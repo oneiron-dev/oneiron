@@ -1,91 +1,58 @@
-//! Custody heads at the vault's surface (KS-4A1, FIX 5685): publishing a
-//! vault's exterior key custody beside its backups, the owner's status read
-//! of it, the self-host anchor door, and the restore that recovers custody
-//! from a head on a host that lacks it.
+//! Custody heads at the vault's surface (KS-4A1/KS-4A2, FIX 5685):
+//! publishing a vault's exterior key custody to every required target, the
+//! owner's status read of it and of its retirements, the self-host anchor
+//! door, the drivers that publish on their own channel, and the restore that
+//! recovers custody from a head on a host that lacks it.
 //!
 //! The head always publishes, sealed and recovery-wrapped, to the folder
-//! beside the backups; the anchor is the one optional step (Engine 10-20
-//! 04:0x). A restore that keeps its image's custody where that custody is
-//! not on this host takes one of three routes: a head the image names is
-//! admitted (fail-closed against a configured anchor; used as it is, and
-//! said so, with none) and landed beside the destination; an image that
-//! names no head drops and names its claim-bound rows whose keys stayed on
-//! the old host; and everything else restores as before. Archive targets
-//! and the kit share the one source and validator: only the opener differs,
-//! the data key the backup unlocked with or the kit's recovery root.
+//! beside the backups and to every other member of the required target set;
+//! the anchor is the one optional step (Engine 10-20 04:0x). A restore that
+//! keeps its image's custody where that custody is not on this host takes
+//! one of three routes: a head the image names is admitted (fail-closed
+//! against a configured anchor; used as it is, and said so, with none) and
+//! landed beside the destination; an image for which no head is found (none
+//! named, none beside the backup with no anchor to owe one, or an entry
+//! point that reads none: a wake, a migration, an engine restore), or one
+//! carrying only the legacy untyped marker, drops and names its claim-bound
+//! rows whose keys stayed on the old host; and everything else restores as
+//! before. Archive targets and the kit share the one source and validator:
+//! only the opener differs, the data key the backup unlocked with or the
+//! kit's recovery root.
+
+mod status;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use heed::RoTxn;
 use oneiron_crypto::HybridSecretKey;
-use serde::Serialize;
 
+pub use self::status::{
+    CUSTODY_ANCHOR_PENDING, CUSTODY_FENCED, CUSTODY_NONE, CUSTODY_PUBLISHED,
+    CUSTODY_RETIREMENT_COMPLETE, CUSTODY_RETIREMENT_PENDING, CUSTODY_TARGET_PENDING,
+    CustodyPendingStep, CustodyRetirement, CustodyStatus, CustodyTargetState, DeclaredTarget,
+};
 use super::{
     CheckpointKey, Custody, RestoreReason, RestoreReport, codec_error, read_image_required,
     write_budget,
 };
+use crate::store::custody_protocol::{
+    AckRecord, AnchorAdvance, AnchorStore, CustodyBatch, CustodyNamespace, CustodyTarget,
+    CustodyVaultId, TargetId, TargetPending, TargetSpec,
+};
 use crate::store::{
-    AnchorAdvance, AnchorStore, CUSTODY_HEAD_WRAP_CONTEXT, CustodyRecipients, CustodyRoute,
-    CustodySourceAt, FileAnchor, FolderTarget, Publication, PublicationState, route_custody,
+    CUSTODY_HEAD_WRAP_CONTEXT, CustodyKind, CustodyRecipients, CustodyRoute, CustodySourceAt,
+    FileAnchor, FolderTarget, Publication, route_custody, standing_retirements_in_txn,
 };
 use crate::{Result, Vault, VaultConfig};
 
-/// The owner's status read's names for where a vault's custody publication
-/// stands.
-pub const CUSTODY_NONE: &str = "custody_none";
-pub const CUSTODY_PUBLISHED: &str = "custody_published";
-pub const CUSTODY_TARGET_PENDING: &str = "custody_target_pending";
-pub const CUSTODY_ANCHOR_PENDING: &str = "custody_anchor_pending";
-pub const CUSTODY_FENCED: &str = "custody_fenced";
-
-/// Where one vault's custody publication stands: the status read's state
-/// name, the positions it compared (writer epoch, log sequence numbers;
-/// public structure, never a key) and why a step is pending.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct CustodyStatus {
-    /// One of [`CUSTODY_NONE`], [`CUSTODY_PUBLISHED`],
-    /// [`CUSTODY_TARGET_PENDING`], [`CUSTODY_ANCHOR_PENDING`] (the
-    /// anchor root is not set up, missing, or behind) or [`CUSTODY_FENCED`]
-    /// (another install took the custody over in a disaster recovery).
-    pub state: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub writer_epoch: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub log_seq: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub published_seq: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub anchored_seq: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
-}
-
-impl CustodyStatus {
-    fn of(publication: Publication) -> Self {
-        Self {
-            state: match publication.state {
-                PublicationState::Nothing => CUSTODY_NONE,
-                PublicationState::Published => CUSTODY_PUBLISHED,
-                PublicationState::TargetPending => CUSTODY_TARGET_PENDING,
-                PublicationState::AnchorPending => CUSTODY_ANCHOR_PENDING,
-                PublicationState::Fenced => CUSTODY_FENCED,
-            },
-            writer_epoch: publication.local.map(|local| local.epoch.get()),
-            log_seq: publication.local.map(|local| local.seq),
-            published_seq: publication.published.map(|published| published.seq),
-            anchored_seq: publication.anchored.map(|anchored| anchored.seq),
-            detail: publication.detail,
-        }
-    }
-}
-
 /// Where a restore on a host without its image's custody finds the head:
 /// the folder beside the backup (`<folder>/oneiron-custody/`), the anchor
-/// root when one is configured, and the kit's recovery root when the
-/// restore was unlocked with the kit.
+/// when one is configured (a root or a door), and the kit's recovery root
+/// when the restore was unlocked with the kit.
 pub struct CustodyRecovery<'a> {
     folder: PathBuf,
-    anchor_root: Option<PathBuf>,
+    anchor: Option<Box<dyn AnchorStore + 'a>>,
     root: Option<&'a HybridSecretKey>,
 }
 
@@ -97,7 +64,7 @@ impl<'a> CustodyRecovery<'a> {
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty())
                 .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
-            anchor_root: None,
+            anchor: None,
             root: None,
         }
     }
@@ -106,7 +73,16 @@ impl<'a> CustodyRecovery<'a> {
     /// CUSTODY_ANCHOR_ROOT); `None` uses the head as it is, and the restore
     /// says rollback is not proven.
     pub fn anchored_at(mut self, root: Option<PathBuf>) -> Self {
-        self.anchor_root = root;
+        if let Some(root) = root {
+            self.anchor = Some(Box::new(FileAnchor::at(root)));
+        }
+        self
+    }
+
+    /// Checked against `anchor`, another install's anchor door or a hosted
+    /// one (FIX 5788).
+    pub fn anchored_by(mut self, anchor: Box<dyn AnchorStore + 'a>) -> Self {
+        self.anchor = Some(anchor);
         self
     }
 
@@ -116,6 +92,12 @@ impl<'a> CustodyRecovery<'a> {
         self.root = Some(root);
         self
     }
+
+    fn anchor(&self) -> Option<&dyn AnchorStore> {
+        self.anchor
+            .as_deref()
+            .map(|anchor| anchor as &dyn AnchorStore)
+    }
 }
 
 impl Vault {
@@ -123,7 +105,7 @@ impl Vault {
     /// root (the kit keeps only its seed), and its data key's custody
     /// subkey while the key is held. Neither is a reason to refuse: a pass
     /// with neither stays pending.
-    fn custody_recipients(&self) -> Result<CustodyRecipients> {
+    pub(crate) fn custody_recipients(&self) -> Result<CustodyRecipients> {
         let data_key = self
             .unlock_vault_key()
             .and_then(|()| self.vault_subkey(CUSTODY_HEAD_WRAP_CONTEXT))
@@ -138,38 +120,46 @@ impl Vault {
 
     /// One publication pass of this vault's custody: its keyless log and
     /// latest sealed head to the folder target `folder` (the backups'
-    /// directory), then the anchor in `anchor_root` when one is configured
-    /// (CALLS CUSTODY_ANCHOR_ROOT). A step that does not go through stays
-    /// pending by name in the status; nothing is refused for it. The anchor
-    /// root must lie outside the vault and its custody.
+    /// directory), every folder member registered before, and every
+    /// `declared` member (a hosted holder this build has no adapter for
+    /// stays pending as `no_adapter`); then `anchor` when one is configured
+    /// (CALLS CUSTODY_ANCHOR_ROOT), once every member acknowledged the head;
+    /// then the completion watermark. A step that does not go through stays
+    /// pending by name in the status; nothing is refused for it.
     pub fn publish_custody(
         &self,
         folder: &Path,
-        anchor_root: Option<&Path>,
+        declared: &[TargetSpec],
+        anchor: Option<&dyn AnchorStore>,
     ) -> Result<CustodyStatus> {
-        if let Some(root) = anchor_root {
-            self.refuse_anchor_inside(root)?;
-        }
         let recipients = self.custody_recipients()?;
-        let target = FolderTarget::at(folder.to_path_buf());
-        let anchor = anchor_root.map(|root| FileAnchor::at(root.to_path_buf()));
-        Ok(CustodyStatus::of(self.store.publish_custody(
-            &recipients,
-            &target,
-            anchor.as_ref().map(|anchor| anchor as &dyn AnchorStore),
-        )?))
+        let folder = FolderTarget::at(folder.to_path_buf());
+        let declared: Vec<DeclaredTarget> =
+            declared.iter().cloned().map(DeclaredTarget::new).collect();
+        let mut targets: Vec<&dyn CustodyTarget> = vec![&folder];
+        targets.extend(declared.iter().map(|target| target as &dyn CustodyTarget));
+        let publication = self.store.publish_custody(&recipients, &targets, anchor)?;
+        self.custody_status_of(publication)
     }
 
-    /// Where this vault's custody publication stands, from the last pass:
-    /// the owner's status read.
+    /// Where this vault's custody publication and retirements stand, from
+    /// the last pass and the journal: the owner's status read.
     pub fn custody_status(&self) -> Result<CustodyStatus> {
-        Ok(CustodyStatus::of(self.store.custody_publication()?))
+        self.custody_status_of(self.store.custody_publication()?)
     }
 
-    /// An anchor kept inside the vault, or beside it in its custody, rolls
-    /// back with what it should prove current.
-    fn refuse_anchor_inside(&self, root: &Path) -> Result<()> {
-        let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    fn custody_status_of(&self, publication: Publication) -> Result<CustodyStatus> {
+        let standing = standing_retirements_in_txn(&self.store, &self.store.env.read_txn()?)?;
+        let retirement =
+            status::retirement(self.store.custody_retirement()?, standing, &publication);
+        Ok(CustodyStatus::of(publication, retirement))
+    }
+
+    /// The self-host anchor in `root`, refused when it lies inside the vault
+    /// or beside it in its custody: such an anchor rolls back with what it
+    /// should prove current.
+    pub fn custody_anchor_root(&self, root: &Path) -> Result<CustodyAnchorRoot> {
+        let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
         let home = self.store.env.path();
         let custody = home.with_file_name(format!(
             ".{}.key-custody",
@@ -177,12 +167,96 @@ impl Vault {
                 .map(|name| name.to_string_lossy())
                 .unwrap_or_default()
         ));
-        if root.starts_with(home) || root.starts_with(custody) {
+        if canonical.starts_with(home) || canonical.starts_with(custody) {
             return Err(crate::Error::InvalidConfig(
                 "the custody anchor root must lie outside the vault and its key custody".into(),
             ));
         }
-        Ok(())
+        Ok(CustodyAnchorRoot::at(root.to_path_buf()))
+    }
+
+    /// For a member that publishes on its own channel (a hosted adapter):
+    /// registers `spec` in the required set before its first exposure and,
+    /// when it is behind the local log position, seals a batch for it.
+    /// `None` when it is current or nothing is in custody.
+    pub fn custody_batch_for(&self, spec: &TargetSpec) -> Result<Option<CustodyBatch>> {
+        let recipients = self.custody_recipients()?;
+        self.store.custody_batch_for(spec, &recipients)
+    }
+
+    /// Accepts a member's acknowledgement of `batch`, once it names exactly
+    /// that batch: stored durably in the journal.
+    pub fn accept_custody_ack(&self, batch: &CustodyBatch, ack: &AckRecord) -> Result<()> {
+        self.store.accept_custody_ack(batch, ack)
+    }
+
+    /// Records why `target` is still pending, by name on the status read.
+    pub fn note_custody_pending(&self, target: &TargetId, pending: &TargetPending) -> Result<()> {
+        self.store.note_custody_pending(target, pending)
+    }
+
+    /// The custody steps an erase of the claims `claims` still owes, for its
+    /// receipt's read: `None` when none of them was ever in custody here.
+    /// Each handed-off retirement of theirs is complete once the watermark
+    /// passed it; until then, every member behind it and the anchor are
+    /// owed, and an intent not handed off yet is `custody_retirement_pending`.
+    pub(crate) fn erase_custody_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        claims: &[[u8; 16]],
+    ) -> Result<Option<(&'static str, Vec<String>)>> {
+        let mut found = false;
+        let mut steps: Vec<CustodyPendingStep> = Vec::new();
+        let mut newest: Option<u64> = None;
+        for claim in claims {
+            let Some(subject) = self
+                .store
+                .custody_subject(CustodyKind::ClaimDecision, claim)?
+            else {
+                return Ok(None);
+            };
+            if crate::store::retirement_in_txn(&self.store, txn, &subject)?.is_some() {
+                found = true;
+                if steps
+                    .iter()
+                    .all(|step| step.state != CUSTODY_RETIREMENT_PENDING)
+                {
+                    steps.push(CustodyPendingStep {
+                        state: CUSTODY_RETIREMENT_PENDING,
+                        target_id: None,
+                        reason: None,
+                    });
+                }
+            }
+            for (seq, done) in self.store.custody_obligations_of(&subject)? {
+                found = true;
+                if !done {
+                    newest = newest.max(Some(seq));
+                }
+            }
+        }
+        if let Some(newest) = newest
+            && let Some(progress) = self.store.custody_retirement()?
+            && progress
+                .completed
+                .is_none_or(|completed| completed < newest)
+        {
+            steps.extend(status::owed(
+                &progress,
+                &self.store.custody_publication()?,
+                newest,
+            ));
+        }
+        Ok(found.then(|| {
+            (
+                if steps.is_empty() {
+                    CUSTODY_RETIREMENT_COMPLETE
+                } else {
+                    CUSTODY_RETIREMENT_PENDING
+                },
+                steps.iter().map(CustodyPendingStep::name).collect(),
+            )
+        }))
     }
 
     /// [`Vault::restore_checkpoint_finishing`], recovering the image's key
@@ -194,10 +268,10 @@ impl Vault {
     /// rollback is not proven. Its custody lands beside `destination` in the
     /// image's own namespace, every retirement first, at the next writer
     /// epoch, which the anchor's advance fences before the vault is kept. An
-    /// image that names no head, restored where its custody is not, drops
-    /// its claim-bound rows whose keys stayed on the old host and names them
-    /// in `dropped_gate_decisions`. A restore whose custody is on this host
-    /// restores as before.
+    /// image for which no head is found, restored where its custody is not,
+    /// drops its claim-bound rows whose keys stayed on the old host and names
+    /// them in `dropped_gate_decisions`. A restore whose custody is on this
+    /// host restores as before.
     pub fn restore_checkpoint_recovering(
         path: &Path,
         key: &CheckpointKey,
@@ -218,9 +292,10 @@ impl Vault {
         )
     }
 
-    /// Every restore that keeps its image's custody. With no `recovery`, an
-    /// image whose head-named custody is not on this host refuses; a wake
-    /// or a migration never drops a row.
+    /// Every restore that keeps its image's custody. With no `recovery` (a
+    /// wake, a migration, an engine restore), an image whose custody is not
+    /// on this host drops and names its claim-bound rows whose keys stayed
+    /// behind, and completes; none refuses for it (Engine 10-20 05:2x).
     pub(super) fn restore_keeping_custody(
         path: &Path,
         key: &CheckpointKey,
@@ -232,9 +307,10 @@ impl Vault {
     ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id, bodies, required) = read_image_required(path, key)?;
         image.drop_machine_identity();
+        let anchor = recovery.and_then(|recovery| recovery.anchor());
         let source = recovery.map(|recovery| CustodySourceAt {
             folder: &recovery.folder,
-            anchor_root: recovery.anchor_root.as_deref(),
+            anchor,
             root: recovery.root,
         });
         let route = route_custody(
@@ -250,8 +326,7 @@ impl Vault {
         let (custody, landing) = match route {
             CustodyRoute::Local => (Custody::Keep, None),
             CustodyRoute::Landed(landing) => (Custody::Keep, Some(landing)),
-            CustodyRoute::Absent if reason == RestoreReason::Restore => (Custody::NewHost, None),
-            CustodyRoute::Absent => (Custody::Keep, None),
+            CustodyRoute::Absent => (Custody::NewHost, None),
         };
         let (made, forked, mut vault, mut report) = Self::restore_image(
             image,
@@ -267,7 +342,7 @@ impl Vault {
         )?;
         finish(&vault)?;
         if let Some(landing) = &landing {
-            landing.fence()?;
+            landing.fence(anchor)?;
             report.custody_note = landing.note().map(str::to_owned);
         }
         forked.keep();
@@ -279,11 +354,11 @@ impl Vault {
     }
 }
 
-/// The self-host anchor door (`/v1/owner/custody-anchor`): keyless read and
-/// compare-and-swap advance of a lineage's record in an owner-selected
-/// anchor root. The store checks that an advance extends the anchored
-/// position; the reader checks the record's tag under its head's control
-/// secret.
+/// The self-host anchor (`/v1/owner/custody-anchor`, and an install that
+/// anchors to a directory it mounts): keyless read and compare-and-swap
+/// advance of a lineage's record in an owner-selected anchor root. The
+/// store checks that an advance extends the anchored position; the reader
+/// checks the record's tag under its head's control secret.
 pub struct CustodyAnchorRoot {
     anchor: FileAnchor,
 }
@@ -298,7 +373,10 @@ impl CustodyAnchorRoot {
     /// The current record of the lineage `namespace` of vault `vault`, if
     /// it has one.
     pub fn read(&self, vault: [u8; 32], namespace: [u8; 16]) -> Result<Option<Vec<u8>>> {
-        self.anchor.read_raw(vault, namespace)
+        self.anchor.read(
+            CustodyVaultId::from_bytes(vault),
+            CustodyNamespace::from_bytes(namespace),
+        )
     }
 
     /// Makes `record` its lineage's current one while the current one is
@@ -306,5 +384,15 @@ impl CustodyAnchorRoot {
     /// when another writer moved it first.
     pub fn advance(&self, expected: Option<[u8; 32]>, record: &[u8]) -> Result<bool> {
         Ok(self.anchor.advance(expected, record)? == AnchorAdvance::Advanced)
+    }
+}
+
+impl AnchorStore for CustodyAnchorRoot {
+    fn read(&self, vault: CustodyVaultId, namespace: CustodyNamespace) -> Result<Option<Vec<u8>>> {
+        self.anchor.read(vault, namespace)
+    }
+
+    fn advance(&self, expected: Option<[u8; 32]>, record: &[u8]) -> Result<AnchorAdvance> {
+        self.anchor.advance(expected, record)
     }
 }

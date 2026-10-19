@@ -82,7 +82,8 @@ struct AnchorAdvanceView {
 fn anchor_root(server: &SyncServer) -> Result<CustodyAnchorRoot, ApiError> {
     host(server)?
         .backups
-        .custody_anchor
+        .custody
+        .anchor_root
         .clone()
         .map(CustodyAnchorRoot::at)
         .ok_or_else(|| {

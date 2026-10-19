@@ -7,6 +7,7 @@ pub(super) mod tests;
 mod bundle_access;
 mod bundle_commit;
 mod checkpoint_roots;
+mod custody;
 mod machine_history;
 
 use base64::Engine;
@@ -330,10 +331,7 @@ pub(super) fn run(
             "residence.machine-history" => {
                 machine_history::machine_history(server, auth, peer, request.params)
             }
-            _ => Err(AppError::bad_request(
-                "unknown residence RPC",
-                Some("method"),
-            )),
+            method => custody::run(server, auth, peer, method, request.params),
         }
     })();
     super::RpcReply::answer(server, auth, call, request.request_id, result)

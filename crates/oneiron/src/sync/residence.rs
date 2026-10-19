@@ -11,6 +11,7 @@ mod bundle_access;
 mod bundle_payload;
 mod bundle_stage;
 mod bundle_turn;
+mod custody;
 mod directives;
 mod discover;
 mod kit_fetch;
@@ -44,6 +45,10 @@ pub use bundle_payload::SealedKitRestore;
 pub use bundle_stage::{SealedBundleStaged, sealed_bundle_stages};
 pub(crate) use bundle_turn::SEALED_BUNDLE_PUBLISH_LEASE_SECS;
 pub use bundle_turn::ask_sealed_bundle_turn;
+pub use custody::{
+    custody_residence_commit, custody_residence_frames, custody_residence_held,
+    custody_residence_stage,
+};
 pub use directives::ResidenceDirectiveState;
 pub(crate) use directives::{
     finish_residence_directive_in_txn, pending_residence_directives, residence_refusal_reason,

@@ -30,14 +30,12 @@ mod tiers;
 mod write_budget;
 mod write_estimate;
 use crate::side_table::{self, Named, SideTable};
+pub use crate::store::custody_protocol;
 use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody, MadeDestination};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
 pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey};
 pub use commitment::CheckpointSigner;
-pub use custody_head::{
-    CUSTODY_ANCHOR_PENDING, CUSTODY_FENCED, CUSTODY_NONE, CUSTODY_PUBLISHED,
-    CUSTODY_TARGET_PENDING, CustodyAnchorRoot, CustodyRecovery, CustodyStatus,
-};
+pub use custody_head::*;
 use heed::types::Bytes;
 pub use host_holds::HostOrderHolds;
 use serde::{Deserialize, Serialize};
@@ -101,10 +99,10 @@ enum Custody<'a> {
     /// holds a key the source's live state, when given, says is destroyed or
     /// committed to be.
     Fork(Option<&'a LiveCustody>),
-    /// As `Keep`, for a new-host restore of an image that names no custody
-    /// head and whose custody is not on this host: its claim-bound rows whose
-    /// keys stayed there are dropped and named, and its binding and
-    /// retirement intents go with them (CALLS CUSTODY_NO_HEAD_GATE_ROWS).
+    /// As `Keep`, for a restore whose custody is not on this host and finds
+    /// no head for it (or carries only the legacy untyped marker), on every
+    /// entry point: its claim-bound rows whose keys stayed there are dropped
+    /// and named, binding and intents with them (CUSTODY_NO_HEAD_GATE_ROWS).
     NewHost,
 }
 /// The custody a side restore forked, removed on drop unless kept: a restore

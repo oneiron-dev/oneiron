@@ -4,6 +4,7 @@
 mod authority;
 mod bundle;
 mod checkpoint_roots;
+pub(crate) mod custody;
 mod index;
 mod kit_fetch;
 mod machine_history;
@@ -16,8 +17,7 @@ pub use index::ResidenceIndexWindow;
 pub use kit_fetch::fetch_sealed_bundle_with_kit;
 pub(crate) use machine_history::fetch_owed_machine_history;
 
-use std::collections::HashSet;
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
 
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};

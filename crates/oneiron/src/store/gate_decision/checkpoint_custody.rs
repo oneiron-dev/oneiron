@@ -370,9 +370,10 @@ impl CheckpointCustody {
 /// names them in its report; `false` refuses it as before.
 pub(crate) const CUSTODY_NO_HEAD_GATE_ROWS: bool = true;
 
-/// [`preflight_checkpoint_rows`] for exactly one case: a restore that keeps
-/// the image's custody, of an image that names no custody head (taken
-/// before KS-4), whose custody is not on this host. A row whose key is
+/// [`preflight_checkpoint_rows`] for exactly one case: a restore, wake or
+/// migration that keeps the image's custody, where no head is found for the
+/// image and its custody is not on this host, or the image carries only the
+/// legacy untyped marker with its keys elsewhere. A row whose key is
 /// missing there is lost, dropped and named, not refused
 /// ([`CUSTODY_NO_HEAD_GATE_ROWS`]); one a committed retirement covers is
 /// erased as before. A missing key anywhere else still refuses.
@@ -390,7 +391,16 @@ pub(crate) fn preflight_absent_custody_rows(
                 .and_then(GateDecisionId::decode_key)
                 .ok_or(Error::CorruptedIndex("gate decision ledger key"))?;
             let (claim, generation) = orcb::raw_claim_generation(value).ok_or_else(corrupt)?;
-            let custody = LocalCustody::at(bound.as_ref().ok_or_else(corrupt)?);
+            // An image that binds no typed custody (the legacy untyped
+            // marker, its keys elsewhere) holds no key here: lost.
+            let custody = match bound.as_ref() {
+                Some(bound) => LocalCustody::at(bound),
+                None if CUSTODY_NO_HEAD_GATE_ROWS => {
+                    lost.push((id, claim));
+                    continue;
+                }
+                None => return Err(corrupt()),
+            };
             let needed = orcb::claim_subject(custody, &claim)?.at(generation);
             match plan.require(&needed) {
                 Ok(Requirement::Retired) => erased.push((id, claim)),

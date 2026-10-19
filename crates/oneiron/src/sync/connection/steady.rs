@@ -401,6 +401,13 @@ impl SyncConnection {
                                     }
                                 }
                             }
+                            // This machine's key custody to its residence home
+                            // (KS-4A2): a home out of reach stays pending by name.
+                            if let Err(error) = crate::sync::client::relay_custody(manager.vault(), &config).await {
+                                let _ = events.send(SyncEvent::Error(format!(
+                                    "Custody relay failed: {error}"
+                                )));
+                            }
                         }));
                     }
                 }

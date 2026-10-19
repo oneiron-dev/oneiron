@@ -6,6 +6,9 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Your vault: where it lives, backups, restore, export, one-act approvals](owner-actions.md) —
   `oneiron doctor`, `backup`, `restore --rehearse`, `restore`, `export`, `secret-scan`,
   `import`, `runs`, `learning-settings`, `widen-proposals`, and the `/v1/owner` routes.
+- [Key custody beside your backups](key-custody.md) — the custody head and keyless log each
+  backup leaves beside it, the residence and hosted members, the anchor (`custody_anchor_root`,
+  `custody_anchor_url`, `/v1/owner/custody-anchor`), the status names, and what a restore says.
 - [Run the server, with or without models](run-with-models.md) — `[models]` config keys
   (HIGH, MID, DETAILED), provider kinds and env vars, what the Dreamer needs to start, chat
   streaming, the saved-workflow pump, and swapping a model in one edit.

@@ -1,158 +1,49 @@
 //! Publishing one lineage's custody (KS-4, FIX 5685): its keyless log, then
-//! its latest sealed head, to a target, then its anchor.
+//! its latest sealed head, to every member of the required target set, then
+//! its anchor, then the completion watermark (KS-4A2).
 //!
 //! The journal is synced before anything is shipped (each frame at its
-//! act). A pass seals a head at the local log position, ships every frame
-//! the target lacks, switches the target's latest head in one atomic step,
-//! deletes every superseded key-bearing head the target held, and advances
-//! the anchor by compare-and-swap. Nothing here is ever waited on by a save
-//! or a backup: a pass that fails leaves its step pending by name, and the
-//! next pass retries. The head always publishes; the anchor is the one
-//! optional step (Engine 10-20 04:0x), pending by name while no anchor root
-//! is set up. Each pass records where it got (`<journal>/status`, no
-//! secret in it), which the owner's status read reports.
-
-use std::fs;
-use std::path::{Path, PathBuf};
+//! act). A pass registers the targets it drives (members are never dropped),
+//! seals one batch at the local log position when a member is behind it,
+//! and hands it to each target the pass reaches: the folders given, and every
+//! folder member an earlier configuration registered, retried at its own
+//! folder. A target acks (stored in the journal) or stays pending by name.
+//! Only once every member acked the position does the anchor advance, by
+//! compare-and-swap; the watermark then rises to the anchored position, and
+//! every retirement obligation at or before it is complete. A member that
+//! publishes on its own channel (the residence home, a hosted adapter) runs
+//! the same batch and ack through [`Store::custody_batch_for`]. Nothing here
+//! is ever waited on by a save or a backup: a step that does not go through
+//! stays pending by name, and the next pass retries. Each pass records where
+//! it got (`<journal>/status`, no secret in it), which the owner's status
+//! read reports.
 
 use crate::error::Result;
 use crate::store::Store;
 
-use super::anchor::{AnchorAdvance, AnchorStore, anchor_record, verified_position};
-use super::files::{EntryState, open_dir, read_whole, replace_file, write_once};
-use super::head::{CustodyRecipients, HeadEntry, head_position, seal_head};
-use super::identity::{CustodyNamespace, CustodyVaultId};
-use super::log::{CustodyPosition, POSITION_LEN, frame_name, log_corrupt};
+use super::anchor::{anchor_record, verified_position};
+use super::files::{EntryState, LocalCustody, read_whole, replace_file};
+use super::folder::FolderTarget;
+use super::head::{CustodyRecipients, HeadEntry, seal_head};
+use super::identity::CustodySubject;
+use super::log::{CustodyPosition, Journal, POSITION_LEN};
+use super::protocol::{
+    AckRecord, AnchorAdvance, AnchorStore, CustodyBatch, CustodyTarget, Lineage, PendingCode,
+    TargetId, TargetKind, TargetPending, TargetPublication, TargetSpec,
+};
+use super::targets::{RequiredSet, RetirementProgress, acked_seq};
 
-const FOLDER: &str = "oneiron-custody";
-const HEAD: &str = "head";
-const LOG: &str = "log";
 const STATUS: &str = "status";
-
-/// One lineage a target holds: a vault's custody in one namespace.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Lineage {
-    pub(crate) vault: CustodyVaultId,
-    pub(crate) namespace: CustodyNamespace,
-}
-
-impl Lineage {
-    pub(super) fn of(position: &CustodyPosition) -> Self {
-        Self {
-            vault: position.vault,
-            namespace: position.namespace,
-        }
-    }
-}
-
-/// Where a restore reads a lineage's custody from: an archive target or
-/// the kit's fetch, through the same validator.
-pub(crate) trait CustodySource {
-    /// The lineage's latest head there, if any.
-    fn head(&self, lineage: Lineage) -> Result<Option<Vec<u8>>>;
-    /// The lineage's log frame at `seq` there, if any.
-    fn frame(&self, lineage: Lineage, seq: u64) -> Result<Option<Vec<u8>>>;
-}
-
-/// Where a pass publishes a lineage's custody.
-pub(crate) trait CustodyTarget: CustodySource {
-    /// Ships `frames` (by sequence number, ascending) the target lacks,
-    /// then makes `head` its latest head in one atomic step, then deletes
-    /// every superseded head and temporary it holds for the lineage and
-    /// shows, by listing again, that none is left.
-    fn publish(&self, lineage: Lineage, frames: &[(u64, Vec<u8>)], head: &[u8]) -> Result<()>;
-}
-
-/// A folder target: `<folder>/oneiron-custody/<namespace hex>.<vault hex>/`
-/// holding `head` and `log/f<seq hex16>`, every directory owner-only.
-pub(crate) struct FolderTarget {
-    folder: PathBuf,
-}
-
-impl FolderTarget {
-    pub(crate) fn at(folder: PathBuf) -> Self {
-        Self { folder }
-    }
-
-    fn dir(&self, lineage: Lineage) -> PathBuf {
-        self.folder.join(FOLDER).join(format!(
-            "{}.{}",
-            crate::entity_id::bytes_to_hex_lower(lineage.namespace.as_bytes()),
-            crate::entity_id::bytes_to_hex_lower(lineage.vault.as_bytes())
-        ))
-    }
-}
-
-impl CustodySource for FolderTarget {
-    fn head(&self, lineage: Lineage) -> Result<Option<Vec<u8>>> {
-        read_whole(&self.dir(lineage).join(HEAD))
-    }
-
-    fn frame(&self, lineage: Lineage, seq: u64) -> Result<Option<Vec<u8>>> {
-        read_whole(&self.dir(lineage).join(LOG).join(frame_name(seq)))
-    }
-}
-
-impl CustodyTarget for FolderTarget {
-    fn publish(&self, lineage: Lineage, frames: &[(u64, Vec<u8>)], head: &[u8]) -> Result<()> {
-        let dir = self.dir(lineage);
-        open_dir(&self.folder.join(FOLDER), true, None)?;
-        open_dir(&dir, true, None)?;
-        let log = dir.join(LOG);
-        open_dir(&log, true, None)?;
-        for (seq, frame) in frames {
-            let name = frame_name(*seq);
-            // A frame already there must be this one: the log is append-only.
-            if !write_once(&log, &name, frame)?
-                && read_whole(&log.join(&name))?.as_deref() != Some(frame.as_slice())
-            {
-                return Err(log_corrupt());
-            }
-        }
-        replace_file(&dir, HEAD, head)?;
-        sweep(&dir)?;
-        sweep(&log)?;
-        let left = fs::read_dir(&dir)?
-            .map(|entry| entry.map(|entry| entry.file_name()))
-            .collect::<std::io::Result<Vec<_>>>()?;
-        if left.iter().any(|name| name != HEAD && name != LOG) {
-            return Err(crate::error::Error::InvalidConfig(
-                "a superseded custody head is still on the folder target".into(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// Removes every temporary an interrupted write left in `dir`, a head's
-/// among them, and syncs it.
-fn sweep(dir: &Path) -> Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if name
-            .to_str()
-            .is_some_and(|name| name.starts_with(".t") && name.ends_with(".pending"))
-        {
-            match fs::remove_file(entry.path()) {
-                Ok(()) => {}
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err.into()),
-            }
-        }
-    }
-    fs::File::open(dir)?.sync_all()?;
-    Ok(())
-}
 
 /// Where one lineage's publication stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PublicationState {
     /// Nothing is in custody yet, so there is no head to publish.
     Nothing,
-    /// The head at the local log position is on the target and anchored.
+    /// Every member holds the head at the local log position, and it is
+    /// anchored.
     Published,
-    /// The target does not hold the head at the local position yet.
+    /// A member does not hold the head at the local position yet.
     TargetPending,
     /// The anchor step is not done: no anchor root is set up, it is
     /// missing, or its advance has not gone through.
@@ -162,15 +53,21 @@ pub(crate) enum PublicationState {
     Fenced,
 }
 
-/// One lineage's publication: its state, the positions it compared, and
-/// why a step is pending, in words naming no secret.
+/// One lineage's publication: its state, the positions it compared, why a
+/// step is pending in words naming no secret, and whether every member's
+/// head is wrapped to the vault data key as well as the recovery root.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Publication {
     pub(crate) state: PublicationState,
     pub(crate) local: Option<CustodyPosition>,
+    /// The least advanced member's acknowledged position, once every
+    /// member has one.
     pub(crate) published: Option<CustodyPosition>,
     pub(crate) anchored: Option<CustodyPosition>,
     pub(crate) detail: Option<String>,
+    /// `Some(false)` while a member holds a head sealed when the data key
+    /// was not held: it is sealed again once the key is (FIX 5791).
+    pub(crate) data_key_wrapped: Option<bool>,
 }
 
 impl Publication {
@@ -181,38 +78,15 @@ impl Publication {
             published: None,
             anchored: None,
             detail: None,
-        }
-    }
-
-    fn pending(
-        state: PublicationState,
-        local: CustodyPosition,
-        published: Option<CustodyPosition>,
-        anchored: Option<CustodyPosition>,
-        detail: String,
-    ) -> Self {
-        Self {
-            state,
-            local: Some(local),
-            published,
-            anchored,
-            detail: Some(detail),
+            data_key_wrapped: None,
         }
     }
 }
 
 /// What the anchor step reads when no anchor root is set up (CALLS
 /// CUSTODY_ANCHOR_ROOT: unset by default).
-pub(crate) const ANCHOR_UNSET: &str = "no custody anchor root is set (backup.custody_anchor_root)";
-
-/// The head position a target holds for `lineage`, unauthenticated.
-fn target_position(target: &dyn CustodySource, lineage: Lineage) -> Option<CustodyPosition> {
-    target
-        .head(lineage)
-        .ok()
-        .flatten()
-        .and_then(|head| head_position(&head).ok())
-}
+pub(crate) const ANCHOR_UNSET: &str =
+    "no custody anchor is set (backup.custody_anchor_root or backup.custody_anchor_url)";
 
 impl PublicationState {
     fn code(self) -> u8 {
@@ -237,9 +111,17 @@ impl PublicationState {
     }
 }
 
-/// `state | 3 x (0 | 1 position) | detail utf-8`.
+/// `state | wraps (0 unknown, 1 root only, 2 data key too) | 3 x (0 | 1
+/// position) | detail utf-8`.
 fn encode_status(publication: &Publication) -> Vec<u8> {
-    let mut out = vec![publication.state.code()];
+    let mut out = vec![
+        publication.state.code(),
+        match publication.data_key_wrapped {
+            None => 0,
+            Some(false) => 1,
+            Some(true) => 2,
+        },
+    ];
     for position in [
         publication.local,
         publication.published,
@@ -258,7 +140,8 @@ fn encode_status(publication: &Publication) -> Vec<u8> {
 }
 
 fn decode_status(bytes: &[u8]) -> Option<Publication> {
-    let (&state, mut rest) = bytes.split_first()?;
+    let (&state, rest) = bytes.split_first()?;
+    let (&wraps, mut rest) = rest.split_first()?;
     let mut positions = [None; 3];
     for slot in &mut positions {
         let (&present, after) = rest.split_first()?;
@@ -275,19 +158,113 @@ fn decode_status(bytes: &[u8]) -> Option<Publication> {
         published: positions[1],
         anchored: positions[2],
         detail: (!detail.is_empty()).then(|| detail.to_owned()),
+        data_key_wrapped: match wraps {
+            0 => None,
+            1 => Some(false),
+            2 => Some(true),
+            _ => return None,
+        },
     })
 }
 
+fn recorded(journal: &Journal) -> Result<Option<Publication>> {
+    Ok(read_whole(&journal.dir().join(STATUS))?.and_then(|bytes| decode_status(&bytes)))
+}
+
+/// What sealing at the local position gave.
+enum Sealed {
+    /// Nothing is in custody yet.
+    Nothing,
+    /// No target the caller drives is behind this position.
+    Current(CustodyPosition),
+    /// A head sealed at the position.
+    Batch(CustodyBatch),
+    /// The head did not seal: why, naming no secret.
+    Failed(CustodyPosition, String),
+}
+
+/// The least advanced member's acknowledged position, once every member
+/// acknowledged one in `local`'s lineage and epoch.
+fn least_acked(
+    set: &RequiredSet,
+    acks: &std::collections::BTreeMap<TargetId, AckRecord>,
+    local: &CustodyPosition,
+) -> Option<CustodyPosition> {
+    let mut least: Option<CustodyPosition> = None;
+    for member in &set.members {
+        acked_seq(acks, member.spec.id(), local)?;
+        let held = acks.get(member.spec.id())?.position.position()?;
+        if least.is_none_or(|least| held.seq < least.seq) {
+            least = Some(held);
+        }
+    }
+    least
+}
+
+/// Whether nothing was ever in this custody: no frame, no entry.
+fn custody_empty(store: &Store, custody: LocalCustody<'_>, journal: &Journal) -> Result<bool> {
+    let _guard = store.core.key_custody.read_guard()?;
+    Ok(journal.position()?.seq == 0 && custody.census()?.is_empty())
+}
+
 impl Store {
+    /// Under the read guard: the local position, then, when `behind` says a
+    /// target the caller drives lacks a head there, a head sealed at it:
+    /// every entry a frame up to the position mints is published before its
+    /// frame, and no retirement runs until the head is sealed.
+    fn seal_batch(
+        &self,
+        custody: LocalCustody<'_>,
+        journal: &Journal,
+        recipients: &CustodyRecipients,
+        revision: u64,
+        behind: impl FnOnce(&CustodyPosition) -> bool,
+    ) -> Result<Sealed> {
+        let _guard = self.core.key_custody.read_guard()?;
+        let position = journal.position()?;
+        if position.seq == 0 && custody.census()?.is_empty() {
+            return Ok(Sealed::Nothing);
+        }
+        if !behind(&position) {
+            return Ok(Sealed::Current(position));
+        }
+        let control = journal.control_or_create()?;
+        let mut entries = Vec::new();
+        let mut retired = Vec::new();
+        for (id, state) in custody.census()? {
+            match state {
+                EntryState::Live => entries.push(HeadEntry {
+                    secret: custody.read(&id)?,
+                    id,
+                }),
+                EntryState::Retired => retired.push(id),
+                EntryState::Missing => {}
+            }
+        }
+        Ok(
+            match seal_head(&position, &control, entries, retired, recipients) {
+                Ok(head) => Sealed::Batch(CustodyBatch {
+                    position,
+                    head,
+                    set_revision: revision,
+                    journal: journal.dir().to_path_buf(),
+                    data_key: recipients.data_key.is_some(),
+                }),
+                Err(error) => Sealed::Failed(position, error.to_string()),
+            },
+        )
+    }
+
     /// One publication pass over this vault's custody lineage: its head to
-    /// `target`, then `anchor` (`None`: no anchor root is set up, the step
-    /// left pending by name). What happens on the way is the pass's state,
-    /// recorded for the status read, never a refusal of anything; only a
-    /// fault in the local custody itself is an error.
+    /// every target in `given` and every folder member registered before,
+    /// then `anchor` (`None`: no anchor is set up, the step left pending by
+    /// name), then the completion watermark. What happens on the way is the
+    /// pass's state, recorded for the status read, never a refusal of
+    /// anything; only a fault in the local custody itself is an error.
     pub(crate) fn publish_custody(
         &self,
         recipients: &CustodyRecipients,
-        target: &dyn CustodyTarget,
+        given: &[&dyn CustodyTarget],
         anchor: Option<&dyn AnchorStore>,
     ) -> Result<Publication> {
         let Some(custody) = self.core.key_custody.local() else {
@@ -299,7 +276,7 @@ impl Store {
             return Ok(Publication::nothing());
         }
         let journal = custody.journal()?;
-        let publication = self.publish_pass(custody, &journal, recipients, target, anchor)?;
+        let publication = self.publish_pass(custody, &journal, recipients, given, anchor)?;
         if publication.state != PublicationState::Nothing {
             replace_file(journal.dir(), STATUS, &encode_status(&publication))?;
         }
@@ -308,63 +285,92 @@ impl Store {
 
     fn publish_pass(
         &self,
-        custody: super::files::LocalCustody<'_>,
-        journal: &super::log::Journal,
+        custody: LocalCustody<'_>,
+        journal: &Journal,
         recipients: &CustodyRecipients,
-        target: &dyn CustodyTarget,
+        given: &[&dyn CustodyTarget],
         anchor: Option<&dyn AnchorStore>,
     ) -> Result<Publication> {
-        // The position first, then the entries, under the read guard: every
-        // entry a frame up to the position mints is published before its
-        // frame, and no retirement runs until the head is sealed.
-        let (position, control, head) = {
-            let _guard = self.core.key_custody.read_guard()?;
-            let position = journal.position()?;
-            let census = custody.census()?;
-            if census.is_empty() && position.seq == 0 {
-                return Ok(Publication::nothing());
+        if custody_empty(self, custody, journal)? {
+            return Ok(Publication::nothing());
+        }
+        // Every folder member an earlier pass registered is retried at its
+        // own folder, whatever the configuration names now.
+        let given_ids: Vec<TargetId> = given
+            .iter()
+            .map(|target| target.spec().id().clone())
+            .collect();
+        let retried: Vec<FolderTarget> = journal
+            .required_set()?
+            .members
+            .iter()
+            .filter(|member| {
+                member.spec.kind() == TargetKind::Folder && !given_ids.contains(member.spec.id())
+            })
+            .filter_map(|member| {
+                member
+                    .spec
+                    .folder_path()
+                    .map(|folder| FolderTarget::at(folder.to_path_buf()))
+            })
+            .collect();
+        let mut targets: Vec<&dyn CustodyTarget> = given.to_vec();
+        targets.extend(retried.iter().map(|target| target as &dyn CustodyTarget));
+        let specs: Vec<TargetSpec> = targets.iter().map(|target| target.spec()).collect();
+        let set = journal.register(&specs)?;
+        journal.reconcile()?;
+        let acks = journal.acks()?;
+        let previous = recorded(journal)?;
+        let wrapped_before = previous
+            .as_ref()
+            .and_then(|previous| previous.data_key_wrapped);
+        // A member holding a head sealed while the data key was not held
+        // gets one wrapped to it as well, once it is (FIX 5791).
+        let reseal = |id: &TargetId| recipients.data_key.is_some() && journal.root_only(id);
+        let due = |id: &TargetId, position: &CustodyPosition| {
+            acked_seq(&acks, id, position) != Some(position.seq) || reseal(id)
+        };
+        let sealed = self.seal_batch(custody, journal, recipients, set.revision, |position| {
+            specs.iter().any(|spec| due(spec.id(), position))
+        })?;
+        let (position, batch) = match sealed {
+            Sealed::Nothing => return Ok(Publication::nothing()),
+            Sealed::Failed(position, detail) => {
+                return Ok(Publication {
+                    state: PublicationState::TargetPending,
+                    local: Some(position),
+                    published: least_acked(&set, &acks, &position),
+                    anchored: previous.and_then(|previous| previous.anchored),
+                    detail: Some(detail),
+                    data_key_wrapped: wrapped_before,
+                });
             }
-            let control = journal.control_or_create()?;
-            let mut entries = Vec::new();
-            let mut retired = Vec::new();
-            for (id, state) in census {
-                match state {
-                    EntryState::Live => entries.push(HeadEntry {
-                        secret: custody.read(&id)?,
-                        id,
-                    }),
-                    EntryState::Retired => retired.push(id),
-                    EntryState::Missing => {}
-                }
-            }
-            let head = match seal_head(&position, &control, entries, retired, recipients) {
-                Ok(head) => head,
-                Err(error) => {
-                    return Ok(Publication::pending(
-                        PublicationState::TargetPending,
-                        position,
-                        None,
-                        None,
-                        error.to_string(),
-                    ));
-                }
-            };
-            (position, control, head)
+            Sealed::Current(position) => (position, None),
+            Sealed::Batch(batch) => (batch.position(), Some(batch)),
         };
         let lineage = Lineage::of(&position);
-        // The anchor is read before the target is written: a newer writer
+        let control = journal.control_or_create()?;
+        let pending = |state, published, anchored, detail: String, wrapped| Publication {
+            state,
+            local: Some(position),
+            published,
+            anchored,
+            detail: Some(detail),
+            data_key_wrapped: wrapped,
+        };
+        // The anchor is read before any target is written: a newer writer
         // epoch fenced this one, and its head would only overwrite the new
         // writer's.
         let current = match anchor.map(|anchor| anchor.read(lineage.vault, lineage.namespace)) {
             None => None,
             Some(Ok(current)) => current,
             Some(Err(error)) => {
-                return Ok(Publication::pending(
+                return Ok(pending(
                     PublicationState::AnchorPending,
-                    position,
-                    target_position(target, lineage),
+                    least_acked(&set, &acks, &position),
                     None,
                     error.to_string(),
+                    wrapped_before,
                 ));
             }
         };
@@ -373,45 +379,87 @@ impl Store {
             .map(|record| verified_position(record, &control.anchor_key()))
             .transpose()?;
         if anchored.is_some_and(|anchored| anchored.epoch > position.epoch) {
-            return Ok(Publication::pending(
+            return Ok(pending(
                 PublicationState::Fenced,
-                position,
-                target_position(target, lineage),
+                least_acked(&set, &acks, &position),
                 anchored,
                 "another install took this vault's custody over in a disaster recovery".into(),
+                wrapped_before,
             ));
         }
-        let start = target_position(target, lineage)
-            .filter(|published| published.same_lineage(&position) && published.seq <= position.seq)
-            .map_or(0, |published| published.seq);
-        let mut frames = Vec::new();
-        for seq in start.saturating_add(1)..=position.seq {
-            if target.frame(lineage, seq).ok().flatten().is_some() {
-                continue;
-            }
-            // A lineage a disaster recovery took over starts its local log
-            // after the admitted position; the target held what came before.
-            if let Some(frame) = journal.frame(seq)? {
-                frames.push((seq, frame));
+        if let Some(batch) = &batch {
+            for target in &targets {
+                let spec = target.spec();
+                if !due(spec.id(), &position) {
+                    continue;
+                }
+                let outcome =
+                    match target.publish(batch) {
+                        Ok(TargetPublication::Acked(ack)) => journal
+                            .accept_ack(batch, &ack)
+                            .map_err(|error| TargetPending {
+                                code: PendingCode::Failed,
+                                detail: error.to_string(),
+                            }),
+                        Ok(TargetPublication::Pending(pending)) => Err(pending),
+                        Err(error) => Err(TargetPending {
+                            code: PendingCode::Failed,
+                            detail: error.to_string(),
+                        }),
+                    };
+                if let Err(pending) = outcome {
+                    journal.note_pending(spec.id(), &pending)?;
+                }
             }
         }
-        if let Err(error) = target.publish(lineage, &frames, &head) {
-            return Ok(Publication::pending(
+        drop(batch);
+        let set = journal.required_set()?;
+        let acks = journal.acks()?;
+        let published = least_acked(&set, &acks, &position);
+        let wrapped = published.is_some().then(|| {
+            !set.members
+                .iter()
+                .any(|member| journal.root_only(member.spec.id()))
+        });
+        let complete = |at: Option<CustodyPosition>| -> Result<()> {
+            if let Some(at) = at
+                && at.same_lineage(&position)
+                && at.epoch == position.epoch
+                && published.is_some_and(|published| published.seq >= at.seq)
+            {
+                journal.advance_completed(&at)?;
+            }
+            Ok(())
+        };
+        let behind: Vec<&str> = set
+            .members
+            .iter()
+            .map(|member| member.spec.id())
+            .filter(|id| acked_seq(&acks, id, &position) != Some(position.seq))
+            .map(TargetId::as_str)
+            .collect();
+        if !behind.is_empty() {
+            complete(anchored)?;
+            return Ok(pending(
                 PublicationState::TargetPending,
-                position,
-                target_position(target, lineage),
+                published,
                 anchored,
-                error.to_string(),
+                format!(
+                    "custody target(s) {} hold no acknowledged head at log position {}; the next \
+                     pass retries",
+                    behind.join(", "),
+                    position.seq
+                ),
+                wrapped,
             ));
         }
-        drop(head);
         let Some(anchor) = anchor else {
-            return Ok(Publication::pending(
+            return Ok(pending(
                 PublicationState::AnchorPending,
-                position,
-                Some(position),
+                published,
                 None,
                 ANCHOR_UNSET.into(),
+                wrapped,
             ));
         };
         let done = |anchored| Publication {
@@ -420,32 +468,31 @@ impl Store {
             published: Some(position),
             anchored: Some(anchored),
             detail: None,
+            data_key_wrapped: wrapped,
         };
         if anchored == Some(position) {
+            complete(Some(position))?;
             return Ok(done(position));
         }
         let expected = current
             .as_deref()
             .map(|record| *blake3::hash(record).as_bytes());
-        Ok(
-            match anchor.advance(expected, &anchor_record(&position, &control)) {
-                Ok(AnchorAdvance::Advanced) => done(position),
-                Ok(AnchorAdvance::Moved) => Publication::pending(
-                    PublicationState::AnchorPending,
-                    position,
-                    Some(position),
-                    anchored,
-                    "the custody anchor moved during this pass; the next pass retries".into(),
-                ),
-                Err(error) => Publication::pending(
-                    PublicationState::AnchorPending,
-                    position,
-                    Some(position),
-                    anchored,
-                    error.to_string(),
-                ),
+        let advanced = anchor.advance(expected, &anchor_record(&position, &control));
+        if let Ok(AnchorAdvance::Advanced) = advanced {
+            complete(Some(position))?;
+            return Ok(done(position));
+        }
+        complete(anchored)?;
+        Ok(pending(
+            PublicationState::AnchorPending,
+            published,
+            anchored,
+            match advanced {
+                Err(error) => error.to_string(),
+                Ok(_) => "the custody anchor moved during this pass; the next pass retries".into(),
             },
-        )
+            wrapped,
+        ))
     }
 
     /// Where this vault's custody publication stands, read without
@@ -457,29 +504,157 @@ impl Store {
         };
         let journal = custody.journal()?;
         let local = journal.position()?;
-        let recorded =
-            read_whole(&journal.dir().join(STATUS))?.and_then(|bytes| decode_status(&bytes));
-        Ok(match recorded {
+        let pending = |recorded: Option<Publication>, detail: &str| Publication {
+            state: PublicationState::TargetPending,
+            local: Some(local),
+            published: recorded.as_ref().and_then(|recorded| recorded.published),
+            anchored: recorded.as_ref().and_then(|recorded| recorded.anchored),
+            detail: Some(detail.to_owned()),
+            data_key_wrapped: recorded.and_then(|recorded| recorded.data_key_wrapped),
+        };
+        Ok(match recorded(&journal)? {
             None if local.seq == 0 && custody.census()?.is_empty() => Publication::nothing(),
-            None => Publication::pending(
-                PublicationState::TargetPending,
-                local,
-                None,
-                None,
-                "no publication pass has run yet".into(),
-            ),
+            None => pending(None, "no publication pass has run yet"),
             Some(recorded)
                 if recorded.local != Some(local) && recorded.state != PublicationState::Fenced =>
             {
-                Publication::pending(
-                    PublicationState::TargetPending,
-                    local,
-                    recorded.published,
-                    recorded.anchored,
-                    "a custody change waits for the next publication pass".into(),
+                pending(
+                    Some(recorded),
+                    "a custody change waits for the next publication pass",
                 )
             }
             Some(recorded) => recorded,
         })
+    }
+
+    /// Where this vault's retirements stand against every required target
+    /// and the anchor, from the journal; `None` before any was handed off.
+    pub(crate) fn custody_retirement(&self) -> Result<Option<RetirementProgress>> {
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(None);
+        };
+        let journal = custody.journal()?;
+        let progress = journal.progress(&journal.position()?)?;
+        Ok(progress.any.then_some(progress))
+    }
+
+    /// For a member that publishes on its own channel (the residence home,
+    /// a hosted adapter): registers `spec` before its first exposure and,
+    /// when it is behind the local position or holds a head without the
+    /// data-key wrap the key now allows, seals a batch for it. `None` when
+    /// it is current or nothing is in custody.
+    pub(crate) fn custody_batch_for(
+        &self,
+        spec: &TargetSpec,
+        recipients: &CustodyRecipients,
+    ) -> Result<Option<CustodyBatch>> {
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(None);
+        };
+        if self.archived_in_txn(&self.env.read_txn()?)? {
+            return Ok(None);
+        }
+        let journal = custody.journal()?;
+        if custody_empty(self, custody, &journal)? {
+            return Ok(None);
+        }
+        let set = journal.register(std::slice::from_ref(spec))?;
+        journal.reconcile()?;
+        let acks = journal.acks()?;
+        let reseal = recipients.data_key.is_some() && journal.root_only(spec.id());
+        let sealed = self.seal_batch(custody, &journal, recipients, set.revision, |position| {
+            reseal || acked_seq(&acks, spec.id(), position) != Some(position.seq)
+        })?;
+        match sealed {
+            Sealed::Batch(batch) => Ok(Some(batch)),
+            Sealed::Failed(_, detail) => {
+                journal.note_pending(
+                    spec.id(),
+                    &TargetPending {
+                        code: PendingCode::Failed,
+                        detail,
+                    },
+                )?;
+                Ok(None)
+            }
+            Sealed::Nothing | Sealed::Current(_) => Ok(None),
+        }
+    }
+
+    /// Accepts a member's ack of `batch` into the journal, once it names
+    /// exactly that batch.
+    pub(crate) fn accept_custody_ack(&self, batch: &CustodyBatch, ack: &AckRecord) -> Result<()> {
+        let custody =
+            self.core
+                .key_custody
+                .local()
+                .ok_or(crate::error::Error::InvariantViolation(
+                    "custody batch without custody",
+                ))?;
+        custody.journal()?.accept_ack(batch, ack)
+    }
+
+    /// The registered members of the required set of kind `kind`; `None`
+    /// while nothing is in custody here, or the vault is archived.
+    pub(crate) fn custody_members(&self, kind: TargetKind) -> Result<Option<Vec<TargetSpec>>> {
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(None);
+        };
+        if self.archived_in_txn(&self.env.read_txn()?)? {
+            return Ok(None);
+        }
+        let journal = custody.journal()?;
+        if custody_empty(self, custody, &journal)? {
+            return Ok(None);
+        }
+        let members = journal.required_set()?.members.into_iter();
+        Ok(Some(
+            members
+                .map(|member| member.spec)
+                .filter(|spec| spec.kind() == kind)
+                .collect(),
+        ))
+    }
+
+    /// The custody subject of `item` of `kind` in this vault's binding;
+    /// `None` while nothing was ever in custody here.
+    pub(crate) fn custody_subject(
+        &self,
+        kind: super::identity::CustodyKind,
+        item: &[u8],
+    ) -> Result<Option<CustodySubject>> {
+        self.core
+            .key_custody
+            .local()
+            .map(|custody| custody.binding().subject(kind, item))
+            .transpose()
+    }
+
+    /// The handed-off retirements of `subject` in this custody's journal, by
+    /// log position, and whether each is complete; a disaster recovery's
+    /// takeover obligation too, once the subject had a generation retired.
+    pub(crate) fn custody_obligations_of(
+        &self,
+        subject: &CustodySubject,
+    ) -> Result<Vec<(u64, bool)>> {
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(Vec::new());
+        };
+        let retired_here = custody.first_unretired(subject)? > 0;
+        custody
+            .journal()?
+            .subject_obligations(subject, retired_here)
+    }
+
+    /// Records why `target` is still pending.
+    pub(crate) fn note_custody_pending(
+        &self,
+        target: &TargetId,
+        pending: &TargetPending,
+    ) -> Result<()> {
+        match self.core.key_custody.local() {
+            Some(custody) => custody.journal()?.note_pending(target, pending),
+            None => Ok(()),
+        }
     }
 }

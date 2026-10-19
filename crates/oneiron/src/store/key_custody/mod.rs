@@ -13,13 +13,17 @@
 
 mod anchor;
 mod files;
+mod folder;
 mod fork;
 mod head;
+mod home;
 mod identity;
 mod log;
+pub mod protocol;
 mod publish;
 mod recovery;
 mod retirement;
+mod targets;
 
 use std::path::PathBuf;
 use std::sync::{OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -30,22 +34,24 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable, SideTableDbs};
 use crate::store::Store;
 
-pub(crate) use self::anchor::{AnchorAdvance, AnchorStore, FileAnchor};
+pub(crate) use self::anchor::FileAnchor;
 #[cfg(test)]
 pub(in crate::store) use self::files::arm_after_key_marker_check;
 pub(crate) use self::files::{EntryState, LocalCustody, custody_present};
+pub(crate) use self::folder::FolderTarget;
 pub(crate) use self::fork::{CustodyPlan, ForkedCustodyDir, Requirement};
 pub(crate) use self::head::{CUSTODY_HEAD_WRAP_CONTEXT, CustodyRecipients};
 pub(crate) use self::identity::{CustodyBinding, CustodyKind, CustodySubject};
 pub(in crate::store) use self::identity::{decode_native_path, encode_native_path};
-pub(crate) use self::publish::{FolderTarget, Publication, PublicationState};
+pub(crate) use self::publish::{Publication, PublicationState};
 pub(crate) use self::recovery::{CustodyRequirement, CustodyRoute, CustodySourceAt, route_custody};
 #[cfg(test)]
 pub(crate) use self::retirement::arm_before_retire_lock;
 pub(crate) use self::retirement::{
     RetireCause, RetirementIntent, retirement_in_txn, retirement_prefix, retirements_in_rows,
-    retirements_in_txn, stage_retirement_in_txn,
+    retirements_in_txn, stage_retirement_in_txn, standing_retirements_in_txn,
 };
+pub(crate) use self::targets::{MemberProgress, RetirementProgress};
 
 /// The vault's custody binding, pinned by the first publication in the same
 /// transaction as what it protects.

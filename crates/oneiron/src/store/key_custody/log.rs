@@ -56,10 +56,10 @@ pub(super) fn log_corrupt() -> Error {
 /// the next one and advances the anchor to it, which fences every writer
 /// still at an older one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct CustodyEpoch(pub(super) u64);
+pub struct CustodyEpoch(pub(super) u64);
 
 impl CustodyEpoch {
-    pub(crate) fn get(self) -> u64 {
+    pub fn get(self) -> u64 {
         self.0
     }
 }
@@ -68,19 +68,20 @@ impl CustodyEpoch {
 /// epoch, the newest frame's sequence number and that frame's hash. An empty
 /// log is sequence 0 under an all-zero tip.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct CustodyPosition {
-    pub(crate) vault: CustodyVaultId,
-    pub(crate) namespace: CustodyNamespace,
-    pub(crate) epoch: CustodyEpoch,
-    pub(crate) seq: u64,
-    pub(crate) tip: [u8; 32],
+pub struct CustodyPosition {
+    pub vault: CustodyVaultId,
+    pub namespace: CustodyNamespace,
+    pub epoch: CustodyEpoch,
+    pub seq: u64,
+    pub tip: [u8; 32],
 }
 
 /// `vault (32) | namespace (16) | epoch u64be | seq u64be | tip (32)`.
 pub(super) const POSITION_LEN: usize = 32 + 16 + 8 + 8 + 32;
 
 impl CustodyPosition {
-    pub(super) fn to_bytes(self) -> [u8; POSITION_LEN] {
+    /// The 96-byte wire form an anchor record and a manifest carry.
+    pub fn to_bytes(self) -> [u8; POSITION_LEN] {
         let mut out = [0u8; POSITION_LEN];
         out[..32].copy_from_slice(self.vault.as_bytes());
         out[32..48].copy_from_slice(self.namespace.as_bytes());
@@ -90,7 +91,7 @@ impl CustodyPosition {
         out
     }
 
-    pub(super) fn from_bytes(bytes: &[u8]) -> Option<Self> {
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         if bytes.len() != POSITION_LEN {
             return None;
         }
@@ -163,6 +164,12 @@ impl Control {
 
     pub(super) fn secret(&self) -> &[u8; 32] {
         &self.secret
+    }
+
+    /// The position the local log starts after: none (0) for a lineage
+    /// begun here, the admitted head's for one taken over.
+    pub(super) fn base_seq(&self) -> u64 {
+        self.base_seq
     }
 
     fn derive(&self, context: &str) -> Zeroizing<[u8; 32]> {

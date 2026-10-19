@@ -27,8 +27,10 @@ pub(super) fn owner_host(
     rehearsal_config: oneiron::VaultConfig,
 ) -> OwnerHost {
     let rehearsals = rehearsal_dir(&config.vault_path);
-    let host =
-        OwnerHost::from_config(config, rehearsal_config).with_rehearsal_dir(rehearsals.clone());
+    // Its custody anchors where `[backup]` names (FIX 5789).
+    let host = OwnerHost::from_config(config, rehearsal_config)
+        .with_rehearsal_dir(rehearsals.clone())
+        .anchored_at(&config.backup);
     for (storage, dir, private) in [
         ("backups", host.backups.dir.as_path(), false),
         ("rehearsals", rehearsals.as_path(), true),
