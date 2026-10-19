@@ -273,11 +273,17 @@ impl WorldPrivacyView {
     /// Refused under a conflicted vault root: its fold knows no world's
     /// settings, so no door may judge a world portable from it.
     pub fn load_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Self> {
+        Self::load_unless_conflicted_in(vault, txn)?.ok_or_else(invalid_authority)
+    }
+
+    /// [`Self::load_in`], or `None` under a conflicted vault root, for a
+    /// door that names that integrity hold rather than failing on it.
+    pub(crate) fn load_unless_conflicted_in(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<Self>> {
         let view = vault.authority_view_readonly_in_txn(txn)?;
-        if view.vault_root_is_conflicted() {
-            return Err(invalid_authority());
-        }
-        Ok(Self { view })
+        Ok((!view.vault_root_is_conflicted()).then_some(Self { view }))
     }
 
     #[must_use]
@@ -293,15 +299,34 @@ impl WorldPrivacyView {
     /// Revalidate a connection's machine proof in this very snapshot, then
     /// apply the world's read setting. Actor identity is never a machine proof.
     pub fn withheld_for_peer(&self, peer: PeerMachine) -> Result<BTreeSet<EntityId>> {
-        let destination = match peer {
+        self.withheld_for(self.destination_for_peer(peer))
+    }
+
+    /// The destination a connection's machine proof names in this very
+    /// snapshot: its machine while the proof still stands on the key it
+    /// proved, else one nobody proved (mesh PR2b). An unanswered install's
+    /// proof never stands ([`AuthorityFold::machine_proof_key`]).
+    #[must_use]
+    pub fn destination_for_peer(&self, peer: PeerMachine) -> Destination {
+        match peer {
             PeerMachine::Proven { machine, key }
                 if self.view.machine_proof_key(machine) == Some(key) =>
             {
                 Destination::Machine(machine)
             }
             _ => Destination::Unknown,
-        };
-        self.withheld_for(destination)
+        }
+    }
+
+    /// Where `world` may be read, as the owner's recipient choice sets it.
+    pub(crate) fn world_read(&self, world: EntityId) -> EffectiveRead {
+        self.view.world_privacy(world).read
+    }
+
+    /// Whether `machine` is one the owner marked his: the recipient test the
+    /// judge reads, never the carrier rule.
+    pub(crate) fn marked_mine(&self, machine: EntityId) -> bool {
+        self.view.trusted_machine(machine).is_some()
     }
 }
 

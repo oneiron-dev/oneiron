@@ -1,9 +1,13 @@
 //! What a gateway result may carry off this device once its call has
 //! nothing left to wait on (DEC-0005): a retained page, a fresh result and a
-//! queued carrier frame, each judged by the rows it was derived from.
+//! queued carrier frame, each judged by the rows it was derived from, for
+//! the machine the call's connection proved (mesh PR2b). A refusal names
+//! its content-free reason: the owner's recipient choice, or an integrity
+//! hold, never a hidden world.
 
 use super::{McpCallContext, McpGatewayError, mcp_engine_error, mcp_page_cursor_error};
 use crate::server::SyncServer;
+use oneiron::settings::ReleaseHold;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -19,7 +23,7 @@ pub(super) fn mcp_snapshot_releases(
         .map_err(|_| mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch))?;
     crate::device_local::withholds_retained(
         &server.vault,
-        actor.locality(),
+        actor.destination(),
         &snapshot.rows,
         &retained,
     )
@@ -45,11 +49,11 @@ pub(super) fn mcp_carrier_releases(
                 .filter_map(|task| oneiron::EntityId::from_hex(task).ok()),
         );
     }
+    let destination = actor.destination();
     serde_json::to_vec(frame).is_ok_and(|bytes| {
-        matches!(
-            crate::device_local::withholds_retained(&server.vault, actor.locality(), &rows, &bytes),
-            Ok(false)
-        )
+        let withheld =
+            crate::device_local::withholds_retained(&server.vault, destination, &rows, &bytes);
+        matches!(withheld, Ok(false))
     })
 }
 
@@ -68,25 +72,27 @@ pub(super) fn mcp_release_result(
     continued: bool,
     result: Value,
 ) -> Result<Value, McpGatewayError> {
-    let refused = || {
+    let refused = |hold: ReleaseHold| {
         if continued {
             mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch)
         } else {
-            mcp_result_changed()
+            mcp_result_withheld(hold)
         }
     };
-    if actor.locality() == oneiron::claim::CallerLocality::OnDevice {
+    let destination = actor.destination();
+    if !destination.is_off_device() {
         return Ok(result);
     }
     let Some(mut named) = crate::device_local::short_refs_named(&server.vault, &result) else {
-        return Err(refused());
+        return Err(refused(ReleaseHold::Placement));
     };
     named.extend_from_slice(rows);
-    let bytes = serde_json::to_vec(&result).map_err(|_| refused())?;
-    if crate::device_local::withholds_retained(&server.vault, actor.locality(), &named, &bytes)
-        .map_err(|error| mcp_engine_error("mcp page release check failed", error))?
+    let bytes = serde_json::to_vec(&result).map_err(|_| refused(ReleaseHold::Placement))?;
+    if let Some(hold) =
+        crate::device_local::retained_hold(&server.vault, &destination, &named, &bytes)
+            .map_err(|error| mcp_engine_error("mcp page release check failed", error))?
     {
-        return Err(refused());
+        return Err(refused(hold));
     }
     Ok(result)
 }
@@ -103,7 +109,8 @@ pub(super) fn mcp_release_error(
     rows: Option<&[oneiron::EntityId]>,
     error: McpGatewayError,
 ) -> McpGatewayError {
-    if actor.locality() == oneiron::claim::CallerLocality::OnDevice {
+    let destination = actor.destination();
+    if !destination.is_off_device() {
         return error;
     }
     let words = serde_json::to_string(&(
@@ -114,25 +121,31 @@ pub(super) fn mcp_release_error(
         &error.effective_scope,
     ))
     .ok();
-    let released = rows.zip(words).is_some_and(|(rows, words)| {
-        crate::device_local::short_refs_in_text(&server.vault, &words).is_some_and(|mut named| {
-            named.extend_from_slice(rows);
-            let withheld = crate::device_local::withholds_retained(
-                &server.vault,
-                actor.locality(),
-                &named,
-                words.as_bytes(),
-            );
-            matches!(withheld, Ok(false))
-        })
-    });
-    if released {
+    let hold = match (rows, words) {
+        (None, _) => Some(ReleaseHold::ProducersUnknown),
+        (Some(_), None) => Some(ReleaseHold::Placement),
+        (Some(rows), Some(words)) => {
+            match crate::device_local::short_refs_in_text(&server.vault, &words) {
+                None => Some(ReleaseHold::Placement),
+                Some(mut named) => {
+                    named.extend_from_slice(rows);
+                    let bytes = words.as_bytes();
+                    crate::device_local::retained_hold(&server.vault, &destination, &named, bytes)
+                        .unwrap_or(Some(ReleaseHold::Placement))
+                }
+            }
+        }
+    };
+    let Some(hold) = hold else {
         return error;
-    }
+    };
     McpGatewayError::new(
         error.code,
         error.kind,
-        "the call failed; its detail stays on this device",
+        format!(
+            "the call failed; its detail stays on this device: {}",
+            hold.reason()
+        ),
     )
 }
 
@@ -169,18 +182,29 @@ pub(super) fn mcp_release_run_result(
 ) -> Result<Value, McpGatewayError> {
     match rows {
         Some(rows) => mcp_release_result(server, actor, rows, false, result),
-        None if actor.locality() == oneiron::claim::CallerLocality::OnDevice => Ok(result),
-        None => Err(mcp_result_changed()),
+        None if !actor.destination().is_off_device() => Ok(result),
+        None => Err(mcp_result_withheld(ReleaseHold::ProducersUnknown)),
     }
 }
 
-/// A fresh result refused at release: the caller calls again.
-fn mcp_result_changed() -> McpGatewayError {
-    McpGatewayError::new(
-        -32603,
-        "mcp_result_changed",
-        "the result changed before it was released; call again",
-    )
+/// A fresh result refused at release: the caller calls again. The message
+/// names the hold, content-free: the owner's world recipient limit for this
+/// destination, or the integrity hold, never the owner's choice for one
+/// (mesh PR2-reasons).
+fn mcp_result_withheld(hold: ReleaseHold) -> McpGatewayError {
+    let message = if hold.is_owner_choice() {
+        format!(
+            "the owner's world recipient limit withholds this result from this destination \
+             ({}); call again after the destination or the policy is verified",
+            hold.reason()
+        )
+    } else {
+        format!(
+            "the result changed before it was released ({}); call again",
+            hold.reason()
+        )
+    };
+    McpGatewayError::new(-32603, "mcp_result_changed", message)
 }
 
 /// A device-only flag committed while a call waits, after its checks ran

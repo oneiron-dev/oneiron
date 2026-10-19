@@ -1,7 +1,9 @@
 //! The scoped export door.
 use super::{Scope, ScopedRecord, admits, disclosure_scope_for_stored_row};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::CallerLocality;
 use crate::provenance::birth::{WithheldKey, row_birth_in_txn};
+use crate::settings::ReadDestination;
 use crate::{
     Vault,
     error::{Error, Result},
@@ -12,18 +14,37 @@ impl Vault {
     /// never carries a SECRET_CUSTODY row or an unpublished LFS chunk.
     /// A row a device-only world keeps on this device is never exported, nor
     /// a text written from one, nor a row whose own words are withdrawn.
+    /// The export goes to a recipient nobody proved; see
+    /// [`Self::export_records_in_scope_for`].
     pub fn export_records_in_scope(
         &self,
         selector: &Scope,
         slip: &Scope,
         channel: &Scope,
     ) -> Result<Vec<ScopedRecord>> {
+        self.export_records_in_scope_for(selector, slip, channel, &CallerLocality::OffDevice.into())
+    }
+
+    /// [`Self::export_records_in_scope`] to the recipient `destination`
+    /// names: a row, and a text written from one, is judged by the world
+    /// settings for each machine it goes to, its proof revalidated in this
+    /// snapshot (mesh PR2b). An export always leaves this device, so an
+    /// on-device destination is read as one nobody proved. Selector, slip,
+    /// channel, epoch and text fences stay conjuncts.
+    pub fn export_records_in_scope_for(
+        &self,
+        selector: &Scope,
+        slip: &Scope,
+        channel: &Scope,
+        destination: &ReadDestination,
+    ) -> Result<Vec<ScopedRecord>> {
+        let recipient = if destination.is_off_device() {
+            destination.clone()
+        } else {
+            ReadDestination::from(CallerLocality::OffDevice)
+        };
         let txn = self.store.env.read_txn()?;
-        let device_only = crate::settings::device_local_worlds_at(
-            self,
-            &txn,
-            crate::claim::CallerLocality::OffDevice,
-        )?;
+        let device_only = crate::settings::device_local_worlds_for(self, &txn, &recipient)?;
         let withheld = |source: &crate::EntityId| {
             crate::settings::device_only_withholds(&self.store, &txn, &device_only, source)
         };

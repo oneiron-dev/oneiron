@@ -63,9 +63,9 @@ impl Memory<'_> {
     }
 
     /// The bound actor's read key, verified in one snapshot, for the caller
-    /// where it sits.
+    /// where it sits and the machine its rows go to (mesh PR2b).
     fn actor_read_key(&self) -> MemoryResult<ScopedReadActorKey> {
-        Ok(self.identity_read_key()?.at(self.locality))
+        Ok(self.identity_read_key()?.for_destination(&self.destination))
     }
 
     /// Binds the host action a host resolved for this handle's caller (FIX

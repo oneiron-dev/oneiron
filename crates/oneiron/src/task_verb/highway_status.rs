@@ -132,11 +132,13 @@ impl Memory<'_> {
         if rejected {
             return Ok(StatusRead::Rejected);
         }
-        // An off-device caller sees no device-local pending row, the filter
-        // `pending_writes` applies.
+        // An off-device caller sees no pending row a world withheld from its
+        // machine keeps, the filter `pending_writes` applies (mesh PR2b).
         let pending = pending
             && !(self.locality() == CallerLocality::OffDevice
-                && self.vault().device_local_keeps(&proposal_ref)?);
+                && self
+                    .vault()
+                    .device_local_keeps_for(&proposal_ref, self.destination())?);
         Ok(StatusRead::View(
             TaskStatusView {
                 handle,

@@ -79,6 +79,10 @@ pub enum ErrorKind {
     CheckpointPolicyRefused,
     /// The owner's checkpoint policy choice named a stale revision.
     CheckpointPolicyRevisionStale,
+    /// The owner's world recipient choice keeps rows from this destination.
+    WorldRecipientLimit,
+    /// A world's placement or a result's producing rows cannot be verified.
+    WorldPlacementUnverifiable,
     InvalidAccessGrantBody,
     InvalidOutboundGrantBody,
     InvalidConnectorKeyBody,

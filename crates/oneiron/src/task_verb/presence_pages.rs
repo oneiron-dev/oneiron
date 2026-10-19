@@ -1,10 +1,13 @@
 //! The TASK type index in bounded pages, as the board's presence scan reads
 //! it.
 
+use std::collections::{BTreeMap, HashSet};
+
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TASK;
+use crate::settings::ReadDestination;
 
 #[derive(Debug)]
 pub(super) struct TaskEntityPageScan {
@@ -114,12 +117,13 @@ where
     })
 }
 
-/// One page of up to `limit` TASKs a reader off this device may read
-/// (DEC-0005). The index is walked past the others on its own cursor,
-/// `index_after`, and a page is short only where the index ends. `read`
-/// counts every index row read.
+/// One page of up to `limit` TASKs a reader off this device toward
+/// `destination` may read (DEC-0005, mesh PR2b). The index is walked past the
+/// others on its own cursor, `index_after`, and a page is short only where
+/// the index ends. `read` counts every index row read.
 pub(super) fn device_admitted_task_page(
     vault: &Vault,
+    destination: &ReadDestination,
     index_after: &mut Option<EntityId>,
     limit: usize,
     read: &mut usize,
@@ -132,7 +136,7 @@ pub(super) fn device_admitted_task_page(
         let Some(&last) = rows.last() else {
             return Ok(page);
         };
-        for id in vault.off_device_readable(rows)? {
+        for id in vault.off_device_readable_for(rows, destination)? {
             if page.len() == limit {
                 // The rest of these rows are read again from here.
                 return Ok(page);
@@ -145,6 +149,32 @@ pub(super) fn device_admitted_task_page(
             return Ok(page);
         }
     }
+}
+
+/// Off this device, a job whose TASK a world withheld from `destination`
+/// keeps stays withheld with that TASK (DEC-0005, mesh PR2b). Owners the rule
+/// lets through, missing ones included, still render as dangling bare jobs.
+pub(super) fn retain_readable_owners<J>(
+    vault: &Vault,
+    destination: &ReadDestination,
+    realizing: &mut BTreeMap<String, J>,
+) -> Result<()> {
+    if !destination.is_off_device() {
+        return Ok(());
+    }
+    let owners = realizing
+        .keys()
+        .filter_map(|task_hex| EntityId::from_hex(task_hex).ok())
+        .collect();
+    let readable: HashSet<EntityId> = vault
+        .off_device_readable_for(owners, destination)?
+        .into_iter()
+        .collect();
+    realizing.retain(|task_hex, _| match EntityId::from_hex(task_hex) {
+        Err(_) => true,
+        Ok(owner) => readable.contains(&owner),
+    });
+    Ok(())
 }
 
 /// Every TASK admitted at `locality`, for a census that must see them all

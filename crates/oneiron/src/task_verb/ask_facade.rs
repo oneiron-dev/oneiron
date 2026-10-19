@@ -1083,7 +1083,7 @@ impl Memory<'_> {
             self.vault(),
             self.actor(),
             handle.group_ref,
-            self.locality(),
+            self.destination(),
         )?)
     }
 }

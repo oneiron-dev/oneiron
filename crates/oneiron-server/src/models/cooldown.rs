@@ -847,10 +847,22 @@ impl OfferCooldowns {
     pub(super) fn world_may_leave(&self, request: &LlmRequest) -> bool {
         let world = request.envelope.scope.world;
         match &self.vault {
-            Some(vault) => matches!(vault.model_call_may_leave_device(world), Ok(true)),
+            Some(vault) => {
+                let endpoint = fallback_endpoint();
+                matches!(vault.model_call_may_leave_for(world, &endpoint), Ok(true))
+            }
             None => world.is_none(),
         }
     }
+}
+
+/// Where a fallback's call goes (mesh PR2b): a provider's own cloud
+/// ([`leaves_device`]), which no linked machine's proof names, so a
+/// destination nobody proved. Never the requester's proof: the model is a
+/// recipient of its own. An offer names no linked machine's endpoint yet;
+/// one that did would be judged as that machine.
+fn fallback_endpoint() -> oneiron::settings::ReadDestination {
+    oneiron::settings::ReadDestination::toward(oneiron::authority::PeerMachine::Unknown)
 }
 
 /// Whether an offer takes the work off the device: a provider's own cloud.

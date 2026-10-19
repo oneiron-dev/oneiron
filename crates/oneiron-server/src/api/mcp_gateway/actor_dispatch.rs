@@ -62,6 +62,16 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     .await
 }
 
+impl McpCallContext {
+    /// This call, on a connection that proved `peer` (mesh PR2b): its reads
+    /// and every release, final, after an await, replayed or an error, judge
+    /// that machine. An unproved peer leaves an unknown destination.
+    pub(crate) fn toward(mut self, peer: oneiron::authority::PeerMachine) -> Self {
+        self.actor.auth = self.actor.auth.take().map(|auth| auth.toward(peer));
+        self
+    }
+}
+
 /// The same connector resolution after the facade or MCP door verified the
 /// caller's holder proof. The token is the bound request's, never an input.
 pub(crate) async fn resolve_mcp_actor_for_auth(

@@ -277,6 +277,16 @@ impl McpResolvedActor {
         )
     }
 
+    /// Where the caller's rows go: its locality, with the machine its
+    /// connection proved (mesh PR2b); a destination nobody proved off this
+    /// device unless its verified auth was found on it.
+    pub(crate) fn destination(&self) -> oneiron::settings::ReadDestination {
+        self.auth.as_ref().map_or_else(
+            || oneiron::claim::CallerLocality::OffDevice.into(),
+            crate::auth::CoreAuth::destination,
+        )
+    }
+
     pub(crate) fn has_unrestricted_record_scope(&self) -> bool {
         self.auth
             .as_ref()

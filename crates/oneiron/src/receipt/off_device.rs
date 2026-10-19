@@ -9,9 +9,9 @@ use super::kernel::{
 };
 use super::projection::finalize_receipt_query_records;
 use crate::Vault;
-use crate::claim::CallerLocality;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::settings::ReadDestination;
 
 /// The `fields` a receipt of each family names rows in, beside its
 /// `trigger_ref`: each value a row id (32 hex, after any `<kind>:`
@@ -99,8 +99,13 @@ fn row_of(value: &str) -> Option<EntityId> {
 }
 
 /// Whether a caller off this device reads `receipt`: its rows are known and
-/// no device-local world keeps any of them ([`Vault::off_device_readable`]).
-fn off_device_admits(vault: &Vault, receipt: &ReceiptRecord) -> Result<bool> {
+/// no world withheld from `destination` keeps any of them
+/// ([`Vault::off_device_readable_for`], mesh PR2b).
+fn off_device_admits(
+    vault: &Vault,
+    receipt: &ReceiptRecord,
+    destination: &ReadDestination,
+) -> Result<bool> {
     let Some(rows) = referenced_rows(vault, receipt)? else {
         return Ok(false);
     };
@@ -108,11 +113,11 @@ fn off_device_admits(vault: &Vault, receipt: &ReceiptRecord) -> Result<bool> {
         return Ok(true);
     }
     let named = rows.len();
-    Ok(vault.off_device_readable(rows)?.len() == named)
+    Ok(vault.off_device_readable_for(rows, destination)?.len() == named)
 }
 
 impl Vault {
-    /// The family receipts of `query` a caller at `locality` reads, newest
+    /// The family receipts of `query` a caller toward `destination` reads, newest
     /// first, at most `query.limit` of them: on this device, those
     /// [`Vault::receipts`] answers. Off it, each receipt is screened whole on
     /// the rows it names ([`referenced_rows`]) before it takes a place, and
@@ -125,9 +130,9 @@ impl Vault {
     pub(crate) fn receipts_for_caller(
         &self,
         query: ReceiptQuery,
-        locality: CallerLocality,
+        destination: &ReadDestination,
     ) -> Result<Vec<ReceiptRecord>> {
-        if locality == CallerLocality::OnDevice || query.limit == 0 {
+        if !destination.is_off_device() || query.limit == 0 {
             return self.receipts(query);
         }
         let limit = query.limit;
@@ -159,7 +164,7 @@ impl Vault {
                     break;
                 }
                 walked += 1;
-                if off_device_admits(self, &receipt)? {
+                if off_device_admits(self, &receipt, destination)? {
                     page.push(receipt);
                 }
             }

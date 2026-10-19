@@ -420,6 +420,9 @@ pub struct Memory<'v> {
     pub(super) host_origin: Option<HostWriteOrigin>,
     /// Where the caller sits; see [`Memory::at`].
     pub(super) locality: crate::claim::CallerLocality,
+    /// Where the caller's rows go, each machine its connection proved beside
+    /// the locality (mesh PR2b); see [`Memory::for_destination`].
+    pub(super) destination: crate::settings::ReadDestination,
     /// Where a host collects the rows its reads pick (`listing_producers`).
     pub(super) producers: Option<&'v super::ProducerRows>,
     /// Where a host bound its writer's TASKs to be born (`with_birth_position`).
@@ -574,6 +577,7 @@ impl Vault {
             room_turn: None,
             host_origin: None,
             locality: crate::claim::CallerLocality::OnDevice,
+            destination: crate::settings::ReadDestination::on_device(),
             producers: None,
             birth_position: Default::default(),
             owner_authorship: None,
@@ -620,6 +624,7 @@ impl Vault {
             room_turn: None,
             host_origin: None,
             locality: crate::claim::CallerLocality::OnDevice,
+            destination: crate::settings::ReadDestination::on_device(),
             producers: None,
             birth_position: Default::default(),
             owner_authorship: None,
@@ -672,6 +677,7 @@ impl<'v> Memory<'v> {
                 room_turn: Some(ceiling),
                 host_origin: self.host_origin.clone(),
                 locality: self.locality,
+                destination: self.destination.clone(),
                 producers: self.producers,
                 birth_position: self.birth_position,
                 // A room turn writes into the room's talk, not as the owner

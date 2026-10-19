@@ -58,9 +58,10 @@ pub struct PipelineBuilder<'a> {
     pub(super) authority_filter: Option<crate::gate::ResolvedRetrievalFilter>,
     /// Only actor-scoped callers may nominate private diary NOTEs in a text channel.
     pub(super) scoped_note_reader: Option<crate::claim::ScopedReadActorKey>,
-    /// Whether the run reads for a caller off this device; see
+    /// Where the run's rows go: off this device or not, and each machine a
+    /// scoped reader's connection proved (mesh PR2b); see
     /// [`Self::caller_off_device`].
-    pub(super) off_device: bool,
+    pub(super) destination: crate::settings::ReadDestination,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
     pub(super) learned_range: Option<(u64, u64)>,
@@ -157,7 +158,7 @@ impl<'a> PipelineBuilder<'a> {
             criticality: None,
             authority_filter: None,
             scoped_note_reader: None,
-            off_device: false,
+            destination: crate::settings::ReadDestination::on_device(),
             since_filter: None,
             occurred_range: None,
             learned_range: None,
@@ -287,7 +288,7 @@ impl<'a> PipelineBuilder<'a> {
 
     /// A scoped read provides the authenticated actor, not a candidate list.
     pub(crate) fn scoped_note_reader(mut self, key: crate::claim::ScopedReadActorKey) -> Self {
-        self.off_device |= key.off_device();
+        self.destination.meet(key.destination());
         self.scoped_note_reader = Some(key);
         self
     }
@@ -295,24 +296,23 @@ impl<'a> PipelineBuilder<'a> {
     /// Reads for a caller off this device: no candidate a device-local world
     /// keeps enters the run (DEC-0005). It only narrows.
     pub(crate) fn caller_off_device(mut self, off_device: bool) -> Self {
-        self.off_device |= off_device;
+        if off_device {
+            self.destination
+                .meet(&crate::claim::CallerLocality::OffDevice.into());
+        }
         self
     }
 
     /// The device-local worlds this run reads nothing of, read in `txn`:
-    /// every flagged one for a caller off this device, none for one on it.
+    /// every one withheld from a machine the run's rows go to, off this
+    /// device (only an unproved one is unknown); none for a caller on it.
     pub(super) fn device_local_worlds(
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<Option<std::collections::BTreeSet<EntityId>>> {
-        self.off_device
-            .then(|| {
-                crate::settings::device_local_worlds_at(
-                    self.vault,
-                    txn,
-                    crate::claim::CallerLocality::OffDevice,
-                )
-            })
+        self.destination
+            .is_off_device()
+            .then(|| crate::settings::device_local_worlds_for(self.vault, txn, &self.destination))
             .transpose()
     }
 

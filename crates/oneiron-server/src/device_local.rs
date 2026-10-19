@@ -5,31 +5,43 @@
 
 use oneiron::EntityId;
 use oneiron::claim::CallerLocality;
+use oneiron::settings::{ReadDestination, ReleaseHold};
 
-/// Whether a retained payload stays on this device for a caller at
-/// `locality`: one of the `rows` its producer derived it from, listed when it
-/// was produced, is a row a device-local world keeps now. A retained payload
+/// Whether a retained payload stays on this device for a caller toward
+/// `destination` (a locality alone is a destination nobody proved): one of
+/// the `rows` its producer derived it from, listed when it was produced, is
+/// a row a world withheld from that destination keeps now. A retained payload
 /// leaves again only while every row it was derived from may leave. The scan
 /// of `payload` for whole entity ids is a backstop for a row its producer did
 /// not list.
 pub(crate) fn withholds_retained(
     vault: &oneiron::Vault,
-    locality: CallerLocality,
+    destination: impl Into<ReadDestination>,
     rows: &[EntityId],
     payload: &[u8],
 ) -> oneiron::Result<bool> {
-    if locality == CallerLocality::OnDevice {
-        return Ok(false);
+    Ok(retained_hold(vault, &destination.into(), rows, payload)?.is_some())
+}
+
+/// Why [`withholds_retained`] keeps a payload on this device, or `None` when
+/// it may leave: the owner's recipient choice for a world a row lies in, or
+/// an integrity hold, each content-free (mesh PR2-reasons). A proved
+/// machine's rows are judged by its own world read settings, revalidated in
+/// one snapshot (mesh PR2b); only an unproved destination is unknown.
+pub(crate) fn retained_hold(
+    vault: &oneiron::Vault,
+    destination: &ReadDestination,
+    rows: &[EntityId],
+    payload: &[u8],
+) -> oneiron::Result<Option<ReleaseHold>> {
+    if !destination.is_off_device() {
+        return Ok(None);
     }
     let mut named = entity_ids_in(payload);
     named.extend_from_slice(rows);
     named.sort_unstable_by_key(|id| *id.as_bytes());
     named.dedup();
-    if named.is_empty() {
-        return Ok(false);
-    }
-    let count = named.len();
-    Ok(vault.off_device_readable(named)?.len() != count)
+    vault.release_hold_for(&named, destination)
 }
 
 /// [`withholds_retained`] for the machine `peer` proved on the socket
@@ -43,39 +55,28 @@ pub(crate) fn withholds_retained_for(
     rows: &[EntityId],
     payload: &[u8],
 ) -> oneiron::Result<bool> {
-    if locality == CallerLocality::OnDevice {
-        return Ok(false);
-    }
-    if oneiron::sync::residence::withheld_from_peer(vault, peer)?.is_none() {
-        return withholds_retained(vault, locality, rows, payload);
-    }
-    let mut named = entity_ids_in(payload);
-    named.extend_from_slice(rows);
-    named.sort_unstable_by_key(|id| *id.as_bytes());
-    named.dedup();
-    Ok(!oneiron::sync::residence::rows_may_reach(
-        vault, peer, &named,
-    )?)
+    withholds_retained(vault, ReadDestination::at(locality, peer), rows, payload)
 }
 
-/// Whether a cached response replayed to a caller at `locality` stays on
-/// this device: one of the `rows` its handler listed, or a row its body
-/// names, is one a device-local world keeps now. A short ref in the body
-/// that names no row keeps it too.
+/// Whether a cached response replayed to a caller toward `destination`
+/// stays on this device: one of the `rows` its handler listed, or a row its
+/// body names, is one a world withheld from that destination keeps now. A
+/// short ref in the body that names no row keeps it too.
 pub(crate) fn replay_withheld(
     vault: &oneiron::Vault,
-    locality: CallerLocality,
+    destination: impl Into<ReadDestination>,
     body: &[u8],
     rows: &[EntityId],
 ) -> bool {
-    if locality == CallerLocality::OnDevice {
+    let destination: ReadDestination = destination.into();
+    if !destination.is_off_device() {
         return false;
     }
     let Some(mut named) = short_refs_in(vault, body) else {
         return true;
     };
     named.extend_from_slice(rows);
-    withholds_retained(vault, locality, &named, body).unwrap_or(true)
+    withholds_retained(vault, destination, &named, body).unwrap_or(true)
 }
 
 /// The rows a JSON body names by short ref, keys included; `None` when one

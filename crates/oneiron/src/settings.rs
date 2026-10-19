@@ -9,13 +9,19 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, Raw, RawValue, SideTable};
 use crate::store::Store;
 
+mod destination;
 mod device_local;
 mod device_only;
 pub mod model_versioning;
 mod models;
 
+pub(crate) use destination::withheld_worlds_in;
+pub use destination::{
+    ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold,
+};
 pub(crate) use device_local::{
     device_local_keeps_among, device_local_keeps_in, device_local_worlds_at,
+    device_local_worlds_for,
 };
 pub(crate) use device_only::{
     CarriedWorlds, carried_worlds_in, device_only_withholds, device_only_withholds_raw,
@@ -593,15 +599,16 @@ fn validate_label(field: &'static str, value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests;
 
-/// Every world whose settings keep it off any other machine: the world
-/// settings' one judge, asked for an unknown destination. Until a door can
-/// name the machine at the other end, every other machine is one. Only
-/// [`device_local_worlds_at`] reads it: every door asks that one function
-/// which worlds a caller's rows are withheld from.
+/// Every world whose settings keep it off the machines `destination` names:
+/// the world settings' one judge, asked for each machine a read's rows go to,
+/// its proof revalidated in `txn` (mesh PR2b). Only a destination no live
+/// machine proof names is unknown. Only [`device_local_worlds_for`] reads
+/// it: every door asks that one function which worlds a caller's rows are
+/// withheld from.
 fn device_only_worlds_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
+    destination: &ReadDestination,
 ) -> Result<std::collections::BTreeSet<EntityId>> {
-    crate::authority::WorldPrivacyView::load_in(vault, txn)?
-        .withheld_for(crate::authority::Destination::Unknown)
+    withheld_worlds_in(vault, txn, destination)
 }

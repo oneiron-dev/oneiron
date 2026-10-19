@@ -400,9 +400,10 @@ impl Memory<'_> {
                 if admitted.len() == limit {
                     break;
                 }
+                let claim = EntityId::from_bytes(record.claim_id)?;
                 if !self
                     .vault
-                    .device_local_keeps(&EntityId::from_bytes(record.claim_id)?)?
+                    .device_local_keeps_for(&claim, &self.destination)?
                 {
                     admitted.push(record);
                 }
@@ -434,9 +435,12 @@ impl Memory<'_> {
                 if records.len() == limit {
                     break;
                 }
-                let kept = self.locality == crate::claim::CallerLocality::OffDevice
+                let kept = self.destination.is_off_device()
                     && match record.claim_id {
-                        Some(id) => self.vault.device_local_keeps(&EntityId::from_bytes(id)?)?,
+                        Some(id) => self.vault.device_local_keeps_for(
+                            &EntityId::from_bytes(id)?,
+                            &self.destination,
+                        )?,
                         None => false,
                     };
                 if !kept {
@@ -498,7 +502,7 @@ impl Memory<'_> {
         }
         Ok(self
             .vault
-            .receipts_for_caller(query, self.locality)?
+            .receipts_for_caller(query, &self.destination)?
             .into_iter()
             .map(family_receipt)
             .collect())

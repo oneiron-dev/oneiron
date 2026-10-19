@@ -434,6 +434,8 @@ async fn idempotent(
     let has_idempotency_header = request.headers().contains_key(IDEMPOTENCY_KEY_HEADER);
     let is_core_auth_route = is_core_auth_route(request_path(&request));
     let locality = crate::auth::caller_locality(request.headers(), request.extensions());
+    // A replay goes to the machine the request's connection proved (mesh PR2b).
+    let peer = crate::auth::proved_peer(request.headers(), request.extensions());
     let revoked = state.server.vault().as_ref();
     let core_auth = if is_core_auth_route {
         Some(
@@ -502,7 +504,7 @@ async fn idempotent(
             // repeated.
             if crate::device_local::replay_withheld(
                 state.server.vault(),
-                locality,
+                oneiron::settings::ReadDestination::at(locality, peer),
                 &response.body,
                 &response.rows,
             ) {

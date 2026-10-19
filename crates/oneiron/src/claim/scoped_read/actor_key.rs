@@ -48,8 +48,10 @@ pub struct ScopedReadActorKey {
     /// The worlds this read asked for (ARCH-0022). Every row it serves,
     /// ranked or reached through the graph, lies in one of them.
     pub(super) worlds: Option<crate::pipeline::WorldAuthoritySet>,
-    /// Whether the caller sits off this device; see [`Self::at`].
-    off_device: bool,
+    /// Where the read's rows go: off this device or not, and each machine a
+    /// connection proved beside that (mesh PR2b); see [`Self::at`] and
+    /// [`Self::for_destination`].
+    destination: crate::settings::ReadDestination,
     /// Set only on a host action's key (FIX 2222); see
     /// [`Self::guarded_by_host_action`].
     host_action: Option<crate::authority::HostActionGuard>,
@@ -359,7 +361,7 @@ impl ScopedReadActorKey {
             owner_exemption: None,
             room_turn: None,
             worlds: None,
-            off_device: false,
+            destination: crate::settings::ReadDestination::on_device(),
             host_action: None,
             owner_proof: None,
         })
@@ -396,7 +398,7 @@ impl ScopedReadActorKey {
             owner_exemption: None,
             room_turn: None,
             worlds: None,
-            off_device: false,
+            destination: crate::settings::ReadDestination::on_device(),
             host_action: None,
             owner_proof: None,
         }
@@ -518,13 +520,29 @@ impl ScopedReadActorKey {
     /// never reads on it again.
     #[must_use]
     pub fn at(mut self, locality: CallerLocality) -> Self {
-        self.off_device |= locality == CallerLocality::OffDevice;
+        self.destination.meet(&locality.into());
+        self
+    }
+
+    /// Read for a caller whose rows go to `destination`: the machine its
+    /// connection proved rides beside the locality, and every read judges
+    /// the world settings for it in its own snapshot (mesh PR2b). It only
+    /// narrows, as [`Self::at`] does: each machine is a conjunct, and a later
+    /// on-device locality never erases one.
+    #[must_use]
+    pub fn for_destination(mut self, destination: &crate::settings::ReadDestination) -> Self {
+        self.destination.meet(destination);
         self
     }
 
     /// Whether this key reads for a caller off this device.
     pub(crate) fn off_device(&self) -> bool {
-        self.off_device
+        self.destination.is_off_device()
+    }
+
+    /// Where this key's rows go.
+    pub(crate) fn destination(&self) -> &crate::settings::ReadDestination {
+        &self.destination
     }
 
     /// Attach the authenticated principal. An unbound delegated caller has no grants.
