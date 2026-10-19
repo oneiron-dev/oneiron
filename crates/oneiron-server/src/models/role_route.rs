@@ -194,10 +194,13 @@ impl ModelRuntime {
             )
             .map_err(RoleRefusal::refused)?;
         let catalog_revision = request.binding().catalog_revision().map(str::to_owned);
-        Ok((RoleCall {
-            request: request.into_request(),
-            ladder: route.ladder,
-        }, catalog_revision))
+        Ok((
+            RoleCall {
+                request: request.into_request(),
+                ladder: route.ladder,
+            },
+            catalog_revision,
+        ))
     }
 
     /// Admits `request`, whose model a durable seat bound (its envelope's

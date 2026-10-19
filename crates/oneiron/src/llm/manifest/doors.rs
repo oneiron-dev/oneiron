@@ -146,7 +146,11 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let manifest = read_manifest(&self.store, &txn)?;
-        route_view(manifest.as_ref(), &read_routes(&self.store, &txn)?, input.slot)
+        route_view(
+            manifest.as_ref(),
+            &read_routes(&self.store, &txn)?,
+            input.slot,
+        )
     }
 
     pub fn replace_model_route_as_owner(
@@ -158,7 +162,11 @@ impl Vault {
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         self.set_model_route_in_txn(&mut txn, input.slot, input.route)?;
         let manifest = read_manifest(&self.store, &txn)?;
-        let view = route_view(manifest.as_ref(), &read_routes(&self.store, &txn)?, input.slot)?;
+        let view = route_view(
+            manifest.as_ref(),
+            &read_routes(&self.store, &txn)?,
+            input.slot,
+        )?;
         txn.commit()?;
         Ok(view)
     }
@@ -170,20 +178,13 @@ impl Vault {
     ) -> Result<ModelRoleReceipt> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let manifest = read_manifest(&self.store, &txn)?
-            .ok_or_else(|| invalid("manifest not configured"))?;
+        let manifest =
+            read_manifest(&self.store, &txn)?.ok_or_else(|| invalid("manifest not configured"))?;
         let binding = manifest.binding(input.role)?;
-        let route = super::effective_route(
-            &manifest,
-            &read_routes(&self.store, &txn)?,
-            binding.slot,
-        )?;
+        let route =
+            super::effective_route(&manifest, &read_routes(&self.store, &txn)?, binding.slot)?;
         let model = model_for_route(binding, route, manifest.routes[&binding.slot])?;
-        let registered = super::super::registry::read_model_registry_row(
-            &self.store,
-            &txn,
-            model,
-        )?;
+        let registered = super::super::registry::read_model_registry_row(&self.store, &txn, model)?;
         let catalog_revision = catalog_revision(registered.as_ref())?;
         Ok(ModelRoleReceipt {
             role: input.role,
