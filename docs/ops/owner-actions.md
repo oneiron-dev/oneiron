@@ -1474,16 +1474,22 @@ of verbs needs both `invoke_action` and the verb on it. A connector narrowed to 
 is refused. A refusal's MCP error kind is its code above.
 
 A running server holds the frame of each card `vault.lenses.default`, `vault.weave.lens` and
-`POST /v1/owner/weave/lens` return, for your credential:
+`POST /v1/owner/weave/lens` return. The card id finds it; the credential that clicks a card
+authors its action, so you can press a card an agent rendered with your own credential. The card
+lends you none of the renderer's authority: every row the action uses is read again as you.
 - `POST /v1/core/lens-frames/{card_id}/events` with `{"event", "idempotencyKey"}` runs one event.
-  A model round-trip action goes back to the agent that rendered the card, as that agent's next
-  turn: it answers `202 {"queued", "callbackId"}`, and the agent decides what to do with it. The
-  same credential, card and key answer the same callback. A card a person's view or a system job
-  rendered answers `409`. A tool action whose verb acts on a live run acts for the run that
-  rendered the card, through your credential's attachment to it, and names no `liveRun`: attach
-  that credential to the run first. A card no run rendered, or a run your credential is not
-  attached to, answers `live_run_unavailable`.
-- `DELETE /v1/core/lens-frames/{card_id}` closes the card; an unknown card answers `NOT_FOUND`.
+  An optional `"selectedContext"` lists `selectionRef`s you made on the card with
+  `vault.lenses.select`; a model round trip carries them to the agent as context, and any other
+  action ignores them. A model round-trip action goes back to the agent that rendered the card,
+  as that agent's next turn, naming you as the one who pressed it: it answers
+  `202 {"queued", "callbackId"}`, and the agent decides what to do with it. The same credential,
+  card and key answer the same callback. A card a person's view or a system job rendered answers
+  `409`. A tool action's reply carries its verb's `x-oneiron-receipt-ref`. A tool action whose
+  verb acts on a live run acts for the run that rendered the card, through your credential's own
+  attachment to it, and names no `liveRun`: attach that credential to the run first. A card no
+  run rendered, or a run your credential is not attached to, answers `live_run_unavailable`.
+- `DELETE /v1/core/lens-frames/{card_id}` closes the card, for the credential that rendered it;
+  any other answers `{"closed": false}`.
 
 ## Widen proposals
 

@@ -5064,6 +5064,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ConsolidationStatusRequest>(),
             ),
             (
+                "vault.consolidation.wake.status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ConsolidationWakeStatusRequest,
+                >(),
+            ),
+            (
                 "vault.runs.step",
                 crate::code_run::vault_read::request_schema::<
                     crate::llm::model_step::SettledStepRequest,
@@ -6496,6 +6502,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.esign.signing.signature",
     "vault.esign.seal.get",
     "vault.consolidation.status",
+    "vault.consolidation.wake.status",
     "vault.runs.step",
     "vault.runs.checkpoint",
     "vault.consolidation.home.get",
@@ -8415,6 +8422,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.consolidation.status" => crate::code_run::vault_read::request_schema::<
             Option<crate::memory::DreamerAttemptView>,
         >(),
+        "vault.consolidation.wake.status" => {
+            crate::code_run::vault_read::request_schema::<Option<crate::memory::DreamerWakeView>>()
+        }
         "vault.runs.step" => crate::code_run::vault_read::request_schema::<
             Option<crate::llm::model_step::SettledStepView>,
         >(),
@@ -15240,6 +15250,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.consolidation.wake.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.runs.step" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19274,6 +19291,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consolidation.status" => {
             let _input: ConsolidationStatusRequest = decode(value.clone())?;
         }
+        "vault.consolidation.wake.status" => {
+            let _input: crate::memory::ConsolidationWakeStatusRequest = decode(value.clone())?;
+        }
         "vault.runs.step" => {
             let _input: crate::llm::model_step::SettledStepRequest = decode(value.clone())?;
         }
@@ -21537,6 +21557,9 @@ pub fn invoke(
             encode(vault_consolidation_enqueue(memory, decode(value)?)?)
         }
         "vault.consolidation.status" => encode(vault_consolidation_status(memory, decode(value)?)?),
+        "vault.consolidation.wake.status" => {
+            encode(vault_consolidation_wake_status(memory, decode(value)?)?)
+        }
         "vault.runs.step" => encode(vault_runs_step(memory, decode(value)?)?),
         "vault.runs.checkpoint" => encode(vault_runs_checkpoint(memory, decode(value)?)?),
         "vault.consolidation.home.get" => {
@@ -28558,7 +28581,7 @@ pub fn vault_questions_answers(
 pub fn vault_questions_refresh(
     memory: &Memory<'_>,
     input: crate::receipt::QuestionRefreshRequest,
-) -> MemoryResult<Vec<crate::llm::decision::questions::AnswerRecord>> {
+) -> MemoryResult<Vec<crate::receipt::QuestionAnswer>> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.refresh", &input)
 }
 pub fn vault_questions_outcomes(
@@ -29664,6 +29687,12 @@ pub fn vault_consolidation_status(
     input: ConsolidationStatusRequest,
 ) -> MemoryResult<Option<crate::memory::DreamerAttemptView>> {
     memory_requests::dreamer_attempt_status(memory, input)
+}
+pub fn vault_consolidation_wake_status(
+    memory: &Memory<'_>,
+    input: crate::memory::ConsolidationWakeStatusRequest,
+) -> MemoryResult<Option<crate::memory::DreamerWakeView>> {
+    memory_requests::dreamer_wake_status(memory, input)
 }
 pub fn vault_runs_step(
     memory: &Memory<'_>,
