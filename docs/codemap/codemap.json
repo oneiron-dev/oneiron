@@ -11606,7 +11606,7 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 8
      }
     },
@@ -18602,7 +18602,7 @@
      "purpose": "Revision-bound reply strips",
      "surface": {
       "crate-vis": 3,
-      "fn": 8,
+      "fn": 9,
       "struct": 3
      }
     },
@@ -77225,7 +77225,7 @@
      "path": "src/api/core/query.rs",
      "purpose": "Query/list/capability routes and their paging helpers",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -80245,7 +80245,7 @@
      "path": "src/api/scoped_auth.rs",
      "purpose": "Legacy owner-auth gate and scoped-read constructors for both auth flavors",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
