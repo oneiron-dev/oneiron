@@ -2220,6 +2220,9 @@ class Oneiron:
         def coreference(self) -> "Oneiron._VaultFederationCoreferenceVerbs":
             return Oneiron._VaultFederationCoreferenceVerbs(self._client)
         @property
+        def burst(self) -> "Oneiron._VaultFederationBurstVerbs":
+            return Oneiron._VaultFederationBurstVerbs(self._client)
+        @property
         def connect(self) -> "Oneiron._VaultFederationConnectVerbs":
             return Oneiron._VaultFederationConnectVerbs(self._client)
     class _VaultFederationCoreferenceVerbs:
@@ -2237,6 +2240,48 @@ class Oneiron:
         def unlink(self, spec):
             """The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims."""
             return json.loads(_translate(lambda: self._client.vault_federation_coreference_unlink(json.dumps(spec))))
+    class _VaultFederationBurstVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def baseline(self, spec):
+            """The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_baseline(json.dumps(spec))))
+        @property
+        def policy(self) -> "Oneiron._VaultFederationBurstPolicyVerbs":
+            return Oneiron._VaultFederationBurstPolicyVerbs(self._client)
+        def ingress(self, spec):
+            """The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_ingress(json.dumps(spec))))
+        def disposition(self, spec):
+            """The owner reads an authenticated batch original disposition, named baseline context and current durable replay state."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_disposition(json.dumps(spec))))
+        @property
+        def review(self) -> "Oneiron._VaultFederationBurstReviewVerbs":
+            return Oneiron._VaultFederationBurstReviewVerbs(self._client)
+        def replay(self, spec):
+            """The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_replay(json.dumps(spec))))
+    class _VaultFederationBurstPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner reads one grant-bound peer's relative-burst outcome policy."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_policy(json.dumps(spec))))
+        def set(self, spec):
+            """The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_policy_set(json.dumps(spec))))
+    class _VaultFederationBurstReviewVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner reads retained peer review bundles, coalesced once per peer and kept after replay or rejection."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_review(json.dumps(spec))))
+        def release(self, spec):
+            """The owner releases a bundle's burst hold for current-grant replay without importing evidence or widening authority."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_review_release(json.dumps(spec))))
+        def reject(self, spec):
+            """The owner rejects a bundle's pending batches while retaining its review evidence and terminal dispositions."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_review_reject(json.dumps(spec))))
     class _VaultFederationConnectVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

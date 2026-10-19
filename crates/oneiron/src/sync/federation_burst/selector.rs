@@ -86,13 +86,14 @@ pub fn replay_selector_fetch(
     payload: &[u8],
 ) -> Result<PreparedSelectorFetch> {
     let peer = peer_for_request(vault, principal, scope, payload)?;
-    let expected = DeferredWork::new(&peer, key, WorkKind::Selector, payload)?;
+    let mut expected = DeferredWork::new(&peer, key, WorkKind::Selector, payload)?;
     if expected.id != *id {
         return Err(Error::sync_protocol(
             SyncProtocolValidation::FederationReplayMismatch,
         ));
     }
     let txn = vault.store.env.read_txn()?;
+    expected.authority_digest = peer.authority_digest_in_txn(vault, &txn)?;
     let work = match expected.load_in_txn(vault, &txn)? {
         Some(work) => work,
         None if expected.completed_selector_in_txn(vault, &txn)? => expected,
@@ -102,6 +103,7 @@ pub fn replay_selector_fetch(
             ));
         }
     };
+    work.revalidate_authority_in_txn(vault, &txn, &peer)?;
     Ok(PreparedSelectorFetch {
         selector: peer.selector.clone(),
         peer,

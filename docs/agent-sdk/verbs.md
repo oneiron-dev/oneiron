@@ -319,6 +319,15 @@ both bindings and their export-census tests in one change.
 - `vault.federation.coreference.confirm`
 - `vault.federation.coreference.share_consent`
 - `vault.federation.coreference.unlink`
+- `vault.federation.burst.baseline`
+- `vault.federation.burst.policy`
+- `vault.federation.burst.policy.set`
+- `vault.federation.burst.ingress`
+- `vault.federation.burst.disposition`
+- `vault.federation.burst.review`
+- `vault.federation.burst.review.release`
+- `vault.federation.burst.review.reject`
+- `vault.federation.burst.replay`
 - `vault.federation.connect.identity`
 - `vault.federation.connect.grants.mint`
 - `vault.federation.connect.offer`

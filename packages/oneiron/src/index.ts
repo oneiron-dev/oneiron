@@ -1193,6 +1193,28 @@ export class Oneiron {
         /** The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims. */
         unlink: (input: Facade.CoreferencePairRequest): Facade.CoreferenceUnlinkReceipt => this.#call(() => this.#client.vaultFederationCoreferenceUnlink(input) as Facade.CoreferenceUnlinkReceipt),
       },
+      burst: {
+        /** The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context. */
+        baseline: (input: Facade.FederationBurstPeerRequest): Facade.FederationBurstBaselineState => this.#call(() => this.#client.vaultFederationBurstBaseline(input) as Facade.FederationBurstBaselineState),
+        /** The owner reads one grant-bound peer's relative-burst outcome policy. */
+        policy: Object.assign((input: Facade.FederationBurstPeerRequest): Facade.FederationBurstPolicy => this.#call(() => this.#client.vaultFederationBurstPolicy(input) as Facade.FederationBurstPolicy), {
+          /** The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant. */
+          set: (input: Facade.FederationBurstPolicySetRequest): Facade.FederationBurstPolicy => this.#call(() => this.#client.vaultFederationBurstPolicySet(input) as Facade.FederationBurstPolicy),
+        }),
+        /** The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt. */
+        ingress: (input: Facade.ConnectDelivery): Facade.FederationBurstReceipt => this.#call(() => this.#client.vaultFederationBurstIngress(input) as Facade.FederationBurstReceipt),
+        /** The owner reads an authenticated batch original disposition, named baseline context and current durable replay state. */
+        disposition: (input: Facade.FederationBurstReplayRequest): Facade.FederationBurstReceipt => this.#call(() => this.#client.vaultFederationBurstDisposition(input) as Facade.FederationBurstReceipt),
+        /** The owner reads retained peer review bundles, coalesced once per peer and kept after replay or rejection. */
+        review: Object.assign((input: Facade.EmptyRequest): Facade.FederationBurstReviewBundle[] => this.#call(() => this.#client.vaultFederationBurstReview(input) as Facade.FederationBurstReviewBundle[]), {
+          /** The owner releases a bundle's burst hold for current-grant replay without importing evidence or widening authority. */
+          release: (input: Facade.FederationBurstReviewRequest): Facade.FederationBurstReviewReceipt => this.#call(() => this.#client.vaultFederationBurstReviewRelease(input) as Facade.FederationBurstReviewReceipt),
+          /** The owner rejects a bundle's pending batches while retaining its review evidence and terminal dispositions. */
+          reject: (input: Facade.FederationBurstReviewRequest): Facade.FederationBurstReviewReceipt => this.#call(() => this.#client.vaultFederationBurstReviewReject(input) as Facade.FederationBurstReviewReceipt),
+        }),
+        /** The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit. */
+        replay: (input: Facade.FederationBurstReplayRequest): Facade.FederationBurstReceipt => this.#call(() => this.#client.vaultFederationBurstReplay(input) as Facade.FederationBurstReceipt),
+      },
       connect: {
         /** The owner reads this vault identity and the host key used for reciprocal Connect consent. */
         identity: (input: Facade.EmptyRequest): Facade.ConnectIdentity => this.#call(() => this.#client.vaultFederationConnectIdentity(input) as Facade.ConnectIdentity),
