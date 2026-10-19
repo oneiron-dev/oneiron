@@ -136,9 +136,10 @@ with no component rebuild. The memory reads and writes the run answers itself
 verb input is encoded once and the call sends that text. One holding a
 non-finite number, boxed or not, is refused before the call
 (`non_finite_verb_input`), since JSON would carry it as null; one JSON
-cannot carry at all is `invalid_verb_input`. A refused call throws a stable
-code, never prose, and so does the bridge's own argument check
-(`invalid_host_argument`).
+cannot carry at all is `invalid_verb_input`; both throw at the call itself.
+The call is then sent on a later microtask, so a refused or parked call
+rejects its promise with a stable code, never prose, and so does the
+bridge's own argument check (`invalid_host_argument`).
 
 The interpreter has its own 24 MiB tracked heap and instruction-interrupt cap.
 Wasmtime adds bounded fuel, linear memory, stack, wall time and host-call counts.

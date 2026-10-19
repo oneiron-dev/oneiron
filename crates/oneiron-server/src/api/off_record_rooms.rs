@@ -13,8 +13,10 @@
 //! - Each save or export posts a notice to the room's timeline, naming who
 //!   and what, never the content. An agent without the grant is told to ask
 //!   a holder: its suggestion posts a notice, saves nothing and waits until
-//!   a holder confirms (their own save) or declines it. Only a person starts
-//!   or exports.
+//!   a holder confirms (their own save) or declines it.
+//! - A person starts a stretch, and so does an agent acting within its
+//!   admitted Write Grant, as itself, so it must be on the roster too
+//!   (FIX 4596). Only a person exports.
 //!
 //! A stretch is named by its room and the host's `session_ref`; each room
 //! names its own. The owner's routes address it as
@@ -223,8 +225,7 @@ pub(crate) async fn room_start(
     auth: &CoreAuth,
     request: Start,
 ) -> Result<Room, ApiError> {
-    auth.require(CoreScope::Write)?;
-    let actor = person(auth)?;
+    let actor = starter(auth)?;
     let room = parse_entity_id_param(&request.room, "room")?;
     let server = Arc::clone(server);
     let view = blocking(move || {
@@ -422,10 +423,7 @@ pub(crate) async fn room_decline_save(
 /// The participant route's authority guard, before a facade hook can fire.
 pub(crate) fn door_admits(auth: &CoreAuth, verb: &str) -> Result<(), ApiError> {
     match verb {
-        "vault.off_record.rooms.start" => {
-            auth.require(CoreScope::Write)?;
-            person(auth).map(drop)
-        }
+        "vault.off_record.rooms.start" => starter(auth).map(drop),
         "vault.off_record.rooms.status" => {
             auth.require(CoreScope::Read)?;
             auth.require_unrestricted_record_scope()?;
@@ -474,13 +472,27 @@ fn participant(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), ApiError> 
     Ok((actor, class))
 }
 
-/// Starting and exporting are a person's own acts.
+/// Who starts a stretch in a room, on a credential that admits Write (FIX
+/// 4596): a person, or an agent acting within its Grant on a verified slip
+/// of its own. Either starts as itself: `enter_in_room` asks that it is on
+/// the room's roster now, so an agent that is no member starts none,
+/// whoever it acts for. REST and the pre-hook admission ask this alike.
+fn starter(auth: &CoreAuth) -> Result<EntityId, ApiError> {
+    auth.require(CoreScope::Write)?;
+    match participant(auth)? {
+        (actor, EdgeActorClass::Human) => Ok(actor),
+        (actor, EdgeActorClass::Agent) if auth.verified_slip().is_some() => Ok(actor),
+        _ => Err(forbidden(
+            "an agent starts an off-record stretch only on a Write slip of its own",
+        )),
+    }
+}
+
+/// Exporting is a person's own act.
 fn person(auth: &CoreAuth) -> Result<EntityId, ApiError> {
     match participant(auth)? {
         (actor, EdgeActorClass::Human) => Ok(actor),
-        _ => Err(forbidden(
-            "only a person starts or exports an off-record stretch",
-        )),
+        _ => Err(forbidden("only a person exports an off-record stretch")),
     }
 }
 

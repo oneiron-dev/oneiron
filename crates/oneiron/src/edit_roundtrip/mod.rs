@@ -98,7 +98,7 @@ pub use self::artifact_question::{
 pub use self::deck::{
     DeckEditContext, DeckRender, DeckRenderSide, DeckSettleEvidence, run_deck_transaction,
 };
-pub use self::deck::{DeckEditOutcome, DeckEditRejection};
+pub use self::deck::{DeckEditOutcome, DeckEditRejection, DeckRejectionInspection};
 pub(crate) use self::deck::{VaultAssets, archive_deck_marks_table, deck_op, verify_deck_proposal};
 pub use self::docx::run_docx_revision;
 pub(crate) use self::docx::{docx_parts_match_replay, validate_docx_passthrough};

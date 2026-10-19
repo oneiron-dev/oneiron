@@ -14,6 +14,7 @@ pub use dissent::{
 mod persistence;
 mod questions;
 pub use outcomes::{record_review_outcome, recurring_findings};
+pub(crate) use persistence::declared_critiques_in_txn;
 use persistence::*;
 pub use questions::{
     REVIEW_DIAL, ReviewDecisions, ReviewFinding, ReviewNote, ReviewNotes, ReviewWording,
@@ -66,6 +67,10 @@ pub struct ReviewRequest {
     pub axis: String,
     pub critics: Vec<ReviewCritic>,
     pub at: u64,
+    /// The launched agent run, by its attempt, the caller declares the
+    /// review for. Kept on the stored review; not part of its identity, so a
+    /// replayed review keeps the run first declared for it.
+    pub spawn_attempt: Option<EntityId>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +80,9 @@ pub struct ReviewResult {
     pub artifacts: Vec<CritiqueArtifact>,
     /// One receipt per typed question asked; empty when the review replays from its cache.
     pub receipts: Vec<DecisionReceipt>,
+    /// The launched run the stored review is declared for, the first one
+    /// declared; `None` when none is recorded.
+    pub spawn_attempt: Option<EntityId>,
 }
 
 /// Review a document, design or proposed claim through the same consolidator as tournaments.
@@ -128,6 +136,7 @@ pub fn review_artifact(
         let txn = vault.store.env.read_txn()?;
         if let Some(result) = cached_review(vault, &txn, request)? {
             drop(txn);
+            let result = keep_declared_spawn(vault, request, result);
             preserve_overruled(vault, &result, request.at)?;
             return Ok(result);
         }
@@ -162,8 +171,28 @@ pub fn review_artifact(
             >= request.auto_resolve_threshold;
     let mut result = persist_review(vault, request, &triage, &artifacts)?;
     result.receipts = receipts;
+    let result = keep_declared_spawn(vault, request, result);
     preserve_overruled(vault, &result, request.at)?;
     Ok(result)
+}
+
+/// A replayed review declared for no run yet takes the run `request`
+/// declares; one declared already keeps its run. The review stands either
+/// way: a declaration that does not record leaves `result` naming none.
+fn keep_declared_spawn(
+    vault: &Vault,
+    request: &ReviewRequest,
+    mut result: ReviewResult,
+) -> ReviewResult {
+    if let (None, Some(spawn)) = (result.spawn_attempt, request.spawn_attempt) {
+        match declare_spawn(vault, &result.verdict_claim, spawn) {
+            Ok(kept) => result.spawn_attempt = kept,
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "replayed review's declared run not recorded");
+            }
+        }
+    }
+    result
 }
 
 fn preserve_overruled(vault: &Vault, result: &ReviewResult, at: u64) -> Result<()> {

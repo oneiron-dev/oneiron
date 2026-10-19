@@ -12,6 +12,16 @@
 //! Grant stands in for the creator, and a name taken again after close
 //! carries none of the closed instance's authority. A stretch the owner
 //! entered names no creator and stays the owner's alone.
+//!
+//! Each creator names their stretches in a space of their own (FIX 4597):
+//! the registry keys a created stretch by an opaque handle minted at entry,
+//! which the entering door answers as its `session_ref`, and keeps the
+//! creator's name beside it. A later call or session header names it by
+//! that handle, or by the name within its creator's own stretches. A name
+//! another creator or the owner holds is no answer of "taken", and a handle
+//! binds only for its creator, or for the owner on their proof.
+
+use std::sync::Arc;
 
 use crate::authority::VerifiedSlip;
 use crate::edge::EdgeActorClass;
@@ -21,7 +31,7 @@ use crate::memory::{
     MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, WitnessReceipt, WitnessTurn,
 };
 
-use super::registry::{live_session_entry, session_entry_state, vet_off_record_session_ref};
+use super::registry::{OffRecordSessionEntry, session_entry_state, vet_off_record_session_ref};
 use super::session::{OffRecordSession, OffRecordSessionVault};
 use super::types::{OffRecordBackendClass, OffRecordMode, OffRecordSessionRecord};
 
@@ -37,7 +47,9 @@ pub struct OffRecordCreator {
 
 impl<'vault> OffRecordSessionVault<'vault> {
     /// Enters a stretch alone, off record, for `creator`, whom the entering
-    /// door authenticated. Otherwise as [`Self::enter`].
+    /// door authenticated, under `session_ref`, their own name for it. The
+    /// handle's [`OffRecordSession::session_ref`] is the instance's opaque
+    /// handle. Otherwise as [`Self::enter`].
     pub fn enter_as_creator(
         &self,
         session_ref: &str,
@@ -50,7 +62,7 @@ impl<'vault> OffRecordSessionVault<'vault> {
             OffRecordMode::OffRecord,
             creator,
         )?;
-        Ok(self.handle(session_ref.to_owned(), entry))
+        self.created_handle(entry)
     }
 
     /// Enters an anonymous stretch alone for `creator`: it keeps nothing,
@@ -69,11 +81,21 @@ impl<'vault> OffRecordSessionVault<'vault> {
             OffRecordMode::Anonymous,
             creator,
         )?;
-        Ok(self.handle(session_ref.to_owned(), entry))
+        self.created_handle(entry)
+    }
+
+    /// The handle of a created `entry`, under the key the registry minted.
+    fn created_handle(
+        &self,
+        entry: Arc<OffRecordSessionEntry>,
+    ) -> Result<OffRecordSession<'vault>> {
+        let key = session_entry_state(&entry)?.record.session_ref.clone();
+        Ok(self.handle(key, entry))
     }
 
     /// Binds the live stretch `session_ref` for `creator`, when this
-    /// instance is one `creator` entered.
+    /// instance is one `creator` entered: `session_ref` is its handle, or
+    /// the name `creator` gave it (FIX 4597).
     ///
     /// # Errors
     ///
@@ -88,11 +110,25 @@ impl<'vault> OffRecordSessionVault<'vault> {
         creator: OffRecordCreator,
     ) -> Result<OffRecordSession<'vault>> {
         vet_off_record_session_ref(session_ref)?;
-        let entry = live_session_entry(&self.vault.store, session_ref)?;
-        if entry.creator != Some(creator) {
-            return Err(Error::OffRecord(OffRecordError::OffRecordSessionNotFound {
+        let not_found = || {
+            Error::OffRecord(OffRecordError::OffRecordSessionNotFound {
                 session_ref: session_ref.to_owned(),
-            }));
+            })
+        };
+        let key = self
+            .vault
+            .store
+            .off_record_sessions
+            .created_key(session_ref, creator.actor)
+            .ok_or_else(not_found)?;
+        let entry = self
+            .vault
+            .store
+            .off_record_sessions
+            .entry(&key)?
+            .ok_or_else(not_found)?;
+        if entry.creator != Some(creator) {
+            return Err(not_found());
         }
         let state = session_entry_state(&entry)?;
         if state.record.closing || state.gone {
@@ -101,7 +137,7 @@ impl<'vault> OffRecordSessionVault<'vault> {
             }));
         }
         drop(state);
-        Ok(self.handle(session_ref.to_owned(), entry))
+        Ok(self.handle(key, entry))
     }
 }
 
