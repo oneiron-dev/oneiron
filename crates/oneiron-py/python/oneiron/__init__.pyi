@@ -2899,6 +2899,8 @@ class Oneiron:
         @property
         def admission(self) -> "Oneiron._SelfAdmissionVerbs": ...
         @property
+        def saved_query(self) -> "Oneiron._SelfSavedQueryVerbs": ...
+        @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs": ...
         @property
         def consent(self) -> "Oneiron._SelfConsentVerbs": ...
@@ -3001,6 +3003,19 @@ class Oneiron:
             """Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work."""
         def receipts(self, spec: Facade.AdmissionReceiptsRequest) -> list[Facade.AdmissionReceipt]:
             """Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay."""
+    class _SelfSavedQueryVerbs:
+        def create(self, spec: Facade.SavedQueryCreateRequest) -> Facade.SavedQueryRecordView:
+            """Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller."""
+        def read(self, spec: Facade.SavedQueryReadRequest) -> Facade.SavedQueryReadResult:
+            """One saved query the caller owns; a query absent or not the caller's reads as not found."""
+        def update(self, spec: Facade.SavedQueryUpdateRequest) -> Facade.SavedQueryRecordView:
+            """Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check."""
+        def archive(self, spec: Facade.SavedQueryArchiveRequest) -> Facade.SavedQueryRecordView:
+            """Archives a saved query under a definition-version check: it stays readable and is never evaluated again."""
+        def members(self, spec: Facade.SavedQueryMembersRequest) -> Facade.SavedQueryMembershipPageView:
+            """One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved."""
+        def evaluate(self, spec: Facade.SavedQueryEvaluateRequest) -> Facade.SavedQueryEvaluationReceipt:
+            """Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity."""
     class _SelfOffRecordVerbs:
         def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
             """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
@@ -3108,6 +3123,8 @@ class Oneiron:
         def chat(self) -> "Oneiron._AiChatVerbs": ...
         @property
         def steps(self) -> "Oneiron._AiStepsVerbs": ...
+        @property
+        def streams(self) -> "Oneiron._AiStreamsVerbs": ...
         def reply(self, spec: Facade.AiReplyRequest) -> Facade.AiReply:
             """Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."""
         @property
@@ -3136,6 +3153,19 @@ class Oneiron:
             """Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."""
         def receipt(self, spec: Facade.ModelStepReceiptRequest) -> Facade.ModelStepReceipt:
             """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."""
+    class _AiStreamsVerbs:
+        def open(self, spec: Facade.ModelStreamOpen) -> Facade.ModelStreamOpened:
+            """Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one."""
+        def subscribe(self, spec: Facade.ModelStreamSubscribe) -> Facade.ModelStreamSubscribed:
+            """Attach before or after open to the caller's shared model stream, without starting a producer; replay every typed part event from the first under an independently detachable handle."""
+        def events(self, spec: Facade.ModelStreamEventsRequest) -> Facade.ModelStreamEvents:
+            """Drain one subscription's queued typed LlmStreamEvents (part-correlated text, reasoning, tool and image deltas, then Done) without blocking; closed once the producer ended and the queue is empty."""
+        def detach(self, spec: Facade.ModelStreamDetach) -> Facade.ModelStreamDetached:
+            """Detach only this subscription from the shared model stream; the producer and every other subscriber continue."""
+        def abort(self, spec: Facade.ModelStreamAbort) -> Facade.ModelStreamTerminal:
+            """Abort the caller's shared model stream with actual usage: subscribers receive the cancelled Done of the parts completed so far, recorded as the one durable terminal."""
+        def terminal(self, spec: Facade.ModelStreamTerminalRequest) -> Facade.ModelStreamTerminal:
+            """Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model."""
     class _AiVoiceVerbs:
         @property
         def asr(self) -> "Oneiron._AiVoiceAsrVerbs": ...

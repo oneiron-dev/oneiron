@@ -58,6 +58,7 @@ pub(crate) use super::browser_doors::*;
 pub(crate) use super::calendar_doors::*;
 pub(crate) use super::campaign_doors::*;
 pub(crate) use super::compliance_doors::*;
+pub(crate) use super::saved_query_doors::*;
 pub(crate) use super::credential_doors::*;
 pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 
@@ -86,6 +87,7 @@ pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::mesh_doors::*;
 pub(crate) use super::model_catalog_doors::*;
 pub(crate) use super::model_step_doors::*;
+pub(crate) use super::model_stream_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 pub(crate) use super::run_review_doors::*;
@@ -1166,6 +1168,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
             .map_err(|error| super::FacadeApiError::from(error).into_memory_error()),
         "ai.steps.submit"
         | "ai.steps.receipt"
+        | "ai.streams.open"
+        | "ai.streams.subscribe"
+        | "ai.streams.events"
+        | "ai.streams.detach"
+        | "ai.streams.abort"
+        | "ai.streams.terminal"
         | "vault.models.catalog.refresh"
         | "vault.models.catalog.get"
         | "vault.models.catalog.diff"
@@ -1734,6 +1742,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
             super::guest_document_doors::guest_document_reader(server, auth).map(drop)
         }
         "execute_code" => super::foreign_code_doors::foreign_code_admits(server, auth),
+        "self.saved_query.evaluate" => super::saved_query_doors::admits(server, auth),
         "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
         "vault.artifacts.ask" | "vault.artifacts.admit" => {

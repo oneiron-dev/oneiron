@@ -171,6 +171,12 @@ both bindings and their export-census tests in one change.
 - `vault.campaign.program.read`
 - `vault.campaign.program.update`
 - `vault.campaign.program.archive`
+- `self.saved_query.create`
+- `self.saved_query.read`
+- `self.saved_query.update`
+- `self.saved_query.archive`
+- `self.saved_query.members`
+- `self.saved_query.evaluate`
 - `vault.weave.report`
 - `vault.weave.digest`
 - `vault.weave.lens`
@@ -718,6 +724,12 @@ both bindings and their export-census tests in one change.
 - `vault.skills.attribution.positive.retire`
 - `ai.steps.submit`
 - `ai.steps.receipt`
+- `ai.streams.open`
+- `ai.streams.subscribe`
+- `ai.streams.events`
+- `ai.streams.detach`
+- `ai.streams.abort`
+- `ai.streams.terminal`
 - `ai.reply`
 - `vault.receipts.context`
 - `ai.voice.asr.open`

@@ -42,6 +42,15 @@ pub const SELF_SAVED_QUERY_ARCHIVE: &str = "self.saved_query.archive";
 /// `self.*` verb: page a SAVED_QUERY's derived membership, read-only.
 pub const SELF_SAVED_QUERY_MEMBERS: &str = "self.saved_query.members";
 
+/// `self.*` verb: evaluate a SAVED_QUERY manually now, with one receipt per
+/// visited entity (verdict, evidence hash, memo hit, judge run).
+///
+/// An SDK row like the program verbs, not a verb of this sync dispatch: a
+/// rubric judge runs on the server's own model seats, so the server's host
+/// door answers it and an embedded vault refuses it as host-only. It is
+/// therefore not in [`CAMPAIGN_SELF_VERBS`].
+pub const SELF_SAVED_QUERY_EVALUATE: &str = "self.saved_query.evaluate";
+
 /// `vault.*` verb: create a campaign program under a campaign the caller owns.
 pub const VAULT_CAMPAIGN_PROGRAM_CREATE: &str = "vault.campaign.program.create";
 

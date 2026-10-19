@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1017 facade rows, 3452 declarations.
-Inputs: 958 of 1017 fully typed, 59 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 916 of 1017 fully typed, 101 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 103; unread shapes: 0.
+Census: 1029 facade rows, 3489 declarations.
+Inputs: 966 of 1029 fully typed, 63 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 920 of 1029 fully typed, 109 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 107; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -3524,6 +3524,166 @@ class ArchiveCampaignProgramRequest(TypedDict):
     campaign_ref: str
     program_ref: str
     expected_definition_version: int
+class SavedQueryScopeSpec(TypedDict):
+    worlds: NotRequired[list[EntityId]]
+    facets: NotRequired[list[str]]
+ClaimComparison = Literal["exists", "eq", "not_eq", "lt", "lte", "gt", "gte", "contains"]
+class SavedQueryFilterSpecTaskOwner(TypedDict):
+    op: Literal["task_owner"]
+    owner: EntityId
+class SavedQueryFilterSpecAll(TypedDict):
+    op: Literal["all"]
+    terms: list[SavedQueryFilterSpec]
+class SavedQueryFilterSpecAny(TypedDict):
+    op: Literal["any"]
+    terms: list[SavedQueryFilterSpec]
+class SavedQueryFilterSpecNot(TypedDict):
+    op: Literal["not"]
+    term: SavedQueryFilterSpec
+class SavedQueryFilterSpecClaim(TypedDict):
+    op: Literal["claim"]
+    predicate: str
+    cmp: ClaimComparison
+    value: NotRequired[Any]
+class SavedQueryFilterSpecEdgeExists(TypedDict):
+    op: Literal["edge_exists"]
+    edge_kind: str
+    target: NotRequired[EntityId | None]
+SavedQueryFilterSpec = SavedQueryFilterSpecTaskOwner | SavedQueryFilterSpecAll | SavedQueryFilterSpecAny | SavedQueryFilterSpecNot | SavedQueryFilterSpecClaim | SavedQueryFilterSpecEdgeExists
+class SavedQueryMatcherSpecHard(TypedDict):
+    kind: Literal["hard"]
+    expression: SavedQueryFilterSpec
+class SavedQueryMatcherSpecSemanticThreshold(TypedDict):
+    kind: Literal["semantic_threshold"]
+    exemplar_ref: EntityId
+    minimum_similarity_micros: int
+class SavedQueryMatcherSpecLlmJudge(TypedDict):
+    kind: Literal["llm_judge"]
+    model_id: str
+    rubric: NotRequired[Any]
+    rubric_version: str
+SavedQueryMatcherSpec = SavedQueryMatcherSpecHard | SavedQueryMatcherSpecSemanticThreshold | SavedQueryMatcherSpecLlmJudge
+EvalMode = Literal["reactive", "wake", "manual"]
+class SavedQueryEvalSpec(TypedDict):
+    mode: EvalMode
+    max_entities_per_wake: int
+    max_judges_per_wake: int
+class SavedQueryCreateRequest(TypedDict):
+    schema_version: NotRequired[int]
+    scope: NotRequired[SavedQueryScopeSpec]
+    filter: SavedQueryFilterSpec
+    matcher: SavedQueryMatcherSpec
+    eval: SavedQueryEvalSpec
+class SavedQueryLifecycleActive(TypedDict):
+    state: Literal["active"]
+class SavedQueryLifecyclePaused(TypedDict):
+    state: Literal["paused"]
+    error: str
+class SavedQueryLifecycleDisabled(TypedDict):
+    state: Literal["disabled"]
+class SavedQueryLifecycleArchived(TypedDict):
+    state: Literal["archived"]
+SavedQueryLifecycle = SavedQueryLifecycleActive | SavedQueryLifecyclePaused | SavedQueryLifecycleDisabled | SavedQueryLifecycleArchived
+class SavedQueryDefinitionView(TypedDict):
+    schema_version: int
+    owner_actor: EntityId
+    scope: SavedQueryScopeSpec
+    definition_version: int
+    filter: SavedQueryFilterSpec
+    matcher: SavedQueryMatcherSpec
+    eval: SavedQueryEvalSpec
+    lifecycle: SavedQueryLifecycle
+class SavedQueryRecordView(TypedDict):
+    query_ref: EntityId
+    definition: SavedQueryDefinitionView
+    created_at: int
+    updated_at: int
+class SavedQueryReadRequest(TypedDict):
+    query_ref: EntityId
+class SavedQueryReadResult(TypedDict):
+    found: bool
+    record: NotRequired[SavedQueryRecordView | None]
+class SavedQueryUpdateRequest(TypedDict):
+    query_ref: EntityId
+    expected_definition_version: int
+    scope: NotRequired[SavedQueryScopeSpec]
+    filter: SavedQueryFilterSpec
+    matcher: SavedQueryMatcherSpec
+    eval: SavedQueryEvalSpec
+class SavedQueryArchiveRequest(TypedDict):
+    query_ref: EntityId
+    expected_definition_version: int
+class SavedQueryMembersRequest(TypedDict):
+    query_ref: EntityId
+    cursor: NotRequired[str | None]
+    limit: NotRequired[int]
+    at_epoch: NotRequired[int | None]
+class SavedQueryMembershipRowView(TypedDict):
+    entity_ref: EntityId
+    state: str
+    entered_valid: int
+    entered_detected: int
+    exited_valid: NotRequired[int | None]
+    exited_detected: NotRequired[int | None]
+    cause: NotRequired[str | None]
+class SavedQueryMembershipPageView(TypedDict):
+    rows: list[SavedQueryMembershipRowView]
+    next_cursor: NotRequired[str | None]
+class SavedQueryEvaluateRequest(TypedDict):
+    query_ref: EntityId
+    candidates: NotRequired[list[EntityId]]
+    after: NotRequired[EntityId | None]
+MatchVerdict = Literal["match", "no_match"]
+class SavedQueryMemoReceipt(TypedDict):
+    definition_version: int
+    verdict: MatchVerdict
+    why: str
+    content_hash: str
+    model_id: str
+    version: str
+    params_hash: str
+    evaluated_at: int
+class ProviderPin(TypedDict):
+    rung: DecisionRung
+    model: str
+    version: str
+class LlmInputUsage(TypedDict):
+    total: int
+    cache_read: int
+    cache_write: int
+class LlmOutputUsage(TypedDict):
+    total: int
+    text: int
+    reasoning: int
+class LlmUsage(TypedDict):
+    input: LlmInputUsage
+    output: LlmOutputUsage
+    raw_provider: Any
+class SavedQueryGenerationReceipt(TypedDict):
+    request_hash: str
+    usage: LlmUsage
+class SavedQueryJudgeReceipt(TypedDict):
+    providers: list[ProviderPin]
+    cost_per_thousand: NotRequired[float | None]
+    generations: list[SavedQueryGenerationReceipt]
+class SavedQueryEntityReceipt(TypedDict):
+    entity_ref: EntityId
+    verdict: MatchVerdict
+    why: str
+    evidence_hash: str
+    memo_hit: bool
+    judge_ran: bool
+    memo: NotRequired[SavedQueryMemoReceipt | None]
+    judge: NotRequired[SavedQueryJudgeReceipt | None]
+class SavedQueryEvaluationReceipt(TypedDict):
+    query_ref: EntityId
+    owner_actor: EntityId
+    definition_version: int
+    evaluated: int
+    memo_hits: int
+    judges_run: int
+    resume_after: NotRequired[EntityId | None]
+    outcomes: list[SavedQueryEntityReceipt]
 WeaveSectionKind = Literal["changes", "projects", "open_asks", "links", "conflicts", "exceptions", "admissions", "budgets", "sieve_score", "digest"]
 class WeaveSectionInput(TypedDict):
     kind: WeaveSectionKind
@@ -4565,10 +4725,6 @@ class SkillTradeoffQuestion(TypedDict):
     axes: dict[str, GoalAxisScore]
     gains: list[str]
     losses: list[str]
-class ProviderPin(TypedDict):
-    rung: DecisionRung
-    model: str
-    version: str
 class JevTradeoffVerdict(TypedDict):
     question_digest: str
     choice: TradeoffChoice
@@ -12554,18 +12710,6 @@ class ModelStepSubmit(TypedDict):
     step_key: str
     request: LlmRequest
     retry: NotRequired[ModelStepRetryPolicy]
-class LlmInputUsage(TypedDict):
-    total: int
-    cache_read: int
-    cache_write: int
-class LlmOutputUsage(TypedDict):
-    total: int
-    text: int
-    reasoning: int
-class LlmUsage(TypedDict):
-    input: LlmInputUsage
-    output: LlmOutputUsage
-    raw_provider: Any
 class LlmResponse(TypedDict):
     message: LlmMessage
     usage: LlmUsage
@@ -12632,6 +12776,122 @@ class ModelStepReceipt(TypedDict):
     result: NotRequired[ModelStepResult | None]
 class ModelStepReceiptRequest(TypedDict):
     step_key: str
+class ModelStreamOpen(TypedDict):
+    stream_key: str
+    request: LlmRequest
+ModelStreamStatus = Literal["pending", "live", "finished", "failed"]
+class ModelStreamOpened(TypedDict):
+    stream_ref: str
+    stream_key: str
+    model: ModelId
+    status: ModelStreamStatus
+class ModelStreamSubscribe(TypedDict):
+    stream_key: str
+class ModelStreamSubscribed(TypedDict):
+    stream_ref: str
+    stream_key: str
+    handle: str
+    status: ModelStreamStatus
+class ModelStreamEventsRequest(TypedDict):
+    stream_key: str
+    handle: str
+    limit: NotRequired[int | None]
+class LlmStreamEventTextStart(TypedDict):
+    event: Literal["text_start"]
+    part_id: str
+class LlmStreamEventTextDelta(TypedDict):
+    event: Literal["text_delta"]
+    part_id: str
+    text: str
+class LlmStreamEventTextEnd(TypedDict):
+    event: Literal["text_end"]
+    part_id: str
+class LlmStreamEventReasoningStart(TypedDict):
+    event: Literal["reasoning_start"]
+    part_id: str
+    signature: NotRequired[str | None]
+class LlmStreamEventReasoningDelta(TypedDict):
+    event: Literal["reasoning_delta"]
+    part_id: str
+    text: str
+class LlmStreamEventReasoningEnd(TypedDict):
+    event: Literal["reasoning_end"]
+    part_id: str
+class LlmStreamEventToolCallStart(TypedDict):
+    event: Literal["tool_call_start"]
+    part_id: str
+    call_id: str
+    name: str
+class LlmStreamEventToolCallDelta(TypedDict):
+    event: Literal["tool_call_delta"]
+    part_id: str
+    input_fragment: str
+class LlmStreamEventToolCallEnd(TypedDict):
+    event: Literal["tool_call_end"]
+    part_id: str
+    call_id: str
+    name: str
+    input: Any
+class LlmStreamEventToolResultStart(TypedDict):
+    event: Literal["tool_result_start"]
+    part_id: str
+    call_id: str
+class LlmStreamEventToolResultDelta(TypedDict):
+    event: Literal["tool_result_delta"]
+    part_id: str
+    output_fragment: str
+class LlmStreamEventToolResultEnd(TypedDict):
+    event: Literal["tool_result_end"]
+    part_id: str
+    call_id: str
+    output: Any
+    is_error: NotRequired[bool]
+class LlmStreamEventImageStart(TypedDict):
+    event: Literal["image_start"]
+    part_id: str
+    media_type: str
+class LlmStreamEventImageDelta(TypedDict):
+    event: Literal["image_delta"]
+    part_id: str
+    data_fragment: str
+class LlmStreamEventImageEnd(TypedDict):
+    event: Literal["image_end"]
+    part_id: str
+    media_type: str
+    image: ImageContent
+class LlmStreamEventDone(TypedDict):
+    event: Literal["done"]
+    message: LlmMessage
+    usage: LlmUsage
+    finish_reason: FinishReason
+LlmStreamEvent = LlmStreamEventTextStart | LlmStreamEventTextDelta | LlmStreamEventTextEnd | LlmStreamEventReasoningStart | LlmStreamEventReasoningDelta | LlmStreamEventReasoningEnd | LlmStreamEventToolCallStart | LlmStreamEventToolCallDelta | LlmStreamEventToolCallEnd | LlmStreamEventToolResultStart | LlmStreamEventToolResultDelta | LlmStreamEventToolResultEnd | LlmStreamEventImageStart | LlmStreamEventImageDelta | LlmStreamEventImageEnd | LlmStreamEventDone
+class ModelStreamEvents(TypedDict):
+    stream_ref: str
+    stream_key: str
+    handle: str
+    events: list[LlmStreamEvent]
+    closed: bool
+    status: ModelStreamStatus
+class ModelStreamDetach(TypedDict):
+    stream_key: str
+    handle: str
+class ModelStreamDetached(TypedDict):
+    stream_ref: str
+    stream_key: str
+    handle: str
+    detached: bool
+class ModelStreamAbort(TypedDict):
+    stream_key: str
+    usage: LlmUsage
+class ModelStreamTerminal(TypedDict):
+    stream_ref: str
+    stream_key: str
+    model: ModelId
+    status: ModelStreamStatus
+    response: NotRequired[LlmResponse | None]
+    failure: NotRequired[str | None]
+class ModelStreamTerminalRequest(TypedDict):
+    stream_key: str
 class AiReplyReader(TypedDict):
     definition: str
     task_family: NotRequired[str | None]

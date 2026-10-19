@@ -739,10 +739,12 @@ fn escrow_vault_key(vault: &oneiron::Vault, managed: &ManagedArgs) -> anyhow::Re
 
 /// The page seal a managed vault opens with (OF-570 maximum tier), from the
 /// data key its supervisor delivered: a sealed vault's, reopened from the
-/// mirror beside it; a new one where no vault is yet and `--maximum-tier`
-/// opted in; none for a plain vault, which stays plain (no converter).
+/// mirror beside it; a new one where no vault is yet and `maximum_tier`
+/// (`--maximum-tier`, else the settings file's) opted in; none for a plain
+/// vault, which stays plain (no converter).
 fn managed_page_seal(
     managed: &ManagedArgs,
+    maximum_tier: bool,
     dek: &[u8; 32],
 ) -> anyhow::Result<Option<oneiron::VaultPageSeal>> {
     let path = &managed.data_dir;
@@ -751,12 +753,12 @@ fn managed_page_seal(
             path, dek,
         )?));
     }
-    if !managed.maximum_tier {
+    if !maximum_tier {
         return Ok(None);
     }
     if path.join("data.mdb").exists() {
         tracing::warn!(
-            "--maximum-tier is chosen when a vault is created; this plain vault opens plain"
+            "the maximum tier is chosen when a vault is created; this plain vault opens plain"
         );
         return Ok(None);
     }
@@ -818,10 +820,10 @@ fn spool_vault_key_escrow(vault: &oneiron::Vault, managed: &ManagedArgs) {
 /// happened.
 pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Result<()> {
     let mut config = managed.serve_config(args);
-    // The supervisor's models table, read and checked before anything opens.
-    config.models = managed.models()?;
-    // Its embedder and batch pods too (FIX 777).
-    managed.embedder(&mut config)?;
+    // The owner's settings file, refused leaf by leaf and settled once,
+    // before anything reads the configuration: its `[oneironer]` arms the
+    // write-time marker in `vault_config` below.
+    super::settings::settle(&managed, args, &mut config)?;
     let cors = crate::commands::build_cors_layer(&config.sync_server_config())?;
     init_managed_tracing(&config.log_level);
     tracing::info!(
@@ -858,7 +860,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     vault_config.failure_signals.deployment =
         oneiron::config::failure_signals::DeploymentTier::Managed;
     // Set before the open: LMDB takes the page key with the environment.
-    vault_config.page_seal = managed_page_seal(&managed, &credentials.dek)?;
+    vault_config.page_seal = managed_page_seal(&managed, config.maximum_tier, &credentials.dek)?;
     let vault = Arc::new(open_managed_vault(
         &managed.data_dir,
         vault_config,
@@ -887,14 +889,36 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     spool_vault_key_escrow(&vault, &managed);
     // A sealed vault serves only once its mirror reopens it at the next start.
     vault.check_page_custody()?;
+    // The owner's embedding spaces and kind slots, as plain serve applies them.
+    if let Some(embedding) = &config.embedding {
+        embedding.apply_to(&vault)?;
+    }
     // The embedder slot and the pods' health poller, as plain serve builds
     // them; the worker that fills the slot starts under the write admission.
     let (embedder, gpu_poller) = crate::commands::build_embedder(&vault, &config).await?;
-    // Managed mode reads no environment, so the destination carries no
-    // bearer: our inbox takes none.
+    // The tagger slot `[oneironer]` names, as plain serve builds it; its
+    // worker starts under the write admission too.
+    let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone()).await?;
+    // The browser and desktop guests, as plain serve attaches them: each
+    // section's own checks decide, and a run with no guest is refused.
+    // Managed mode reads no environment, so the feedback destination carries
+    // no bearer: our inbox takes none.
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
+        .with_tagger(tagger)
+        .with_browser_guest(
+            config
+                .browser
+                .as_ref()
+                .map(crate::config::BrowserConfig::guest),
+        )
+        .with_desktop_guest(
+            config
+                .desktop
+                .as_ref()
+                .map(crate::config::DesktopConfig::guest),
+        )
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,
@@ -1052,6 +1076,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ));
     // Pending vectors are filled while the vault admits writes (FIX 777).
     ladder_workers.extend(sync_server.spawn_embedding_worker_admitted(admitted()));
+    // Witnessed turns' tagging markers drain under the same admission.
+    ladder_workers.extend(sync_server.spawn_tagging_worker_admitted(admitted()));
     // Stored media is embedded under the same admission (OF-370).
     ladder_workers.extend(sync_server.spawn_media_embedding_worker_admitted(admitted()));
     // Queued and resumed agent runs, each admitted with its permit (OF-533).
