@@ -16,7 +16,8 @@ use crate::error::CodeError;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeProducingOperation {
     pub operation: EntityId,
-    pub actor: EntityId,
+    /// None once that actor was erased (FIX 4476).
+    pub actor: Option<EntityId>,
     pub turn: EntityId,
     pub activity: EntityId,
     pub intent: EntityId,

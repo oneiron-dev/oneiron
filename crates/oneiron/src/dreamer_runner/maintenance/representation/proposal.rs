@@ -1,6 +1,7 @@
 //! Pre-materialized author seam and durable maintenance execution. No delivery here.
 use super::super::applied::{MaintenanceInverse, MaintenanceRevert};
 use super::super::proposals;
+use super::approval::ApprovalOwner;
 use super::context::{
     reach_out_stands, reach_out_stands_in_txn, validate_citations, validate_packet,
 };
@@ -82,12 +83,33 @@ impl RepresentationPlanner for PrematerializedDraft {
         })
     }
 }
+/// A plan's row, written when it is queued: its packet, the owner it is
+/// for, and its landing once it lands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct StoredProposal {
-    pub packet: Packet,
-    pub run: String,
-    pub revision: [u8; 32],
+struct StoredProposal {
+    packet: Packet,
+    /// Outside the hashed packet, so an erase forgets them while the
+    /// packet's id and content ref stand (FIX 4512).
+    owner: ApprovalOwner,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    landed: Option<LandedProposal>,
+}
+/// The run a plan landed in and its reviewed revision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LandedProposal {
+    run: String,
+    revision: [u8; 32],
+}
+/// A landed plan as a review reads it, for its live owner: the request is
+/// rebuilt from the packet and the envelope, never stored with the owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct LiveProposal {
+    pub(super) packet: Packet,
+    pub(super) request: RepresentationRequest,
+    pub(super) run: String,
+    pub(super) revision: [u8; 32],
 }
 impl Vault {
     /// Reads real context, verifies the pre-materialized draft, stores it below
@@ -136,7 +158,7 @@ impl Vault {
         validate_citations(&context.voice, &draft.voice, None)?;
         measure_plan(self, &context, &draft.text);
         let packet = Packet {
-            request: request.clone(),
+            request: request.packet(),
             content: crate::compaction::output::store_output(self, draft.text.as_bytes())?,
             evidence: draft.evidence,
             voice: draft.voice,
@@ -144,8 +166,26 @@ impl Vault {
         };
         // Re-read after the host callback. A source edited while authoring is
         // not the source the model saw, even when its old quote still exists.
-        validate_packet(self, &packet)?;
+        validate_packet(self, &packet, request.owner)?;
         let id = packet.id()?;
+        // The owner waits in the plan's envelope, not in the queue (FIX 4512).
+        // A plan queued or landed for them keeps its row; one whose owner was
+        // erased never takes a live owner again.
+        self.with_write_txn_grouped(|txn| {
+            let held = PROPOSAL.get(&self.store, &*txn, &id)?;
+            match held {
+                Some(held) if held.owner.is(request.owner) => Ok(()),
+                Some(_) => Err(invalid()),
+                None => {
+                    let envelope = StoredProposal {
+                        packet: packet.clone(),
+                        owner: ApprovalOwner::Actor(request.owner),
+                        landed: None,
+                    };
+                    PROPOSAL.put(&self.store, txn, &id, &envelope)
+                }
+            }
+        })?;
         let input = String::from_utf8(packet.bytes()?).map_err(|_| invalid())?;
         DreamerRunnerStore::new(self).enqueue_maintenance(
             REPRESENTATION_FACET,
@@ -185,13 +225,25 @@ pub(in crate::dreamer_runner::maintenance) fn run(
     let packet: Packet =
         serde_json::from_str(attempt.status.payload.input.as_str().ok_or_else(invalid)?)
             .map_err(|_| invalid())?;
+    let id = packet.id()?;
+    // The owner is the envelope's, written when the plan was queued. A plan
+    // whose owner was erased since lands nothing (FIX 4512).
+    let held = {
+        let txn = vault.store.env.read_txn()?;
+        PROPOSAL.get(&vault.store, &txn, &id)?.ok_or_else(invalid)?
+    };
+    if held.packet != packet {
+        return Err(invalid());
+    }
+    let ApprovalOwner::Actor(owner) = held.owner else {
+        return Ok(None);
+    };
     if let Some(pin) = &packet.reach_out
         && !reach_out_stands(vault, pin.claim, pin.revision)?
     {
         return Ok(None);
     }
-    validate_packet(vault, &packet)?;
-    let id = packet.id()?;
+    validate_packet(vault, &packet, owner)?;
     let authority = vault.dreamer_authority()?.entity_ref();
     let run = crate::entity_id::bytes_to_hex_lower(attempt.status.attempt.id.as_bytes());
     let value = String::from_utf8(packet.bytes()?).map_err(|_| invalid())?;
@@ -207,9 +259,11 @@ pub(in crate::dreamer_runner::maintenance) fn run(
             source_meet: ClaimSource::Generated,
         },
     );
+    // The Dreamer's own claim, about no person: the owner stays in the
+    // envelope alone (FIX 4512).
     let candidate = ClaimCandidate::new(
         PREDICATE,
-        ClaimSubject::Entity(packet.request.owner),
+        ClaimSubject::Entity(authority),
         Value::from(value),
         1.0,
     )
@@ -231,13 +285,22 @@ pub(in crate::dreamer_runner::maintenance) fn run(
         attempt.status.attempt.id,
         |landing| {
             vault.with_write_txn_grouped(|txn| {
-                if let Some(existing) = PROPOSAL.get(&vault.store, &*txn, &id)? {
-                    if existing.packet != packet || vault.get_claim_in_txn(&*txn, &id)?.is_none() {
+                let held = PROPOSAL
+                    .get(&vault.store, &*txn, &id)?
+                    .ok_or_else(invalid)?;
+                if held.packet != packet {
+                    return Err(invalid());
+                }
+                if held.landed.is_some() {
+                    if vault.get_claim_in_txn(&*txn, &id)?.is_none() {
                         return Err(invalid());
                     }
                     // The owner's review and revert are terminal, never reset
                     // by replay.
                     return Ok(Some(id));
+                }
+                if !held.owner.is(owner) {
+                    return Ok(None);
                 }
                 if let Some(pin) = &packet.reach_out
                     && !reach_out_stands_in_txn(vault, &*txn, authority, pin.claim, pin.revision)?
@@ -277,8 +340,11 @@ pub(in crate::dreamer_runner::maintenance) fn run(
                 }
                 let record = StoredProposal {
                     packet: packet.clone(),
-                    run: run.clone(),
-                    revision: review_revision(&landed)?,
+                    owner: held.owner,
+                    landed: Some(LandedProposal {
+                        run: run.clone(),
+                        revision: review_revision(&landed)?,
+                    }),
                 };
                 PROPOSAL.put(&vault.store, txn, &id, &record)?;
                 if landing.record_in_txn(
@@ -288,7 +354,7 @@ pub(in crate::dreamer_runner::maintenance) fn run(
                     MaintenanceInverse::RepresentationPlan,
                     now,
                 )? {
-                    vault.record_finding_notification_in_txn(txn, id, packet.request.owner, now)?;
+                    vault.record_finding_notification_in_txn(txn, id, owner, now)?;
                 }
                 Ok(Some(id))
             })
@@ -338,27 +404,68 @@ pub(in crate::dreamer_runner::maintenance) fn review_revision(
     normalized.approval = ClaimApprovalStatus::Proposed;
     Ok(*blake3::hash(&crate::claim::encode_claim_body(&normalized)?).as_bytes())
 }
+/// A landed plan for its live owner. One whose owner was erased reads as
+/// stale: it no longer reviews, arms or sends (FIX 4512).
 pub(super) fn read_proposal(
     vault: &Vault,
     id: &EntityId,
-) -> Result<(StoredProposal, crate::ClaimBody)> {
+) -> Result<(LiveProposal, crate::ClaimBody)> {
     let record: StoredProposal = {
         let txn = vault.store.env.read_txn()?;
         PROPOSAL.get(&vault.store, &txn, id)?.ok_or_else(invalid)?
     };
+    let (ApprovalOwner::Actor(owner), Some(landed)) = (record.owner, record.landed) else {
+        return Err(invalid());
+    };
     let body = vault.get_claim(id)?.ok_or_else(invalid)?;
+    let authority = vault.dreamer_authority()?.entity_ref();
     if record.packet.id()? != *id
         || body.predicate != PREDICATE
-        || body.subject != ClaimSubject::Entity(record.packet.request.owner)
+        || body.subject != ClaimSubject::Entity(authority)
         || body.source != Some(ClaimSource::Generated)
         || body.lifecycle != crate::ClaimLifecycleStatus::Active
         || body.stale
-        || review_revision(&body)? != record.revision
-        || crate::claim::session_claim_producer(&body)
-            != Some(vault.dreamer_authority()?.entity_ref())
+        || review_revision(&body)? != landed.revision
+        || crate::claim::session_claim_producer(&body) != Some(authority)
         || body.value.as_str() != std::str::from_utf8(&record.packet.bytes()?).ok()
     {
         return Err(invalid());
     }
-    Ok((record, body))
+    let proposal = LiveProposal {
+        request: record.packet.request.with_owner(owner),
+        packet: record.packet,
+        run: landed.run,
+        revision: landed.revision,
+    };
+    Ok((proposal, body))
+}
+
+/// Erasing `actor` from the plans' envelopes (FIX 4512): a plan for them
+/// keeps its packet, id, content ref and landing and names no one, so it no
+/// longer reviews, arms or sends, and a queued one lands nothing. The packet
+/// and the claim it landed as never named them. One-way, in the erase's own
+/// transaction. An id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a plan row that cannot be read.
+pub(crate) fn erase_proposal_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::typed_body::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut plans = Vec::new();
+    for (id, mut record) in PROPOSAL.scan(&vault.store, wtxn)? {
+        if record.owner.is(*actor) {
+            record.owner = ApprovalOwner::Erased;
+            plans.push((id, record));
+        }
+    }
+    for (id, record) in plans {
+        PROPOSAL.put(&vault.store, wtxn, &id, &record)?;
+    }
+    Ok(())
 }
