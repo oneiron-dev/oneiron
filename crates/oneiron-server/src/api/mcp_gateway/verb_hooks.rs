@@ -30,8 +30,10 @@ use crate::server::SyncServer;
 /// Rewrite. An ask saves the registration the call came in by, so
 /// settlement runs it again here, its pre chain on the drain's permit. A
 /// hook's ask runs on the task-work turn the memory's operation holds, if
-/// any. The memory is read before the returned future first waits, so the
-/// future holds none of it.
+/// any. A call that keeps no record keeps its hooks' records and ask pauses
+/// for its live session only (FIX 4283), judged on the memory, with the hook
+/// pause it resumes (`_meta.hook_ask`). The memory is read before the
+/// returned future first waits, so the future holds none of it.
 pub(crate) fn mcp_row_hooks_pre<'a>(
     server: &'a Arc<SyncServer>,
     tool: &'a str,
@@ -42,13 +44,15 @@ pub(crate) fn mcp_row_hooks_pre<'a>(
     let admitted = mcp_hooks_admitted(server, tool, actor, memory);
     let invocation = memory.invocation();
     let turn = memory.task_work_turn();
-    let resume = RowHookResume {
-        credential: mcp_verb_ask_credential(actor, memory),
-        drain: actor.drain.clone(),
-        session: oneiron::task_verb::verb_hook_boundary::hook_session(Some(memory), tool),
-    };
+    let credential = mcp_verb_ask_credential(actor, memory);
+    let session = oneiron::task_verb::verb_hook_boundary::hook_session(Some(memory), tool);
     async move {
         let (reader, check) = admitted?;
+        let resume = RowHookResume {
+            credential,
+            drain: actor.drain.clone(),
+            session: session.map_err(mcp_facade_error)?,
+        };
         crate::api::facade::row_hooks_pre_with(
             server,
             reader,
@@ -207,6 +211,7 @@ impl McpCallContext {
             request_id: format!("verb-ask-{}", call.invocation.to_hex()),
             landing,
             invocation: Some(call.invocation),
+            hook_ask: None,
             off_record_session: None,
             room_turn: None,
             drain: Some(drain),

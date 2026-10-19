@@ -34,16 +34,20 @@
 //! saver who no longer holds, a room that is closing) fails the call, as on
 //! every room write. A session-only call with no room overlay keeps its
 //! records in the in-memory keep instead (`SessionHookKeep`, on the vault's
-//! verb-hook state), keyed by its session or the process.
+//! verb-hook state), keyed by its session or the process
+//! ([`Vault::session_hook_key`], L13 PR-D); the session's close drops them.
 
 use serde_json::Value;
 
 use crate::code_run::{SessionHookDisposition, SessionHookNotKept};
-use crate::error::Result;
-use crate::runtime_hooks::verb::{HookRecordsKept, SessionHooks, VerbArgsCheck, VerbHookStorage};
+use crate::error::{Error, OffRecordError, Result};
+use crate::runtime_hooks::verb::{
+    HookRecordsKept, SessionHookKey, SessionHooks, VerbArgsCheck, VerbHookStorage,
+};
 use crate::runtime_hooks::{VerbCall, VerbHookPre, VerbHookStop};
 use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 use crate::side_table::RoutedDbs;
+use crate::{EntityId, Vault};
 
 use super::session::OffRecordSession;
 
@@ -171,5 +175,49 @@ fn room_hooks<'s>(
         hooks.answering_unread()
     } else {
         hooks
+    }
+}
+
+impl Vault {
+    /// The in-memory keep's key of a session-only call with no room overlay
+    /// whose surface binds `binding`, its off-record session and the
+    /// principal it binds it for (`Memory::off_record_binding`; L13 PR-D,
+    /// FIX 4283): the live stretch that binding names, by its registry key
+    /// and when it was entered, read as
+    /// [`Self::off_record_session_is_anonymous_for`] reads it (a creator's
+    /// name resolves to its instance). The process when the surface binds
+    /// none, or names no live stretch: a `no_record` row called before its
+    /// session starts, or a session header that names no off-record stretch,
+    /// keeps working as today. The close drops a session's key
+    /// ([`Self::close_off_record_entry`]).
+    ///
+    /// # Errors
+    ///
+    /// [`OffRecordError::OffRecordSessionClosing`] when the stretch it names
+    /// is closing: its records and pauses would outlive it.
+    pub(crate) fn session_hook_key(
+        &self,
+        binding: Option<(&str, Option<EntityId>)>,
+    ) -> Result<SessionHookKey> {
+        let Some((session, principal)) = binding else {
+            return Ok(SessionHookKey::Process);
+        };
+        let session = session.trim();
+        let registry = &self.store.off_record_sessions;
+        let key = principal
+            .and_then(|principal| registry.created_key(session, principal))
+            .unwrap_or_else(|| session.to_owned());
+        match registry.record(&key) {
+            Some(record) if record.closing => {
+                Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
+                    session_ref: key,
+                }))
+            }
+            Some(record) => Ok(SessionHookKey::Session {
+                key,
+                entered_at: record.entered_at,
+            }),
+            None => Ok(SessionHookKey::Process),
+        }
     }
 }

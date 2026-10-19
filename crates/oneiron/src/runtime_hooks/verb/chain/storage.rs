@@ -20,7 +20,8 @@ impl Chain<'_> {
     /// Commits the chain's rows. A resumed chain commits even with no run
     /// after the asking hook: its write uses the answer up. A session-only
     /// call's chain holds them for the call to keep once its read is done
-    /// ([`Self::hold_in_session`]).
+    /// ([`Self::hold_in_session`]), a resumed one after using its answer up
+    /// in the keep ([`Self::take_session_answer`], L13 PR-D).
     pub(super) fn commit(&self) -> Result<()> {
         if self.runs.is_empty() && self.token.is_none() {
             return Ok(());
@@ -30,6 +31,7 @@ impl Chain<'_> {
                 .vault
                 .with_write_txn_grouped(|txn| self.write_in_txn(txn)),
             VerbHookStorage::Session(hooks) => {
+                self.take_session_answer(hooks)?;
                 self.hold_in_session(hooks);
                 Ok(())
             }

@@ -651,9 +651,10 @@ pub(crate) const ROOM_TURN_HEADER: &str = "x-oneiron-room-turn";
 /// same one to find its ask.
 pub(crate) const INVOCATION_HEADER: &str = "x-oneiron-invocation";
 
-/// `memory` bound to the invocation the call names, if it names one, and
-/// to the off-record session it names (OF-063: inside an anonymous one a
-/// reference refusal writes no receipt, as its call writes none, OF-538).
+/// `memory` bound to the invocation the call names, if it names one, the
+/// hook pause it resumes beside it (L13 PR-D), and the off-record session
+/// it names (OF-063: inside an anonymous one a reference refusal writes no
+/// receipt, as its call writes none, OF-538).
 /// The facade, in the room turn the call names, is the door a credential
 /// caller's call came in by: a verb hook's ask saves it, so settlement runs
 /// the call again here (ARCH-0080 §3 Ask).
@@ -668,6 +669,10 @@ fn facade_invocation<'v>(
     let memory = memory.with_credential_door(VerbAskDoor::Facade {
         room: call.room_turn()?,
     });
+    let memory = match call.hook_ask()? {
+        Some(ask) => memory.with_hook_ask(ask),
+        None => memory,
+    };
     Ok(match call.invocation()? {
         Some(invocation) => memory.with_invocation(invocation),
         None => memory,
@@ -829,7 +834,7 @@ async fn facade_hooks_pre(
     let resume = RowHookResume {
         credential,
         drain: call.drain().cloned(),
-        session: hook_session::facade_hook_session(server, call, bound, verb),
+        session: hook_session::facade_hook_session(server, call, bound, verb)?,
     };
     // What a hook reads, built on every call so a binding installed after
     // this door looked still finds it: the caller's read key, its
