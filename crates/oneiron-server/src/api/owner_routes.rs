@@ -66,11 +66,14 @@ mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
 mod model_setting_routes;
+mod owner_work_routes;
 mod pack_routes;
 mod pad_routes;
 mod peer_confidence_routes;
 mod proactivity_routes;
 mod recovery_kit_routes;
+mod recovery_kit_target_routes;
+mod root_routes;
 mod secret_control_routes;
 mod secret_found_routes;
 mod secret_lift_routes;
@@ -86,6 +89,7 @@ mod weave_routes;
 mod widen_proposal_routes;
 mod wire_health_routes;
 mod world_privacy_routes;
+mod world_privacy_work_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
 
@@ -170,6 +174,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(steer_routes::routes())
         .merge(training_swap_routes::routes())
         .merge(world_privacy_routes::routes())
+        .merge(world_privacy_work_routes::routes())
+        .merge(owner_work_routes::routes())
+        .merge(root_routes::routes())
+        .merge(recovery_kit_target_routes::routes())
         .merge(super::owner_origin::routes())
         .merge(super::packs::routes())
 }

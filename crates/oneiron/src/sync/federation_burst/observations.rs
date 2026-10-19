@@ -56,18 +56,42 @@ pub(super) fn observe_in_txn(
         row.tick = now;
     }
     row.recent = row.recent.saturating_add(writes.max(1));
-    // Only completed clock ticks train the baseline. A current burst cannot
-    // teach away its own signal. Cold start is the normalizer's clock seed.
-    let baseline = row.completed as f64 / now.saturating_sub(row.first).max(1) as f64;
-    let size = crate::ports::EntityStoreRead::port_entity_count(&vault.store, &*txn)?;
-    let inputs = normalized_burst_inputs(row.recent, 1, baseline, size, row.streak);
-    let streak_baseline = row.streak_total as f64 / row.completed_streaks.max(1) as f64;
-    let streak_ratio =
-        normalized_burst_inputs(u64::from(row.streak), 1, streak_baseline, size, 0).rate_ratio;
     save(vault, txn, &key, &row)?;
+    let baseline = baseline_from_row(vault, txn, peer, now, &row)?;
     Ok(PeerHealth {
-        inputs,
-        streak_ratio,
+        inputs: crate::llm::NormalizedBurstInputs {
+            rate_ratio: baseline.rate_ratio, streak: baseline.streak,
+        },
+        streak_ratio: baseline.streak_ratio,
+        baseline,
+        policy: super::policy::load_in_txn(vault, txn, peer)?,
+    })
+}
+
+pub(super) fn baseline_in_txn(
+    vault: &Vault, txn: &heed::RoTxn<'_>, peer: &FederationPeer, now: u64,
+) -> Result<super::FederationBurstBaselineState> {
+    let row = load(vault, txn, &key(peer))?;
+    baseline_from_row(vault, txn, peer, now.max(row.tick), &row)
+}
+
+fn baseline_from_row(
+    vault: &Vault, txn: &heed::RoTxn<'_>, peer: &FederationPeer, now: u64, row: &Observation,
+) -> Result<super::FederationBurstBaselineState> {
+    // The current tick never trains away its own burst signal.
+    let learned_rate = row.completed as f64 / now.saturating_sub(row.first).max(1) as f64;
+    let learned_streak = row.streak_total as f64 / row.completed_streaks.max(1) as f64;
+    let policy = super::policy::load_in_txn(vault, txn, peer)?;
+    let baseline = super::policy::resolved_baseline(&policy, learned_rate, learned_streak);
+    let size = crate::ports::EntityStoreRead::port_entity_count(&vault.store, txn)?;
+    let recent = if now == row.tick { row.recent } else { 0 };
+    let inputs = normalized_burst_inputs(recent, 1, baseline.writes_per_sec, size, row.streak);
+    let streak_ratio = normalized_burst_inputs(
+        u64::from(row.streak), 1, baseline.structural_streak, size, 0,
+    ).rate_ratio;
+    Ok(super::FederationBurstBaselineState {
+        learned: policy.baseline.is_none(), baseline, vault_size: size,
+        recent_writes: recent, rate_ratio: inputs.rate_ratio, streak: row.streak, streak_ratio,
     })
 }
 
@@ -79,12 +103,7 @@ pub(super) fn replay_ready_in_txn(
     peer: &FederationPeer,
     now: u64,
 ) -> Result<bool> {
-    let row = load(vault, txn, &key(peer))?;
-    let now = now.max(row.tick);
-    let recent = if now == row.tick { row.recent } else { 0 };
-    let baseline = row.completed as f64 / now.saturating_sub(row.first).max(1) as f64;
-    let size = crate::ports::EntityStoreRead::port_entity_count(&vault.store, txn)?;
-    Ok(normalized_burst_inputs(recent, 1, baseline, size, row.streak).rate_ratio <= 1.0)
+    Ok(baseline_in_txn(vault, txn, peer, now)?.rate_ratio <= 1.0)
 }
 
 pub(super) fn outcome_in_txn(
@@ -113,5 +132,8 @@ pub(super) fn record_outcome(
     structural_failure: bool,
 ) -> Result<()> {
     peer.revalidate(vault)?;
-    vault.with_write_txn_grouped(|txn| outcome_in_txn(vault, txn, peer, structural_failure))
+    vault.with_write_txn_grouped(|txn| {
+        peer.revalidate_in_txn(vault, txn)?;
+        outcome_in_txn(vault, txn, peer, structural_failure)
+    })
 }

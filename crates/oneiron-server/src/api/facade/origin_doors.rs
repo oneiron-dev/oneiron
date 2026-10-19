@@ -115,3 +115,73 @@ pub(crate) async fn vault_code_checkout_bind(
     )
     .await
 }
+
+pub(crate) async fn vault_code_origin_register(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: OriginRegisterRequest,
+) -> Listed<OriginRegistered> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.origin.register",
+        move |memory, owner| memory.origin_register_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_origin_mirror_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: OriginRepoRequest,
+) -> Listed<OriginMirrorView> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.origin.mirror.get",
+        move |memory, owner| memory.origin_mirror_get_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_origin_mirror_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: OriginMirrorSetRequest,
+) -> Listed<oneiron::origin::mirror::OriginMirrorTarget> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.origin.mirror.set",
+        move |memory, owner| memory.origin_mirror_set_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_origin_mirror_clear(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: OriginRepoRequest,
+) -> Listed<OriginMirrorCleared> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.origin.mirror.clear",
+        move |memory, owner| memory.origin_mirror_clear_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_origin_mirror_push(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: OriginRepoRequest,
+) -> Listed<oneiron::origin::mirror::OriginMirrorRun> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.origin.mirror.push",
+        move |memory, owner| memory.origin_mirror_push_as(owner, input),
+    )
+    .await
+}

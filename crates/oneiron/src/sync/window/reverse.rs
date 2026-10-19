@@ -19,6 +19,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_TURN};
 use crate::sync::local_claims::{claim_sync_allowed, local_claim_sync_allowed};
+use crate::sync::origin_claims::pin_erased_replacement;
 use loro::{CommitOptions, LoroDoc, LoroMap};
 
 /// Reverse re-materialization: LMDB→CRDT (insert-missing only).
@@ -398,6 +399,8 @@ fn reverse_rematerialize_scan(
                 || fixed_actor_mismatch
                 || edited
             {
+                // FIX 3877: an origin claim's erased form replaces its carrier history-free.
+                pin_erased_replacement(vault, window_key, &entities_map, &hex_id, &raw)?;
                 // Pack rows mirror the canonical wire header/body (origin
                 // handle/generation, exact identity/payload), not the
                 // receiver-local materialization. A corrupt local pack row
