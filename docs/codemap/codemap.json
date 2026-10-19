@@ -2077,7 +2077,7 @@
      "path": "src/attempt_queue/engine/workflow.rs",
      "purpose": "Transactional point-claim and retry lineage reads for ordered host composition",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
