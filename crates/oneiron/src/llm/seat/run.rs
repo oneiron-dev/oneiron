@@ -205,7 +205,18 @@ impl Vault {
     /// while no seat is born for `run_id`. A seat born generic is no task's,
     /// so it refuses here rather than read as an unstamped task.
     pub fn task_model_seat_receipt(&self, run_id: EntityId) -> Result<Option<TaskSeatReceipt>> {
-        self.stored_run_seat(run_id)?
+        let txn = self.store.env.read_txn()?;
+        self.task_model_seat_receipt_in_txn(&txn, run_id)
+    }
+
+    /// [`Self::task_model_seat_receipt`] in the caller's snapshot, so a read
+    /// pairs the seat with what else that snapshot holds.
+    pub(crate) fn task_model_seat_receipt_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        run_id: EntityId,
+    ) -> Result<Option<TaskSeatReceipt>> {
+        self.stored_run_seat_in_txn(txn, run_id)?
             .map(|row| match row.binding {
                 RunSeatBinding::Task { type_ref } => Ok(TaskSeatReceipt {
                     type_ref,
@@ -220,7 +231,16 @@ impl Vault {
     }
 
     fn stored_run_seat(&self, run_id: EntityId) -> Result<Option<StoredRunSeat>> {
-        let row = RUN_SEATS.get(&self.store, &self.store.env.read_txn()?, &run_id)?;
+        let txn = self.store.env.read_txn()?;
+        self.stored_run_seat_in_txn(&txn, run_id)
+    }
+
+    fn stored_run_seat_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        run_id: EntityId,
+    ) -> Result<Option<StoredRunSeat>> {
+        let row = RUN_SEATS.get(&self.store, txn, &run_id)?;
         if let Some(row) = &row
             && (row.version != 1 || row.receipt.why.trim().is_empty())
         {
