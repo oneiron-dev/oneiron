@@ -103,17 +103,16 @@ impl Vault {
         let queue = AttemptQueue::new(self);
         let mut executed = 0_usize;
         loop {
-            let attempt = match self.with_write_txn_grouped(|txn| {
-                crate::ports::JobQueue::port_job_claim(
-                    self,
-                    txn,
-                    Some(crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND),
-                    ClaimAttempt {
-                        lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
-                        now,
-                    },
-                )
-            })? {
+            // The kind's own claim door runs the job port's claim and
+            // broadcasts only a real claim, so an empty queue never wakes the
+            // worker that just found it empty.
+            let attempt = match queue.claim_kind(
+                crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND,
+                ClaimAttempt {
+                    lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                    now,
+                },
+            )? {
                 ClaimOutcome::Empty => break,
                 ClaimOutcome::Claimed(attempt) => attempt,
             };

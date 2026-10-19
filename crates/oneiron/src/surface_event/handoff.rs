@@ -355,17 +355,16 @@ impl Vault {
         dispatcher: &dyn SurfaceEventDispatcher,
     ) -> Result<SurfaceEventWorkerOutcome> {
         let queue = AttemptQueue::new(self);
-        let ClaimOutcome::Claimed(attempt) = self.with_write_txn_grouped(|txn| {
-            crate::ports::JobQueue::port_job_claim(
-                self,
-                txn,
-                Some(SURFACE_EVENT_ATTEMPT_KIND),
-                ClaimAttempt {
-                    lease_owner: lease_owner.to_owned(),
-                    now,
-                },
-            )
-        })?
+        // The kind's own claim door runs the job port's claim and broadcasts
+        // only a real claim, so an empty queue never wakes the drain that
+        // just found it empty.
+        let ClaimOutcome::Claimed(attempt) = queue.claim_kind(
+            SURFACE_EVENT_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: lease_owner.to_owned(),
+                now,
+            },
+        )?
         else {
             return Ok(SurfaceEventWorkerOutcome::Empty);
         };

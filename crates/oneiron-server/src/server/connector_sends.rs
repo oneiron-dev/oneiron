@@ -14,8 +14,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::calendar_host::CalendarChannelSink;
+use crate::calendar_host::{CalendarChannelSink, CalendarSendClients};
 use oneiron::Vault;
+use tokio::sync::broadcast::error::TryRecvError;
 
 use super::core::SyncServer;
 use super::housekeeping::HousekeepingAdmission;
@@ -43,18 +44,36 @@ impl SyncServer {
         // pass and the first wait still wakes the loop.
         let mut wake = oneiron::attempt_queue::AttemptQueue::new(self.vault()).subscribe();
         let mut backoff = FIRST_BACKOFF;
+        // The worker's send clients, built on the first pass's blocking
+        // thread and kept across passes, so a pass that finds nothing to send
+        // builds none. A pass that could not build them tries again next time.
+        let mut clients: Option<CalendarSendClients> = None;
+        // Whether a timer started the pass about to run; the first pass
+        // counts as one, since nothing has signalled yet.
+        let mut tick = true;
         loop {
             let Some(admission) = admit() else {
                 tokio::time::sleep(IDLE).await;
+                tick = true;
                 continue;
             };
+            // The pass reads the queue as it is now, which answers every
+            // signal already waiting; a commit after this point still wakes
+            // the wait below.
+            while let Ok(()) | Err(TryRecvError::Lagged(_)) = wake.try_recv() {}
             let vault = Arc::clone(self.vault());
             let line_push_allowance = self.config.line.monthly_push_allowance();
+            let mut kept = clients.take();
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
-                send_pass(&vault, line_push_allowance)
+                let next = send_pass(&vault, line_push_allowance, &mut kept, tick);
+                (next, kept)
             })
-            .await;
+            .await
+            .map(|(next, kept)| {
+                clients = kept;
+                next
+            });
             let wait = match pass {
                 Ok(Ok(next)) => {
                     backoff = FIRST_BACKOFF;
@@ -77,18 +96,31 @@ impl SyncServer {
                     wait
                 }
             };
-            tokio::select! {
-                _ = wake.recv() => {}
-                () = tokio::time::sleep(wait) => {}
-            }
+            tick = tokio::select! {
+                _ = wake.recv() => false,
+                () = tokio::time::sleep(wait) => true,
+            };
         }
     }
 }
 
 /// One pass: every claimable send, then the instant the next one is ready.
 /// A LINE push is counted against the account plan's monthly allowance.
-fn send_pass(vault: &Vault, line_push_allowance: u32) -> oneiron::Result<Option<u64>> {
-    let mut sink = CalendarChannelSink::new(vault, line_push_allowance)?;
+/// The worker's kept clients are built here, off the runtime, when it has
+/// none yet. A pass a timer started (`tick`) opens with the general write
+/// door's per-write work, as the surface-event drain's does.
+fn send_pass(
+    vault: &Vault,
+    line_push_allowance: u32,
+    clients: &mut Option<CalendarSendClients>,
+    tick: bool,
+) -> oneiron::Result<Option<u64>> {
+    let clients = match clients {
+        Some(clients) => clients,
+        None => clients.insert(CalendarSendClients::new()?),
+    };
+    let mut sink = CalendarChannelSink::new(vault, line_push_allowance, clients);
+    super::connector_events::carry_write_piggybacks(vault, tick)?;
     let delivered = vault
         .run_connector_task_executor(&mut sink, unix_now())
         .map_err(|error| oneiron::Error::InvalidConfig(error.to_string()))?;

@@ -127,18 +127,35 @@ impl<'a> ServedChannelSink<'a> {
     ///
     /// The client could not be built.
     pub fn new(vault: &'a Vault) -> Result<Self> {
-        let client = reqwest::blocking::Client::builder()
+        Ok(Self::with_client(vault, Self::client()?))
+    }
+
+    /// The bounded HTTPS client a served sink sends on: no proxy, no
+    /// redirects, short timeouts; each send adds its own credential. It is a
+    /// blocking client, so build it on a blocking thread. A worker that keeps
+    /// one across its passes hands each pass a clone ([`Self::with_client`]).
+    ///
+    /// # Errors
+    ///
+    /// The client could not be built.
+    pub fn client() -> Result<reqwest::blocking::Client> {
+        reqwest::blocking::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(20))
             .build()
-            .map_err(|_| Error::InvalidConfig("served send client unavailable".to_owned()))?;
-        Ok(Self {
+            .map_err(|_| Error::InvalidConfig("served send client unavailable".to_owned()))
+    }
+
+    /// The served sink on a client [`Self::client`] built.
+    #[must_use]
+    pub fn with_client(vault: &'a Vault, client: reqwest::blocking::Client) -> Self {
+        Self {
             vault,
             client,
             line_push_allowance: DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE,
-        })
+        }
     }
 
     /// The LINE account plan's monthly push allowance, LINE's free plan
