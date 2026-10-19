@@ -1015,7 +1015,7 @@
      "path": "src/agent_dispatch/planner_live/intent.rs",
      "purpose": "The reserved spawn intent (DOOR-111 S2, S4c-1): a planned spawn, durable under its asker's intent key",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 1
      }
     },
