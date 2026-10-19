@@ -5862,7 +5862,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/secret_scan/lift_history/records.rs",
@@ -41640,7 +41640,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BodyLocation",
@@ -41652,7 +41652,7 @@
      "path": "src/provenance/body.rs",
      "purpose": "Who owns a body and whether it is whole",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 3,
       "struct": 3
@@ -42782,10 +42782,20 @@
      "path": "src/recovery/checkpoint/artifact.rs",
      "purpose": "Sealed checkpoint artifacts (OF-570 (c))",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 7,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/artifact/sink.rs",
+     "purpose": "Writing a sealed artifact: the envelopes one artifact's chunks seal into, and the sink that streams the…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -42805,6 +42815,16 @@
      "path": "src/recovery/checkpoint/authority_plane/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/carried_bodies.rs",
+     "purpose": "The body files a checkpoint carries beside its rows (OF-597, FIX 3677, FIX 5348)",
+     "surface": {
+      "crate-vis": 10
+     }
     },
     {
      "bucket": "m",
@@ -43836,7 +43856,7 @@
      "path": "src/result_body/pins.rs",
      "purpose": "Reader pins: a result body a reader holds is never deleted",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -49637,10 +49657,60 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/store/body_envelope/frames.rs",
+     "purpose": "One body file's envelope (FIX 5348): E0 chunks under the file's own data key",
+     "surface": {
+      "crate-vis": 27
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_envelope/mod.rs",
+     "purpose": "Body files on a sealed vault (FIX 5348, L01 FIX 3677 follow-up)",
+     "surface": {
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_envelope/reader.rs",
+     "purpose": "An open body file, whichever form it rests in: what every reader of a body file gets in place of a `File`…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_envelope/rows.rs",
+     "purpose": "A sealed body file's key row (FIX 5348): one per digest, in `PROVENANCE_BODY_KEY`, beside the body's…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_envelope/spill.rs",
+     "purpose": "Writing body files (FIX 5348): a body spilled as it streams, sealed chunk by chunk in a sealed directory…",
+     "surface": {
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/body_store.rs",
      "purpose": "File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++)",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -49940,7 +50010,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 1,
       "re-export": 13
      }
@@ -60197,7 +60267,7 @@
      "purpose": "The maximum tier (OF-570): every LMDB page of a vault sealed under a page key",
      "surface": {
       "const": 1,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 15,
       "struct": 2
      }
@@ -62330,7 +62400,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 57,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -62575,7 +62645,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 73,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62801,7 +62871,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3849,
+   "source_files": 3856,
    "test_files": 902
   },
   "oneiron-android": {
@@ -79599,7 +79669,7 @@
      "path": "src/commands/history_import/notes/folder.rs",
      "purpose": "`oneiron import folder attach|rescan|detach|list`: a folder of markdown notes and PDFs that stays attached…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 2
      }
     },
     {
@@ -81923,6 +81993,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/owner_storage.rs",
+     "purpose": "The owner host a managed vault serves with: its backups and restore rehearsals on the tenant's own disk, in…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/peer.rs",
      "purpose": "Kernel-verified local transport peer, not a public caller IP",
      "surface": {
@@ -83263,7 +83343,7 @@
      "path": "src/owner/schedule.rs",
      "purpose": "Scheduled backups for a running `serve`",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -85069,7 +85149,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -85225,7 +85305,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 825,
+   "source_files": 826,
    "test_files": 182
   },
   "oneiron-spawn": {
