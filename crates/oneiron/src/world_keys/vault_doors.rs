@@ -130,6 +130,9 @@ impl Vault {
                 .signer
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(signer));
+            // A revoke this install could not carry is carried as its key
+            // loads (CALLS CUSTODY_REVOKE_PENDING_CARRY).
+            self.carry_pending_revokes_logged();
             return Ok(machine);
         }
         Err(super::refused(

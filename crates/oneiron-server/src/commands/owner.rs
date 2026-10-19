@@ -894,6 +894,8 @@ struct ImportedArchive {
     withheld_results: usize,
     restored_secrets: usize,
     unchanged_secrets: usize,
+    /// Secrets the archive carried that a revoke here ended: not restored.
+    skipped_revoked_secrets: usize,
     /// Secrets the archive carried as handles only: re-enter each one.
     missing_secrets: Vec<String>,
     embedding_setup: ImportedEmbeddingSetup,
@@ -947,6 +949,7 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
         withheld_results: receipt.withheld_results,
         restored_secrets: receipt.restored_secrets,
         unchanged_secrets: receipt.unchanged_secrets,
+        skipped_revoked_secrets: receipt.skipped_revoked_secrets,
         missing_secrets: receipt
             .missing_secrets
             .into_iter()

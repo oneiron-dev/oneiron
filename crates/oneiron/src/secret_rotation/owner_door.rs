@@ -169,15 +169,18 @@ impl Vault {
     /// every replica that folds the request holds the id as terminal. The
     /// returned work receipt says it committed here, never that every
     /// replica holds it (CALLS CUSTODY_COMPLETION); with none recorded, the
-    /// custody work says exactly why the revoke stays here (FIX 4994). The
-    /// record's value is erased here in the same commit (CALLS
+    /// custody work says exactly why the revoke stays here (FIX 4994). An
+    /// install that cannot carry the act yet, with no live machine profile
+    /// or no install key loaded, still revokes here, and its carry is
+    /// pending until it can sign (CALLS CUSTODY_REVOKE_PENDING_CARRY, FIX
+    /// 4851). The record's value is erased here in the same commit (CALLS
     /// CUSTODY_REVOKE_ERASE).
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is no longer
     /// the live owner's; [`SecretError::SecretRefNotFound`] for a name
-    /// custody does not hold; an install key that fails to load; otherwise
-    /// the store's errors.
+    /// custody does not hold; an install key that fails to load for a reason
+    /// other than keys not available here; otherwise the store's errors.
     pub fn revoke_secret_as_owner(
         &self,
         owner: &AuthenticatedOwner,
@@ -185,7 +188,7 @@ impl Vault {
         secret_ref: &str,
         at: u64,
     ) -> Result<SecretRevoked> {
-        self.load_install_signing_if_minted()?;
+        self.load_signing_for_revoke()?;
         let mut wtxn = self.store.env.write_txn()?;
         let actor = owner.revalidate_in_txn(self, &wtxn)?;
         if !crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &actor)? {
@@ -196,7 +199,7 @@ impl Vault {
         let rotation =
             self.revoke_secret_in_txn(&mut wtxn, secret_ref, super::RevokeCause::Revoked, at)?;
         let custody =
-            self.carry_custody_revoke_in_txn(&mut wtxn, owner, surface, secret_ref, at)?;
+            self.carry_custody_revoke_in_txn(&mut wtxn, actor, surface, secret_ref, at)?;
         wtxn.commit()?;
         self.mirror_custody_change(&custody);
         Ok(SecretRevoked { rotation, custody })

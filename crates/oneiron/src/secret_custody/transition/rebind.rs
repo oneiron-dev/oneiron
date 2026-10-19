@@ -9,6 +9,11 @@
 //! floor admits it (CALLS CUSTODY_REBIND_PENDING_FLOOR). What is pending is
 //! derived from the kept carrier and the fold alone; the request a receiver
 //! took is kept beside the record so a replay never applies again.
+//!
+//! A carrier that brings the record itself, a register, a rotate or any live
+//! carrier above the record held here, waits the same way when the floor
+//! refuses its bindings, and applies with its value once the floor admits
+//! it (CALLS CUSTODY_CARRIER_PENDING_FLOOR, FIX 5336).
 
 use super::{CustodyApplied, CustodyTransition, WipedRecord};
 use crate::Vault;
@@ -33,14 +38,39 @@ enum CustodyRebindPendingFloor {
     /// admits them: once, by the request, in the committing transaction,
     /// which keeps the request as taken beside the record. A replay never
     /// takes them again, a later rebind or rotation supersedes it, and a
-    /// terminal revoke drops it. No queue is kept: the taken request is
-    /// node-local, and a restore rebuilds what is pending from the kept
-    /// carriers.
+    /// terminal revoke drops it. No queue is kept: what is pending is
+    /// derived from the kept carriers, and the taken request is canonical
+    /// beside the record it was taken into (FIX 5337), so a checkpoint
+    /// carries both.
     ApplyWhenFloorAdmits,
 }
 
 const CUSTODY_REBIND_PENDING_FLOOR: CustodyRebindPendingFloor =
     CustodyRebindPendingFloor::ApplyWhenFloorAdmits;
+
+/// How a receiver meets a carrier that brings the record itself, wider than
+/// its live floor (CALLS CUSTODY_CARRIER_PENDING_FLOOR).
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CustodyCarrierPendingFloor {
+    /// A live carrier this vault keeps as its latest, sealed to this
+    /// machine, of a record it does not hold or holds at an earlier
+    /// generation and status (a register, a rotate, or a rewrap it never
+    /// took), whose bindings the live floor here refused, stays pending.
+    /// The custody pass after an authority catch-up and on the served tick
+    /// finds each one the floor now admits, opens its value outside any
+    /// transaction, and applies it through the path a carrier's arrival
+    /// takes, which judges signature, request, permits, revoke, local, name
+    /// and floor again in the committing transaction. A value this machine
+    /// cannot open yet leaves it pending; a later carrier supersedes it; an
+    /// admitted revoke drops it. No queue is kept: the kept carriers and
+    /// the record held decide what is pending.
+    ApplyWhenFloorAdmits,
+}
+
+#[cfg(feature = "sync")]
+const CUSTODY_CARRIER_PENDING_FLOOR: CustodyCarrierPendingFloor =
+    CustodyCarrierPendingFloor::ApplyWhenFloorAdmits;
 
 /// The rewrap request whose bindings this vault took into each record it
 /// holds as a receiver, by record id.
@@ -131,6 +161,52 @@ pub(super) fn rebind_held_in_txn(
     Ok(applied)
 }
 
+/// Whether `transition`, a carrier this vault keeps as its latest, brings a
+/// record pending here that the live floor now admits (CALLS
+/// CUSTODY_CARRIER_PENDING_FLOOR): live, standing on `fold`, sealed to
+/// `this` machine, of a portable record this vault does not hold or holds
+/// live at an earlier generation and status. Reads no value.
+#[cfg(feature = "sync")]
+fn pending_carrier_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fold: &AuthorityFold,
+    this: Option<EntityId>,
+    transition: &CustodyTransition,
+) -> Result<bool> {
+    if transition.status == crate::secret_custody::SecretCustodyStatus::Revoked
+        || fold.custody_revoked(&transition.id)
+        || !transition
+            .permits()
+            .any(|permit| Some(permit.machine) == this)
+    {
+        return Ok(false);
+    }
+    let held = super::super::read_secret_custody_in_txn(&vault.store, txn, &transition.id)?.map(
+        |mut held| {
+            zeroize::Zeroize::zeroize(&mut held.value_bytes);
+            held
+        },
+    );
+    if held.is_some_and(|held| {
+        !super::custody_portable(&held)
+            || held.status == crate::secret_custody::SecretCustodyStatus::Revoked
+            || transition.order() <= (held.rotation_generation, super::status_rank(held.status))
+    }) {
+        return Ok(false);
+    }
+    let Ok(carried) = transition.record() else {
+        return Ok(false);
+    };
+    match CUSTODY_CARRIER_PENDING_FLOOR {
+        CustodyCarrierPendingFloor::ApplyWhenFloorAdmits => Ok(
+            super::super::refuse_bindings_wider_than_live_floor(&vault.store, txn, &carried)
+                .is_ok()
+                && transition.verify(fold).is_ok(),
+        ),
+    }
+}
+
 /// Whether `transition`, a carrier this vault keeps as its latest, is a
 /// rebind pending here that the live floor now admits: a live rewrap
 /// another install holds for, at the generation and status of the record
@@ -167,48 +243,74 @@ fn pending_rebind_in_txn(
 
 impl Vault {
     /// Takes the bindings of every rebind pending here that the live floor
-    /// now admits (CALLS CUSTODY_REBIND_PENDING_FLOOR): each judged from the
-    /// carrier this vault keeps and its fold, then again in one writer
-    /// transaction through the same path a carrier's arrival takes, its
-    /// request kept as taken in that commit. The custody pass after an
-    /// authority catch-up and on the served tick runs it. Returns how many
-    /// records it rebound.
+    /// now admits (CALLS CUSTODY_REBIND_PENDING_FLOOR), and applies every
+    /// carrier that brings a record the floor refused before and now admits
+    /// (CALLS CUSTODY_CARRIER_PENDING_FLOOR): each judged from the carrier
+    /// this vault keeps and its fold, then again in one writer transaction
+    /// through the same path a carrier's arrival takes, a rebind's request
+    /// kept as taken in that commit. A carrier's value is opened before that
+    /// transaction, and the keystore is read only when one waits on it. The
+    /// custody pass after an authority catch-up and on the served tick runs
+    /// it. Returns how many records it wrote.
     #[cfg(feature = "sync")]
     pub(crate) fn apply_pending_rebinds(&self) -> Result<usize> {
-        let due: Vec<CustodyTransition> = {
+        let (rebinds, carriers, vault_id) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             let this = crate::identity::read_machine_id_in_txn(self, &txn)?;
-            let mut due = Vec::new();
+            let mut rebinds = Vec::new();
+            let mut carriers = Vec::new();
             for (_, carrier) in super::TRANSITIONS.scan(&self.store, &txn)? {
                 let Ok(transition) = CustodyTransition::decode(&carrier) else {
                     continue;
                 };
                 if pending_rebind_in_txn(self, &txn, &fold, this, &transition)? {
-                    due.push(transition);
+                    rebinds.push(transition);
+                } else if pending_carrier_in_txn(self, &txn, &fold, this, &transition)? {
+                    carriers.push(transition);
                 }
             }
-            due
+            (rebinds, carriers, fold.vault_id)
         };
-        if due.is_empty() {
+        // A value this machine cannot open yet leaves its carrier pending.
+        let opened: Vec<_> = match (carriers.is_empty(), vault_id) {
+            (false, Some(vault_id)) => match self.machine_secret_outside_txn() {
+                Ok(secret) => carriers
+                    .into_iter()
+                    .filter_map(|transition| {
+                        let value =
+                            transition.open_value(&vault_id, secret.machine, &secret.secret)?;
+                        Some((transition, value))
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        if rebinds.is_empty() && opened.is_empty() {
             return Ok(0);
         }
         self.with_write_txn(|wtxn| {
-            let mut rebound = 0;
-            for transition in &due {
-                // A rebind carries no value: the record keeps the one held.
+            let mut written = 0;
+            // A rebind carries no value: the record keeps the one held.
+            let due = rebinds.iter().map(|transition| (transition, None)).chain(
+                opened
+                    .iter()
+                    .map(|(transition, value)| (transition, Some(value.as_slice()))),
+            );
+            for (transition, value) in due {
                 let applied = super::apply_custody_transition_in_txn(
                     self,
                     wtxn,
                     transition,
-                    None,
+                    value,
                     transition.signed_at,
                 )?;
                 if applied == CustodyApplied::Written {
-                    rebound += 1;
+                    written += 1;
                 }
             }
-            Ok(rebound)
+            Ok(written)
         })
     }
 }

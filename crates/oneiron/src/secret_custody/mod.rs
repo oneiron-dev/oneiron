@@ -99,7 +99,7 @@ pub(crate) use self::control::input::{
 };
 pub(crate) use self::control::{
     ActiveChange, Material, custody_work_executor, drop_revoked_copies_in_txn,
-    refuse_revoked_use_in_txn,
+    erase_pending_revoke_actor_in_txn, refuse_revoked_use_in_txn,
 };
 pub use self::control::{
     CustodyCandidate, CustodyDelivery, CustodyKeptHere, CustodyManifestCheck, CustodyPlan,
@@ -118,7 +118,8 @@ pub use self::found_keys::{
 };
 pub(crate) use self::found_keys::{
     FoundNote, KeptValues, erase_found_key_actor_in_txn, found_key_actions_in_txn,
-    note_found_keys_in_txn, raise_found_key_notices_in_txn, settle_found_key_in_txn,
+    note_found_keys_in_txn, raise_found_key_notices_in_txn, ruled_no_secret_in_txn,
+    settle_found_key_in_txn,
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use self::known_values::{KnownSweep, KnownValues};

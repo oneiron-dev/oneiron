@@ -621,8 +621,10 @@ pub(crate) enum CustodyApplied {
 /// never takes a peer's transition. A rewrap at the generation and status
 /// held changes the bindings alone, by its request (CALLS
 /// CUSTODY_BIND_TRAVEL), or stays pending while the live floor here refuses
-/// them (CALLS CUSTODY_REBIND_PENDING_FLOOR). A revocation also revokes the
-/// record's leases here and erases its value (CALLS CUSTODY_REVOKE_ERASE).
+/// them (CALLS CUSTODY_REBIND_PENDING_FLOOR); so does a carrier that brings
+/// the record (CALLS CUSTODY_CARRIER_PENDING_FLOOR). A revocation also
+/// revokes the record's leases here and erases its value (CALLS
+/// CUSTODY_REVOKE_ERASE).
 ///
 /// An admitted revoke of the id in this transaction's fold is terminal (CALLS
 /// CUSTODY_CONCURRENT_ACTIVE): a live transition of it is refused, and a held

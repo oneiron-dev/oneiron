@@ -39,6 +39,7 @@ mod doors;
 mod execute;
 pub(super) mod input;
 mod manifest;
+mod pending_revoke;
 pub(super) mod permits;
 mod revoked;
 #[cfg(feature = "sync")]
@@ -48,8 +49,11 @@ use zeroize::Zeroizing;
 
 pub use self::doors::{CustodyCandidate, SealedCustodyChange, SecretCustodyView};
 pub(crate) use self::execute::Material;
-use self::input::{InputBinding, RelayedInput, input_digest, keep_input_in_txn};
+use self::input::{
+    InputBinding, RelayedInput, input_digest, keep_input_in_txn, request_witness_in_txn,
+};
 pub use self::manifest::CustodyManifestCheck;
+pub(crate) use self::pending_revoke::erase_pending_revoke_actor_in_txn;
 pub(crate) use self::revoked::{
     custody_revoked_in_txn, drop_revoked_copies_in_txn, refuse_revoked_use_in_txn,
     settle_revoked_in_txn,
@@ -154,8 +158,12 @@ pub enum CustodyKeptHere {
     /// "this device only".
     DeviceLocal,
     /// This install has no live machine profile to carry the owner's act,
-    /// so no other machine learns of the change from here (FIX 4851).
+    /// so no other machine learns of the change from here.
     NoCarrier,
+    /// A revoke this install cannot carry yet, with no live machine profile
+    /// or no install key loaded: it stands here, and its carry is pending
+    /// until this install can sign (CALLS CUSTODY_REVOKE_PENDING_CARRY).
+    CarryPending,
     /// This install, the holder, has no encryption key that imports, so no
     /// request can name it (CALLS CUSTODY_EXECUTOR).
     NoHolderKey,
@@ -168,6 +176,7 @@ impl CustodyKeptHere {
         match self {
             Self::DeviceLocal => "device_local",
             Self::NoCarrier => "no_carrier",
+            Self::CarryPending => "carry_pending",
             Self::NoHolderKey => "no_holder_key",
         }
     }
@@ -184,6 +193,10 @@ impl CustodyKeptHere {
             Self::NoHolderKey => {
                 "kept on this install only: it has no encryption key to hold the secret for \
                  your other machines"
+            }
+            Self::CarryPending => {
+                "revoked here; your other machines learn of it once this install can sign your \
+                 act (it has no live machine profile yet, or its install key is not loaded)"
             }
         }
     }
@@ -300,9 +313,10 @@ pub struct SecretRevoked {
     /// holds it yet (CALLS CUSTODY_COMPLETION). Kept here, with nothing
     /// recorded, as [`CustodyKeptHere::DeviceLocal`] for a record that stays
     /// on its device (device bound, cross-vault or "this device only"), or
-    /// [`CustodyKeptHere::NoCarrier`] when this install has no live machine
-    /// profile to carry the owner's act, so no other machine learns of it
-    /// from here.
+    /// [`CustodyKeptHere::CarryPending`] when this install cannot carry the
+    /// owner's act yet, with no live machine profile or no install key
+    /// loaded: his other machines learn of it once this install can sign
+    /// (CALLS CUSTODY_REVOKE_PENDING_CARRY).
     pub custody: SecretCustodyWork,
 }
 
@@ -467,6 +481,7 @@ impl Vault {
                 &RelayedInput {
                     sealed_at: at,
                     request: hash,
+                    witness: request_witness_in_txn(self, txn, &hash)?,
                     envelope,
                 },
             )?;

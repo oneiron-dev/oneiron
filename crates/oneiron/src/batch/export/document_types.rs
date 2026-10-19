@@ -331,6 +331,9 @@ pub struct WholeVaultImportReceipt {
     /// own ids, and those already here unchanged.
     pub restored_secrets: usize,
     pub unchanged_secrets: usize,
+    /// Portable custody records the archive carried whose id an admitted
+    /// revoke here names: they stay dead and are not restored (FIX 4852).
+    pub skipped_revoked_secrets: usize,
     /// Custody records the archive carried as handles only: secrets to
     /// re-enter through the owner's registration door.
     pub missing_secrets: Vec<crate::secret_custody::SecretCustodyMetadata>,

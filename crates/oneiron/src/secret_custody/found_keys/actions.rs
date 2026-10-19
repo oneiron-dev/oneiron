@@ -212,7 +212,7 @@ impl Vault {
             }
             // The ruling's surface is where the request reached this
             // install: audit only.
-            let carried = self.carry_custody_revoke_in_txn(txn, owner, surface, &rec.name, at)?;
+            let carried = self.carry_custody_revoke_in_txn(txn, actor, surface, &rec.name, at)?;
             Ok((settled, carried))
         })?;
         self.mirror_custody_change(&carried);
@@ -243,6 +243,25 @@ pub(crate) fn settle_found_key_in_txn(
     };
     key.settled = Some(settled);
     FOUND.put(store, txn, &origin.record, &found)
+}
+
+/// Whether the owner ruled the found key custody record `custody` holds no
+/// secret: the one record a revoke leaves its bytes (CALLS
+/// CUSTODY_REVOKE_ERASE), which the found-key screen reads.
+pub(crate) fn ruled_no_secret_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    custody: &EntityId,
+) -> Result<bool> {
+    let Some(origin) = crate::batch::secret_scan::mask_origin_in_txn(store, txn, custody)? else {
+        return Ok(false);
+    };
+    Ok(FOUND.get(store, txn, &origin.record)?.is_some_and(|found| {
+        found
+            .keys
+            .iter()
+            .any(|key| key.custody == *custody && key.ruled_no_secret())
+    }))
 }
 
 /// One found key as the owner reads it, with what they may still do.
