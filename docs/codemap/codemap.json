@@ -35365,8 +35365,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 50,
-      "fn": 34,
+      "crate-vis": 51,
+      "fn": 35,
       "struct": 2,
       "type": 1
      }
