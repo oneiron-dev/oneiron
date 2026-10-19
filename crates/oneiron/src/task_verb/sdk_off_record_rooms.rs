@@ -8,7 +8,8 @@ use crate::off_record::{
     OffRecordBackendClass, OffRecordMode, OffRecordNoticeAct, OffRecordTalkMessage,
 };
 
-/// A person starts an off-record stretch in a room they belong to.
+/// A person, or an agent within its Write Grant, starts an off-record
+/// stretch in a room they belong to (FIX 4596).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OffRecordRoomStartRequest {

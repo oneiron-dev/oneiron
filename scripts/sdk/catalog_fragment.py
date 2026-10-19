@@ -49,10 +49,11 @@ REVISION = 'crates/oneiron/src/task_verb/catalog_fragment_revision.rs'
 #   The guest's verb import takes `output` alone (code_sandbox/wasmtime_runtime/
 #   typed.rs, `self.verbs.call`), and bootstrap.js `verb` resolves with it
 #   decoded: the row's output, or `StoredResult`, runtime.d.ts's card, in its
-#   place past 512 KiB of JSON (wire.rs `fit_reply`). A refusal throws its
-#   whole JSON text (typed.rs `State::call`), a reply with no `output` throws
-#   `missing_host_response_field` (typed.rs `field`), and `budget` never
-#   reaches the guest.
+#   place past 512 KiB of JSON (wire.rs `fit_reply`). bootstrap.js sends the
+#   call on a later microtask, so a refusal rejects the promise with its
+#   whole JSON text (typed.rs `State::call`), a reply with no `output` rejects
+#   with `missing_host_response_field` (typed.rs `field`), and `budget` never
+#   reaches the guest. Only the local input encoding throws synchronously.
 # - COORDINATION: the rows code mode answers with the run's own coordination
 #   reply, not the row's output (wire.rs `self_call`). Their reply is
 #   `unknown`, and so is a run row's output when the table does not name it.
@@ -70,10 +71,11 @@ REVISION_ALGORITHM = 'sha256'
 REPLY = 'Promise<{output} | StoredResult>'
 REPLY_DOC = (
     'Every verb call resolves with its row\'s output itself, or with a `StoredResult` card in its place past 512 KiB of JSON.',
-    'A refused call throws a string, the refusal\'s JSON: JSON.parse gives `{denied, reasonCodes}` (`denied` the outcome word,',
+    'A refused call rejects with a string, the refusal\'s JSON: JSON.parse gives `{denied, reasonCodes}` (`denied` the outcome word,',
     '`reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).',
-    'A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge\'s own',
-    'refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".',
+    'A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge\'s own',
+    'refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON',
+    'cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.',
 )
 COORDINATION = ()
 JSDOC = True

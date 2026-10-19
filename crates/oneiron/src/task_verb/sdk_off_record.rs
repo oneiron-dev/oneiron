@@ -44,7 +44,9 @@ pub enum OffRecordEnterMode {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OffRecordStartRequest {
-    /// The host's own name for the session, 1 to 256 bytes.
+    /// The caller's own name for the session, 1 to 256 bytes: the owner's
+    /// names are the owner's, and every other creator's are their own, so a
+    /// name another caller holds is never "taken" (FIX 4597).
     pub session_ref: String,
     pub mode: OffRecordEnterMode,
     /// `local` when inference stays on this device, `remote_provider` when a
@@ -76,6 +78,10 @@ pub struct OffRecordWitnessRequest {
 /// One live session as its owner sees it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OffRecordSessionView {
+    /// What later calls and the session header name it by. A stretch a
+    /// creator entered answers its opaque instance handle (FIX 4597); its
+    /// creator may name it by their own name for it too. A handle is no
+    /// authority: it binds only for its creator, or the owner on their proof.
     pub session_ref: String,
     /// `off_record`, `on_record` or `anonymous`.
     pub mode: OffRecordMode,
@@ -171,10 +177,11 @@ pub struct OffRecordExecuted {
 }
 
 /// A session row on a bare embedded handle: refused, as this handle binds no
-/// session manager. The session lives on the served host that entered it,
-/// which admits its manager (its creator or the vault's owner) on every
-/// call; the engine's in-process served client reaches that host from the
-/// same process, as a remote client reaches a server.
+/// session manager. The session lives in the served host's RAM, the host
+/// that entered it, which admits its manager (its creator or the vault's
+/// owner) on every call; the engine's in-process served client reaches that
+/// host from the same process, as a remote client reaches a server. No port
+/// injects a manager into a bare handle (Engine ruling FIX 4595).
 ///
 /// # Errors
 ///
@@ -183,7 +190,7 @@ pub fn off_record_host_only<I, T>(_memory: &Memory<'_>, verb: &str, _input: &I) 
     Err(MemoryError::new(
         MEMORY_CODE_MODEL_UNAVAILABLE,
         format!(
-            "{verb} acts on an off-record session through the served host that holds it; this bare handle binds no session manager"
+            "{verb} cannot use this bare handle: the session lives in the served host's RAM; this handle binds no session manager"
         ),
         &[super::sdk_host::SERVED_CLIENT_HINT],
     ))

@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1049 facade rows, 3536 declarations.
+Census: 1049 facade rows, 3537 declarations.
 Inputs: 985 of 1049 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 939 of 1049 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
@@ -7860,8 +7860,12 @@ class LegalHold(TypedDict):
     ends_at: NotRequired[int | None]
     secret_until: NotRequired[int | None]
     matter_ref: NotRequired[str | None]
+    legal_basis_ref: NotRequired[str | None]
+    jurisdiction: NotRequired[str | None]
+    issuing_authority_ref: NotRequired[str | None]
     lifted_at: NotRequired[int | None]
     owner_told: NotRequired[bool]
+    requires_non_use: NotRequired[bool]
 class LegalHoldWidenRequest(TypedDict):
     hold_id: EntityId
     targets: list[LegalHoldTarget]
@@ -7880,17 +7884,31 @@ class LegalHoldEvent(TypedDict):
     request_id: NotRequired[str | None]
 class LegalHoldLiftAndEraseRequest(TypedDict):
     records: list[EntityId]
+ErasePendingReason = Literal["historical_sweep"]
+LegalHoldBoundKind = Literal["law"]
+class LegalHoldBound(TypedDict):
+    kind: LegalHoldBoundKind
+    order_ref: NotRequired[str | None]
+    legal_basis_ref: NotRequired[str | None]
+    jurisdiction: NotRequired[str | None]
+    issuing_authority_ref: NotRequired[str | None]
+    ends_at: NotRequired[int | None]
 class LegalHoldEraseStateErased(TypedDict):
     state: Literal["erased"]
     receipt_ref: NotRequired[str | None]
 class LegalHoldEraseStateCompletionPending(TypedDict):
     state: Literal["completion_pending"]
-class LegalHoldEraseStateKeptByLegalOrder(TypedDict):
-    state: Literal["kept_by_legal_order"]
+    receipt_ref: NotRequired[str | None]
+    reason: NotRequired[ErasePendingReason | None]
+class LegalHoldEraseStateRetainedForLaw(TypedDict):
+    state: Literal["retained_for_law"]
+    bound: LegalHoldBound
+    works_self_hosted: bool
+    self_hosted_note: str
 class LegalHoldEraseStateFailed(TypedDict):
     state: Literal["failed"]
     message: str
-LegalHoldEraseState = LegalHoldEraseStateErased | LegalHoldEraseStateCompletionPending | LegalHoldEraseStateKeptByLegalOrder | LegalHoldEraseStateFailed
+LegalHoldEraseState = LegalHoldEraseStateErased | LegalHoldEraseStateCompletionPending | LegalHoldEraseStateRetainedForLaw | LegalHoldEraseStateFailed
 class LegalHoldErasedRecord(TypedDict):
     record: EntityId
     status: LegalHoldEraseState
@@ -10682,6 +10700,7 @@ class TaskTypeTreePin(TypedDict):
     fork_ref: EntityId
     tree_version: int
     nodes: list[TaskTypeNodeSpec]
+    project_ref: NotRequired[EntityId | None]
 class TypeStamp(TypedDict):
     node_id: str
     tree_version: int
@@ -10697,7 +10716,9 @@ class TaskTypeTreeView(TypedDict):
 class TaskTypeTreePinReceipt(TypedDict):
     fork_ref: EntityId
     stored: TaskTypeTreeView
-    in_force: bool
+    requested_tree_version: NotRequired[int | None]
+    project_ref: NotRequired[EntityId | None]
+    in_force: NotRequired[bool | None]
 class TaskTypeTreeRead(TypedDict):
     project_ref: NotRequired[EntityId | None]
     tree_version: NotRequired[int | None]
@@ -10771,11 +10792,12 @@ class RouteObservation(TypedDict):
     effort: ReasoningEffort
     why: str
     reused: bool
-CriticAssociation = Literal["branch_attempt", "canonical_run_ref"]
+CriticAssociation = Literal["branch_attempt", "canonical_run_ref", "declared_spawn_attempt"]
 class CriticObservation(TypedDict):
     run_ref: str
     branch_attempt_ref: EntityId
     association: CriticAssociation
+    declared_attempt_ref: NotRequired[EntityId | None]
     artifact_id: str
     target_ref: str
     type_ref: TypeStamp
@@ -11207,6 +11229,7 @@ class CriticReviewSubmit(TypedDict):
     auto_resolve_threshold: float
     catalog: Any
     critics: list[CriticBinding]
+    spawn_attempt_ref: NotRequired[str | None]
 class CritiqueTriageScores(TypedDict):
     accept: float
     revise: float
@@ -11260,6 +11283,7 @@ class CriticReviewOutcome(TypedDict):
     triage: CritiqueTriage
     artifacts: list[CritiqueArtifact]
     receipts: list[DecisionReceipt]
+    spawn_attempt_ref: NotRequired[str | None]
 class OutlineCommunication(TypedDict):
     audience: str
     outcome: str
@@ -11751,22 +11775,18 @@ class DeckProposeRequest(TypedDict):
     run_ref: str
     context: NotRequired[DeckEditContext]
     made_by: NotRequired[MadeBy | None]
-OfficeFormat = Literal["xlsx", "docx", "pptx"]
-class DeckRejectionSheet(TypedDict):
-    name: str
-    index: int
-class DeckRejectionSheetDependency(TypedDict):
-    from_sheet: str
-    to_sheet: str
-class DeckRejectionSummary(TypedDict):
-    format: OfficeFormat
-    sheets: list[DeckRejectionSheet]
-    defined_names: list[str]
-    has_pivots: bool
-    has_charts: bool
-    has_macros: bool
-    cross_sheet_dependencies: list[DeckRejectionSheetDependency]
-    unknown_parts: list[str]
+class DeckInspection(TypedDict):
+    slides: list[DeckSlideInspection]
+    ambiguities: list[DeckIdentityAmbiguity]
+    marks: IdMarks
+class DeckRejectionInspectionInspected(TypedDict):
+    state: Literal["inspected"]
+    deck: DeckInspection
+    parts: list[str]
+class DeckRejectionInspectionUnreadable(TypedDict):
+    state: Literal["unreadable"]
+    reason: str
+DeckRejectionInspection = DeckRejectionInspectionInspected | DeckRejectionInspectionUnreadable
 class DeckRejectionCheck(TypedDict):
     name: str
     passed: bool
@@ -11910,7 +11930,7 @@ class DeckTransactionRefusalDeck(TypedDict):
     detail: str
 DeckTransactionRefusal = DeckTransactionRefusalInvalid | DeckTransactionRefusalBaseChanged | DeckTransactionRefusalNotEditable | DeckTransactionRefusalStep | DeckTransactionRefusalPartDiffOutsideTransaction | DeckTransactionRefusalPackage | DeckTransactionRefusalDeck
 class DeckProposeRejection(TypedDict):
-    inspection: DeckRejectionSummary
+    inspection: DeckRejectionInspection
     report: DeckRejectionReport
     refusal: DeckTransactionRefusal
 class DeckProposeOutcome(TypedDict):
@@ -12639,7 +12659,7 @@ class CallPurposeOtherBody(TypedDict):
     name: str
 class CallPurposeOther(TypedDict):
     other: CallPurposeOtherBody
-CallPurpose = Literal["extraction", "consolidation", "answer_gen", "auto_check", "tool_routing", "voice", "eval"] | CallPurposeOther
+CallPurpose = Literal["extraction", "consolidation", "answer_gen", "auto_check", "tool_routing", "voice", "eval", "autonomy.for_human", "autonomy.own_time"] | CallPurposeOther
 class DeterministicFallback(TypedDict):
     name: str
     config: NotRequired[Any | None]
@@ -16116,6 +16136,7 @@ class ConsolidationLineageView(TypedDict):
     job_ref: str
     tries: list[ConsolidationTryView]
     chain_complete: bool
+    latest_job_ref: NotRequired[str | None]
     steps: list[ConsolidationStepRef]
     next_step: NotRequired[str | None]
 EvidenceKind = Literal["turn", "message", "note", "asset_text", "import_record"]

@@ -2135,7 +2135,7 @@ class Oneiron:
             """The owner reads the residence directives this replica holds and each machine's result as received here; a null result means not received here, not that the machine is idle."""
     class _VaultOffRecordVerbs:
         def start(self, spec: Facade.OffRecordStartRequest) -> Facade.OffRecordSessionView:
-            """The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it."""
+            """The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous, under their own name for it, and answers the handle later calls name it by."""
         def status(self, spec: Facade.OffRecordSessionRequest) -> Facade.OffRecordSessionView:
             """The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows."""
         def witness(self, spec: Facade.OffRecordWitnessRequest) -> Facade.WitnessReceipt:
@@ -2160,7 +2160,7 @@ class Oneiron:
         def status(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
             """Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk."""
         def start(self, spec: Facade.OffRecordRoomStartRequest) -> Facade.OffRecordRoomView:
-            """A person starts an off-record stretch in a room they belong to, on their own credential."""
+            """A person, or an agent within its Write Grant, starts an off-record stretch in a room they belong to, on their own credential."""
         def witness(self, spec: Facade.OffRecordRoomWitnessRequest) -> Facade.WitnessReceipt:
             """Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant."""
         def save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomSaved:

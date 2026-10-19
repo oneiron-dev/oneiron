@@ -4,8 +4,8 @@
 //!
 //! Storing is candidate storage only. The fork keeps its lifecycle and goes
 //! in force when the ordinary admission gate admits it; the receipt says
-//! whether it is in force, and nothing here admits, flips a lifecycle or
-//! registers a fork.
+//! whether it is in force for the scope the pin names, and nothing here
+//! admits, flips a lifecycle or registers a fork.
 //!
 //! The owner also reads one spawned agent by its attempt (S6): what the
 //! stores hold for it, every stamp as stored. A stamp that disagrees is an
@@ -18,10 +18,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::agent_dispatch::{
-    CoordinationPattern, SkillRevisionRef, load_team_type_tree, load_team_type_tree_at,
-    store_team_type_tree, team_shape_skill_in_force,
+    CoordinationPattern, SkillRevisionRef, load_team_type_tree_at_in_txn,
+    load_team_type_tree_in_txn, store_team_type_tree, team_shape_skill_in_force_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::error::Error;
 use crate::learning::TypeRef;
 use crate::llm::ReasoningEffort;
 use crate::llm::decision::{DecisionRung, ProviderPin};
@@ -79,13 +80,19 @@ pub struct TaskTypeNodeSpec {
 }
 
 /// An authored tree for an open local fork of the team-shape skill, at the
-/// version it is stored as. Its measured counters start at zero.
+/// version it asks to be stored as. Its measured counters start at zero.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskTypeTreePin {
     pub fork_ref: EntityId,
     pub tree_version: u64,
     pub nodes: Vec<TaskTypeNodeSpec>,
+    /// The project the pin is read in: its kept trees join the vault's in
+    /// the version check, and the receipt's `in_force` answers for it.
+    /// `None` is the vault. The pin never registers or admits the fork
+    /// there.
+    #[serde(default)]
+    pub project_ref: Option<EntityId>,
 }
 
 /// The vault's tree, or a project's: in force, or the kept tree at one
@@ -136,14 +143,29 @@ impl From<&TaskTypeTree> for TaskTypeTreeView {
     }
 }
 
-/// The tree stored on the fork, and whether that fork is the vault's
-/// team-shape skill in force: a stored tree is a candidate until the gate
-/// admits its fork.
+/// The tree stored on the fork, and whether that fork is the team-shape
+/// skill in force for the scope the pin named: a stored tree is a candidate
+/// until the gate admits its fork.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TaskTypeTreePinReceipt {
     pub fork_ref: EntityId,
+    /// The tree as stored, at the version it was stored at.
     pub stored: TaskTypeTreeView,
-    pub in_force: bool,
+    /// The version the pin asked for, given only when it differs from the
+    /// stored one: the tree was stored at the next free version because the
+    /// requested one names another structure in its lookup scope.
+    #[serde(default)]
+    pub requested_tree_version: Option<u64>,
+    /// The scope the pin was read in and `in_force` answers for: a project,
+    /// or `None` for the vault head. A project's answer says nothing of
+    /// another project's.
+    #[serde(default)]
+    pub project_ref: Option<EntityId>,
+    /// Whether the fork is the team-shape skill in force for that scope.
+    /// `None` when that could not be read after the tree was stored: unknown,
+    /// not false.
+    #[serde(default)]
+    pub in_force: Option<bool>,
 }
 
 /// The tree read (`None` when no kept tree is at the version asked) and the
@@ -365,6 +387,11 @@ pub enum CriticAssociation {
     /// A review whose run reference is the run's canonical id: it names the
     /// run, which does not prove it reviewed the run's work.
     CanonicalRunRef,
+    /// A review its caller declared for the run (`spawn_attempt_ref` on
+    /// `vault.critic.review`), under whatever run reference it chose. The
+    /// declaration is the caller's word: it does not prove the review judged
+    /// the run's output.
+    DeclaredSpawnAttempt,
 }
 
 /// One critique artifact and its calibration stamp, as stored.
@@ -373,6 +400,10 @@ pub struct CriticObservation {
     pub run_ref: String,
     pub branch_attempt_ref: EntityId,
     pub association: CriticAssociation,
+    /// The launched run's attempt a declared association names; `None` for
+    /// the others, whose branch or run reference names the run.
+    #[serde(default)]
+    pub declared_attempt_ref: Option<EntityId>,
     pub artifact_id: String,
     pub target_ref: String,
     pub type_ref: TypeStamp,
@@ -481,9 +512,12 @@ pub struct PlannedSpawnObservation {
     #[serde(default)]
     pub receipt: Option<TeamReceiptView>,
     pub routes: Vec<RouteObservation>,
-    /// Critiques keyed under a launched attempt or under a review run that
-    /// names one. Not exhaustive: a review under a run reference the caller
-    /// chose is not discoverable from an attempt.
+    /// Critiques keyed under a launched attempt, under a review run that
+    /// names one, or of a review its caller declared for one. A declaration
+    /// is not proof the review judged that run's output. Not exhaustive: a
+    /// review under a run reference the caller chose, declared for no run,
+    /// is not discoverable from an attempt, and a stored review that does
+    /// not read is an issue rather than a critique.
     pub critics: Vec<CriticObservation>,
     pub learning: Vec<LearningObservation>,
     pub issues: Vec<ObservationIssue>,
@@ -492,7 +526,10 @@ pub struct PlannedSpawnObservation {
 /// Stores an authored task-type tree on `input.fork_ref`, an open local fork
 /// of the team-shape skill, as the owner, through the tree store (which
 /// refuses a fork outside the lineage, a fork no longer open and a version
-/// behind its parent's tree). The receipt says whether the fork is in force.
+/// behind its parent's tree, and stores a version that already names
+/// another structure in its lookup scope at the next free one). The receipt
+/// gives the version stored and says whether the fork is in force for the
+/// vault or `input.project_ref`.
 ///
 /// # Errors
 ///
@@ -513,19 +550,46 @@ pub fn pin_tree_as(
         ));
     }
     check_structure(&input.nodes)?;
-    let tree = authored_tree(version, &input.nodes);
-    store_team_type_tree(vault, input.fork_ref, &tree, crate::unix_seconds_now())?;
-    let in_force = team_shape_skill_in_force(vault, None)? == Some(input.fork_ref);
+    let mut tree = authored_tree(version, &input.nodes);
+    tree.version = store_team_type_tree(
+        vault,
+        input.fork_ref,
+        &tree,
+        input.project_ref,
+        crate::unix_seconds_now(),
+    )?;
     Ok(TaskTypeTreePinReceipt {
         fork_ref: input.fork_ref,
         stored: TaskTypeTreeView::from(&tree),
-        in_force,
+        requested_tree_version: (tree.version != version).then_some(version),
+        project_ref: input.project_ref,
+        in_force: fork_in_force(vault, input.fork_ref, input.project_ref),
     })
+}
+
+/// Whether `fork` is the team-shape skill in force for `project` (`None` is
+/// the vault), read once its tree is stored. `None` when that read fails:
+/// the tree is stored either way.
+fn fork_in_force(vault: &Vault, fork: EntityId, project: Option<EntityId>) -> Option<bool> {
+    let in_force = vault
+        .store
+        .env
+        .read_txn()
+        .map_err(Error::from)
+        .and_then(|txn| team_shape_skill_in_force_in_txn(vault, &txn, project));
+    match in_force {
+        Ok(skill) => Some(skill == Some(fork)),
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "pinned tree's skill in force did not read");
+            None
+        }
+    }
 }
 
 /// Reads, as the owner, the task-type tree in force for the vault or
 /// `project_ref`, or the kept tree at `tree_version` as it was placed in,
-/// never restamped; and the team-shape skill in force there.
+/// never restamped; and the team-shape skill in force there, from the same
+/// snapshot.
 ///
 /// # Errors
 ///
@@ -536,13 +600,14 @@ pub fn read_tree_as(
     input: TaskTypeTreeRead,
 ) -> MemoryResult<TaskTypeTreeReadReply> {
     owner.revalidate(vault)?;
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let tree = match input.tree_version {
-        None => Some(load_team_type_tree(vault, input.project_ref)?),
-        Some(version) => load_team_type_tree_at(vault, input.project_ref, version)?,
+        None => Some(load_team_type_tree_in_txn(vault, &txn, input.project_ref)?),
+        Some(version) => load_team_type_tree_at_in_txn(vault, &txn, input.project_ref, version)?,
     };
     Ok(TaskTypeTreeReadReply {
         project_ref: input.project_ref,
-        in_force_skill_ref: team_shape_skill_in_force(vault, input.project_ref)?,
+        in_force_skill_ref: team_shape_skill_in_force_in_txn(vault, &txn, input.project_ref)?,
         tree: tree.as_ref().map(TaskTypeTreeView::from),
     })
 }
@@ -551,7 +616,8 @@ pub fn read_tree_as(
 /// `input.spawn_ref` runs: its dispatch's type stamp and frozen plan, the
 /// one team it started with the members that launched and the team's
 /// receipt, each launched run's seat route, the critiques found for those
-/// runs and the receipt-backed learning read. Every stamp reads as stored.
+/// runs and the receipt-backed learning read, all in one snapshot. Every
+/// stamp reads as stored.
 ///
 /// # Errors
 ///
