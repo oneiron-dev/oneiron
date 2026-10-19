@@ -211,7 +211,10 @@ pub struct DreamerWakeLiveCallView {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum DreamerWakeLeaseView {
     /// Admitted and not yet closed; `dispatched` once bytes may have left.
-    Open { reserve_units: u64, dispatched: bool },
+    Open {
+        reserve_units: u64,
+        dispatched: bool,
+    },
     /// Closed with the units it charged.
     Settled { used_units: u64 },
     /// Released untouched.
@@ -389,7 +392,11 @@ fn checkpoint_view(park: EntityId, cut: &WakeObservedCheckpoint) -> DreamerWakeC
         attempt_count: cut.attempt_count,
         wake_ref: cut.wake.entity_id().to_hex(),
         parked_at: cut.parked_at,
-        saved_steps: cut.saved_steps.iter().map(|step| hex_string(step)).collect(),
+        saved_steps: cut
+            .saved_steps
+            .iter()
+            .map(|step| hex_string(step))
+            .collect(),
         resumed: cut.resumed.as_ref().map(|resumed| DreamerWakeResumeView {
             wake_ref: resumed.wake.entity_id().to_hex(),
             at: resumed.at,

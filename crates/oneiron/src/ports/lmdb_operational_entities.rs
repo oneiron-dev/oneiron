@@ -21,7 +21,6 @@ fn stored_record(store: &Store, txn: &RwTxn<'_>, id: &EntityId) -> Result<(Vec<u
 }
 
 /// Whether a body is one MessagePack map carrying exactly one `entity_doc_ref` string.
-#[cfg(feature = "sync")]
 fn carries_one_document_pointer(body: &[u8]) -> bool {
     let mut cursor = std::io::Cursor::new(body);
     let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut cursor) else {
@@ -73,7 +72,6 @@ impl EntityStoreMaintenance for Store {
         )?;
         Ok(true)
     }
-    #[cfg(feature = "sync")]
     fn port_entity_document_pointer_put(
         &self,
         txn: &mut RwTxn<'_>,

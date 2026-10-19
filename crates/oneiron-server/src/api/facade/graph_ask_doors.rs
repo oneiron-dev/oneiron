@@ -459,13 +459,8 @@ async fn vault_questions_refresh_answer(
         if let Some(asks) = asked {
             return Ok(QuestionAnswer::union(Vec::new(), asks));
         }
-        let graph = refresh_question_with(
-            vault,
-            asker,
-            asker.entity_ref(),
-            input.id,
-            now,
-            |record| {
+        let graph =
+            refresh_question_with(vault, asker, asker.entity_ref(), input.id, now, |record| {
                 Ok(LadderGraphAnswerer::routed(
                     &server,
                     record.principal,
@@ -476,8 +471,7 @@ async fn vault_questions_refresh_answer(
                 )
                 .with_criteria(record.definition.criteria.clone())
                 .with_posture(record.definition.posture))
-            },
-        )?;
+            })?;
         Ok(QuestionAnswer::union(graph, Vec::new()))
     })
     .await

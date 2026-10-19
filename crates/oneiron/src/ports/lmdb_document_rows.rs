@@ -133,7 +133,6 @@ impl<T: ManifestDbs> DocumentRowStore for T {
         Ok(seq)
     }
 
-    #[cfg(feature = "sync")]
     fn port_document_update_put(
         &self,
         txn: &mut RwTxn<'_>,

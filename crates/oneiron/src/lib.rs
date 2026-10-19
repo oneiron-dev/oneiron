@@ -50,7 +50,6 @@ pub mod context_projection;
 pub mod conversation;
 pub(crate) mod distance;
 pub mod embed;
-#[cfg(feature = "sync")]
 pub mod entity_doc;
 pub(crate) mod fusion;
 pub mod graph_fs;

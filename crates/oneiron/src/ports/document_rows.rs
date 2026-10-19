@@ -20,7 +20,6 @@ impl DocumentSlot {
 
     /// A slot named by its key spelling. Only the canonical lower-case spelling names a slot, so
     /// a key read back re-encodes to the same bytes.
-    #[cfg(feature = "sync")]
     pub(crate) fn from_hex(hex: &str) -> Result<Self> {
         Self::parse(hex).ok_or(crate::Error::CorruptedIndex("entity document slot"))
     }
@@ -89,7 +88,6 @@ pub(crate) trait DocumentRowStore: Transactions {
         update: &[u8],
     ) -> Result<u32>;
     /// Writes one update at a place its caller numbers; the counter does not move.
-    #[cfg(feature = "sync")]
     fn port_document_update_put(
         &self,
         txn: &mut Self::Write<'_>,

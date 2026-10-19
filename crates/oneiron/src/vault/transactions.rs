@@ -14,6 +14,15 @@ use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
 use crate::store::{
     Callback, EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, Rows, validate_embedding_model_id,
 };
+#[cfg(feature = "sync")]
+use crate::sync::federation_burst::check_active_in_txn as check_federation_imports_in_txn;
+
+/// A build without sync runs no federation import, so a write has no
+/// import authority to recheck (FIX 4248).
+#[cfg(not(feature = "sync"))]
+fn check_federation_imports_in_txn(_vault: &Vault, _txn: &heed::RoTxn<'_>) -> Result<()> {
+    Ok(())
+}
 
 /// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
 /// a pathological prefix scans a very large sync_state database. Deletion's
@@ -465,7 +474,7 @@ impl Vault {
                 let _active_write_txn = crate::store::active_write_txn_guard();
                 let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
                 // A key this write's mask found raises its notice here.
-                match crate::sync::federation_burst::check_active_in_txn(self, wtxn)
+                match check_federation_imports_in_txn(self, wtxn)
                     .map_err(E::from)
                     .and_then(|()| f(wtxn))
                     .and_then(|result| {
