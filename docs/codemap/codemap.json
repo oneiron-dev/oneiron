@@ -2047,7 +2047,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 4
      }
     },
@@ -3076,7 +3076,7 @@
      "path": "src/authority/left_notices.rs",
      "purpose": "A removed person's own notices of losing a shared vault (OF-158 client leave)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3
      }
     },
@@ -3163,7 +3163,7 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 11,
       "struct": 3
@@ -3216,7 +3216,7 @@
      "path": "src/authority/machine_profile/owner_answers.rs",
      "purpose": "The owner's machine answers (mesh PR1b): a profile revision that carries his act ([`OwnerAct`]), signed by…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 2
      }
     },
@@ -3227,7 +3227,7 @@
      "path": "src/authority/machine_standing.rs",
      "purpose": "A machine's standing as the owner-act fold reads it: each chain's revisions, the carrier rule and its…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -3666,6 +3666,7 @@
      "path": "src/authority/slip_vault/courtesy.rs",
      "purpose": "The host's signature on a courtesy deletion ask and on its answer (OF-273)",
      "surface": {
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -4334,7 +4335,7 @@
      "path": "src/authority/world_refold.rs",
      "purpose": "A world edit, a world key record or a grant travel choice above a main-log row the fold did not keep, folded…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -18957,6 +18958,16 @@
       "enum": 4,
       "fn": 13,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/coop_delivery/refresh.rs",
+     "purpose": "A courtesy try across this vault's own host re-root (FIX 5088; Engine 10-19 15:0x)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -61710,7 +61721,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62790,7 +62801,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3848,
+   "source_files": 3849,
    "test_files": 902
   },
   "oneiron-android": {
