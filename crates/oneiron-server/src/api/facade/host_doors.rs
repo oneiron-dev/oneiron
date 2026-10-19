@@ -58,6 +58,7 @@ pub(crate) use super::browser_doors::*;
 pub(crate) use super::calendar_doors::*;
 pub(crate) use super::campaign_doors::*;
 pub(crate) use super::compliance_doors::*;
+pub(crate) use super::saved_query_doors::*;
 pub(crate) use super::credential_doors::*;
 pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 
@@ -1734,6 +1735,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
             super::guest_document_doors::guest_document_reader(server, auth).map(drop)
         }
         "execute_code" => super::foreign_code_doors::foreign_code_admits(server, auth),
+        "self.saved_query.evaluate" => super::saved_query_doors::admits(server, auth),
         "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
         "vault.artifacts.ask" | "vault.artifacts.admit" => {

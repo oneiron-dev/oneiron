@@ -826,6 +826,36 @@ export_facade! {
     let output = client.vault_campaign_program_archive(&input)?;
     crate::codec::lift_record("vault.campaign.program.archive", &output)
 };
+"self.saved_query.create" => fn self_saved_query_create(&self, input: SavedQueryCreateRequest) -> SavedQueryRecordView = |client| {
+    let input: oneiron::campaign::surface::SavedQueryCreateRequest = crate::codec::lower_record("self.saved_query.create", input)?;
+    let output = client.self_saved_query_create(&input)?;
+    crate::codec::lift_record("self.saved_query.create", &output)
+};
+"self.saved_query.read" => fn self_saved_query_read(&self, input: SavedQueryReadRequest) -> SavedQueryReadResult = |client| {
+    let input: oneiron::campaign::surface::SavedQueryReadRequest = crate::codec::lower_record("self.saved_query.read", input)?;
+    let output = client.self_saved_query_read(&input)?;
+    crate::codec::lift_record("self.saved_query.read", &output)
+};
+"self.saved_query.update" => fn self_saved_query_update(&self, input: SavedQueryUpdateRequest) -> SavedQueryRecordView = |client| {
+    let input: oneiron::campaign::surface::SavedQueryUpdateRequest = crate::codec::lower_record("self.saved_query.update", input)?;
+    let output = client.self_saved_query_update(&input)?;
+    crate::codec::lift_record("self.saved_query.update", &output)
+};
+"self.saved_query.archive" => fn self_saved_query_archive(&self, input: SavedQueryArchiveRequest) -> SavedQueryRecordView = |client| {
+    let input: oneiron::campaign::surface::SavedQueryArchiveRequest = crate::codec::lower_record("self.saved_query.archive", input)?;
+    let output = client.self_saved_query_archive(&input)?;
+    crate::codec::lift_record("self.saved_query.archive", &output)
+};
+"self.saved_query.members" => fn self_saved_query_members(&self, input: SavedQueryMembersRequest) -> SavedQueryMembershipPageView = |client| {
+    let input: oneiron::campaign::surface::SavedQueryMembersRequest = crate::codec::lower_record("self.saved_query.members", input)?;
+    let output = client.self_saved_query_members(&input)?;
+    crate::codec::lift_record("self.saved_query.members", &output)
+};
+"self.saved_query.evaluate" => fn self_saved_query_evaluate(&self, input: SavedQueryEvaluateRequest) -> SavedQueryEvaluationReceipt = |client| {
+    let input: oneiron::campaign::surface::SavedQueryEvaluateRequest = crate::codec::lower_record("self.saved_query.evaluate", input)?;
+    let output = client.self_saved_query_evaluate(&input)?;
+    crate::codec::lift_record("self.saved_query.evaluate", &output)
+};
 "vault.weave.report" => fn vault_weave_report(&self, input: WeaveReportRequest) -> WeaveReportView = |client| {
     let input: oneiron::claim::WeaveReportRequest = crate::codec::lower_record("vault.weave.report", input)?;
     let output = client.vault_weave_report(&input)?;

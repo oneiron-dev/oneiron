@@ -195,6 +195,12 @@ vaultCampaignProgramCreate(input: unknown): unknown
 vaultCampaignProgramRead(input: unknown): unknown
 vaultCampaignProgramUpdate(input: unknown): unknown
 vaultCampaignProgramArchive(input: unknown): unknown
+selfSavedQueryCreate(input: unknown): unknown
+selfSavedQueryRead(input: unknown): unknown
+selfSavedQueryUpdate(input: unknown): unknown
+selfSavedQueryArchive(input: unknown): unknown
+selfSavedQueryMembers(input: unknown): unknown
+selfSavedQueryEvaluate(input: unknown): unknown
 vaultWeaveReport(input: unknown): unknown
 vaultWeaveDigest(input: unknown): unknown
 vaultWeaveLens(input: unknown): unknown

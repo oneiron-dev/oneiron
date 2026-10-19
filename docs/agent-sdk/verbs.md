@@ -171,6 +171,12 @@ both bindings and their export-census tests in one change.
 - `vault.campaign.program.read`
 - `vault.campaign.program.update`
 - `vault.campaign.program.archive`
+- `self.saved_query.create`
+- `self.saved_query.read`
+- `self.saved_query.update`
+- `self.saved_query.archive`
+- `self.saved_query.members`
+- `self.saved_query.evaluate`
 - `vault.weave.report`
 - `vault.weave.digest`
 - `vault.weave.lens`

@@ -548,6 +548,24 @@ impl OneironClient {
                 "vault.campaign.program.archive" => remote_agent_verb_output::<
                     oneiron::campaign::surface::CampaignProgramRecord,
                 >(client, verb, &input),
+                "self.saved_query.create" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::SavedQueryRecordView,
+                >(client, verb, &input),
+                "self.saved_query.read" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::SavedQueryReadResult,
+                >(client, verb, &input),
+                "self.saved_query.update" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::SavedQueryRecordView,
+                >(client, verb, &input),
+                "self.saved_query.archive" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::SavedQueryRecordView,
+                >(client, verb, &input),
+                "self.saved_query.members" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::SavedQueryMembershipPageView,
+                >(client, verb, &input),
+                "self.saved_query.evaluate" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::SavedQueryEvaluationReceipt,
+                >(client, verb, &input),
                 "vault.weave.report" => {
                     remote_agent_verb_output::<oneiron::claim::WeaveReportView>(
                         client, verb, &input,
@@ -5296,6 +5314,78 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.campaign.program.archive", value)
+    }
+    pub fn self_saved_query_create(
+        &self,
+        input: &oneiron::campaign::surface::SavedQueryCreateRequest,
+    ) -> Result<oneiron::campaign::surface::SavedQueryRecordView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.saved_query.create", value)
+    }
+    pub fn self_saved_query_read(
+        &self,
+        input: &oneiron::campaign::surface::SavedQueryReadRequest,
+    ) -> Result<oneiron::campaign::surface::SavedQueryReadResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.saved_query.read", value)
+    }
+    pub fn self_saved_query_update(
+        &self,
+        input: &oneiron::campaign::surface::SavedQueryUpdateRequest,
+    ) -> Result<oneiron::campaign::surface::SavedQueryRecordView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.saved_query.update", value)
+    }
+    pub fn self_saved_query_archive(
+        &self,
+        input: &oneiron::campaign::surface::SavedQueryArchiveRequest,
+    ) -> Result<oneiron::campaign::surface::SavedQueryRecordView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.saved_query.archive", value)
+    }
+    pub fn self_saved_query_members(
+        &self,
+        input: &oneiron::campaign::surface::SavedQueryMembersRequest,
+    ) -> Result<oneiron::campaign::surface::SavedQueryMembershipPageView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.saved_query.members", value)
+    }
+    pub fn self_saved_query_evaluate(
+        &self,
+        input: &oneiron::campaign::surface::SavedQueryEvaluateRequest,
+    ) -> Result<oneiron::campaign::surface::SavedQueryEvaluationReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.saved_query.evaluate", value)
     }
     pub fn vault_weave_report(
         &self,

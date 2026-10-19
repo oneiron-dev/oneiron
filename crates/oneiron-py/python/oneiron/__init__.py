@@ -4575,6 +4575,9 @@ class Oneiron:
         def admission(self) -> "Oneiron._SelfAdmissionVerbs":
             return Oneiron._SelfAdmissionVerbs(self._client)
         @property
+        def saved_query(self) -> "Oneiron._SelfSavedQueryVerbs":
+            return Oneiron._SelfSavedQueryVerbs(self._client)
+        @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs":
             return Oneiron._SelfOffRecordVerbs(self._client)
         @property
@@ -4748,6 +4751,27 @@ class Oneiron:
         def receipts(self, spec):
             """Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay."""
             return json.loads(_translate(lambda: self._client.self_admission_receipts(json.dumps(spec))))
+    class _SelfSavedQueryVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, spec):
+            """Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller."""
+            return json.loads(_translate(lambda: self._client.self_saved_query_create(json.dumps(spec))))
+        def read(self, spec):
+            """One saved query the caller owns; a query absent or not the caller's reads as not found."""
+            return json.loads(_translate(lambda: self._client.self_saved_query_read(json.dumps(spec))))
+        def update(self, spec):
+            """Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check."""
+            return json.loads(_translate(lambda: self._client.self_saved_query_update(json.dumps(spec))))
+        def archive(self, spec):
+            """Archives a saved query under a definition-version check: it stays readable and is never evaluated again."""
+            return json.loads(_translate(lambda: self._client.self_saved_query_archive(json.dumps(spec))))
+        def members(self, spec):
+            """One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved."""
+            return json.loads(_translate(lambda: self._client.self_saved_query_members(json.dumps(spec))))
+        def evaluate(self, spec):
+            """Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity."""
+            return json.loads(_translate(lambda: self._client.self_saved_query_evaluate(json.dumps(spec))))
     class _SelfOffRecordVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

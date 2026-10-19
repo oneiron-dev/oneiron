@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1051 code-mode rows (1027 host rows, 24 run rows), 3493 declarations.
-// Replies: 943 fully typed, 104 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1057 code-mode rows (1033 host rows, 24 run rows), 3517 declarations.
+// Replies: 944 fully typed, 109 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 106; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -732,6 +732,34 @@ declare namespace Sdk {
   type CampaignProgramReadResult = { found: boolean; record?: CampaignProgramRecord | null };
   type UpdateCampaignProgramRequest = { campaign_ref: string; program_ref: string; expected_definition_version: number; name: string; steps: CampaignProgramStepSpec[]; audience?: CampaignProgramAudienceSpec | null };
   type ArchiveCampaignProgramRequest = { campaign_ref: string; program_ref: string; expected_definition_version: number };
+  type SavedQueryScopeSpec = { worlds?: EntityId[]; facets?: string[] };
+  type ClaimComparison = "exists" | "eq" | "not_eq" | "lt" | "lte" | "gt" | "gte" | "contains";
+  type SavedQueryFilterSpec = { op: "task_owner"; owner: EntityId } | { op: "all"; terms: SavedQueryFilterSpec[] } | { op: "any"; terms: SavedQueryFilterSpec[] } | { op: "not"; term: SavedQueryFilterSpec } | { op: "claim"; predicate: string; cmp: ClaimComparison; value?: unknown } | { op: "edge_exists"; edge_kind: string; target?: EntityId | null };
+  type SavedQueryMatcherSpec = { kind: "hard"; expression: SavedQueryFilterSpec } | { kind: "semantic_threshold"; exemplar_ref: EntityId; minimum_similarity_micros: number } | { kind: "llm_judge"; model_id: string; rubric?: unknown; rubric_version: string };
+  type EvalMode = "reactive" | "wake" | "manual";
+  type SavedQueryEvalSpec = { mode: EvalMode; max_entities_per_wake: number; max_judges_per_wake: number };
+  type SavedQueryCreateRequest = { schema_version?: number; scope?: SavedQueryScopeSpec; filter: SavedQueryFilterSpec; matcher: SavedQueryMatcherSpec; eval: SavedQueryEvalSpec };
+  type SavedQueryLifecycle = { state: "active" } | { state: "paused"; error: string } | { state: "disabled" } | { state: "archived" };
+  type SavedQueryDefinitionView = { schema_version: number; owner_actor: EntityId; scope: SavedQueryScopeSpec; definition_version: number; filter: SavedQueryFilterSpec; matcher: SavedQueryMatcherSpec; eval: SavedQueryEvalSpec; lifecycle: SavedQueryLifecycle };
+  type SavedQueryRecordView = { query_ref: EntityId; definition: SavedQueryDefinitionView; created_at: number; updated_at: number };
+  type SavedQueryReadRequest = { query_ref: EntityId };
+  type SavedQueryReadResult = { found: boolean; record?: SavedQueryRecordView | null };
+  type SavedQueryUpdateRequest = { query_ref: EntityId; expected_definition_version: number; scope?: SavedQueryScopeSpec; filter: SavedQueryFilterSpec; matcher: SavedQueryMatcherSpec; eval: SavedQueryEvalSpec };
+  type SavedQueryArchiveRequest = { query_ref: EntityId; expected_definition_version: number };
+  type SavedQueryMembersRequest = { query_ref: EntityId; cursor?: string | null; limit?: number; at_epoch?: number | null };
+  type SavedQueryMembershipRowView = { entity_ref: EntityId; state: string; entered_valid: number; entered_detected: number; exited_valid?: number | null; exited_detected?: number | null; cause?: string | null };
+  type SavedQueryMembershipPageView = { rows: SavedQueryMembershipRowView[]; next_cursor?: string | null };
+  type SavedQueryEvaluateRequest = { query_ref: EntityId; candidates?: EntityId[]; after?: EntityId | null };
+  type MatchVerdict = "match" | "no_match";
+  type SavedQueryMemoReceipt = { definition_version: number; verdict: MatchVerdict; why: string; content_hash: string; model_id: string; version: string; params_hash: string; evaluated_at: number };
+  type ProviderPin = { rung: DecisionRung; model: string; version: string };
+  type LlmInputUsage = { total: number; cache_read: number; cache_write: number };
+  type LlmOutputUsage = { total: number; text: number; reasoning: number };
+  type LlmUsage = { input: LlmInputUsage; output: LlmOutputUsage; raw_provider: unknown };
+  type SavedQueryGenerationReceipt = { request_hash: string; usage: LlmUsage };
+  type SavedQueryJudgeReceipt = { providers: ProviderPin[]; cost_per_thousand?: number | null; generations: SavedQueryGenerationReceipt[] };
+  type SavedQueryEntityReceipt = { entity_ref: EntityId; verdict: MatchVerdict; why: string; evidence_hash: string; memo_hit: boolean; judge_ran: boolean; memo?: SavedQueryMemoReceipt | null; judge?: SavedQueryJudgeReceipt | null };
+  type SavedQueryEvaluationReceipt = { query_ref: EntityId; owner_actor: EntityId; definition_version: number; evaluated: number; memo_hits: number; judges_run: number; resume_after?: EntityId | null; outcomes: SavedQueryEntityReceipt[] };
   type WeaveSectionKind = "changes" | "projects" | "open_asks" | "links" | "conflicts" | "exceptions" | "admissions" | "budgets" | "sieve_score" | "digest";
   type WeaveSectionInput = { kind: WeaveSectionKind; predicates?: string[]; edge_kinds?: string[] };
   type WeaveReportRequest = { sections: WeaveSectionInput[] };
@@ -944,7 +972,6 @@ declare namespace Sdk {
   type TradeoffRole = { author: EntityId } | { board: { project: EntityId; people: EntityId[] } } | { vault_owner: EntityId[] };
   type GoalAxisScore = { kind: GoalAxisKind; before: number; after: number };
   type SkillTradeoffQuestion = { goal_id: EntityId; goal_revision: string; project?: EntityId | null; roles: TradeoffRole[]; proposal: EntityId; proposal_digest: string; target_digest: string; evidence_digest: string; world_digest: string; axes: Record<string, GoalAxisScore>; gains: string[]; losses: string[] };
-  type ProviderPin = { rung: DecisionRung; model: string; version: string };
   type JevTradeoffVerdict = { question_digest: string; choice: TradeoffChoice; probability: number; pin: ProviderPin };
   type SkillTradeoffAsk = { pending: EntityId; question: SkillTradeoffQuestion; jev?: JevTradeoffVerdict | null; rung: number };
   type SkillOptimizeTradeoffAskView = { question_digest: string; ask: SkillTradeoffAsk };
@@ -2556,9 +2583,6 @@ declare namespace Sdk {
   type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
   type ModelStepRetryPolicy = { max_attempts: number };
   type ModelStepSubmit = { step_key: string; request: LlmRequest; retry?: ModelStepRetryPolicy };
-  type LlmInputUsage = { total: number; cache_read: number; cache_write: number };
-  type LlmOutputUsage = { total: number; text: number; reasoning: number };
-  type LlmUsage = { input: LlmInputUsage; output: LlmOutputUsage; raw_provider: unknown };
   type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason };
   type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input";
   type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
@@ -3872,6 +3896,20 @@ declare namespace self {
   const run: {
     /** Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls. */
     attach(input: Sdk.RunAttachRequest): Promise<Sdk.RunAttached | StoredResult>;
+  };
+  const saved_query: {
+    /** Archives a saved query under a definition-version check: it stays readable and is never evaluated again. */
+    archive(input: Sdk.SavedQueryArchiveRequest): Promise<Sdk.SavedQueryRecordView | StoredResult>;
+    /** Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller. */
+    create(input: Sdk.SavedQueryCreateRequest): Promise<Sdk.SavedQueryRecordView | StoredResult>;
+    /** Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity. */
+    evaluate(input: Sdk.SavedQueryEvaluateRequest): Promise<Sdk.SavedQueryEvaluationReceipt | StoredResult>;
+    /** One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved. */
+    members(input: Sdk.SavedQueryMembersRequest): Promise<Sdk.SavedQueryMembershipPageView | StoredResult>;
+    /** One saved query the caller owns; a query absent or not the caller's reads as not found. */
+    read(input: Sdk.SavedQueryReadRequest): Promise<Sdk.SavedQueryReadResult | StoredResult>;
+    /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check. */
+    update(input: Sdk.SavedQueryUpdateRequest): Promise<Sdk.SavedQueryRecordView | StoredResult>;
   };
   const secrets: {
     /** Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value. */
