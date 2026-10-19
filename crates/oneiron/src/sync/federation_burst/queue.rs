@@ -100,7 +100,10 @@ impl DeferredWork {
     }
 
     pub(in crate::sync) fn revalidate_authority_in_txn(
-        &self, vault: &Vault, txn: &heed::RoTxn<'_>, peer: &FederationPeer,
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        peer: &FederationPeer,
     ) -> Result<()> {
         if self.authority_digest != peer.authority_digest_in_txn(vault, txn)? {
             return Err(crate::Error::InvalidConfig("federation batch grant or pact scope changed; reject the retained batch and send a newly authorized delivery".into()));
@@ -277,13 +280,17 @@ impl DeferredWork {
     }
 
     pub(in crate::sync) fn update_by_id(
-        vault: &Vault, peer: &FederationPeer, id: &[u8; 32],
+        vault: &Vault,
+        peer: &FederationPeer,
+        id: &[u8; 32],
     ) -> Result<Option<Self>> {
         Self::find_update(vault, peer, Some(id))
     }
 
     fn find_update(
-        vault: &Vault, peer: &FederationPeer, id: Option<&[u8; 32]>,
+        vault: &Vault,
+        peer: &FederationPeer,
+        id: Option<&[u8; 32]>,
     ) -> Result<Option<Self>> {
         peer.revalidate(vault)?;
         let txn = vault.store.env.read_txn()?;
@@ -302,7 +309,9 @@ impl DeferredWork {
             {
                 return Err(corrupt());
             }
-            if id.is_some_and(|id| work.id != *id) { continue; }
+            if id.is_some_and(|id| work.id != *id) {
+                continue;
+            }
             work.revalidate_authority_in_txn(vault, &txn, peer)?;
             if work.kind != WorkKind::Selector
                 && (work.isolated_update.is_none()
