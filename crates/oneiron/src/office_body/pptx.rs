@@ -503,6 +503,7 @@ impl Vault {
                 source_version: source(&self.store, wtxn, artifact)?.source_version,
                 actor: BodyActor::Actor(actor.entity_ref()),
                 author: actor.entity_ref().to_hex(),
+                token: None,
                 at,
                 changes: export.outcome.changed_parts.len() as u64,
                 recalc: None,

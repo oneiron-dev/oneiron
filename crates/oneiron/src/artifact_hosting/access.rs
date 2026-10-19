@@ -312,6 +312,8 @@ impl Vault {
             bytes,
             crate::secret_custody::SecretSight::Masked,
         )?;
+        // A DOCX copy shows its default author (FIX 4513).
+        let bytes = self.resolve_docx_authors_in_txn(txn, bytes)?;
         let size_bytes = u64::try_from(bytes.len())
             .map_err(|_| Error::ArithmeticOverflow("artifact served length"))?;
         Ok(Some(ArtifactServedFile {

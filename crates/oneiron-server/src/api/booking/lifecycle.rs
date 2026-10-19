@@ -6,11 +6,12 @@ use oneiron::booking::{
     SolveResult, VaultActiveHoldSource, run_booking_lifecycle_attempt,
 };
 use oneiron::dreamer_runner::DreamerHomeNodeClass;
+use oneiron::memory::ProducerRows;
 use oneiron::{CalendarSel, DreamerRunnerStore, EntityId, Vault};
 
 use super::constants::BOOKING_LIFECYCLE_LEASE_OWNER;
 use super::helpers::engine_read_error;
-use super::page_token::page_event_type_configs_engine;
+use super::page_token::page_event_type_configs_listed;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
@@ -55,7 +56,8 @@ pub(super) async fn run_booking_verb(
                 page_ref,
                 exclude_session_key: oracle_request.exclude_session_key.or(exclude_session),
                 now_utc: now,
-                calendars: page_calendar_bindings(vault, page_ref)?,
+                calendars: page_calendar_bindings(vault, page_ref)?.0,
+                producers: None,
             })
         },
         &BookingLifecycleConsumerInput {
@@ -123,11 +125,17 @@ pub(super) struct ServerBookingOracle<'a> {
     exclude_session_key: Option<SessionKey>,
     now_utc: u64,
     calendars: Vec<(EntityId, Vec<CalendarSel>)>,
+    /// Where a listing oracle lists every row its solves read (FIX 4777);
+    /// `None` lists none.
+    producers: Option<&'a ProducerRows>,
 }
 
 impl SlotOracle for ServerBookingOracle<'_> {
     fn solve(&self, request: &SolveRequest) -> Result<SolveResult, BookingError> {
-        self.with_solver(|solver| solver.solve(request))
+        self.with_solver(|solver| match self.producers {
+            Some(producers) => solver.solve_listing(request, None, producers),
+            None => solver.solve(request),
+        })
     }
 
     fn solve_moving(
@@ -135,7 +143,10 @@ impl SlotOracle for ServerBookingOracle<'_> {
         request: &SolveRequest,
         moving: EntityId,
     ) -> Result<SolveResult, BookingError> {
-        self.with_solver(|solver| solver.solve_moving(request, moving))
+        self.with_solver(|solver| match self.producers {
+            Some(producers) => solver.solve_listing(request, Some(moving), producers),
+            None => solver.solve_moving(request, moving),
+        })
     }
 }
 
@@ -171,8 +182,31 @@ pub(super) fn booking_oracle<'a>(
         page_ref,
         exclude_session_key,
         now_utc: now,
-        calendars: page_calendar_bindings(&server.vault, page_ref)?,
+        calendars: page_calendar_bindings(&server.vault, page_ref)?.0,
+        producers: None,
     })
+}
+
+/// [`booking_oracle`] that lists in `producers` every row its solves read
+/// (FIX 4777), beside the live `booking.event_type` claims its host to
+/// calendar binding was read from.
+pub(super) fn booking_oracle_listing<'a>(
+    server: &'a SyncServer,
+    page_ref: EntityId,
+    exclude_session_key: Option<SessionKey>,
+    now: u64,
+    producers: &'a ProducerRows,
+) -> Result<(ServerBookingOracle<'a>, Vec<EntityId>), ApiError> {
+    let (calendars, claims) = page_calendar_bindings(&server.vault, page_ref)?;
+    let oracle = ServerBookingOracle {
+        vault: &server.vault,
+        page_ref,
+        exclude_session_key,
+        now_utc: now,
+        calendars,
+        producers: Some(producers),
+    };
+    Ok((oracle, claims))
 }
 
 /// The request-time host to calendar binding the solver asks CAL through.
@@ -181,13 +215,15 @@ pub(super) fn booking_oracle<'a>(
 /// contaminated by another host's feed. The selector stays unfiltered because
 /// the passport-index selector is CAL-02's and is ignored on this baseline; a
 /// host with no configured calendar is a configuration defect the solver
-/// refuses, not a free host.
+/// refuses, not a free host. Beside it, the claims it was read from.
 fn page_calendar_bindings(
     vault: &Vault,
     page_ref: EntityId,
-) -> Result<Vec<(EntityId, Vec<CalendarSel>)>, BookingError> {
+) -> Result<(Vec<(EntityId, Vec<CalendarSel>)>, Vec<EntityId>), BookingError> {
     let mut bindings: Vec<(EntityId, Vec<CalendarSel>)> = Vec::new();
-    for config in page_event_type_configs_engine(vault, page_ref)? {
+    let mut claims = Vec::new();
+    for (config, claim) in page_event_type_configs_listed(vault, page_ref)? {
+        claims.push(claim);
         for host in &config.hosts {
             if bindings.iter().any(|(id, _)| *id == host.host_ref) {
                 continue;
@@ -195,5 +231,5 @@ fn page_calendar_bindings(
             bindings.push((host.host_ref, vec![CalendarSel { system: None }]));
         }
     }
-    Ok(bindings)
+    Ok((bindings, claims))
 }

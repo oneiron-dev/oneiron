@@ -49,6 +49,9 @@ use loro::{CommitOptions, ExportMode, LoroDoc};
 ///
 /// A world flagged device-only (`device_only`, read once per packing pass)
 /// keeps its WORLD row, its claims and its NOTEs on this device too.
+///
+/// A file-plane ASSET stays too (FIX 5393): its row holds a manifest, not
+/// its bytes. A pending mirror of it keeps its marker for the body transport.
 pub(super) fn window_packing_excludes_entity(
     vault: &Vault,
     device_only: &std::collections::BTreeSet<EntityId>,
@@ -57,6 +60,7 @@ pub(super) fn window_packing_excludes_entity(
     let rtxn = vault.store.env.read_txn()?;
     if crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, &rtxn, id)?
         || crate::settings::device_only_withholds(&vault.store, &rtxn, device_only, id)?
+        || crate::sync::asset_body::file_row_at(&vault.store, &rtxn, id)?
     {
         return Ok(true);
     }

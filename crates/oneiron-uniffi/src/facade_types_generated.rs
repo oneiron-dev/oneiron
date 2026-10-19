@@ -48582,6 +48582,8 @@ pub struct OfficeBodyExportRecord {
     pub actor: String,
     #[serde(rename = "author")]
     pub author: String,
+    #[serde(rename = "token", default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
     #[serde(rename = "at")]
     pub at: u64,
     #[serde(rename = "changes")]
