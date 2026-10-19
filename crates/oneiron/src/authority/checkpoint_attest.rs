@@ -39,16 +39,16 @@ const PIN_DIGEST_CONTEXT: &str = "oneiron/authority/checkpoint-pin/v1";
 const SLHDSA_PUBLIC_KEY_LEN: usize = 64;
 
 /// One root's attestation of one image. Key: image id + [`root_row_key`].
-const ATTESTATIONS: SideTable<([u8; 32], Vec<u8>), StoredAttestation, Named> =
+pub(super) const ATTESTATIONS: SideTable<([u8; 32], Vec<u8>), StoredAttestation, Named> =
     SideTable::new(&side_table::AUTHORITY_CHECKPOINT_ATTESTATION);
 /// The newest image whose attestations reached this vault's policy. Key: ().
-const ATTESTED_HEAD: SideTable<(), AttestedHead, Named> =
+pub(super) const ATTESTED_HEAD: SideTable<(), AttestedHead, Named> =
     SideTable::new(&side_table::AUTHORITY_CHECKPOINT_ATTESTED_HEAD);
 /// Each eligible root's certified checkpoint key. Key: [`root_row_key`].
-const KEY_BINDINGS: SideTable<Vec<u8>, AuthorityCheckpointKeyBinding, Named> =
+pub(super) const KEY_BINDINGS: SideTable<Vec<u8>, AuthorityCheckpointKeyBinding, Named> =
     SideTable::new(&side_table::AUTHORITY_CHECKPOINT_KEY_BINDING);
 
-fn attest_refused(reason: &'static str) -> Error {
+pub(super) fn attest_refused(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidAuthorityLogBody(reason))
 }
 
@@ -57,7 +57,7 @@ fn encode_err() -> Error {
 }
 
 /// A root key as a row key: a suite byte, then the key bytes.
-fn root_row_key(root: &AuthorityKey) -> Vec<u8> {
+pub(super) fn root_row_key(root: &AuthorityKey) -> Vec<u8> {
     let (suite, bytes): (u8, &[u8]) = match root {
         AuthorityKey::Ed25519(bytes) => (1, bytes.as_slice()),
         AuthorityKey::P256(bytes) => (2, bytes.as_slice()),
@@ -333,26 +333,51 @@ fn attested_roots(
                 "the attestation's key binding is not the pinned one",
             ));
         }
-        binding.verify(&root.key)?;
-        let transcript =
-            attestation_transcript(pin.vault_id, pin.genesis, *image_id, policy, binding)?;
-        if attestation.classical.public_key != root.key
-            || !verify_authority_signature(&attestation.classical, &transcript)
-        {
-            return Err(attest_refused(
-                "the attestation's classical signature does not verify",
-            ));
-        }
-        Vault::verify_authority_image(
-            &binding.install,
-            &binding.slhdsa,
-            binding.epoch,
-            &transcript,
-            &attestation.hash_based,
+        verify_root_attestation(
+            &root.key,
+            pin.vault_id,
+            pin.genesis,
+            image_id,
+            policy,
+            attestation,
         )?;
         roots.insert(root.key.clone());
     }
     Ok(roots)
+}
+
+/// Verifies one root's attestation of `image` for this vault and genesis,
+/// under the policy whose digest is `policy`, against `root` alone: its
+/// binding verifies under `root`, its classical signature verifies under
+/// `root`, and its hash-based record verifies under the install, key and
+/// epoch the binding certifies, all over one transcript. The caller has
+/// checked that `root` is its own policy's root and that the binding is the
+/// one it trusts for it: the attestation names neither (FIX 4882).
+pub(super) fn verify_root_attestation(
+    root: &AuthorityKey,
+    vault_id: [u8; 32],
+    genesis: [u8; 32],
+    image: &[u8; 32],
+    policy: [u8; 32],
+    attestation: &AuthorityCheckpointAttestation,
+) -> Result<()> {
+    let binding = &attestation.binding;
+    binding.verify(root)?;
+    let transcript = attestation_transcript(vault_id, genesis, *image, policy, binding)?;
+    if attestation.classical.public_key != *root
+        || !verify_authority_signature(&attestation.classical, &transcript)
+    {
+        return Err(attest_refused(
+            "the attestation's classical signature does not verify",
+        ));
+    }
+    Vault::verify_authority_image(
+        &binding.install,
+        &binding.slhdsa,
+        binding.epoch,
+        &transcript,
+        &attestation.hash_based,
+    )
 }
 
 /// Verifies `attestations` of `image_id` against `pin` and returns the roots
@@ -375,10 +400,10 @@ pub fn verify_authority_checkpoint_attestations(
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StoredAttestation {
+pub(super) struct StoredAttestation {
     /// The digest of the policy the attestation was made under.
-    policy: [u8; 32],
-    attestation: AuthorityCheckpointAttestation,
+    pub(super) policy: [u8; 32],
+    pub(super) attestation: AuthorityCheckpointAttestation,
 }
 
 /// The attestations stored for `image` that were made under the root policy
@@ -399,18 +424,18 @@ pub(super) fn checkpoint_attestations_under_in_txn(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AttestedHead {
-    image: [u8; 32],
+pub(super) struct AttestedHead {
+    pub(super) image: [u8; 32],
     /// The digest of the policy its attestations reached.
-    policy: [u8; 32],
+    pub(super) policy: [u8; 32],
 }
 
 /// What an attestation is made against, read in one transaction.
 #[derive(Clone, PartialEq, Eq)]
-struct CheckpointContext {
-    vault_id: [u8; 32],
-    genesis: [u8; 32],
-    policy: CheckpointRootPolicy,
+pub(super) struct CheckpointContext {
+    pub(super) vault_id: [u8; 32],
+    pub(super) genesis: [u8; 32],
+    pub(super) policy: CheckpointRootPolicy,
 }
 
 impl CheckpointContext {
@@ -423,7 +448,10 @@ impl CheckpointContext {
 }
 
 impl Vault {
-    fn checkpoint_context_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<CheckpointContext> {
+    pub(super) fn checkpoint_context_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<CheckpointContext> {
         let genesis = self
             .authority_fold_readonly_in_txn(txn)?
             .vault_id
@@ -484,7 +512,7 @@ impl Vault {
     }
 
     /// Whether the stored attestations of `image` reach `context`'s policy.
-    fn image_attested_in_txn(
+    pub(super) fn image_attested_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         context: &CheckpointContext,
@@ -597,29 +625,14 @@ impl Vault {
         }
         binding.verify(root)?;
         let policy = context.policy.digest()?;
-        let transcript =
-            attestation_transcript(context.vault_id, context.genesis, image, policy, &binding)?;
-        let classical = AuthoritySignature {
-            suite: root.suite(),
-            public_key: root.clone(),
-            signature: sign(&transcript)?,
-        };
-        if !verify_authority_signature(&classical, &transcript) {
-            return Err(attest_refused(
-                "the root's classical signature does not verify",
-            ));
-        }
-        let (install, slhdsa, hash_based) = self.sign_authority_image(&transcript)?;
-        if install != binding.install || slhdsa != binding.slhdsa {
-            return Err(attest_refused(
-                "this install's checkpoint key is not the bound one",
-            ));
-        }
-        let attestation = AuthorityCheckpointAttestation {
+        let attestation = self.sign_checkpoint_attestation(
+            context.vault_id,
+            context.genesis,
+            image,
+            policy,
             binding,
-            classical,
-            hash_based,
-        };
+            sign,
+        )?;
         let key = root_row_key(root);
         let mut txn = self.store.env.write_txn()?;
         if self.checkpoint_context_in_txn(&txn)? != context
@@ -644,6 +657,45 @@ impl Vault {
         }
         txn.commit()?;
         Ok(attestation)
+    }
+
+    /// `binding`'s root attests image `image` of this vault and genesis under
+    /// the policy whose digest is `policy`, storing nothing: `sign` makes the
+    /// root's classical signature over the transcript it is handed, and this
+    /// install the hash-based one under the key `binding` certifies, which
+    /// must be this install's.
+    pub(super) fn sign_checkpoint_attestation(
+        &self,
+        vault_id: [u8; 32],
+        genesis: [u8; 32],
+        image: [u8; 32],
+        policy: [u8; 32],
+        binding: AuthorityCheckpointKeyBinding,
+        sign: impl FnOnce(&[u8]) -> Result<Vec<u8>>,
+    ) -> Result<AuthorityCheckpointAttestation> {
+        let root = binding.root.clone();
+        let transcript = attestation_transcript(vault_id, genesis, image, policy, &binding)?;
+        let classical = AuthoritySignature {
+            suite: root.suite(),
+            public_key: root,
+            signature: sign(&transcript)?,
+        };
+        if !verify_authority_signature(&classical, &transcript) {
+            return Err(attest_refused(
+                "the root's classical signature does not verify",
+            ));
+        }
+        let (install, slhdsa, hash_based) = self.sign_authority_image(&transcript)?;
+        if install != binding.install || slhdsa != binding.slhdsa {
+            return Err(attest_refused(
+                "this install's checkpoint key is not the bound one",
+            ));
+        }
+        Ok(AuthorityCheckpointAttestation {
+            binding,
+            classical,
+            hash_based,
+        })
     }
 
     /// The host path: attests `image` with this engine's own host root key,

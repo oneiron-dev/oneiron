@@ -16,8 +16,10 @@
 //! the pack's SKILL.md in its task before its other skills: a fresh run's
 //! task takes it, a process re-entry builds the same task from the same
 //! frozen bytes, and a continuation, whose task is its source's fork, reuses
-//! the exposure its source kept once the forked task holds the body there.
-//! Nothing reads the skill's current head or runs an exploration trial.
+//! the exposure its source run kept once the forked task holds the body
+//! there. Each run keeps its own exposure, so a retry never moves the one a
+//! continuation of an older run reads. Nothing reads the skill's current
+//! head or runs an exploration trial.
 
 use std::sync::Arc;
 
@@ -26,6 +28,7 @@ use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, SpawnNeed, T
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use oneiron::code_run::TaskExposure;
 use oneiron::engine_executor::EngineExecutorConfig;
+use oneiron::engine_executor::continuation::run_continuation;
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::llm::seat::ModelSeat;
 use oneiron::llm::{LlmError, LlmRequest, LlmResponse, ResponseFormat};
@@ -246,15 +249,17 @@ impl AgentPatternLaunchRunner {
 /// no planned team. The pack is the snapshot its launch froze. A fresh
 /// run's task takes the pack's SKILL.md after the separator its other
 /// skills take; a continued run's task, its source's fork, holds it already,
-/// where the exposure its source kept says, and takes nothing again. The
-/// pack's manifest row and the exposure are then recorded on the run's own
-/// lease, the row once.
+/// where the exposure its source run (the run its checkpoint names) kept
+/// says, and takes nothing again. The pack's manifest row and the exposure
+/// are then recorded on the run's own lease, the row once and the exposure
+/// under the run's own id, which a continuation of this run reads.
 ///
 /// # Errors
 ///
 /// A record-only pack, or one with no SKILL.md text; a continued run whose
-/// source kept no exposure, or whose task does not hold the body where it
-/// says; the engine's refusals, a damaged launch included; storage errors.
+/// source run kept no exposure, or whose task does not hold the body where
+/// it says; the engine's refusals, a damaged launch included; storage
+/// errors.
 pub(super) fn leader_exposure(
     vault: &Vault,
     leased: &AttemptRecord,
@@ -270,7 +275,12 @@ pub(super) fn leader_exposure(
     let body = skill_text(pack)?;
     let revision = format!("{}@{}", pack.skill_id(), pack.version());
     let exposure = if continues {
-        let kept = launch.exposure.ok_or_else(|| refused(NO_KEPT_EXPOSURE))?;
+        // The source run's own exposure, never the latest retry's.
+        let source = run_continuation(vault, leased.id)?
+            .map(|continuation| continuation.checkpoint.source_run);
+        let kept = source
+            .and_then(|source| launch.exposures.get(&source).cloned())
+            .ok_or_else(|| refused(NO_KEPT_EXPOSURE))?;
         held_in(&config.task, kept, body, pack.entity(), &revision)?
     } else {
         TaskExposure::append(
