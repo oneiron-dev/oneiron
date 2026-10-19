@@ -584,7 +584,6 @@ impl Vault {
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),
             housekeeping: Default::default(),
-            #[cfg(feature = "sync")]
             entity_docs: std::sync::Mutex::new(crate::entity_doc::EntityDocRegistry::default()),
             #[cfg(feature = "sync")]
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),

@@ -754,9 +754,11 @@ pub(super) fn keyed_text_in_txn(
 
 /// The erase hook, in the erasing transaction, before the graph is torn
 /// down. A TURN loses its tag set; a MESSAGE's turns lose theirs, and each
-/// is owed a new pass over the text it keeps. An entity a tag set names is
-/// taken out of it, and a provisional entity is retired. Returns whether
-/// anything was there.
+/// is owed a new pass over the text it keeps. A MESSAGE's turns are the
+/// ones [`source_turns_in_txn`] finds, so a MESSAGE erased after its window
+/// was demoted still frees the kept turns whose sets list it. An entity a
+/// tag set names is taken out of it, and a provisional entity is retired.
+/// Returns whether anything was there.
 pub(crate) fn erase_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -771,7 +773,7 @@ pub(crate) fn erase_in_txn(
         replace_in_txn(vault, txn, id, None)?;
         existed = true;
     }
-    for turn in tagged_parts_of_in_txn(store, txn, id)? {
+    for turn in source_turns_in_txn(store, txn, id)? {
         replace_in_txn(vault, txn, &turn, None)?;
         super::mark_turn_in_txn(vault, txn, turn)?;
         existed = true;
@@ -784,13 +786,13 @@ pub(crate) fn erase_in_txn(
 /// The physical tear's hook, which every door that tears an entity down
 /// reaches, a batch delete among them, with no vault in hand: `id` leaves
 /// every tag set that names it and is retired if provisional. A tag set of
-/// `id`, or of a turn `id` is part of, is the erase doors' to settle (they
-/// run [`erase_in_txn`] first); one still here is dropped without reading
-/// any text, so each provisional entity it was the origin of is retired
-/// rather than moved.
+/// `id`, or of a turn `id` is a source of ([`source_turns_in_txn`]), is the
+/// erase doors' to settle (they run [`erase_in_txn`] first); one still here
+/// is dropped without reading any text, so each provisional entity it was
+/// the origin of is retired rather than moved.
 pub(crate) fn tear_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
     crate::dreamer_runner::maintenance::identity::erase_mention_resolutions_in_txn(store, txn, id)?;
-    let mut turns = tagged_parts_of_in_txn(store, txn, id)?;
+    let mut turns = source_turns_in_txn(store, txn, id)?;
     if TAG_SET.contains(store, txn, id)? {
         turns.push(*id);
     }
@@ -857,7 +859,48 @@ fn tagged_parts_of_in_txn(
     Ok(turns)
 }
 
-/// Whether erasing `id` has tagging rows to remove.
+/// The turns whose tag sets `id` is a source of: those it is part of by a
+/// `PartOf` edge, and every turn whose stored set lists `id` among the
+/// MESSAGE rows it was read from. A window demoted back to thin took the
+/// edges (OF-534), so a MESSAGE erased there is found by the list alone.
+/// The stored rows are read raw: the readable view hides the very sets
+/// whose message is gone, and no index leads from a message to the sets
+/// that list it, so every set is read. Each turn comes once, the edge-led
+/// ones first, all read before the caller writes.
+fn source_turns_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut turns = tagged_parts_of_in_txn(store, txn, id)?;
+    let mut seen: BTreeSet<EntityId> = turns.iter().copied().collect();
+    for row in TAG_SET.iter_from(store, txn, &[])? {
+        let (turn, tags) = row?;
+        if tags.messages.contains(id) && seen.insert(turn) {
+            turns.push(turn);
+        }
+    }
+    Ok(turns)
+}
+
+/// Whether a stored tag set lists `id` among the MESSAGE rows it was read
+/// from: the raw read of [`source_turns_in_txn`], stopping at the first.
+fn listed_as_source_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    for row in TAG_SET.iter_from(store, txn, &[])? {
+        if row?.1.messages.contains(id) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether erasing `id` has tagging rows to remove. A tag set that lists
+/// `id` as a source counts, so a headerless delete of a MESSAGE whose row a
+/// demoted window took still reaches the erase hook.
 pub(crate) fn erase_scope_exists_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -865,5 +908,6 @@ pub(crate) fn erase_scope_exists_in_txn(
 ) -> Result<bool> {
     Ok(TAG_SET.contains(store, txn, id)?
         || next_ref_in_txn(store, txn, id, None)?.is_some()
-        || provisional::exists_in_txn(store, txn, id)?)
+        || provisional::exists_in_txn(store, txn, id)?
+        || listed_as_source_in_txn(store, txn, id)?)
 }

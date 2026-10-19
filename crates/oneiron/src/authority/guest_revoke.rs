@@ -204,72 +204,125 @@ impl Vault {
         grant_ref: EntityId,
     ) -> Result<GuestRevokeOutcome> {
         self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
-            require_host(&*self.authority_view_readonly_in_txn(txn)?, issuer)?;
-            if let Some(done) = WITHDRAWN.get(&self.store, txn, &grant_ref)? {
-                let fold = self.authority_view_readonly_in_txn(txn)?;
-                return Ok(GuestRevokeOutcome {
-                    grant_ref,
-                    guest_ref: done.guest_ref,
-                    changed: false,
-                    revoked_at: done.revoked_at,
-                    revoked_slips: Vec::new(),
-                    pact: federation_grant_activation(&fold, &grant_ref),
-                    deletion_request: GuestDeletionRequestStatus::NotRequested,
-                    courtesy_targets: ended_pact_targets(&fold, grant_ref),
-                });
+            self.revoke_guest_access_in_txn(txn, owner, issuer, grant_ref)
+        })
+    }
+
+    /// [`Self::revoke_guest_access`] in the caller's writer: the whole
+    /// withdrawal commits or rolls back with the caller's transaction. A
+    /// delete of the guest's PERSON withdraws its grants here (FIX 3875).
+    pub(crate) fn revoke_guest_access_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        issuer: &HostSlipIssuer,
+        grant_ref: EntityId,
+    ) -> Result<GuestRevokeOutcome> {
+        owner.revalidate_in_txn(self, txn)?;
+        require_host(&*self.authority_view_readonly_in_txn(txn)?, issuer)?;
+        if let Some(done) = WITHDRAWN.get(&self.store, txn, &grant_ref)? {
+            let fold = self.authority_view_readonly_in_txn(txn)?;
+            return Ok(GuestRevokeOutcome {
+                grant_ref,
+                guest_ref: done.guest_ref,
+                changed: false,
+                revoked_at: done.revoked_at,
+                revoked_slips: Vec::new(),
+                pact: federation_grant_activation(&fold, &grant_ref),
+                deletion_request: GuestDeletionRequestStatus::NotRequested,
+                courtesy_targets: ended_pact_targets(&fold, grant_ref),
+            });
+        }
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        } = live_entity_row_in_txn(&self.store, txn, &grant_ref)?
+        else {
+            return Err(Error::EntityNotFound);
+        };
+        let grant = decode_federation_grant_body(&body)?;
+        if !grant.role.is_guest()
+            || !matches!(
+                grant.scope,
+                FederationGrantScope::Ask { .. } | FederationGrantScope::Connect { .. }
+            )
+        {
+            return Err(Error::EntityNotFound);
+        }
+        let revoked_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        for action in
+            live_pact_disconnects(&*self.authority_view_readonly_in_txn(txn)?, grant_ref)?
+        {
+            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
+        }
+        let revoked_slips = self.revoke_grant_slips_in_txn(txn, issuer, grant_ref)?;
+        apply_ops(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            txn,
+            vec![BatchOp::Delete { id: grant_ref }],
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )?;
+        let withdrawal = GuestWithdrawal {
+            guest_ref: grant.member_ref,
+            revoked_at,
+        };
+        WITHDRAWN.put(&self.store, txn, &grant_ref, &withdrawal)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        Ok(GuestRevokeOutcome {
+            grant_ref,
+            guest_ref: withdrawal.guest_ref,
+            changed: true,
+            revoked_at,
+            revoked_slips,
+            pact: federation_grant_activation(&fold, &grant_ref),
+            deletion_request: GuestDeletionRequestStatus::NotRequested,
+            courtesy_targets: ended_pact_targets(&fold, grant_ref),
+        })
+    }
+
+    /// The live, unwithdrawn Connect guest grants whose member is `person`
+    /// (FIX 3875): what a delete of that PERSON withdraws before it scrubs
+    /// or publishes, so no pact goes on naming a deleted actor. Every grant
+    /// is read; one whose body does not decode is no Connect guest's here.
+    pub(crate) fn live_connect_guest_grants_of_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let mut grants = Vec::new();
+        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            txn,
+            ENTITY_TYPE_FEDERATION_GRANT,
+            None,
+        )? {
+            let id = id?;
+            if WITHDRAWN.get(&self.store, txn, &id)?.is_some() {
+                continue;
             }
             let LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_FEDERATION_GRANT,
                 body,
-            } = live_entity_row_in_txn(&self.store, txn, &grant_ref)?
+            } = live_entity_row_in_txn(&self.store, txn, &id)?
             else {
-                return Err(Error::EntityNotFound);
+                continue;
             };
-            let grant = decode_federation_grant_body(&body)?;
-            if !grant.role.is_guest()
-                || !matches!(
-                    grant.scope,
-                    FederationGrantScope::Ask { .. } | FederationGrantScope::Connect { .. }
-                )
-            {
-                return Err(Error::EntityNotFound);
-            }
-            let revoked_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            for action in
-                live_pact_disconnects(&*self.authority_view_readonly_in_txn(txn)?, grant_ref)?
-            {
-                self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
-            }
-            let revoked_slips = self.revoke_grant_slips_in_txn(txn, issuer, grant_ref)?;
-            apply_ops(
-                &self.store,
-                &self.config,
-                &self.analyzer,
-                txn,
-                vec![BatchOp::Delete { id: grant_ref }],
-                self.text_index_trusted
-                    .load(std::sync::atomic::Ordering::Acquire),
-                false,
-                true,
-            )?;
-            let withdrawal = GuestWithdrawal {
-                guest_ref: grant.member_ref,
-                revoked_at,
+            let Ok(grant) = decode_federation_grant_body(&body) else {
+                continue;
             };
-            WITHDRAWN.put(&self.store, txn, &grant_ref, &withdrawal)?;
-            let fold = self.authority_view_readonly_in_txn(txn)?;
-            Ok(GuestRevokeOutcome {
-                grant_ref,
-                guest_ref: withdrawal.guest_ref,
-                changed: true,
-                revoked_at,
-                revoked_slips,
-                pact: federation_grant_activation(&fold, &grant_ref),
-                deletion_request: GuestDeletionRequestStatus::NotRequested,
-                courtesy_targets: ended_pact_targets(&fold, grant_ref),
-            })
-        })
+            if grant.role.is_guest()
+                && matches!(grant.scope, FederationGrantScope::Connect { .. })
+                && grant.member_ref == person
+            {
+                grants.push(id);
+            }
+        }
+        Ok(grants)
     }
 }
 

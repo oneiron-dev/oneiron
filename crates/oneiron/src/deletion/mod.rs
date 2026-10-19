@@ -84,7 +84,7 @@ pub use actor_fields::{
 // A checkpoint restore reruns the erase's actor sweep (FIX 3655).
 pub(crate) use actor_fields::{hard_erased_ids_in, rerun_actor_scrubs_in_txn};
 pub(crate) use derived_rows::tear_derived_rows_in_txn;
-pub(crate) use gate::{DeletionClaim, DeletionGateContext, GatedDeletion};
+pub(crate) use gate::{DeletionClaim, DeletionGateContext, GatedDeletion, GuestRevokeAuthority};
 pub(crate) use receipt::{decode_redaction_audit_receipt, validate_redaction_receipt_body};
 pub(crate) use receipt_completion::{
     append_redaction_sweep_completion_in_txn, redaction_sweep_completion_id,
