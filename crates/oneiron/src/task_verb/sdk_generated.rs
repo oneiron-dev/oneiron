@@ -1323,6 +1323,33 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.mesh.identity",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.mesh.bind_machine",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::MeshMachineBinding,
+                >(),
+            ),
+            (
+                "vault.mesh.set_alpn_grant",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::MeshAlpnGrant>(
+                ),
+            ),
+            (
+                "vault.mesh.revoke_machine",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::MeshMachineRevokeRequest,
+                >(),
+            ),
+            (
+                "vault.mesh.dial",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::MeshDialRequest>(
+                ),
+            ),
+            (
                 "vault.inspection.resolve",
                 crate::code_run::vault_read::request_schema::<crate::lens::InspectionResolveRequest>(
                 ),
@@ -5823,6 +5850,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.slim.resume_step",
     "vault.slim.drop_heavy",
     "vault.slim.resume",
+    "vault.mesh.path_receipts",
+    "vault.mesh.identity",
+    "vault.mesh.bind_machine",
+    "vault.mesh.set_alpn_grant",
+    "vault.mesh.revoke_machine",
+    "vault.mesh.dial",
     "vault.org_admin.configure",
     "vault.org_admin.powers",
     "vault.members.reset_project_access",
@@ -6869,6 +6902,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.slim.resume" => {
             crate::code_run::vault_read::request_schema::<crate::slim::public::SlimResumeReceipt>()
+        }
+        "vault.mesh.path_receipts" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::sync::mesh_path::MeshPathReceipt>,
+        >(),
+        "vault.mesh.identity" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::MeshBindingIdentity,
+        >(),
+        "vault.mesh.bind_machine" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::MeshMachineBound>()
+        }
+        "vault.mesh.set_alpn_grant" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::MeshAlpnGrant>()
+        }
+        "vault.mesh.revoke_machine" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::MeshMachineRevoked,
+        >(),
+        "vault.mesh.dial" => {
+            crate::code_run::vault_read::request_schema::<crate::sync::mesh_path::MeshPathReceipt>()
         }
         "vault.org_admin.configure" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::OrgAdminConfigured,
@@ -10235,6 +10286,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.mesh.path_receipts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mesh.identity" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mesh.bind_machine" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mesh.set_alpn_grant" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mesh.revoke_machine" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mesh.dial" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -16254,6 +16340,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.mesh.path_receipts" => {
             let _input: crate::task_verb::sdk::MeshPathReceiptsRequest = decode(value.clone())?;
         }
+        "vault.mesh.identity" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.mesh.bind_machine" => {
+            let _input: crate::task_verb::sdk::MeshMachineBinding = decode(value.clone())?;
+        }
+        "vault.mesh.set_alpn_grant" => {
+            let _input: crate::task_verb::sdk::MeshAlpnGrant = decode(value.clone())?;
+        }
+        "vault.mesh.revoke_machine" => {
+            let _input: crate::task_verb::sdk::MeshMachineRevokeRequest = decode(value.clone())?;
+        }
+        "vault.mesh.dial" => {
+            let _input: crate::task_verb::sdk::MeshDialRequest = decode(value.clone())?;
+        }
         "vault.inspection.resolve" => {
             let _input: crate::lens::InspectionResolveRequest = decode(value.clone())?;
         }
@@ -19379,6 +19480,11 @@ pub fn invoke(
         "vault.slim.drop_heavy" => encode(vault_slim_drop_heavy(memory, decode(value)?)?),
         "vault.slim.resume" => encode(vault_slim_resume(memory, decode(value)?)?),
         "vault.mesh.path_receipts" => encode(vault_mesh_path_receipts(memory, decode(value)?)?),
+        "vault.mesh.identity" => encode(vault_mesh_identity(memory, decode(value)?)?),
+        "vault.mesh.bind_machine" => encode(vault_mesh_bind_machine(memory, decode(value)?)?),
+        "vault.mesh.set_alpn_grant" => encode(vault_mesh_set_alpn_grant(memory, decode(value)?)?),
+        "vault.mesh.revoke_machine" => encode(vault_mesh_revoke_machine(memory, decode(value)?)?),
+        "vault.mesh.dial" => encode(vault_mesh_dial(memory, decode(value)?)?),
         "vault.inspection.resolve" => encode(vault_inspection_resolve(memory, decode(value)?)?),
         "vault.shared.propose_delete" => {
             encode(vault_shared_propose_delete(memory, decode(value)?)?)
@@ -23133,6 +23239,36 @@ pub fn vault_mesh_path_receipts(
     input: crate::task_verb::sdk::MeshPathReceiptsRequest,
 ) -> MemoryResult<Vec<crate::sync::mesh_path::MeshPathReceipt>> {
     crate::task_verb::sdk::mesh_path_receipts_as_owner(memory, &input)
+}
+pub fn vault_mesh_identity(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::MeshBindingIdentity> {
+    crate::task_verb::sdk::host_only(memory, "vault.mesh.identity", &input)
+}
+pub fn vault_mesh_bind_machine(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::MeshMachineBinding,
+) -> MemoryResult<crate::task_verb::sdk::MeshMachineBound> {
+    crate::task_verb::sdk::host_only(memory, "vault.mesh.bind_machine", &input)
+}
+pub fn vault_mesh_set_alpn_grant(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::MeshAlpnGrant,
+) -> MemoryResult<crate::task_verb::sdk::MeshAlpnGrant> {
+    crate::task_verb::sdk::host_only(memory, "vault.mesh.set_alpn_grant", &input)
+}
+pub fn vault_mesh_revoke_machine(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::MeshMachineRevokeRequest,
+) -> MemoryResult<crate::task_verb::sdk::MeshMachineRevoked> {
+    crate::task_verb::sdk::host_only(memory, "vault.mesh.revoke_machine", &input)
+}
+pub fn vault_mesh_dial(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::MeshDialRequest,
+) -> MemoryResult<crate::sync::mesh_path::MeshPathReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.mesh.dial", &input)
 }
 pub fn vault_inspection_resolve(
     memory: &Memory<'_>,

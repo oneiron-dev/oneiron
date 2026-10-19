@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1001 facade rows, 3401 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 953.
+// UniFFI census: 1006 facade rows, 3409 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 958.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -16443,6 +16443,102 @@ pub struct MeshPathReceipt {
     pub detail: Option<String>,
     #[serde(rename = "attempts")]
     pub attempts: u64,
+}
+
+/// `oneiron::authority::mesh_machine::doors::MeshBindingIdentity`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MeshBindingIdentity {
+    #[serde(rename = "machine")]
+    pub machine: String,
+    #[serde(rename = "device_key")]
+    pub device_key: Vec<u8>,
+    #[serde(rename = "endpoint_key")]
+    pub endpoint_key: Vec<u8>,
+    #[serde(rename = "device_proof")]
+    pub device_proof: Vec<u8>,
+    #[serde(rename = "transport_proof")]
+    pub transport_proof: Vec<u8>,
+}
+
+/// `oneiron::authority::mesh_machine::MeshMachineAddress`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MeshMachineAddress {
+    #[serde(rename = "endpoint_key")]
+    pub endpoint_key: Vec<u8>,
+    #[serde(rename = "direct_addrs")]
+    pub direct_addrs: Vec<String>,
+    #[serde(rename = "relay_url", default, skip_serializing_if = "Option::is_none")]
+    pub relay_url: Option<String>,
+}
+
+/// `oneiron::authority::mesh_machine::doors::MeshMachineBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MeshMachineBinding {
+    #[serde(rename = "machine")]
+    pub machine: String,
+    #[serde(rename = "address")]
+    pub address: MeshMachineAddress,
+    #[serde(rename = "device_key")]
+    pub device_key: Vec<u8>,
+    #[serde(rename = "pairing_slip_id")]
+    pub pairing_slip_id: Vec<u8>,
+    #[serde(rename = "device_proof")]
+    pub device_proof: Vec<u8>,
+    #[serde(rename = "transport_proof")]
+    pub transport_proof: Vec<u8>,
+}
+
+/// `oneiron::task_verb::sdk_mesh::MeshMachineBound`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MeshMachineBound {
+    #[serde(rename = "machine")]
+    pub machine: String,
+    #[serde(rename = "endpoint_key")]
+    pub endpoint_key: Vec<u8>,
+}
+
+/// `oneiron::authority::mesh_machine::doors::MeshAlpnGrant`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MeshAlpnGrant {
+    #[serde(rename = "machine")]
+    pub machine: String,
+    #[serde(rename = "endpoint_key")]
+    pub endpoint_key: Vec<u8>,
+    #[serde(rename = "alpn")]
+    pub alpn: Vec<u8>,
+    #[serde(rename = "allow")]
+    pub allow: bool,
+}
+
+/// `oneiron::task_verb::sdk_mesh::MeshMachineRevokeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MeshMachineRevokeRequest {
+    #[serde(rename = "machine")]
+    pub machine: String,
+}
+
+/// `oneiron::task_verb::sdk_mesh::MeshMachineRevoked`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MeshMachineRevoked {
+    #[serde(rename = "machine")]
+    pub machine: String,
+}
+
+/// `oneiron::task_verb::sdk_mesh::MeshDialRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MeshDialRequest {
+    #[serde(rename = "address")]
+    pub address: MeshMachineAddress,
+    #[serde(rename = "alpn")]
+    pub alpn: Vec<u8>,
 }
 
 /// `oneiron::lens::inspection::InspectionResolveRequest`.

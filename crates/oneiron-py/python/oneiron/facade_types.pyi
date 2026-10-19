@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1001 facade rows, 3427 declarations.
-Inputs: 943 of 1001 fully typed, 58 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 902 of 1001 fully typed, 99 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1006 facade rows, 3435 declarations.
+Inputs: 948 of 1006 fully typed, 58 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 907 of 1006 fully typed, 99 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 105; unread shapes: 0.
 """
 
@@ -5349,6 +5349,38 @@ class MeshPathReceipt(TypedDict):
     relay_url: NotRequired[str | None]
     detail: NotRequired[str | None]
     attempts: int
+class MeshBindingIdentity(TypedDict):
+    machine: EntityId
+    device_key: list[int]
+    endpoint_key: list[int]
+    device_proof: list[int]
+    transport_proof: list[int]
+class MeshMachineAddress(TypedDict):
+    endpoint_key: list[int]
+    direct_addrs: list[str]
+    relay_url: NotRequired[str | None]
+class MeshMachineBinding(TypedDict):
+    machine: EntityId
+    address: MeshMachineAddress
+    device_key: list[int]
+    pairing_slip_id: list[int]
+    device_proof: list[int]
+    transport_proof: list[int]
+class MeshMachineBound(TypedDict):
+    machine: EntityId
+    endpoint_key: list[int]
+class MeshAlpnGrant(TypedDict):
+    machine: EntityId
+    endpoint_key: list[int]
+    alpn: list[int]
+    allow: bool
+class MeshMachineRevokeRequest(TypedDict):
+    machine: EntityId
+class MeshMachineRevoked(TypedDict):
+    machine: EntityId
+class MeshDialRequest(TypedDict):
+    address: MeshMachineAddress
+    alpn: list[int]
 class InspectionResolveRequest(TypedDict):
     handle: str
 LensBackingTargetKind = Literal["entity", "claim"]

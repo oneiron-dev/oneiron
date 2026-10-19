@@ -2066,6 +2066,21 @@ class Oneiron:
         def path_receipts(self, spec):
             """The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."""
             return json.loads(_translate(lambda: self._client.vault_mesh_path_receipts(json.dumps(spec))))
+        def identity(self, spec):
+            """This install's public mesh keys and both binding proofs, for the owner; no private key or grant is returned."""
+            return json.loads(_translate(lambda: self._client.vault_mesh_identity(json.dumps(spec))))
+        def bind_machine(self, spec):
+            """Bind a paired MACHINE's address and transport key using both possession proofs; the binding starts with no ALPN grants."""
+            return json.loads(_translate(lambda: self._client.vault_mesh_bind_machine(json.dumps(spec))))
+        def set_alpn_grant(self, spec):
+            """Allow or revoke one exact ALPN for a paired MACHINE and endpoint key, under the caller's own owner proof."""
+            return json.loads(_translate(lambda: self._client.vault_mesh_set_alpn_grant(json.dumps(spec))))
+        def revoke_machine(self, spec):
+            """Permanently revoke a MACHINE's mesh admission and all its ALPN grants; a new enrollment needs a new MACHINE and pairing."""
+            return json.loads(_translate(lambda: self._client.vault_mesh_revoke_machine(json.dumps(spec))))
+        def dial(self, spec):
+            """Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream."""
+            return json.loads(_translate(lambda: self._client.vault_mesh_dial(json.dumps(spec))))
     class _VaultInspectionVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

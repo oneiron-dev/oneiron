@@ -268,6 +268,11 @@ both bindings and their export-census tests in one change.
 - `vault.slim.drop_heavy`
 - `vault.slim.resume`
 - `vault.mesh.path_receipts`
+- `vault.mesh.identity`
+- `vault.mesh.bind_machine`
+- `vault.mesh.set_alpn_grant`
+- `vault.mesh.revoke_machine`
+- `vault.mesh.dial`
 - `vault.inspection.resolve`
 - `vault.shared.propose_delete`
 - `vault.shared.propose_transfer`
