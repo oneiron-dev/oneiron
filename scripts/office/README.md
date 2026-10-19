@@ -68,13 +68,33 @@ requiring a flaky real hang. The local clean source was generated with
 
 ## Environment approval and receipt gates
 
-`environment.json` is the versioned approved Mac/renderer pin. It fixes the
-PowerPoint and macOS builds, PDFKit version, font-inventory SHA-256, observer,
-locale, raster scale and harness version. The oracle records the observed pin
-but refuses to open a candidate when any approved field differs. Update the
-configuration explicitly after checking a deliberate Mac or Office upgrade;
-never change it just to turn an unsupported result green. The committed Mac
-mini receipts show the reference values.
+`environment.json` (version 2) is the versioned approved Mac/renderer pin. It
+fixes the PowerPoint and macOS builds, PDFKit version, observer, locale, raster
+scale and harness version, and holds one approved font-inventory digest per
+account in `approved_font_inventories`. The oracle records the observed pin,
+with the effective account (`font_account`) and its `font_inventory_sha256`,
+and refuses to open a candidate when any approved field differs or the
+account's digest is not the approved one. Update the configuration explicitly
+after checking a deliberate Mac or Office upgrade; never change it just to turn
+an unsupported result green. The committed Mac mini receipts predate the
+per-account font pin and show the other reference values.
+
+The font inventory hashes the font files themselves, never their mtime or the
+session's activated list: sorted JSON rows `{root_label, relative_path, bytes,
+sha256}` over `/System/Library/Fonts`, `/Library/Fonts`, the account's
+`~/Library/Fonts` and PowerPoint's bundled `Contents/Resources/DFonts` and
+`Fonts`, with a row for each missing root or unreadable file. Approve it on vel,
+in a source checkout, once per account (`olety` over ssh, `decktest` in its own
+logged-in Terminal):
+
+```sh
+python3 -I scripts/office/deck_oracle.py fonts
+python3 -I scripts/office/deck_oracle.py fonts --approve scripts/office/environment.json
+```
+
+`fonts` prints the rows and the digest; `--approve` writes only the running
+account's digest, atomically. A refusal prints the observed digest and this
+command. Commit the change and start a new run.
 
 Before PowerPoint opens a deck, the oracle checks that the private staged
 snapshot has the same SHA-256 and byte count as the initially recorded source.
