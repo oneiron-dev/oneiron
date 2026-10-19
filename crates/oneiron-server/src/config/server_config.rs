@@ -355,7 +355,9 @@ pub struct ServeConfig {
     /// deployment's default, on for our managed serve and off on every plain
     /// serve ([`oneiron::config::failure_signals::default_exports`]).
     pub failure_signal_export: Option<bool>,
-    pub failure_signal_training: bool,
+    /// The owner's training choice on what that switch sends, as given:
+    /// `None` follows the switch (FIX 5188).
+    pub failure_signal_training: Option<bool>,
     /// Opaque host-managed KMS key reference. `Some` only for the managed
     /// posture; relay and self-host keep no host reference at all. Never key
     /// material, and redacted in this struct's `Debug`.
@@ -371,6 +373,10 @@ pub struct ServeConfig {
     /// it for the owner to approve; it is never read off the operating
     /// system. A computer unless the file says otherwise.
     pub device_class: oneiron::authority::MachineDeviceClass,
+    /// `--esign-delivery-outbox-dir`, argv only: where the e-sign delivery
+    /// outbox hands authorized mail to the host's sender (OF-415). Unset, no
+    /// outbox worker runs.
+    pub esign_delivery_outbox_dir: Option<PathBuf>,
 }
 
 impl Default for ServeConfig {
@@ -439,11 +445,12 @@ impl Default for ServeConfig {
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
             failure_signal_export: None,
-            failure_signal_training: false,
+            failure_signal_training: None,
             hosted_kms_key_ref: None,
             hooks: true,
             maximum_tier: false,
             device_class: vault.machine_device_class,
+            esign_delivery_outbox_dir: None,
         }
     }
 }
@@ -523,6 +530,7 @@ impl fmt::Debug for ServeConfig {
             .field("hooks", &self.hooks)
             .field("maximum_tier", &self.maximum_tier)
             .field("device_class", &self.device_class)
+            .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
             .finish()
     }
 }
@@ -590,8 +598,9 @@ impl ServeConfig {
         config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
         // A plain serve is self-run whatever posture it declares, so "Help
-        // improve Oneiron" stays off until its owner turns it on; only the
-        // managed serve entry sets the managed deployment (CALLS 1459).
+        // improve Oneiron" and training on what it sends stay off until its
+        // owner turns them on; only the managed serve entry sets the managed
+        // deployment (CALLS 1459).
         config.failure_signals = oneiron::config::failure_signals::FailureSignalConfig {
             deployment: oneiron::config::failure_signals::DeploymentTier::SelfHost,
             export_opt_in: self.failure_signal_export,

@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1049 facade rows, 3539 declarations.
+Census: 1049 facade rows, 3537 declarations.
 Inputs: 985 of 1049 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 939 of 1049 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
@@ -10793,11 +10793,12 @@ class RouteObservation(TypedDict):
     effort: ReasoningEffort
     why: str
     reused: bool
-CriticAssociation = Literal["branch_attempt", "canonical_run_ref"]
+CriticAssociation = Literal["branch_attempt", "canonical_run_ref", "declared_spawn_attempt"]
 class CriticObservation(TypedDict):
     run_ref: str
     branch_attempt_ref: EntityId
     association: CriticAssociation
+    declared_attempt_ref: NotRequired[EntityId | None]
     artifact_id: str
     target_ref: str
     type_ref: TypeStamp
@@ -11229,6 +11230,7 @@ class CriticReviewSubmit(TypedDict):
     auto_resolve_threshold: float
     catalog: Any
     critics: list[CriticBinding]
+    spawn_attempt_ref: NotRequired[str | None]
 class CritiqueTriageScores(TypedDict):
     accept: float
     revise: float
@@ -11282,6 +11284,7 @@ class CriticReviewOutcome(TypedDict):
     triage: CritiqueTriage
     artifacts: list[CritiqueArtifact]
     receipts: list[DecisionReceipt]
+    spawn_attempt_ref: NotRequired[str | None]
 class OutlineCommunication(TypedDict):
     audience: str
     outcome: str
@@ -11773,22 +11776,18 @@ class DeckProposeRequest(TypedDict):
     run_ref: str
     context: NotRequired[DeckEditContext]
     made_by: NotRequired[MadeBy | None]
-OfficeFormat = Literal["xlsx", "docx", "pptx"]
-class DeckRejectionSheet(TypedDict):
-    name: str
-    index: int
-class DeckRejectionSheetDependency(TypedDict):
-    from_sheet: str
-    to_sheet: str
-class DeckRejectionSummary(TypedDict):
-    format: OfficeFormat
-    sheets: list[DeckRejectionSheet]
-    defined_names: list[str]
-    has_pivots: bool
-    has_charts: bool
-    has_macros: bool
-    cross_sheet_dependencies: list[DeckRejectionSheetDependency]
-    unknown_parts: list[str]
+class DeckInspection(TypedDict):
+    slides: list[DeckSlideInspection]
+    ambiguities: list[DeckIdentityAmbiguity]
+    marks: IdMarks
+class DeckRejectionInspectionInspected(TypedDict):
+    state: Literal["inspected"]
+    deck: DeckInspection
+    parts: list[str]
+class DeckRejectionInspectionUnreadable(TypedDict):
+    state: Literal["unreadable"]
+    reason: str
+DeckRejectionInspection = DeckRejectionInspectionInspected | DeckRejectionInspectionUnreadable
 class DeckRejectionCheck(TypedDict):
     name: str
     passed: bool
@@ -11932,7 +11931,7 @@ class DeckTransactionRefusalDeck(TypedDict):
     detail: str
 DeckTransactionRefusal = DeckTransactionRefusalInvalid | DeckTransactionRefusalBaseChanged | DeckTransactionRefusalNotEditable | DeckTransactionRefusalStep | DeckTransactionRefusalPartDiffOutsideTransaction | DeckTransactionRefusalPackage | DeckTransactionRefusalDeck
 class DeckProposeRejection(TypedDict):
-    inspection: DeckRejectionSummary
+    inspection: DeckRejectionInspection
     report: DeckRejectionReport
     refusal: DeckTransactionRefusal
 class DeckProposeOutcome(TypedDict):

@@ -84,9 +84,12 @@ pub struct VaultVmConfig {
     /// (`[models]`, `[embedder]` and `[gpu]` among them), as
     /// `--settings-file`, and under `seal/` `key.pem`, `chain.pem`,
     /// `trust.pem` and `organ` as the matching `--seal-*-file` and
-    /// `--seal-organ` flags, and the one-line `tsa-url` and `signing-url` as
-    /// `--seal-tsa-url` and `--seal-signing-url`. Files a settings path names
-    /// may sit beside it. Without it the guest runs with none of them.
+    /// `--seal-organ` flags, the one-line `tsa-url` and `signing-url` as
+    /// `--seal-tsa-url` and `--seal-signing-url`, and the one-line
+    /// `oauth-resource-indicator` and `kit-bundle-public-urls` (the host's
+    /// public https origin, and the comma-separated URLs a kit dials) as the
+    /// flags of those names. Files a settings path names may sit beside it.
+    /// Without it the guest runs with none of them.
     #[serde(default)]
     pub config_disk: Option<PathBuf>,
 }

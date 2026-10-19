@@ -2006,7 +2006,7 @@
      "purpose": "Retry/intervene/manifest append plus lease-cleanup mutation doors",
      "surface": {
       "crate-vis": 7,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -2354,10 +2354,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/act_standing.rs",
+     "purpose": "An owner act signed outside the authority log, judged at its own causal point (FIX 4649, mesh contract §4)…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/adopted_build.rs",
      "purpose": "A later checkpoint image on a vault that adopted one (OF-469, slice D; identity.md, \"Resumable checkpoints…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -3245,7 +3255,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "re-export": 54
      }
     },
@@ -3285,7 +3295,7 @@
      "path": "src/authority/owner_act.rs",
      "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 10,
       "enum": 2,
       "fn": 4,
       "struct": 1
@@ -6240,17 +6250,14 @@
       "DeckInspectionView",
       "DeckProposeRejection",
       "DeckRejectionCheck",
-      "DeckRejectionReport",
-      "DeckRejectionSheet",
-      "DeckRejectionSheetDependency",
-      "DeckRejectionSummary"
+      "DeckRejectionReport"
      ],
      "path": "src/blob_artifact/deck_doors.rs",
      "purpose": "The native deck edit door's typed wire (DOOR-142 A, ARCH-0077 \"Edit target choice\")…",
      "surface": {
       "enum": 1,
       "fn": 1,
-      "struct": 8
+      "struct": 5
      }
     },
     {
@@ -14126,6 +14133,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_runtime/wire/describe.rs",
+     "purpose": "How code mode routes a raw `describe` before any typed row: a result the run holds, a secret's handle…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_symbol/actor_erase.rs",
+     "purpose": "An erased actor out of the symbol manifests' producing-operation chains (FIX 4476)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -14169,7 +14196,7 @@
      "path": "src/code_symbol/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 8
      }
     },
@@ -18658,7 +18685,7 @@
      "path": "src/critic/review.rs",
      "purpose": "Artifact-independent review fan-out and the persisted calibration feedback loop",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 1,
       "re-export": 4,
@@ -18698,7 +18725,7 @@
      "path": "src/critic/review/persistence.rs",
      "purpose": "Transactional review bundles",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -20853,7 +20880,7 @@
      "path": "src/dreamer_runner/constants.rs",
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
-      "const": 24,
+      "const": 25,
       "crate-vis": 31
      }
     },
@@ -21379,7 +21406,7 @@
      "path": "src/dreamer_runner/maintenance/representation/approval.rs",
      "purpose": "Content-bound owner review, live revalidation, and the existing OF-327 adapter",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 12,
       "struct": 2
      }
@@ -21412,7 +21439,7 @@
      "purpose": "Evidence-citing user-voice plans",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 1,
       "re-export": 3,
@@ -21430,7 +21457,7 @@
      "path": "src/dreamer_runner/maintenance/representation/proposal.rs",
      "purpose": "Pre-materialized author seam and durable maintenance execution",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 2,
       "trait": 1
@@ -21566,9 +21593,9 @@
      "path": "src/dreamer_runner/mod.rs",
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 4,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -21609,6 +21636,90 @@
       "crate-vis": 1,
       "fn": 4,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/admit.rs",
+     "purpose": "DOOR-141 admission: one writer judges a wake against the live vault and, in one commit, records its Gate…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/arm.rs",
+     "purpose": "DOOR-141 setup: an actor arms a pinned callable SKILL entry for its own future turns",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/authority.rs",
+     "purpose": "The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as…",
+     "surface": {
+      "crate-vis": 12,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/lease.rs",
+     "purpose": "The program kind's own lease and reservation (DOOR-141): the runner's one admission chain over program…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/mod.rs",
+     "purpose": "Turn-woken programs (DOOR-141, FIX 4382)",
+     "surface": {
+      "crate-vis": 3,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArmTurnProgram",
+      "LandedTurnRef",
+      "ProgramRecipePin",
+      "TurnProgramAdmissionOutcome",
+      "TurnProgramAdmissionReceipt",
+      "TurnProgramDrain",
+      "TurnProgramRegistration"
+     ],
+     "path": "src/dreamer_runner/program/types.rs",
+     "purpose": "The DOOR-141 vocabulary: the pinned program, its arming, the wake a landed turn owes it, and what admitting…",
+     "surface": {
+      "crate-vis": 10,
+      "enum": 1,
+      "fn": 1,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/wake.rs",
+     "purpose": "The wake a landed turn owes its actor's armed programs (DOOR-141 §4): it is recorded in the turn's own…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -22125,7 +22236,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -23250,6 +23361,7 @@
       "DeckEditContext",
       "DeckEditOutcome",
       "DeckEditRejection",
+      "DeckRejectionInspection",
       "DeckRender",
       "DeckRenderSide",
       "DeckSettleEvidence"
@@ -23258,7 +23370,7 @@
      "purpose": "Native deck edits (ARCH-0077, \"Edit in place with passthrough\"): one docedit deck transaction over the exact…",
      "surface": {
       "crate-vis": 9,
-      "enum": 2,
+      "enum": 3,
       "fn": 3,
       "struct": 4
      }
@@ -28386,7 +28498,7 @@
      "purpose": "Who decided a topology seal, and whether that decision stands here (mesh PR2-topology, amended 10-19 03:0x…",
      "surface": {
       "const": 2,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 4,
       "fn": 8,
       "struct": 1
@@ -28402,7 +28514,7 @@
      "path": "src/identity_topology/admission_disposition.rs",
      "purpose": "Signed append-only admission facts, independent of a decision's erasable author",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "enum": 1,
       "struct": 1
      }
@@ -28484,7 +28596,7 @@
      "path": "src/identity_topology/mod.rs",
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "re-export": 12
      }
     },
@@ -28577,13 +28689,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/identity_topology/seal_standing.rs",
+     "purpose": "A decision seal's causal evidence (FIX 4649, FIX 4652): the act each decision seal names for…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/identity_topology/shell_edge_reconcile.rs",
      "purpose": "Derives and reconciles the canonical `merged_into` / `split_into` shell edge set from the ledger fold — the…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -28656,7 +28778,7 @@
      "purpose": "Pinned wire vocabulary of the identity-topology family: the type-76 body field keys, the reassignment-map…",
      "surface": {
       "const": 2,
-      "crate-vis": 63
+      "crate-vis": 64
      }
     },
     {
@@ -32475,6 +32597,7 @@
      "path": "src/llm/seat/run.rs",
      "purpose": "A run's immutable seat pin: born once per run, loaded again on resume",
      "surface": {
+      "crate-vis": 1,
       "fn": 4,
       "struct": 1
      }
@@ -35747,6 +35870,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/turn_program.rs",
+     "purpose": "DOOR-141's two seams on the actor's surface: arming a program for this actor's own future turns, and the…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "WitnessAssertions",
       "WitnessAuthor",
@@ -36609,7 +36743,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -36769,7 +36903,7 @@
      "path": "src/office_body/actor_erase.rs",
      "purpose": "An erased actor out of the office rows that name it (FIX 3520): the export records, the deck forks' records…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -36882,7 +37016,7 @@
      "path": "src/office_body/pptx.rs",
      "purpose": "The PPTX body: the OF-510 live deck (`oneiron_docedit::live`) as a Loro document on the typed-body door…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 10,
       "re-export": 2,
       "struct": 3
@@ -36896,6 +37030,16 @@
      "purpose": "The PPTX body inside its Loro document, schema 1 (ARCH-0077, \"One deck, one document\")",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/pptx/log.rs",
+     "purpose": "The deck log's entries as the body keeps them (FIX 4513): each operation with the commit peer it ran under…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -37039,7 +37183,7 @@
      "path": "src/origin/document_ingress.rs",
      "purpose": "Crash-idempotent push-to-document lowering under the origin single-writer lock",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 1
      }
@@ -37247,7 +37391,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 11,
       "re-export": 1
      }
@@ -37394,6 +37538,7 @@
      "purpose": "The repo secret manifest, read from a repository the vault serves as origin (ARCH-0069 S2; ARCH-0068 RC4 and…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 1,
       "struct": 1
      }
@@ -41833,7 +41978,7 @@
       "const": 5,
       "crate-vis": 2,
       "enum": 2,
-      "fn": 11,
+      "fn": 12,
       "struct": 4
      }
     },
@@ -44444,7 +44589,7 @@
      "path": "src/secret_custody/codec.rs",
      "purpose": "MessagePack body codec for custody records, bands, floors, and bindings",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 8,
       "fn": 2
      }
     },
@@ -44462,7 +44607,7 @@
      "path": "src/secret_custody/control.rs",
      "purpose": "Custody control on the shared owner-work request (WILL L04 row 04): every change to a portable secret's…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 12,
       "enum": 2,
       "fn": 4,
       "re-export": 1,
@@ -44495,13 +44640,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/control/input.rs",
-     "purpose": "The protected input of an active custody change (WILL L04 row 04): what a register or rotate hands its…",
+     "purpose": "The protected input of an active custody change (WILL L04 row 04): what a register, rotate or bind hands its…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 18
      }
     },
     {
@@ -44510,6 +44655,16 @@
      "notable": [],
      "path": "src/secret_custody/control/permits.rs",
      "purpose": "Who may hold an active custody change's bytes (WILL L04 row 04): the recipients the owner permits, each…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/control/revoked.rs",
+     "purpose": "The owner's revoke on a custody request (WILL L04 row 04): its carrier records it with no byte, and every…",
      "surface": {
       "crate-vis": 6
      }
@@ -44626,6 +44781,7 @@
      "path": "src/secret_custody/owner_door.rs",
      "purpose": "The owner registers a secret (ARCH-0069 S1–S3): the production door that puts a value into custody",
      "surface": {
+      "crate-vis": 1,
       "fn": 2,
       "struct": 4
      }
@@ -44734,7 +44890,7 @@
      "path": "src/secret_custody/transition.rs",
      "purpose": "OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as a custody…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 17,
       "fn": 1
      }
     },
@@ -44746,6 +44902,16 @@
      "purpose": "The bytes of a custody transition: its strict codec, the transcript its signature covers, and the value…",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/transition/rebind.rs",
+     "purpose": "A rewrap's bindings on a machine that already holds its record (WILL L04 row 04, CALLS CUSTODY_BIND_TRAVEL)…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -44998,7 +45164,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ArtifactTaintState",
@@ -45009,7 +45175,7 @@
      "purpose": "SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build…",
      "surface": {
       "const": 5,
-      "crate-vis": 13,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 8,
       "struct": 1
@@ -45024,6 +45190,16 @@
      "surface": {
       "crate-vis": 4,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_rotation/revoke.rs",
+     "purpose": "Revocation: terminal value death everywhere the vault reaches",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -46285,7 +46461,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/side_table/decls/vault_meta_t_z.rs",
@@ -46327,7 +46503,7 @@
      "path": "src/skill/call.rs",
      "purpose": "Callable skill execution through the caller's existing sandbox runtime and host",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "re-export": 1
      }
@@ -53762,7 +53938,6 @@
       "BoardWakeRequest",
       "CompanionSharingRequest",
       "CompanionSharingSetRequest",
-      "DescribeRequest",
       "EmptyRequest",
       "InboxListRequest",
       "InboxMarkRequest",
@@ -53800,9 +53975,9 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 13,
-      "re-export": 70,
-      "struct": 40
+      "fn": 10,
+      "re-export": 71,
+      "struct": 39
      }
     },
     {
@@ -54066,6 +54241,19 @@
      "surface": {
       "fn": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DescribeRequest"
+     ],
+     "path": "src/task_verb/sdk_describe.rs",
+     "purpose": "`describe`'s typed input and the checks every door runs over it: one target per call (FIX 3256), and whether…",
+     "surface": {
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -55576,7 +55764,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 16
+      "fn": 17
      }
     },
     {
@@ -55825,7 +56013,7 @@
      "path": "src/team/receipt.rs",
      "purpose": "The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 9,
       "struct": 5
@@ -56440,7 +56628,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "TypedBodyCommit",
@@ -56452,7 +56640,7 @@
      "path": "src/typed_body.rs",
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 11,
       "re-export": 1,
@@ -56481,6 +56669,16 @@
      "purpose": "Typed bodies the historical lift sweep reads again (OF-067, Engine ruling G2 = b)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/typed_body/receipts.rs",
+     "purpose": "Who made each typed-body commit, kept beside the body (FIX 4513)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -59409,7 +59607,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OwnerWorkDrain"
@@ -60616,7 +60814,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 174,
+     "files": 175,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60798,14 +60996,14 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Sandbox boundary contract for code-mode execution"
     },
     "code_symbol": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -61057,7 +61255,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 69,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61267,7 +61465,7 @@
      "purpose": "ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4)"
     },
     "identity_topology": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -61393,7 +61591,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 219,
+     "files": 220,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61428,7 +61626,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61694,7 +61892,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 30,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61715,9 +61913,9 @@
      "purpose": "SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2)"
     },
     "secret_rotation": {
-     "files": 3,
+     "files": 4,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build…"
     },
@@ -61904,7 +62102,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 188,
+     "files": 189,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61981,9 +62179,9 @@
      "purpose": "OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap"
     },
     "typed_body": {
-     "files": 3,
+     "files": 4,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
@@ -62072,9 +62270,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 199,
+   "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3788,
+   "source_files": 3806,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73811,6 +74009,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/turn_program.rs",
+     "purpose": "The host's half of DOOR-141: the wakes a landed turn's own commit owed its actor's armed programs, typed…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/turns.rs",
      "purpose": "Chat turns in flight",
      "surface": {
@@ -74286,7 +74494,7 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -74782,7 +74990,17 @@
      "path": "src/api/esign.rs",
      "purpose": "Session-less signing ceremony",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/esign/delivery_outbox.rs",
+     "purpose": "The e-sign delivery outbox (OF-415, FIX 3577): the seam that hands each authorized `esign.delivery` intent…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -76692,7 +76910,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 43
+      "crate-vis": 44
      }
     },
     {
@@ -79323,7 +79541,7 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 14,
       "re-export": 24
      }
@@ -81047,7 +81265,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/managed/settings.rs",
@@ -81092,7 +81310,7 @@
      "purpose": "Managed vault open gates: credentials, the canary marker, and the DEK MAC",
      "surface": {
       "const": 3,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -83830,14 +84048,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 51,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 442,
+     "files": 443,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -84273,7 +84491,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 809,
+   "source_files": 811,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -85413,6 +85631,7 @@
       "DeckGateView",
       "DeckIdentityAmbiguity",
       "DeckInspectRequest",
+      "DeckInspection",
       "DeckInspectionView",
       "DeckKeepBinding",
       "DeckNativeRefusal",
@@ -85440,10 +85659,8 @@
       "DeckProposeRequest",
       "DeckRect",
       "DeckRejectionCheck",
+      "DeckRejectionInspection",
       "DeckRejectionReport",
-      "DeckRejectionSheet",
-      "DeckRejectionSheetDependency",
-      "DeckRejectionSummary",
       "DeckRender",
       "DeckRenderSide",
       "DeckReviewView",
@@ -86547,7 +86764,6 @@
       "OfficeBodyReadRequest",
       "OfficeBodyReviewedFork",
       "OfficeBodyView",
-      "OfficeFormat",
       "OmittedKnowledge",
       "OmittedNeighbor",
       "OnlineAxisMeasurement",
@@ -87986,7 +88202,7 @@
      "purpose": "—",
      "surface": {
       "enum": 838,
-      "struct": 2673
+      "struct": 2671
      }
     },
     {
@@ -88289,7 +88505,7 @@
      "purpose": "Host-attested account actions: one managed widen request, and one request the vault owner makes in person…",
      "surface": {
       "const": 5,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -88300,7 +88516,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 8,
+      "mod": 9,
       "re-export": 7
      }
     },
@@ -88333,6 +88549,17 @@
      "surface": {
       "fn": 8,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/settings_policy.rs",
+     "purpose": "What a managed vault's settings file (`--settings-file`) may not set, as dotted fields of the server's…",
+     "surface": {
+      "const": 2,
+      "fn": 1
      }
     },
     {
@@ -88405,7 +88632,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -88414,7 +88641,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 20,
+   "source_files": 21,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {

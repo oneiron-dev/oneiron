@@ -724,6 +724,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             hosted_kms_key_ref: value.hosted_kms_key_ref,
             maximum_tier: value.maximum_tier,
             device_class: value.device_class,
+            esign_delivery_outbox_dir: None,
         }
     }
 }
@@ -803,6 +804,8 @@ struct PartialServeConfig {
     maximum_tier: Option<bool>,
     /// `device_class` is file-only, as `maximum_tier` is.
     device_class: Option<oneiron::authority::MachineDeviceClass>,
+    /// `--esign-delivery-outbox-dir` is argv-only: no file key, no env.
+    esign_delivery_outbox_dir: Option<PathBuf>,
 }
 
 impl fmt::Debug for PartialServeConfig {
@@ -883,6 +886,7 @@ impl fmt::Debug for PartialServeConfig {
             )
             .field("maximum_tier", &self.maximum_tier)
             .field("device_class", &self.device_class)
+            .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
             .finish()
     }
 }
@@ -1075,7 +1079,7 @@ impl PartialServeConfig {
             resolved.failure_signal_export = Some(value);
         }
         if let Some(value) = self.failure_signal_training {
-            resolved.failure_signal_training = value;
+            resolved.failure_signal_training = Some(value);
         }
         if let Some(value) = self.privacy_posture {
             resolved.privacy_posture = value;
@@ -1088,6 +1092,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.device_class {
             resolved.device_class = value;
+        }
+        if let Some(value) = self.esign_delivery_outbox_dir {
+            resolved.esign_delivery_outbox_dir = Some(value);
         }
         Ok(())
     }
@@ -1109,7 +1116,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             oauth_issuer: value.oauth_issuer.clone(),
             oauth_jwks_uri: value.oauth_jwks_uri.clone(),
             oauth_resource_indicator: value.oauth_resource_indicator.clone(),
-            kit_bundle_public_urls: None,
+            kit_bundle_public_urls: value.kit_bundle_public_urls.clone(),
             allow_unauthenticated: value.insecure_allow_unauthenticated,
             allowed_origins: value.allowed_origins.clone(),
             artifact_domains: value.artifact_domains.clone(),
@@ -1170,6 +1177,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             hosted_kms_key_ref: value.hosted_kms_key_ref.clone(),
             maximum_tier: None,
             device_class: None,
+            esign_delivery_outbox_dir: value.esign_delivery_outbox_dir.clone(),
         }
     }
 }

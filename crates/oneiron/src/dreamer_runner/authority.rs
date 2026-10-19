@@ -321,6 +321,12 @@ pub(crate) fn stamp_attempt(
     if record.kind == super::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND {
         return stamp_resident_attempt(vault, txn, record);
     }
+    // A turn-woken program runs as the actor whose turn woke it, under the
+    // admission that sealed that actor's authority (DOOR-141): no base-agent
+    // stamp is minted for it, so none can stand in for that actor.
+    if record.kind == super::DREAMER_TURN_PROGRAM_ATTEMPT_KIND {
+        return super::program::stamp_program_attempt(vault, txn, record);
+    }
     // The generic runner also carries independent agent dispatch. Those jobs
     // retain their own principals and are NOT base-agent facets.
     if facet == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE

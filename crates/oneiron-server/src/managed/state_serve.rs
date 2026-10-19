@@ -860,6 +860,9 @@ fn spool_vault_key_escrow(vault: &oneiron::Vault, managed: &ManagedArgs) {
 /// ready byte, and the ready byte is what tells the supervisor any of it
 /// happened.
 pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Result<()> {
+    // The supervisor names a personal vault's owner by the contract's copy of
+    // the embedded owner's id; a copy that drifted stops the boot here.
+    super::vault_gates::check_embedded_owner_holder()?;
     let mut config = managed.serve_config(args);
     // The owner's settings file, refused leaf by leaf and settled once,
     // before anything reads the configuration: its `[oneironer]` arms the
@@ -897,7 +900,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let mut vault_config = config.vault_config();
     // Our cloud hosts this vault. The owner's "Help improve Oneiron" and
     // training choices stand as the supervisor passed them; an unset export
-    // takes the managed default.
+    // takes the managed default, and unset training follows the export.
     vault_config.failure_signals.deployment =
         oneiron::config::failure_signals::DeploymentTier::Managed;
     // Set before the open: LMDB takes the page key with the environment.
@@ -1153,6 +1156,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         Arc::clone(&sync_server),
         admitted(),
     ));
+    // Authorized e-sign mail goes to the supervisor's sender through its
+    // outbox, under the same admission; without the flag none runs (OF-415).
+    ladder_workers.extend(config.esign_delivery_outbox_dir.clone().map(|dir| {
+        crate::api::spawn_esign_delivery_outbox(Arc::clone(&sync_server), admitted(), dir)
+    }));
     // Due standing questions are answered through the ladder (OF-506).
     if !ai.bind_question_timer(&sync_server) {
         ladder_workers.push(crate::decision_graph::spawn(&sync_server, admitted()));

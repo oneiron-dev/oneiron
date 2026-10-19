@@ -25,7 +25,7 @@
 //! deck with the fewest container writes, so an edit read against an older
 //! frontier merges with the head unit by unit.
 
-use super::{invalid, live};
+use super::{invalid, live, log::LoggedOp};
 use crate::error::{Error, Result};
 use loro::{
     Container, ExpandType, LoroDoc, LoroList, LoroMap, LoroMovableList, LoroText, LoroTree,
@@ -35,7 +35,7 @@ use loro::{
 use oneiron_docedit::edit::transaction::IdMarks;
 use oneiron_docedit::live::{
     DeckNode, DeckOp, GeometryProps, LiveDeck, LiveError, NodeId, NodeKind, Paragraph, Run,
-    StampedOp, TextBody,
+    TextBody,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -87,7 +87,7 @@ const EXPAND: ExpandType = ExpandType::After;
 /// The deck as its document holds it.
 pub(super) struct Body {
     pub(super) deck: LiveDeck,
-    pub(super) log: Vec<StampedOp>,
+    pub(super) log: Vec<LoggedOp>,
     /// The landed export the deck is bound to; `None` while it is bound to
     /// the imported source.
     pub(super) retained: Option<Retained>,
@@ -183,7 +183,7 @@ pub(super) fn read(doc: &LoroDoc) -> Result<Body> {
         opaque_parts.insert(part, *hash.as_bytes());
     }
 
-    let log: Vec<StampedOp> = entries(&doc.get_list(LOG))?;
+    let log: Vec<LoggedOp> = entries(&doc.get_list(LOG))?;
     let landed: Vec<Retained> = entries(&doc.get_list(LANDED))?;
     let version =
         u64::try_from(log.len() + landed.len()).map_err(|_| invalid("the deck log is too long"))?;
@@ -228,8 +228,8 @@ pub(super) fn sync_to(doc: &LoroDoc, target: &LiveDeck) -> Result<()> {
     Ok(())
 }
 
-/// Append one call's stamped operations to the log.
-pub(super) fn append_log(doc: &LoroDoc, ops: &[StampedOp]) -> Result<()> {
+/// Append one call's operations to the log, under its commit peer (FIX 4513).
+pub(super) fn append_log(doc: &LoroDoc, ops: &[LoggedOp]) -> Result<()> {
     let log = doc.get_list(LOG);
     for op in ops {
         log.push(encode(op)?).map_err(loro)?;
