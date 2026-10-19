@@ -2600,6 +2600,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/checkpoint_root_countersign.rs",
+     "purpose": "What this home's root signed for a linked machine's own checkpoint image (FIX 5195), kept until the machine…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "RootAttestationDelivery",
       "RootAttestationDeliveryState"
@@ -5720,7 +5730,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "enum": 1,
       "re-export": 1
      }
@@ -5898,7 +5908,7 @@
      "path": "src/batch/secret_scan/mask.rs",
      "purpose": "Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -5929,6 +5939,16 @@
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/stream_known.rs",
+     "purpose": "Known custody values in a streamed ASSET body (FIX 5395, CALLS KNOWN_VALUE_STREAM_FINDER)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -45294,7 +45314,7 @@
      "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
      "surface": {
       "const": 1,
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -45318,7 +45338,7 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "re-export": 10
      }
     },
@@ -45443,7 +45463,7 @@
      "path": "src/secret_custody/transition.rs",
      "purpose": "OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as a custody…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 1
      }
     },
@@ -45464,7 +45484,7 @@
      "path": "src/secret_custody/transition/rebind.rs",
      "purpose": "A rewrap's bindings on a machine that already holds its record (WILL L04 row 04, CALLS CUSTODY_BIND_TRAVEL)…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -49745,7 +49765,7 @@
      "path": "src/store/asset_body/stage.rs",
      "purpose": "Staging an ASSET body from a reader before the transaction that puts it (FIX 3677): the body streams into…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -61528,7 +61548,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 177,
+     "files": 178,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61542,7 +61562,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 128,
+     "files": 129,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62986,7 +63006,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3866,
+   "source_files": 3868,
    "test_files": 902
   },
   "oneiron-android": {
