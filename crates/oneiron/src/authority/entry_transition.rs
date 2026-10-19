@@ -268,6 +268,21 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    // So is the owner's mint or revoke of an agent's Grant, which moves no
+    // fold state: the Grant row is the state (FIX 5628).
+    if let AuthorityOp::AgentGrantAct(record) = &entry.op {
+        if let Err(issue) = super::agent_grant_act::apply_agent_grant_act(
+            &state,
+            entry,
+            record,
+            hash,
+            (context.pin, context.machine_standing),
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     // The owner's machine answer is signed the same way, by its carrier's
     // install key under his act (mesh PR1b): the roster consent rule never
     // reads it, and `device_can_authority_consent` stays as it is for every
@@ -615,6 +630,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)
+        | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::OwnerWorkCancel(_) => false,

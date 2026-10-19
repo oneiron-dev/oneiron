@@ -263,6 +263,7 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         AuthorityOp::HomeCandidacy(declaration) => {
             super::home_candidacy::home_candidacy_value(declaration)
         }
+        AuthorityOp::AgentGrantAct(record) => super::agent_grant_act::agent_grant_act_value(record),
     }
 }
 

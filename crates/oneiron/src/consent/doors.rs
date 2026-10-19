@@ -23,6 +23,7 @@ use crate::error::GateError;
 
 mod lineage;
 mod person_credential;
+mod request_credential;
 
 // ---------------------------------------------------------------------------
 // Owner authentication — invariant 2
@@ -58,6 +59,9 @@ pub struct AuthenticatedOwner {
     /// revalidation then also requires it to be live; it adds no owner
     /// authority, so every owner-tier door refuses the proof.
     person_credential: Option<Box<crate::authority::VerifiedSlip>>,
+    /// The slip a person's request arrived with, a liveness guard alone
+    /// ([`Vault::bind_request_credential`], FIX 4328).
+    request_credential: Option<Box<crate::authority::VerifiedSlip>>,
     /// The host action this owner was authenticated from, when a host
     /// authenticated a self-hosted root or the local dev mode as the owner
     /// ([`Vault::authenticate_host_action_owner`], FIX 2222). Every
@@ -256,6 +260,7 @@ impl AuthenticatedOwner {
                 "person credential is no longer live",
             )));
         }
+        self.request_credential_holds_in_txn(vault, txn)?;
         Ok(self.actor)
     }
 
@@ -473,6 +478,7 @@ impl Vault {
             vault_open: self.store.open_nonce,
             credential: None,
             person_credential: None,
+            request_credential: None,
             host_action: None,
         })
     }
@@ -504,6 +510,7 @@ impl Vault {
             vault_open: self.store.open_nonce,
             credential: None,
             person_credential: None,
+            request_credential: None,
             host_action: Some(Box::new(action.guard().clone())),
         };
         self.recheck_owner(&owner)?;
