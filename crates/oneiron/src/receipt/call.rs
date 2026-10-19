@@ -410,6 +410,50 @@ impl Vault {
         Ok(receipt_ref)
     }
 
+    /// The final delivery of a call whose answer was replaced when it was
+    /// sent (FIX 814, OF-538): a WS result the send-time recheck replaced
+    /// with the refusal `code`, whose content digest is `refusal_digest`.
+    /// Appends a second receipt, in its own grouped write transaction,
+    /// copied from the call's own row `original_ref` as it is stored now: its
+    /// transport, verb, caller (so an erased one stays erased), request and
+    /// action digests, with the refusal as its outcome and result digest and
+    /// no served rows. The call's own row is never changed. Returns the new
+    /// ref, or `None` when `original_ref` names no row.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn record_delivery_refusal(
+        &self,
+        original_ref: &str,
+        code: &str,
+        refusal_digest: String,
+    ) -> Result<Option<String>> {
+        let Some(original_id) = call_receipt_id(original_ref) else {
+            return Ok(None);
+        };
+        self.with_write_txn_grouped(|txn| {
+            let Some(original) = CALL_RECEIPTS.get(&self.store, txn, &original_id)? else {
+                return Ok(None);
+            };
+            let id = self.store.clock.entity_id()?;
+            let receipt_ref = format!("{CALL_RECEIPT_REF_PREFIX}{}", id.to_hex());
+            let receipt = CallReceipt {
+                receipt_ref: receipt_ref.clone(),
+                at: self.store.clock.now_recorded_at(),
+                outcome: CallOutcome::Refused {
+                    code: bounded(code.to_owned()),
+                },
+                result_digest: Some(refusal_digest),
+                served: Vec::new(),
+                served_records: Vec::new(),
+                ..original
+            };
+            CALL_RECEIPTS.put(self, txn, &id, &receipt)?;
+            Ok(Some(receipt_ref))
+        })
+    }
+
     /// Erasing `actor` (FIX 812, Engine ruling 10-18): each call receipt it
     /// made keeps its existence, its ref, its time, its verb, its outcome and
     /// its digests, and states [`ERASED_CALL_IDENTITY`] for who called: the
