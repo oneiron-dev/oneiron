@@ -31,8 +31,8 @@ const NO_CARRIER: &str = "this install has no live machine profile in the vault'
                           the owner's checkpoint policy choice";
 /// The choice would name more rows than one authority entry may: the log's
 /// encoding bound, never a possession test.
-const TOO_MANY_HEADS: &str = "the checkpoint policy has more concurrent choices than one choice may \
-                              name; nothing was written";
+const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than one checkpoint \
+                              policy choice may name; nothing was written";
 /// The fold did not count the signed choice here: it never reports success.
 const NOT_COUNTED: &str = "this install's fold does not count the checkpoint policy choice";
 
@@ -93,9 +93,9 @@ impl Vault {
     ///
     /// The choice must stand now: every key a selectable root, the quorum
     /// between the multi-root floor and the roots named, a hardware
-    /// requirement some named root meets. It names the main-log heads, this
-    /// install's standing rows and every live choice, so it supersedes all of
-    /// them, and lands atomically or not at all.
+    /// requirement some named root meets. It names the main-log heads alone,
+    /// whose fold carries this install's standing rows and every live choice,
+    /// so it supersedes all of them, and lands atomically or not at all.
     ///
     /// # Errors
     /// [`RecordError::AuthorityRefused`] for an agent's act or an install
@@ -145,9 +145,10 @@ impl Vault {
         }
         let signer = AuthorityKey::Ed25519(public_key);
         let seq = next_sequence(&fold, &signer)?;
-        let mut parents = fold.append_heads.clone();
-        parents.extend(standing_rows(&fold, machine));
-        parents.extend(fold.checkpoint_policy.live.keys().copied());
+        // The main-log heads alone: this install's standing rows and every
+        // live choice are main-log rows among them or their ancestors, so the
+        // fold at the heads carries them (FIX 4987).
+        let parents = fold.append_heads.clone();
         if parents.len() > MAX_PARENTS {
             return Err(policy_refused(TOO_MANY_HEADS));
         }

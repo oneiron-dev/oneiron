@@ -193,6 +193,10 @@ pub(super) struct GuardedTransport<S> {
     pub(super) socket: Option<S>,
     revoked: Arc<dyn RevokedTokenJtis + Send + Sync>,
     session_jti: Option<String>,
+    /// A managed vault's attested owner this socket serves, and the vault
+    /// that must still record him as its live owner (FIX 5255). No token id
+    /// names him, so every consult asks that instead.
+    live_owner: Option<(Arc<oneiron::Vault>, crate::auth::CoreAuth)>,
     /// Set only while an app-tier frame is draining; sync keeps its owner guard.
     pub(super) app_jti: Option<String>,
     conn_id: u32,
@@ -253,6 +257,7 @@ where
             socket: Some(socket),
             revoked,
             session_jti,
+            live_owner: None,
             app_jti: None,
             conn_id,
             write_through_threshold,
@@ -271,6 +276,18 @@ where
         self
     }
 
+    /// Serves `owner`, a managed vault's attested owner, when there is one:
+    /// every consult then also asks `vault` whether he is still its live
+    /// owner, so a session no token id names is never unguarded.
+    pub(super) fn with_live_owner(
+        mut self,
+        vault: &Arc<oneiron::Vault>,
+        owner: Option<crate::auth::CoreAuth>,
+    ) -> Self {
+        self.live_owner = owner.map(|owner| (Arc::clone(vault), owner));
+        self
+    }
+
     /// Records the codecs the peer's hello listed; binary sends after this
     /// wrap frames it decodes.
     pub(super) fn set_peer_codecs(&mut self, codecs: WireCodecs) {
@@ -286,6 +303,10 @@ where
     fn credential_revoked(&self) -> bool {
         session_credential_revoked(self.revoked.as_ref(), self.session_jti.as_deref())
             || session_credential_revoked(self.revoked.as_ref(), self.app_jti.as_deref())
+            || self
+                .live_owner
+                .as_ref()
+                .is_some_and(|(vault, owner)| !owner.credential_is_live(vault))
     }
 
     /// Reads the next inbound frame.

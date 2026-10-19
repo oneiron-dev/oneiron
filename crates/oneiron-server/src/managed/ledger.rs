@@ -125,6 +125,24 @@ impl WakeLedger {
         action.verify(&self.token, &self.vault_name, request)
     }
 
+    /// The transcript `holder_ref`'s owner action covers on this vault, for
+    /// a request with `head` whose body is `body_len` bytes, fed in pieces
+    /// and checked by `ManagedOwnerAction::verify_transcript`.
+    pub(super) fn owner_transcript(
+        &self,
+        holder_ref: &str,
+        head: &oneiron_vault_contract::ManagedOwnerHead<'_>,
+        body_len: u64,
+    ) -> oneiron_vault_contract::ManagedOwnerTranscript {
+        oneiron_vault_contract::ManagedOwnerTranscript::new(
+            &self.token,
+            &self.vault_name,
+            holder_ref,
+            head,
+            body_len,
+        )
+    }
+
     pub fn rev(&self) -> u64 {
         self.rev.load(Ordering::SeqCst)
     }
