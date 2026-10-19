@@ -2241,6 +2241,24 @@ impl OneironClient {
                 "ai.steps.receipt" => remote_agent_verb_output::<
                     oneiron::llm::model_step::ModelStepReceipt,
                 >(client, verb, &input),
+                "ai.streams.open" => remote_agent_verb_output::<
+                    oneiron::llm::model_stream::ModelStreamOpened,
+                >(client, verb, &input),
+                "ai.streams.subscribe" => remote_agent_verb_output::<
+                    oneiron::llm::model_stream::ModelStreamSubscribed,
+                >(client, verb, &input),
+                "ai.streams.events" => remote_agent_verb_output::<
+                    oneiron::llm::model_stream::ModelStreamEvents,
+                >(client, verb, &input),
+                "ai.streams.detach" => remote_agent_verb_output::<
+                    oneiron::llm::model_stream::ModelStreamDetached,
+                >(client, verb, &input),
+                "ai.streams.abort" => remote_agent_verb_output::<
+                    oneiron::llm::model_stream::ModelStreamTerminal,
+                >(client, verb, &input),
+                "ai.streams.terminal" => remote_agent_verb_output::<
+                    oneiron::llm::model_stream::ModelStreamTerminal,
+                >(client, verb, &input),
                 "ai.reply" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiReply>(
                     client, verb, &input,
                 ),
@@ -11984,6 +12002,78 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("ai.steps.receipt", value)
+    }
+    pub fn ai_streams_open(
+        &self,
+        input: &oneiron::llm::model_stream::ModelStreamOpen,
+    ) -> Result<oneiron::llm::model_stream::ModelStreamOpened, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.streams.open", value)
+    }
+    pub fn ai_streams_subscribe(
+        &self,
+        input: &oneiron::llm::model_stream::ModelStreamSubscribe,
+    ) -> Result<oneiron::llm::model_stream::ModelStreamSubscribed, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.streams.subscribe", value)
+    }
+    pub fn ai_streams_events(
+        &self,
+        input: &oneiron::llm::model_stream::ModelStreamEventsRequest,
+    ) -> Result<oneiron::llm::model_stream::ModelStreamEvents, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.streams.events", value)
+    }
+    pub fn ai_streams_detach(
+        &self,
+        input: &oneiron::llm::model_stream::ModelStreamDetach,
+    ) -> Result<oneiron::llm::model_stream::ModelStreamDetached, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.streams.detach", value)
+    }
+    pub fn ai_streams_abort(
+        &self,
+        input: &oneiron::llm::model_stream::ModelStreamAbort,
+    ) -> Result<oneiron::llm::model_stream::ModelStreamTerminal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.streams.abort", value)
+    }
+    pub fn ai_streams_terminal(
+        &self,
+        input: &oneiron::llm::model_stream::ModelStreamTerminalRequest,
+    ) -> Result<oneiron::llm::model_stream::ModelStreamTerminal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.streams.terminal", value)
     }
     pub fn ai_reply(
         &self,

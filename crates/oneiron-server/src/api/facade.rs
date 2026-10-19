@@ -104,6 +104,7 @@ mod merge_queue_doors;
 mod mesh_doors;
 mod model_catalog_doors;
 mod model_step_doors;
+mod model_stream_doors;
 mod note_doors;
 mod off_record_doors;
 mod off_record_room_doors;
@@ -159,6 +160,7 @@ mod wire_health_doors;
 
 pub(crate) use admission_doors::{admission_observer, call_verb};
 pub(crate) use asr_doors::AsrSessions;
+pub(crate) use model_stream_doors::ModelStreams;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{connector_answer_as, connector_call_as};

@@ -724,6 +724,12 @@ both bindings and their export-census tests in one change.
 - `vault.skills.attribution.positive.retire`
 - `ai.steps.submit`
 - `ai.steps.receipt`
+- `ai.streams.open`
+- `ai.streams.subscribe`
+- `ai.streams.events`
+- `ai.streams.detach`
+- `ai.streams.abort`
+- `ai.streams.terminal`
 - `ai.reply`
 - `vault.receipts.context`
 - `ai.voice.asr.open`

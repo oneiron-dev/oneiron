@@ -3591,6 +3591,36 @@ export_facade! {
     let output = client.ai_steps_receipt(&input)?;
     crate::codec::lift_record("ai.steps.receipt", &output)
 };
+"ai.streams.open" => fn ai_streams_open(&self, input: ModelStreamOpen) -> ModelStreamOpened = |client| {
+    let input: oneiron::llm::model_stream::ModelStreamOpen = crate::codec::lower_record("ai.streams.open", input)?;
+    let output = client.ai_streams_open(&input)?;
+    crate::codec::lift_record("ai.streams.open", &output)
+};
+"ai.streams.subscribe" => fn ai_streams_subscribe(&self, input: ModelStreamSubscribe) -> ModelStreamSubscribed = |client| {
+    let input: oneiron::llm::model_stream::ModelStreamSubscribe = crate::codec::lower_record("ai.streams.subscribe", input)?;
+    let output = client.ai_streams_subscribe(&input)?;
+    crate::codec::lift_record("ai.streams.subscribe", &output)
+};
+"ai.streams.events" => fn ai_streams_events(&self, input: ModelStreamEventsRequest) -> ModelStreamEvents = |client| {
+    let input: oneiron::llm::model_stream::ModelStreamEventsRequest = crate::codec::lower_record("ai.streams.events", input)?;
+    let output = client.ai_streams_events(&input)?;
+    crate::codec::lift_record("ai.streams.events", &output)
+};
+"ai.streams.detach" => fn ai_streams_detach(&self, input: ModelStreamDetach) -> ModelStreamDetached = |client| {
+    let input: oneiron::llm::model_stream::ModelStreamDetach = crate::codec::lower_record("ai.streams.detach", input)?;
+    let output = client.ai_streams_detach(&input)?;
+    crate::codec::lift_record("ai.streams.detach", &output)
+};
+"ai.streams.abort" => fn ai_streams_abort(&self, input: ModelStreamAbort) -> ModelStreamTerminal = |client| {
+    let input: oneiron::llm::model_stream::ModelStreamAbort = crate::codec::lower_record("ai.streams.abort", input)?;
+    let output = client.ai_streams_abort(&input)?;
+    crate::codec::lift_record("ai.streams.abort", &output)
+};
+"ai.streams.terminal" => fn ai_streams_terminal(&self, input: ModelStreamTerminalRequest) -> ModelStreamTerminal = |client| {
+    let input: oneiron::llm::model_stream::ModelStreamTerminalRequest = crate::codec::lower_record("ai.streams.terminal", input)?;
+    let output = client.ai_streams_terminal(&input)?;
+    crate::codec::lift_record("ai.streams.terminal", &output)
+};
 "ai.reply" => fn ai_reply(&self, input: AiReplyRequest) -> AiReply = |client| {
     let input: oneiron::task_verb::sdk::AiReplyRequest = crate::codec::lower_record("ai.reply", input)?;
     let output = client.ai_reply(&input)?;

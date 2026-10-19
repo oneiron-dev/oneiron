@@ -748,6 +748,12 @@ vaultSkillsAttributionProposals(input: unknown): unknown
 vaultSkillsAttributionPositiveRetire(input: unknown): unknown
 aiStepsSubmit(input: unknown): unknown
 aiStepsReceipt(input: unknown): unknown
+aiStreamsOpen(input: unknown): unknown
+aiStreamsSubscribe(input: unknown): unknown
+aiStreamsEvents(input: unknown): unknown
+aiStreamsDetach(input: unknown): unknown
+aiStreamsAbort(input: unknown): unknown
+aiStreamsTerminal(input: unknown): unknown
 aiReply(input: unknown): unknown
 vaultReceiptsContext(input: unknown): unknown
 aiVoiceAsrOpen(input: unknown): unknown
