@@ -77715,7 +77715,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 46
+      "crate-vis": 47
      }
     },
     {
@@ -77789,7 +77789,17 @@
      "path": "src/auth/machine_proof.rs",
      "purpose": "The machine a request names",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/auth/managed_request.rs",
+     "purpose": "The caller of one request a managed vault serves (WILL-PLAN L14 row 01, Engine ruling 10-19)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -79383,7 +79393,7 @@
      "path": "src/device_sync.rs",
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -83385,7 +83395,7 @@
      "purpose": "HTTP query routes for web dashboard access"
     },
     "auth": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -83807,7 +83817,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 803,
+   "source_files": 804,
    "test_files": 182
   },
   "oneiron-spawn": {
