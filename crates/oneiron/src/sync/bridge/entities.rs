@@ -300,10 +300,22 @@ pub(super) fn committed_entity_state_matches(vault: &Vault, id: &EntityId, blob:
     let Ok(rtxn) = vault.store.env.read_txn() else {
         return false;
     };
-    matches!(
-        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, id),
-        Ok(Some(existing)) if *existing == *blob || pack_sync::pack_echo_equal(&existing, blob)
-    )
+    match crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, id) {
+        Ok(Some(existing)) => {
+            *existing == *blob
+                || pack_sync::pack_echo_equal(&existing, blob)
+                // A file-plane ASSET holding the same body (FIX 5393).
+                || crate::sync::asset_body::file_echo_equal(
+                    &vault.store,
+                    &rtxn,
+                    id,
+                    &existing,
+                    blob,
+                )
+                .unwrap_or(false)
+        }
+        _ => false,
+    }
 }
 
 /// Writes one `rm:w:{window}:{entity_hex}` marker in its OWN txn (the

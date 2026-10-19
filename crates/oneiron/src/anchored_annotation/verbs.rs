@@ -50,7 +50,8 @@ impl Memory<'_> {
             return Ok(unsupported(kind));
         }
         let file = self
-            .export_blob_artifact_sighted(&artifact, input.version, None)?
+            .vault()
+            .export_blob_artifact_as_raw(&artifact, input.version, self.secret_sight()?)?
             .ok_or_else(|| MemoryError::not_found("artifact version not found"))?;
         let Ok(format) = OfficeFormat::from_media_type(&file.media_type) else {
             return Ok(unsupported(file.kind));
@@ -79,7 +80,12 @@ impl Memory<'_> {
     /// The text of an exact immutable anchor, through the caller's file sight.
     fn annotation_anchor_view(&self, anchor: &Anchor) -> MemoryResult<AnnotationAnchorView> {
         let file = self
-            .export_blob_artifact_sighted(&anchor.artifact_id, Some(anchor.version), None)?
+            .vault()
+            .export_blob_artifact_as_raw(
+                &anchor.artifact_id,
+                Some(anchor.version),
+                self.secret_sight()?,
+            )?
             .ok_or_else(|| MemoryError::not_found("anchor version not found"))?;
         let limits = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
@@ -101,7 +107,8 @@ impl Memory<'_> {
     ) -> MemoryResult<AnnotationAnchorView> {
         let artifact = resolve_entity_ref(self.vault(), &input.artifact_ref)?;
         let file = self
-            .export_blob_artifact_sighted(&artifact, input.version, None)?
+            .vault()
+            .export_blob_artifact_as_raw(&artifact, input.version, self.secret_sight()?)?
             .ok_or_else(|| MemoryError::not_found("artifact version not found"))?;
         let locator = Locator::try_from(&input.locator)?;
         let format = OfficeFormat::from_media_type(&file.media_type)?;
