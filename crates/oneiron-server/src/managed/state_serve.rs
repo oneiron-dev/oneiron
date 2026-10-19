@@ -1235,6 +1235,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ladder_workers.extend(config.esign_delivery_outbox_dir.clone().map(|dir| {
         crate::api::spawn_esign_delivery_outbox(Arc::clone(&sync_server), admitted(), dir)
     }));
+    // Training offers and withdrawals go to the supervisor's outbox, offers
+    // under the same admission; without the flag none runs (OF-420).
+    ladder_workers.extend(config.publisher_training_outbox_dir.clone().map(|dir| {
+        crate::conversation_training::spawn(
+            Arc::clone(&sync_server),
+            admitted(),
+            dir,
+            crate::conversation_training::Placement::Managed,
+        )
+    }));
     // Due standing questions are answered through the ladder (OF-506).
     if !ai.bind_question_timer(&sync_server) {
         ladder_workers.push(crate::decision_graph::spawn(&sync_server, admitted()));

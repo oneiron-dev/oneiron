@@ -2515,23 +2515,36 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AuthorityArchiveContent",
       "AuthorityArchiveCustodian",
       "AuthorityArchiveManifest",
-      "AuthorityCheckpointRow",
       "AuthorityCheckpointUnresolved",
       "AuthorityCheckpointV2"
      ],
-     "path": "src/authority/checkpoint_image.rs",
+     "path": "src/authority/checkpoint_image/mod.rs",
      "purpose": "The portable authority checkpoint v2 image (OF-469): the exact fold a vault builds of its covered history…",
      "surface": {
       "const": 5,
-      "crate-vis": 11,
+      "crate-vis": 8,
       "fn": 6,
-      "struct": 6
+      "re-export": 1,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityCheckpointRow"
+     ],
+     "path": "src/authority/checkpoint_image/row.rs",
+     "purpose": "One covered row's summary in a checkpoint v2 image: the row's scaffold and, for a row a fold or a store door…",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 1
      }
     },
     {
@@ -25871,8 +25884,97 @@
       "const": 1,
       "enum": 4,
       "fn": 2,
+      "re-export": 4,
       "struct": 3,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IntakeReceiptKey",
+      "IntakeRecipient"
+     ],
+     "path": "src/feedback/conversation_training/crypto.rs",
+     "purpose": "The publisher training files' crypto (OF-420): the install signature on what the vault writes (C1, D6), the…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/conversation_training/custody.rs",
+     "purpose": "Local custody of publisher training offers and controls (OF-420): what this vault prepared, published and…",
+     "surface": {
+      "crate-vis": 27
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PublisherTrainingLifecycle",
+      "ReceiptCursor",
+      "ReceivedTrainingReceipt",
+      "ReleaseDecision",
+      "SealedTrainingOffer",
+      "SignedTrainingControl",
+      "TrainingControlId",
+      "TrainingQueued",
+      "TrainingReceiptPage",
+      "TrainingSubmissionId",
+      "TrainingUnavailable",
+      "TrainingWithheld"
+     ],
+     "path": "src/feedback/conversation_training/lifecycle.rs",
+     "purpose": "The publisher training lifecycle (OF-420 A2): what an outbox takes, and what the engine decides about it",
+     "surface": {
+      "enum": 3,
+      "fn": 4,
+      "struct": 8,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TrainingUpkeep"
+     ],
+     "path": "src/feedback/conversation_training/reconcile.rs",
+     "purpose": "Withdrawal by reconciliation (OF-420 A4, D2), receipts (C2, C3, C5) and the outbox's upkeep",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TrainingOfferPass"
+     ],
+     "path": "src/feedback/conversation_training/release.rs",
+     "purpose": "The offer pass and its release gate (OF-420 A2, A3; D1)",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/conversation_training/source.rs",
+     "purpose": "The source selector (OF-420 A3): one person's words in one conversation, read from the canonical rows, never…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -60955,7 +61057,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 175,
+     "files": 176,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61515,7 +61617,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 16,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -62411,9 +62513,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 197,
+   "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3817,
+   "source_files": 3824,
    "test_files": 902
   },
   "oneiron-android": {
@@ -80173,6 +80275,46 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/conversation_training/account.rs",
+     "purpose": "C1 (CALLS-1): a self-hosted vault's binding to the publisher's intake as the person's Oneiron account…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/mod.rs",
+     "purpose": "The publisher training outbox (OF-420 A1, \"Learn from my conversations\"): the worker that writes this…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/outbox.rs",
+     "purpose": "The outbox directory as the engine's training transport: three protocol subdirectories under one lock…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/worker.rs",
+     "purpose": "The outbox's periodic tick",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/credential_resume.rs",
      "purpose": "The server's check for a credential caller's call a verb hook's ask stopped (ARCH-0080 §3 Ask, OF-580)",
      "surface": {
@@ -81507,7 +81649,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "ManagedShutdown",
@@ -84415,6 +84557,13 @@
      "layout": "file+dir",
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
+    "conversation_training": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "The publisher training outbox (OF-420 A1, \"Learn from my conversations\"): the worker that writes this…"
+    },
     "credential_resume": {
      "files": 1,
      "impl_vault": false,
@@ -84579,7 +84728,7 @@
     "managed": {
      "files": 21,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Managed serve mode: the vault engine as a supervised child process"
     },
@@ -84733,7 +84882,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 817,
+   "source_files": 821,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -88612,6 +88761,40 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TrainingChunkV1",
+      "TrainingControlBodyV1",
+      "TrainingControlChangeV1",
+      "TrainingControlV1",
+      "TrainingFileName",
+      "TrainingFilterV1",
+      "TrainingForgetSourceV1",
+      "TrainingNoHumanReadV1",
+      "TrainingOfferBodyV1",
+      "TrainingOfferV1",
+      "TrainingPayloadV1",
+      "TrainingPersonChoiceChangeV1",
+      "TrainingPersonChoiceV1",
+      "TrainingReceiptBodyV1",
+      "TrainingReceiptStatusV1",
+      "TrainingReceiptSubjectV1",
+      "TrainingReceiptV1",
+      "TrainingSignatureV1",
+      "TrainingUsedRunV1",
+      "TrainingWorldEligibilityV1"
+     ],
+     "path": "src/lib/conversation_training.rs",
+     "purpose": "The publisher training outbox (OF-420, \"Learn from my conversations\"): the files a vault hands toward…",
+     "surface": {
+      "const": 15,
+      "enum": 4,
+      "fn": 11,
+      "struct": 16
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -88792,7 +88975,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 9,
+      "mod": 10,
       "re-export": 7
      }
     },
@@ -88908,7 +89091,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -88917,7 +89100,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 21,
+   "source_files": 22,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
