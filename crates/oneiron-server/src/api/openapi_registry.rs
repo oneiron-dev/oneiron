@@ -203,6 +203,7 @@ use utoipa::OpenApi;
         super::owner_routes::cooperative_deletion_routes::answer,
         super::cooperative_deletion::take_request,
         super::cooperative_deletion::take_reply,
+        super::cooperative_deletion::take_succession,
         super::recovery_bundle::part,
 
         lease_revoke

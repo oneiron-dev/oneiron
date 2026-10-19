@@ -7,7 +7,7 @@ use super::{DescriptionSource, ModelId, ModelWireFormat, ReasoningEffort, invali
 use crate::error::Result;
 use crate::llm::routing::DescriptionPolicy;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SeatPrecedence {
     /// Each authored level (global, purpose, vault, then the holder or judge)
@@ -20,7 +20,7 @@ pub enum SeatPrecedence {
 
 /// A v2 manifest row. Model-specific ladders may also come from the existing
 /// description-policy row when that policy is configured for the model.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SeatPolicy {
     pub default_reasoning_ladder: Vec<ReasoningEffort>,

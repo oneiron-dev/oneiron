@@ -23,7 +23,7 @@ pub(super) use self::field_validators::{
     ERR_ABANDONED_WITHOUT_REASON, ERR_ABANDONED_WITHOUT_RESULT, ERR_CANCEL_RECEIPTS_FULL,
     ERR_CANCELLATION_MISPLACED, ERR_DEDUPE_ACTOR_WITHOUT_KEY, ERR_HANDOFF_WITHOUT_RESUME_POINT,
     ERR_LANDING_RECORD_MISPLACED, ERR_LANDING_WITH_BACKOFF, ERR_LANDING_WITHOUT_LEASE,
-    ERR_LANDING_WITHOUT_RECORD, ERR_LEASE_TIMEOUT_ZERO, ERR_MANIFEST_FULL, ERR_RESERVE_SPEND_ZERO,
+    ERR_LANDING_WITHOUT_RECORD, ERR_LEASE_TIMEOUT_ZERO, ERR_RESERVE_SPEND_ZERO,
     lease_claimed_record, validate_attempt_events, validate_attempt_manifest,
     validate_cancel_actor, validate_cancel_standing, validate_cleanup_leases_input,
     validate_failure_reason, validate_intervention_actor, validate_kind, validate_manifest_entry,
