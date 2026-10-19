@@ -102,9 +102,11 @@ rewrites the host, as nginx does by default (`$proxy_host`), makes every kit
 fetch look missing, so a restore with the kit alone finds nothing at that
 home. In nginx, set `proxy_set_header Host $http_host;` (not `$host`, which
 drops the port). A proxy or tunnel that cannot keep the host can instead
-leave it to `oauth_resource_indicator`: set it to the public URL the kit
-dials, and the server also checks the signature against that URL's host and
-port.
+list the public URLs the kit dials in `kit_bundle_public_urls` (env
+`ONEIRON_KIT_BUNDLE_PUBLIC_URLS`, comma-separated; config file or environment
+only, no flag), one for each tunnel alias the home answers on, and the server
+also checks the signature against each URL's host and port. When that list is
+empty, the server reads `oauth_resource_indicator` as the one public URL.
 
 `artifact_port` (flag `--artifact-port`, env `ONEIRON_ARTIFACT_PORT`) is the
 port of a second listener, on the same host, that serves hosted artifacts
@@ -186,6 +188,7 @@ pptx_comment_patches = 10000      # comment edits one PowerPoint comment proposa
 import_xlsx_live_cells = 200000   # cells one workbook import writes into a live office body; past it the workbook is imported whole and the row asks
 pack_script_output_bytes = 65536 # bytes of one foreign pack script run's typed output; past it the row asks and the output is read whole (up to the sandbox's 1 MiB file bound)
 pack_script_output_rows = 16      # inbound events, verbs or connector events one foreign pack script run emits; past it the row asks and every row is served
+attempt_manifest_entries = 65536  # entries in one attempt's pack manifest; past it the row asks and every entry is kept
 judge_rubric_bytes = 8192         # bytes of the judge rubric (the judge skill's text) one judgment or label re-check reads; past it the rubric is read whole and the row asks
 judge_instructions_bytes = 8192   # bytes of skill instructions one held-out replay judgment reads; past it they are read whole and the row asks
 judge_replay_text_bytes = 40000   # bytes of replay text (runs' tasks and responses) one replay judgment's state carries; past it the replays ride whole and the row asks

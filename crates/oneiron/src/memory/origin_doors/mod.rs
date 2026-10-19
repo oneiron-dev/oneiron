@@ -29,7 +29,12 @@ impl Memory<'_> {
     /// this handle's own human actor; an agent never borrows it, and a
     /// request field never stands in for it.
     fn origin_owner(&self, owner: &AuthenticatedOwner) -> MemoryResult<EntityId> {
-        let txn = self.vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
         self.origin_owner_in_txn(owner, &txn)
     }
 
