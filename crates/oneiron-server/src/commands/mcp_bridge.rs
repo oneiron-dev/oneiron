@@ -16,6 +16,12 @@
 //! oversized exchange costs the agent one typed error for that request, not
 //! the session.
 //!
+//! In owner mode (`--auth-mode owner`, FIX 5540) the bridge runs as the
+//! vault's owner himself instead ([`bridge_auth`]): each socket it opens
+//! carries the sign-in an authenticated surface wrote to an owner-only file,
+//! read afresh for every upgrade, and no slip or holder proof. It rides the
+//! socket alone, with no HTTP fallback.
+//!
 //! Every line goes to the server as the client wrote it, but for one
 //! addition: a `tools/call` whose `_meta` names no `oneiron/invocation` gains
 //! a fresh one there (ARCH-0080 §3), every other `_meta` key as the client
@@ -47,6 +53,7 @@ use serde_json::{Value, json};
 use super::api;
 use crate::cli::{McpArgs, McpSurface};
 
+mod bridge_auth;
 mod link;
 
 /// How many requests may be in flight at once. A client that sends more
@@ -190,7 +197,10 @@ impl WakePump {
                     }
                     Ok(Err(refusal)) => {
                         if !failed {
-                            eprintln!("oneiron wake: {}", refusal.rpc_error(&Value::Null));
+                            eprintln!(
+                                "oneiron wake: {}",
+                                refusal.rpc_error(&Value::Null, &bridge.auth)
+                            );
                         }
                         failed = true;
                     }
@@ -373,8 +383,9 @@ struct Bridge {
     pick: Mutex<Pick>,
     /// Signalled when a probe ends.
     probed: Condvar,
-    token: String,
-    seed: String,
+    /// Whom every request runs as: a paired slip, or the owner by his
+    /// sign-in's file.
+    auth: bridge_auth::Auth,
     /// How long one request may take, and how long its answer may stall.
     deadline: Duration,
     idle: Duration,
@@ -390,23 +401,7 @@ struct Bridge {
 impl Bridge {
     fn new(args: &McpArgs) -> anyhow::Result<Self> {
         let base = api::normalized_base(&args.url)?;
-        let (token, seed) = match &args.credential_file {
-            Some(path) => {
-                let held = super::credential_file::PairedCredentialFile::read(path)?;
-                (held.token, held.seed)
-            }
-            None => (
-                credential_env(&args.secret_env)?,
-                credential_env(&args.binding_key_env)?,
-            ),
-        };
-        anyhow::ensure!(
-            token.starts_with("v2.slip."),
-            "the credential is not a paired slip; mint one with `oneiron token agent`"
-        );
-        // Sign once now, so a slip and seed that do not belong together fail
-        // at spawn, on the stderr the operator reads, and not on every call.
-        api::signed_binding_for_seed(&token, &seed)?;
+        let auth = bridge_auth::Auth::from_args(args)?;
         Ok(Self {
             link: link::Link::new(&base, args.transport)?,
             pick: Mutex::new(Pick {
@@ -416,13 +411,13 @@ impl Bridge {
                 last_failure: None,
             }),
             probed: Condvar::new(),
-            token,
-            seed,
+            auth,
             deadline: Duration::from_secs(args.request_timeout_secs),
             idle: Duration::from_secs(args.idle_timeout_secs),
-            // The slip and seed stay in this process: the server gets the
-            // slip and a proof signed for each request, and no variable
-            // either may be in reaches a process the bridge starts.
+            // The credential stays in this process: the server gets the slip
+            // and a proof signed for each request, or the owner's upgrade
+            // headers, and no variable a slip or seed may be in reaches a
+            // process the bridge starts, in either mode.
             named_env: vec![args.secret_env.clone(), args.binding_key_env.clone()],
             pending_calls: Mutex::new(HashMap::new()),
         })
@@ -481,7 +476,7 @@ impl Bridge {
             }
             // No answer from the server is no proof the call finished, so
             // the memory keeps what it holds.
-            Err(refusal) => refusal.rpc_error(&id),
+            Err(refusal) => refusal.rpc_error(&id, &self.auth),
         })
     }
 
@@ -621,7 +616,8 @@ impl Bridge {
     }
 
     /// One request to `surface` over the bridge's connection, signed for this
-    /// request alone, that ends by `until` whatever the server does.
+    /// request alone (on the owner's socket, as his upgrade's sign-in), that
+    /// ends by `until` whatever the server does.
     fn post_to(
         &self,
         surface: McpSurface,
@@ -631,12 +627,18 @@ impl Bridge {
         if until.saturating_duration_since(Instant::now()).is_zero() {
             return Err(self.refusal_for(surface, link::Cut::Deadline));
         }
-        let sign = || {
-            api::signed_binding_for_seed(&self.token, &self.seed).map_err(|error| error.to_string())
-        };
-        let credential = link::Credential {
-            bearer: &self.token,
-            sign: &sign,
+        let sign;
+        let credential = match &self.auth {
+            bridge_auth::Auth::Slip { token, seed } => {
+                sign = move || {
+                    api::signed_binding_for_seed(token, seed).map_err(|error| error.to_string())
+                };
+                link::Credential::Slip {
+                    bearer: token,
+                    sign: &sign,
+                }
+            }
+            bridge_auth::Auth::Owner { headers_file } => link::Credential::Owner { headers_file },
         };
         let bounds = link::Bounds {
             until,
@@ -667,7 +669,10 @@ impl Bridge {
                 self.idle.as_secs()
             )),
             link::Cut::TooLarge => Refusal::TooLarge,
-            link::Cut::Revoked(why) => Refusal::Auth(json!({ "error": why })),
+            link::Cut::Revoked(why) | link::Cut::Unauthorized(why) => {
+                Refusal::Auth(json!({ "error": why }))
+            }
+            link::Cut::Unavailable(why) => Refusal::Unavailable(why),
         }
     }
 }
@@ -731,7 +736,8 @@ struct Pick {
 enum Refusal {
     /// The HTTP door refused the credential before MCP saw the request (401 or
     /// 403): revoked, expired or unproven, say. The server's error body rides
-    /// along.
+    /// along. In owner mode, also his socket's refused upgrade, or a sign-in
+    /// file that is not admitted.
     Auth(Value),
     /// The server answered the bridge's own `initialize`, which picks the
     /// endpoint, with no result.
@@ -741,18 +747,23 @@ enum Refusal {
     Server(String, Value),
     /// No answer at all, or none whole within the request's deadline.
     Unreachable(String),
+    /// Owner mode only: the server offers him no MCP socket, and no other
+    /// carrier takes his sign-in.
+    Unavailable(String),
     /// An answer past [`MAX_REPLY_BYTES`], dropped unread.
     TooLarge,
 }
 
 impl Refusal {
-    fn rpc_error(&self, id: &Value) -> String {
+    /// The JSON-RPC error for request `id`; an auth refusal's advice is
+    /// `auth`'s own.
+    fn rpc_error(&self, id: &Value, auth: &bridge_auth::Auth) -> String {
         match self {
             Self::Auth(body) => rpc_error(
                 id,
                 -32001,
                 "mcp_auth_required",
-                "the server refused this credential before MCP; check --url names the vault that minted it. If revoked or expired, stop that vault, re-mint with `oneiron token agent --name <name> --tier <tier> --out <new-file> --config <vault-config>`, restart `oneiron serve --config <vault-config>`, and update --credential-file",
+                auth.refused_advice(),
                 Some(body.clone()),
             ),
             Self::Refused(answer) => match answer.get("error") {
@@ -775,6 +786,17 @@ impl Refusal {
                 &format!(
                     "{message}; start the vault with `oneiron serve --config <vault-config>` \
                          and check --url matches its host and port; MCP does not start a vault"
+                ),
+                None,
+            ),
+            Self::Unavailable(message) => rpc_error(
+                id,
+                -32000,
+                "mcp_socket_unavailable",
+                &format!(
+                    "{message}; owner mode carries MCP over the server's socket alone, with no \
+                     HTTP fallback: check --url names the owner's vault and that it serves MCP \
+                     on its socket"
                 ),
                 None,
             ),
@@ -808,15 +830,4 @@ fn rpc_error(
         "error": { "code": code, "message": message, "data": data },
     })
     .to_string()
-}
-
-fn credential_env(name: &str) -> anyhow::Result<String> {
-    match std::env::var(name) {
-        Ok(value) if !value.trim().is_empty() => Ok(value.trim().to_owned()),
-        Ok(_) | Err(std::env::VarError::NotPresent) => anyhow::bail!(
-            "{name} is not set; pass --credential-file or set {name} (`oneiron token agent` mints both)"
-        ),
-        // The error's own Display would quote the value.
-        Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("{name} is not valid UTF-8"),
-    }
 }
