@@ -15,7 +15,8 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use oneiron_vault_contract::ManagedWidenAction;
 use oneiron_vault_contract::{
-    CONTRACT_VERSION, CtlRequest, CtlResponse, UnixTs, now_ts, validate_wake_entries,
+    CONTRACT_VERSION, CtlRequest, CtlResponse, REAP_PAUSE_REFUSAL, UnixTs, now_ts,
+    validate_wake_entries,
 };
 use tokio::sync::{Mutex, watch};
 
@@ -35,20 +36,16 @@ use oneiron_vault_contract::host::{Host, HostLimits};
 /// [`ManagedError::WritesFrozen`] is the only thing that emits it. That is what
 /// keeps "the reap freeze refused this" distinguishable from every other way
 /// this surface can be briefly unavailable — a 503 without the tag is a
-/// different outage and means a different response from the caller.
-pub const WRITES_FROZEN_TAG: &str = "writes_frozen";
+/// different outage and means a different response from the caller. It is
+/// the wire spelling of [`REAP_PAUSE_REFUSAL`]'s kind, which a ctl refusal
+/// carries too.
+pub const WRITES_FROZEN_TAG: &str = REAP_PAUSE_REFUSAL.error.as_str();
 
 /// What a vault frozen for reap says (K18), served and logged: a temporary
 /// pause under the service's vault lifecycle allocation, what it holds back,
 /// how it lifts, and that a self-hosted vault has no such limit. It names no
 /// duration: this process knows none.
 pub(super) const WRITES_FROZEN_MESSAGE: &str = "This hosted vault is paused while the service prepares to reap it under its vault lifecycle allocation. New effects, requests other than GET, HEAD and OPTIONS (POST reads included) and connection upgrades are refused, and background passes wait, until the reap is aborted or the vault wakes again; the same request then succeeds. The same action works on a self-hosted vault, which has no such service reap limit; its storage and authorization checks still apply.";
-
-/// The bound a reap pause names: the service's capacity, as its vault
-/// lifecycle allocation, in the phase that prepares a reap.
-const REAP_PAUSE_BOUND_KIND: &str = "capacity";
-const REAP_PAUSE_RESOURCE: &str = "vault_lifecycle_allocation";
-const REAP_PAUSE_PHASE: &str = "reap_prepare";
 
 /// An alarm the supervisor pushed, as the reconciler hook saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -446,9 +443,9 @@ impl ManagedState {
                 if !self.background_waiting.swap(true, Ordering::SeqCst) {
                     tracing::info!(
                         reason = WRITES_FROZEN_TAG,
-                        bound_kind = REAP_PAUSE_BOUND_KIND,
-                        bound_resource = REAP_PAUSE_RESOURCE,
-                        bound_phase = REAP_PAUSE_PHASE,
+                        bound_kind = REAP_PAUSE_REFUSAL.bound.kind.as_str(),
+                        bound_resource = REAP_PAUSE_REFUSAL.bound.resource.as_str(),
+                        bound_phase = REAP_PAUSE_REFUSAL.bound.phase.as_str(),
                         "background passes wait: the vault is paused for reap preparation until the reap is aborted or the vault wakes again"
                     );
                 }
@@ -932,7 +929,8 @@ fn is_read_only(request: &Request) -> bool {
 /// construction: `reap_abort` lifts it and the same request succeeds. The
 /// fields beside it name the bound (K18): the service's vault lifecycle
 /// allocation while it prepares a reap, what waits, what lifts it, and that a
-/// self-hosted vault has no such limit.
+/// self-hosted vault has no such limit. Each comes from the same
+/// [`REAP_PAUSE_REFUSAL`] a ctl refusal carries, so the two cannot drift.
 fn writes_frozen_response(error: &ManagedError) -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
@@ -943,18 +941,18 @@ fn writes_frozen_response(error: &ManagedError) -> Response {
 
 /// [`writes_frozen_response`]'s body.
 fn writes_frozen_body(error: &ManagedError) -> serde_json::Value {
+    let refusal = REAP_PAUSE_REFUSAL;
     serde_json::json!({
-        "error": WRITES_FROZEN_TAG,
+        "error": refusal.error,
         "message": error.to_string(),
-        "bound": {
-            "kind": REAP_PAUSE_BOUND_KIND,
-            "resource": REAP_PAUSE_RESOURCE,
-            "phase": REAP_PAUSE_PHASE,
-        },
-        "temporary": true,
+        "bound": refusal.bound,
+        "temporary": refusal.temporary,
         "affected": ["effects", "non_safe_method_requests", "upgrades", "background_passes"],
-        "resumes_on": ["reap_abort", "wake"],
-        "self_hosted": {"supported": true, "condition": "no_service_reap_limit"},
+        "resumes_on": refusal.resumes_on,
+        "self_hosted": {
+            "supported": refusal.self_hosted_supported,
+            "condition": "no_service_reap_limit",
+        },
     })
 }
 
