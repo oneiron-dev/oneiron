@@ -106,6 +106,7 @@ mod dispatch;
 mod error;
 mod inbox;
 pub mod intake;
+mod preview_store;
 mod redaction;
 mod report;
 
@@ -144,6 +145,7 @@ pub use self::dispatch::{
 };
 pub use self::error::FeedbackError;
 pub use self::inbox::{FeedbackInboxNote, FeedbackInboxVia};
+pub use self::preview_store::RetainedFeedbackPreview;
 pub use self::redaction::{
     FilteredFeedback, FilteredText, TextFilter, TextFilterError, TextFilterIdentity,
     apply_recognised_spans,

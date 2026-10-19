@@ -2786,6 +2786,26 @@
       "section": false
     },
     {
+      "name": "vault.turn_programs.arm",
+      "description": "Arms a pinned callable skill entry for the caller's own future turns, in one conversation or any of its own; arming the same definition again returns the standing registration.",
+      "input": "crate::dreamer_runner::ArmTurnProgram",
+      "output": "crate::dreamer_runner::TurnProgramRegistration",
+      "call": "memory.arm_turn_program(&input)?",
+      "scope": "Write",
+      "openapi": true,
+      "section": false
+    },
+    {
+      "name": "vault.turn_programs.disarm",
+      "description": "Disarms one of the caller's own armed turn programs; true when it was armed.",
+      "input": "crate::dreamer_runner::DisarmTurnProgram",
+      "output": "bool",
+      "call": "memory.disarm_turn_program(input.registration)?",
+      "scope": "Write",
+      "openapi": true,
+      "section": false
+    },
+    {
       "name": "self.saved_query.create",
       "description": "Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller.",
       "input": "crate::campaign::surface::SavedQueryCreateRequest",

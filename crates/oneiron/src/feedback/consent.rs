@@ -7,7 +7,7 @@ use crate::genui::{
 
 use super::bundle::{
     FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_REF_MAX_BYTES, FEEDBACK_SEND_VERB, FeedbackBundle,
-    FeedbackEncoding, encode_feedback_bundle, feedback_bundle_digest_as,
+    FeedbackEncoding, decode_feedback_bundle_as, encode_feedback_bundle, feedback_bundle_digest_as,
 };
 use super::error::{
     FeedbackError, approval_field, checked_token, expect_field, push_framed_identity,
@@ -51,7 +51,8 @@ pub fn feedback_logical_send_ref(digest: &str, approval_receipt_ref: &str) -> St
 }
 
 /// Where one approved feedback bundle is allowed to go.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FeedbackSendRoute {
     /// Outbound channel token.
     pub channel: String,
@@ -237,6 +238,23 @@ pub struct FeedbackPreview {
 }
 
 impl FeedbackPreview {
+    /// A retained preview read back from its exact bytes: decoded under
+    /// `encoding` and digested again, never redacted or re-encoded, so the
+    /// bytes a send carries are the bytes the preview showed (FIX 5212).
+    pub(super) fn from_retained(
+        encoding: FeedbackEncoding,
+        bytes: Vec<u8>,
+    ) -> Result<Self, FeedbackError> {
+        let bundle = decode_feedback_bundle_as(encoding, &bytes)?;
+        let digest = feedback_bundle_digest_as(encoding, &bytes);
+        Ok(Self {
+            bundle,
+            encoding,
+            bytes,
+            digest,
+        })
+    }
+
     /// The bundle as the redactor returned it.
     #[must_use]
     pub const fn bundle(&self) -> &FeedbackBundle {

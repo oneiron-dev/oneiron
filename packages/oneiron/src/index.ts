@@ -817,6 +817,12 @@ export class Oneiron {
         archive: (input: Facade.ArchiveCampaignProgramRequest): Facade.CampaignProgramRecord => this.#call(() => this.#client.vaultCampaignProgramArchive(input) as Facade.CampaignProgramRecord),
       },
     },
+    turn_programs: {
+      /** Arms a pinned callable skill entry for the caller's own future turns, in one conversation or any of its own; arming the same definition again returns the standing registration. */
+      arm: (input: Facade.ArmTurnProgram): Facade.TurnProgramRegistration => this.#call(() => this.#client.vaultTurnProgramsArm(input) as Facade.TurnProgramRegistration),
+      /** Disarms one of the caller's own armed turn programs; true when it was armed. */
+      disarm: (input: Facade.DisarmTurnProgram): boolean => this.#call(() => this.#client.vaultTurnProgramsDisarm(input) as boolean),
+    },
     weave: {
       /** The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role. */
       report: (input: Facade.WeaveReportRequest): Facade.WeaveReportView => this.#call(() => this.#client.vaultWeaveReport(input) as Facade.WeaveReportView),

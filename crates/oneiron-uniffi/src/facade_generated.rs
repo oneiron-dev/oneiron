@@ -826,6 +826,16 @@ export_facade! {
     let output = client.vault_campaign_program_archive(&input)?;
     crate::codec::lift_record("vault.campaign.program.archive", &output)
 };
+"vault.turn_programs.arm" => fn vault_turn_programs_arm(&self, input: ArmTurnProgram) -> TurnProgramRegistration = |client| {
+    let input: oneiron::dreamer_runner::ArmTurnProgram = crate::codec::lower_record("vault.turn_programs.arm", input)?;
+    let output = client.vault_turn_programs_arm(&input)?;
+    crate::codec::lift_record("vault.turn_programs.arm", &output)
+};
+"vault.turn_programs.disarm" => fn vault_turn_programs_disarm(&self, input: DisarmTurnProgram) -> bool = |client| {
+    let input: oneiron::dreamer_runner::DisarmTurnProgram = crate::codec::lower_record("vault.turn_programs.disarm", input)?;
+    let output = client.vault_turn_programs_disarm(&input)?;
+    crate::codec::lift_record("vault.turn_programs.disarm", &output)
+};
 "self.saved_query.create" => fn self_saved_query_create(&self, input: SavedQueryCreateRequest) -> SavedQueryRecordView = |client| {
     let input: oneiron::campaign::surface::SavedQueryCreateRequest = crate::codec::lower_record("self.saved_query.create", input)?;
     let output = client.self_saved_query_create(&input)?;

@@ -44,8 +44,9 @@ pub(crate) use self::home::reelect_home_in_txn;
 pub use self::milestone::*;
 pub use self::owner_doors::*;
 pub use self::program::{
-    ArmTurnProgram, LandedTurnRef, ProgramRecipePin, TurnProgramAdmissionOutcome,
-    TurnProgramAdmissionReceipt, TurnProgramDrain, TurnProgramRegistration,
+    ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin,
+    TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,
+    TurnProgramRegistration,
 };
 pub(crate) use self::program::{
     TurnProgramAuthority, arm_turn_program_in_txn, disarm_turn_program_in_txn,

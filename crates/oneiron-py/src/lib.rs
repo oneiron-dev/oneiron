@@ -1638,6 +1638,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_turn_programs_arm(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.turn_programs.arm")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.turn_programs.arm", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_turn_programs_disarm(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.turn_programs.disarm")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.turn_programs.disarm", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_saved_query_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.saved_query.create")?;
         let output = py

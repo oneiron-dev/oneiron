@@ -31,8 +31,9 @@ pub(crate) use self::authority::{
     TurnProgramAuthority, require_program_actor_in_txn, stamp_program_attempt,
 };
 pub use self::types::{
-    ArmTurnProgram, LandedTurnRef, ProgramRecipePin, TurnProgramAdmissionOutcome,
-    TurnProgramAdmissionReceipt, TurnProgramDrain, TurnProgramRegistration,
+    ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin,
+    TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,
+    TurnProgramRegistration,
 };
 pub(crate) use self::wake::{
     drain_turn_program_wakes, record_turn_program_wakes_in_txn, turn_programs_armed_in_txn,

@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1086 code-mode rows (1061 host rows, 25 run rows), 3613 declarations.
-// Replies: 969 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1088 code-mode rows (1063 host rows, 25 run rows), 3617 declarations.
+// Replies: 971 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -745,6 +745,10 @@ declare namespace Sdk {
   type CampaignProgramReadResult = { found: boolean; record?: CampaignProgramRecord | null };
   type UpdateCampaignProgramRequest = { campaign_ref: string; program_ref: string; expected_definition_version: number; name: string; steps: CampaignProgramStepSpec[]; audience?: CampaignProgramAudienceSpec | null };
   type ArchiveCampaignProgramRequest = { campaign_ref: string; program_ref: string; expected_definition_version: number };
+  type ArmTurnProgram = { skill: EntityId; executor: string; args: unknown; conversation?: EntityId | null };
+  type ProgramRecipePin = { skill: EntityId; version: string; content_hash: string; entry: string; contract_digest: string; executor: string; args: string };
+  type TurnProgramRegistration = { registration: EntityId; actor: EntityId; conversation?: EntityId | null; definition: ProgramRecipePin; revision: string; armed_at: number; newly_armed: boolean };
+  type DisarmTurnProgram = { registration: EntityId };
   type SavedQueryScopeSpec = { worlds?: EntityId[]; facets?: string[] };
   type ClaimComparison = "exists" | "eq" | "not_eq" | "lt" | "lte" | "gt" | "gte" | "contains";
   type SavedQueryFilterSpec = { op: "task_owner"; owner: EntityId } | { op: "all"; terms: SavedQueryFilterSpec[] } | { op: "any"; terms: SavedQueryFilterSpec[] } | { op: "not"; term: SavedQueryFilterSpec } | { op: "claim"; predicate: string; cmp: ClaimComparison; value?: unknown } | { op: "edge_exists"; edge_kind: string; target?: EntityId | null };
@@ -6229,6 +6233,12 @@ declare const vault: Sdk.VaultHost & {
       /** The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern. */
       set(input: Sdk.TrustedContactTierRequest): Promise<Sdk.TrustedContactTierSet | StoredResult>;
     };
+  };
+  turn_programs: {
+    /** Arms a pinned callable skill entry for the caller's own future turns, in one conversation or any of its own; arming the same definition again returns the standing registration. */
+    arm(input: Sdk.ArmTurnProgram): Promise<Sdk.TurnProgramRegistration | StoredResult>;
+    /** Disarms one of the caller's own armed turn programs; true when it was armed. */
+    disarm(input: Sdk.DisarmTurnProgram): Promise<boolean | StoredResult>;
   };
   vectors: {
     /** Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically. */

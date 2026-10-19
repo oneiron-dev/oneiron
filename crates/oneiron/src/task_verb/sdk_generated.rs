@@ -897,6 +897,17 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.turn_programs.arm",
+                crate::code_run::vault_read::request_schema::<crate::dreamer_runner::ArmTurnProgram>(
+                ),
+            ),
+            (
+                "vault.turn_programs.disarm",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::DisarmTurnProgram,
+                >(),
+            ),
+            (
                 "self.saved_query.create",
                 crate::code_run::vault_read::request_schema::<
                     crate::campaign::surface::SavedQueryCreateRequest,
@@ -6035,6 +6046,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.campaign.enroll",
     "vault.campaign.stage.evidence",
     "vault.campaign.unsubscribe",
+    "vault.turn_programs.arm",
+    "vault.turn_programs.disarm",
     "self.saved_query.create",
     "self.saved_query.read",
     "self.saved_query.update",
@@ -6976,6 +6989,10 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.campaign.unsubscribe" => crate::code_run::vault_read::request_schema::<
             crate::campaign::surface::CampaignUnsubscribeReceipt,
         >(),
+        "vault.turn_programs.arm" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_runner::TurnProgramRegistration,
+        >(),
+        "vault.turn_programs.disarm" => crate::code_run::vault_read::request_schema::<bool>(),
         "self.saved_query.create" => crate::code_run::vault_read::request_schema::<
             crate::campaign::surface::SavedQueryRecordView,
         >(),
@@ -10069,6 +10086,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.campaign.program.archive" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.turn_programs.arm" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.turn_programs.disarm" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -16815,6 +16846,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::campaign::surface::ArchiveCampaignProgramRequest =
                 decode(value.clone())?;
         }
+        "vault.turn_programs.arm" => {
+            let _input: crate::dreamer_runner::ArmTurnProgram = decode(value.clone())?;
+        }
+        "vault.turn_programs.disarm" => {
+            let _input: crate::dreamer_runner::DisarmTurnProgram = decode(value.clone())?;
+        }
         "self.saved_query.create" => {
             let _input: crate::campaign::surface::SavedQueryCreateRequest = decode(value.clone())?;
         }
@@ -20198,6 +20235,8 @@ pub fn invoke(
         "vault.campaign.program.archive" => {
             encode(vault_campaign_program_archive(memory, decode(value)?)?)
         }
+        "vault.turn_programs.arm" => encode(vault_turn_programs_arm(memory, decode(value)?)?),
+        "vault.turn_programs.disarm" => encode(vault_turn_programs_disarm(memory, decode(value)?)?),
         "self.saved_query.create" => encode(self_saved_query_create(memory, decode(value)?)?),
         "self.saved_query.read" => encode(self_saved_query_read(memory, decode(value)?)?),
         "self.saved_query.update" => encode(self_saved_query_update(memory, decode(value)?)?),
@@ -23469,6 +23508,18 @@ pub fn vault_campaign_program_archive(
     input: crate::campaign::surface::ArchiveCampaignProgramRequest,
 ) -> MemoryResult<crate::campaign::surface::CampaignProgramRecord> {
     memory.campaign_program_archive(&input)
+}
+pub fn vault_turn_programs_arm(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::ArmTurnProgram,
+) -> MemoryResult<crate::dreamer_runner::TurnProgramRegistration> {
+    memory.arm_turn_program(&input)
+}
+pub fn vault_turn_programs_disarm(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::DisarmTurnProgram,
+) -> MemoryResult<bool> {
+    memory.disarm_turn_program(input.registration)
 }
 pub fn self_saved_query_create(
     memory: &Memory<'_>,
