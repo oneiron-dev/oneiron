@@ -39063,7 +39063,7 @@
      "path": "src/outbound/served_sink.rs",
      "purpose": "The sink a served connector-send worker hands the connector executor (OF-187): the transports this engine…",
      "surface": {
-      "fn": 4,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -80447,7 +80447,7 @@
      "path": "src/calendar_host.rs",
      "purpose": "The calendar host's real CalDAV wire and iMIP submission transport",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -84914,7 +84914,7 @@
      "path": "src/server/connector_events.rs",
      "purpose": "The served surface-event drain (OF-218): the one thing that hands each queued inbound event to its actor's…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
