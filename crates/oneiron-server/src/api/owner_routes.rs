@@ -308,6 +308,17 @@ fn feedback_host(
 }
 
 pub(super) fn owner_error(error: OwnerError) -> ApiError {
+    // FIX 5479, FIX 5615: a backup or a rehearsal stopped at the disk's floor
+    // or by a full disk names capacity, never a fault of its own.
+    if let Some(capacity) = backup::write_budget::Capacity::of_owner(&error) {
+        return ApiError::new(
+            capacity.refusal(),
+            ApiErrorDetails::InvalidState {
+                state: Some(backup::write_budget::CAPACITY_STATE.to_owned()),
+            },
+            [backup::write_budget::CAPACITY_REMEDY],
+        );
+    }
     match error {
         OwnerError::Invalid(message) => ApiError::bad_request(message, None),
         OwnerError::Changed(message) => ApiError::new(
@@ -327,15 +338,6 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
         OwnerError::NotFound(what, which) => ApiError::not_found(what, Some(&which)),
         OwnerError::Engine(error) => match error.kind() {
             oneiron::ErrorKind::ConsentOwnerNotAuthenticated => ApiError::forbidden_scope("owner"),
-            // FIX 5479: a backup or a rehearsal stopped at the disk's floor
-            // names capacity, never a fault of its own.
-            oneiron::ErrorKind::Io if backup::write_budget::at_floor(&error) => ApiError::new(
-                backup::write_budget::CAPACITY_REFUSAL,
-                ApiErrorDetails::InvalidState {
-                    state: Some(backup::write_budget::CAPACITY_STATE.to_owned()),
-                },
-                [backup::write_budget::CAPACITY_REMEDY],
-            ),
             // FIX 5147: a stale seen revision (or a write that lost its race)
             // is the same conflict `OwnerError::Changed` answers, with the
             // engine's words, on every owner route, not a 500.

@@ -241,9 +241,9 @@ impl AgentVerbDoor for SkillCredentialDoor {
             return Ok(true);
         };
         crate::device_local::withholds_retained(self.server.vault(), destination, rows, &[])
-        .map_err(|_| AgentVerbRefusal {
-            code: oneiron::memory::MEMORY_CODE_INTERNAL.to_owned(),
-        })
+            .map_err(|_| AgentVerbRefusal {
+                code: oneiron::memory::MEMORY_CODE_INTERNAL.to_owned(),
+            })
     }
 }
 

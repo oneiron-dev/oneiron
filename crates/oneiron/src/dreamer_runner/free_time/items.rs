@@ -1,0 +1,404 @@
+//! A free-time cycle's items (FIX 4453): the binding each item's attempt
+//! runs under, what it lands, and how it ends.
+//!
+//! The cycle stamps each item's binding in the commit that queues it; the
+//! binding, never the model's words or the run's name, says which agent,
+//! cycle, item and spend scope the work is. The for-human item lands its
+//! suggestion as a Proposed claim of the agent's own and its note to its
+//! human; the own-time item is the resident's dreaming, or rest when the
+//! agent chose rest. Its real spend lands on its own scope under the cycle's
+//! root in the commit that settles its wake reservation, and its terminal
+//! settles that scope in the commit that ends it.
+
+use serde::{Deserialize, Serialize};
+
+use super::cycle::{FreeTimeCycle, FreeTimeCycleState, FreeTimeNote, FreeTimeOwnTimeChoice};
+use super::receipt::{
+    FreeTimeItemOutcome, FreeTimeItemReceipt, close_cycle_if_done_in_txn, record_receipt_in_txn,
+};
+use super::{CYCLE, FreeTimeKind, ITEM, RECEIPT};
+use crate::agent_dispatch::{AgentDispatcher, SpendScopeId};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
+use crate::{ClaimInput, ClaimSource, EdgeActorClass, EntityId, Error, Result, Vault};
+
+/// The longest retry chain an item's binding is looked up along.
+const MAX_RETRY_DEPTH: usize = 64;
+/// The predicate an agent's free-time suggestion for its human lands under.
+const SUGGESTION_PREDICATE: &str = "autonomy.suggestion";
+
+/// What one item's attempt runs under, stamped by its cycle when it queued
+/// the attempt. A retry reads the binding of the try it retries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FreeTimeItemBinding {
+    pub agent: EntityId,
+    pub cycle: EntityId,
+    /// Its cycle's boundary, which keys the cycle's row.
+    pub boundary: u64,
+    /// Where its cycle's period starts (Unix seconds): the records the item
+    /// reads begin here.
+    pub period_start: u64,
+    pub item: EntityId,
+    pub kind: FreeTimeKind,
+    pub policy_revision: u64,
+    /// The attempt its cycle queued.
+    pub attempt: [u8; 16],
+    /// The scope its spend lands on, under its cycle's root.
+    pub spend_scope: SpendScopeId,
+}
+
+fn invalid(reason: &str) -> Error {
+    Error::InvalidConfig(format!("free-time item: {reason}"))
+}
+
+/// The payload input of an item its cycle queues: the resident, and the
+/// cycle it belongs to.
+pub(crate) fn free_time_item_input(resident: EntityId, cycle: EntityId) -> rmpv::Value {
+    rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("resident"),
+            rmpv::Value::Binary(resident.as_bytes().to_vec()),
+        ),
+        (
+            rmpv::Value::from("cycle"),
+            rmpv::Value::Binary(cycle.as_bytes().to_vec()),
+        ),
+    ])
+}
+
+/// Whether a payload input names a free-time cycle.
+fn names_cycle(input: &rmpv::Value) -> bool {
+    matches!(input, rmpv::Value::Map(entries)
+        if entries.iter().any(|(key, _)| key.as_str() == Some("cycle")))
+}
+
+/// The runner line a free-time item reserves and settles on: its resident's
+/// free-time line, never the pass's. Accounting only; the money meter is its
+/// cycle's spend scope. `None` for any attempt no cycle queued.
+pub(crate) fn free_time_line(record: &AttemptRecord) -> Option<String> {
+    let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload).ok()?;
+    if !names_cycle(&payload.input) {
+        return None;
+    }
+    let resident = crate::dreamer_consolidation::resident_of_dream_input(&payload.input).ok()?;
+    Some(format!("free_time/{}", resident.to_hex()))
+}
+
+/// `attempt`'s binding: its own, else the try it retries.
+fn binding_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<Option<FreeTimeItemBinding>> {
+    let queue = AttemptQueue::new(vault);
+    let mut cursor = attempt;
+    for _ in 0..MAX_RETRY_DEPTH {
+        if let Some(binding) = ITEM.get(&vault.store, txn, &cursor)? {
+            return Ok(Some(binding));
+        }
+        match queue.get_in_txn(txn, cursor)?.and_then(|row| row.retry_of) {
+            Some(previous) => cursor = previous,
+            None => return Ok(None),
+        }
+    }
+    Err(invalid("the retry chain runs past its bound"))
+}
+
+impl Vault {
+    /// The free-time binding `attempt` runs under (FIX 4453); `None` for an
+    /// attempt no free-time cycle queued.
+    ///
+    /// # Errors
+    /// A store read that fails, or a retry chain past its bound.
+    pub fn free_time_item_binding(
+        &self,
+        attempt: AttemptId,
+    ) -> Result<Option<FreeTimeItemBinding>> {
+        let txn = self.store.env.read_txn()?;
+        binding_in_txn(self, &txn, attempt)
+    }
+}
+
+/// Whether a resident's attempt runs as a free-time item.
+pub(crate) enum FreeTimeItemRun {
+    /// No cycle queued it: it runs as it always has.
+    Unbound,
+    /// Its cycle ended, or its item already has its receipt: it runs nothing.
+    Done,
+    /// It runs under this binding.
+    Run(FreeTimeItemBinding),
+}
+
+/// What `resident`'s `attempt` runs as. Its binding must name `resident`.
+pub(crate) fn free_time_item_to_run(
+    vault: &Vault,
+    attempt: AttemptId,
+    resident: EntityId,
+) -> Result<FreeTimeItemRun> {
+    let txn = vault.store.env.read_txn()?;
+    let Some(binding) = binding_in_txn(vault, &txn, attempt)? else {
+        return Ok(FreeTimeItemRun::Unbound);
+    };
+    if binding.agent != resident {
+        return Err(invalid("the binding names another agent"));
+    }
+    let open = CYCLE
+        .get(&vault.store, &txn, &(binding.agent, binding.boundary))?
+        .is_some_and(|cycle| cycle.state == FreeTimeCycleState::Open);
+    if !open
+        || RECEIPT.contains(
+            &vault.store,
+            &txn,
+            &(binding.agent, binding.cycle, binding.item),
+        )?
+    {
+        return Ok(FreeTimeItemRun::Done);
+    }
+    Ok(FreeTimeItemRun::Run(binding))
+}
+
+/// Records an own-time item's reflection in the commit that lands its diary
+/// entry. The entry stays private; the receipt says only that it landed.
+pub(crate) fn record_own_time_landed_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    binding: &FreeTimeItemBinding,
+    at: u64,
+) -> Result<()> {
+    let receipt = FreeTimeItemReceipt::of(binding, FreeTimeItemOutcome::Completed, None, at);
+    if record_receipt_in_txn(vault, txn, &receipt)? {
+        close_cycle_if_done_in_txn(vault, txn, binding.agent, binding.boundary, at)?;
+    }
+    Ok(())
+}
+
+/// What an agent's free time for its human came back with, from its reply's
+/// block.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FreeTimeForHumanReply {
+    /// One suggestion for its human. It lands as a proposal; nothing is
+    /// applied.
+    #[serde(default)]
+    pub(crate) suggestion: Option<String>,
+    /// Its short note to its human on what it got up to.
+    #[serde(default)]
+    pub(crate) note: Option<String>,
+    /// What it chose for its own time.
+    #[serde(default)]
+    pub(crate) own_time: Option<FreeTimeOwnTimeChoice>,
+}
+
+/// Lands what an agent's free time for its human came back with (FIX 4453):
+/// its suggestion as a Proposed claim of its own, then in one commit the
+/// item's receipt (Completed only with a landed proposal, else Failed), its
+/// note to its human and its choice for its own time. A choice of rest ends
+/// the own-time item with no call, no spend and no text. `reply` is `None`
+/// when the reply held no block. A replay lands nothing twice.
+///
+/// # Errors
+/// A store read or write that fails.
+pub(crate) fn land_free_time_for_human(
+    vault: &Vault,
+    binding: &FreeTimeItemBinding,
+    reply: Option<&FreeTimeForHumanReply>,
+) -> Result<()> {
+    let suggestion = reply
+        .and_then(|reply| reply.suggestion.as_deref())
+        .map(str::trim)
+        .filter(|suggestion| !suggestion.is_empty());
+    let proposal = match suggestion {
+        Some(suggestion) => propose_suggestion(vault, binding, suggestion)?,
+        None => None,
+    };
+    vault.with_write_txn_grouped(|txn| {
+        let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        let outcome = if proposal.is_some() {
+            FreeTimeItemOutcome::Completed
+        } else {
+            FreeTimeItemOutcome::Failed
+        };
+        let receipt = FreeTimeItemReceipt::of(binding, outcome, proposal, at);
+        if !record_receipt_in_txn(vault, txn, &receipt)? {
+            return Ok(());
+        }
+        let key = (binding.agent, binding.boundary);
+        let Some(mut cycle) = CYCLE.get(&vault.store, txn, &key)? else {
+            return Ok(());
+        };
+        if let Some(reply) = reply {
+            if cycle.owner_note.is_none()
+                && let Some(text) = reply
+                    .note
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+            {
+                cycle.owner_note = Some(FreeTimeNote {
+                    author: binding.agent,
+                    at,
+                    text: text.to_owned(),
+                });
+            }
+            if cycle.own_time_choice.is_none() {
+                cycle.own_time_choice = reply.own_time;
+            }
+        }
+        // The note is the agent's own words, admitted at the side-row wall.
+        // A note the wall refuses is dropped; the receipt and choice stand.
+        let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+        match CYCLE.put(&vault.store, &mut savepoint, &key, &cycle) {
+            Ok(()) => savepoint.commit()?,
+            Err(error) => {
+                drop(savepoint);
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    agent = %binding.agent.to_hex(),
+                    "a free-time note was not admitted"
+                );
+                cycle.owner_note = None;
+                CYCLE.put(&vault.store, txn, &key, &cycle)?;
+            }
+        }
+        if cycle.own_time_choice == Some(FreeTimeOwnTimeChoice::Rest) {
+            rest_in_txn(vault, txn, &cycle, at)?;
+        }
+        close_cycle_if_done_in_txn(vault, txn, binding.agent, binding.boundary, at)
+    })
+}
+
+/// Proposes `suggestion` as the agent's own Generated claim, Proposed and
+/// never applied, under one id per item so a replay proposes nothing twice.
+/// A refusal is logged and lands nothing: the item then has no proposal.
+fn propose_suggestion(
+    vault: &Vault,
+    binding: &FreeTimeItemBinding,
+    suggestion: &str,
+) -> Result<Option<EntityId>> {
+    let id = crate::codebase::entity_id_from_hash_material(
+        b"oneiron:free_time:suggestion:v1",
+        &[binding.item.as_bytes().as_slice()],
+    )?;
+    if vault.get_claim(&id)?.is_some() {
+        return Ok(Some(id));
+    }
+    let input = ClaimInput {
+        id: Some(id.to_hex()),
+        predicate: SUGGESTION_PREDICATE.to_owned(),
+        subject_ref: binding.agent.to_hex(),
+        value: serde_json::Value::String(suggestion.to_owned()),
+        confidence: 1.0,
+        source: ClaimSource::Generated.as_str().to_owned(),
+        world_ref: None,
+        relationship_ref: None,
+        scope: None,
+        valid_from: None,
+        valid_to: None,
+        occurred_at: None,
+        learned_at: None,
+        salience: None,
+    };
+    match vault
+        .memory(binding.agent, EdgeActorClass::Agent)
+        .claim_propose(&input)
+    {
+        Ok(_) => Ok(Some(id)),
+        Err(error) => {
+            tracing::warn!(
+                code = %error.code,
+                agent = %binding.agent.to_hex(),
+                "a free-time suggestion was not proposed"
+            );
+            Ok(None)
+        }
+    }
+}
+
+/// Ends `cycle`'s own-time item Rested: the agent chose rest. Rest makes no
+/// call and spends nothing, so an own-time item that already spent keeps
+/// running to its own receipt.
+fn rest_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    cycle: &FreeTimeCycle,
+    at: u64,
+) -> Result<()> {
+    let Some(item) = cycle
+        .items
+        .iter()
+        .find(|item| item.kind == FreeTimeKind::OwnTime)
+    else {
+        return Ok(());
+    };
+    if let Some(attempt) = item.attempt
+        && AgentDispatcher::new(vault)
+            .attempt_spend_scope_in_txn(txn, AttemptId::from_bytes(&attempt)?)?
+            .is_some_and(|scope| scope.spent_units > 0)
+    {
+        return Ok(());
+    }
+    record_receipt_in_txn(
+        vault,
+        txn,
+        &FreeTimeItemReceipt {
+            agent: cycle.agent,
+            cycle: cycle.cycle,
+            item: item.item,
+            kind: FreeTimeKind::OwnTime,
+            policy_revision: cycle.policy_revision,
+            outcome: FreeTimeItemOutcome::Rested,
+            attempt: item.attempt,
+            proposal: None,
+            at,
+        },
+    )?;
+    Ok(())
+}
+
+/// Lands a free-time item's real spend on its own scope under its cycle's
+/// root (FIX 4453), in the commit that settles its wake reservation: that
+/// reservation is the key, so a replay that finds it gone records nothing
+/// twice. Spend already made is recorded whole. A no-op for any attempt no
+/// cycle queued.
+pub(crate) fn charge_free_time_item_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    units: u64,
+) -> Result<()> {
+    if units == 0 {
+        return Ok(());
+    }
+    let Some(binding) = binding_in_txn(vault, txn, attempt)? else {
+        return Ok(());
+    };
+    AgentDispatcher::new(vault).record_guard_spend_in_txn(txn, &binding.spend_scope, units)?;
+    Ok(())
+}
+
+/// Ends a free-time item at its attempt's terminal (FIX 4453), in the commit
+/// that ends it: its scope settles into its cycle's root and gives back what
+/// it held, and an item that ended without its receipt takes `outcome`,
+/// never a success. A no-op for any attempt no cycle queued.
+pub(crate) fn end_free_time_item_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    record: &AttemptRecord,
+    outcome: FreeTimeItemOutcome,
+    now: u64,
+) -> Result<()> {
+    if record.kind != crate::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND
+        && record.kind != crate::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
+    {
+        return Ok(());
+    }
+    let Some(binding) = binding_in_txn(vault, txn, record.id)? else {
+        return Ok(());
+    };
+    AgentDispatcher::new(vault).settle_child_in_txn(txn, &record.id, now)?;
+    let receipt = FreeTimeItemReceipt::of(&binding, outcome, None, now);
+    if record_receipt_in_txn(vault, txn, &receipt)? {
+        close_cycle_if_done_in_txn(vault, txn, binding.agent, binding.boundary, now)?;
+    }
+    Ok(())
+}

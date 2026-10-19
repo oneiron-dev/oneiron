@@ -90,6 +90,9 @@ struct IssuedVaultKey {
     passphrase_cost: Option<StoredCost>,
     coverage: KitCoverage,
     pieces: Vec<PieceFile>,
+    /// Whether the kit's public facts went into the kit inventory (`recovery-kit
+    /// status`). Its pieces open the key either way.
+    listed: bool,
 }
 
 /// `recovery-kit issue-vault-key` (FIX 4532): a kit of the vault data key on
@@ -115,6 +118,7 @@ pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> 
         vault_id,
         manifest,
         pieces,
+        listed,
     } = vault.issue_vault_key_recovery_kit_as(
         &owner,
         &KitIssue {
@@ -137,6 +141,7 @@ pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> 
         }),
         coverage: manifest.coverage,
         pieces: files,
+        listed,
     })
 }
 

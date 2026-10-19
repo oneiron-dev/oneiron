@@ -10,6 +10,9 @@ use crate::ports::EntityStoreRead;
 use crate::{EntityId, Vault};
 
 mod live_audience;
+mod thread_readers;
+
+pub(crate) use thread_readers::{thread_ceiling_in, thread_reader_in};
 
 impl Memory<'_> {
     /// The room's roster (ARCH-0067 §8): the channel Conversation's members,
@@ -227,11 +230,13 @@ impl Memory<'_> {
             return Err(unknown_room());
         }
         drop(txn);
+        // The thread stays personal or held as the bound turn is.
         Ok(match self.room_turn() {
             Some(turn) => {
                 turn.terms.meet(&now.terms.get());
                 RoomTurnCeiling {
                     terms: turn.terms.clone(),
+                    personal: turn.personal,
                     ..now
                 }
             }
@@ -257,7 +262,8 @@ impl Memory<'_> {
     /// reads. Each row is checked again against the room as its own snapshot
     /// reads it. A turn bound to one thread rebuilds through that thread's
     /// ceiling ([`thread_ceiling_in`]), so a thread-only reader keeps reading
-    /// it; a room turn reads as before.
+    /// it; a room turn reads as before. It stays personal or held as the
+    /// turn is.
     pub(crate) fn room_turn_now(&self) -> MemoryResult<Option<RoomTurnCeiling>> {
         let Some(turn) = self.room_turn() else {
             return Ok(None);
@@ -274,6 +280,7 @@ impl Memory<'_> {
         turn.terms.meet(&now.terms.get());
         Ok(Some(RoomTurnCeiling {
             terms: turn.terms.clone(),
+            personal: turn.personal,
             ..now
         }))
     }
@@ -657,7 +664,8 @@ pub(crate) fn room_reader_in(
 /// the build. One snapshot builds all of it, the same one that serves the
 /// row it is checked against. `None` when `caller` does not read the room
 /// here ([`room_reader_in`]); an agent on a Ready join reads it without
-/// joining the roster.
+/// joining the roster. It is a held ceiling: only a personal read marks its
+/// own (FIX 5545).
 pub(crate) fn room_ceiling_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -701,97 +709,6 @@ pub(crate) fn room_ceiling_in(
         peers: peer_read_keys_in(vault, txn, caller, &members)?,
         roster: live_audience::with_entries(members, &live),
         branch: None,
-    }))
-}
-
-/// Whether `caller` reads thread `thread` of `room` as `txn` reads it
-/// (OF-529): a reader of the room ([`room_reader_in`]), or an AGENT_DEF
-/// standing on an OF-531 Ready join for that thread itself. A thread's join
-/// opens that thread's reads alone, never the room's or another thread's,
-/// and takes no seat. A private thread (FIX 2951) is read by its audience
-/// alone, before any of these, and one hidden from `caller` reads as a
-/// missing one.
-pub(crate) fn thread_reader_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    room: EntityId,
-    thread: EntityId,
-    members: &[EntityId],
-    caller: EntityId,
-) -> crate::Result<bool> {
-    match crate::workspace_roster::thread_audience_allows_in(vault, txn, room, thread, caller) {
-        Ok(true) => {}
-        Ok(false) | Err(crate::Error::EntityNotFound) => return Ok(false),
-        Err(error) => return Err(error),
-    }
-    if room_reader_in(vault, txn, room, members, caller)? {
-        return Ok(true);
-    }
-    if vault.get_entity_type_in_txn(txn, &caller)? != Some(crate::registry::ENTITY_TYPE_AGENT_DEF) {
-        return Ok(false);
-    }
-    let agent = crate::workspace_roster::JoinSubject::Agent(caller);
-    match crate::workspace_roster::require_join_for_branch_in_txn(
-        vault,
-        txn,
-        room,
-        Some(thread),
-        &agent,
-        None,
-    ) {
-        Ok(_) => Ok(true),
-        Err(crate::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. })) => {
-            Ok(false)
-        }
-        Err(error) => Err(error),
-    }
-}
-
-/// [`room_ceiling_in`] for a reader of thread `thread` of `room`
-/// ([`thread_reader_in`]): the same terms, audience and peer reads over the
-/// room's roster in this snapshot, which a thread's reader never joins. A
-/// private thread's (FIX 2951) are over the members in its audience alone.
-/// `None` when `caller` does not read the thread here.
-pub(crate) fn thread_ceiling_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    room: EntityId,
-    thread: EntityId,
-    caller: EntityId,
-) -> crate::Result<Option<RoomTurnCeiling>> {
-    let Some(members) = room_roster_in(vault, txn, room)? else {
-        return Ok(None);
-    };
-    if !thread_reader_in(vault, txn, room, thread, &members, caller)? {
-        return Ok(None);
-    }
-    let members = crate::workspace_roster::thread_members_in(vault, txn, room, thread, &members)?;
-    let worlds = reading_defaults_in(vault, txn, &members)?;
-    let clearances = clearances_in(vault, txn, &members)?;
-    let roster: Vec<_> = members
-        .iter()
-        .zip(worlds.into_iter().zip(clearances))
-        .map(|(member, (active_worlds, clearance))| RoomPresence {
-            actor: *member,
-            actor_class: None,
-            label: String::new(),
-            present: true,
-            active_worlds,
-            clearance,
-        })
-        .collect();
-    let terms = RoomTerms {
-        worlds: room_worlds(&roster)?,
-        facets: room_facets_axis_in(vault, txn, room)?,
-        clearance: room_clearance(&roster),
-        p7: true,
-    };
-    Ok(Some(RoomTurnCeiling {
-        room,
-        caller,
-        terms: crate::claim::TurnTerms::new(terms),
-        peers: peer_read_keys_in(vault, txn, caller, &members)?,
-        roster: members,
-        branch: Some(thread),
+        personal: false,
     }))
 }

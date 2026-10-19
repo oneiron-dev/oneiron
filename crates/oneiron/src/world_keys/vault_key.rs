@@ -288,6 +288,16 @@ pub enum VaultKeyUnlock<'a> {
         capsule: &'a [u8],
         secret: &'a HybridSecretKey,
     },
+    /// The data-key kit's pieces, two or one and the kit passphrase (FIX
+    /// 5614): they rebuild the vault data key itself, bound to `vault_id`,
+    /// the id the owner names, which must be the artifact's or the vault's.
+    /// The key opens only as the one its commitment names; no wrap opens
+    /// and none need be carried (`kit`).
+    Kit {
+        vault_id: [u8; 32],
+        pieces: &'a [crate::recovery::KitPiece],
+        passphrase: Option<&'a crate::recovery::KitPassphrase>,
+    },
 }
 
 /// The vault key as it rests: its commitment and every wrap's sealed envelope,
@@ -435,6 +445,15 @@ impl CarriedVaultKey {
             } => {
                 let presented = StoredWrap::presented_escrow(label, capsule)?;
                 attempt(&presented, &UnlockSecret::Hybrid(secret));
+            }
+            VaultKeyUnlock::Kit {
+                vault_id: kit_vault,
+                pieces,
+                passphrase,
+            } => {
+                let rebuilt =
+                    kit::open_kit(vault_id, &self.commitment, kit_vault, pieces, *passphrase)?;
+                return Ok((rebuilt, Vec::new()));
             }
         }
         match key {
