@@ -159,6 +159,10 @@ pub enum AuthorityOp {
     /// signed by its own install key (FIX 4898). A main-log entry, so every
     /// machine the owner admits folds it.
     HomeCandidacy(HomeCandidacy),
+    /// One owner mint or revoke of an agent's Grant, signed by the install
+    /// key of a live machine of the vault, in any role (FIX 5628). A
+    /// main-log entry, so every machine the owner admits folds it.
+    AgentGrantAct(AgentGrantActRecord),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -445,6 +449,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::ConversationTrainingSet(set) => set.validate(),
         AuthorityOp::ConversationTrainingVaultSet(set) => set.validate(),
         AuthorityOp::HomeCandidacy(declaration) => declaration.validate(),
+        AuthorityOp::AgentGrantAct(record) => record.validate(),
     }
 }
 

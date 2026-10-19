@@ -45,6 +45,7 @@ use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryResult};
 use crate::ports::{EntityRecord, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+mod agent_grant_act;
 
 /// Rows a page holds when the query names no limit.
 pub const AUTHORITY_AUDIT_DEFAULT_LIMIT: usize = 50;
@@ -95,11 +96,11 @@ pub struct AuthorityAuditQuery {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AuthorityAuditEventKind {
-    /// A capability mint, a federation connect, or a person's yes to
-    /// training on their conversations.
+    /// A capability mint, a federation connect, an owner's agent Grant mint,
+    /// or a person's yes to training on their conversations.
     Grant,
-    /// A capability revoke, a federation disconnect or dissolve, or a
-    /// person turning training on their conversations off.
+    /// A capability revoke, a federation disconnect or dissolve, an owner's
+    /// agent Grant revoke, or a person turning training on their conversations off.
     Revoke,
     /// A federation confirm (its `detail` keeps accept, rescope, a2a connect
     /// or revoke) or a critical-write confirm (clear or decline).
@@ -729,6 +730,7 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
+        AuthorityOp::AgentGrantAct(record) => agent_grant_act::classify(record),
     }
 }
 

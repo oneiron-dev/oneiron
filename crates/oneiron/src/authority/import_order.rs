@@ -101,6 +101,12 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
                 entry.signer_key().clone(),
             )]
         }
+        AuthorityOp::AgentGrantAct(record) => {
+            vec![Grant::InstallKey(
+                record.machine,
+                entry.signer_key().clone(),
+            )]
+        }
         AuthorityOp::OwnerWorkRequest(request) => {
             vec![Grant::InstallKey(
                 request.carrier,

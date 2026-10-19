@@ -268,7 +268,7 @@ fn axis_value<T: Ord>(axis: &ScopeAxis<T>, encode: impl Fn(&T) -> Value) -> Valu
     }
 }
 
-fn scope_value(scope: &Scope) -> Value {
+pub(super) fn scope_value(scope: &Scope) -> Value {
     let id = |v: &ScopeId| Value::from(v.0.to_hex());
     Value::Map(vec![
         (Value::from(SCOPE_KEY_WORLDS), axis_value(&scope.worlds, id)),
@@ -295,7 +295,7 @@ fn scope_value(scope: &Scope) -> Value {
     ])
 }
 
-fn decode_scope(value: &Value) -> Result<Scope> {
+pub(super) fn decode_scope(value: &Value) -> Result<Scope> {
     let entries = map_entries(value)?;
     validate_keys(entries, &SLIP_SCOPE_KEYS)?;
     let id = |v: &Value| decode_id(v).map(ScopeId);

@@ -67,6 +67,7 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::HomeNodePick(_)
                 | AuthorityOp::ConversationTrainingSet(_)
                 | AuthorityOp::ConversationTrainingVaultSet(_)
+                | AuthorityOp::AgentGrantAct(_)
         )
 }
 
