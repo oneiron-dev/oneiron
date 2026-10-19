@@ -69,8 +69,9 @@ pub struct ConsentRegistryRow {
 }
 
 /// A support grant's delegation as the registry shows it (OF-606): why the
-/// customer let support in, who approved it, and the wall deadline it ends
-/// at, with where the grant stands now.
+/// customer let support in, who approved it, the wall deadline it ends at
+/// and whom the support credential may address (FIX 5059), with where the
+/// grant stands now.
 #[derive(
     Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
@@ -81,6 +82,8 @@ pub struct ConsentRegistryDelegation {
     pub approved_by: String,
     pub wall_expires_at: u64,
     pub status: crate::authority::SupportGrantStatus,
+    /// The support credential's effective comm reach (FIX 5059).
+    pub comm: crate::authority::CommReach,
 }
 
 /// The one-tap revoke command carried by every registry row.
@@ -169,6 +172,7 @@ impl ConsentRegistryRow {
                 grant.records.iter().cloned().collect::<Vec<_>>().join(",")
             ));
         }
+        selectors.push(format!("comm:{}", grant.comm.as_str()));
         Self {
             domain: ConsentDomain::Action,
             subject: format!("{}/{}", grant.holder.to_hex(), grant.holder_class),
@@ -193,6 +197,7 @@ impl ConsentRegistryRow {
                 approved_by: grant.delegation.owner_ref.clone(),
                 wall_expires_at: grant.delegation.wall_expires_at,
                 status: grant.status,
+                comm: grant.comm,
             }),
         }
     }
