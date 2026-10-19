@@ -45,7 +45,7 @@ pub use failure_signals::{
 };
 pub use feedback::{CLOUD_FEEDBACK_ENDPOINT, FeedbackConfig, FeedbackInboxConfig};
 pub use import::ImportConfig;
-pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig};
+pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig, KeystoreInstall};
 pub use limits::LimitsConfig;
 pub use line::LineConfig;
 pub(crate) use linear::LinearCredential;

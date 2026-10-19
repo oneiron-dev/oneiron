@@ -243,9 +243,34 @@ names the field and never its value:
   are resolved. An import queue with no `claude_code_root` and `codex_root` of
   its own would read the defaults under HOME, so it stops the vault too.
 
+The supervisor binds five more settings on argv alone; a settings file that
+names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind` or
+`mesh_relays` is refused `SupervisorOwned`:
+
+- `--browser-runtime <path>` and `--desktop-runtime <path>`: the browser and
+  desktop guests' container CLI, an absolute path on the vault's own host or
+  root filesystem. Each stands as the `runtime` of the owner's `[browser]` or
+  `[desktop]` section, which may then leave `runtime` out. The owner's section
+  still turns the guest on and picks its image and bounds; the flag alone turns
+  on no guest, and the guest still needs an isolating host. An owner's own
+  `runtime` inside the vault's storage works as before without the flag.
+- `--organ-dir <path>`: where pack organ builds, the seal's among them, are
+  written, on the tenant's own storage; without it, `<data_dir>/organs`. It is
+  made private at start. A managed vault never reads `ONEIRON_ORGAN_DIR` and
+  never writes them to the OS temp directory.
+- `--mesh-bind <ip:port>` and `--mesh-relays <url>,<url>`: the paired-machine
+  mesh listener's bind and private relays (device-sync.md); without a bind the
+  mesh is off. A managed vault never reads `ONEIRON_MESH_*`.
+
+A vault VM reads the guest runtimes and the mesh settings from the one-line
+files `/config/browser-runtime`, `/config/desktop-runtime`, `/config/mesh-bind`
+and `/config/mesh-relays` on its config drive.
+
 A `local` embedder names its files with `model_dir` or `models_dir`, because
-the XDG data root is never read, and a `[keystore]` that asks for a keystore
-needs the supervisor's `--keystore-dir`. Every embedding, tagging and other
+the XDG data root is never read. A keystore lives in the supervisor's
+`--keystore-dir` alone, since one without it would be looked for under HOME:
+without the flag none is opened, and unless the file sets `[keystore] backend
+= "off"` the vault serves degraded (below). Every embedding, tagging and other
 background pass runs under the vault's write admission, so a vault frozen for
 reap fills nothing until it thaws. Without the file a managed vault runs on the
 defaults: no model seats (its ladder is the rule table and the owner's asks),
@@ -254,6 +279,18 @@ before the file is settled, at the level it settles to (`--log-level` over the
 file's `log_level`). A file with `[models.voice]` and no `--voice-socket` runs
 no voice loop, logged once with the reason `voice_socket_missing`; live voice
 sessions still run.
+
+A managed vault reports how it came up on every ctl `Ping`, as `readiness`
+(contract v3): `{"state":"ready"}`, or `{"state":"degraded","missing":[...]}`
+naming each signing facility it serves without, as `{"facility","reason"}`:
+`keystore_directory` with `missing_binding` (no `--keystore-dir`, and the owner
+did not turn the keystore off), `device_keystore` with `open_failed`,
+`install_signing_keys` with `prepare_failed`, or `host_node_profile` with
+`profile_failed`. It is a snapshot taken at start, also logged once before the
+vault reports ready, with the reason `managed_facility_missing`. A degraded
+vault still serves and sends the same ready byte: reads and sync go on, and
+the signing and world-key doors refuse as they do without a keystore. An owner
+who set `backend = "off"` gets `ready`.
 
 The supervisor gives a vault its publisher training outbox (OF-420, "Learn from
 my conversations") as `--publisher-training-outbox-dir <vault>/training-outbox`,
