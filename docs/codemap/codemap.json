@@ -13217,7 +13217,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "mod": 6,
       "re-export": 20
      }
@@ -13536,8 +13536,18 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "re-export": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/program_resume.rs",
+     "purpose": "A turn program's resume checkpoint (DOOR-141 PR3b, FIX 4382): the compact head and keyed pages its pinned…",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -13547,7 +13557,7 @@
      "path": "src/code_run/storage/reader_folds.rs",
      "purpose": "A fold's receipt (ARCH-0079 #reader-forks) and a summary's memo row, beside the run's fold ledger and where…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -13634,7 +13644,7 @@
      "path": "src/code_run/storage/wait_delivery.rs",
      "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 10,
       "struct": 3
      }
@@ -22350,7 +22360,7 @@
      "path": "src/dreamer_runner/program/authority.rs",
      "purpose": "The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 1
      }
     },
@@ -22372,7 +22382,7 @@
      "path": "src/dreamer_runner/program/mod.rs",
      "purpose": "Turn-woken programs (DOOR-141, FIX 4382)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 2
      }
     },
@@ -22384,7 +22394,17 @@
      "purpose": "A turn program's reads (DOOR-141 PR3a, FIX 4382): what admitting a landed turn's wakes decided, where one…",
      "surface": {
       "fn": 3,
-      "re-export": 1
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/read/checkpoint.rs",
+     "purpose": "A turn program's fourth read (DOOR-141 PR3b): the resume checkpoint its restarter reads, as the caller reads…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -22392,6 +22412,11 @@
      "kind": "src",
      "notable": [
       "ProgramAdmissionOutcomeView",
+      "ProgramCheckpointCallView",
+      "ProgramCheckpointHeadView",
+      "ProgramCheckpointRequest",
+      "ProgramCheckpointView",
+      "ProgramCheckpointWaitView",
       "ProgramFrontierView",
       "ProgramHeldView",
       "ProgramQueueView",
@@ -22414,7 +22439,17 @@
      "purpose": "The wire shapes of a turn program's reads (DOOR-141 PR3a)",
      "surface": {
       "enum": 5,
-      "struct": 13
+      "struct": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/resume.rs",
+     "purpose": "A turn program's holds and their resume (DOOR-141 PR3b, FIX 4382, FIX 5711)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -22424,7 +22459,7 @@
      "path": "src/dreamer_runner/program/run.rs",
      "purpose": "Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 25
      }
     },
     {
@@ -22902,7 +22937,7 @@
       "TurnProgramRuntime"
      ],
      "path": "src/dreamer_wake/program.rs",
-     "purpose": "The Dreamer's turn program runtime (DOOR-141 PR2, FIX 4382)",
+     "purpose": "The Dreamer's turn program runtime (DOOR-141 PR2 and PR3b, FIX 4382)",
      "surface": {
       "fn": 1,
       "struct": 3,
@@ -25109,9 +25144,19 @@
      "path": "src/engine_executor/mod.rs",
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 3,
       "re-export": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/program_entry.rs",
+     "purpose": "A turn program's pinned entry (DOOR-141 PR3b, FIX 4382)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -25131,7 +25176,7 @@
      "path": "src/engine_executor/repl.rs",
      "purpose": "Durable REPL loop: run(), persistence helpers, and LLM request building",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -39831,7 +39876,7 @@
      "path": "src/outbound_intent_ledger/mod.rs",
      "purpose": "Device-local durable intent ledger for effectful outbound calls",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 3
      }
     },
@@ -39852,7 +39897,17 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_intent_ledger/store/pending.rs",
+     "purpose": "The sends one attempt has not settled (DOOR-141 PR3b): what a held turn program's resume waits on, read over…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -56197,7 +56252,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1100
+      "fn": 1101
      }
     },
     {
@@ -62909,7 +62964,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 101,
+     "files": 102,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63175,7 +63230,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 92,
+     "files": 94,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63231,7 +63286,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63588,7 +63643,7 @@
      "purpose": "Standing outbound-grant records for OF-367 RS6.2/RS6.5"
     },
     "outbound_intent_ledger": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -64192,7 +64247,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3958,
+   "source_files": 3963,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73158,7 +73213,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1071
+      "fn": 1072
      }
     },
     {
@@ -74297,7 +74352,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1072
+      "fn": 1073
      }
     },
     {
@@ -78353,9 +78408,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/program_read_doors.rs",
-     "purpose": "A turn program's reads (DOOR-141 PR3a): what a landed turn's wakes admitted, where one program's run stands…",
+     "purpose": "A turn program's reads (DOOR-141 PR3a, PR3b): what a landed turn's wakes admitted, where one program's run…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -89883,6 +89938,11 @@
       "ProductivityTree",
       "ProductivityTreeRequest",
       "ProgramAdmissionOutcomeView",
+      "ProgramCheckpointCallView",
+      "ProgramCheckpointHeadView",
+      "ProgramCheckpointRequest",
+      "ProgramCheckpointView",
+      "ProgramCheckpointWaitView",
       "ProgramFrontierView",
       "ProgramHeldView",
       "ProgramQueueView",
@@ -91148,7 +91208,7 @@
      "purpose": "—",
      "surface": {
       "enum": 873,
-      "struct": 2766
+      "struct": 2771
      }
     },
     {

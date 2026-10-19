@@ -275,7 +275,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/persona_doors.rs` | src | s | 4 crate-vis | — | Profile request answers and mode-A copy edits under the owner's own proof |
 | `src/api/facade/plugin_section_doors.rs` | src | s | 7 crate-vis | — | The host doors of the plugin Context Board sections (DOOR-112)… |
 | `src/api/facade/policy_doors.rs` | src | s | 3 crate-vis | — | The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`… |
-| `src/api/facade/program_read_doors.rs` | src | s | 3 crate-vis | — | A turn program's reads (DOOR-141 PR3a): what a landed turn's wakes admitted, where one program's run stands… |
+| `src/api/facade/program_read_doors.rs` | src | s | 4 crate-vis | — | A turn program's reads (DOOR-141 PR3a, PR3b): what a landed turn's wakes admitted, where one program's run… |
 | `src/api/facade/project_card_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's project-card tap (OF-501): `vault.projects.confirm` |
 | `src/api/facade/proxy_doors.rs` | src | s | 2 crate-vis | — | Owner-only OpenAI proxy admission and selective remember-grant withdrawal |
 | `src/api/facade/reaction_doors.rs` | src | s | 2 crate-vis | — | The host door of `vault.messages.react` (OF-181) |
