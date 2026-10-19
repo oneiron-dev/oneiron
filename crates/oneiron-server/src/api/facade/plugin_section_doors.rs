@@ -11,10 +11,9 @@ use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{
-    MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult, PluginSectionGrant,
-    PluginSectionGrantRequest, PluginSectionListRequest, PluginSectionProposal,
-    PluginSectionProposeRequest, PluginSectionRevokeRequest, PluginSectionRevoked,
-    PluginSectionSuggestRequest, PluginSectionSuggestion, PluginSectionsView,
+    MemoryResult, PluginSectionGrant, PluginSectionGrantRequest, PluginSectionListRequest,
+    PluginSectionProposal, PluginSectionProposeRequest, PluginSectionRevokeRequest,
+    PluginSectionRevoked, PluginSectionSuggestRequest, PluginSectionSuggestion, PluginSectionsView,
     PluginSuggestionsSetRequest, PluginSuggestionsView,
 };
 use oneiron::runtime_hooks::InvocationId;
@@ -27,13 +26,7 @@ use crate::server::SyncServer;
 
 /// The vault owner's proof from the request, as `/v1/owner` takes it.
 fn owner(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<AuthenticatedOwner> {
-    crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{verb} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })
+    super::owner_binding::facade_owner(server, auth, verb)
 }
 
 /// `vault.packs.sections.propose`: the caller offers one typed section

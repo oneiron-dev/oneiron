@@ -76050,7 +76050,7 @@
      "path": "src/api/facade/owner_binding.rs",
      "purpose": "WILL-PLAN L13 row 01: one revalidated binding for a managed vault's attested owner, shared by the policy…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 7
      }
     },
     {

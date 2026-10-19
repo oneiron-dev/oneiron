@@ -22,8 +22,9 @@ pub(super) fn hyde_caller(
             &["Use the same credential that requested recall, outside an off-record session."],
         ));
     }
-    super::facade_actor(server, auth)
-        .map_err(|_| MemoryError::bad_request("HyDE host work requires an authenticated principal"))
+    super::owner_binding::facade_caller_or(server, auth, || {
+        MemoryError::bad_request("HyDE host work requires an authenticated principal")
+    })
 }
 
 pub(crate) async fn vault_retrieval_hyde_configure(

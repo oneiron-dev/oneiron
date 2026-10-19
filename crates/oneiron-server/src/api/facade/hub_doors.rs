@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::memory::{MemoryError, MemoryResult};
+use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{self, *};
 
 use super::host_doors::{Listed, MaybeListed, internal, no_hook_sandbox, owner_proof, refused};
@@ -20,15 +20,9 @@ pub(super) async fn owner_call<T: Send + 'static>(
     + Send
     + 'static,
 ) -> Listed<T> {
-    let owner = match crate::api::owner_routes::owner(auth, server) {
+    let owner = match super::owner_binding::facade_owner(server, auth, verb) {
         Ok(owner) => owner,
-        Err(_) => {
-            return refused(MemoryError::new(
-                oneiron::memory::MEMORY_CODE_FORBIDDEN,
-                format!("{verb} is the vault owner's"),
-                &["Present the owner's own verified, unattenuated credential."],
-            ));
-        }
+        Err(refusal) => return refused(refusal),
     };
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || match act(&server, &owner) {

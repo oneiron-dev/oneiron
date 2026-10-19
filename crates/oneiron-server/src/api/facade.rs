@@ -777,14 +777,14 @@ async fn facade_hooks_pre(
     value: serde_json::Value,
 ) -> Result<VerbHookPre, FacadeApiError> {
     let auth = call.auth();
+    // A hosted operator's root acts as nobody (FIX 2222): no hook runs for
+    // it, and its typed refusal comes before any row door's own (FIX 4371).
+    super::host_action::facade_host_action(server, auth)?;
     if verb == "vault.export" {
         export_admits(server, auth)?;
     } else {
         host_doors::door_admits(server, auth, verb)?;
     }
-    // A hosted operator's root acts as nobody, so no hook runs for it as the
-    // host either (FIX 2222).
-    super::host_action::facade_host_action(server, auth)?;
     let bound = facade_actor(server, auth).ok();
     let (actor, class) = match bound {
         Some(actor) => actor,
