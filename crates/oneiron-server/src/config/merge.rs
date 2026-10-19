@@ -169,6 +169,12 @@ pub fn resolve_backup_config(args: &ServeArgs) -> anyhow::Result<BackupConfig> {
         }
         _ => {}
     }
+    // The owner's settings file over it, as serve layers it (FIX 5016).
+    if let Some(path) = &args.settings_file
+        && let Some(over) = load_backup_section(path)?
+    {
+        backup.apply_override(over);
+    }
     if let Some(over) = lookup_backup_override(&mut |key| std::env::var(key).ok())? {
         backup.apply_override(over);
     }
@@ -220,9 +226,20 @@ pub(crate) fn layer_serve_config(
         }
         _ => PartialServeConfig::default(),
     };
+    // The owner's settings file (`--settings-file`, FIX 5016), in the config
+    // file's schema as a managed vault reads it: one more vault file layer,
+    // over the config file and under the environment and the flags.
+    let settings_values = args
+        .settings_file
+        .as_deref()
+        .map(load_file_config)
+        .transpose()?;
 
     let space_naming = super::embedder_space::SpaceNaming::of([
         file_values.embedder.as_ref(),
+        settings_values
+            .as_ref()
+            .and_then(|values| values.embedder.as_ref()),
         env.values.embedder.as_ref(),
         flag_values.embedder.as_ref(),
     ]);
@@ -230,10 +247,14 @@ pub(crate) fn layer_serve_config(
     let mut posture_source = None;
     let mut key_ref_source = None;
     for (source, values) in [
-        (ConfigLayer::Vault, file_values),
-        (ConfigLayer::Environment, env.values),
-        (ConfigLayer::Holder, flag_values),
+        (ConfigLayer::Vault, Some(file_values)),
+        (ConfigLayer::Vault, settings_values),
+        (ConfigLayer::Environment, Some(env.values)),
+        (ConfigLayer::Holder, Some(flag_values)),
     ] {
+        let Some(values) = values else {
+            continue;
+        };
         if values.privacy_posture.is_some() {
             posture_source = Some(source);
         }
@@ -255,6 +276,15 @@ pub(crate) fn layer_serve_config(
     }
     if let Some(embedder) = resolved.embedder.as_mut() {
         super::embedder_space::settle_local_space(embedder, space_naming)?;
+    }
+    // `--voice-socket` names where the voice loop the layered
+    // `[models.voice]` turns on listens, over its `socket` (FIX 5016), as
+    // managed mode sets it on its settings file. With no voice configured it
+    // names nothing.
+    if let Some(socket) = &args.voice_socket
+        && let Some(models) = resolved.models.as_mut()
+    {
+        models.voice.listen_on(socket)?;
     }
     Ok(resolved)
 }

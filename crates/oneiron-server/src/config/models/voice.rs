@@ -65,18 +65,12 @@ impl VoiceFile {
             (None, None) => None,
         };
         if let Some(socket) = &self.socket {
-            anyhow::ensure!(
-                socket.is_absolute() && socket.file_name().is_some(),
-                "models.voice.socket must be an absolute socket path"
-            );
-            anyhow::ensure!(
+            check_socket(
+                "models.voice.socket",
+                socket,
                 extraction_prompt.is_some(),
-                "models.voice.socket needs `extraction_prompt` or `extraction_prompt_file`"
-            );
-            anyhow::ensure!(
                 render.is_some(),
-                "models.voice.socket needs `stock_voice` or `bank_voice`"
-            );
+            )?;
         }
         let queue_capacity = self.queue_capacity.unwrap_or(DEFAULT_QUEUE_CAPACITY);
         let call_budget_units = self.call_budget_units.unwrap_or(DEFAULT_CALL_BUDGET_UNITS);
@@ -92,4 +86,35 @@ impl VoiceFile {
             call_budget_units,
         })
     }
+}
+
+impl VoiceSettings {
+    /// Names `socket` as the loop's, over the file's own (`--voice-socket`,
+    /// FIX 5016), where voice is configured: an extraction prompt or a voice.
+    /// It is checked as the file's socket is; with neither, it names nothing.
+    pub(crate) fn listen_on(&mut self, socket: &Path) -> anyhow::Result<()> {
+        let (prompt, render) = (self.extraction_prompt.is_some(), self.render.is_some());
+        if !prompt && !render {
+            return Ok(());
+        }
+        check_socket("--voice-socket", socket, prompt, render)?;
+        self.socket = Some(socket.to_path_buf());
+        Ok(())
+    }
+}
+
+/// Refuses a socket `field` names that the loop cannot run on: one that is
+/// not an absolute socket path, or settings with no extraction prompt or no
+/// voice to speak in.
+fn check_socket(field: &str, socket: &Path, prompt: bool, render: bool) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        socket.is_absolute() && socket.file_name().is_some(),
+        "{field} must be an absolute socket path"
+    );
+    anyhow::ensure!(
+        prompt,
+        "{field} needs `extraction_prompt` or `extraction_prompt_file`"
+    );
+    anyhow::ensure!(render, "{field} needs `stock_voice` or `bank_voice`");
+    Ok(())
 }
