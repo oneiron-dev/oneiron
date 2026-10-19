@@ -451,17 +451,21 @@ impl SealTrust {
         rtxn: &heed::RoTxn<'_>,
         act: &ExternalAct,
     ) -> Result<ExternalActStanding> {
-        if let Some(standing) = self.causal.as_ref().and_then(|points| points.standing(act)) {
-            return Ok(standing);
+        self.fold(store, rtxn)?;
+        if !self
+            .causal
+            .as_ref()
+            .is_some_and(|points| points.judges(act))
+        {
+            let mut acts = super::seal_standing::decision_seal_acts_in_txn(store, rtxn)?;
+            acts.insert(act.clone());
+            self.causal = Some(crate::authority::causal_points_in_txn(store, rtxn, &acts)?);
         }
-        let mut acts = super::seal_standing::decision_seal_acts_in_txn(store, rtxn)?;
-        acts.insert(act.clone());
-        let points = crate::authority::causal_points_in_txn(store, rtxn, &acts)?;
-        let standing = points.standing(act).ok_or(Error::InvariantViolation(
-            "identity topology seal causal standing",
-        ))?;
-        self.causal = Some(points);
-        Ok(standing)
+        let invariant = || Error::InvariantViolation("identity topology seal causal standing");
+        let (Some(points), Some(fold)) = (self.causal.as_ref(), self.roster.as_ref()) else {
+            return Err(invariant());
+        };
+        points.standing(act, fold).ok_or_else(invariant)
     }
 
     /// How fact row `id`, sealing `core`, stands here.

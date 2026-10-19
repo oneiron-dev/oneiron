@@ -15,10 +15,13 @@
 //! The states come from one fold of the stored log that keeps each named
 //! head's state (the checkpoint image build's capture), or, on a vault that
 //! adopted an image and does not hold its covered history, from the tail's
-//! image-grade fold past it. Neither reads a clock. A head this vault holds
-//! no state for (pruned behind a checkpoint, not yet arrived, above a gap)
-//! leaves the act pending: never judged on the fold as it stands now, and
-//! never as absent (CALLS "FIX 4649 missing signed past"). The topology rows
+//! image-grade fold past it. Neither reads a clock. A head in the past of
+//! another named head adds nothing to the merge, so an image that kept no
+//! state for it (a carrier's old standing row behind the frontier) does not
+//! matter. Any other head this vault holds no state for (pruned behind a
+//! checkpoint, not yet arrived, above a gap) leaves the act pending: never
+//! judged on the fold as it stands now, and never as absent (CALLS "FIX 4649
+//! missing signed past"). The topology rows
 //! stay outside the pure fold: their readers hand this module the acts, and
 //! the removal writers fetch the acts' tokens ([`acknowledged_by_in_txn`]).
 
@@ -27,7 +30,7 @@ use std::sync::Arc;
 
 use super::adopted_fold::{AdoptedImageFold, AdoptedTail};
 use super::fold_resume::{FoldCapture, ImageFold};
-use super::machine_standing::{Standing, StandingView, every_chain};
+use super::machine_standing::{InstallHold, Mark, Standing, StandingView, every_chain};
 use super::*;
 use crate::EntityId;
 use crate::error::Result;
@@ -63,23 +66,88 @@ pub(crate) enum ExternalActStanding {
     Refused,
 }
 
-/// The standing of each act one authority generation was asked about. Local
-/// and derived: rebuilt on a miss, never stored.
+/// What one authority generation holds of the acts it was asked about: each
+/// act at its signed heads, and the merged state its removal race reads.
+/// Local and derived: rebuilt on a miss, never stored.
 pub(crate) struct CausalPoints {
     generation: u64,
-    standings: BTreeMap<ExternalAct, ExternalActStanding>,
+    /// Each act at its heads; `None` where a head has no state here.
+    at: BTreeMap<ExternalAct, Option<AtHeads>>,
+    now: Option<FoldState>,
+    pin: Option<PinnedRoot>,
+}
+
+/// An act at its signed heads: whether its carrier and owner stood there,
+/// and its carrier's signing chains' marks.
+struct AtHeads {
+    stood: bool,
+    marks: BTreeMap<MachineAdmitter, Mark>,
 }
 
 impl CausalPoints {
-    /// How `act` stands here; `None` when this set was not built for it.
-    pub(crate) fn standing(&self, act: &ExternalAct) -> Option<ExternalActStanding> {
-        self.standings.get(act).copied()
+    /// Whether this set was built for `act`.
+    pub(crate) fn judges(&self, act: &ExternalAct) -> bool {
+        self.at.contains_key(act)
+    }
+
+    /// How `act` stands here; `None` when this set was not built for it. Its
+    /// removal race counts this install's chains as `fold`, this install's
+    /// own fold, reads them: a chain held or stale here lifts nothing, as for
+    /// an owner choice ([`super::owner_choice`]).
+    pub(crate) fn standing(
+        &self,
+        act: &ExternalAct,
+        fold: &AuthorityFold,
+    ) -> Option<ExternalActStanding> {
+        let (Some(at), Some(now)) = (self.at.get(act)?, &self.now) else {
+            return Some(ExternalActStanding::Pending);
+        };
+        if !at.stood {
+            return Some(ExternalActStanding::Refused);
+        }
+        let counted =
+            |machine: EntityId, admitter: MachineAdmitter| install_hold(fold, machine, admitter);
+        let standing = Standing::new(now, self.pin.as_ref(), &counted);
+        Some(
+            if standing.owner_act_race(
+                act.machine,
+                &act.token,
+                &act.key,
+                &at.marks,
+                StandingView::Install,
+            ) {
+                ExternalActStanding::Stands
+            } else {
+                ExternalActStanding::Refused
+            },
+        )
     }
 }
 
-/// The standing of every act in `acts`, judged on `txn`'s stored authority
-/// log. One fold answers a whole pass; a committed generation's answers are
-/// kept for the next pass that asks about no other act.
+/// How this install counts `machine`'s chain under `admitter`, as its own
+/// fold projected it: held past its floor or by the fold with no vouch, and
+/// stale or with no settled root ([`super::install_fold::stale_chains`]).
+fn install_hold(fold: &AuthorityFold, machine: EntityId, admitter: MachineAdmitter) -> InstallHold {
+    let Some(folded) = fold.machine(machine) else {
+        return InstallHold::default();
+    };
+    let chains: Vec<&MachineRevision> = match admitter {
+        MachineAdmitter::Roster => folded.roster.iter().chain(&folded.roster_trusted).collect(),
+        MachineAdmitter::Anchor(key) => folded.anchored.get(&key).into_iter().collect(),
+    };
+    InstallHold {
+        held: chains.iter().any(|chain| chain.floor_held),
+        stale: chains
+            .iter()
+            .any(|chain| chain.stale || chain.admitter_unsettled),
+    }
+}
+
+/// Every act in `acts` at its signed heads, and the merged state its removal
+/// race reads, judged on `txn`'s stored authority log. One fold answers a
+/// whole pass; a committed generation's answers are kept for the next pass
+/// that asks about no other act. Nothing here reads a clock: this install's
+/// holds enter only at [`CausalPoints::standing`].
 pub(crate) fn causal_points_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -94,15 +162,12 @@ pub(crate) fn causal_points_in_txn(
         .filter(|cached| cached.generation == generation);
     let mut asked = acts.clone();
     if let Some(cached) = cached {
-        if acts.iter().all(|act| cached.standings.contains_key(act)) {
+        if acts.iter().all(|act| cached.judges(act)) {
             return Ok(cached);
         }
-        asked.extend(cached.standings.keys().cloned());
+        asked.extend(cached.at.keys().cloned());
     }
-    let points = Arc::new(CausalPoints {
-        generation,
-        standings: standings_in_txn(store, txn, &asked)?,
-    });
+    let points = Arc::new(points_in_txn(store, txn, generation, &asked)?);
     // A second read txn on this thread fails with MDB_BAD_RSLOT, as for
     // `per_authority_generation`: only a committed generation is kept.
     let committed = std::thread::scope(|scope| {
@@ -155,32 +220,35 @@ pub(super) fn acknowledged_by_in_txn(
     Ok(seen)
 }
 
-fn standings_in_txn(
+fn points_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
+    generation: u64,
     acts: &BTreeSet<ExternalAct>,
-) -> Result<BTreeMap<ExternalAct, ExternalActStanding>> {
-    let pending = || {
-        acts.iter()
-            .map(|act| (act.clone(), ExternalActStanding::Pending))
-            .collect()
+) -> Result<CausalPoints> {
+    let pin = super::pinned_root::read_pinned_root_in_txn(store, txn)?;
+    let mut points = CausalPoints {
+        generation,
+        at: acts.iter().map(|act| (act.clone(), None)).collect(),
+        now: None,
+        pin,
     };
     if acts.is_empty() {
-        return Ok(BTreeMap::new());
+        return Ok(points);
     }
     let heads: BTreeSet<_> = acts
         .iter()
         .flat_map(|act| act.heads.iter().copied())
         .collect();
-    let pin = super::pinned_root::read_pinned_root_in_txn(store, txn)?;
-    let Some(ImageFold {
-        per_parent, merged, ..
-    }) = capture_in_txn(store, txn, &heads, pin.as_ref())?
+    let Some((
+        ImageFold {
+            per_parent, merged, ..
+        },
+        parents,
+    )) = capture_in_txn(store, txn, &heads, points.pin.as_ref())?
     else {
-        return Ok(pending());
+        return Ok(points);
     };
-    let now = Standing::new(&merged, pin.as_ref(), &every_chain);
-    let mut standings = BTreeMap::new();
     // Acts sort by their heads first: one parent state per causal point.
     let mut parent: Option<(&BTreeSet<AuthorityEntryHash>, Option<FoldState>)> = None;
     for act in acts {
@@ -188,26 +256,71 @@ fn standings_in_txn(
             .as_ref()
             .is_none_or(|(heads, _)| *heads != &act.heads)
         {
-            parent = Some((&act.heads, parent_state(&per_parent, &act.heads)));
+            parent = Some((&act.heads, parent_state(&per_parent, &parents, &act.heads)));
         }
-        let standing = match parent.as_ref().and_then(|(_, state)| state.as_ref()) {
-            Some(state) => judge(state, &now, pin.as_ref(), act),
-            None => ExternalActStanding::Pending,
-        };
-        standings.insert(act.clone(), standing);
+        if let Some((_, Some(state))) = &parent {
+            points
+                .at
+                .insert(act.clone(), Some(at_heads(state, points.pin.as_ref(), act)));
+        }
     }
-    Ok(standings)
+    points.now = Some(merged);
+    Ok(points)
 }
 
-/// The fold state at `heads`, the merge of each head's state; `None` when
-/// some head has none here, or none is named.
+/// `act` at its parent state `parent`: its carrier under the one carrier
+/// rule in the roster view and its owner live, and its carrier's signing
+/// chains' marks, as an owner choice lands at its parents.
+fn at_heads(parent: &FoldState, pin: Option<&PinnedRoot>, act: &ExternalAct) -> AtHeads {
+    let at = Standing::new(parent, pin, &every_chain);
+    let roster = StandingView::Under(MachineAdmitter::Roster);
+    AtHeads {
+        stood: at.admits_owner_act_signer(act.machine, &act.key, roster)
+            && super::owner_act::owner_live_at(parent, act.owner),
+        marks: at.live_signing_chains(act.machine, &AuthorityKey::Ed25519(act.key)),
+    }
+}
+
+/// Each row's parents: the stored rows', and an adopted image's carried
+/// metadata.
+type Parents = BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>>;
+
+/// The fold state at `heads`: the merge of each head's state. A head with no
+/// state here counts only when it is in the past of a head that has one;
+/// otherwise, or when no head is named, `None`.
 fn parent_state(
     per_parent: &BTreeMap<AuthorityEntryHash, Option<FoldState>>,
+    parents: &Parents,
     heads: &BTreeSet<AuthorityEntryHash>,
 ) -> Option<FoldState> {
+    let (stated, mut unstated): (Vec<_>, BTreeSet<_>) = (
+        heads
+            .iter()
+            .filter_map(|head| Some((*head, per_parent.get(head)?.as_ref()?)))
+            .collect(),
+        heads
+            .iter()
+            .filter(|head| per_parent.get(*head).is_none_or(Option::is_none))
+            .copied()
+            .collect(),
+    );
+    let mut stack: Vec<_> = stated.iter().map(|(head, _)| *head).collect();
+    let mut seen = BTreeSet::new();
+    while !unstated.is_empty()
+        && let Some(row) = stack.pop()
+    {
+        for parent in parents.get(&row).into_iter().flatten() {
+            if seen.insert(*parent) {
+                unstated.remove(parent);
+                stack.push(*parent);
+            }
+        }
+    }
+    if !unstated.is_empty() {
+        return None;
+    }
     let mut merged: Option<FoldState> = None;
-    for head in heads {
-        let state = per_parent.get(head)?.as_ref()?;
+    for (_, state) in stated {
         merged = Some(match merged {
             Some(merged) => merge_states(&merged, state),
             None => state.clone(),
@@ -216,58 +329,37 @@ fn parent_state(
     merged
 }
 
-/// `act` at its parent state `parent`, and its removal race on `now`.
-fn judge(
-    parent: &FoldState,
-    now: &Standing<'_>,
-    pin: Option<&PinnedRoot>,
-    act: &ExternalAct,
-) -> ExternalActStanding {
-    let at = Standing::new(parent, pin, &every_chain);
-    let roster = StandingView::Under(MachineAdmitter::Roster);
-    if !at.admits_owner_act_signer(act.machine, &act.key, roster)
-        || !super::owner_act::owner_live_at(parent, act.owner)
-    {
-        return ExternalActStanding::Refused;
-    }
-    let marks = at.live_signing_chains(act.machine, &AuthorityKey::Ed25519(act.key));
-    if now.owner_act_race(
-        act.machine,
-        &act.token,
-        &act.key,
-        &marks,
-        StandingView::Install,
-    ) {
-        ExternalActStanding::Stands
-    } else {
-        ExternalActStanding::Refused
-    }
-}
-
-/// The stored log's fold keeping the state at each of `heads`, with no clock:
-/// past the adopted image where this vault does not hold its covered history,
-/// else the held log whole. `None` where history the fold needs is not held.
+/// The stored log's fold keeping the state at each of `heads`, with no clock,
+/// and each row's parents: past the adopted image where this vault does not
+/// hold its covered history, else the held log whole. `None` where history
+/// the fold needs is not held.
 fn capture_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     heads: &BTreeSet<AuthorityEntryHash>,
     pin: Option<&PinnedRoot>,
-) -> Result<Option<ImageFold>> {
+) -> Result<Option<(ImageFold, Parents)>> {
     let posture = store.privacy_posture;
     let peers = crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
     if let Some(adopted) = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?
     {
         match capture_past_adopted(store, txn, &adopted, heads, pin, &peers)? {
-            AdoptedImageFold::Captured { fold, .. } => return Ok(Some(*fold)),
+            (AdoptedImageFold::Captured { fold, .. }, parents) => {
+                return Ok(Some((*fold, parents)));
+            }
             // Every covered row is held here: the held log folds whole.
-            AdoptedImageFold::NeedHistory(request) if request.missing.is_empty() => {}
-            AdoptedImageFold::NeedHistory(_) => return Ok(None),
+            (AdoptedImageFold::NeedHistory(request), _) if request.missing.is_empty() => {}
+            (AdoptedImageFold::NeedHistory(_), _) => return Ok(None),
         }
     }
     let entries = authority_log_rows_in_txn(store, txn)?
         .into_iter()
         .map(|(_, body)| decode_authority_log_entry_body(&body))
         .collect::<Result<Vec<_>>>()?;
+    let parents = entries
+        .iter()
+        .map(|entry| Ok((authority_entry_hash(entry)?, entry.parent_hashes.clone())))
+        .collect::<Result<Parents>>()?;
     let observations = authority_local_observations_in_txn(store, txn, &entries)?;
     let capture = FoldCapture::for_image(heads.clone());
     let (consent, local) = super::fold_engine::own_log_inputs(posture, pin);
@@ -283,11 +375,12 @@ fn capture_in_txn(
             ..local
         },
     );
-    Ok(capture.take_image().map(|image| *image))
+    Ok(capture.take_image().map(|image| (*image, parents)))
 }
 
 /// The tail's image-grade fold past `adopted`, keeping the state at each of
-/// `heads` it folds, as a later image's build folds it.
+/// `heads` it folds, as a later image's build folds it, and the parents the
+/// image's rows and the tail's name.
 fn capture_past_adopted(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -295,7 +388,7 @@ fn capture_past_adopted(
     heads: &BTreeSet<AuthorityEntryHash>,
     pin: Option<&PinnedRoot>,
     peers: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
-) -> Result<AdoptedImageFold> {
+) -> Result<(AdoptedImageFold, Parents)> {
     let image = adopted.image();
     let covered_ids: BTreeMap<EntityId, AuthorityEntryHash> = image
         .covered
@@ -329,7 +422,17 @@ fn capture_past_adopted(
     let observations = super::sequence_observation::authority_local_observations_of_rows_in_txn(
         store, txn, &metas,
     )?;
-    super::adopted_fold::capture_adopted_checkpoint_tail(
+    let parents = image
+        .rows
+        .iter()
+        .map(|(hash, row)| (*hash, row.parents.clone()))
+        .chain(
+            closed_tail
+                .iter()
+                .map(|(hash, entry)| (*hash, entry.parent_hashes.clone())),
+        )
+        .collect();
+    let captured = super::adopted_fold::capture_adopted_checkpoint_tail(
         adopted,
         AdoptedTail {
             tail: &closed_tail,
@@ -342,5 +445,6 @@ fn capture_past_adopted(
             posture: store.privacy_posture,
             pin,
         },
-    )
+    )?;
+    Ok((captured, parents))
 }
