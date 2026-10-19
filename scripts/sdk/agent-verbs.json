@@ -17104,6 +17104,14 @@
       }
     },
     {
+      "name": "self.workflows.dispatch_bound",
+      "input": "crate::task_verb::sdk::WorkflowBoundDispatchRequest",
+      "output": "crate::task_verb::sdk::WorkflowRunView",
+      "scope": "Write",
+      "context": "run",
+      "effect": "WorkflowDispatch"
+    },
+    {
       "name": "self.leader.advice",
       "input": "crate::code_run::LeaderAdviceInput",
       "output": "serde_json::Value",

@@ -206,13 +206,17 @@ impl AgentVerbDoor for RunHostDoor {
     }
 
     /// The run's own calls keep the run's own admission. A consult landing
-    /// reads its refs on the agent's own lane, on this device (DOOR-063):
-    /// the run holds no credential, and its lane is never the owner's.
+    /// reads its refs, and a TASK binding its TASK and workflow (FIX 5316),
+    /// on the agent's own lane, on this device (DOOR-063): the run holds no
+    /// credential, and its lane is never the owner's.
     fn admit_run_call(
         &self,
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
-        if call != RunCall::Bridge(SelfEffect::ConsultResult) {
+        if !matches!(
+            call,
+            RunCall::Bridge(SelfEffect::ConsultResult | SelfEffect::WorkflowDispatch)
+        ) {
             return Ok(None);
         }
         self.server

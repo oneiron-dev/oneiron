@@ -37251,6 +37251,8 @@ pub enum SelfEffect {
     LeaderSplit,
     #[serde(rename = "Team")]
     Team,
+    #[serde(rename = "WorkflowDispatch")]
+    WorkflowDispatch,
 }
 
 /// `oneiron::code_run::types::SelfDurableWaitReason`.
