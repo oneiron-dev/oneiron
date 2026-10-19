@@ -2482,7 +2482,7 @@
      "purpose": "Checkpoint v2 adoption (OF-469): the one image a vault trusts in place of replaying the history it covers",
      "surface": {
       "crate-vis": 4,
-      "fn": 11,
+      "fn": 12,
       "struct": 3
      }
     },
@@ -2975,6 +2975,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/history_transfer/handoff.rs",
+     "purpose": "The rows a leave handoff stands on, folded with this vault's own (FIX 3797, FIX 3798)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/home_pick.rs",
      "purpose": "Folds the owner's signed picks of his vault's home node (DOOR-101 PR2a; ARCH-0026: \"The owner picks the home…",
      "surface": {
@@ -3080,7 +3090,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/left_notices.rs",
@@ -52428,7 +52438,7 @@
       "const": 2,
       "crate-vis": 11,
       "fn": 14,
-      "re-export": 15,
+      "re-export": 16,
       "struct": 2
      }
     },
@@ -52518,7 +52528,22 @@
      "purpose": "What the vault's sealed cloud bundle carries (FIX 922 PR 2): the base section and the section of each world…",
      "surface": {
       "fn": 3,
+      "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RecoveryCheckpointTrust"
+     ],
+     "path": "src/sync/residence/bundle_payload/checkpoint.rs",
+     "purpose": "The checkpoint image a sealed bundle's base section carries, and the kit restore that adopts it (FIX 3583)",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -61635,7 +61660,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 178,
+     "files": 179,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62895,7 +62920,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 197,
+     "files": 198,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63093,7 +63118,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3874,
+   "source_files": 3876,
    "test_files": 902
   },
   "oneiron-android": {
