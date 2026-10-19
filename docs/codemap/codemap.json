@@ -15039,7 +15039,7 @@
      "purpose": "Deployment-tier participation is separate from permission to train",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -77846,7 +77846,7 @@
      "path": "src/connector_call_settle.rs",
      "purpose": "The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -77935,7 +77935,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "const": 1,
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 25,
       "struct": 1
      }
@@ -79018,7 +79018,7 @@
      "path": "src/managed/isolation.rs",
      "purpose": "Fail-closed Linux fscrypt and root-owned UID allocation probes",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -79182,7 +79182,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 20,
       "struct": 3,
       "type": 1
@@ -80892,7 +80892,7 @@
      "path": "src/server/media_embedding.rs",
      "purpose": "The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -81045,7 +81045,7 @@
      "path": "src/server/resident_pump.rs",
      "purpose": "The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
