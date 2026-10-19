@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1049 facade rows, 3532 declarations.
+Census: 1049 facade rows, 3534 declarations.
 Inputs: 985 of 1049 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 939 of 1049 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
@@ -1170,7 +1170,7 @@ class SteerRequest(TypedDict):
     task_ref: str
     instruction: str
     key: str
-RunSignalState = Literal["Pending", "Settled", "RefusedCancelCapacity", "RefusedCancelUnavailable"]
+RunSignalState = Literal["Pending", "Settled", "RefusedCancelUnavailable"]
 class SteerReceipt(TypedDict):
     task_ref: str
     branch: str
@@ -13844,6 +13844,10 @@ class GraphAskRequest(TypedDict):
     unit_deadline_ms: NotRequired[int | None]
     posture: NotRequired[HostingPrivacyPosture | None]
     criteria: NotRequired[QuestionCriteria | None]
+SourceConflict = Literal["facet", "project", "world", "relationship", "scope_term", "principal", "unrepresentable"]
+class OmittedNeighbor(TypedDict):
+    id: str
+    reason: SourceConflict
 class AnswerRecord(TypedDict):
     claim: str
     unit: str
@@ -13851,6 +13855,7 @@ class AnswerRecord(TypedDict):
     frontier: list[int]
     source_kind: int
     answered_at: int
+    omitted: NotRequired[list[OmittedNeighbor]]
 class GraphAskDeclined(TypedDict):
     unit: EntityId
     decision: TypedDecision
