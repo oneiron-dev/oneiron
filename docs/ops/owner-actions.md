@@ -966,6 +966,17 @@ Turning the setting off, or opting out, stops new sharing: held offers are refus
 nothing already shared is withdrawn; it follows the intake's retention. A deleted conversation or
 message, a world turned private and a person's erasure still withdraw what was shared.
 
+What leaves is opaque. No offer or withdrawal names your vault, a conversation, a person or a
+world: each carries a scope for the calendar month (UTC) it was first prepared in, and that
+month's codes for the conversation, the people and the worlds. The scope and the codes change
+every month, so the same conversation or person reads as unrelated codes in two months. They are
+made under a key your vault keeps in its own key custody and never sends anywhere, not to our
+cloud and not to the intake; the link from a code back to you stays in your vault. A withdrawal
+that reaches offers from several months goes as one withdrawal per month. Erasing a hosted vault
+first purges every scope it ever used at the intake, one purge per month, and the erase waits,
+with no time limit, until the intake confirms each one removed; only then does the vault destroy
+its key, and then the vault.
+
 A person reads their own training receipts at `GET /v1/owner/conversation-learning/receipts`,
 with the same proof as their opt-out: each submission carrying their words with its
 conversation, worlds, local custody (`held`, `published`, `withheld`, `withdrawn`), the intake's

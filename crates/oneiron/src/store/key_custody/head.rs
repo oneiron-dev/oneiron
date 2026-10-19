@@ -50,9 +50,9 @@ pub(super) fn head_corrupt() -> Error {
 /// compartment they are sealed in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CompartmentScope {
-    /// Kinds the host engine reads in its own process (claim keys): their
-    /// compartment opens with the vault data key as well, so a restore that
-    /// unlocked a backup opens it without the kit.
+    /// Kinds the host engine reads in its own process (claim keys, the
+    /// training link key): their compartment opens with the vault data key
+    /// as well, so a restore that unlocked a backup opens it without the kit.
     HostReadable,
     /// Kinds only the owner's own machines may read (a later client's, KS-5
     /// world pads): wrapped to the recovery root alone, never to the
@@ -64,7 +64,7 @@ impl CompartmentScope {
     /// Each kind's scope; a later kind names its own.
     pub(crate) fn of(kind: CustodyKind) -> Self {
         match kind {
-            CustodyKind::ClaimDecision => Self::HostReadable,
+            CustodyKind::ClaimDecision | CustodyKind::TrainingLink => Self::HostReadable,
         }
     }
 

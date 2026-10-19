@@ -1,33 +1,42 @@
-//! Local custody of publisher training offers and controls (OF-420): what
-//! this vault prepared, published and withdrew, by id.
+//! Local custody of publisher training offers and controls (OF-420;
+//! TRAINING-LINK = C): what this vault prepared, published, withdrew and
+//! purged, by id, and the private half of every link the outbox never
+//! carries.
 //!
 //! Two Named families, each LIVE across a restore: they record acts that
 //! already left the vault, so an older image never brings back a withdrawn
 //! submission or replays an event number.
 //!
 //! - custody (`publisher_training:custody:v1:`): one row per submission
-//!   (`s` + id) and per control (`c` + id). A row holds ids, revisions and
-//!   states, never text: an offer's bytes live only sealed, in the outbox.
-//! - state (`publisher_training:state:v1`): the next event number and the
-//!   receipt cursor.
+//!   (`s` + id) and per control (`c` + id). A row holds raw ids, revisions,
+//!   states, the month whose scope it rides and its ordinal in that scope,
+//!   never text: an offer's bytes live only sealed, in the outbox. The raw
+//!   ids stay here; what leaves names only their codes for that month
+//!   (`link`).
+//! - state (`publisher_training:state:v1`): the vault's private local order
+//!   (never exported), every month it used with that month's scope, next
+//!   ordinal and receipt cursor, whether the training link key was minted,
+//!   and the purge's controls, one per scope, once it is recorded.
 //!
 //! A person's erase (FIX 3520) forgets their name here: every submission
 //! carrying their words stands withdrawn, each that reached the intake named
-//! by an id-only forget control in the erase's own transaction, so the
-//! withdrawal still flows without naming them.
+//! by an id-only forget control in the erase's own transaction, one control
+//! per month those submissions were prepared in, so the withdrawal still
+//! flows without naming them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use oneiron_vault_contract::conversation_training::TrainingReceiptStatusV1;
+use oneiron_vault_contract::conversation_training::TrainingReceiptStatusV2;
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 
-use super::lifecycle::{ReceiptCursor, TrainingControlId, TrainingSubmissionId};
+use super::lifecycle::{ReceiptCursor, TrainingControlId, TrainingScope, TrainingSubmissionId};
+use super::link;
 
 /// A custody key: the row's kind, then its id.
 pub(super) type CustodyKey = ([u8; 1], [u8; 16]);
@@ -43,7 +52,7 @@ pub(super) const SUBMISSIONS: SideTable<CustodyKey, SubmissionCustody, Named> =
 /// Each control this vault recorded.
 pub(super) const CONTROLS: SideTable<CustodyKey, ControlCustody, Named> =
     SideTable::new(&side_table::PUBLISHER_TRAINING_CUSTODY);
-/// The event counter and the receipt cursor.
+/// The private order, the months used, the link flag and the purge.
 const STATE: SideTable<(), OutboxState, Named> =
     SideTable::new(&side_table::PUBLISHER_TRAINING_STATE);
 
@@ -67,9 +76,14 @@ pub(super) struct SubmissionCustody {
     pub(super) setting_act: Option<[u8; 32]>,
     /// The worlds' settings revision digest then.
     pub(super) policy_revision: [u8; 32],
-    /// Its place in the event order.
-    pub(super) event_seq: u64,
-    /// Unix seconds.
+    /// Its place in the vault's private local order: never exported.
+    pub(super) local_seq: u64,
+    /// The UTC month of its first preparation, `YYYY-MM`: the scope it
+    /// rides. A retry keeps it.
+    pub(super) month: String,
+    /// Its ordinal within its month's scope. A retry keeps it.
+    pub(super) scope_seq: u64,
+    /// Unix seconds, of its first preparation. A retry keeps it.
     pub(super) prepared_at: u64,
     /// When it was published; `None` while it never left.
     pub(super) published_at: Option<u64>,
@@ -99,7 +113,7 @@ pub(super) enum SubmissionState {
 /// The intake's last word on a subject.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct ReceiptMark {
-    pub(super) status: TrainingReceiptStatusV1,
+    pub(super) status: TrainingReceiptStatusV2,
     /// Whether the receipt carried the no-human-read attestation (C5).
     pub(super) attested: bool,
     pub(super) sequence: u64,
@@ -116,7 +130,13 @@ pub(super) struct UsedRun {
 /// One control, by id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct ControlCustody {
-    pub(super) event_seq: u64,
+    /// Its place in the vault's private local order: never exported.
+    pub(super) local_seq: u64,
+    /// The month whose scope it rides: that of the submissions it reaches,
+    /// or for a purge control the month whose scope it purges.
+    pub(super) month: String,
+    /// Its ordinal within that scope.
+    pub(super) scope_seq: u64,
     pub(super) change: ControlChange,
     /// Unix seconds.
     pub(super) recorded_at: u64,
@@ -125,7 +145,8 @@ pub(super) struct ControlCustody {
     pub(super) receipt: Option<ReceiptMark>,
 }
 
-/// What a control says, as the engine keeps it.
+/// What a control says, as the engine keeps it: raw ids, coded for the
+/// control's month only when it is signed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum ControlChange {
     /// Remove these submissions of one source.
@@ -135,15 +156,72 @@ pub(super) enum ControlChange {
     },
     /// A world's eligibility now.
     WorldEligibility { world: EntityId, everywhere: bool },
+    /// Purge everything under the control's own scope (TL-5).
+    PurgeScope,
 }
 
-/// The event counter and the receipt cursor.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct OutboxState {
-    /// The next event number; events start at 1.
-    next_event_seq: u64,
-    /// The highest publisher sequence applied.
-    receipt_cursor: u64,
+/// The outbox's private state.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct OutboxState {
+    /// The vault's private local order; events start at 1. It orders the
+    /// latest submission of each source and private sorting, and is never
+    /// exported.
+    pub(super) next_local_seq: u64,
+    /// Every month this vault used, by `YYYY-MM`.
+    pub(super) months: BTreeMap<String, MonthState>,
+    /// Whether the training link key was minted. Once set, a missing key is
+    /// an error, never a new key.
+    pub(super) link_minted: bool,
+    /// The purge, once recorded (TL-5).
+    pub(super) purge: Option<PurgeState>,
+}
+
+/// One month this vault used.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct MonthState {
+    /// Its scope tag S, kept so listing scopes never needs the key.
+    pub(super) scope: [u8; 32],
+    /// The next ordinal in its scope; ordinals start at 1.
+    pub(super) next_event_seq: u64,
+    /// The highest publisher sequence applied in its scope.
+    pub(super) receipt_cursor: u64,
+}
+
+/// The purge (TL-5): its controls, one per scope the vault used, and when
+/// they were recorded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct PurgeState {
+    pub(super) controls: Vec<[u8; 16]>,
+    /// Unix seconds.
+    pub(super) recorded_at: u64,
+}
+
+impl OutboxState {
+    /// The scope of `month`, which this vault used.
+    ///
+    /// # Errors
+    /// A month the vault never used: damaged custody.
+    pub(super) fn scope_of(&self, month: &str) -> Result<[u8; 32]> {
+        self.months
+            .get(month)
+            .map(|entry| entry.scope)
+            .ok_or(Error::CorruptedIndex("publisher training month"))
+    }
+
+    /// Every scope this vault used and its receipt cursor, in scope order:
+    /// what the scopes file lists.
+    pub(super) fn cursors(&self) -> Vec<ReceiptCursor> {
+        let mut cursors: Vec<ReceiptCursor> = self
+            .months
+            .values()
+            .map(|entry| ReceiptCursor {
+                scope: TrainingScope(entry.scope),
+                sequence: entry.receipt_cursor,
+            })
+            .collect();
+        cursors.sort_unstable();
+        cursors
+    }
 }
 
 /// A fresh random 16-byte id.
@@ -153,37 +231,71 @@ pub(super) fn random_id() -> [u8; 16] {
     id
 }
 
-/// Takes the next event number, in the caller's transaction.
-pub(super) fn next_event_seq_in(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<u64> {
-    let mut state = STATE.get(&vault.store, txn, &())?.unwrap_or_default();
-    let seq = state.next_event_seq.max(1);
-    state.next_event_seq = seq.saturating_add(1);
-    STATE.put(&vault.store, txn, &(), &state)?;
+/// The outbox's private state, as `txn` reads it.
+pub(super) fn state(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<OutboxState> {
+    Ok(STATE.get(&vault.store, txn, &())?.unwrap_or_default())
+}
+
+/// Writes the outbox's private state.
+pub(super) fn put_state_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    state: &OutboxState,
+) -> Result<()> {
+    STATE.put(&vault.store, txn, &(), state)
+}
+
+/// Takes the next number of the vault's private local order, in the
+/// caller's transaction.
+pub(super) fn next_local_seq_in(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<u64> {
+    let mut state = state(vault, txn)?;
+    let seq = state.next_local_seq.max(1);
+    state.next_local_seq = seq.saturating_add(1);
+    put_state_in(vault, txn, &state)?;
     Ok(seq)
 }
 
-/// The highest publisher sequence this vault applied.
-pub(super) fn receipt_cursor(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ReceiptCursor> {
-    Ok(ReceiptCursor(
-        STATE
-            .get(&vault.store, txn, &())?
-            .unwrap_or_default()
-            .receipt_cursor,
-    ))
-}
-
-/// Moves the receipt cursor up to `sequence`, never down.
-pub(super) fn advance_receipt_cursor_in(
+/// Takes the next ordinal of `month`'s scope, in the caller's transaction:
+/// the scope, and that ordinal. A month this vault never used joins its
+/// list, its scope made under the training link key, which this first use
+/// mints when the vault has none yet.
+pub(super) fn next_scope_seq_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    sequence: u64,
-) -> Result<()> {
-    let mut state = STATE.get(&vault.store, txn, &())?.unwrap_or_default();
-    if sequence > state.receipt_cursor {
-        state.receipt_cursor = sequence;
-        STATE.put(&vault.store, txn, &(), &state)?;
+    month: &str,
+) -> Result<([u8; 32], u64)> {
+    let mut state = state(vault, txn)?;
+    let known = state.months.get(month).map(|entry| entry.scope);
+    let scope = match known {
+        Some(scope) => scope,
+        None => link::scope_tag(&link::training_link_key_in(vault, txn, &mut state)?, month),
+    };
+    let entry = state.months.entry(month.to_owned()).or_insert(MonthState {
+        scope,
+        next_event_seq: 1,
+        receipt_cursor: 0,
+    });
+    let seq = entry.next_event_seq.max(1);
+    entry.next_event_seq = seq.saturating_add(1);
+    put_state_in(vault, txn, &state)?;
+    Ok((scope, seq))
+}
+
+/// Whether the intake's `removed` receipt for every purge control is in
+/// (TL-5): it holds nothing under any of this vault's scopes.
+pub(super) fn purge_removed(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    let Some(purge) = state(vault, txn)?.purge else {
+        return Ok(false);
+    };
+    for id in purge.controls {
+        let removed = control(vault, txn, TrainingControlId(id))?
+            .and_then(|row| row.receipt)
+            .is_some_and(|mark| mark.status == TrainingReceiptStatusV2::Removed);
+        if !removed {
+            return Ok(false);
+        }
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Every submission, in id order.
@@ -248,48 +360,55 @@ pub(super) fn put_control_in(
     CONTROLS.put(&vault.store, txn, &(CONTROL, id.0), row)
 }
 
-/// Records one control, unspooled, at the next event number: its id and
-/// that number.
+/// Records one control, unspooled, riding `month`'s scope at its next
+/// ordinal (and the next number of the private order): its id.
 pub(super) fn record_control_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    month: &str,
     change: ControlChange,
     now: u64,
-) -> Result<(TrainingControlId, u64)> {
+) -> Result<TrainingControlId> {
     let id = TrainingControlId(random_id());
-    let event_seq = next_event_seq_in(vault, txn)?;
+    let local_seq = next_local_seq_in(vault, txn)?;
+    let (_, scope_seq) = next_scope_seq_in(vault, txn, month)?;
     let row = ControlCustody {
-        event_seq,
+        local_seq,
+        month: month.to_owned(),
+        scope_seq,
         change,
         recorded_at: now,
         spooled: false,
         receipt: None,
     };
     put_control_in(vault, txn, id, &row)?;
-    Ok((id, event_seq))
+    Ok(id)
 }
 
 impl Vault {
     /// A person's erase over the custody family (FIX 3520), in the erase's
-    /// own transaction: each submission carrying their words that reached
-    /// the intake gets an id-only forget control, and every such row forgets
-    /// their id and stands withdrawn, its files left for the next pass to
-    /// purge.
+    /// own transaction: the submissions carrying their words that reached
+    /// the intake get id-only forget controls, one per source and month,
+    /// each under that month's scope, and every such row forgets their id
+    /// and stands withdrawn, its files left for the next pass to purge.
     pub(crate) fn erase_publisher_training_custody_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()> {
-        let mut forgets: BTreeMap<EntityId, Vec<[u8; 16]>> = BTreeMap::new();
+        let mut forgets: BTreeMap<(EntityId, String), Vec<[u8; 16]>> = BTreeMap::new();
         for ((_, id), mut row) in SUBMISSIONS.scan_from(&self.store, wtxn, &SUBMISSION)? {
             if !row.persons.contains(actor) {
                 continue;
             }
             let removed = row
                 .receipt
-                .is_some_and(|mark| mark.status == TrainingReceiptStatusV1::Removed);
+                .is_some_and(|mark| mark.status == TrainingReceiptStatusV2::Removed);
             if row.published_at.is_some() && !removed {
-                forgets.entry(row.source).or_default().push(id);
+                forgets
+                    .entry((row.source, row.month.clone()))
+                    .or_default()
+                    .push(id);
             }
             row.persons.remove(actor);
             if matches!(
@@ -301,10 +420,11 @@ impl Vault {
             SUBMISSIONS.put(&self.store, wtxn, &(SUBMISSION, id), &row)?;
         }
         let now = crate::unix_seconds_now();
-        for (source, submissions) in forgets {
+        for ((source, month), submissions) in forgets {
             record_control_in(
                 self,
                 wtxn,
+                &month,
                 ControlChange::ForgetSource {
                     source,
                     submissions,
