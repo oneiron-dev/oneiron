@@ -159,9 +159,15 @@ mod tests;
 pub(crate) use archive_scratch::ScratchEnv;
 #[cfg(unix)]
 pub(crate) use asset_body::{
-    ASSET_FILE_PLANE, AssetBodyFacts, asset_body_file_of_row, asset_file_in_txn,
-    file_put_body_in_txn, short_content_hash_in_txn, stage_asset_body_in_txn,
+    ASSET_FILE_PLANE, AssetBodyFacts, AssetFileKind, AssetFileManifest, asset_body_file_of_row,
+    asset_file_in_txn, file_put_body_in_txn, short_content_hash_in_txn, stage_asset_body_in_txn,
 };
+#[cfg(unix)]
+#[allow(
+    unused_imports,
+    reason = "FIX 5489 PR2 and PR3 receive bodies through these"
+)]
+pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody};
 #[cfg(unix)]
 pub(crate) use body_envelope::{
     BODY_FILE_SHRED_SCOPE, BODY_FILE_WRAP_CONTEXT, BODY_KEYS, BodyFile, BodyKeyRow, BodySeal,
