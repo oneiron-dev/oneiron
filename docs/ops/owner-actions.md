@@ -1536,12 +1536,16 @@ Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` or
 - `GET /v1/owner/legal-holds/log` reads the log, oldest first.
 - `GET /v1/owner/legal-holds/lift-and-erase` returns the confirm's title and prompt, to show
   before you `POST` it with `{"records": ["<hex>", ...]}`. Each record answers `erased` with its
-  receipt, `completion_pending` where Oneiron hosts the bytes until the deletion receipt
-  completes, `kept_by_legal_order`, or `failed` (the hold is lifted; a plain delete retries).
+  receipt once the receipt is complete, `completion_pending` with the receipt and
+  `"reason": "historical_sweep"` while its history sweep is queued (the same rule self-hosted and
+  hosted), `retained_for_law` with the order's `bound` (the law, jurisdiction, issuing authority
+  and end) and what self-hosting changes, or `failed` (the hold is lifted; a plain delete retries).
 
 The SDK verbs `vault.legal_holds.place`, `.widen`, `.list`, `.log` and `.lift_and_erase` do the
 same under the owner's credential. Where Oneiron hosts the bytes, a legal order Oneiron must obey
-can also hold records. You cannot lift it, and an erase you confirm waits until it ends.
+can also hold records. You cannot lift it, and an erase you confirm waits until it ends. You see
+the order whole, with its reference and terms, unless the order itself requires silence; then you
+see nothing of it until that silence ends, and an erase it keeps reads only `completion_pending`.
 
 ## Erase a text's history
 
