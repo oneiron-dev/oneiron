@@ -128,6 +128,7 @@ impl AttemptQueue<'_> {
         now: u64,
     ) -> Result<()> {
         append_cancel_receipt(
+            &self.store.limit_watch,
             record,
             AttemptCancelReceiptKind::SoftRequested,
             authorship.actor,
@@ -222,6 +223,7 @@ impl AttemptQueue<'_> {
         record.updated_at = input.now;
         let recorded_resume_point = record.cancel_state.resume_point.clone();
         append_cancel_receipt(
+            &self.store.limit_watch,
             &mut record,
             AttemptCancelReceiptKind::LandingAccepted,
             input.lease_owner,
@@ -282,6 +284,7 @@ impl AttemptQueue<'_> {
 
         count_cancel_rejection(&mut record.cancel_state.pressure);
         append_cancel_receipt(
+            &self.store.limit_watch,
             &mut record,
             AttemptCancelReceiptKind::SoftRejected,
             input.lease_owner,
@@ -339,6 +342,7 @@ impl AttemptQueue<'_> {
         record.cancel_state.resume_point = Some(input.resume_point.clone());
         let trigger = record.cancel_state.landing.as_ref().map(|l| l.trigger);
         append_cancel_receipt(
+            &self.store.limit_watch,
             &mut record,
             AttemptCancelReceiptKind::ResumePointRecorded,
             input.lease_owner,
@@ -476,6 +480,7 @@ impl AttemptQueue<'_> {
             .ok_or(Error::ArithmeticOverflow("landing reserve spend"))?;
         let trigger = record.cancel_state.landing.as_ref().map(|l| l.trigger);
         append_cancel_receipt(
+            &self.store.limit_watch,
             &mut record,
             AttemptCancelReceiptKind::ReserveSpent,
             input.lease_owner,

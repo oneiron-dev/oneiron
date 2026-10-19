@@ -64,8 +64,8 @@ pub struct DecisionAsk {
     /// Vault clock seconds when the ask was queued.
     pub asked_at: u64,
     pub question: DecisionQuestion,
-    #[serde(with = "super::codec::entity")]
-    pub principal: EntityId,
+    #[serde(with = "super::codec::answer_actor")]
+    pub principal: AnswerActor,
     #[serde(with = "super::codec::entities")]
     pub evidence: Vec<EntityId>,
     pub reason: HumanAskReason,
@@ -125,16 +125,16 @@ pub struct AskAnswer {
 }
 
 impl DecisionAsk {
-    /// The request the ladder queued, rebuilt.
-    pub fn request(&self) -> HumanDecisionRequest {
+    /// The request the ladder queued, rebuilt; refused once its principal was erased (FIX 4588).
+    pub fn request(&self) -> Result<HumanDecisionRequest> {
         let unbind = |reading: &PairedReading| PairedAnswer {
             question: reading.question,
             question_version: reading.question_version,
             probability: reading.probability,
         };
-        HumanDecisionRequest {
+        Ok(HumanDecisionRequest {
             question: self.question.clone(),
-            principal: self.principal,
+            principal: self.principal.live()?,
             evidence: self.evidence.clone(),
             reason: self.reason,
             prior: self.prior.as_ref().map(|prior| ProviderDecision {
@@ -148,7 +148,7 @@ impl DecisionAsk {
             queue_pin: self.queue_pin.clone(),
             to: self.to.clone(),
             correlation: self.correlation,
-        }
+        })
     }
 
     /// Neither answered nor withdrawn.
@@ -161,7 +161,7 @@ impl DecisionAsk {
         self.is_open()
             && self.question.id == request.question.id
             && self.question.version == request.question.version
-            && self.principal == request.principal
+            && self.principal.is(request.principal)
             && self.evidence == request.evidence
             && self.to == request.to
             && self.correlation == request.correlation
@@ -211,7 +211,7 @@ impl Vault {
                 id: EntityId::now(),
                 asked_at,
                 question: request.question.clone(),
-                principal: request.principal,
+                principal: AnswerActor::Actor(request.principal),
                 evidence: request.evidence.clone(),
                 reason: request.reason,
                 prior,
@@ -305,7 +305,7 @@ impl Vault {
             let (_, ask) = row?;
             if ask.question.id == question.id
                 && ask.question.version == question.version
-                && ask.principal == principal
+                && ask.principal.is(principal)
             {
                 return Ok(Some(ask));
             }
@@ -330,7 +330,7 @@ impl Vault {
             let (_, ask) = row?;
             if ask.question.id == question.id
                 && ask.question.version == question.version
-                && ask.principal == principal
+                && ask.principal.is(principal)
                 && ask.evidence == evidence
                 && ask.to == *to
                 && ask.correlation == correlation
@@ -453,7 +453,7 @@ impl Vault {
                 Err(invalid("decision ask already answered"))
             };
         }
-        let changed = ask.request().changed_by(answer.clone())?;
+        let changed = ask.request()?.changed_by(answer.clone())?;
         if let Some(record) = &changed {
             self.record_person_changed_answer(ask.id, record)?;
         }
@@ -537,7 +537,7 @@ impl Vault {
         let actor = by.entity_ref();
         self.climb_decision_ask_with(seq, |txn, ask| {
             self.verify_write_actor_in_txn(txn, by)?;
-            if ask.principal == actor
+            if ask.principal.is(actor)
                 || self.holds_ask_role_in_txn(txn, ask, actor, holder_kind(by)?)?
                 || crate::policy_model::owners_in_txn(self, txn)?.contains(&actor)
             {
@@ -672,7 +672,7 @@ impl Vault {
         act: AskAct,
     ) -> Result<Vec<RoleHolder>> {
         let named = match role {
-            AskRole::Responsible { actor, .. } => vec![*actor],
+            AskRole::Responsible { actor, .. } => actor.id().into_iter().collect(),
             AskRole::Board { project } => self
                 .board_in_txn(txn, *project)?
                 .map(|(board, _)| board)
@@ -693,7 +693,7 @@ impl Vault {
         let mut chain = Vec::new();
         let project = match role {
             AskRole::Responsible { actor, project } => {
-                chain.push((role.clone(), vec![*actor]));
+                chain.push((role.clone(), actor.id().into_iter().collect()));
                 *project
             }
             AskRole::Board { project } => Some(*project),

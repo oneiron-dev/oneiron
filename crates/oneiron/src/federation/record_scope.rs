@@ -169,6 +169,52 @@ pub(crate) fn stamp_put(
 ) -> Result<()> {
     bump_scope_revision(store, txn)?;
     let prior = SCOPE_RECORD.get(store, txn, &id)?;
+    let Some((scope, facet)) = derived_position(store, txn, id, kind, data)? else {
+        if prior.is_some() {
+            return Err(Error::InvalidClaimBody("birth facet restamp refused"));
+        }
+        // A birth without its same-transaction FacetOf is not stamped.
+        return Ok(());
+    };
+    if let Some(prior) = prior {
+        // Content is mutable. The type, facet and authority position are NOT.
+        // A changed facet/sensitivity/world/audience is a fork with a new id.
+        let kept = prior.birth_facet == *facet.as_bytes()
+            && (prior.scope == scope || settled_at_birth(kind, &prior.scope, &scope));
+        if prior.version != 2 || prior.kind != kind || !(kept || writer_settled(&prior, &scope)) {
+            return Err(Error::InvalidClaimBody("record scope restamp refused"));
+        }
+        return Ok(());
+    }
+    if replicated && kind != crate::registry::ENTITY_TYPE_CLAIM {
+        // A peer cannot mint a birth position for an opaque row merely by
+        // picking its ID and bytes. Only an existing stamped row inherits.
+        return Ok(());
+    }
+    let stamp = Stamp {
+        version: 2,
+        kind,
+        birth_facet: *facet.as_bytes(),
+        scope,
+    };
+    SCOPE_RECORD.put(store, txn, &id, &stamp)?;
+    Ok(())
+}
+
+/// The position the row `id` of `kind`, with body `data`, is born at, read
+/// on `store`, and the facet it is born under: a CLAIM's from its body, a
+/// FACET at itself, a NOTE or ASSET under its one `FacetOf` target, an
+/// ASSET_TEXT under its sources' facet, any other record under its own
+/// substrate facet. A FACET or RELATIONSHIP keeps the sensitivity its body
+/// declares. `None` for a NOTE or ASSET whose `FacetOf` is not written: no
+/// position is inferred.
+fn derived_position(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<Option<(Scope, EntityId)>> {
     let (mut scope, facet) = if kind == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::decode_claim_body(data, true)?;
         (body.record_scope("read"), body.scope_facet)
@@ -176,17 +222,13 @@ pub(crate) fn stamp_put(
         (default_stamp(kind, id), id)
     } else if carries_birth_stamp(kind) {
         let Some(facet) = birth_facet(store, txn, id)? else {
-            if prior.is_some() {
-                return Err(Error::InvalidClaimBody("birth facet restamp refused"));
-            }
-            // A birth without its same-transaction FacetOf is not stamped.
-            return Ok(());
+            return Ok(None);
         };
         (default_stamp(kind, facet), facet)
     } else if kind == crate::registry::ENTITY_TYPE_ASSET_TEXT {
         // A text born from its sources sits under their facet; one born
         // unplaced keeps its own (`asset_text`). A stamp added later is
-        // refused below as a restamp.
+        // refused by `stamp_put` as a restamp.
         let facet = asset_text::text_facet(store, txn, id)?;
         (default_stamp(kind, facet), facet)
     } else {
@@ -196,7 +238,7 @@ pub(crate) fn stamp_put(
     // A locally authored RELATIONSHIP may declare its sensitivity just as a
     // FACET does. The resulting digest-bound record position, not a raw body
     // string read at export time, is the portable disclosure ceiling. Replayed
-    // opaque rows above remain unstamped and cannot become public here.
+    // opaque rows remain unstamped and cannot become public here.
     if matches!(
         kind,
         crate::registry::ENTITY_TYPE_FACET | crate::registry::ENTITY_TYPE_RELATIONSHIP
@@ -225,29 +267,70 @@ pub(crate) fn stamp_put(
         }
     }
     scope.verbs = ScopeAxis::Bottom;
-    if let Some(prior) = prior {
-        // Content is mutable. The type, facet and authority position are NOT.
-        // A changed facet/sensitivity/world/audience is a fork with a new id.
-        let kept = prior.birth_facet == *facet.as_bytes()
-            && (prior.scope == scope || settled_at_birth(kind, &prior.scope, &scope));
-        if prior.version != 2 || prior.kind != kind || !(kept || writer_settled(&prior, &scope)) {
-            return Err(Error::InvalidClaimBody("record scope restamp refused"));
-        }
+    Ok(Some((scope, facet)))
+}
+
+/// Stages the position of `id`, a row a room's write stages in `view`, beside
+/// it in the room's overlay (WILL L11-01): the derivation `stamp_put` makes
+/// on base, kept as the room's content metadata, which a narrowed read places
+/// the row by. A row base holds keeps its base birth, which a room never
+/// restamps; a row the room placed keeps that position; one whose position
+/// cannot be derived yet (a NOTE before its `FacetOf`, a body that names no
+/// position) stays unplaced, and a narrowed read never finds it. Base and its
+/// scope revision see nothing, and a promote replays none of it.
+pub(crate) fn stage_session_position(
+    view: &crate::store::SessionStoreView<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<()> {
+    if crate::ports::EntityStoreRead::port_entity_present(view.read().base(), &*txn, &id)?
+        || SCOPE_RECORD.get(view, txn, &id)?.is_some()
+    {
         return Ok(());
     }
-    if replicated && kind != crate::registry::ENTITY_TYPE_CLAIM {
-        // A peer cannot mint a birth position for an opaque row merely by
-        // picking its ID and bytes. Only an existing stamped row inherits.
-        return Ok(());
-    }
+    let (scope, facet) = match derived_position(view, txn, id, kind, data) {
+        Ok(Some(position)) => position,
+        Ok(None) | Err(Error::InvalidClaimBody(_)) => return Ok(()),
+        Err(error) => return Err(error),
+    };
     let stamp = Stamp {
         version: 2,
         kind,
         birth_facet: *facet.as_bytes(),
         scope,
     };
-    SCOPE_RECORD.put(store, txn, &id, &stamp)?;
-    Ok(())
+    SCOPE_RECORD.put(view, txn, &id, &stamp)
+}
+/// Whether every row `view`'s room stages a body, words, a vector or an
+/// out-edge for is one the room placed itself (WILL L11-01): a room birth
+/// carrying the position its write staged beside it
+/// ([`stage_session_position`]). A room that restages or hides a base row,
+/// or adds an edge from one, or holds a row whose position it could not
+/// derive, has not placed all its rows: a read that must place each row it
+/// serves (a credential for only some worlds) reads base alone there, so no
+/// base row is placed for it by what the room wrote.
+pub(crate) fn room_rows_placed(view: &crate::store::SessionStoreView<'_>) -> bool {
+    // Each of these keys starts with the row's id; an out-edge's with its
+    // source's.
+    let placed = |key: &[u8]| {
+        key.get(..16)
+            .and_then(|id| <[u8; 16]>::try_from(id).ok())
+            .and_then(|bytes| EntityId::from_bytes(bytes).ok())
+            .is_some_and(|id| view.vault_meta.stages_row(&SCOPE_RECORD.key_bytes(&id)))
+    };
+    let rows = [
+        &view.entities,
+        &view.text_forward,
+        &view.vectors,
+        &view.edges_out,
+    ];
+    rows.into_iter().all(|keyspace| {
+        keyspace.staged_rows().is_none_or(|staged| {
+            !staged.clear_base && staged.rows.iter().all(|(key, _)| placed(key))
+        })
+    })
 }
 /// A TURN/MESSAGE body never proposes an audience: only
 /// `stamp_leader_project` settles a non-default one, at the record's birth.
@@ -899,9 +982,11 @@ fn machine_history_disclosure_scope(
 /// The position the scoped read and export doors select the stored row of
 /// `id` at, from its body `data` of `kind`: a history control's current
 /// effective audience, or the row's birth stamp; `None` where neither door
-/// selects it.
+/// selects it. `store` is the content the row is read on: base, or a room's
+/// union, whose rows carry the positions their writes staged and whose
+/// history controls stay withheld (WILL L11-01).
 pub(crate) fn disclosure_scope_for_stored_row(
-    store: &Store,
+    store: &(impl ManifestDbs + MachineHistoryScope),
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: u8,
@@ -909,7 +994,7 @@ pub(crate) fn disclosure_scope_for_stored_row(
 ) -> Result<Option<Scope>> {
     if kind == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::decode_claim_body(data, true)?;
-        if let Some(scope) = machine_history_disclosure_scope(store, txn, &body)? {
+        if let Some(scope) = store.machine_history_scope(txn, &body)? {
             return Ok(scope);
         }
     }

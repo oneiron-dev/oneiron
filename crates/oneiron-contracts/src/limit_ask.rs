@@ -118,6 +118,15 @@ pub enum EngineLimit {
     /// (skill-index, skill and actor-claim loads). Past it, the row asks
     /// whether everything is okay and every entry is kept.
     AttemptManifestEntries,
+    /// Receipts accumulated in one attempt's append-only cancel protocol
+    /// history (requests, refusals, landing rows and the terminal receipt).
+    /// Past it, the row asks whether everything is okay and every receipt is
+    /// kept.
+    AttemptCancelReceipts,
+    /// Attempt rows one retry-tip walk visits along a single retry lineage.
+    /// Past it, the row asks whether everything is okay while the whole
+    /// lineage is still read.
+    AttemptRetryTipRows,
     /// Bytes of the judge's rubric (the active shared `judge` skill's text)
     /// one judgment or label re-check reads. Past it the rubric is read whole.
     JudgeRubricBytes,
@@ -204,11 +213,32 @@ pub enum EngineLimit {
     /// writes and retrieval regressions. Past it the tripwire runs at that
     /// threshold.
     TripwireThreshold,
+    /// Documents one e-sign sweep is handed: a seal backstop, expiry or
+    /// reminder batch. Past it the row asks whether everything is okay and
+    /// every document in the batch is swept.
+    EsignSweepDocuments,
+    /// Signing principals one owner names for e-sign. Past it the row asks
+    /// and every principal is kept.
+    EsignSigningPrincipals,
+    /// Bytes of one uploaded signature image, as it arrived. Past it the
+    /// envelope's sender is asked whether everything is okay, and the image
+    /// is decoded, stored and bound.
+    EsignSignatureInputBytes,
+    /// Bytes of one signature image's canonical PNG re-encoding. Past it the
+    /// envelope's sender is asked, and the image is stored and bound.
+    EsignSignaturePngBytes,
+    /// Canonical signature image bytes one signing document holds in all.
+    /// Past it the envelope's sender is asked, and the image is stored and
+    /// bound.
+    EsignSignatureDocumentBytes,
+    /// Signature images one recipient of a signing document holds. Past it
+    /// the envelope's sender is asked, and the image is stored and bound.
+    EsignSignatureRecipientImages,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 53] = [
+    pub const ALL: [Self; 61] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -236,6 +266,8 @@ impl EngineLimit {
         Self::PackScriptOutputBytes,
         Self::PackScriptOutputRows,
         Self::AttemptManifestEntries,
+        Self::AttemptCancelReceipts,
+        Self::AttemptRetryTipRows,
         Self::JudgeRubricBytes,
         Self::MaintenanceRowItems,
         Self::MaintenanceTextBytes,
@@ -262,6 +294,12 @@ impl EngineLimit {
         Self::BlockedDetailBytes,
         Self::SealReferenceBytes,
         Self::TripwireThreshold,
+        Self::EsignSweepDocuments,
+        Self::EsignSigningPrincipals,
+        Self::EsignSignatureInputBytes,
+        Self::EsignSignaturePngBytes,
+        Self::EsignSignatureDocumentBytes,
+        Self::EsignSignatureRecipientImages,
     ];
 
     /// The config key that sets the row.
@@ -294,6 +332,8 @@ impl EngineLimit {
             Self::PackScriptOutputBytes => "limits.pack_script_output_bytes",
             Self::PackScriptOutputRows => "limits.pack_script_output_rows",
             Self::AttemptManifestEntries => "limits.attempt_manifest_entries",
+            Self::AttemptCancelReceipts => "limits.attempt_cancel_receipts",
+            Self::AttemptRetryTipRows => "limits.attempt_retry_tip_rows",
             Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
             Self::MaintenanceRowItems => "limits.maintenance_row_items",
             Self::MaintenanceTextBytes => "limits.maintenance_text_bytes",
@@ -320,6 +360,12 @@ impl EngineLimit {
             Self::BlockedDetailBytes => "limits.blocked_detail_bytes",
             Self::SealReferenceBytes => "limits.seal_reference_bytes",
             Self::TripwireThreshold => "limits.tripwire_threshold",
+            Self::EsignSweepDocuments => "limits.esign_sweep_documents",
+            Self::EsignSigningPrincipals => "limits.esign_signing_principals",
+            Self::EsignSignatureInputBytes => "limits.esign_signature_input_bytes",
+            Self::EsignSignaturePngBytes => "limits.esign_signature_png_bytes",
+            Self::EsignSignatureDocumentBytes => "limits.esign_signature_document_bytes",
+            Self::EsignSignatureRecipientImages => "limits.esign_signature_recipient_images",
         }
     }
 
@@ -356,6 +402,12 @@ impl EngineLimit {
             // Sixteen times the 4,096 entries the append door refused past
             // before Rule 5.
             Self::AttemptManifestEntries => 65_536,
+            // Sixteen times the 256 receipts the append door refused past
+            // before Rule 5.
+            Self::AttemptCancelReceipts => 4_096,
+            // Sixteen times the 1,024 rows the walk refused past before
+            // Rule 5.
+            Self::AttemptRetryTipRows => 16_384,
             // The shipped rubric is about 1 KiB; the judgment's state holds
             // at most 64 KiB in all.
             Self::JudgeRubricBytes => 8_192,
@@ -392,6 +444,15 @@ impl EngineLimit {
             Self::BlockedDetailBytes => 4096,
             Self::SealReferenceBytes => 256,
             Self::TripwireThreshold => 1024,
+            // The batch, principal, image byte and image count ceilings the
+            // e-sign sweeps, principals and signature upload refused past
+            // before Rule 5.
+            Self::EsignSweepDocuments => 100,
+            Self::EsignSigningPrincipals => 256,
+            Self::EsignSignatureInputBytes => 2 << 20,
+            Self::EsignSignaturePngBytes => 2 << 20,
+            Self::EsignSignatureDocumentBytes => 64 << 20,
+            Self::EsignSignatureRecipientImages => 16,
         }
     }
 }

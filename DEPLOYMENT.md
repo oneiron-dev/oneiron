@@ -189,6 +189,8 @@ import_xlsx_live_cells = 200000   # cells one workbook import writes into a live
 pack_script_output_bytes = 65536 # bytes of one foreign pack script run's typed output; past it the row asks and the output is read whole (up to the sandbox's 1 MiB file bound)
 pack_script_output_rows = 16      # inbound events, verbs or connector events one foreign pack script run emits; past it the row asks and every row is served
 attempt_manifest_entries = 65536  # entries in one attempt's pack manifest; past it the row asks and every entry is kept
+attempt_cancel_receipts = 4096    # receipts in one attempt's cancel protocol history; past it the row asks and every receipt is kept
+attempt_retry_tip_rows = 16384    # attempt rows one retry-tip walk visits along a retry lineage; past it the row asks and the whole lineage is still read
 judge_rubric_bytes = 8192         # bytes of the judge rubric (the judge skill's text) one judgment or label re-check reads; past it the rubric is read whole and the row asks
 judge_instructions_bytes = 8192   # bytes of skill instructions one held-out replay judgment reads; past it they are read whole and the row asks
 judge_replay_text_bytes = 40000   # bytes of replay text (runs' tasks and responses) one replay judgment's state carries; past it the replays ride whole and the row asks
@@ -212,6 +214,12 @@ detector_window_runs = 64         # runs in one telemetry window a model-graded 
 blocked_detail_bytes = 4096       # bytes of one blocked report's stored detail; past it the detail is kept whole and the row asks
 seal_reference_bytes = 256        # bytes of one executor, judge or evidence reference a seal check names; past it the reference is kept whole and the row asks
 tripwire_threshold = 1024         # each count threshold a tripwire policy sets; past it the tripwire runs at that threshold and the row asks
+esign_sweep_documents = 100       # documents one e-sign seal backstop, expiry or reminder sweep is handed; past it every document is swept and the row asks
+esign_signing_principals = 256    # signing principals one owner names for e-sign; past it every principal is kept and the row asks
+esign_signature_input_bytes = 2097152 # bytes of one uploaded signature image; past it the image is stored and bound and the envelope's sender is asked
+esign_signature_png_bytes = 2097152 # bytes of one signature image's canonical PNG; past it the image is stored and bound and the envelope's sender is asked
+esign_signature_document_bytes = 67108864 # canonical signature image bytes one signing document holds; past it the image is stored and bound and the envelope's sender is asked
+esign_signature_recipient_images = 16 # signature images one recipient holds; past it the image is stored and bound and the envelope's sender is asked
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

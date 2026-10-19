@@ -2,7 +2,7 @@
 use crate::auth::{parse_signature, parse_slip_id};
 use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
-use axum::{Json, extract::State, http::HeaderMap};
+use axum::{Json, extract::State, http::HeaderMap, http::request::Parts};
 use oneiron::authority::{
     HostSlipIssuer, MachineDeviceClass, MachineEncryptionKey, MachineEnrolmentRequest,
     MachineOwnership, PairingDescriptor, PairingPrincipal,
@@ -27,11 +27,11 @@ pub(super) struct CreateLink {
     machine: Option<MachineOwnership>,
 }
 pub(super) async fn create_link(
-    headers: HeaderMap,
+    parts: Parts,
     State(server): State<Arc<SyncServer>>,
     Json(request): Json<CreateLink>,
 ) -> Result<Json<oneiron::authority::PairingLink>, EnvelopedApiError> {
-    let auth = super::check_api_owner_act(&headers, &server)?;
+    let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?;
     let link = match request.machine {
         // A link the owner makes records them: a holder that can propose has
         // the OpenAI proxy admitted under that owner when it redeems.
@@ -62,7 +62,7 @@ pub(super) async fn create_link(
         Some(ownership) => {
             let owner = super::owner_routes::owner(&auth, &server)?;
             let surface =
-                super::owner_routes::machine_routes::act_surface(&server, &auth, &headers);
+                super::owner_routes::machine_routes::act_surface(&server, &auth, &parts.headers);
             with_issuer(&server, |issuer| {
                 server.vault().issue_machine_pairing_link(
                     issuer,
@@ -479,11 +479,11 @@ pub(super) struct RevokeSlip {
     slip_id: [u8; 32],
 }
 pub(super) async fn revoke(
-    headers: HeaderMap,
+    parts: Parts,
     State(server): State<Arc<SyncServer>>,
     Json(request): Json<RevokeSlip>,
 ) -> Result<Json<serde_json::Value>, EnvelopedApiError> {
-    super::check_api_owner_act(&headers, &server)?;
+    super::scoped_auth::check_request_owner_act(&parts, &server)?;
     with_issuer(&server, |issuer| {
         server
             .vault()

@@ -644,12 +644,16 @@ it there. An agent about to send, pay, invite or share on that name is still sto
 choice card first.
 
 - `GET /v1/owner/dreamer/maintenance/applied` (optionally `?limit=<n>`): every applied write,
-  reverted ones too, newest first, with its finding (or, for a name kept separate, its `ask`),
-  kind (`finding`, `curator`, `proactivity_policy`, `reach_out`, `representation_plan` or
-  `identity_provisional`), facet, attempt, receipt and your revert once made.
+  reverted ones too, newest first, with its finding (or, for a name kept separate, its `ask`; for
+  a project's team-shape fork, its `project` and `fork`), kind (`finding`, `curator`,
+  `proactivity_policy`, `reach_out`, `representation_plan`, `identity_provisional` or
+  `project_tree_fork`), facet, attempt, receipt and your revert once made.
 - `POST /v1/owner/dreamer/maintenance/revert` with `{"finding": "<32 hex>"}` (or
-  `{"ask": "<64 hex>"}` for a name kept separate) undoes its effect, retracts its finding as yours
-  and leaves one receipt. A curator rung's claim comes back at its prior confidence and rung: in
+  `{"ask": "<64 hex>"}` for a name kept separate, or `{"project": "<32 hex>", "fork": "<32 hex>"}`
+  for a project's team-shape fork) undoes its effect, retracts its finding as yours and leaves one
+  receipt. A fork's revert takes it off its project, which goes back to the vault tree, and the
+  Coach does not fork that project again until the vault's team-shape head moves. A curator
+  rung's claim comes back at its prior confidence and rung: in
   place when a weakening closed a claim with no signed history, else as the Dreamer's fresh copy
   born of it, since a signed claim's history never reopens (the copy carries the default `ClaimOf`
   weight). A digest request puts back the rows it replaced, or the defaults. A reach-out's revert
@@ -844,9 +848,17 @@ that destination: repeating the request is the same send, a changed destination 
 another owner's preview, is refused (409), and a preview older than an hour is refused. Two
 owners sending the same bundle are two sends. The send is an ordinary outbound effect: until the vault's policy grants
 `external:send` on the feedback channel to you, it is held (`"outcome": "held"`) and nothing
-leaves. A bundle carries no vault text the engine attached; proposal text is yours, and it leaves only
-on your send of exactly that preview. A written note is refused until the engine redacts notes
-in the vault (OF-420).
+leaves. A bundle carries no vault text the engine attached; proposal text and a written note are
+yours, and they leave only on your send of exactly that preview. When the vault's on-device
+OneiroNER tagger is serving, it replaces every name it recognises in the note and proposal with its
+label (`[PERSON]`, `[ORG]`, ...) before the preview; nothing is called safe, and you read the
+filtered text in the preview. A written note needs that filter: when it can't run (no on-device
+tagger), a note is refused (409), and a proposal without a note is sent as you wrote it (OF-420).
+
+Sharing real conversation text to train the models Oneiron ships ("Learn from my conversations")
+is off until the person whose words they are says yes, per world, and private worlds are never
+included. The engine has one door for it, and it sends nothing today: no machine-only intake is
+configured. Training a model of your own on your own data (the training pack) needs no sharing.
 
 A vault our cloud hosts (managed serve) sends to `collector` at `https://oneiron.dev/feedback`
 unless told otherwise; self-hosted serve sends nowhere until you set both keys. `GET
@@ -1536,12 +1548,16 @@ Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` or
 - `GET /v1/owner/legal-holds/log` reads the log, oldest first.
 - `GET /v1/owner/legal-holds/lift-and-erase` returns the confirm's title and prompt, to show
   before you `POST` it with `{"records": ["<hex>", ...]}`. Each record answers `erased` with its
-  receipt, `completion_pending` where Oneiron hosts the bytes until the deletion receipt
-  completes, `kept_by_legal_order`, or `failed` (the hold is lifted; a plain delete retries).
+  receipt once the receipt is complete, `completion_pending` with the receipt and
+  `"reason": "historical_sweep"` while its history sweep is queued (the same rule self-hosted and
+  hosted), `retained_for_law` with the order's `bound` (the law, jurisdiction, issuing authority
+  and end) and what self-hosting changes, or `failed` (the hold is lifted; a plain delete retries).
 
 The SDK verbs `vault.legal_holds.place`, `.widen`, `.list`, `.log` and `.lift_and_erase` do the
 same under the owner's credential. Where Oneiron hosts the bytes, a legal order Oneiron must obey
-can also hold records. You cannot lift it, and an erase you confirm waits until it ends.
+can also hold records. You cannot lift it, and an erase you confirm waits until it ends. You see
+the order whole, with its reference and terms, unless the order itself requires silence; then you
+see nothing of it until that silence ends, and an erase it keeps reads only `completion_pending`.
 
 ## Erase a text's history
 

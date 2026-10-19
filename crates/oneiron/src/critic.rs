@@ -79,6 +79,9 @@ const MAX_EVIDENCE_REFS: usize = 64;
 const MAX_EVIDENCE_REF_BYTES: usize = 256;
 const MAX_SUGGESTED_EDIT_BYTES: usize = 8192;
 const DEFAULT_UCB_EXPLORATION: f64 = 0.35;
+/// How an erased critic's ref begins (FIX 4477; a call): the erased spelling
+/// and a colon, then an opaque id of its own that hashes no actor.
+const ERASED_CRITIC_REF_PREFIX: &str = "erased:";
 
 pub const OF366_SEED_LENS_CATALOG_JSON: &str = r#"{
   "schema_version": 1,
@@ -237,6 +240,13 @@ impl CritiqueProvenance {
         ))
     }
 
+    /// Whether the critic was erased: its ref is an opaque id, not an actor,
+    /// and [`Self::actor`] refuses it (FIX 4477).
+    #[must_use]
+    pub fn is_erased(&self) -> bool {
+        self.critic_ref.starts_with(ERASED_CRITIC_REF_PREFIX)
+    }
+
     pub fn executor(&self) -> Result<String> {
         if self.critic_class == crate::EdgeActorClass::Human as u8 {
             return Ok(self.critic_ref.clone());
@@ -316,6 +326,22 @@ impl CritiqueArtifact {
         validate_critique_artifact(&artifact)?;
         Ok(artifact)
     }
+
+    /// Names the erased critic by `token`, from [`erased_critic_ref`], here
+    /// and in the calibration executor that copied its id (FIX 4477). The
+    /// verdict, lens, evidence and times stay.
+    pub(crate) fn forget_critic(&mut self, token: &str) {
+        if self.calibration.executor.as_deref() == Some(self.provenance.critic_ref.as_str()) {
+            self.calibration.executor = Some(token.to_owned());
+        }
+        self.provenance.critic_ref = token.to_owned();
+    }
+}
+
+/// An erased critic's opaque ref: [`ERASED_CRITIC_REF_PREFIX`] and the fresh
+/// id `opaque`, one per erased critic per record, so no two critics share it.
+pub(crate) fn erased_critic_ref(opaque: EntityId) -> String {
+    format!("{ERASED_CRITIC_REF_PREFIX}{}", opaque.to_hex())
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
@@ -492,6 +518,41 @@ impl<'a> CritiqueArtifactStore<'a> {
         }
         artifacts.sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
         Ok(artifacts)
+    }
+
+    /// The branch's critiques for an observation that reads past a bad row
+    /// (FIX 4468): every row that decodes and validates, sorted as
+    /// [`Self::list_branch`] sorts them, and one line naming each row that
+    /// does not. A storage fault still fails the read.
+    pub(crate) fn observe_branch_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        branch_attempt: AttemptId,
+    ) -> Result<(Vec<CritiqueArtifact>, Vec<String>)> {
+        let mut artifacts = Vec::new();
+        let mut unread = Vec::new();
+        for row in
+            CRITIQUE_ARTIFACT.iter_raw_from(&self.vault.store, txn, branch_attempt.as_bytes())?
+        {
+            let (key, value) = row?;
+            let Some(key) = CritiqueArtifactKey::decode_key(&key) else {
+                unread.push("a critique row on this run's branch has an unreadable key".to_owned());
+                continue;
+            };
+            let artifact = CRITIQUE_ARTIFACT.decode_value(&value).and_then(|artifact| {
+                validate_critique_artifact(&artifact)?;
+                Ok(artifact)
+            });
+            match artifact {
+                Ok(artifact) => artifacts.push(artifact),
+                Err(error) => {
+                    let id = &key.artifact_id;
+                    unread.push(format!("critique {id} does not read: {error}"));
+                }
+            }
+        }
+        artifacts.sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
+        Ok((artifacts, unread))
     }
 }
 

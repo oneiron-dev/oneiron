@@ -6,6 +6,7 @@ use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::validate::{lease_claimed_record, validate_lease_owner};
 use crate::attempt_queue::{AttemptId, AttemptRecord, ClaimAttempt, ClaimOutcome};
 use crate::error::Result;
+use crate::limit_ask::EngineLimit;
 
 impl AttemptQueue<'_> {
     /// Claims one known ready row with the ordinary claim's admission: the
@@ -75,6 +76,10 @@ impl AttemptQueue<'_> {
     }
 
     /// Finds a unique retry tip in the transaction that releases the next step.
+    ///
+    /// A row visited twice is a cycle and refuses; a long lineage does not.
+    /// The whole lineage is read; past the `[limits]` `attempt_retry_tip_rows`
+    /// row the finished walk asks whether everything is okay (Rule 5).
     pub(crate) fn retry_tip_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -93,10 +98,13 @@ impl AttemptQueue<'_> {
             }
         }
         loop {
-            if !seen.insert(current.id) || seen.len() > 1024 {
-                return Err(invalid_transition("retry_tip", "cycle_or_bound"));
+            if !seen.insert(current.id) {
+                return Err(invalid_transition("retry_tip", "cycle"));
             }
             let Some(mut candidates) = children.remove(&current.id) else {
+                self.store
+                    .limit_watch
+                    .measure(EngineLimit::AttemptRetryTipRows, seen.len() as u64);
                 return Ok(current);
             };
             if candidates.len() != 1 {
@@ -115,5 +123,41 @@ impl AttemptQueue<'_> {
             }
             current = next;
         }
+    }
+
+    /// The newest try of `start`'s retry lineage, for a read: each try's one
+    /// retry followed forward, a landing successor included. `None` when a
+    /// try has two retries or the walk meets a row twice, so no one try is
+    /// newest. Unlike [`Self::retry_tip_in_txn`] it releases nothing and asks
+    /// nothing of the rows' fields; a long lineage asks through the
+    /// `attempt_retry_tip_rows` row and is still read whole (Rule 5).
+    pub(crate) fn newest_retry_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        start: AttemptId,
+    ) -> Result<Option<AttemptId>> {
+        let mut children = std::collections::HashMap::<AttemptId, Vec<AttemptId>>::new();
+        for entry in self.store.attempt_records.iter(txn)? {
+            let (key, bytes) = entry?;
+            let row = decode_record(&bytes, AttemptId::from_bytes(&key)?)?;
+            if let Some(parent) = row.retry_of {
+                children.entry(parent).or_default().push(row.id);
+            }
+        }
+        let mut seen = std::collections::HashSet::from([start]);
+        let mut current = start;
+        while let Some(next) = children.get(&current) {
+            let [next] = next.as_slice() else {
+                return Ok(None);
+            };
+            if !seen.insert(*next) {
+                return Ok(None);
+            }
+            current = *next;
+        }
+        self.store
+            .limit_watch
+            .measure(EngineLimit::AttemptRetryTipRows, seen.len() as u64);
+        Ok(Some(current))
     }
 }

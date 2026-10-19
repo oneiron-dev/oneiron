@@ -9,7 +9,12 @@
 //! is the owner's alone. Neither the session's name nor a broad read Grant
 //! manages one: the registry keeps the creator per instance, in RAM
 //! (`OffRecordSessionVault::bind_as_creator`), so a name taken again after
-//! close carries none of the closed instance's authority.
+//! close carries none of the closed instance's authority. Each creator names
+//! their stretches in their own space (FIX 4597): start answers the
+//! instance's opaque handle as its `session_ref`, which later calls and the
+//! session header name, as the caller's own name for it does among their
+//! own; no answer says that a name someone else holds is taken. The owner
+//! manages a creator's instance by its handle, on their proof.
 //!
 //! A stretch in a room keeps its members' own bounded acts: status reads it
 //! as their membership shows it, witness speaks in it as one of them, and
@@ -563,11 +568,12 @@ async fn off_record_execute(
     let (actor, class) =
         super::facade_actor(server, auth).map_err(|error| error.into_memory_error())?;
     let session_ref = input.session_ref.clone();
-    // The caller's own stretch by that name, before a run is entered: the
-    // run binds it again on its own thread, for its creator when the caller
-    // manages it as one.
-    let creator = as_caller(server, auth, VERB, move |server, caller| {
-        managed_session(server.vault(), caller, VERB, &session_ref).map(|_| caller.creator())
+    // The caller's own stretch by that handle or name, before a run is
+    // entered: the run binds the instance's key again on its own thread, for
+    // its creator when the caller manages it as one.
+    let (session_ref, creator) = as_caller(server, auth, VERB, move |server, caller| {
+        managed_session(server.vault(), caller, VERB, &session_ref)
+            .map(|session| (session.session_ref().to_owned(), caller.creator()))
     })
     .await?;
     let host = server
@@ -580,13 +586,16 @@ async fn off_record_execute(
                 &["Configure the server's code-mode host, then call again."],
             )
         })?;
-    let run_id = crate::mcp::off_record_run_id(&input.session_ref, actor, &input.run_ref);
+    let run_id = crate::mcp::off_record_run_id(&session_ref, actor, &input.run_ref);
     let outcome = host
         .execute_in_off_record_session(
             Arc::clone(&server.vault),
+            // The run's reads in the room read under this request's own
+            // caller, credential and place (WILL L11-01).
             OffRecordRunSession {
-                session_ref: input.session_ref,
+                session_ref,
                 creator,
+                caller: auth.clone(),
             },
             WriteActor::new(actor, class),
             input.run_ref.clone(),

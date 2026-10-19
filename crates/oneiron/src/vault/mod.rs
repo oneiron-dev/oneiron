@@ -172,6 +172,9 @@ pub struct Vault {
     /// The step loops leased attempts run on this handle, each under the
     /// root token a hard queue control stops it by (FIX 600). In memory only.
     pub(crate) attempt_cancels: crate::engine_executor::AttemptCancels,
+    /// The wake passes running on this handle and their admitted calls, held
+    /// weakly: their roots own them (DOOR-144). In memory only, never restored.
+    pub(crate) active_wakes: crate::dreamer_wake::ActiveWakes,
     /// The served host that drives an answered code consent wait's effect
     /// (DOOR-079 1a), installed once per open vault, never process-global
     /// ([`Vault::install_code_consent_effect_host`]). In memory only.

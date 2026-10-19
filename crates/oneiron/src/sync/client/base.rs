@@ -30,7 +30,9 @@ use crate::sync::{
 /// world.
 const ITEM11_UNREADABLE_HOME_DISCOVERY: bool = true;
 /// FIX 922 item 11 call: a home that may not read a window's world is not asked to promote it; the
-/// `rp:w:` intent stays, and a first-edit promotion reports the home unavailable.
+/// `rp:w:` intent stays, and a first-edit promotion reports the home unavailable. Nor is it asked to
+/// retain or demote it (FIX 3872): a retain is marked refused, and a demotion reports the home
+/// unavailable.
 pub(super) const ITEM11_UNREADABLE_HOME_PROMOTION: bool = true;
 
 /// Client-side sync engine.

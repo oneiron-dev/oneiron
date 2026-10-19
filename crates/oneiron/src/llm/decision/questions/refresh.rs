@@ -336,6 +336,11 @@ fn refresh_with(
                 frontier,
                 source_kind: kind,
                 answered_at: now,
+                omitted: p
+                    .context
+                    .as_ref()
+                    .map(|context| context.omitted.clone())
+                    .unwrap_or_default(),
             };
             land(vault, txn, actor, principal, &answer, &raw, rows.as_deref())?;
             arrival::watch_sources(
@@ -506,7 +511,7 @@ pub fn refresh_due_questions_by_role<A: GraphAnswerer>(
 pub fn standing_ask_route(principal: EntityId) -> AskTo {
     AskTo {
         role: AskRole::Responsible {
-            actor: principal,
+            actor: crate::llm::decision::AnswerActor::Actor(principal),
             project: None,
         },
         ceiling: RoleRank::Owner,
@@ -685,9 +690,10 @@ impl Vault {
 }
 
 /// One unit's answer from a graph answerer, read under `record`'s principal:
-/// the unit and its eligible neighbours, as a one-off graph ask reads them.
-/// A neighbourhood no one answer can stay inside abstains before any model
-/// runs, as the answer would read wider than a source it rests on.
+/// the unit and its eligible neighbours, as a one-off graph ask reads them,
+/// a neighbour no one answer can rest on beside the unit named as omitted.
+/// A unit no one answer can stay inside abstains before any model runs, as
+/// the answer would read wider than a source it rests on.
 fn graph_proposal(
     vault: &Vault,
     record: &QuestionRecord,

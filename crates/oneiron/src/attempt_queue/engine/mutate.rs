@@ -636,6 +636,7 @@ impl AttemptQueue<'_> {
                         let authority = ForceCancelAuthority::lease_expiry();
                         validate_force_authority(&authority)?;
                         force_cancel_record(
+                            &self.store.limit_watch,
                             &mut record,
                             authority.grounds(),
                             authority.actor().to_owned(),
@@ -700,6 +701,46 @@ impl AttemptQueue<'_> {
         self.store.diagnostics.attempt_queue.record(&report);
         emit_attempt_queue_cleanup_span(&input, &report);
         Ok(report)
+    }
+
+    /// [`Self::cleanup_leases`] for one kind's rows alone: an expired lease
+    /// of `kind` goes back to the ready index through the same transition,
+    /// while every unsettled row of any other kind is held as it is, however
+    /// old its lease, so a worker reclaiming its own expired claims never
+    /// takes another worker's. `None` when no lease of `kind` had expired:
+    /// nothing was written.
+    pub fn cleanup_kind_leases(
+        &self,
+        kind: &str,
+        input: CleanupAttemptLeases,
+    ) -> Result<Option<AttemptQueueCleanupReport>> {
+        validate_cleanup_leases_input(&input)?;
+        let mut others = std::collections::HashSet::new();
+        let mut expired = false;
+        {
+            let rtxn = self.store.env.read_txn()?;
+            for row in self.store.attempt_records.iter(&rtxn)? {
+                let (key, raw_record) = row?;
+                let id = AttemptId::from_bytes(&key)?;
+                let record = decode_record(&raw_record, id)?;
+                if record.state.is_terminal() {
+                    continue;
+                }
+                if record.kind != kind {
+                    // Every unsettled row of another kind, not only a leased
+                    // one: a row claimed after this read is held all the same.
+                    others.insert(id);
+                } else if record.state.is_running()
+                    && lease_expired(&record, input.now, input.lease_timeout_secs)
+                {
+                    expired = true;
+                }
+            }
+        }
+        if !expired {
+            return Ok(None);
+        }
+        self.cleanup_leases_except(input, &others).map(Some)
     }
 }
 fn mark_rechecked_candidate_not_running(report: &mut AttemptQueueCleanupReport) {

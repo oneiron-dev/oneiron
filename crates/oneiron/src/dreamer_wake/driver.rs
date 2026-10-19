@@ -2,6 +2,7 @@
 
 mod concurrent;
 mod hooks;
+mod observe;
 
 use std::future::poll_fn;
 use std::panic::AssertUnwindSafe;
@@ -241,20 +242,16 @@ impl<'a> DreamerWakeDriver<'a> {
             Ok(hooks) => hooks,
             Err(skipped) => return Ok(skipped),
         };
-        self.begin_wake(input.now)?;
-        let prepared = crate::dreamer_consolidation::PreparedWake::capture_with_grants(
-            self.vault,
-            input.scope,
-            input.host_scope.as_ref(),
-        )?;
-        let report = self
-            .run_prepared_wake_pass(input, exec, cancel, &prepared)
-            .await?;
+        self.start_wake_observation(&input);
+        let report = self.run_begun_wake_pass(input, exec, cancel).await;
+        self.finish_wake_observation(report.as_ref());
+        let report = report?;
         self.post_wake_hooks(hooks, &report);
         Ok(report)
     }
 
-    fn begin_wake(&mut self, now: u64) -> Result<()> {
+    fn begin_wake(&mut self, input: &RunWakePass) -> Result<()> {
+        let now = input.now;
         // Per-pass driver state (ONE-1305): a reused driver must fire its
         // wrap/finalize notices anew each pass, and steering signals belong
         // to the pass that raised them — the host drains them after run.
@@ -271,6 +268,8 @@ impl<'a> DreamerWakeDriver<'a> {
         // (here, or by a peer through sync) resumes its parked attempt as
         // the same try, admissible in this very pass.
         crate::llm::resume_signalled_steps(self.vault, now.saturating_mul(1_000))?;
+        // An ended pass's Checkpoint parks resume as the same tries (DOOR-144).
+        self.resume_checkpoints(input);
         crate::human_task::run_human_followups_on_wake(self.vault, now)?;
         self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
         // PEOPLE `about`: a person whose facts moved queues its lines anew.
@@ -573,6 +572,7 @@ impl<'a> DreamerWakeDriver<'a> {
 
             report.admitted += 1;
             let attempt_id = admitted.status.attempt.id;
+            self.observe_admitted(&admitted);
             // The runner line this attempt reserved on: the pass's, or the
             // line the host routed it to.
             let line = admitted.reservation.budget_id.clone();

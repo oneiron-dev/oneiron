@@ -26,7 +26,7 @@ use oneiron::llm::{
 };
 use oneiron::skill::{LoadedSkillPack, SkillRole};
 use oneiron::team::{PatternLaunchRunner, PatternLaunchSpec, TeamAxis};
-use oneiron::{Error, Result, Vault};
+use oneiron::{Error, ErrorKind, Result, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -137,6 +137,13 @@ impl HostPatternLaunchRunner {
             .admit_role(&self.vault, CHAT_ROLE, request)
             .map_err(|refusal| match refusal {
                 RoleRefusal::NoSeat => no_seat(),
+                // A store fault inside admission is the host's, not a bound
+                // the owner can act on (FIX 5045); a typed refusal keeps its
+                // own text.
+                RoleRefusal::Refused(error) if store_fault(&error) => fault(format!(
+                    "the house generative seat's admission failed on a store fault: {error}"
+                )),
+                RoleRefusal::Refused(error) if matches!(*error, Error::Refused(_)) => *error,
                 refusal => stop(format!(
                     "the house generative seat refused the pattern run: {refusal}; fix the \
                      vault's model route for {}, then ask again",
@@ -151,6 +158,7 @@ impl HostPatternLaunchRunner {
         {
             call.request.envelope.response_format = ResponseFormat::Text;
         }
+        warn_launch_input(&self.vault, &call.request);
         let units = self.ai.chat_settings().turn_budget_units;
         let meter = BudgetGuard::with_reserve_units(
             run_id.clone(),
@@ -330,6 +338,43 @@ pub(in crate::server) fn launch_request(
     })
 }
 
+/// Warns, and only warns, when the request's text reads larger than the
+/// catalog's context value for the exact model it goes to (FIX 4640). The
+/// count is an offline o200k estimate of the text parts, not the provider's
+/// own count, so the request is sent unchanged either way.
+pub(in crate::server) fn warn_launch_input(vault: &Vault, request: &LlmRequest) {
+    let window = match vault.model_registry_row(&request.model) {
+        Ok(Some(row)) if row.catalog.context_window_tokens > 0 => row.catalog.context_window_tokens,
+        Ok(_) => return,
+        Err(error) => {
+            tracing::warn!(
+                model = %request.model,
+                %error,
+                "the pattern run's model row did not read; its input goes unestimated"
+            );
+            return;
+        }
+    };
+    let estimate = request
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .map(|part| match part {
+            ContentPart::Text { text } => oneiron::count_context_pack_tokens(text) as u64,
+            _ => 0,
+        })
+        .fold(0_u64, u64::saturating_add);
+    if estimate > window {
+        tracing::warn!(
+            model = %request.model,
+            estimate,
+            catalog_window = window,
+            "the pattern request's text estimate is above the model's catalog context value; \
+             an estimate only, sent unchanged"
+        );
+    }
+}
+
 /// A reply's start, as the schema shapes it.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -416,6 +461,22 @@ fn off_schema(detail: impl std::fmt::Display) -> Error {
 /// refusal that names its bound, which the planner answers as it is.
 pub(in crate::server) fn stop(reason: impl Into<String>) -> Error {
     Error::Refused(reason.into())
+}
+
+/// Whether an admission error is the store's, as the doors' error map reads
+/// it (INTERNAL), rather than a bound the caller can act on.
+fn store_fault(error: &Error) -> bool {
+    matches!(
+        error.kind(),
+        ErrorKind::Storage
+            | ErrorKind::Io
+            | ErrorKind::CorruptedIndex
+            | ErrorKind::SideTableRow
+            | ErrorKind::InvariantViolation
+            | ErrorKind::MapFull
+            | ErrorKind::IndexOverflow
+            | ErrorKind::MissingPostingEntry
+    )
 }
 
 /// A host fault that stopped a pattern run: a solo or zero-width plan, task

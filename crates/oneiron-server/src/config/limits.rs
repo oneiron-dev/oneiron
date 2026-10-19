@@ -264,6 +264,8 @@ impl LimitsConfig {
             pack_script_output_bytes,
             pack_script_output_rows,
             attempt_manifest_entries,
+            attempt_cancel_receipts,
+            attempt_retry_tip_rows,
             judge_rubric_bytes,
             maintenance_row_items,
             maintenance_text_bytes,
@@ -290,6 +292,12 @@ impl LimitsConfig {
             blocked_detail_bytes,
             seal_reference_bytes,
             tripwire_threshold,
+            esign_sweep_documents,
+            esign_signing_principals,
+            esign_signature_input_bytes,
+            esign_signature_png_bytes,
+            esign_signature_document_bytes,
+            esign_signature_recipient_images,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -358,6 +366,8 @@ impl LimitsConfig {
                 EngineLimit::AttemptManifestEntries,
                 attempt_manifest_entries,
             ),
+            (EngineLimit::AttemptCancelReceipts, attempt_cancel_receipts),
+            (EngineLimit::AttemptRetryTipRows, attempt_retry_tip_rows),
             (EngineLimit::JudgeRubricBytes, judge_rubric_bytes),
             (EngineLimit::MaintenanceRowItems, maintenance_row_items),
             (EngineLimit::MaintenanceTextBytes, maintenance_text_bytes),
@@ -393,6 +403,27 @@ impl LimitsConfig {
             (EngineLimit::BlockedDetailBytes, blocked_detail_bytes),
             (EngineLimit::SealReferenceBytes, seal_reference_bytes),
             (EngineLimit::TripwireThreshold, tripwire_threshold),
+            (EngineLimit::EsignSweepDocuments, esign_sweep_documents),
+            (
+                EngineLimit::EsignSigningPrincipals,
+                esign_signing_principals,
+            ),
+            (
+                EngineLimit::EsignSignatureInputBytes,
+                esign_signature_input_bytes,
+            ),
+            (
+                EngineLimit::EsignSignaturePngBytes,
+                esign_signature_png_bytes,
+            ),
+            (
+                EngineLimit::EsignSignatureDocumentBytes,
+                esign_signature_document_bytes,
+            ),
+            (
+                EngineLimit::EsignSignatureRecipientImages,
+                esign_signature_recipient_images,
+            ),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -528,6 +559,8 @@ pub(super) struct LimitsConfigOverride {
     pub(super) pack_script_output_bytes: Option<u64>,
     pub(super) pack_script_output_rows: Option<u64>,
     pub(super) attempt_manifest_entries: Option<u64>,
+    pub(super) attempt_cancel_receipts: Option<u64>,
+    pub(super) attempt_retry_tip_rows: Option<u64>,
     pub(super) judge_rubric_bytes: Option<u64>,
     pub(super) maintenance_row_items: Option<u64>,
     pub(super) maintenance_text_bytes: Option<u64>,
@@ -554,4 +587,10 @@ pub(super) struct LimitsConfigOverride {
     pub(super) blocked_detail_bytes: Option<u64>,
     pub(super) seal_reference_bytes: Option<u64>,
     pub(super) tripwire_threshold: Option<u64>,
+    pub(super) esign_sweep_documents: Option<u64>,
+    pub(super) esign_signing_principals: Option<u64>,
+    pub(super) esign_signature_input_bytes: Option<u64>,
+    pub(super) esign_signature_png_bytes: Option<u64>,
+    pub(super) esign_signature_document_bytes: Option<u64>,
+    pub(super) esign_signature_recipient_images: Option<u64>,
 }
