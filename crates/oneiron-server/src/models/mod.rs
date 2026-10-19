@@ -245,19 +245,25 @@ impl ModelRuntime {
     }
 
     /// [`build`](Self::build), with the custody door a `key_secret`
-    /// provider's calls read their key at. Without one, such a provider is
+    /// provider's calls read their key at, through a broker made for the
+    /// providers alone. Without one, or outside a runtime, such a provider is
     /// unavailable.
     #[must_use]
     pub fn build_with_keys(config: Option<&ModelsConfig>, keys: Option<Arc<dyn KeyDoor>>) -> Self {
-        Self::build_hosted(config, keys, OfferCooldowns::unkept())
+        let broker = config
+            .zip(keys)
+            .and_then(|(config, keys)| BrokerContext::for_providers(keys, config));
+        Self::build_hosted(config, broker.as_ref(), OfferCooldowns::unkept())
     }
 
-    /// [`build_with_keys`](Self::build_with_keys), with where an offer a
+    /// [`build`](Self::build), with the vault's one credential-broker
+    /// context every `key_secret` provider, chat or media, sends through
+    /// (without one, such a provider is unavailable), and where an offer a
     /// provider refused for a quota or a limit rests until its reset.
     #[must_use]
-    pub fn build_hosted(
+    pub(crate) fn build_hosted(
         config: Option<&ModelsConfig>,
-        keys: Option<Arc<dyn KeyDoor>>,
+        broker: Option<&BrokerContext>,
         rests: Arc<OfferCooldowns>,
     ) -> Self {
         let Some(config) = config else {
@@ -269,16 +275,12 @@ impl ModelRuntime {
         };
         let mut status = ModelsStatus::default();
         let mut built = BTreeMap::new();
-        // One broker for every `key_secret` provider, chat or media, made
-        // only if one exists.
-        let brokered = config
-            .providers
-            .values()
-            .any(|provider| provider.key_secret.is_some());
-        let site =
-            brokered.then(|| broker::BrokerSite::new(config).map_err(|error| error.to_string()));
+        // Every `key_secret` provider, chat or media, sends through the
+        // context's one broker and reads its key at the context's door.
+        let site = broker.map(BrokerContext::site);
+        let keys = broker.map(BrokerContext::keys);
         for (name, provider) in &config.providers {
-            match build_provider(name, provider, config, site.as_ref(), keys.as_ref()) {
+            match build_provider(name, provider, config, site, keys) {
                 Ok(Some(backend)) => {
                     let broker = backend.broker_isolation();
                     built.insert(name.clone(), backend);
@@ -427,13 +429,7 @@ impl ModelRuntime {
                     .push(SeatStatus::new(*role, None, state, rung_status));
             }
         }
-        let media = MediaRuntime::build(
-            config,
-            &rests,
-            &mut status.seats,
-            site.as_ref(),
-            keys.as_ref(),
-        );
+        let media = MediaRuntime::build(config, &rests, &mut status.seats, site, keys);
         // Each chat model the router serves, and each media seat's rung, is
         // one a parked offer's calls may fall back to once the owner names
         // it (`use_fallback`).
