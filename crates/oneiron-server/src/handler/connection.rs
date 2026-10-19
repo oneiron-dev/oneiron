@@ -73,16 +73,11 @@ async fn ws_upgrade_handler(
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Response, Response> {
     // The MCP carrier serves no sync state, so it admits any holder-bound
-    // slip rather than only an owner-grade one.
+    // slip rather than only an owner-grade one, and on a managed vault the
+    // owner his supervisor attested. There each call it carries is admitted
+    // under the reap freeze as one `POST /mcp` is (FIX 5128).
     if super::mcp_socket::requested(&ws) {
-        // On a managed vault its calls would ride a held socket past the
-        // reap freeze, which admits each request or upgrade once: a slip
-        // there is refused, named, and each call goes as one `POST /mcp`.
-        if server.managed_issuer.is_some() && crate::auth::carries_caller_slip(&headers) {
-            return Err(managed_mcp_carrier_refused());
-        }
-        return super::mcp_socket::upgrade(ws, &headers, &extensions, server)
-            .map_err(IntoResponse::into_response);
+        return super::mcp_socket::upgrade(ws, &headers, &extensions, server);
     }
     let auth = match CoreAuth::for_attested_request(&headers, &extensions, "/ws", &server) {
         Some(Ok(auth)) if auth.is_owner_grade() => auth,
@@ -165,26 +160,6 @@ fn sync_upgrade_refused(headers: &HeaderMap, server: &SyncServer) -> Response {
         return crate::auth::caller_slip_too_narrow("full replication").into_response();
     }
     StatusCode::UNAUTHORIZED.into_response()
-}
-
-/// The MCP carrier's refusal on a managed vault (WILL-PLAN L14 row 01). The
-/// reap freeze admits a request or an upgrade once and never sees a call on
-/// a socket it already let through, and the carrier holds nothing a reap
-/// counts, so a reap could read quiescent over a call in flight. The bound
-/// is the service's vault lifecycle allocation; the same calls run on this
-/// vault as one `POST /mcp` each, and the carrier runs on a self-hosted one.
-fn managed_mcp_carrier_refused() -> Response {
-    let body = serde_json::json!({
-        "error": "mcp_carrier_unavailable",
-        "message": "This hosted vault serves MCP as one POST /mcp per call, not on a held \
-            socket: a call on the socket would run past the reap pause of the service's vault \
-            lifecycle allocation. The same calls work here over POST /mcp, and the socket \
-            carrier works on a self-hosted vault.",
-        "bound": {"kind": "capacity", "resource": "vault_lifecycle_allocation"},
-        "alternative": "POST /mcp",
-        "self_hosted": {"supported": true},
-    });
-    (StatusCode::FORBIDDEN, axum::Json(body)).into_response()
 }
 
 /// This install's machine proof answering the upgrade whose slip proof
@@ -305,7 +280,7 @@ async fn handle_connection(
     // of liveness, and do not: they consult at the chokepoint. A rejected
     // hello is its connection's receipt before its close (FIX 3303).
     let Some(protocol_version) =
-        super::protocol_close::hello(&mut transport, &server, conn_id).await
+        super::protocol_close::hello(&mut transport, &server, conn_id, None).await
     else {
         return;
     };
@@ -665,7 +640,7 @@ async fn handle_connection(
 
         let Some(msg_result) = next_message else {
             // A frame the transport refused is receipted, then closed (FIX 3303).
-            super::protocol_close::close_read_refusal(&server, &mut transport).await;
+            super::protocol_close::close_read_refusal(&server, &mut transport, None).await;
             break;
         };
         let data = match msg_result {
@@ -681,15 +656,27 @@ async fn handle_connection(
                 tracing::warn!(conn_id, "received unexpected text message");
                 continue;
             }
-            Err(_) => {
+            Err(error) => {
                 tracing::warn!(conn_id, reason = "websocket_read_failed", "WebSocket error");
+                // A frame the WebSocket codec refused is a refusal, not a
+                // disconnect: receipted, then closed (FIX 5311).
+                super::protocol_close::close_read_error(&server, &mut transport, &error, None)
+                    .await;
                 break;
             }
         };
 
-        // Size check
+        // Size check: an oversized frame is receipted, then closed (FIX 5310).
         if data.len() > server.config.max_frame_size {
             tracing::warn!(conn_id, size = data.len(), "frame too large");
+            super::protocol_close::refuse_frame(
+                &mut transport,
+                &server,
+                close_codes::FRAME_TOO_LARGE,
+                "frame too large",
+                None,
+            )
+            .await;
             break;
         }
 
@@ -785,15 +772,18 @@ async fn handle_connection(
                                 .await;
                             break;
                         }
+                        // FIX 5310: each refusal below is its connection's
+                        // receipt, then the close it always sent, or, where
+                        // it sent none, its protocol close code.
                         ProtocolError::ReplacementUnsupported => {
-                            transport
-                                .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
-                                    code: close_codes::VERSION_MISMATCH,
-                                    reason: Utf8Bytes::from_static(
-                                        "window behind its history-free floor: upgrade this device to hello v13+ (v14 for residence)",
-                                    ),
-                                })))
-                                .await;
+                            super::protocol_close::refuse_frame(
+                                &mut transport,
+                                &server,
+                                close_codes::VERSION_MISMATCH,
+                                "window behind its history-free floor: upgrade this device to hello v13+ (v14 for residence)",
+                                None,
+                            )
+                            .await;
                             break;
                         }
                         ProtocolError::WaitedOut => {
@@ -802,22 +792,38 @@ async fn handle_connection(
                                 reason = "waited_out",
                                 "document waited for its turn past its deadline — closing"
                             );
-                            transport
-                                .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
-                                    code: close_codes::TRY_AGAIN_LATER,
-                                    reason: Utf8Bytes::from_static(
-                                        "waited for its turn past its deadline: nothing was applied",
-                                    ),
-                                })))
-                                .await;
+                            super::protocol_close::refuse_frame(
+                                &mut transport,
+                                &server,
+                                close_codes::TRY_AGAIN_LATER,
+                                "waited for its turn past its deadline: nothing was applied",
+                                None,
+                            )
+                            .await;
                             break;
                         }
                         ProtocolError::InvalidPayload(msg) => {
                             tracing::warn!(conn_id, error = %msg, "invalid payload — closing");
+                            super::protocol_close::refuse_frame(
+                                &mut transport,
+                                &server,
+                                close_codes::DECODE_ERROR,
+                                "invalid payload",
+                                None,
+                            )
+                            .await;
                             break;
                         }
                         ProtocolError::UnknownTag(tag) => {
                             tracing::warn!(conn_id, tag, "unknown tag — closing");
+                            super::protocol_close::refuse_frame(
+                                &mut transport,
+                                &server,
+                                close_codes::UNKNOWN_TAG,
+                                "unknown tag",
+                                None,
+                            )
+                            .await;
                             break;
                         }
                         ProtocolError::VvDecode(_) => {
@@ -832,6 +838,14 @@ async fn handle_connection(
                         }
                         ProtocolError::FrameTooLarge { size, max } => {
                             tracing::warn!(conn_id, size, max, "frame too large — closing");
+                            super::protocol_close::refuse_frame(
+                                &mut transport,
+                                &server,
+                                close_codes::FRAME_TOO_LARGE,
+                                "frame too large",
+                                None,
+                            )
+                            .await;
                             break;
                         }
                         ProtocolError::LoroImport(_) => {
@@ -859,6 +873,38 @@ async fn handle_connection(
             }
             Err(ProtocolError::UnknownTag(tag)) => {
                 tracing::warn!(conn_id, tag, "unknown tag — closing");
+                super::protocol_close::refuse_frame(
+                    &mut transport,
+                    &server,
+                    close_codes::UNKNOWN_TAG,
+                    "unknown tag",
+                    None,
+                )
+                .await;
+                break;
+            }
+            Err(ProtocolError::InvalidPayload(reason)) => {
+                tracing::warn!(conn_id, error = %reason, "invalid payload — closing");
+                super::protocol_close::refuse_frame(
+                    &mut transport,
+                    &server,
+                    close_codes::DECODE_ERROR,
+                    "invalid payload",
+                    None,
+                )
+                .await;
+                break;
+            }
+            Err(ProtocolError::FrameTooLarge { size, max }) => {
+                tracing::warn!(conn_id, size, max, "frame too large — closing");
+                super::protocol_close::refuse_frame(
+                    &mut transport,
+                    &server,
+                    close_codes::FRAME_TOO_LARGE,
+                    "frame too large",
+                    None,
+                )
+                .await;
                 break;
             }
             Err(e) => {

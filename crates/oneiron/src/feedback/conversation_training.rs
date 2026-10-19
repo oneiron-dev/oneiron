@@ -1,17 +1,23 @@
-//! "Learn from my conversations" (FIX 4489, OF-420): the one check real
-//! conversation text passes before it may go toward training the models
-//! Oneiron ships, and the only door that sends it there.
+//! "Learn from my conversations" (FIX 4489, FIX 5502 owner rulings,
+//! OF-420): the one check real conversation text passes before it may go
+//! toward training the models Oneiron ships, and the only doors that send it
+//! there.
 //!
-//! The owner's rule, in plain words: real conversation text is used for
-//! training only after the person whose words they are says yes, and it stays
-//! off until they do. Before anything leaves, the in-vault filter runs over it
-//! (a [`TextFilter`]: the Oneironer, under OF-420's in-vault redaction), and
-//! what it returns is called filtered, never more. No person reads it. A yes
-//! is scoped to the worlds the person names, and a private world is never
-//! included: a world counts only while its folded privacy read is
-//! everywhere, the rule code-fix exports keep. Otherwise real chat text never
-//! leaves, except in a report the person sends (the feedback bundle's
-//! one-shot approval, not this switch).
+//! The owner's rule, in plain words ("my casa my rules", 10-19): one setting
+//! per vault, set by its admin and off until the admin turns it on
+//! (`Vault::set_conversation_learning`). While it is on, everything in the
+//! vault counts, people, agents and guests alike. A private world never
+//! counts: a world counts only while its folded privacy read is everywhere,
+//! the rule code-fix exports keep. The admin may let people opt out: then a
+//! person's own "leave my messages out" (`Vault::set_conversation_training`)
+//! keeps their messages out ([`opted_out`]). Turning the setting off, or
+//! opting out, stops new sharing; it withdraws nothing already shared, which
+//! follows the intake's retention. Before anything leaves, the in-vault
+//! filter runs over it (a [`TextFilter`]: the Oneironer, under OF-420's
+//! in-vault redaction), and what it returns is called filtered, never more.
+//! No person reads it. Otherwise real chat text never leaves, except in a
+//! report the person sends (the feedback bundle's one-shot approval, not
+//! this setting).
 //!
 //! The switch covers sharing toward the models Oneiron ships, and only that
 //! (DEC-0005 #data-leaves-split; ARCH-0053 #training-opt-in). Training a
@@ -45,8 +51,8 @@ pub use self::lifecycle::{
     TrainingReceiptPage, TrainingSubmissionId, TrainingUnavailable, TrainingWithheld,
 };
 pub use self::receipts::{
-    PersonTrainingControl, PersonTrainingReceipts, PersonTrainingSubmission, TrainingCustody,
-    TrainingReceiptsCursor, TrainingUsedRun,
+    PersonTrainingReceipts, PersonTrainingSubmission, TrainingCustody, TrainingReceiptsCursor,
+    TrainingUsedRun,
 };
 pub use self::reconcile::TrainingUpkeep;
 pub use self::release::TrainingOfferPass;
@@ -54,7 +60,7 @@ pub use self::release::TrainingOfferPass;
 use std::collections::BTreeSet;
 
 use crate::Vault;
-use crate::authority::EffectiveRead;
+use crate::authority::{AuthorityFold, EffectiveRead};
 use crate::consent::person_is_live_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -65,43 +71,65 @@ use super::redaction::{FilteredText, TextFilter, TextFilterError};
 pub const NO_PUBLISHER_TRAINING_INTAKE: &str =
     "no machine-only intake for conversation training is configured";
 
-/// Where a person's "Learn from my conversations" choice is read: the worlds
-/// whose conversations they said yes to, as those worlds count now.
+/// Where the vault's "Learn from my conversations" setting is read, and
+/// each person's own opt-out while the setting lets people opt out.
 ///
-/// Only the PERSON's own yes counts. Nobody else's choice opts them in: not
-/// an owner's, an admin's or an agent's, and not an environment variable, a
-/// manifest or a hosted default.
+/// Only the vault's admin turns it on. Nothing else does: not an agent, an
+/// environment variable, a manifest or a hosted default.
 pub trait ConversationTrainingChoice {
-    /// The worlds `person` said yes for. `Ok(None)` is off: no choice, a
-    /// cleared one, or their choices in conflict. `Ok(Some(worlds))` is never
-    /// empty.
+    /// Whether the vault's setting is on now. No choice, an off and a
+    /// conflict read as off.
     ///
     /// # Errors
-    /// Any read that cannot be made withholds; it never reads as a yes.
-    fn conversation_training_worlds(&self, person: EntityId) -> Result<Option<BTreeSet<EntityId>>>;
+    /// Any read that cannot be made withholds; it never reads as on.
+    fn conversation_learning_on(&self) -> Result<bool>;
+
+    /// Whether `person`'s own messages are left out now: the vault lets
+    /// people opt out, and they did.
+    ///
+    /// # Errors
+    /// Any read that cannot be made withholds; it never lets them in.
+    fn conversation_training_opted_out(&self, person: EntityId) -> Result<bool>;
 }
 
-/// The reader that says off for everyone, for a caller with no choice
-/// register to read.
+/// The reader that says off, for a caller with no setting to read.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoChoicesYet;
 
 impl ConversationTrainingChoice for NoChoicesYet {
-    fn conversation_training_worlds(
-        &self,
-        _person: EntityId,
-    ) -> Result<Option<BTreeSet<EntityId>>> {
-        Ok(None)
+    fn conversation_learning_on(&self) -> Result<bool> {
+        Ok(false)
+    }
+
+    fn conversation_training_opted_out(&self, _person: EntityId) -> Result<bool> {
+        Ok(true)
     }
 }
 
-/// Each person's own signed choice, as this vault folds it
-/// (`Vault::conversation_training_worlds`): a conflict, a clear and no
-/// choice read as off, and a world no longer eligible drops out.
+/// The vault's own signed setting and each person's own signed opt-out, as
+/// this vault folds them: a conflicting setting reads as off.
 impl ConversationTrainingChoice for Vault {
-    fn conversation_training_worlds(&self, person: EntityId) -> Result<Option<BTreeSet<EntityId>>> {
-        Self::conversation_training_worlds(self, person)
+    fn conversation_learning_on(&self) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        Ok(fold.conversation_training_vault.on())
     }
+
+    fn conversation_training_opted_out(&self, person: EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        Ok(opted_out(&fold, person))
+    }
+}
+
+/// The opt-out rule (owner ruling 10-19 21:1x), the one place it is read:
+/// `person`'s own messages are left out while the vault's setting is on and
+/// lets people opt out, and they asked to leave them out (a conflict among
+/// their choices reads as asked). Otherwise their choice is kept and
+/// ignored.
+fn opted_out(fold: &AuthorityFold, person: EntityId) -> bool {
+    fold.conversation_training_vault.allows_opt_out()
+        && fold.conversation_training.leaves_out(person)
 }
 
 /// Where one conversation text came from: whose words, and which worlds.
@@ -109,7 +137,8 @@ impl ConversationTrainingChoice for Vault {
 pub struct ConversationSource {
     /// The row the text was read from, kept for provenance.
     pub source: EntityId,
-    /// Every person whose words the text carries; empty is unattributed.
+    /// Every person whose words the text carries, members and guests alike;
+    /// empty for text only agents wrote.
     pub persons: BTreeSet<EntityId>,
     /// Every world the text came from; empty is unplaced.
     pub worlds: BTreeSet<EntityId>,
@@ -128,8 +157,8 @@ pub struct ConversationText {
 /// Whether a source may go toward training the models Oneiron ships.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Eligibility {
-    /// Every person named is live and said yes for every world named, and
-    /// every world reads everywhere.
+    /// The vault's setting is on, every world reads everywhere, and every
+    /// person named is live and has not opted out.
     Eligible,
     /// Held back, and why.
     Withheld(Withheld),
@@ -138,65 +167,54 @@ pub enum Eligibility {
 /// Why a source is held back. Each reason names ids, never text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Withheld {
-    /// The source names no person, so whose yes it needs is unknown.
-    Unattributed,
     /// The source names no world, so whether it came from a private one is
     /// unknown.
     Unplaced,
+    /// The vault's setting is off.
+    Off,
     /// A world the text came from reads narrower than everywhere, or its
     /// read is conflicted or unknowable.
     PrivateWorld(EntityId),
     /// A person whose words these are is no longer a live person.
     PersonNotLive(EntityId),
-    /// A person whose words these are has no yes in force.
-    Off(EntityId),
-    /// A person's yes does not name a world the text came from.
-    WorldNotInScope {
-        /// The person whose yes is narrower.
-        person: EntityId,
-        /// The world it does not name.
-        world: EntityId,
-    },
+    /// A person whose words these are left their own messages out, while
+    /// the vault lets people opt out.
+    OptedOut(EntityId),
 }
 
-/// Judges one source on the strict reading: every person named is a live
-/// person whose own yes is in force and names every world the text came
-/// from, and every one of those worlds reads everywhere on this vault's
-/// fold. A source naming no person or no world is withheld, as is any read
-/// short of that. The choice is read now, each time this is asked.
+/// Judges one source on the strict reading: the vault's setting is on,
+/// every world the text came from reads everywhere on this vault's fold,
+/// and every person named is live and has not opted out. A source naming no
+/// world is withheld, as is any read short of that; one naming no person
+/// (text only agents wrote) needs no person's read. The setting is read
+/// now, each time this is asked.
 ///
 /// # Errors
-/// Storage faults, and any error the choice reader returns: never a yes.
+/// Storage faults, and any error the setting reader returns: never a yes.
 pub fn eligible(
     vault: &Vault,
     choices: &dyn ConversationTrainingChoice,
     source: &ConversationSource,
 ) -> Result<Eligibility> {
-    if source.persons.is_empty() {
-        return Ok(Eligibility::Withheld(Withheld::Unattributed));
-    }
     if source.worlds.is_empty() {
         return Ok(Eligibility::Withheld(Withheld::Unplaced));
+    }
+    if !choices.conversation_learning_on()? {
+        return Ok(Eligibility::Withheld(Withheld::Off));
     }
     if let Some(reason) = fold_withholds(vault, source)? {
         return Ok(Eligibility::Withheld(reason));
     }
     for person in &source.persons {
-        let Some(chosen) = choices.conversation_training_worlds(*person)? else {
-            return Ok(Eligibility::Withheld(Withheld::Off(*person)));
-        };
-        if let Some(world) = source.worlds.iter().find(|world| !chosen.contains(*world)) {
-            return Ok(Eligibility::Withheld(Withheld::WorldNotInScope {
-                person: *person,
-                world: *world,
-            }));
+        if choices.conversation_training_opted_out(*person)? {
+            return Ok(Eligibility::Withheld(Withheld::OptedOut(*person)));
         }
     }
     Ok(Eligibility::Eligible)
 }
 
 /// The fold's part of [`eligible`], in one read transaction closed before
-/// the choice reader opens its own: every world reads everywhere (any
+/// the setting reader opens its own: every world reads everywhere (any
 /// narrower, conflicted or unknowable read is private), and every person is
 /// live.
 fn fold_withholds(vault: &Vault, source: &ConversationSource) -> Result<Option<Withheld>> {
@@ -221,9 +239,10 @@ fn fold_withholds(vault: &Vault, source: &ConversationSource) -> Result<Option<W
 /// Oneiron ships.
 ///
 /// An implementation is the contract the owner's rule needs from the far
-/// side: no person reads what it takes; it honours withdrawal, so a person
-/// who turns the switch off or deletes their words has them removed from its
-/// store and from every later run; and it names the runs that used them.
+/// side: no person reads what it takes; it honours withdrawal, so a person's
+/// deleted words, a deleted source or a world turned private are removed
+/// from its store and from every later run; and it names the runs that used
+/// them.
 /// Nothing in this engine implements it, and the human-readable feedback
 /// inbox is not one.
 pub trait PublisherTrainingSink {
@@ -271,12 +290,12 @@ pub enum ShareOutcome {
 /// must pass [`eligible`]; then the filter runs over its text, and a filter
 /// that cannot run or rejects its answer withholds the source (it is never
 /// sent unfiltered); then [`eligible`] is asked again at the send itself, so
-/// a person who turned the switch off, or a world made private, while the
-/// filter ran stops the send; then the filtered text and its provenance go
-/// to the sink.
+/// a setting turned off, a person who opted out, or a world made private,
+/// while the filter ran stops the send; then the filtered text and its
+/// provenance go to the sink.
 ///
 /// # Errors
-/// A storage fault, a choice read that fails, or a sink that refuses stops
+/// A storage fault, a setting read that fails, or a sink that refuses stops
 /// the pass; every source already taken passed every check.
 pub fn share_for_publisher_training(
     vault: &Vault,
@@ -322,8 +341,8 @@ fn share_one(
             return Ok(Some(ShareWithheld::FilterRejected(reason)));
         }
     };
-    // The send-time read: the choice and the worlds as they stand now, not
-    // as they stood before the filter ran.
+    // The send-time read: the setting, the opt-outs and the worlds as they
+    // stand now, not as they stood before the filter ran.
     if let Eligibility::Withheld(reason) = eligible(vault, choices, &item.source)? {
         return Ok(Some(ShareWithheld::Ineligible(reason)));
     }

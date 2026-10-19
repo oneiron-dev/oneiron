@@ -98,11 +98,14 @@ pub enum OwnerActKind {
     /// The owner's pick of the vault's home node (`HomeNodePick`; DOOR-101
     /// PR2a). Its `seen` is over the vault's live picks.
     HomeNodePick,
-    /// A person's own "Learn from my conversations" choice
-    /// (`ConversationTrainingSet`; FIX 4489, Engine 10-19 12:1x). Not an
+    /// "Learn from my conversations" (FIX 4489, FIX 5502 owner rulings
+    /// 10-19). A person's own opt-out (`ConversationTrainingSet`) is not an
     /// owner act: `owner` is the acting PERSON, owner of the vault or not
     /// (the holder meaning of `by: Owner`), and `target` is that same
-    /// person. Its `seen` is over that person's live choices.
+    /// person; its `seen` is over that person's live choices. The vault's
+    /// setting (`ConversationTrainingVaultSet`) has `owner` the admin's
+    /// PERSON and `target` the vault; its `seen` is over the vault's live
+    /// setting choices, under its own revision domain.
     ConversationTraining,
 }
 

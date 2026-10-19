@@ -68,6 +68,7 @@ mod legal_hold_routes;
 pub(super) mod machine_routes;
 mod model_setting_routes;
 mod owner_work_routes;
+mod pack_preview_routes;
 mod pack_routes;
 mod pad_routes;
 mod peer_confidence_routes;
@@ -155,6 +156,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(proactivity_routes::routes())
         .merge(weave_routes::routes())
         .merge(pack_routes::routes())
+        .merge(pack_preview_routes::routes())
         .merge(cooperative_deletion_routes::routes())
         .merge(federation_connect_routes::routes())
         .merge(decision_ask_routes::routes())
@@ -325,6 +327,12 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
         OwnerError::NotFound(what, which) => ApiError::not_found(what, Some(&which)),
         OwnerError::Engine(error) => match error.kind() {
             oneiron::ErrorKind::ConsentOwnerNotAuthenticated => ApiError::forbidden_scope("owner"),
+            // FIX 5147: a stale seen revision (or a write that lost its race)
+            // is the same conflict `OwnerError::Changed` answers, with the
+            // engine's words, on every owner route, not a 500.
+            oneiron::ErrorKind::ConcurrentWrite => {
+                owner_error(OwnerError::Changed(error.to_string()))
+            }
             oneiron::ErrorKind::ConsentApproveOnceSpent => {
                 ApiError::invalid_state(Some("already_decided"))
             }

@@ -500,12 +500,10 @@ impl Memory<'_> {
             })?;
             query = query.with_kind(kind);
         }
-        Ok(self
-            .vault
-            .receipts_for_caller(query, &self.destination)?
-            .into_iter()
-            .map(family_receipt)
-            .collect())
+        let mut receipts = self.vault.receipts_for_caller(query, &self.destination)?;
+        // A world's name on the owner's own share receipt is his (FIX 5493).
+        crate::share_travel::screen_owner_notice_fields(self, &mut receipts);
+        Ok(receipts.into_iter().map(family_receipt).collect())
     }
 
     // ── query verbs (BRIDGE-02) ─────────────────────────────────────────

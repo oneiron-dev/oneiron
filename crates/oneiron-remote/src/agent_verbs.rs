@@ -770,6 +770,9 @@ impl OneironClient {
                 "vault.packs.put" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PackPutReceipt,
                 >(client, verb, &input),
+                "vault.packs.preview" => remote_agent_verb_output::<
+                    oneiron::skill_hub::pack_catalog::PackImportPreview,
+                >(client, verb, &input),
                 "vault.packs.connector.prepare" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectorPackView,
                 >(client, verb, &input),
@@ -6278,6 +6281,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.packs.put", value)
+    }
+    pub fn vault_packs_preview(
+        &self,
+        input: &oneiron::task_verb::sdk::PackPreviewRequest,
+    ) -> Result<oneiron::skill_hub::pack_catalog::PackImportPreview, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.preview", value)
     }
     pub fn vault_packs_connector_prepare(
         &self,
