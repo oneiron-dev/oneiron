@@ -63,22 +63,13 @@ impl Memory<'_> {
         let input_hash = hash_input(&input);
         let served = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let model = encoder.model_id().as_str().to_owned();
-            let result = if encoder.locality() != EmbedderLocality::OnDevice {
-                Err("off_device_shadow_denied".into())
-            } else {
-                encoder
-                    .infer(&input)
-                    .map_err(|error| format!("{:?}", error.kind()))
-            };
+            let result = infer_encoder(&input, encoder);
             (model, result)
         }));
         let (model, result) =
             served.unwrap_or_else(|_| ("unavailable".into(), Err("encoder_panicked".into())));
         let (output, failure) = match result {
-            Ok(output) => match validate(&input, &output) {
-                Ok(()) => (Some(output), None),
-                Err(error) => (None, Some(error.into())),
-            },
+            Ok(output) => (Some(output), None),
             Err(error) => (None, Some(error)),
         };
         Ok(WitnessWithShadow {
@@ -93,6 +84,23 @@ impl Memory<'_> {
         })
     }
 }
+/// Write-free execution through the same locality and output guards as
+/// witness shadowing. A network tagger still needs an egress-aware serving
+/// door; this helper never turns a caller's route into that authority.
+pub fn infer_encoder(
+    input: &EncoderInput,
+    encoder: &dyn ExtractionEncoder,
+) -> Result<EncoderOutput, String> {
+    if encoder.locality() != EmbedderLocality::OnDevice {
+        return Err("off_device_shadow_denied".into());
+    }
+    let output = encoder
+        .infer(input)
+        .map_err(|error| format!("{:?}", error.kind()))?;
+    validate(input, &output).map_err(str::to_owned)?;
+    Ok(output)
+}
+
 /// The input digest: the turn, then each message's id, length and text. A
 /// window folds in after them only when it holds a turn, so a turn read
 /// alone digests as it always has; a NUL cannot begin a message id, so the
