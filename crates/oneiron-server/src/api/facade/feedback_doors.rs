@@ -16,7 +16,9 @@
 //! stands approved for its publisher. When this server's on-device tagger
 //! can filter, that text leaves as the in-vault filter returned it (OF-420,
 //! `crate::feedback_redaction`); when it cannot, as written, as it did
-//! before the filter.
+//! before the filter. The send carries the bytes the preview kept and runs
+//! no filter (FIX 5212); it rebuilds only the unfiltered bundle, to bind its
+//! request to the issue, category and text choice the preview was made for.
 use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
@@ -131,18 +133,21 @@ fn feedback_host(server: &SyncServer) -> MemoryResult<Arc<FeedbackHost>> {
 }
 
 /// The issue's bundle as it would leave: every free text in it run through
-/// this server's in-vault filter when it runs, and as built when it cannot.
+/// this server's in-vault filter when it runs, and as built when it cannot;
+/// beside it, the digest of the bundle as built, which binds a send to it.
 fn bundle_preview(
     server: &SyncServer,
     issue: &ReportIssue,
     category: oneiron::feedback::FeedbackCategory,
     include_text: bool,
-) -> MemoryResult<FeedbackPreview> {
-    prepare_feedback_preview(
-        sdk::subject_feedback_bundle(issue, category, include_text),
-        &feedback_redactor(server).door(Unfiltered::AsBuilt),
-    )
-    .map_err(|error| MemoryError::bad_request(error.to_string()))
+) -> MemoryResult<(FeedbackPreview, String)> {
+    let built = sdk::subject_feedback_bundle(issue, category, include_text);
+    let source = owner_feedback::source_digest(&built)
+        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+    let preview =
+        prepare_feedback_preview(built, &feedback_redactor(server).door(Unfiltered::AsBuilt))
+            .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+    Ok((preview, source))
 }
 
 fn preview_subject(
@@ -154,8 +159,9 @@ fn preview_subject(
     let vault = server.vault();
     let issue = sdk::report_issue_as_owner(vault, owner, &input.issue_ref)?;
     let publisher_ref = sdk::subject_feedback_publisher(&issue)?;
-    let preview = bundle_preview(server, &issue, input.category, input.include_text)?;
-    let view = owner_feedback::preview_view(vault, &host, owner, &preview).map_err(owner_error)?;
+    let (preview, source) = bundle_preview(server, &issue, input.category, input.include_text)?;
+    let view = owner_feedback::preview_view(vault, &host, owner, &preview, &source)
+        .map_err(owner_error)?;
     Ok(FeedbackSubjectPreview {
         includes_text: input.include_text && issue.request.carries_text(),
         digest: view.digest,
@@ -183,12 +189,17 @@ fn send_subject(
     // Beside the bundle approval, quoted vault text crosses only while the
     // issue's own disclosure stands approved for its publisher.
     sdk::subject_feedback_send_allowed(vault, &issue, input.include_text)?;
-    let preview = bundle_preview(server, &issue, input.category, input.include_text)?;
+    // FIX 5212: the bytes go as the preview kept them; only the unfiltered
+    // bundle is rebuilt, so a request naming another issue, category or text
+    // choice than the preview's is refused, and no filter runs.
+    let built = sdk::subject_feedback_bundle(&issue, input.category, input.include_text);
+    let source = owner_feedback::source_digest(&built)
+        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     let sent = owner_feedback::send_previewed(
         vault,
         &host,
         owner,
-        &preview,
+        &source,
         &input.digest,
         &input.approval,
         input.previewed_at,
