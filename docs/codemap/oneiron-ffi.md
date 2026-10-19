@@ -13,11 +13,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `build.rs` | src | s | — | — | — |
 | `src/lib/alloc.rs` | src | s | 6 crate-vis | — | Rust-owned buffer/array constructors and generic free_vec |
-| `src/lib/engine.rs` | src | m | 5 struct · 13 fn | OneironAppHost, OneironEngine, OneironEngineConnection, OneironReply, OneironSecretSink | The embedded engine (OF-237): the full server `oneiron serve` runs, in the app's own process, over the vault… |
+| `src/lib/engine.rs` | src | m | 5 struct · 15 fn | OneironAppHost, OneironEngine, OneironEngineConnection, OneironReply, OneironSecretSink | The embedded engine (OF-237): the full server `oneiron serve` runs, in the app's own process, over the vault… |
+| `src/lib/engine_error.rs` | src | s | 1 enum · 1 fn · 1 crate-vis | OneironEngineErrorCode | Why an embedded engine call failed (OF-237): each call that fails `EngineError` leaves its cause on the… |
 | `src/lib/entity.rs` | src | m | 13 fn · 1 crate-vis | — | Free fns plus vault lifecycle, health, and entity entry points |
 | `src/lib/guard.rs` | src | s | 6 crate-vis | — | Panic guard and raw-pointer slice/out/vault helpers |
 | `src/lib/host_root.rs` | src | s | 1 fn | — | `oneiron_vault_open_with_host_root`: the raw open that profiles this install from the vault's host root… |
-| `src/lib/mod.rs` | src | s | 5 re-export | — | C ABI for on-device iOS and macOS access to the Oneiron vault |
+| `src/lib/mod.rs` | src | s | 6 re-export | — | C ABI for on-device iOS and macOS access to the Oneiron vault |
 | `src/lib/parse.rs` | src | s | 18 crate-vis | — | ID/enum/limit/query/format parsing and validation helpers |
 | `src/lib/query.rs` | src | m | 14 fn | — | Edge, search, vector, context-pack, and graph-traversal entry points |
 | `src/lib/tests.rs` | test | m | — | — | Inline ABI tests: layout stability, round-trips, batch/boundary |
