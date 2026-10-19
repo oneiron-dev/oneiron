@@ -119,19 +119,57 @@ pub const MANAGED_VOICE_PATH: &str = "/voice";
 /// clock, either way, in seconds. The vault takes each hello's action once.
 pub const MANAGED_VOICE_MAX_SKEW_SECS: u64 = 60;
 
+/// The raw bytes of a managed voice hello's `nonce`: fresh random bytes for
+/// each hello, so two hellos for the same room and roster in the same second
+/// sign apart. The hello carries them as twice as many lowercase hex
+/// characters.
+pub const MANAGED_VOICE_NONCE_BYTES: usize = 16;
+
+/// The body a managed voice hello's action signs: its `issued_at`, in Unix
+/// seconds, as eight big-endian bytes, then its nonce's raw bytes
+/// ([`managed_voice_body`]).
+pub type ManagedVoiceBody = [u8; 8 + MANAGED_VOICE_NONCE_BYTES];
+
+/// A managed voice hello's `nonce` as its raw bytes: exactly
+/// `2 * MANAGED_VOICE_NONCE_BYTES` lowercase hex characters, else `None`.
+#[must_use]
+pub fn managed_voice_nonce(text: &str) -> Option<[u8; MANAGED_VOICE_NONCE_BYTES]> {
+    if text.len() != 2 * MANAGED_VOICE_NONCE_BYTES
+        || !text
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return None;
+    }
+    super::from_hex(text)?.try_into().ok()
+}
+
+/// The [`ManagedVoiceBody`] of a hello issued at `issued_at` (Unix seconds)
+/// with `nonce`.
+#[must_use]
+pub fn managed_voice_body(
+    issued_at: u64,
+    nonce: &[u8; MANAGED_VOICE_NONCE_BYTES],
+) -> ManagedVoiceBody {
+    let mut body = [0u8; 8 + MANAGED_VOICE_NONCE_BYTES];
+    body[..8].copy_from_slice(&issued_at.to_be_bytes());
+    body[8..].copy_from_slice(nonce);
+    body
+}
+
 impl<'a> ManagedOwnerRequest<'a> {
     /// A managed voice hello as its action signs it: the room and the voice
     /// roster the hello names in the first two bound slots (empty when
-    /// absent), and its `issued_at`, in Unix seconds, as eight big-endian
-    /// bytes of body.
+    /// absent), and its [`ManagedVoiceBody`] (`issued_at`, then the nonce)
+    /// as the body.
     #[must_use]
-    pub fn voice(room: &'a str, roster: &'a str, issued_at: &'a [u8; 8]) -> Self {
+    pub fn voice(room: &'a str, roster: &'a str, body: &'a ManagedVoiceBody) -> Self {
         Self {
             method: MANAGED_VOICE_METHOD,
             path: MANAGED_VOICE_PATH,
             query: "",
             headers: [room, roster, ""],
-            body: issued_at,
+            body,
         }
     }
 }

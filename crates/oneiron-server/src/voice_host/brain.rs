@@ -363,6 +363,15 @@ impl ChatBrain {
             .is_some_and(|turn| turn.generation == generation && !turn.handle.is_finished())
     }
 
+    /// Whether no turn of this brain is answering or still winding down, so
+    /// nothing it started can write any more.
+    pub(super) fn at_rest(&self) -> bool {
+        self.turn
+            .as_ref()
+            .is_none_or(|turn| turn.handle.is_finished())
+            && self.retiring.iter().all(JoinHandle::is_finished)
+    }
+
     /// An abort only requests cancellation. Joining observes the stream drop,
     /// including the existing exactly-once partial-usage settlement.
     pub(super) async fn settle_retired(&mut self) {
