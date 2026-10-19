@@ -107,6 +107,7 @@ mod off_record_room_doors;
 mod origin_doors;
 mod owner_binding;
 mod persona_doors;
+mod plugin_section_doors;
 mod policy_doors;
 mod project_card_doors;
 mod proxy_doors;
