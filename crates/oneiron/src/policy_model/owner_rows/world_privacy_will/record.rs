@@ -5,6 +5,9 @@
 //! right. A holder's yes applies it as his own act (`by: Owner`, `answer` =
 //! the request), once.
 
+use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
+
 use serde::{Deserialize, Serialize};
 
 use crate::authority::{PolicyRevision, WorldPrivacy};
@@ -256,7 +259,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let actor = holder.revalidate_person_in_txn(self, &txn)?;
         let every = crate::policy_model::is_live_vault_owner_in_txn(self, &txn, &actor)?;
-        let mut held = std::collections::BTreeMap::new();
+        let mut held = BTreeMap::new();
         let mut requests = Vec::new();
         for (_, request) in REQUESTS.scan(&self.store, &txn)? {
             if pending_only && request.status != WorldPrivacyRequestStatus::Pending {
@@ -264,11 +267,14 @@ impl Vault {
             }
             if !every {
                 let world = request.world_id()?;
-                if !held.contains_key(&world) {
-                    let holders = super::world_holders_in_txn(self, &txn, world)?;
-                    held.insert(world, holders.contains(&actor));
-                }
-                if held.get(&world) != Some(&true) {
+                let holds = match held.entry(world) {
+                    Entry::Occupied(entry) => *entry.get(),
+                    Entry::Vacant(entry) => {
+                        let holders = super::world_holders_in_txn(self, &txn, world)?;
+                        *entry.insert(holders.contains(&actor))
+                    }
+                };
+                if !holds {
                     continue;
                 }
             }
