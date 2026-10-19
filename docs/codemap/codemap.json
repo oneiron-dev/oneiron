@@ -60590,7 +60590,7 @@
      "path": "src/engine.rs",
      "purpose": "The embedded engine (OF-237) behind the Kotlin `EmbeddedEngine`: the full server `oneiron serve` runs, in…",
      "surface": {
-      "fn": 10
+      "fn": 11
      }
     },
     {
@@ -60601,7 +60601,17 @@
      "purpose": "Minimal JNI/Kotlin ownership adapter",
      "surface": {
       "fn": 10,
-      "mod": 1
+      "mod": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/reads.rs",
+     "purpose": "The Kotlin `EmbeddedVault`'s context pack, text search and graph reads, lowered to the same core reads the C…",
+     "surface": {
+      "fn": 6
      }
     }
    ],
@@ -60612,11 +60622,18 @@
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The embedded engine (OF-237) behind the Kotlin `EmbeddedEngine`: the full server `oneiron serve` runs, in…"
+    },
+    "reads": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The Kotlin `EmbeddedVault`'s context pack, text search and graph reads, lowered to the same core reads the C…"
     }
    },
    "over_bar": 0,
    "purpose": "Minimal JNI/Kotlin ownership adapter",
-   "source_files": 2,
+   "source_files": 3,
    "test_files": 0
   },
   "oneiron-authority": {
@@ -66799,8 +66816,22 @@
      "path": "src/lib/engine.rs",
      "purpose": "The embedded engine (OF-237): the full server `oneiron serve` runs, in the app's own process, over the vault…",
      "surface": {
-      "fn": 13,
+      "fn": 15,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OneironEngineErrorCode"
+     ],
+     "path": "src/lib/engine_error.rs",
+     "purpose": "Why an embedded engine call failed (OF-237): each call that fails `EngineError` leaves its cause on the…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -66841,7 +66872,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -66899,7 +66930,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -66908,7 +66939,7 @@
    },
    "over_bar": 0,
    "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
-   "source_files": 10,
+   "source_files": 11,
    "test_files": 1
   },
   "oneiron-guest": {
@@ -69173,6 +69204,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NapiEngineOptions",
+      "NativeEngine"
+     ],
+     "path": "src/facade/client/embedded_engine.rs",
+     "purpose": "The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron…",
+     "surface": {
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -69428,7 +69473,7 @@
      "purpose": "JS bindings for the typed `companion.expression.*` doors"
     },
     "facade": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69451,7 +69496,7 @@
    },
    "over_bar": 2,
    "purpose": "—",
-   "source_files": 21,
+   "source_files": 22,
    "test_files": 1
   },
   "oneiron-organ-host": {
@@ -70183,6 +70228,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedded_engine.rs",
+     "purpose": "The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
@@ -70202,6 +70257,13 @@
     }
    ],
    "modules": {
+    "embedded_engine": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron…"
+    },
     "pairing": {
      "files": 1,
      "impl_vault": false,
@@ -70212,7 +70274,7 @@
    },
    "over_bar": 1,
    "purpose": "`oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1)",
-   "source_files": 3,
+   "source_files": 4,
    "test_files": 0
   },
   "oneiron-remote": {
@@ -70272,13 +70334,14 @@
      "notable": [
       "InProcessReply",
       "InProcessRequest",
+      "InProcessStream",
       "InProcessTransport"
      ],
      "path": "src/in_process.rs",
      "purpose": "A served client (OF-237): the remote backend over an `oneiron-server` this process runs, with no socket…",
      "surface": {
       "fn": 1,
-      "struct": 2,
+      "struct": 3,
       "trait": 1
      }
     },
@@ -77913,26 +77976,71 @@
      "surface": {
       "crate-vis": 6,
       "fn": 1,
-      "re-export": 2
+      "re-export": 5
      }
     },
     {
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "BlockingBody",
       "BlockingConnection",
       "BlockingEngine",
+      "BlockingReply"
+     ],
+     "path": "src/embedded/blocking.rs",
+     "purpose": "The embedded engine for a binding whose callers are app threads (OF-237): [`BlockingEngine`] runs an…",
+     "surface": {
+      "fn": 15,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EmbeddedBody",
       "EmbeddedConnection",
       "EmbeddedEngine",
       "EmbeddedReply",
+      "EmbeddedReplyStream",
       "EmbeddedRequest"
      ],
      "path": "src/embedded/engine.rs",
      "purpose": "The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding",
      "surface": {
       "const": 1,
-      "fn": 28,
+      "fn": 20,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EngineErrorKind",
+      "EngineFailure"
+     ],
+     "path": "src/embedded/failure.rs",
+     "purpose": "Why an embedded engine call failed, by cause (OF-237): the one projection every binding raises, a stable…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProcessHost"
+     ],
+     "path": "src/embedded/process_host.rs",
+     "purpose": "The app host of a binding whose app is a plain process (OF-237): the Python and Node served clients, which…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -81936,7 +82044,7 @@
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…"
     },
     "embedded": {
-     "files": 2,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -82197,7 +82305,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 771,
+   "source_files": 774,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82362,7 +82470,7 @@
      "path": "src/embedded_engine.rs",
      "purpose": "The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the…",
      "surface": {
-      "fn": 11,
+      "fn": 13,
       "struct": 6,
       "trait": 1
      }
