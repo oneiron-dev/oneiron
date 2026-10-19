@@ -194,6 +194,11 @@ pub struct SyncServer {
     /// listener's `oneiron/organ/1` share its budget and warm processes.
     #[cfg(unix)]
     pub(crate) organs: Arc<oneiron_organ_host::OrganHost>,
+    /// Where pack organ builds are written, when the host names it (managed
+    /// serve, FIX 3565); `None` takes `ONEIRON_ORGAN_DIR`, else the OS temp
+    /// directory ([`Self::organ_dir()`]).
+    #[cfg(unix)]
+    pub(super) organ_dir: Option<std::path::PathBuf>,
     /// Where the run admission of every model call writes its receipts.
     pub(crate) run_receipts: Arc<crate::models::ServerReceipts>,
     /// Model seats, background AI status and the Dreamer's session hints.
@@ -489,6 +494,8 @@ impl SyncServer {
             organs: Arc::new(oneiron_organ_host::OrganHost::new(
                 oneiron_organ_host::HostConfig::default(),
             )),
+            #[cfg(unix)]
+            organ_dir: None,
             run_receipts,
             ai: crate::ai_host::AiHandle::inert(),
             pattern_launch_runner: None,

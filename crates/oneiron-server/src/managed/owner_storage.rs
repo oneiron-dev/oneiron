@@ -4,7 +4,9 @@
 //! vault VM they are `/vault/data.backups` and `/vault/data.rehearsals`:
 //! never the system temp directory, `/run`, the read-only `/config` or the
 //! key directory `/vault/keys`. A direct Linear mirror's response custody
-//! lies beside them, in `/vault/data.linear-responses`.
+//! lies beside them, in `/vault/data.linear-responses`, and pack organ builds
+//! under the data directory, in `/vault/data/organs`, unless the supervisor
+//! names their directory.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -66,6 +68,30 @@ pub(super) fn linear_responses(config: &ServeConfig) {
             "owner storage is not usable; the Linear mirror fails until it is"
         );
     }
+}
+
+/// Where this vault's pack organ builds are written (FIX 3565): the
+/// supervisor's `--organ-dir`, else `organs` under the data directory, on
+/// the tenant's own storage either way and never the shared temp directory.
+/// It is made private when missing and checked with a write, as
+/// [`owner_host`] checks its storage; one it cannot make is said with its
+/// reason, and an organ install then names its own failure.
+#[cfg(unix)]
+pub(super) fn organ_dir(managed: &super::args::ManagedArgs) -> PathBuf {
+    let dir = managed
+        .organ_dir
+        .clone()
+        .unwrap_or_else(|| managed.data_dir.join("organs"));
+    if let Err(error) = prepare(&dir, true) {
+        tracing::warn!(
+            reason = "owner_storage_unavailable",
+            storage = "organs",
+            dir = %dir.display(),
+            error = %format!("{error:#}"),
+            "owner storage is not usable; pack organ installs fail until it is"
+        );
+    }
+    dir
 }
 
 /// `<data_dir>.rehearsals`, beside the data directory as its backups are.

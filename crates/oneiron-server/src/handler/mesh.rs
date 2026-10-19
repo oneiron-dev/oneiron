@@ -32,7 +32,8 @@ const RELAYS_ENV: &str = "ONEIRON_MESH_RELAYS";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MeshProvedMachine(pub(crate) oneiron::EntityId);
 
-/// The mesh listener's settings, from the host's environment.
+/// The mesh listener's settings, from the host's environment, or from a
+/// managed vault's argv ([`Self::from_parts`]).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct MeshConfig {
     bind: Option<SocketAddr>,
@@ -40,6 +41,12 @@ pub(crate) struct MeshConfig {
 }
 
 impl MeshConfig {
+    /// The listener's bind address, off without one, and its private relay
+    /// URLs, direct paths only without them.
+    pub(crate) fn from_parts(bind: Option<SocketAddr>, relays: Vec<String>) -> Self {
+        Self { bind, relays }
+    }
+
     pub(crate) fn from_env() -> anyhow::Result<Self> {
         let bind = match std::env::var(BIND_ENV) {
             Ok(raw) if !raw.trim().is_empty() => Some(
@@ -58,7 +65,7 @@ impl MeshConfig {
                     .collect()
             })
             .unwrap_or_default();
-        Ok(Self { bind, relays })
+        Ok(Self::from_parts(bind, relays))
     }
 }
 

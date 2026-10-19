@@ -13,17 +13,24 @@
 //! before any handler runs; only then is the spool replayed, byte for byte,
 //! as the request's body. Nothing is held in memory but the piece in hand,
 //! and a compressed body is verified as sent, before any route decodes it.
+//!
+//! Every other attested route's body is held in memory up to the buffered
+//! verification's 64 MiB, as it always was, and spills to the same stage
+//! past it (FIX 5619, Rule 5): its size never refuses it, only the disk's
+//! floor ([`verify_held`]).
 
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
 
-use axum::body::{Body, Bytes};
+use axum::body::{Body, BodyDataStream, Bytes};
 use axum::extract::Request;
 use axum::http::StatusCode;
 use axum::http::header::CONTENT_LENGTH;
+use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use oneiron_vault_contract::{
-    MANAGED_OWNER_BOUND_HEADERS, ManagedOwnerAction, ManagedOwnerHead, ManagedOwnerTranscript,
+    MANAGED_OWNER_BOUND_HEADERS, ManagedOwnerAction, ManagedOwnerHead, ManagedOwnerRequest,
+    ManagedOwnerTranscript,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -34,6 +41,11 @@ use crate::server::SyncServer;
 /// The most of a staged body read at once, as it is hashed and as it is
 /// replayed: a buffer's size, not a bound on the body.
 const STAGE_PIECE: usize = 64 * 1024;
+
+/// The most of a buffered route's body ingress holds in memory to verify it
+/// (`MAX_REMOTE_REQUEST_BYTES`, 64 MiB): what those routes held whole before
+/// FIX 5619. A body within it needs no disk; one past it is staged.
+const HELD_BODY_BYTES: usize = oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
 
 /// Verifies `assertion` over `request` with its body staged, and hands the
 /// request back with that body replayed and the owner it names marked. Or
@@ -53,18 +65,114 @@ pub(super) async fn verify_staged(
         return Err(owner_attestation_refused(request.uri().path()));
     };
     let (parts, body) = request.into_parts();
-    let declared = parts
-        .headers
-        .get(CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok());
+    let declared = declared_length(&parts);
     if ceiling
         .zip(declared)
         .is_some_and(|(ceiling, declared)| declared > ceiling)
     {
         return Err(StatusCode::PAYLOAD_TOO_LARGE.into_response());
     }
-    let (spool, length) = spool_body(server, body, declared, ceiling).await?;
+    let pieces = body.into_data_stream();
+    let (spool, length) = spool_body(server, Bytes::new(), pieces, declared, ceiling).await?;
+    verify_spooled(ledger, assertion, holder, parts, spool, length).await
+}
+
+/// Verifies `assertion` over a request on a route the buffered verification
+/// held (FIX 5619, Rule 5), so that its size never refuses it. A body within
+/// [`HELD_BODY_BYTES`] is held and verified in memory, as it always was, and
+/// a vault at its disk reserve still serves it. One past it, or declared
+/// past it, is staged as [`verify_staged`] stages a streaming route's, with
+/// no ceiling of its own: only the disk's floor ends it, and the route's own
+/// body limit still holds once it is replayed. The answers are
+/// [`verify_staged`]'s, and a body that failed is 400.
+pub(super) async fn verify_held(
+    server: &SyncServer,
+    ledger: &WakeLedger,
+    assertion: &ManagedOwnerAction,
+    request: Request,
+) -> Result<Request, Response> {
+    let Ok(holder) = oneiron::EntityId::from_hex(&assertion.holder_ref) else {
+        return Err(owner_attestation_refused(request.uri().path()));
+    };
+    let (parts, body) = request.into_parts();
+    let declared = declared_length(&parts);
+    let mut pieces = body.into_data_stream();
+    let mut held = Vec::new();
+    let fits = declared.is_none_or(|declared| {
+        usize::try_from(declared).is_ok_and(|declared| declared <= HELD_BODY_BYTES)
+    });
+    if fits {
+        loop {
+            match pieces.next().await {
+                None => return verify_in_memory(ledger, assertion, holder, parts, held),
+                Some(Ok(piece)) => {
+                    held.extend_from_slice(&piece);
+                    if held.len() > HELD_BODY_BYTES {
+                        break;
+                    }
+                }
+                Some(Err(_)) => return Err(body_failed()),
+            }
+        }
+    }
+    let (spool, length) = spool_body(server, Bytes::from(held), pieces, declared, None).await?;
+    verify_spooled(ledger, assertion, holder, parts, spool, length).await
+}
+
+/// The length a request declares, when it declares one.
+fn declared_length(parts: &Parts) -> Option<u64> {
+    parts
+        .headers
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+}
+
+/// Verifies `assertion` over the request `parts` head with its whole `body`
+/// held, and hands the request back with that body and `holder` marked.
+fn verify_in_memory(
+    ledger: &WakeLedger,
+    assertion: &ManagedOwnerAction,
+    holder: oneiron::EntityId,
+    parts: Parts,
+    body: Vec<u8>,
+) -> Result<Request, Response> {
+    let header = |name: &'static str| {
+        parts
+            .headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+    };
+    let verified = ledger.verify_owner_action(
+        assertion,
+        &ManagedOwnerRequest {
+            method: parts.method.as_str(),
+            path: parts.uri.path(),
+            query: parts.uri.query().unwrap_or(""),
+            headers: MANAGED_OWNER_BOUND_HEADERS.map(header),
+            body: &body,
+        },
+    );
+    if !verified {
+        return Err(owner_attestation_refused(parts.uri.path()));
+    }
+    let mut request = Request::from_parts(parts, Body::from(body));
+    request.extensions_mut().insert(ManagedOwnerHolder(holder));
+    Ok(request)
+}
+
+/// Verifies `assertion` over the request `parts` head with its body of
+/// `length` bytes staged in `spool`, and hands the request back with the
+/// spool replayed as its body and `holder` marked.
+async fn verify_spooled(
+    ledger: &WakeLedger,
+    assertion: &ManagedOwnerAction,
+    holder: oneiron::EntityId,
+    parts: Parts,
+    spool: std::fs::File,
+    length: u64,
+) -> Result<Request, Response> {
     let header = |name: &'static str| {
         parts
             .headers
@@ -93,14 +201,16 @@ pub(super) async fn verify_staged(
     Ok(request)
 }
 
-/// Spools `body` to an anonymous file on the vault's disk and counts it.
+/// Spools a body, `prefix` (what was already read of it) and then the rest of
+/// `pieces`, to an anonymous file on the vault's disk and counts it.
 /// Each piece first claims the room it has still to write on the disk's
 /// floor (the rest the request declared, or the piece itself), so no
 /// upload counts that room as free meanwhile; a piece that would take the
 /// disk below its reserve ends the stage, and the spool goes with it.
 async fn spool_body(
     server: &SyncServer,
-    body: Body,
+    prefix: Bytes,
+    pieces: BodyDataStream,
     declared: Option<u64>,
     ceiling: Option<u64>,
 ) -> Result<(std::fs::File, u64), Response> {
@@ -112,15 +222,15 @@ async fn spool_body(
     let mut spool = tokio::fs::File::from_std(spool);
     let floor = server.transfers.disk.clone();
     let claim = floor.claim();
-    let mut pieces = body.into_data_stream();
+    let mut pieces =
+        futures_util::stream::iter((!prefix.is_empty()).then_some(Ok::<_, axum::Error>(prefix)))
+            .chain(pieces);
     let mut length: u64 = 0;
     loop {
         let piece = match tokio::time::timeout(server.transfers.idle, pieces.next()).await {
             Ok(Some(Ok(piece))) => piece,
             Ok(None) => break,
-            Ok(Some(Err(_))) => {
-                return Err((StatusCode::BAD_REQUEST, "the request body failed").into_response());
-            }
+            Ok(Some(Err(_))) => return Err(body_failed()),
             Err(_) => {
                 return Err((
                     StatusCode::REQUEST_TIMEOUT,
@@ -189,6 +299,11 @@ fn replay(spool: std::fs::File) -> Body {
         })
     });
     Body::from_stream(pieces)
+}
+
+/// The answer to a request body that failed on its way in.
+fn body_failed() -> Response {
+    (StatusCode::BAD_REQUEST, "the request body failed").into_response()
 }
 
 /// The refusal of a stage the vault's disk had no room for.

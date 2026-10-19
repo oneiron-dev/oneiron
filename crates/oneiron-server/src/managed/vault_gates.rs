@@ -4,10 +4,14 @@ use std::os::fd::{FromRawFd, RawFd};
 use std::path::Path;
 
 use oneiron::federation::derivation::DerivationOwner;
-use oneiron_vault_contract::{Credentials, DEK_LEN, read_credentials};
+use oneiron_vault_contract::{
+    Credentials, DEK_LEN, FacilityNotice, FacilityReason, ManagedFacility, ManagedReadiness,
+    read_credentials,
+};
 use subtle::ConstantTimeEq;
 
 use super::args::ManagedError;
+use crate::config::KeystoreInstall;
 
 /// The host's authority on a vault past its open gates: its logged root and
 /// the engine's MACHINE writers, which sign with host-held keys (ONE-1634).
@@ -15,24 +19,72 @@ use super::args::ManagedError;
 /// with them the host's own node in the roster: never the owner's, never a
 /// world key's recipient. A restart keeps a node the owner answered for since
 /// as he answered (FIX 4648).
+///
+/// The readiness it returns names each signing facility the vault serves
+/// without (WILL-PLAN L14 row 17): the supervisor's key directory, where the
+/// owner did not turn the keystore off (`keystore_unbound`), a keystore that
+/// would not open, signing keys that did not load, and a node the roster
+/// did not take. None of them stops the start.
 pub(super) fn provision_host_authority(
     vault: &oneiron::Vault,
     issuer: &oneiron::authority::HostSlipIssuer,
     keystore: &crate::config::KeystoreConfig,
+    keystore_unbound: bool,
     data_dir: &Path,
-) -> oneiron::Result<()> {
+) -> oneiron::Result<ManagedReadiness> {
     vault.ensure_host_root_slip(issuer)?;
     vault.provision_engine_machine_identities(issuer)?;
-    if keystore.install_on(vault, data_dir)
-        && let Err(error) = vault.provision_host_node(issuer)
-    {
-        tracing::warn!(
-            kind = ?error.kind(),
-            reason = %error,
-            "this host's node is not in the roster; serving on"
+    let mut missing = Vec::new();
+    let mut lacks = |facility, reason| missing.push(FacilityNotice { facility, reason });
+    if keystore_unbound {
+        lacks(
+            ManagedFacility::KeystoreDirectory,
+            FacilityReason::MissingBinding,
         );
     }
-    Ok(())
+    match keystore.install(vault, data_dir) {
+        KeystoreInstall::Off => {}
+        KeystoreInstall::Unavailable => {
+            lacks(ManagedFacility::DeviceKeystore, FacilityReason::OpenFailed);
+        }
+        KeystoreInstall::Installed { signing } => {
+            if !signing {
+                lacks(
+                    ManagedFacility::InstallSigningKeys,
+                    FacilityReason::PrepareFailed,
+                );
+            }
+            if let Err(error) = vault.provision_host_node(issuer) {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    reason = %error,
+                    "this host's node is not in the roster; serving on"
+                );
+                lacks(
+                    ManagedFacility::HostNodeProfile,
+                    FacilityReason::ProfileFailed,
+                );
+            }
+        }
+    }
+    Ok(ManagedReadiness::from_missing(missing))
+}
+
+/// Logs each facility a vault that came up degraded serves without, once,
+/// before it signals ready: by its closed name and reason, never a path or
+/// an error's text. Reads and sync go on; that facility's own acts refuse.
+pub(super) fn warn_degraded(readiness: &ManagedReadiness) {
+    let ManagedReadiness::Degraded { missing } = readiness else {
+        return;
+    };
+    for notice in missing {
+        tracing::warn!(
+            reason = "managed_facility_missing",
+            facility = notice.facility.as_str(),
+            cause = notice.reason.as_str(),
+            "the managed vault serves without this facility: reads and sync go on, and its own acts refuse until it is provided"
+        );
+    }
 }
 
 /// Refuses to boot when the engine's embedded owner id and the vault

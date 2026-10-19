@@ -10,12 +10,15 @@
 //! a prefix: `{..}` is one non-empty path segment, `{*..}` the non-empty rest
 //! of the path. A route that is not registered still answers 404 or 405.
 //!
-//! The owner routes take a body the buffered verification holds
-//! (`MAX_REMOTE_REQUEST_BYTES`, 64 MiB): `GET /ws` among them, whose upgrade
-//! carries an empty body; the attestation covers the handshake, never the
-//! frames after it. The staged routes keep their streaming and their own
-//! ceilings: git smart HTTP, LFS and the owner's sealed custody change (FIX
-//! 5674), whose bodies have no ceiling, and the
+//! The owner routes' bodies are held in memory up to the buffered
+//! verification's `MAX_REMOTE_REQUEST_BYTES` (64 MiB) and staged on the
+//! vault's disk past it (`owner_stage::verify_held`, FIX 5619), so a body's
+//! size never refuses its attestation, and each route's own body limit
+//! stands (a deck proposal's 96 MiB, FIX 5440). `GET /ws` is among them,
+//! whose upgrade carries an empty body; the attestation covers the
+//! handshake, never the frames after it. The staged routes keep their
+//! streaming and their own ceilings: git smart HTTP, LFS and the owner's
+//! sealed custody change (FIX 5674), whose bodies have no ceiling, and the
 //! blob artifact uploads (`POST /v1/core/artifacts` and an artifact's
 //! `versions` and `outputs`) and the `/v1/ai` media uploads, which take up
 //! to 96 MiB. Managed ingress stages their bodies on the vault's disk and

@@ -267,7 +267,7 @@ fn install(server: &SyncServer, seal: &SealConfig, fetch: FetchGrant) -> Result<
         .vault
         .pack_organ_build(&entry.pack_name, SEAL_ORGAN, &platform)
         .map_err(|err| format!("the seal organ build: {err}"))?;
-    seal_spec_from_pack(&binary, &crate::server::organ_dir(), fetch)
+    seal_spec_from_pack(&binary, &server.organ_dir(), fetch)
         .map_err(|err| format!("the seal organ build: {err}"))
 }
 

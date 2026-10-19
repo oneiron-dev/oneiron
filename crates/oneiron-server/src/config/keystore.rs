@@ -93,6 +93,15 @@ impl KeystoreConfig {
     /// world-key doors answer `KeystoreUnavailable` without it, and reads and sync
     /// go on. True when one was installed.
     pub fn install_on(&self, vault: &oneiron::Vault, vault_path: &Path) -> bool {
+        matches!(
+            self.install(vault, vault_path),
+            KeystoreInstall::Installed { .. }
+        )
+    }
+
+    /// [`Self::install_on`], saying what came of it: off, no keystore, or one
+    /// installed and whether this install's signing keys loaded from it.
+    pub fn install(&self, vault: &oneiron::Vault, vault_path: &Path) -> KeystoreInstall {
         match self.open(vault_path) {
             Ok(Some(keystore)) => {
                 tracing::info!(
@@ -100,14 +109,15 @@ impl KeystoreConfig {
                     "this-device keystore installed"
                 );
                 vault.install_device_keystore(keystore);
-                vault.prepare_install_signing_logged();
-                true
+                KeystoreInstall::Installed {
+                    signing: vault.prepare_install_signing_logged(),
+                }
             }
             Ok(None) => {
                 tracing::info!(
                     "keystore backend is off; signing and world-key doors are unavailable"
                 );
-                false
+                KeystoreInstall::Off
             }
             Err(error) => {
                 // The keystore's closed error, or none for an unresolved key
@@ -116,7 +126,7 @@ impl KeystoreConfig {
                     reason = ?error.downcast_ref::<oneiron_keystore::KeystoreError>(),
                     "no this-device-only keystore; signing and world-key doors are unavailable"
                 );
-                false
+                KeystoreInstall::Unavailable
             }
         }
     }
@@ -141,6 +151,18 @@ impl KeystoreConfig {
         }
         Ok(installed)
     }
+}
+
+/// What [`KeystoreConfig::install`] came to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KeystoreInstall {
+    /// The backend is off: none was opened.
+    Off,
+    /// The platform has none, or it would not open.
+    Unavailable,
+    /// One is installed; `signing` says whether this install's signing keys
+    /// loaded from it.
+    Installed { signing: bool },
 }
 
 /// The keystore crate's default key directory, or why there is none.

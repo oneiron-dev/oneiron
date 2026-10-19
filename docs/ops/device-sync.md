@@ -50,8 +50,9 @@ fresh vault has another authority root, and the home refuses it.
 - A way to the home:
   - over the mesh, when the home's MACHINE row carries a paired mesh address here and the mesh
     listener runs (a server built with the `mesh` feature, `ONEIRON_MESH_BIND=<addr:port>`, plus
-    `ONEIRON_MESH_RELAYS` for private relays). The machine dials from the listener's own endpoint
-    and never binds a second one;
+    `ONEIRON_MESH_RELAYS` for private relays). A managed vault reads no environment: its supervisor
+    passes them as `--mesh-bind <addr:port>` and `--mesh-relays <url>,<url>`, and without a bind its
+    mesh is off. The machine dials from the listener's own endpoint and never binds a second one;
   - otherwise at `home_url` itself, which must be `wss://` (or `ws://` to a loopback address):
     the same `/ws` upgrade every SDK client makes.
 

@@ -13,7 +13,13 @@
 /// the machine's declared class, the credential broker's process and roots,
 /// the voice loop's socket, the key directory, the publisher training
 /// outbox and the direct Linear mirror's response custody, which the host
-/// derives beside the data directory.
+/// derives beside the data directory. The training outbox and the last
+/// five are reserved argv-only bindings the server's schema has no key for:
+/// the guests' container CLIs, the pack organ directory and the mesh
+/// listener's bind and relays, which the supervisor passes as
+/// `--browser-runtime`, `--desktop-runtime`, `--organ-dir`, `--mesh-bind`
+/// and `--mesh-relays`. An owner's `[browser] runtime` and `[desktop]
+/// runtime` stay his, inside the vault's own storage.
 pub const SUPERVISOR_OWNED: &[&str] = &[
     "vault_path",
     "host",
@@ -41,6 +47,11 @@ pub const SUPERVISOR_OWNED: &[&str] = &[
     "keystore.dir",
     crate::conversation_training::OUTBOX_DIR_SETTING,
     "linear.response_dir",
+    "browser_runtime",
+    "desktop_runtime",
+    "organ_dir",
+    "mesh_bind",
+    "mesh_relays",
 ];
 
 /// The leaves that name a key by the environment variable holding it.
