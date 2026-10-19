@@ -223,7 +223,8 @@ pub struct SecretCustodyWork {
     pub kept_here: Option<CustodyKeptHere>,
     pub delivery: CustodyDelivery,
     /// For a register the owner's surface sealed without stating a
-    /// `manifest_ref`, what its holder checks the record against (CALLS
+    /// `manifest_ref`, what its holder checked the record against when this
+    /// install is the holder, else what this install attached for it (CALLS
     /// CUSTODY_MANIFEST_UNSTATED); `None` for any other change.
     pub manifest: Option<CustodyManifestCheck>,
 }
@@ -268,15 +269,18 @@ impl SecretCustodyWork {
         }
     }
 
-    /// A recorded request's words: a register that carries no manifest says
-    /// it registers without a manifest check (CALLS
-    /// CUSTODY_MANIFEST_UNSTATED).
+    /// A recorded request's words: a register taken, or to be taken,
+    /// without a manifest check says so (CALLS CUSTODY_MANIFEST_UNSTATED).
     fn status_text(&self, status: OwnerWorkStatus) -> &'static str {
-        match (status, &self.manifest) {
-            (OwnerWorkStatus::RecordedAwaitingHolder, Some(CustodyManifestCheck::Unchecked)) => {
+        let unchecked = self
+            .manifest
+            .as_ref()
+            .is_some_and(CustodyManifestCheck::unchecked);
+        match (status, unchecked) {
+            (OwnerWorkStatus::RecordedAwaitingHolder, true) => {
                 "recorded, awaiting a holder; to be registered without a manifest check"
             }
-            (OwnerWorkStatus::Enacted, Some(CustodyManifestCheck::Unchecked)) => {
+            (OwnerWorkStatus::Enacted, true) => {
                 "enacted by its holder; registered without a manifest check"
             }
             (status, _) => status.text(),
@@ -455,6 +459,7 @@ impl Vault {
             });
         };
         let mut rotation = None;
+        let mut manifest = None;
         if let (Some(envelope), true) = (envelope, holder != machine || change.sealed.is_some()) {
             keep_input_in_txn(
                 self,
@@ -483,11 +488,15 @@ impl Vault {
                 }
                 self.append_owner_work_result_in_txn(txn, hash, machine, done.outcome)?;
                 rotation = done.rotation;
+                manifest = done.manifest;
             }
         }
         let after = self.authority_view_readonly_in_txn(txn)?;
         Ok(Recorded {
-            custody: SecretCustodyWork::recorded(receipt.refreshed(&after)),
+            custody: SecretCustodyWork {
+                manifest,
+                ..SecretCustodyWork::recorded(receipt.refreshed(&after))
+            },
             rotation,
         })
     }

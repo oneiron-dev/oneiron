@@ -60,10 +60,11 @@ enum CustodyManifestRecheck {
     /// nor anything the holder cannot read. No digest is taken of
     /// `manifest_ref` or of the ciphertext. A sealed register whose surface
     /// stated no manifest carries the vault's one current approved manifest,
-    /// checked when the record names it, or an explicit "no manifest" mark
-    /// (CALLS CUSTODY_MANIFEST_UNSTATED). A register that carries no
-    /// snapshot is not checked against one, as before, and nothing asks
-    /// where the holder runs.
+    /// checked when the record names it, or an explicit "no manifest" mark;
+    /// it never refuses on a mismatch, it reports it (CALLS
+    /// CUSTODY_MANIFEST_UNSTATED). A register that carries no snapshot is
+    /// not checked against one, as before, and nothing asks where the holder
+    /// runs.
     OwnerApprovedSnapshot,
 }
 

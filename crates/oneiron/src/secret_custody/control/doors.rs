@@ -434,9 +434,11 @@ impl Vault {
         }
         wtxn.commit()?;
         self.mirror_custody_change(&recorded.custody);
-        Ok(SecretCustodyWork {
-            manifest: manifest_check,
-            ..recorded.custody
-        })
+        // What this install checked as the holder, else what it attached.
+        let mut custody = recorded.custody;
+        if custody.manifest.is_none() {
+            custody.manifest = manifest_check;
+        }
+        Ok(custody)
     }
 }

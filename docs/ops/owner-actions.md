@@ -1747,8 +1747,12 @@ name. A sealed register that sends no `"manifest_ref"` gets the vault's one curr
 manifest attached instead. That is the manifest file at the commit this install publishes now for
 a branch of a repository it serves, when exactly one such commit holds one. The holder checks a
 record that names that manifest against it. When no manifest applies, or several do, the request
-records that it carries none, and the reply's `custody.said` says the secret is registered without
-a manifest check. Send `"manifest_ref"` whenever the record names a manifest.
+records that it carries none. Such a register is never refused for a manifest mismatch. A record
+that names no manifest, names another one, or disagrees with the published one is registered
+without a manifest check, and the reply says so: `custody.said` ends "registered without a
+manifest check". `custody.manifest` names the manifests when this install is the holder, and the
+one it attached when another install is. Send `"manifest_ref"` whenever the record names a
+manifest; a stated ref keeps its check and its refusal.
 
 A revoke erases the secret's value at rest on each install that holds it and keeps its name and
 generation. Its reply's `custody` says whether it went to your other machines or why it stayed
