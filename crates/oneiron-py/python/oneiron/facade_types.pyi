@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1054 facade rows, 3565 declarations.
-Inputs: 989 of 1054 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 944 of 1054 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1055 facade rows, 3576 declarations.
+Inputs: 990 of 1055 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 945 of 1055 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
@@ -7893,6 +7893,47 @@ class AuthorityHandoffAlarm(TypedDict):
     seen: list[str]
 class HandoffAlarmRequest(TypedDict):
     signer: str
+class RootRequestCancelRequest(TypedDict):
+    request: str
+OwnerWorkKind = Literal["world_key", "root", "publish_bundle", "custody"]
+OwnerWorkRefusal = Literal["stale_revision", "owner_not_live", "world_not_live", "executor_not_reader", "home_not_linked", "secret_not_portable", "secret_not_active", "recipient_changed", "invalid_input", "custody_conflict", "wider_than_floor", "root_revision_mismatch"]
+class OwnerWorkStatusRecordedAwaitingHolder(TypedDict):
+    state: Literal["recorded_awaiting_holder"]
+class OwnerWorkStatusEnacted(TypedDict):
+    state: Literal["enacted"]
+class OwnerWorkStatusRefused(TypedDict):
+    state: Literal["refused"]
+    reason: OwnerWorkRefusal
+class OwnerWorkStatusCancelled(TypedDict):
+    state: Literal["cancelled"]
+class OwnerWorkStatusSuperseded(TypedDict):
+    state: Literal["superseded"]
+OwnerWorkStatus = OwnerWorkStatusRecordedAwaitingHolder | OwnerWorkStatusEnacted | OwnerWorkStatusRefused | OwnerWorkStatusCancelled | OwnerWorkStatusSuperseded
+OwnerWorkUnassigned = Literal["no_eligible_reader", "target_is_recorder", "target_not_linked", "no_bundle_holder", "no_custody_holder"]
+CustodyUncheckedReason = Literal["none_named", "none_published", "unread", "other_manifest", "disagrees"]
+class CustodyRegisterCheckChecked(TypedDict):
+    kind: Literal["checked"]
+    manifest_ref: str
+class CustodyRegisterCheckUnchecked(TypedDict):
+    kind: Literal["unchecked"]
+    reason: CustodyUncheckedReason
+    refs: list[str]
+CustodyRegisterCheck = CustodyRegisterCheckChecked | CustodyRegisterCheckUnchecked
+BundleHomeWarning = Literal["home_does_not_keep_sealed_bundles", "home_profile_unknown"]
+OwnerWorkCancelState = Literal["cancelled", "already_enacted", "already_refused"]
+class OwnerWorkCancelNote(TypedDict):
+    entries: list[str]
+    state: OwnerWorkCancelState
+class OwnerWorkReceipt(TypedDict):
+    request: NotRequired[str | None]
+    kind: OwnerWorkKind
+    target: EntityId
+    executor: NotRequired[EntityId | None]
+    status: OwnerWorkStatus
+    unassigned: NotRequired[OwnerWorkUnassigned | None]
+    manifest_check: NotRequired[CustodyRegisterCheck | None]
+    home_warning: NotRequired[BundleHomeWarning | None]
+    cancel: NotRequired[OwnerWorkCancelNote | None]
 class CleanupRunRequest(TypedDict):
     ...
 CleanupPosture = Literal["propose_first", "auto_with_digest"]

@@ -222,6 +222,8 @@ pub(crate) use super::hook_regen_doors::*;
 pub(crate) use super::host_trigger_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.
 pub(crate) use super::merge_queue_doors::*;
+// The owner's root-request cancel door (FIX 5586), likewise.
+pub(crate) use super::root_request_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::lens_selection_doors::*;
 pub(crate) use super::ui_action_routes::vault_lenses_default;

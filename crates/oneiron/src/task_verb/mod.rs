@@ -337,6 +337,7 @@ mod sdk_reply;
 mod sdk_research;
 mod sdk_residence;
 mod sdk_retrieval;
+mod sdk_root_requests;
 mod sdk_scratchpad;
 mod sdk_secret;
 mod sdk_secret_grant;

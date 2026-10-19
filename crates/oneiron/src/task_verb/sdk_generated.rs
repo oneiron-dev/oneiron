@@ -2312,6 +2312,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.roots.requests.cancel",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RootRequestCancelRequest,
+                >(),
+            ),
+            (
                 "vault.cleanup.run",
                 crate::code_run::vault_read::request_schema::<
                     crate::vault_cleanup::surface::CleanupRunRequest,
@@ -11930,6 +11936,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.roots.requests.cancel" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.cleanup.run" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -17698,6 +17711,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.authority.handoff_alarms.acknowledge" => {
             let _input: crate::task_verb::sdk::HandoffAlarmRequest = decode(value.clone())?;
         }
+        "vault.roots.requests.cancel" => {
+            let _input: crate::task_verb::sdk::RootRequestCancelRequest = decode(value.clone())?;
+        }
         "vault.cleanup.run" => {
             let _input: crate::vault_cleanup::surface::CleanupRunRequest = decode(value.clone())?;
         }
@@ -20804,6 +20820,9 @@ pub fn invoke(
         "vault.authority.handoff_alarms.acknowledge" => encode(
             vault_authority_handoff_alarms_acknowledge(memory, decode(value)?)?,
         ),
+        "vault.roots.requests.cancel" => {
+            encode(vault_roots_requests_cancel(memory, decode(value)?)?)
+        }
         "vault.cleanup.run" => encode(vault_cleanup_run(memory, decode(value)?)?),
         "vault.entities.mention" => encode(vault_entities_mention(memory, decode(value)?)?),
         "vault.legal_holds.place" => encode(vault_legal_holds_place(memory, decode(value)?)?),
@@ -25701,6 +25720,17 @@ pub fn vault_authority_handoff_alarms_acknowledge(
     crate::task_verb::sdk::acknowledge_handoff_alarm(
         memory.vault(),
         &memory.embedded_owner("vault.authority.handoff_alarms.acknowledge")?,
+        input,
+    )
+}
+pub fn vault_roots_requests_cancel(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RootRequestCancelRequest,
+) -> MemoryResult<crate::world_keys::OwnerWorkReceipt> {
+    crate::task_verb::sdk::cancel_root_request_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.roots.requests.cancel")?,
+        crate::authority::ActSurface::ThisInstall,
         input,
     )
 }

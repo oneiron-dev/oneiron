@@ -126,6 +126,7 @@ mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
 pub(super) mod role_picks;
+mod root_request_doors;
 mod run_read_doors;
 mod run_review_doors;
 mod saved_query_doors;
