@@ -3,22 +3,40 @@
 //!
 //! `vault.lenses.default`'s host door ([`vault_lenses_default`]) renders the
 //! card and records its frame before the answer leaves. `POST
-//! /v1/core/lens-frames/{card_id}/events` then takes one client event and
-//! its idempotency key. The event names only what was touched: the frame,
-//! the exact render the client was handed and the card's current `$state`
-//! are the host's, found under the fresh credential's idempotency principal
-//! and locality, so only the caller that rendered a card drives it. The
-//! event is validated against them under the credential's own read; a
+//! /v1/core/lens-frames/{card_id}/events` then takes one client event, its
+//! idempotency key and an optional `selectedContext`. The event names only
+//! what was touched: the frame, the exact render the client was handed and
+//! the card's current `$state` are the host's, found by the card id alone.
+//!
+//! The credential that clicks a card authors its action (FIX 3267, Engine
+//! ruling 10-19): a card id locates the host-held manifest and never lends
+//! its renderer's authority. The event is validated against the frame under
+//! the clicking credential's own read, every backing ref the action uses
+//! proved again on it, and the validated action's emitter is the clicker. A
 //! deterministic tool then meets the verb scope and record admission an
 //! action call of its command meets, and runs through the app's one
-//! executor as the credential's action; a live-run verb acts for the run
-//! that rendered the card, through the credential's attachment to it (FIX
-//! 2652). A local patch moves the held
-//! `$state` and dispatches nothing. A model round trip goes back to the
-//! agent that emitted the card, as its next turn
-//! ([`crate::ai_host::queue_lens_callback`]): it answers `202 {"queued",
-//! "callbackId"}`, and a card a person's view or a system job emitted
-//! answers `409`.
+//! executor as the clicker's action; a live-run verb acts for the run that
+//! rendered the card, through the clicker's own attachment to it (FIX 2652),
+//! never the renderer's. A local patch moves the held `$state` and
+//! dispatches nothing. A model round trip goes back to the agent that
+//! rendered the card, as its next turn
+//! ([`crate::ai_host::queue_lens_callback`]), labelled with who pressed it:
+//! it answers `202 {"queued", "callbackId"}`, and a card a person's view or
+//! a system job rendered answers `409`. Closing a card stays with the
+//! credential that rendered it, and retiring it with its run.
+//!
+//! `selectedContext` (FIX 3268) names selections the clicker made on this
+//! card (`vault.lenses.select`'s `selectionRef`s), each a host-held
+//! [`oneiron::lens::LensReadHandle`]. On a model round trip each is proved
+//! again under the held render and the clicker's read before the callback is
+//! queued, and rides it as context: never approval or action authority. Any
+//! other action ignores it (CALLS "3268 lens selected context").
+//!
+//! A deterministic tool's reply states its dispatched verb's call receipt in
+//! `x-oneiron-receipt-ref`, exactly as that verb's own reply stated it,
+//! recorded, `none; no-record` or nothing, on its success and its refusal
+//! alike (FIX 2887); the lens route writes no receipt of its own. A local
+//! patch, a queued callback and a close dispatch no verb and state none.
 //!
 //! A managed vault's attested owner drives the cards it rendered the same
 //! way: render, event and close are each attested at managed ingress, and a
@@ -33,7 +51,7 @@ use axum::Router;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::{Extensions, HeaderMap, StatusCode};
-use axum::response::Json;
+use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{delete, post};
 use oneiron::EntityId;
 use oneiron::claim::ScopedReadResult;
@@ -43,16 +61,18 @@ use oneiron::lens::{
     LensDefaultRequest, LensFrameCard, LensRenderId,
 };
 use oneiron::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MemoryResult,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MemoryError,
+    MemoryResult,
 };
 use serde::Deserialize;
 
 use super::action_routes::{
-    action_bound, bind_card_run, execute_validated_ui, require_action_scope,
+    ActionBound, action_bound, bind_card_run, execute_validated_ui, require_action_scope,
 };
 use super::host_doors::internal;
 use super::{FacadeApiError, facade_actor, facade_input, facade_json};
 use crate::ai_host::LensCallback;
+use crate::api::call_receipt::CallStamp;
 use crate::api::credential_memory;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::lens_frames::{CardOwner, HeldCard};
@@ -119,15 +139,21 @@ pub(crate) async fn vault_lenses_default(
     (answer, listed)
 }
 
-/// One event's body: the client's event, and the key its dispatch replays
-/// under.
+/// One event's body: the client's event, the key its dispatch replays
+/// under, and the selections the clicker made on the card, by the
+/// `selectionRef` each `vault.lenses.select` answered (FIX 3268).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct UiEventRequest {
     event: GeneratedUiActionEvent,
     idempotency_key: String,
+    #[serde(default)]
+    selected_context: Vec<String>,
 }
 
+/// One event on a held card. A deterministic tool's reply states its
+/// dispatched verb's call receipt as that verb's reply stated it (FIX
+/// 2887); every other reply states none.
 async fn event(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -135,6 +161,31 @@ async fn event(
     headers: HeaderMap,
     extensions: Extensions,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Response {
+    let mut stamp = CallStamp::Unrecorded;
+    let answer = event_answer(
+        auth,
+        server,
+        card_id,
+        headers,
+        extensions,
+        payload,
+        &mut stamp,
+    )
+    .await;
+    let mut response = answer.into_response();
+    stamp.stamp_header(&mut response);
+    response
+}
+
+async fn event_answer(
+    auth: CoreAuth,
+    server: Arc<SyncServer>,
+    card_id: String,
+    headers: HeaderMap,
+    extensions: Extensions,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+    stamp: &mut CallStamp,
 ) -> Result<(StatusCode, Json<serde_json::Value>), FacadeApiError> {
     // The card came from a read; what its actions write meets its own scope.
     auth.require(CoreScope::Read)?;
@@ -148,9 +199,11 @@ async fn event(
         ));
     }
     let (actor, class) = facade_actor(&server, &auth)?;
+    // The card id locates the held manifest; the clicker's own read proves
+    // the event (FIX 3267).
     let held = server
         .lens_frames
-        .card(&auth, &request.event.card_id)
+        .card(&request.event.card_id)
         .ok_or_else(rerender)?;
     // One event on a card at a time, from its validation to its effect.
     let mut state = held.state.lock().await;
@@ -160,17 +213,39 @@ async fn event(
         let held = Arc::clone(&held);
         let current = state.clone();
         let event = request.event;
-        tokio::task::spawn_blocking(move || {
-            credential_memory(&server.vault, Some(&auth), actor, class)
-                .at(auth.locality())
-                .lens_frame_event(&held.frame, &held.render, &current, &event)
+        let selected = request.selected_context;
+        tokio::task::spawn_blocking(move || -> MemoryResult<GeneratedUiValidatedAction> {
+            let memory = credential_memory(&server.vault, Some(&auth), actor, class)
+                .at(auth.locality());
+            let validated =
+                memory.lens_frame_event(&held.frame, &held.render, &current, &event)?;
+            // A selection is context for a model round trip alone; any other
+            // action ignores it (CALLS "3268 lens selected context").
+            let (emitter, callback) = match validated {
+                GeneratedUiValidatedAction::ModelRoundTrip { emitter, callback } => {
+                    (emitter, callback)
+                }
+                other => return Ok(other),
+            };
+            let selected = selected
+                .iter()
+                .map(|selection_ref| {
+                    server
+                        .lens_frames
+                        .selection(&auth, &held, selection_ref)
+                        .ok_or_else(unselected)
+                })
+                .collect::<MemoryResult<Vec<_>>>()?;
+            let callback =
+                memory.lens_frame_selected_context(&held.frame, &held.render, callback, selected)?;
+            Ok(GeneratedUiValidatedAction::ModelRoundTrip { emitter, callback })
         })
         .await
         .map_err(|_| internal("a lens frame event"))??
     };
     let answer = match validated {
         GeneratedUiValidatedAction::Local { state: next, .. } => {
-            if !server.lens_frames.restate(&auth, &held, &next) {
+            if !server.lens_frames.restate(&held, &next) {
                 return Err(rerender());
             }
             let answer = serde_json::json!({ "$state": &next });
@@ -178,7 +253,7 @@ async fn event(
             answer
         }
         GeneratedUiValidatedAction::DeterministicTool { .. } => {
-            dispatch_tool(
+            let (answer, stamped) = dispatch_tool(
                 &server,
                 &auth,
                 &held,
@@ -187,9 +262,14 @@ async fn event(
                 validated,
                 request.idempotency_key,
             )
-            .await?
+            .await;
+            *stamp = stamped;
+            answer?
         }
         GeneratedUiValidatedAction::ModelRoundTrip { emitter, callback } => {
+            // The round trip goes to the agent that rendered the card,
+            // labelled with its author, the clicker.
+            let rendered_by = held.frame.principal().clone();
             let server = Arc::clone(&server);
             let credential = auth.idempotency_principal();
             let key = request.idempotency_key;
@@ -197,6 +277,7 @@ async fn event(
                 crate::ai_host::queue_lens_callback(
                     &server.vault,
                     &credential,
+                    &rendered_by,
                     &emitter,
                     &callback,
                     &key,
@@ -216,7 +297,7 @@ async fn event(
                 LensCallback::NoAgent => Err(FacadeApiError::new(
                     StatusCode::CONFLICT,
                     MEMORY_CODE_INVALID_STATE,
-                    "no agent emitted this card, so its model round trip has no turn to go to",
+                    "no agent rendered this card, so its model round trip has no turn to go to",
                     ["Only a card an agent rendered sends a model round trip back to it."],
                 )),
                 LensCallback::KeyReused => Err(FacadeApiError::new(
@@ -234,9 +315,8 @@ async fn event(
 
 /// A validated deterministic tool: the verb scope and record admission an
 /// action call of its command meets, then the app's one executor under the
-/// credential's binding. Its answer is an action call's. A live-run verb
-/// acts for the run that rendered `held` (FIX 2652), through this
-/// credential's attachment to it, under that run's action key.
+/// clicking credential's binding. Its answer is an action call's, beside
+/// what its verb-table row's reply stated of its call receipt (FIX 2887).
 async fn dispatch_tool(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -245,15 +325,42 @@ async fn dispatch_tool(
     extensions: Extensions,
     validated: GeneratedUiValidatedAction,
     key: String,
-) -> Result<serde_json::Value, FacadeApiError> {
+) -> (Result<serde_json::Value, FacadeApiError>, CallStamp) {
+    let (bound, key) = match tool_bound(server, auth, held, &headers, &validated, key) {
+        Ok(bound) => bound,
+        Err(refused) => return (Err(refused), CallStamp::Unrecorded),
+    };
+    let (dispatch, stamp) =
+        execute_validated_ui(server, headers, extensions, bound, validated, key).await;
+    let answer = dispatch.and_then(|dispatch| {
+        Ok(serde_json::json!({
+            "outcome": dispatch.outcome_value().map_err(engine)?,
+            "readReceipt": dispatch.read_receipt,
+        }))
+    });
+    (answer, stamp)
+}
+
+/// What a validated tool runs under, and its key: the clicking credential's
+/// binding, and for a live-run verb the run that rendered `held` (FIX 2652),
+/// through this credential's own attachment to it, under that run's action
+/// key. A person pressing an agent's live card attaches first.
+fn tool_bound(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    held: &Arc<HeldCard>,
+    headers: &HeaderMap,
+    validated: &GeneratedUiValidatedAction,
+    key: String,
+) -> Result<(ActionBound, String), FacadeApiError> {
     let mut live = false;
-    if let GeneratedUiValidatedAction::DeterministicTool { action, .. } = &validated {
+    if let GeneratedUiValidatedAction::DeterministicTool { action, .. } = validated {
         require_action_scope(auth, action.command().as_str())?;
         live = is_live_run_verb(action.command().as_str());
     }
     // The owner act records where this request's own headers say he spoke
     // from (FIX 4625).
-    let surface = crate::api::owner_routes::machine_routes::act_surface(server, auth, &headers);
+    let surface = crate::api::owner_routes::machine_routes::act_surface(server, auth, headers);
     let mut bound = action_bound(server, auth, surface)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",
@@ -261,18 +368,16 @@ async fn dispatch_tool(
         )
     })?;
     let key = if live {
-        let creator_run = server.lens_frames.creator_run(auth, held);
+        let creator_run = server.lens_frames.creator_run(held);
         bind_card_run(server, auth, &mut bound, creator_run.as_deref(), &key)?
     } else {
         key
     };
-    let dispatch = execute_validated_ui(server, headers, extensions, bound, validated, key).await?;
-    Ok(serde_json::json!({
-        "outcome": dispatch.outcome_value().map_err(engine)?,
-        "readReceipt": dispatch.read_receipt,
-    }))
+    Ok((bound, key))
 }
 
+/// Closes a held card for the credential that rendered it; a card it did
+/// not render answers `{"closed": false}` and stays held.
 async fn close(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -292,6 +397,16 @@ fn rerender() -> FacadeApiError {
         MEMORY_CODE_NOT_FOUND,
         "this server holds no frame for this card; re-render the lens",
         ["Render the lens again and send its events to the card that render returns."],
+    )
+}
+
+/// A `selectedContext` ref this credential selected nothing under on this
+/// card.
+fn unselected() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_NOT_FOUND,
+        "this caller made no such selection on this card; select again",
+        &["Select through vault.lenses.select on this card and send its selectionRef."],
     )
 }
 

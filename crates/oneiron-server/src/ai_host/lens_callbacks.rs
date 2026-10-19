@@ -1,12 +1,15 @@
 //! OF-181 (FIX 2611): a lens card's model round trip goes back to the agent
-//! that emitted the card, as that agent's next turn (ARCH-0048 G2).
+//! that rendered the card, as that agent's next turn (ARCH-0048 G2).
 //!
-//! The card's frame names its emitter. Only an agent-task frame whose
-//! principal is an AGENT_DEF of this vault takes a callback; a card a
-//! person's view or a system job rendered has no agent to hand it to. The
-//! callback is data, never a tool call: it rides the agent's next run as a
-//! briefing labelled as such, and the agent decides what to do, writing only
-//! through its own gated verbs. Nothing is forwarded on its behalf.
+//! The card's frame names its renderer, the callback's destination; the
+//! event's author is whoever clicked (FIX 3267), a person pressing an
+//! agent's card included, and the briefing names them. Only an agent-task
+//! frame whose principal is an AGENT_DEF of this vault takes a callback; a
+//! card a person's view or a system job rendered has no agent to hand it to.
+//! The callback is data, never a tool call and never the clicker's
+//! authority: it rides the agent's next run as a briefing labelled as such,
+//! and the agent decides what to do, writing only through its own gated
+//! verbs. Nothing is forwarded on its behalf.
 //!
 //! The run goes through the resident dispatch shape: a settled resident's
 //! run, else a top-level run of the agent. One credential, card and
@@ -43,20 +46,22 @@ pub(crate) enum LensCallback {
     KeyReused,
 }
 
-/// Queues `callback` for the agent that emitted its card. `credential` is
-/// the sending credential's idempotency principal; it, the card and
-/// `idempotency_key` dedupe the run.
+/// Queues `callback` for the agent that rendered its card, `rendered_by`,
+/// naming `author`, the principal that clicked. `credential` is the sending
+/// credential's idempotency principal; it, the card and `idempotency_key`
+/// dedupe the run.
 pub(crate) fn queue_lens_callback(
     vault: &Vault,
     credential: &str,
-    emitter: &LensPrincipalBinding,
+    rendered_by: &LensPrincipalBinding,
+    author: &LensPrincipalBinding,
     callback: &GeneratedUiAgentCallback,
     idempotency_key: &str,
 ) -> Result<LensCallback> {
-    if emitter.kind() != LensActingPrincipalKind::AgentTask {
+    if rendered_by.kind() != LensActingPrincipalKind::AgentTask {
         return Ok(LensCallback::NoAgent);
     }
-    let Ok(agent) = EntityId::from_hex(emitter.principal_ref()) else {
+    let Ok(agent) = EntityId::from_hex(rendered_by.principal_ref()) else {
         return Ok(LensCallback::NoAgent);
     };
     if vault.get_entity_type(&agent)? != Some(ENTITY_TYPE_AGENT_DEF) {
@@ -71,7 +76,7 @@ pub(crate) fn queue_lens_callback(
     };
     let key = dedupe_key(credential, &callback.source_card_id, idempotency_key);
     let spec = normalize_context_spec(ContextSpec {
-        briefing: Some(briefing(callback)),
+        briefing: Some(briefing(author, callback)),
         ..ContextSpec::default()
     });
     // A finished run has left the pending dedupe; its key on the run still
@@ -134,10 +139,10 @@ fn dedupe_key(credential: &str, card: &LensRenderId, idempotency_key: &str) -> S
     format!("lens-callback:{}", hasher.finalize().to_hex())
 }
 
-/// The callback as the agent reads it: what was pressed, on which card, the
+/// The callback as the agent reads it: who pressed what, on which card, the
 /// arguments the card's own declaration resolved, and any read reach the
-/// person selected. All of it is labelled data.
-fn briefing(callback: &GeneratedUiAgentCallback) -> String {
+/// presser selected. All of it is labelled data.
+fn briefing(author: &LensPrincipalBinding, callback: &GeneratedUiAgentCallback) -> String {
     let params: Vec<serde_json::Value> = callback
         .resolved_params
         .iter()
@@ -153,6 +158,10 @@ fn briefing(callback: &GeneratedUiAgentCallback) -> String {
         })
         .collect();
     let event = serde_json::json!({
+        "by": {
+            "principal": author.principal_ref(),
+            "kind": author.kind(),
+        },
         "action": callback.action_name.as_str(),
         "params": params,
         "card": callback.source_card_id.as_str(),

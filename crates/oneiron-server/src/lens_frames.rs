@@ -5,11 +5,21 @@
 //! host: the [`LensRenderFrame`] that minted the card's backing refs, the
 //! exact [`GeneratedUiRender`] the client was handed, and the card's current
 //! `$state`, kept apart from the schema and initial values the render
-//! declared. This store keeps them per card, for the caller that rendered
-//! it: keyed by the credential's idempotency principal (the exact verified
-//! instrument and its caveats), the caller's locality and the card id. It is
-//! process-local; a card it does not hold, after a restart too, is rendered
-//! again.
+//! declared. This store keeps them per card, keyed by the card id alone,
+//! beside the custody of the caller that rendered it: the credential's
+//! idempotency principal (the exact verified instrument and its caveats) and
+//! the caller's locality. It is process-local; a card it does not hold,
+//! after a restart too, is rendered again.
+//!
+//! Authorship (FIX 3267, Engine ruling 10-19): the credential that clicks a
+//! card authors that card's action. The card id locates the held manifest
+//! for any caller, and never lends its renderer's authority: each event is
+//! proved under the clicking credential's own read. Custody stays the
+//! renderer's: only its credential closes the card, a re-render replaces
+//! only its own cards, and its run's retirement closes the cards that run
+//! created. Selections are the selecting credential's: each is kept under
+//! its selector's custody inside the card, and only that selector reads it
+//! back.
 //!
 //! Retention (CALLS "OF-181 lens frame retention"): a frame lives until its
 //! card is closed or the server drops, charged to `server.retained`. No count
@@ -61,7 +71,8 @@ pub(crate) struct HeldCard {
     /// The current `$state`, apart from `render.state` (the declared schema
     /// and initial values). Its lock serializes the card's events.
     pub(crate) state: tokio::sync::Mutex<GeneratedUiStateSnapshot>,
-    selections: Mutex<BTreeMap<String, LensReadHandle>>,
+    /// Each selector's selections on this card, by selection ref.
+    selections: Mutex<BTreeMap<(Custody, String), LensReadHandle>>,
 }
 
 /// Who owns a held card's supersession: the run that created it and the
@@ -95,19 +106,19 @@ impl CardOwner {
     }
 }
 
-/// Whose card a frame is: the credential's idempotency principal, where it
-/// called from, and the card.
-#[derive(Clone, PartialEq, Eq, Hash)]
-struct FrameKey {
+/// A credential at its locality: the custody a card's renderer keeps, and
+/// the selector a selection is kept for. Its idempotency principal and
+/// where it called from.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct Custody {
     principal: String,
     on_device: bool,
-    card: LensRenderId,
 }
 
 struct Frames {
-    cards: HashMap<FrameKey, Entry>,
+    cards: HashMap<LensRenderId, Entry>,
     /// The held cards by arrival, oldest first: the order the floor evicts in.
-    arrival: BTreeMap<u64, FrameKey>,
+    arrival: BTreeMap<u64, LensRenderId>,
     next: u64,
     /// The bytes every held card stands for.
     bytes: usize,
@@ -117,6 +128,8 @@ struct Frames {
 
 struct Entry {
     arrival: u64,
+    /// The credential that rendered the card, which alone closes it.
+    custody: Custody,
     /// What the card stands for apart from its current `$state`.
     base: usize,
     /// `base` and its current `$state`.
@@ -173,7 +186,8 @@ impl LensFrameStore {
         render: GeneratedUiRender,
         owner: CardOwner,
     ) -> MemoryResult<usize> {
-        let key = FrameKey::new(auth, render.card_id.clone());
+        let custody = Custody::of(auth);
+        let card = render.card_id.clone();
         if !self.hold(auth, frame, render, Some(owner.clone()))? {
             return Ok(0);
         }
@@ -182,9 +196,8 @@ impl LensFrameStore {
             .cards
             .iter()
             .filter(|(held, entry)| {
-                held.principal == key.principal
-                    && held.on_device == key.on_device
-                    && held.card != key.card
+                entry.custody == custody
+                    && **held != card
                     && owner.subscription.is_some()
                     && entry.owner.as_ref() == Some(&owner)
             })
@@ -237,8 +250,9 @@ impl LensFrameStore {
                 &[],
             ));
         }
-        let key = FrameKey::new(auth, render.card_id.clone());
-        let base = footprint(&key, &frame, &render);
+        let custody = Custody::of(auth);
+        let key = render.card_id.clone();
+        let base = footprint(&custody, &frame, &render);
         let state = render.state.clone();
         let bytes = base + state_footprint(&state);
         let card = Arc::new(HeldCard {
@@ -264,6 +278,7 @@ impl LensFrameStore {
             key,
             Entry {
                 arrival,
+                custody,
                 base,
                 bytes,
                 card,
@@ -273,18 +288,18 @@ impl LensFrameStore {
         Ok(true)
     }
 
-    /// The card `card` that `auth`'s caller rendered here, if this store
-    /// still holds it.
-    pub(crate) fn card(&self, auth: &CoreAuth, card: &LensRenderId) -> Option<Arc<HeldCard>> {
-        let key = FrameKey::new(auth, card.clone());
+    /// The card `card`, whoever rendered it, if this store still holds it:
+    /// the id locates the held manifest and lends no authority (FIX 3267).
+    pub(crate) fn card(&self, card: &LensRenderId) -> Option<Arc<HeldCard>> {
         self.lock()
             .cards
-            .get(&key)
+            .get(card)
             .map(|entry| Arc::clone(&entry.card))
     }
 
-    /// Retains a proved handle beside its frame, charged to the same retained
-    /// line. Re-selecting the same reach reuses its locator and charge.
+    /// Retains a handle `auth`'s caller proved on `held`, beside its frame
+    /// under that selector's custody, charged to the same retained line.
+    /// Re-selecting the same reach reuses its locator and charge.
     pub(crate) fn remember_selection(
         &self,
         auth: &CoreAuth,
@@ -295,7 +310,8 @@ impl LensFrameStore {
             MemoryError::new(MEMORY_CODE_INTERNAL, "selection encoding failed", &[])
         })?;
         let selection_ref = blake3::hash(&encoded).to_hex().to_string();
-        let key = FrameKey::new(auth, held.render.card_id.clone());
+        let selector = Custody::of(auth);
+        let key = held.render.card_id.clone();
         let mut frames = self.lock();
         let Some((arrival, base, old)) = frames
             .cards
@@ -309,10 +325,14 @@ impl LensFrameStore {
             .selections
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if selections.contains_key(&selection_ref) {
-            return Ok(Some(selection_ref));
+        let slot = (selector, selection_ref);
+        if selections.contains_key(&slot) {
+            return Ok(Some(slot.1));
         }
-        let extra = encoded.len() + selection_ref.len() + std::mem::size_of::<LensReadHandle>();
+        let extra = encoded.len()
+            + slot.0.principal.len()
+            + slot.1.len()
+            + std::mem::size_of::<LensReadHandle>();
         frames.bytes -= old;
         if !frames.fit(&self.line, &self.questions, old + extra, Some(arrival)) {
             frames.bytes += old;
@@ -325,7 +345,8 @@ impl LensFrameStore {
             entry.base = base + extra;
             entry.bytes = old + extra;
         }
-        selections.insert(selection_ref.clone(), selected);
+        let selection_ref = slot.1.clone();
+        selections.insert(slot, selected);
         Ok(Some(selection_ref))
     }
 
@@ -337,7 +358,7 @@ impl LensFrameStore {
         held: &Arc<HeldCard>,
         selection_ref: &str,
     ) -> Option<LensReadHandle> {
-        let key = FrameKey::new(auth, held.render.card_id.clone());
+        let key = held.render.card_id.clone();
         let frames = self.lock();
         frames
             .cards
@@ -346,16 +367,16 @@ impl LensFrameStore {
         held.selections
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .get(selection_ref)
+            .get(&(Custody::of(auth), selection_ref.to_owned()))
             .cloned()
     }
 
-    /// The run that created `held`, which `auth`'s caller holds, by the
-    /// `to_hex()` its owner names it by (FIX 2652): the run a live-run verb
-    /// on the card acts for. `None` for a card no run rendered, or one no
-    /// longer held as `held`.
-    pub(crate) fn creator_run(&self, auth: &CoreAuth, held: &Arc<HeldCard>) -> Option<String> {
-        let key = FrameKey::new(auth, held.render.card_id.clone());
+    /// The run that created `held`, by the `to_hex()` its owner names it by
+    /// (FIX 2652): the run a live-run verb on the card acts for, whose
+    /// attachment the clicking credential must hold itself. `None` for a
+    /// card no run rendered, or one no longer held as `held`.
+    pub(crate) fn creator_run(&self, held: &Arc<HeldCard>) -> Option<String> {
+        let key = held.render.card_id.clone();
         self.lock()
             .cards
             .get(&key)
@@ -364,17 +385,11 @@ impl LensFrameStore {
             .map(|owner| owner.creator_run.clone())
     }
 
-    /// Re-charges `held`, which `auth`'s caller holds, for its next `$state`
-    /// before the caller moves it there. `false`: the card is no longer held,
-    /// closed meanwhile or evicted, now too when the floor reached it as the
-    /// oldest card left.
-    pub(crate) fn restate(
-        &self,
-        auth: &CoreAuth,
-        held: &Arc<HeldCard>,
-        state: &GeneratedUiStateSnapshot,
-    ) -> bool {
-        let key = FrameKey::new(auth, held.render.card_id.clone());
+    /// Re-charges `held` for its next `$state` before an event's author
+    /// moves it there. `false`: the card is no longer held, closed meanwhile
+    /// or evicted, now too when the floor reached it as the oldest card left.
+    pub(crate) fn restate(&self, held: &Arc<HeldCard>, state: &GeneratedUiStateSnapshot) -> bool {
+        let key = held.render.card_id.clone();
         let state_bytes = state_footprint(state);
         let mut frames = self.lock();
         let Some((arrival, base, old)) = frames
@@ -406,11 +421,17 @@ impl LensFrameStore {
     }
 
     /// Closes the card `card` that `auth`'s caller rendered here, giving its
-    /// bytes back. `false` when it was not held.
+    /// bytes back. `false` when it was not held, or another credential
+    /// rendered it: close stays with the renderer's custody.
     pub(crate) fn close(&self, auth: &CoreAuth, card: &LensRenderId) -> bool {
-        let key = FrameKey::new(auth, card.clone());
+        let custody = Custody::of(auth);
         let mut frames = self.lock();
-        let Some(arrival) = frames.cards.get(&key).map(|entry| entry.arrival) else {
+        let Some(arrival) = frames
+            .cards
+            .get(card)
+            .filter(|entry| entry.custody == custody)
+            .map(|entry| entry.arrival)
+        else {
             return false;
         };
         frames.evict(arrival);
@@ -425,12 +446,11 @@ impl LensFrameStore {
     }
 }
 
-impl FrameKey {
-    fn new(auth: &CoreAuth, card: LensRenderId) -> Self {
+impl Custody {
+    fn of(auth: &CoreAuth) -> Self {
         Self {
             principal: auth.idempotency_principal(),
             on_device: auth.locality() == CallerLocality::OnDevice,
-            card,
         }
     }
 }
@@ -479,14 +499,14 @@ impl Frames {
 }
 
 /// The bytes a held card stands for apart from its current `$state`: its
-/// render's encoding, its frame's backing rows and its key.
-fn footprint(key: &FrameKey, frame: &LensRenderFrame, render: &GeneratedUiRender) -> usize {
+/// render's encoding, its frame's backing rows, its custody and its id.
+fn footprint(custody: &Custody, frame: &LensRenderFrame, render: &GeneratedUiRender) -> usize {
     serde_json::to_vec(render).map_or(0, |encoded| encoded.len())
         + std::mem::size_of::<Entry>()
         + std::mem::size_of::<HeldCard>()
         + frame.backing_refs().len() * std::mem::size_of::<LensHostBackingRef>()
-        + key.principal.len()
-        + key.card.as_str().len()
+        + custody.principal.len()
+        + render.card_id.as_str().len()
 }
 
 /// The bytes a card's current `$state` stands for: its encoding.

@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1083 code-mode rows (1059 host rows, 24 run rows), 3578 declarations.
-// Replies: 966 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1084 code-mode rows (1060 host rows, 24 run rows), 3591 declarations.
+// Replies: 967 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -3225,6 +3225,19 @@ declare namespace Sdk {
   type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "cancelled" | "signal" | "other";
   type DreamerParkedAttemptView = { job_ref: string; cause: DreamerParkCauseView; parked_at: number };
   type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number; parked?: DreamerParkedAttemptView | null };
+  type ConsolidationWakeStatusRequest = { job_ref?: string | null; wake_ref?: string | null; limit?: number | null; cursor?: string | null };
+  type DreamerWakeEndView = { unix_ms: number; elapsed_ms: number; stop?: string | null };
+  type DreamerWakeHeaderView = { trigger: string; scope: string; worker: string; node_id: string; budget_id: string; origin_unix_ms?: number | null; ceiling_ms: number; ceiling_unix_ms?: number | null; entered_unix_ms: number; entered_elapsed_ms: number; ended?: DreamerWakeEndView | null };
+  type DreamerWakeResumeView = { wake_ref: string; at: number; worker: string };
+  type DreamerWakeCheckpointView = { park_ref: string; job_ref: string; attempt_count: number; wake_ref: string; parked_at: number; saved_steps: string[]; resumed?: DreamerWakeResumeView | null };
+  type DreamerWakeGenerationView = { job_ref: string; attempt_count: number; wake_ref: string; worker: string; run_id?: string | null; admitted_elapsed_ms: number; checkpoint?: DreamerWakeCheckpointView | null; after_cut?: DreamerWakeCheckpointView | null };
+  type DreamerWakeCallStateView = "claimed" | "settled" | "aborted" | "unsettled";
+  type DreamerWakeCallEndView = { state: DreamerWakeCallStateView; at_unix_ms: number; used_units?: number | null; claim_ref?: string | null };
+  type DreamerWakeCallView = { call_ref: string; job_ref: string; attempt_count: number; step_hash: string; ordinal: number; lease_id: string; admitted_elapsed_ms: number; end?: DreamerWakeCallEndView | null };
+  type DreamerWakeLeaseView = { state: "open"; reserve_units: number; dispatched: boolean } | { state: "settled"; used_units: number } | { state: "aborted" };
+  type DreamerWakeLiveCallView = { call_ref: string; lease_id: string; lease?: DreamerWakeLeaseView | null };
+  type DreamerWakeLiveView = { elapsed_ms: number; remaining_ms: number; calls: DreamerWakeLiveCallView[] };
+  type DreamerWakeView = { wake_ref: string; header: DreamerWakeHeaderView; generation?: DreamerWakeGenerationView | null; members?: DreamerWakeGenerationView[]; calls?: DreamerWakeCallView[]; next_cursor?: string | null; live?: DreamerWakeLiveView | null };
   type SettledStepRequest = { job_ref: string; step_hash: string };
   type SettledStepView = { job_ref: string; run_id?: string | null; claim_ref: string; step_hash: string; model: ModelId; purpose: string; params_hash: string; response: LlmResponse };
   type CheckpointReadRequest = { run_ref: string; from_step?: number; limit?: number | null };
@@ -4755,6 +4768,10 @@ declare const vault: Sdk.VaultHost & {
     promote(input: Sdk.ConsolidationPromoteRequest): Promise<Sdk.ConsolidationPromotion | StoredResult>;
     /** Reads the status of one consolidation attempt by its durable job reference. */
     status(input: Sdk.ConsolidationStatusRequest): Promise<Sdk.DreamerAttemptView | null | StoredResult>;
+    wake: {
+      /** Reads one page of a consolidation wake pass observation by attempt or wake reference: its clock and ceiling, admitted attempts, each model call with its lease, the Checkpoint parks it cut and the pass as it runs now. */
+      status(input: Sdk.ConsolidationWakeStatusRequest): Promise<Sdk.DreamerWakeView | null | StoredResult>;
+    };
   };
   consults: {
     /** The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies. */
@@ -5563,8 +5580,8 @@ declare const vault: Sdk.VaultHost & {
     };
     pause(input: Sdk.QuestionPauseRequest): Promise<Sdk.QuestionPaused | StoredResult>;
     read(input: Sdk.QuestionReadRequest): Promise<Sdk.QuestionRecord | null | StoredResult>;
-    /** Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it. */
-    refresh(input: Sdk.QuestionRefreshRequest): Promise<Sdk.AnswerRecord[] | StoredResult>;
+    /** Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it. */
+    refresh(input: Sdk.QuestionRefreshRequest): Promise<Sdk.QuestionAnswer[] | StoredResult>;
     /** Reads the caller's standing question scheduling head: its current version, paused state, last refresh and any failed-refresh hold. */
     schedule(input: Sdk.QuestionScheduleRequest): Promise<Sdk.QuestionScheduleHead | null | StoredResult>;
   };

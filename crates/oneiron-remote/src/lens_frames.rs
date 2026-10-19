@@ -4,16 +4,21 @@
 //!
 //! These are transport helpers, not verbs: the routes sit outside the facade
 //! nest and have no verb-table row. A card's frame lives only on the server
-//! that rendered it (`vault.lenses.default`), held under the credential's
-//! principal and locality, so only the connected handle that rendered a card
-//! drives it. A handle served in process (`connect_in_process`, OF-237) is
-//! one: both calls cross its transport to the server this process runs, with
-//! the same headers and the same replies, a queued callback included. That
-//! served client is the path for interactive frames in an app that runs its
-//! engine in process (`EmbeddedEngine.client` in the UniFFI binding): render,
-//! send events and close on that one handle. An embedded handle holds no
-//! frame and refuses both calls; this crate keeps no second frame store and
-//! no bare renderer.
+//! that rendered it (`vault.lenses.default`), found there by the card id. The
+//! handle that sends an event authors its action (FIX 3267): a person
+//! pressing an agent-rendered card sends its own events, proved under its own
+//! credential, and the card id lends it none of the renderer's authority.
+//! Closing a card stays with the handle that rendered it. A handle served in
+//! process (`connect_in_process`, OF-237) crosses its transport to the server
+//! this process runs, with the same headers and the same replies, a queued
+//! callback included. That served client is the path for interactive frames
+//! in an app that runs its engine in process (`EmbeddedEngine.client` in the
+//! UniFFI binding). An embedded handle holds no frame and refuses both calls;
+//! this crate keeps no second frame store and no bare renderer.
+//!
+//! An event's reply states its dispatched verb's call receipt, so
+//! `last_receipt_ref` reads it after a deterministic tool (FIX 2887); a local
+//! patch, a queued callback and a close dispatch no verb and leave it empty.
 //!
 //! The bodies are the server's wire shapes, camelCase as it spells them.
 
@@ -24,8 +29,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Backend, OneironClient};
 
-/// One event's body: the client's event, and the key a deterministic
-/// action's dispatch replays under. The key is required in the body.
+/// One event's body: the client's event, the key a deterministic action's
+/// dispatch replays under, and the selections this handle made on the card.
+/// The key is required in the body.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LensFrameEventRequest {
@@ -34,6 +40,13 @@ pub struct LensFrameEventRequest {
     pub event: GeneratedUiActionEvent,
     /// The idempotency key a deterministic action's dispatch replays under.
     pub idempotency_key: String,
+    /// Selections this handle made on this card, each the `selectionRef`
+    /// `vault.lenses.select` answered (FIX 3268): read reach the server
+    /// holds, proved again under the held render before a model round trip
+    /// carries it to the agent as context. Context, never approval or
+    /// action authority; any other action ignores it. Empty by default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_context: Vec<String>,
 }
 
 /// What an event answers. The wire has no discriminator: a local action
@@ -96,12 +109,12 @@ fn embedded_refusal() -> MemoryError {
 
 impl OneironClient {
     /// Sends one event on the lens card `card_id` to the server that
-    /// rendered it, under this handle's credential. `request.event.cardId`
-    /// must name the same card. A card the server holds no frame for
-    /// (closed, evicted, or held before a restart) refuses `NOT_FOUND`:
-    /// render the lens again. A model round-trip action queues its callback
-    /// for the agent that emitted the card; a card no agent emitted refuses
-    /// `INVALID_STATE`. A handle served in process sends it to the server
+    /// rendered it, under this handle's credential, which authors the
+    /// card's action whoever rendered it. `request.event.cardId` must name
+    /// the same card. A card the server holds no frame for (closed, evicted,
+    /// or held before a restart) refuses `NOT_FOUND`: render the lens again.
+    /// A model round-trip action queues its callback for the agent that
+    /// rendered the card; a card no agent rendered refuses `INVALID_STATE`. A handle served in process sends it to the server
     /// this process runs; an embedded handle refuses `BAD_REQUEST`, naming
     /// the served client to render through.
     pub fn lens_frame_event(
@@ -116,7 +129,8 @@ impl OneironClient {
     }
 
     /// Closes the lens card `card_id` on the server that rendered it and
-    /// frees its frame. An embedded handle refuses `BAD_REQUEST`.
+    /// frees its frame, when this handle rendered it. An embedded handle
+    /// refuses `BAD_REQUEST`.
     pub fn close_lens_frame(&self, card_id: &str) -> Result<CloseLensFrameReply, MemoryError> {
         match &self.backend {
             Backend::Remote(remote) => remote.close_lens_frame(card_id),

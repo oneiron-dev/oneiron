@@ -10,8 +10,10 @@ use oneiron::lens::LensPrincipalBinding;
 use oneiron::{EdgeActorClass, WriteActor};
 
 use super::super::FacadeApiError;
-use super::{ActionBound, FacadeRowDoor, app, engine, internal, refused};
+use super::row_door::FacadeRowDoor;
+use super::{ActionBound, app, engine, internal, refused};
 use crate::actions::SharedActionExecutor;
+use crate::api::call_receipt::CallStamp;
 use crate::auth::CoreAuth;
 use crate::server::{HeldLiveRun, ResolvedLiveRun, SyncServer, seated_planner};
 
@@ -73,6 +75,34 @@ where
         + Send
         + 'static,
 {
+    run_bound_stamped(server, headers, extensions, bound, credential, run)
+        .await
+        .0
+}
+
+/// [`run_bound`], and beside its dispatch what its verb-table row's reply
+/// stated of its call receipt (FIX 2887): recorded, no-record or
+/// unrecorded, on the row's success and its refusal alike. Unrecorded when
+/// no row ran through the door's route: a typed action, a run row, a
+/// refusal before the row, or a row the credential's own facade call ran.
+pub(super) async fn run_bound_stamped<F>(
+    server: &Arc<SyncServer>,
+    headers: HeaderMap,
+    extensions: Extensions,
+    bound: ActionBound,
+    credential: Option<CoreAuth>,
+    run: F,
+) -> (Result<ActionDispatch, FacadeApiError>, CallStamp)
+where
+    F: FnOnce(
+            &SharedActionExecutor,
+            &oneiron::Vault,
+            WriteActor,
+            ActionHostBinding<'_>,
+        ) -> oneiron::Result<ActionDispatch>
+        + Send
+        + 'static,
+{
     let ActionBound {
         actor,
         class,
@@ -81,9 +111,53 @@ where
         surface,
         live_run,
     } = bound;
-    let door: Arc<dyn AgentVerbDoor> = Arc::new(FacadeRowDoor::new(
+    let door = Arc::new(FacadeRowDoor::new(
         server, headers, extensions, key, credential,
     ));
+    let verb_door: Arc<dyn AgentVerbDoor> = Arc::clone(&door) as Arc<dyn AgentVerbDoor>;
+    let bound = Unbound {
+        actor,
+        class,
+        owner,
+        surface,
+        live_run,
+    };
+    let ran = run_with_door(server, verb_door, bound, run).await;
+    (ran, door.stamp())
+}
+
+/// What an action runs under once its read key went to its verb door.
+struct Unbound {
+    actor: oneiron::EntityId,
+    class: EdgeActorClass,
+    owner: Option<oneiron::consent::AuthenticatedOwner>,
+    surface: Option<oneiron::authority::ActSurface>,
+    live_run: Option<ResolvedLiveRun>,
+}
+
+async fn run_with_door<F>(
+    server: &Arc<SyncServer>,
+    door: Arc<dyn AgentVerbDoor>,
+    bound: Unbound,
+    run: F,
+) -> Result<ActionDispatch, FacadeApiError>
+where
+    F: FnOnce(
+            &SharedActionExecutor,
+            &oneiron::Vault,
+            WriteActor,
+            ActionHostBinding<'_>,
+        ) -> oneiron::Result<ActionDispatch>
+        + Send
+        + 'static,
+{
+    let Unbound {
+        actor,
+        class,
+        owner,
+        surface,
+        live_run,
+    } = bound;
     let executor = app()?;
     // OF-181: the live run's guard, waited for briefly while an entry or
     // another action holds it, taken before the action and held through it,

@@ -19,6 +19,11 @@
 //! under the policy in force (FIX 5108): each root accepted, signed but not
 //! counted, or pending, with the quorum, the hardware rule and what the
 //! accepted roots still lack.
+//!
+//! `GET .../roots/deliveries` answers, for each root held here, where each
+//! home's checkpoint head it signed stands (FIX 5196): signed but not
+//! uploaded, delivered to the home's intake, or accepted, with the home's
+//! machine (null for a home that proved none on its socket).
 
 use std::sync::Arc;
 
@@ -31,7 +36,8 @@ use axum::routing::{get, post};
 use oneiron::authority::{
     ActAuthority, AuthorityCheckpointRoots, AuthorityKey, AuthoritySignatureSuite,
     CheckpointPolicyHead, CheckpointPolicyView, CheckpointPosture, CheckpointRootChoice,
-    CheckpointRootDelivery, CheckpointRootPolicy,
+    CheckpointRootDelivery, CheckpointRootPolicy, RootAttestationDelivery,
+    RootAttestationDeliveryState,
 };
 use oneiron::error::RecordError;
 use serde::{Deserialize, Serialize};
@@ -48,6 +54,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/checkpoint-policy", get(view).post(select))
         .route("/checkpoint-policy/clear", post(clear))
         .route("/checkpoint-policy/roots", get(roots))
+        .route("/checkpoint-policy/roots/deliveries", get(deliveries))
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,6 +173,36 @@ struct RootsReply {
     head: Option<HeadRootsReply>,
 }
 
+/// One home head a root held here signed, and where it stands.
+#[derive(Debug, Serialize)]
+struct HomeDeliveryReply {
+    /// The home's machine, as 32 hex; null for a home that proved none on
+    /// its socket.
+    machine: Option<String>,
+    /// The home's head image the root signed, as 64 hex.
+    image: String,
+    /// `signed_not_uploaded` (signed here, the home's intake has not taken
+    /// it), `delivered` (taken, not yet reported accepted) or `accepted`
+    /// (the home's head no longer awaits the root).
+    state: RootAttestationDeliveryState,
+}
+
+/// One root held here and every home head it signed.
+#[derive(Debug, Serialize)]
+struct RootDeliveriesReply {
+    /// `<suite>:<hex key>`.
+    root: String,
+    /// In machine order, a home that proved none first.
+    homes: Vec<HomeDeliveryReply>,
+}
+
+#[derive(Debug, Serialize)]
+struct DeliveriesReply {
+    /// Each root held here that signed a home's head, ascending by key;
+    /// empty when none did.
+    roots: Vec<RootDeliveriesReply>,
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -250,6 +287,29 @@ fn roots_reply(head: &AuthorityCheckpointRoots) -> HeadRootsReply {
             .collect(),
         awaited: head.awaited().map(key_text).collect(),
         shortfall: head.shortfall,
+    }
+}
+
+fn deliveries_reply(kept: Vec<RootAttestationDelivery>) -> DeliveriesReply {
+    let mut roots = std::collections::BTreeMap::<String, Vec<HomeDeliveryReply>>::new();
+    for delivery in kept {
+        roots
+            .entry(key_text(&delivery.root))
+            .or_default()
+            .push(HomeDeliveryReply {
+                machine: delivery.home.map(|machine| machine.to_hex()),
+                image: hex(&delivery.image),
+                state: delivery.state,
+            });
+    }
+    DeliveriesReply {
+        roots: roots
+            .into_iter()
+            .map(|(root, mut homes)| {
+                homes.sort_by(|a, b| a.machine.cmp(&b.machine).then(a.image.cmp(&b.image)));
+                RootDeliveriesReply { root, homes }
+            })
+            .collect(),
     }
 }
 
@@ -390,6 +450,25 @@ async fn roots(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRe
         Ok(RootsReply {
             head: head.as_ref().map(roots_reply),
         })
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `GET /v1/owner/checkpoint-policy/roots/deliveries`: for each root held
+/// here, each home's checkpoint head it signed, as signed but not uploaded,
+/// delivered or accepted (FIX 5196). Read-only.
+async fn deliveries(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<DeliveriesReply> {
+    owner(&auth, &server)?;
+    let reply = blocking(move || -> OwnerResult<DeliveriesReply> {
+        let kept = server
+            .vault()
+            .checkpoint_root_deliveries()
+            .map_err(refusal)?;
+        Ok(deliveries_reply(kept))
     })
     .await?;
     Ok(Json(reply))

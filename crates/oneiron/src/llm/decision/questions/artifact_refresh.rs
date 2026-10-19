@@ -15,6 +15,10 @@
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
+mod manual;
+
+pub use self::manual::refresh_artifact_question_now;
+
 use serde::{Deserialize, Serialize};
 
 use super::refresh::{hold_failed, principal_actor, source_actor_key};

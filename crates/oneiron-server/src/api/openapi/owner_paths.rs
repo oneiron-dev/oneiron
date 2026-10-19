@@ -108,6 +108,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/checkpoint-policy/roots/deliveries",
+        summary: "For each root held here, each home checkpoint head it signed: the home's machine (null for a home that proved none), the head image and its state, signed_not_uploaded, delivered or accepted.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/cleanup",
         summary: "Cleanup review.",
         row: None,

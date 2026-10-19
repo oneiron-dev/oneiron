@@ -1,4 +1,7 @@
-//! Frame-bound selections and result-set actions on the caller's held card.
+//! Frame-bound selections and result-set actions on a held card. The card id
+//! locates the held manifest; each selection is the selecting credential's,
+//! proved under its own read, and a result-set action is the clicking
+//! credential's (FIX 3267).
 
 use std::sync::Arc;
 
@@ -18,7 +21,7 @@ use crate::server::SyncServer;
 fn missing() -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_NOT_FOUND,
-        "this caller holds no such card or selection; re-render and select again",
+        "this server holds no such card, or this caller no such selection on it; re-render and select again",
         &[],
     )
 }
@@ -38,7 +41,7 @@ pub(crate) async fn vault_lenses_select(
         move |server, auth, memory| {
             let held = server
                 .lens_frames
-                .card(auth, &input.card_id)
+                .card(&input.card_id)
                 .ok_or_else(missing)?;
             let selected = memory.lens_frame_select(&held.frame, &held.render, &input)?;
             let view = selected.clone();
@@ -67,7 +70,7 @@ pub(crate) async fn vault_lenses_resolve(
         move |server, auth, memory| {
             let held = server
                 .lens_frames
-                .card(auth, &input.card_id)
+                .card(&input.card_id)
                 .ok_or_else(missing)?;
             let selected = server
                 .lens_frames
@@ -93,7 +96,7 @@ pub(crate) async fn vault_lenses_result_set_action(
 ) -> MemoryResult<LensResultSetActionResult> {
     let held = server
         .lens_frames
-        .card(auth, &input.event.action.card_id)
+        .card(&input.event.action.card_id)
         .ok_or_else(missing)?;
     // Keep the same per-card lock the existing UI event door holds through effects.
     let state = held.state.lock().await;
