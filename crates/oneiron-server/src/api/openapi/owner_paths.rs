@@ -84,6 +84,24 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/checkpoint-policy",
+        summary: "The checkpoint root policy in force, the revision a surface presents back as seen, the owner's choice in force, every live choice and any conflict among them.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/checkpoint-policy",
+        summary: "The owner selects the roots that attest his checkpoint images and their quorum, on any host; a stale seen is a conflict.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/checkpoint-policy/clear",
+        summary: "The owner clears his checkpoint policy choice; the policy his hosting posture fixes holds again. A stale seen is a conflict.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/cleanup",
         summary: "Cleanup review.",
         row: None,
@@ -260,7 +278,13 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/connectors/proxy",
         summary: "Admits the OpenAI proxy for one paired actor.",
-        row: None,
+        row: Some("vault.connectors.proxy.admit"),
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/connectors/proxy/revoke-write",
+        summary: "Revokes only the proxy remember grant at the reviewed key and slate revision, preserving read access and stored memory.",
+        row: Some("vault.connectors.proxy.revoke_write"),
     },
     OwnerRoute {
         method: "post",

@@ -238,3 +238,28 @@ impl HostSlipIssuer {
         ))
     }
 }
+
+impl HostSlipIssuer {
+    /// Signs a stripped guest body together with its live grant/pact context.
+    pub fn sign_guest_document_envelope(
+        &self,
+        context: crate::task_verb::sdk::GuestDocumentContext,
+        body: crate::federation::GuestShareEnvelopeBody,
+    ) -> Result<crate::task_verb::sdk::GuestDocumentEnvelope> {
+        let envelope = crate::federation::sign_guest_share_envelope(body, |bytes| {
+            Ok(self.signing.sign(bytes).to_bytes().to_vec())
+        })?;
+        let encoded = crate::federation::encode_guest_share_envelope(&envelope)?;
+        let signature = self
+            .signing
+            .sign(&context.transcript(&encoded)?)
+            .to_bytes()
+            .to_vec();
+        Ok(crate::task_verb::sdk::GuestDocumentEnvelope {
+            context,
+            envelope,
+            signer: crate::entity_id::bytes_to_hex_lower(&self.signing.verifying_key().to_bytes()),
+            signature,
+        })
+    }
+}

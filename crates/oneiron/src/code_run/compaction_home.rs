@@ -12,7 +12,7 @@ use crate::claim::{
     CallerLocality, ClaimApprovalStatus, ClaimLifecycleStatus, ClaimReadStatus, ClaimSubject,
     PointRead, ReadRow, decode_claim_body,
 };
-use crate::compaction::{CompactionHomeRef, SelfCompactionUnavailable};
+use crate::compaction::{CompactionHomeRef, HOME_PART_WORN, SelfCompactionUnavailable};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::DiaryReadOutcome;
@@ -313,7 +313,7 @@ impl CompactionHome {
             refs.push(CompactionHomeRef {
                 part: item.part.as_str().to_owned(),
                 row: Some(item.row),
-                state: if fits { "present" } else { "truncated" }.to_owned(),
+                state: if fits { HOME_PART_WORN } else { "truncated" }.to_owned(),
             });
         }
         for (part, why) in &self.absent {

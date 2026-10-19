@@ -38,7 +38,8 @@ impl CompactionDriver {
     /// Read-time views project this record; the driver advances only on commit.
     /// A self-written summary (FIX 4465) lands only with its `landing`: its
     /// packet must be the gated request's own, and its receipt rides the
-    /// coverage row and the summary's birth.
+    /// coverage row and the summary's birth. The same transaction declares
+    /// its Dreamer check (FIX 4465 B), so a crash loses neither or both.
     #[expect(
         clippy::too_many_arguments,
         reason = "the coverage landing's arguments plus a self-written summary's landing"
@@ -78,6 +79,7 @@ impl CompactionDriver {
                         mint,
                         writer.as_ref(),
                     )?;
+                    declare_self_check_in_txn(vault, txn, mint, writer.as_ref())?;
                     placement.settle_in(&vault.store, txn, mint.summary_id())
                 },
             )
@@ -139,7 +141,14 @@ impl CompactionDriver {
     /// summary and the run's coverage land in the room's overlay through
     /// `session`, on the `route` the run captured at entry, and drop with it
     /// at close. Such a summary takes no birth stamp: it is never exported.
-    /// The vector its pass embedded, if any, stages with it.
+    /// The vector its pass embedded, if any, stages with it. A self-written
+    /// one's receipt rides its overlay coverage row (FIX 4465 B); it declares
+    /// no Dreamer check, since nothing of the room reaches base, where the
+    /// Dreamer reads.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the overlay landing's arguments plus a self-written summary's receipt"
+    )]
     pub(crate) fn integrate_in_overlay(
         &mut self,
         session: &crate::off_record::OffRecordSession<'_>,
@@ -148,6 +157,7 @@ impl CompactionDriver {
         mut gated: GatedCompaction,
         accumulated: &[CompactionWindowMessage],
         span: &crate::code_run::ExecutorOutputSpan,
+        writer: Option<&crate::compaction::CompactionExecution>,
     ) -> Result<SwapPlan> {
         let session_ref = gated.request.session_ref;
         let vector = gated.vector.take();
@@ -160,7 +170,8 @@ impl CompactionDriver {
                 request,
                 product,
                 vector.as_ref(),
-                |view, txn, mint| span.put_coverage_in(view, txn, mint, None),
+                writer,
+                |view, txn, mint| span.put_coverage_in(view, txn, mint, writer),
             )
         })
     }
@@ -170,10 +181,13 @@ impl CompactionDriver {
     /// in its overlay ([`Self::integrate_in_overlay`]). A room already on
     /// record at entry lands its summary in base under the room's saver, the
     /// way the run's other base writes land, born at the run's `placement`.
-    /// An anonymous room keeps nothing: its route refuses.
+    /// An anonymous room keeps nothing: its route refuses. A self-written
+    /// summary (FIX 4465 B) lands only with its `self_landing`, checked as a
+    /// canonical run's is, its receipt on the same route.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the overlay landing's arguments plus the base birth placement"
+        reason = "the overlay landing's arguments, the base birth placement and a self-written \
+                  summary's landing"
     )]
     pub(crate) fn integrate_in_session(
         &mut self,
@@ -184,9 +198,27 @@ impl CompactionDriver {
         gated: GatedCompaction,
         accumulated: &[CompactionWindowMessage],
         span: &crate::code_run::ExecutorOutputSpan,
+        self_landing: Option<crate::compaction::SelfLanding>,
     ) -> Result<SwapPlan> {
+        if let Some(self_landing) = &self_landing {
+            let WindowLog::Host { run: Some(run), .. } = gated.request.log else {
+                return Err(Error::InvariantViolation(
+                    "a self-written epoch is cut from no run's log",
+                ));
+            };
+            Self::check_self_landing(&gated, run, byline, self_landing)?;
+        }
+        let writer = self_landing.map(|landing| landing.execution);
         if route.target() == crate::session_overlay::RouteTarget::Overlay {
-            return self.integrate_in_overlay(session, route, byline, gated, accumulated, span);
+            return self.integrate_in_overlay(
+                session,
+                route,
+                byline,
+                gated,
+                accumulated,
+                span,
+                writer.as_ref(),
+            );
         }
         let session_ref = gated.request.session_ref;
         session.executor_land_base_epoch(route, |vault, landing| {
@@ -197,10 +229,16 @@ impl CompactionDriver {
                     byline,
                     request,
                     product,
-                    None,
+                    writer.as_ref(),
                     landing,
                     |txn, mint| {
-                        vault.put_code_run_compaction_coverage_in_txn(txn, span, mint, None)?;
+                        vault.put_code_run_compaction_coverage_in_txn(
+                            txn,
+                            span,
+                            mint,
+                            writer.as_ref(),
+                        )?;
+                        declare_self_check_in_txn(vault, txn, mint, writer.as_ref())?;
                         placement.settle_in(&vault.store, txn, mint.summary_id())
                     },
                 )
@@ -279,4 +317,27 @@ impl CompactionDriver {
             retained_tail: accumulated.to_vec(),
         })
     }
+}
+
+/// A self-written epoch's Dreamer check, declared in its mint's own
+/// transaction under a key its landing fixes (FIX 4465 B): a replayed mint
+/// finds the declaration it made, and a rolled-back one leaves none.
+fn declare_self_check_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    mint: &crate::compaction::EpochMint,
+    writer: Option<&crate::compaction::CompactionExecution>,
+) -> Result<()> {
+    let Some(writer) = writer else {
+        return Ok(());
+    };
+    crate::dreamer_runner::maintenance::declare_compaction_check_in_txn(
+        vault,
+        txn,
+        crate::compaction::CompactionLanding::Epoch {
+            summary: mint.summary_id(),
+            epoch: mint.epoch(),
+        },
+        writer,
+    )
 }
