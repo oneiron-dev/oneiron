@@ -1,14 +1,17 @@
-//! A resumed fold: the stored log's reference fold carried over a chain of
-//! new rows off its one main head, without folding the whole log again. It
-//! answers only where its guards show the reference reaches the same fold
-//! from the same inputs; otherwise it declines, and the caller folds the log.
+//! A resumed fold: the stored log's reference fold carried over the new rows
+//! past its frontier, without folding the whole log again. It answers only
+//! where its guards show the reference reaches the same fold from the same
+//! inputs; otherwise it declines, and the caller folds the log.
 //!
 //! The base is the last once fold of a strict fold that settled in one round
-//! with one install round and no fold with no vouch. A new row joins it only
-//! when it extends the head, is an op that changes no earlier row's fate
-//! (an agent enrollment, a fresh binding, a slip mint or consume, a fresh
-//! federation confirm, a critical-write confirm), and folds valid on its own
-//! parent's state.
+//! with one install round and no fold with no vouch. It keeps the state at
+//! its one main head and at each world's side leaf. A new row joins it only
+//! when it is an op that changes no earlier row's fate (an agent enrollment,
+//! a fresh binding, a slip mint or consume, a fresh federation confirm, a
+//! critical-write confirm, a world key record), folds valid on its own
+//! parents' states, and stands on that frontier: a main row extends the
+//! head as one chain, and a world key record names kept states and earlier
+//! new rows alone (FIX 4881, [`side_tail`]).
 //!
 //! The base also indexes the history it folded (OF-469): each row's signer,
 //! sequence, parents and world, and whole only the rows a later fold reads
@@ -24,6 +27,8 @@ use super::fold_project::{RowStates, Settled};
 use super::revoke_proof::RevokeFacts;
 use super::*;
 use crate::EntityId;
+
+mod side_tail;
 
 /// What a strict fold leaves for a resumed one: its last once fold, unless a
 /// second strict round, a second install round or a fold with no vouch spoiled
@@ -101,7 +106,7 @@ pub(super) struct OnceParts<'a> {
     pub(super) fold: &'a AuthorityFold,
 }
 
-/// What no row of the chain changes.
+/// What no row of the tail changes.
 struct Settlement {
     revoke_facts: RevokeFacts,
     retired_keys: BTreeSet<AuthorityKey>,
@@ -120,21 +125,19 @@ struct Settlement {
 struct Once {
     judged: BTreeSet<AuthorityEntryHash>,
     head: AuthorityEntryHash,
-    head_state: FoldState,
+    /// The main head and each side leaf, with its state and ancestor counts.
+    frontier: BTreeMap<AuthorityEntryHash, side_tail::FrontierPoint>,
     /// The merge of every surviving state, before any restrictive fact.
     merged: FoldState,
     /// The final merge's revocations, by key.
     revocations: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
     settlement: Arc<Settlement>,
-    /// The judged rows' slip issuers. No op a chain admits names a root or
-    /// a consent device, so a chain never adds one.
+    /// The judged rows' slip issuers. No op a tail admits names a root or
+    /// a consent device, so a tail never adds one.
     issuers: BTreeSet<AuthorityKey>,
     uncounted: BTreeSet<AuthorityEntryHash>,
     pairs: u64,
     counted_pairs: u64,
-    head_ancestors: u64,
-    head_counted_ancestors: u64,
-    head_counted: bool,
     /// Every binding any state holds, by key.
     writers: BTreeMap<AuthorityKey, BTreeSet<(EntityId, String)>>,
     /// The keys some main state holds a live binding for.
@@ -191,8 +194,7 @@ impl Once {
         let (Some(head), None) = (heads.next().copied(), heads.next()) else {
             return None;
         };
-        let head_state = states[&head].clone();
-        if head_state.federation_pacts != merged.federation_pacts {
+        if states[&head].federation_pacts != merged.federation_pacts {
             return None;
         }
         let final_merged = final_merged?;
@@ -202,7 +204,7 @@ impl Once {
             .filter(|(_, entry)| super::log_budget::is_uncounted(entry, &issuers))
             .map(|(hash, _)| *hash)
             .collect::<BTreeSet<_>>();
-        let head_ancestors = &entry_ancestors[&head];
+        let frontier = side_tail::frontier_of(by_hash, states, entry_ancestors, &uncounted, head)?;
         let mut writers = BTreeMap::<_, BTreeSet<_>>::new();
         let mut bound_keys = BTreeSet::new();
         let (mut confirm_ids, mut confirm_nonces) = (BTreeSet::new(), BTreeSet::new());
@@ -241,7 +243,7 @@ impl Once {
         Some(Self {
             judged: by_hash.keys().copied().collect(),
             head,
-            head_state,
+            frontier,
             merged,
             revocations: final_merged.actor_revocation_hashes.clone(),
             settlement: Arc::new(Settlement {
@@ -255,12 +257,6 @@ impl Once {
             }),
             pairs: entry_ancestors.values().map(|past| past.len() as u64).sum(),
             counted_pairs: counted_ancestor_pairs,
-            head_ancestors: head_ancestors.len() as u64,
-            head_counted_ancestors: head_ancestors
-                .iter()
-                .filter(|hash| !uncounted.contains(*hash))
-                .count() as u64,
-            head_counted: !uncounted.contains(&head),
             issuers,
             uncounted,
             writers,
@@ -286,8 +282,10 @@ impl Once {
 /// 4535), a grant travel choice (only its own grant's choices), a checkpoint
 /// policy choice or a home pick (each only the vault's choices of its kind),
 /// a person's conversation training choice (only that person's choices), an
-/// owner work request or result (each judges only its own work). A resumed
-/// fold and a fold past an adopted checkpoint take only these.
+/// owner work request or result (each judges only its own work), a world key
+/// record (it fills only its own key's slots, or is refused as a no-op, FIX
+/// 4881). A resumed fold and a fold past an adopted checkpoint take only
+/// these, and each still folds through its own transition.
 pub(super) fn admits_past(
     merged: &FoldState,
     entry: &AuthorityLogEntry,
@@ -321,7 +319,8 @@ pub(super) fn admits_past(
         | AuthorityOp::HomeNodePick(_)
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::OwnerWorkRequest(_)
-        | AuthorityOp::OwnerWorkResult(_) => true,
+        | AuthorityOp::OwnerWorkResult(_)
+        | AuthorityOp::WorldKeyWraps(_) => true,
         AuthorityOp::FederationConfirm(action) => {
             confirms.0.insert(action.confirm_id) && confirms.1.insert(action.nonce)
         }
@@ -786,8 +785,9 @@ pub(in crate::authority) fn fold_stored_log(
 }
 
 impl FoldBase {
-    /// The fold of the base's log and the tail, a chain of new rows off its
-    /// head, as the reference reaches it; None wherever a guard fails.
+    /// The fold of the base's log and the tail, the new rows on its frontier
+    /// ([`side_tail`]), as the reference reaches it; None wherever a guard
+    /// fails.
     fn resume(&self, log: StoredTail<'_>, inputs: &Inputs) -> Option<(AuthorityFold, Self)> {
         let StoredTail {
             tail,
@@ -818,73 +818,7 @@ impl FoldBase {
         {
             return None;
         }
-        // The new rows are one chain off the head.
-        let mut next = BTreeMap::new();
-        for (hash, entry) in &new_rows {
-            let [parent] = entry.parent_hashes.as_slice() else {
-                return None;
-            };
-            if next.insert(*parent, *hash).is_some() {
-                return None;
-            }
-        }
-        let mut chain = Vec::with_capacity(new_rows.len());
-        let mut tip = once.head;
-        while let Some(child) = next.get(&tip) {
-            chain.push(*child);
-            tip = *child;
-        }
-        if chain.len() != new_rows.len() {
-            return None;
-        }
-        let mut confirms = (once.confirm_ids.clone(), once.confirm_nonces.clone());
-        for hash in &chain {
-            let entry = new_rows[hash];
-            let retired = std::iter::once(&entry.signer)
-                .chain(&entry.cosigns)
-                .any(|signature| settlement.retired_keys.contains(&signature.public_key));
-            if settlement.missing_parents.contains(hash)
-                || super::world_privacy::side_world(&entry.op).is_some()
-                || observations
-                    .sequence_floors
-                    .get(hash)
-                    .is_some_and(|floor| entry.seq < *floor)
-                || retired
-                || !once.admits(entry, &mut confirms)
-            {
-                return None;
-            }
-        }
-        // The memory floor and counted pairs over the whole log, exactly as
-        // `entry_ancestor_index` counts them: each new row's ancestry is the
-        // head's, the head, and the chain before it. The chain adds no slip
-        // issuer, so only its own slip rows join the uncounted.
-        let mut uncounted = once.uncounted.clone();
-        uncounted.extend(
-            chain
-                .iter()
-                .filter(|hash| super::log_budget::is_uncounted(new_rows[*hash], &once.issuers)),
-        );
-        let (mut pairs, mut counted_pairs) = (once.pairs, once.counted_pairs);
-        let (mut ancestors, mut counted_ancestors) =
-            (once.head_ancestors, once.head_counted_ancestors);
-        let mut tip_counted = once.head_counted;
-        for hash in &chain {
-            ancestors += 1;
-            counted_ancestors += u64::from(tip_counted);
-            pairs += ancestors;
-            tip_counted = !uncounted.contains(hash);
-            if tip_counted {
-                counted_pairs += counted_ancestors;
-            }
-        }
         let memory_floor_bytes = super::log_budget::fold_memory_floor(Some(&observations.policy));
-        if super::log_budget::fold_projected_bytes(once.judged.len() + chain.len(), pairs)
-            > memory_floor_bytes
-        {
-            return None;
-        }
-        // Each new row folds on its parent's state as the scheduler folds it.
         let (consent_arm, _) = super::fold_engine::own_log_inputs(inputs.posture, None);
         let no_handoff_line = BTreeSet::new();
         let context = FoldContext {
@@ -900,50 +834,54 @@ impl FoldBase {
             memory_floor_bytes,
             pin: inputs.pin.as_ref(),
         };
-        let mut states = BTreeMap::from([(once.head, once.head_state.clone())]);
-        for hash in &chain {
-            let entry = new_rows[hash];
-            let EntryFold::Ready(state) =
-                super::entry_transition::fold_entry_state(entry, *hash, &states, context)
-            else {
-                return None;
-            };
-            if state.federation_pacts != once.merged.federation_pacts {
-                return None;
-            }
-            states.insert(*hash, state);
-        }
+        // The new rows: main rows one chain off the head, and world key
+        // records on the kept frontier, each on its own parents' states.
+        let mut tail = side_tail::fold_tail(once, &self.rows, &new_rows, context)?;
         let mut merged = once.merged.clone();
         let mut writers = once.writers.clone();
         let mut bound_keys = once.bound_keys.clone();
-        for hash in &chain {
-            merged = merge_states(&merged, &states[hash]);
-            add_writers(&mut writers, &states[hash]);
-            add_bound_keys(&mut bound_keys, &states[hash]);
+        for (hash, state) in &tail.states {
+            merged = merge_states(&merged, state);
+            add_writers(&mut writers, state);
+            if tail.main.contains(hash) {
+                add_bound_keys(&mut bound_keys, state);
+            }
         }
         let mut valid_entries = once.fold.valid_entries.clone();
-        valid_entries.extend(chain.iter().copied());
+        valid_entries.extend(tail.order.iter().copied());
+        // The projection reads each world-key envelope from the rows read
+        // whole, the base's and the tail's.
+        let tail_rows: Vec<_> = tail.order.iter().map(|hash| (*hash, new_rows[hash])).collect();
+        let mut projected = self.projected.clone();
+        for (hash, entry) in &tail_rows {
+            if is_projected(&entry.op) {
+                projected.insert(*hash, (*entry).clone());
+            }
+        }
         let rows = Resumed {
             marks: &settlement.marks,
             fold: &once.fold,
             revocations: &once.revocations,
             bound_keys: &once.bound_keys,
-            chain: chain.iter().map(|hash| (*hash, &states[hash])).collect(),
+            chain: tail
+                .states
+                .iter()
+                .filter(|(hash, _)| tail.main.contains(*hash))
+                .map(|(hash, state)| (*hash, state))
+                .collect(),
             writers: &writers,
             missed: Cell::new(false),
         };
-        // The projection reads rows only for world-key envelopes, and no
-        // chain row is a world-key record.
         let (fold, final_merged) = super::fold_project::project_once(
             Settled {
                 merged: Some(merged.clone()),
                 valid_entries,
-                by_hash: &self.projected,
+                by_hash: &projected,
                 revoke_facts: &settlement.revoke_facts,
                 retired_keys: settlement.retired_keys.clone(),
                 closed_handoffs: settlement.closed_handoffs.clone(),
                 unsettled: settlement.unsettled,
-                counted_ancestor_pairs: counted_pairs,
+                counted_ancestor_pairs: tail.counted_pairs,
                 issues: settlement.issues.clone(),
             },
             &rows,
@@ -954,21 +892,16 @@ impl FoldBase {
             || !super::world_privacy::worlds_unmoved_past(
                 &fold,
                 &once.fold,
-                chain.iter().map(|hash| (*hash, new_rows[hash])),
+                tail_rows.iter().copied(),
             )
         {
             return None;
         }
         // The install's own view, in its first and only round, over the
         // rows its stale-roster window reads.
-        let projected: Vec<&AuthorityLogEntry> = self
-            .projected
-            .values()
-            .chain(chain.iter().map(|hash| new_rows[hash]))
-            .filter(|entry| is_projected(&entry.op))
-            .collect();
+        let read_whole: Vec<&AuthorityLogEntry> = projected.values().collect();
         let mut view = super::install_fold::install_view(
-            &projected,
+            &read_whole,
             fold.clone(),
             first_seen_at_secs,
             Some(now_secs),
@@ -978,18 +911,14 @@ impl FoldBase {
         if view.rests_on_counting() && !super::install_fold::stale_chains(&view).is_empty() {
             return None;
         }
-        let chained: Vec<_> = chain.iter().map(|hash| (*hash, new_rows[hash])).collect();
-        super::install_fold::finish_install_fold_of(&self.rows_with(&chained), &mut view);
+        super::install_fold::finish_install_fold_of(&self.rows_with(&tail_rows), &mut view);
         let mut judged = once.judged.clone();
-        judged.extend(chain.iter().copied());
+        judged.extend(tail.order.iter().copied());
         let mut rows = self.rows.clone();
-        let mut projected = self.projected.clone();
-        for (hash, entry) in &chained {
+        for (hash, entry) in &tail_rows {
             rows.insert(*hash, RowSummary::of(entry));
-            if is_projected(&entry.op) {
-                projected.insert(*hash, (*entry).clone());
-            }
         }
+        let frontier = tail.take_frontier(once, &new_rows);
         let next = Self {
             inputs: self.inputs.clone(),
             rows,
@@ -998,22 +927,19 @@ impl FoldBase {
             floors: observations.sequence_floors.clone(),
             once: Once {
                 judged,
-                head: tip,
-                head_state: states.remove(&tip)?,
+                head: tail.tip,
+                frontier,
                 merged,
                 revocations: final_merged?.actor_revocation_hashes,
                 settlement: Arc::clone(settlement),
                 issuers: once.issuers.clone(),
-                uncounted,
-                pairs,
-                counted_pairs,
-                head_ancestors: ancestors,
-                head_counted_ancestors: counted_ancestors,
-                head_counted: tip_counted,
+                uncounted: tail.uncounted,
+                pairs: tail.pairs,
+                counted_pairs: tail.counted_pairs,
                 writers,
                 bound_keys,
-                confirm_ids: confirms.0,
-                confirm_nonces: confirms.1,
+                confirm_ids: tail.confirms.0,
+                confirm_nonces: tail.confirms.1,
                 fold,
             },
         };
@@ -1034,7 +960,9 @@ pub(super) struct Resumed<'a> {
     pub(super) revocations: &'a BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
     /// The keys some main state of the base holds a live binding for.
     pub(super) bound_keys: &'a BTreeSet<AuthorityKey>,
-    /// The new rows' states.
+    /// The new main rows' states: the writer frontiers a projection adds,
+    /// as a full fold's are main rows alone. A world key record's state
+    /// still joins the merge and the writer census.
     pub(super) chain: Vec<(AuthorityEntryHash, &'a FoldState)>,
     /// Every binding any state holds, by key, the new rows' included.
     pub(super) writers: &'a BTreeMap<AuthorityKey, BTreeSet<(EntityId, String)>>,

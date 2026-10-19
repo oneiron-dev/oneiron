@@ -181,6 +181,18 @@ pub(crate) fn adopted_authority_checkpoint_in_txn(
         .map_err(|_| Error::CorruptedIndex("adopted authority checkpoint"))
 }
 
+/// The image id the stored adoption's pin names, read without verifying the
+/// image: what a fault report names when the adopted image fails its
+/// re-verify (FIX 5248). None when nothing was adopted.
+pub(crate) fn adopted_checkpoint_id_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<[u8; 32]>> {
+    Ok(ADOPTED
+        .get(store, txn, &())?
+        .map(|adopted| adopted.pin.checkpoint))
+}
+
 impl Vault {
     /// What [`Vault::adopt_authority_checkpoint_in_txn`] compares, read in
     /// `txn`'s snapshot.

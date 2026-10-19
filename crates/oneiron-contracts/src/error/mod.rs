@@ -29,7 +29,7 @@ pub use self::legal_hold::{
 };
 pub use self::maintenance::{CompactionPacketError, MaintenanceError};
 pub use self::off_record::OffRecordError;
-pub use self::record::{RecordError, RoomLiveSpeakersHold};
+pub use self::record::{RecordError, RoomLiveSpeakersHold, SEAL_STANDING_RECONCILE_TEXT};
 pub use self::registry::RegistryError;
 pub use self::relay::RelayError;
 pub use self::secret::{KitRecord, SecretError};
@@ -266,6 +266,8 @@ pub enum ErrorKind {
     AuthorityLogFull,
     /// The authority fold needs history this vault does not hold (OF-469).
     AuthorityHistoryRequired,
+    /// The decision seals' standing could not be verified (FIX 5248).
+    SealStandingUnverifiable,
     InvalidSecretCustodyBody,
     SecretNameInUse,
     SecretCustodyNotActive,
