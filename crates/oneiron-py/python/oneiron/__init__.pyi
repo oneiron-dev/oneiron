@@ -1135,6 +1135,10 @@ class Oneiron:
             """Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion."""
         @property
         def schedules(self) -> "Oneiron._VaultWeaveSchedulesVerbs": ...
+        @property
+        def setting_changes(self) -> "Oneiron._VaultWeaveSettingChangesVerbs": ...
+        @property
+        def digest_feedback(self) -> "Oneiron._VaultWeaveDigestFeedbackVerbs": ...
     class _VaultWeaveDigestVerbs:
         def __call__(self, spec: Facade.WeaveDigestRequest) -> Facade.WeaveDigestView | None:
             """One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none."""
@@ -1171,6 +1175,16 @@ class Oneiron:
             """Sets one reader's daily or weekly digest schedule and section recipe under the owner's proof."""
         def clear(self, spec: Facade.WeaveReaderRef) -> Facade.WeaveScheduleCleared:
             """Stops one reader's digest schedule under the owner's proof, keeping its saved periods."""
+    class _VaultWeaveSettingChangesVerbs:
+        def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.WeaveDigestSettingChange]:
+            """Lists the Coach's proposed and applied changes to the owner's own digest rhythm and section order, newest first, under the owner's proof."""
+        def answer(self, spec: Facade.WeaveDigestSettingAnswer) -> Facade.WeaveDigestSettingChange:
+            """Accepts, as the owner's own act, or declines one proposed change to the owner's digest settings; a stale accept applies nothing."""
+        def undo(self, spec: Facade.WeaveDigestSettingUndo) -> Facade.WeaveDigestSettingChange:
+            """Undoes one applied or accepted change to the owner's digest settings, restoring the rhythm and section order before it while the settings are unchanged since."""
+    class _VaultWeaveDigestFeedbackVerbs:
+        def put(self, spec: Facade.WeaveDigestFeedback) -> Facade.WeaveDigestFeedback:
+            """Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are."""
     class _VaultInboxVerbs:
         @property
         def concerns(self) -> "Oneiron._VaultInboxConcernsVerbs": ...

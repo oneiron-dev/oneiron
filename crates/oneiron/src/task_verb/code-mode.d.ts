@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1092 code-mode rows (1067 host rows, 25 run rows), 3634 declarations.
-// Replies: 975 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1096 code-mode rows (1071 host rows, 25 run rows), 3640 declarations.
+// Replies: 979 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -101,7 +101,7 @@ declare namespace Sdk {
   type IdentityActNowRequest = { name: string; conversation?: string | null; effect: IdentityEffect; prompt: string; someone_new: string };
   type IdentityActNow = { state: "settled"; entity: string } | { state: "unknown" } | { state: "deciding"; ask: string } | { state: "needs_person"; ask: string; card: unknown };
   type InboxListRequest = { after?: string | null; limit?: number | null };
-  type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask" | "world_privacy_changed" | "world_privacy_proposed";
+  type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask" | "world_privacy_changed" | "world_privacy_proposed" | "weave_digest_settings_changed";
   type NotificationSource = { producer: string; event: string; job_kind?: string | null; attempt?: string | null; run?: string | null; result?: string | null; detail?: string | null };
   type NotificationRow = { id: string; learned_at: number; kind: NotificationKind; source: NotificationSource; subject_refs: string[]; created_at: number; origin_conversation?: string | null; seen: boolean; acked: boolean };
   type NotificationPage = { rows: NotificationRow[]; next_after?: string | null };
@@ -856,6 +856,12 @@ declare namespace Sdk {
   type WeaveScheduleHold = { until: number; because?: string | null };
   type WeaveScheduleView = { reader: WeaveReaderRef; cadence: WeaveDigestCadence; next_due_at: number; sections: WeaveSectionInput[]; held?: WeaveScheduleHold | null };
   type WeaveScheduleCleared = { cleared: boolean };
+  type WeaveDigestSettingChangeStatus = "pending" | "applied" | "accepted" | "declined" | "superseded" | "undone";
+  type WeaveDigestSettings = { cadence: WeaveDigestCadence; sections: WeaveSectionKind[] };
+  type WeaveDigestSettingChange = { change_ref: string; status: WeaveDigestSettingChangeStatus; before: WeaveDigestSettings; after: WeaveDigestSettings; reason: string; coach_ref: string; grant_ref?: string | null; base_generation: number; after_generation?: number | null; undone_generation?: number | null; created_at: number; settled_at?: number | null };
+  type WeaveDigestSettingAnswer = { change_ref: string; accept: boolean };
+  type WeaveDigestSettingUndo = { change_ref: string };
+  type WeaveDigestFeedback = { preferred_cadence?: WeaveDigestCadence | null; lead_section?: WeaveSectionKind | null; keep_current?: boolean };
   type WeaveDigestRendered = { scheduled_for: number; rendered_at: number; narrowing: ScopedReadReceipt };
   type InboxLensRequest = { identity?: string | null; agent?: string | null; limit?: number | null; before_impact?: number | null; before_at?: number | null; before_id?: string | null };
   type InboxLensKind = "conversation" | "waiting_on_you" | "coordination_update" | "concern";
@@ -6297,6 +6303,10 @@ declare const vault: Sdk.VaultHost & {
       /** Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due. */
       render(input: Sdk.EmptyRequest): Promise<Sdk.WeaveDigestRendered | null | StoredResult>;
     };
+    digest_feedback: {
+      /** Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are. */
+      put(input: Sdk.WeaveDigestFeedback): Promise<Sdk.WeaveDigestFeedback | StoredResult>;
+    };
     /** Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion. */
     enqueue(input: Sdk.WeaveEnqueueRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
     item: {
@@ -6334,6 +6344,14 @@ declare const vault: Sdk.VaultHost & {
       list(input: Sdk.EmptyRequest): Promise<Sdk.WeaveScheduleView[] | StoredResult>;
       /** Sets one reader's daily or weekly digest schedule and section recipe under the owner's proof. */
       put(input: Sdk.WeaveScheduleView): Promise<Sdk.WeaveScheduleView | StoredResult>;
+    };
+    setting_changes: {
+      /** Accepts, as the owner's own act, or declines one proposed change to the owner's digest settings; a stale accept applies nothing. */
+      answer(input: Sdk.WeaveDigestSettingAnswer): Promise<Sdk.WeaveDigestSettingChange | StoredResult>;
+      /** Lists the Coach's proposed and applied changes to the owner's own digest rhythm and section order, newest first, under the owner's proof. */
+      list(input: Sdk.EmptyRequest): Promise<Sdk.WeaveDigestSettingChange[] | StoredResult>;
+      /** Undoes one applied or accepted change to the owner's digest settings, restoring the rhythm and section order before it while the settings are unchanged since. */
+      undo(input: Sdk.WeaveDigestSettingUndo): Promise<Sdk.WeaveDigestSettingChange | StoredResult>;
     };
   };
   /** The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined. */

@@ -183,7 +183,7 @@ fn release_board_replay(
     };
     if crate::device_local::withholds_retained(
         &server.vault,
-        auth.locality(),
+        auth.destination(),
         replay.rows,
         replay.body,
     )

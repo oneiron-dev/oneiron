@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1057 facade rows, 3584 declarations.
-Inputs: 992 of 1057 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 947 of 1057 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1061 facade rows, 3590 declarations.
+Inputs: 996 of 1061 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 951 of 1061 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
@@ -387,7 +387,7 @@ IdentityActNow = IdentityActNowSettled | IdentityActNowUnknown | IdentityActNowD
 class InboxListRequest(TypedDict):
     after: NotRequired[str | None]
     limit: NotRequired[int | None]
-NotificationKind = Literal["job_completed", "job_failed", "job_cancelled", "job_abandoned", "finding", "event_received", "import_finished", "digest", "ask", "world_privacy_changed", "world_privacy_proposed"]
+NotificationKind = Literal["job_completed", "job_failed", "job_cancelled", "job_abandoned", "finding", "event_received", "import_finished", "digest", "ask", "world_privacy_changed", "world_privacy_proposed", "weave_digest_settings_changed"]
 class NotificationSource(TypedDict):
     producer: str
     event: str
@@ -4154,6 +4154,32 @@ class WeaveScheduleView(TypedDict):
     held: NotRequired[WeaveScheduleHold | None]
 class WeaveScheduleCleared(TypedDict):
     cleared: bool
+WeaveDigestSettingChangeStatus = Literal["pending", "applied", "accepted", "declined", "superseded", "undone"]
+class WeaveDigestSettings(TypedDict):
+    cadence: WeaveDigestCadence
+    sections: list[WeaveSectionKind]
+class WeaveDigestSettingChange(TypedDict):
+    change_ref: str
+    status: WeaveDigestSettingChangeStatus
+    before: WeaveDigestSettings
+    after: WeaveDigestSettings
+    reason: str
+    coach_ref: str
+    grant_ref: NotRequired[str | None]
+    base_generation: int
+    after_generation: NotRequired[int | None]
+    undone_generation: NotRequired[int | None]
+    created_at: int
+    settled_at: NotRequired[int | None]
+class WeaveDigestSettingAnswer(TypedDict):
+    change_ref: str
+    accept: bool
+class WeaveDigestSettingUndo(TypedDict):
+    change_ref: str
+class WeaveDigestFeedback(TypedDict):
+    preferred_cadence: NotRequired[WeaveDigestCadence | None]
+    lead_section: NotRequired[WeaveSectionKind | None]
+    keep_current: NotRequired[bool]
 class WeaveDigestRendered(TypedDict):
     scheduled_for: int
     rendered_at: int

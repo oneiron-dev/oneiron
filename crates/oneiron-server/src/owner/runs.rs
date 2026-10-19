@@ -16,6 +16,7 @@ use oneiron::claim::{CallerLocality, ClaimBody};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeActorClass;
 use oneiron::run_tree::{GateConsentBundle, GateConsentBundleAction};
+use oneiron::settings::ReadDestination;
 use oneiron::write_envelope::WriteActor;
 use oneiron::{ClaimSubject, EntityId, Vault};
 use serde::Serialize;
@@ -84,9 +85,13 @@ pub(crate) struct CommitmentWakeScheduled {
     pub(crate) error: Option<String>,
 }
 
-/// Runs with proposals waiting, most proposals first, of those a caller at
-/// `locality` may see.
-pub(crate) fn pending(vault: &Vault, locality: CallerLocality) -> OwnerResult<Vec<PendingRun>> {
+/// Runs with proposals waiting, most proposals first, of those a caller
+/// whose rows go to `destination` may see.
+pub(crate) fn pending(
+    vault: &Vault,
+    destination: impl Into<ReadDestination>,
+) -> OwnerResult<Vec<PendingRun>> {
+    let destination = destination.into();
     let mut runs = Vec::new();
     for group in vault.pending_gate_consent_groups(PENDING_SCAN_LIMIT)? {
         let Some(run_id) = group.dreamer_run_id else {
@@ -97,7 +102,7 @@ pub(crate) fn pending(vault: &Vault, locality: CallerLocality) -> OwnerResult<Ve
             .iter()
             .map(|record| EntityId::from_bytes(record.claim_id))
             .collect::<oneiron::Result<Vec<_>>>()?;
-        if !run_kept(vault, locality, members)? {
+        if !run_kept(vault, &destination, members)? {
             runs.push((run_id, group.records.len()));
         }
     }
@@ -159,25 +164,30 @@ fn run_named(vault: &Vault, run: RunName<'_>) -> OwnerResult<String> {
     }
 }
 
-/// Whether a caller at `locality` is kept from the run whose proposals are
-/// `members`: off this device a run holding a proposal a device-local world
-/// keeps is none of its runs, and none of its members is named (DEC-0005).
-/// Such a run reads as one that does not exist.
-fn run_kept(vault: &Vault, locality: CallerLocality, members: Vec<EntityId>) -> OwnerResult<bool> {
-    if locality == CallerLocality::OnDevice {
+/// Whether a caller whose rows go to `destination` is kept from the run
+/// whose proposals are `members`: off this device a run holding a proposal a
+/// world withheld from there keeps is none of its runs, and none of its
+/// members is named (DEC-0005, FIX 4937). Such a run reads as one that does
+/// not exist.
+fn run_kept(
+    vault: &Vault,
+    destination: &ReadDestination,
+    members: Vec<EntityId>,
+) -> OwnerResult<bool> {
+    if !destination.is_off_device() {
         return Ok(false);
     }
     let count = members.len();
-    Ok(vault.off_device_readable(members)?.len() != count)
+    Ok(vault.off_device_readable_for(members, destination)?.len() != count)
 }
 
-/// The bundle a caller at `locality` may see of the run `run_id`, with its
-/// members' bodies.
+/// The bundle a caller whose rows go to `destination` may see of the run
+/// `run_id`, with its members' bodies.
 fn visible_bundle(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     run_id: &str,
-    locality: CallerLocality,
+    destination: &ReadDestination,
 ) -> OwnerResult<(GateConsentBundle, Vec<ClaimBody>)> {
     // Resolve admits an act on what this shows, so the proof is revalidated,
     // not only read.
@@ -188,7 +198,7 @@ fn visible_bundle(
         .iter()
         .map(|member| member.claim_id)
         .collect();
-    if run_kept(vault, locality, members)? {
+    if run_kept(vault, destination, members)? {
         return Err(oneiron::Error::EntityNotFound.into());
     }
     Ok((bundle, bodies))
@@ -199,10 +209,10 @@ pub(crate) fn review(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     run: RunName<'_>,
-    locality: CallerLocality,
+    destination: impl Into<ReadDestination>,
 ) -> OwnerResult<RunReview> {
     let run_id = run_named(vault, run)?;
-    let (bundle, bodies) = visible_bundle(vault, owner, &run_id, locality)?;
+    let (bundle, bodies) = visible_bundle(vault, owner, &run_id, &destination.into())?;
     Ok(review_of(bundle, bodies))
 }
 
@@ -275,12 +285,13 @@ pub(crate) fn resolve(
     run: RunName<'_>,
     bundle_id: &str,
     action: GateConsentBundleAction,
-    locality: CallerLocality,
+    destination: impl Into<ReadDestination>,
 ) -> OwnerResult<RunResolved> {
+    let destination = destination.into();
     let expected = parse_bundle_id(bundle_id)?;
     let run_id = run_named(vault, run)?;
-    if locality == CallerLocality::OffDevice {
-        visible_bundle(vault, owner, &run_id, locality)?;
+    if destination.locality() == CallerLocality::OffDevice {
+        visible_bundle(vault, owner, &run_id, &destination)?;
     }
     let receipt = vault
         .resolve_gate_consent_bundle(owner, expected, &run_id, action, vault.now_recorded_at())
