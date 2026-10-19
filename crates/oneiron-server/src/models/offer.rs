@@ -8,6 +8,7 @@ use oneiron::llm::media::AiOperation;
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferBinding, OfferRoute, PaidConnector};
 use oneiron::settings::ReadDestination;
 use oneiron::{ModelId, ModelLocality};
+#[cfg(feature = "mesh")]
 use oneiron_llm_own_server::MeshPeerProof;
 
 use crate::config::models::{ProviderConfig, ProviderKind};
@@ -45,6 +46,7 @@ pub enum OfferEndpoint {
     Unproved,
     /// One of the owner's other nodes, as the last authenticated handshake
     /// with it proved it; unproved until one did.
+    #[cfg(feature = "mesh")]
     Mesh(MeshPeerProof),
 }
 
@@ -66,6 +68,7 @@ impl OfferEndpoint {
         match self {
             Self::OnDevice => ReadDestination::on_device(),
             Self::Unproved => ReadDestination::toward(PeerMachine::Unknown),
+            #[cfg(feature = "mesh")]
             Self::Mesh(proof) => ReadDestination::toward(proof.peer()),
         }
     }
