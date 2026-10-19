@@ -225,6 +225,8 @@ impl ScopedRead<'_> {
                 value.push(None);
                 continue;
             };
+            // A file-plane ASSET reads as its body, never its manifest.
+            let raw = self.vault.scoped_row_bytes_in_txn(&txn, &record.id, raw)?;
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             value.push(Some((

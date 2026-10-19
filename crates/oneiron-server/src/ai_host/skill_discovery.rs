@@ -11,6 +11,7 @@
 //! the host's model rungs for what the rules leave open. A doubtful answer
 //! takes a Coach note and holds in the unclear ledger.
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
+use oneiron::limit_ask::EngineLimit;
 use oneiron::receipt::ReceiptRecord;
 use oneiron::skill_attribution::{
     ATTRIBUTION_CALL_PURPOSE_NAME, AttributionNotes, AttributionVerdict, DeviationCause,
@@ -27,18 +28,9 @@ use crate::server::SyncServer;
 const RECEIPTS: usize = 32;
 /// What one job's calls may spend.
 const BUDGET_UNITS: u64 = 1 << 20;
-/// Most bytes of the attempt's run the call reads, and of each call, output,
-/// task or error in it.
-const TRACE_BYTES: usize = 48 * 1024;
-const ITEM_BYTES: usize = 2 * 1024;
-/// Most bytes of skill text the call reads, and of one skill's. Every loaded
-/// skill is judged; more skills share the text room.
-const SKILLS_BYTES: usize = 32 * 1024;
-const SKILL_BYTES: usize = 8 * 1024;
-/// Most bytes of a deviation's reason kept.
+/// Most bytes of a deviation's reason kept: the evidence door's policy reason
+/// budget refuses a longer one.
 const REASON_BYTES: usize = 1024;
-/// Most bytes of one doubtful answer's note kept.
-const NOTE_BYTES: usize = 1024;
 /// The note writer's instruction. The outcome goes as data.
 const NOTE_SYSTEM: &str = "You write the Coach's note on one attribution the decision ladder \
     could not settle. The data you get is a finished attempt's routing facts, the label the \
@@ -83,8 +75,11 @@ pub(super) fn run(server: &SyncServer, admitted: &DreamerAdmittedAttempt) -> one
         .map_err(|error| oneiron::Error::InvalidConfig(format!("no owner principal: {error}")))?;
     let host = server.decision_host();
     let ladder = host.attribution_ladder();
-    let notes = CoachNotes {
-        models: &source.models,
+    let notes = MeasuredNotes {
+        vault,
+        coach: CoachNotes {
+            models: &source.models,
+        },
     };
     let decisions = host.attribution_decisions(&ladder, principal, &notes);
     let report = vault.run_coach_skill_discovery(admitted, RECEIPTS, &source, Some(&decisions))?;
@@ -110,8 +105,7 @@ impl ReceiptAttributionSource for TraceClassifier<'_> {
         &self,
         receipt: &ReceiptRecord,
     ) -> oneiron::Result<Option<Vec<ReceiptAttributionFacts>>> {
-        let Some(trace) = receipt_attribution_trace(self.vault, receipt, TRACE_BYTES, ITEM_BYTES)?
-        else {
+        let Some(trace) = receipt_attribution_trace(self.vault, receipt)? else {
             return Ok(None);
         };
         // A pack that loaded no skill has nothing to judge.
@@ -122,7 +116,20 @@ impl ReceiptAttributionSource for TraceClassifier<'_> {
         if trace.steps.is_empty() && trace.outputs.is_empty() && trace.last_error.is_none() {
             return Ok(None);
         }
-        let skill_bytes = (SKILLS_BYTES / trace.skills.len()).min(SKILL_BYTES);
+        // Every loaded skill is judged on its whole text: the longest and the
+        // count are measured, never cut.
+        let longest = trace
+            .skills
+            .iter()
+            .map(|skill| skill.desc.len())
+            .max()
+            .unwrap_or(0);
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::MaintenanceRowItems, trace.skills.len() as u64);
         let data = serde_json::json!({
             "outcome": receipt.outcome,
             "kind": trace.kind,
@@ -130,13 +137,12 @@ impl ReceiptAttributionSource for TraceClassifier<'_> {
             "last_error": trace.last_error,
             "calls": trace.steps,
             "outputs": trace.outputs,
-            "cut": trace.cut,
             "skills": trace
                 .skills
                 .iter()
                 .map(|skill| serde_json::json!({
                     "revision": skill.revision,
-                    "text": clip(&skill.desc, skill_bytes),
+                    "text": skill.desc,
                 }))
                 .collect::<Vec<_>>(),
         });
@@ -202,7 +208,7 @@ impl CoachNotes<'_> {
                 None
             });
         match written.as_deref().map(str::trim) {
-            Some(text) if !text.is_empty() => clip(text, NOTE_BYTES).to_owned(),
+            Some(text) if !text.is_empty() => text.to_owned(),
             _ if answer.verdict == AttributionVerdict::Unclear => {
                 "no label fits the attempt's record; no Coach note was written".to_owned()
             }
@@ -214,6 +220,28 @@ impl CoachNotes<'_> {
                 request.floor
             ),
         }
+    }
+}
+
+/// The sweep's notes: [`CoachNotes`], with each call's longest note measured
+/// against the engine's text row. The host passes every note on whole.
+struct MeasuredNotes<'a> {
+    vault: &'a Vault,
+    coach: CoachNotes<'a>,
+}
+
+impl AttributionNotes for MeasuredNotes<'_> {
+    fn notes(
+        &self,
+        request: &JudgeRequest<'_>,
+        answers: &[HunkVerdict],
+    ) -> oneiron::Result<Vec<Option<String>>> {
+        let notes = self.coach.notes(request, answers)?;
+        let longest = notes.iter().flatten().map(String::len).max().unwrap_or(0);
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
+        Ok(notes)
     }
 }
 

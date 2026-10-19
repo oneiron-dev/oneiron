@@ -13,9 +13,12 @@
 //! vault's owner for it (`ManagedOwnerAction`), is that owner himself (FIX
 //! 5255): the person, with every owner scope and no host credential behind
 //! him, while the vault records him as its live owner. A request with
-//! neither is served as it was, as the host's root. A slip beside an
-//! attestation of the same person stays the slip, with its own bounds;
-//! beside another person's, the request is refused.
+//! neither is anonymous (FIX 2222, FIX 5255): it names no caller, so a door
+//! that needs one refuses it, and only the public doors, whose own
+//! capability, signature or provider proof stands alone, serve it; never
+//! the host's root or the dev mode. A slip beside an attestation of the same
+//! person stays the slip, with its own bounds; beside another person's, the
+//! request is refused.
 
 use axum::http::header::AUTHORIZATION;
 use axum::http::{Extensions, HeaderMap, request::Parts};
@@ -51,7 +54,7 @@ pub(crate) fn carries_caller_slip(headers: &HeaderMap) -> bool {
 /// never touches), for the child to verify. Any other bearer or connector
 /// credential terminated at the supervisor and is removed, as is a holder
 /// proof no slip rides with, so a request without a slip reaches the child
-/// as it always has.
+/// with no caller credential at all.
 pub(crate) fn forward_caller_credentials(headers: &mut HeaderMap) {
     let bearer = carries_caller_slip(headers);
     let connector = headers
@@ -142,15 +145,17 @@ fn caller_conflicts_with_owner() -> ApiError {
 
 impl CoreAuth {
     /// The caller `headers` name on a managed vault: the slip they carry,
-    /// verified read-only, or, with none, the host's root as the supervisor
-    /// it serves. A slip that does not verify is refused, named.
+    /// verified read-only. A slip that does not verify is refused, named.
+    /// Headers that carry none name no caller: the request is anonymous and
+    /// refused here, never served as the host's root (FIX 2222). The owner
+    /// its supervisor attested is [`Self::for_managed_request`]'s, which
+    /// reads the request's extensions too.
     pub(super) fn managed_caller(
         headers: &HeaderMap,
         server: &SyncServer,
-        issuer: &oneiron::authority::HostSlipIssuer,
     ) -> Result<Self, ApiError> {
         let Some(token) = caller_slip(headers)? else {
-            return Self::managed_supervisor(server, issuer);
+            return Err(ApiError::unauthorized());
         };
         let proof = BindingProof::from_headers(headers).map_err(|_| caller_binding_refused())?;
         Self::from_slip_token(token, &proof, server.vault().as_ref()).map_err(|refused| {
@@ -200,21 +205,6 @@ impl CoreAuth {
         Ok(auth)
     }
 
-    /// The host's root on a managed vault, for a request that carries no
-    /// caller slip: all scopes, as the supervisor's own.
-    fn managed_supervisor(
-        server: &SyncServer,
-        issuer: &oneiron::authority::HostSlipIssuer,
-    ) -> Result<Self, ApiError> {
-        let proof = server
-            .vault()
-            .verified_host_root_slip(issuer)
-            .map_err(|_| ApiError::unauthorized())?;
-        let mut auth = Self::from_verified(proof, true)?;
-        auth.principal = "managed-supervisor".to_owned();
-        Ok(auth)
-    }
-
     /// The one caller of a request, from its headers and its extensions
     /// together: on a managed vault [`Self::for_managed_request`]'s, on any
     /// other the credential its headers carry. The caller is then placed
@@ -236,11 +226,12 @@ impl CoreAuth {
     /// judges its caller without awaiting, from the request's headers,
     /// extensions and path: the slip the request carries, else the owner
     /// managed ingress verified for it ([`Self::for_attested_owner`]), with
-    /// no header authenticated first, else the host's own credential as
-    /// before. A slip beside another person's attestation is refused. A
-    /// managed vault's callers never reach the account-key door, so it is
-    /// the same one caller. `None` on any other vault, whose door keeps its
-    /// own header path.
+    /// no header authenticated first. A request with neither is anonymous
+    /// and refused ([`Self::managed_caller`]): no host credential stands in
+    /// for a missing one. A slip beside another person's attestation is
+    /// refused. A managed vault's callers never reach the account-key door,
+    /// so it is the same one caller. `None` on any other vault, whose door
+    /// keeps its own header path.
     pub(crate) fn for_managed_request(
         headers: &HeaderMap,
         extensions: &Extensions,

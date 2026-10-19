@@ -92,7 +92,7 @@ impl Vault {
             {
                 out.push(ScopedRecord {
                     id,
-                    bytes: raw,
+                    bytes: self.scoped_row_bytes_in_txn(&txn, &id, raw)?,
                     scope: Some(scope),
                     suppressed: false,
                     birth: None,

@@ -584,6 +584,69 @@ impl AgentDispatcher<'_> {
         self.vault.store.notify_attempt_observers();
         Ok(result_ref)
     }
+
+    /// The answer a completed resident run's result names, for a reader that
+    /// must see exactly what the run produced (a seal check, OF-544):
+    /// `result_ref` is the TURN [`Self::attach_resident_run_result`] made for
+    /// `attempt`, and the answer is that run's own complete output, as its
+    /// digest and length. `None` for any other result, a TURN with no answer,
+    /// or a run that no longer holds that output. The TURN's id is never read
+    /// as an output digest.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn resident_run_answer(
+        &self,
+        attempt: AttemptId,
+        result_ref: &str,
+    ) -> Result<Option<crate::compaction::output::OutputRef>> {
+        let Ok(turn) = EntityId::from_hex(result_ref) else {
+            return Ok(None);
+        };
+        if turn != EntityId::derive(RUN_RESULT, &[attempt.as_bytes().as_slice()])? {
+            return Ok(None);
+        }
+        let Some(bytes) = self.vault.get(&turn)? else {
+            return Ok(None);
+        };
+        let Ok(artifact) = rmpv::decode::read_value(&mut bytes.as_slice()) else {
+            return Ok(None);
+        };
+        let root = Some(&artifact);
+        let attempt_ref = crate::entity_id::bytes_to_hex_lower(attempt.as_bytes());
+        let kind = result_field(root, "kind").and_then(Value::as_str);
+        let of = result_field(root, "attempt_ref").and_then(Value::as_str);
+        if kind != Some("resident.run_result") || of != Some(attempt_ref.as_str()) {
+            return Ok(None);
+        }
+        let answer = result_field(root, "answer");
+        let run = result_field(root, "run_ref")
+            .and_then(Value::as_str)
+            .and_then(|run| EntityId::from_hex(run).ok());
+        let handle = result_field(answer, "handle").and_then(Value::as_str);
+        let length = result_field(answer, "bytes").and_then(Value::as_u64);
+        let (Some(run), Some(handle), Some(length)) = (run, handle, length) else {
+            return Ok(None);
+        };
+        let Some(replay) = self.vault.get_code_run_replay_record(&run)? else {
+            return Ok(None);
+        };
+        Ok(replay
+            .outputs
+            .iter()
+            .find(|output| output.complete && output.handle == handle && output.raw_len == length)
+            .map(crate::code_run::CodeRunRawOutput::output_ref))
+    }
+}
+
+/// One key of a result TURN's map.
+fn result_field<'a>(value: Option<&'a Value>, key: &str) -> Option<&'a Value> {
+    value?
+        .as_map()?
+        .iter()
+        .find(|(name, _)| name.as_str() == Some(key))
+        .map(|(_, value)| value)
 }
 
 /// The run id every inbox wake of `agent` carries.
