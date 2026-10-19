@@ -29,6 +29,14 @@ use crate::workspace_roster::{OwnerProjectSigner, RosterActor, RosterErase};
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 
+mod history;
+pub(crate) use self::history::erase_card_actor_in_txn;
+pub use self::history::{
+    ACTOR_ERASE_PROJECT_VERDICT, ACTOR_ERASE_SETTLED_PROJECT_CARD, ProjectVerdictErase,
+    SettledProjectCardErase,
+};
+use self::history::{card_mint, live_card, live_verdict, shown_card};
+
 /// The attempt kind of one conversation's pending project question.
 pub(crate) const PROJECT_DETECTION_KIND: &str = "project.proposal.detect.v1";
 
@@ -113,6 +121,11 @@ pub struct ProjectCardRecord {
     pub drafted_by: RosterActor,
     pub state: ProjectCardState,
     pub at: u64,
+    /// Set on a listed card that named an actor that was erased (FIX 4229):
+    /// it is history, in erased form, and nothing confirms, dismisses or
+    /// replays it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub history: bool,
 }
 
 /// What the drafting agent proposes on one source message. The principal and
@@ -139,50 +152,6 @@ pub struct ProjectCardConfirmRequest {
 
 fn refused(reason: &str) -> Error {
     Error::InvalidConfig(format!("project card: {reason}"))
-}
-
-/// Erasing `actor` from the host-held cards (FIX 3520): a card no tap
-/// answered that the actor drafted, is for, would lead or sits on the board
-/// of goes with its place in its conversation, when
-/// [`ACTOR_ERASE_PENDING_PROJECT`] says so. A minted or dismissed card keeps
-/// its row, its card and its time, and names no drafter. One-way, in the
-/// erase's own transaction. An id whose entity is no actor scans nothing.
-///
-/// # Errors
-///
-/// Storage errors, or a card row that cannot be read.
-pub(crate) fn erase_card_actor_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
-    if names_no_actor(vault, wtxn, actor)? {
-        return Ok(());
-    }
-    let hex = actor.to_hex();
-    let mut doomed = Vec::new();
-    let mut erased = Vec::new();
-    for (key, mut record) in CARDS.scan(&vault.store, wtxn)? {
-        let card = &record.card;
-        let staged = record.state == ProjectCardState::Proposed
-            && (record.drafted_by.is(*actor)
-                || card.principal_ref == hex
-                || card.leader_agent_def_ref == hex
-                || card.board_human_refs.contains(&hex));
-        if staged && ACTOR_ERASE_PENDING_PROJECT == RosterErase::Delete {
-            doomed.push((key, record.conversation));
-        } else if record.drafted_by.forget(*actor) {
-            erased.push((key, record));
-        }
-    }
-    for (key, conversation) in &doomed {
-        CARDS.delete(&vault.store, wtxn, key)?;
-        CONVERSATION_CARDS.delete(&vault.store, wtxn, &(*conversation, *key))?;
-    }
-    for (key, record) in &erased {
-        CARDS.put(&vault.store, wtxn, key, record)?;
-    }
-    Ok(())
 }
 
 /// Erasing `actor` from the pending project questions (FIX 3520): a
@@ -237,7 +206,7 @@ fn live_card_in(
 ) -> Result<bool> {
     for row in CONVERSATION_CARDS.iter_from(&vault.store, txn, conversation.as_bytes())? {
         let ((_, key), _) = row?;
-        let Some(record) = CARDS.get(&vault.store, txn, &key)? else {
+        let Some(record) = shown_card(&vault.store, txn, &key)? else {
             continue;
         };
         if record.state == ProjectCardState::Proposed
@@ -448,7 +417,7 @@ fn mark_minted_in_txn(
     key: &[u8; 32],
     receipt: &ProjectMintReceipt,
 ) -> Result<()> {
-    let mut record = CARDS.get(&vault.store, txn, key)?.ok_or_else(invalid)?;
+    let mut record = live_card(&vault.store, txn, key)?.ok_or_else(invalid)?;
     if record.state != ProjectCardState::Proposed {
         return Err(refused("the card was already answered"));
     }
@@ -466,7 +435,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         message: EntityId,
     ) -> Result<Option<ProjectDetectionVerdict>> {
-        VERDICTS.get(&self.store, txn, &message)
+        live_verdict(&self.store, txn, &message)
     }
 
     /// One host-held card by its id, if any: the record a goal-intake run is
@@ -476,7 +445,18 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         card_id: &str,
     ) -> Result<Option<ProjectCardRecord>> {
-        CARDS.get(&self.store, txn, &card_key(card_id))
+        live_card(&self.store, txn, &card_key(card_id))
+    }
+
+    /// The state and the leader of one host-held card by its id, if any, as
+    /// stored, a card that turned history included (FIX 4229): what a
+    /// goal-intake run is checked against (OF-501).
+    pub(crate) fn project_card_mint_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        card_id: &str,
+    ) -> Result<Option<(ProjectCardState, String)>> {
+        card_mint(&self.store, txn, &card_key(card_id))
     }
 
     /// One host-held card by its id, if any, in a read of its own: the card
@@ -507,7 +487,7 @@ impl Vault {
         let key = card_key(card_id);
         let record = {
             let txn = self.store.env.read_txn()?;
-            CARDS.get(&self.store, &txn, &key)?.ok_or_else(invalid)?
+            live_card(&self.store, &txn, &key)?.ok_or_else(invalid)?
         };
         if record.state == ProjectCardState::Dismissed {
             return Err(refused("a dismissed card never mints"));
@@ -601,8 +581,7 @@ impl Memory<'_> {
         let drafter = self.actor();
         let at = crate::unix_seconds_now();
         self.with_verified_actor_write_txn(|txn| {
-            let verdict = VERDICTS
-                .get(&vault.store, txn, &message)?
+            let verdict = live_verdict(&vault.store, txn, &message)?
                 .ok_or_else(|| refused("no project question answered yes on this message"))?;
             if verdict.answer != ProjectDetectionAnswer::Yes || verdict.house != Some(drafter) {
                 return Err(refused("this agent was not asked to draft this card").into());
@@ -623,7 +602,7 @@ impl Memory<'_> {
             if let Some(thread) = source.thread {
                 card = card.on_thread(source.conversation, thread)?;
             }
-            if let Some(stored) = CARDS.get(&vault.store, txn, &key)? {
+            if let Some(stored) = live_card(&vault.store, txn, &key)? {
                 return if stored.card == card {
                     Ok(stored.card)
                 } else {
@@ -644,6 +623,7 @@ impl Memory<'_> {
                     drafted_by: RosterActor::Actor(drafter),
                     state: ProjectCardState::Proposed,
                     at,
+                    history: false,
                 },
             )?;
             CONVERSATION_CARDS.put(&vault.store, txn, &(source.conversation, key), &message)?;
@@ -654,6 +634,8 @@ impl Memory<'_> {
     /// The cards shown in a conversation, each with its state: to the person
     /// each is for, the agent that drafted it, and the members of the room it
     /// sits in. No client surface draws them yet; this is the read they use.
+    /// A card that named an erased actor is listed in erased form, marked
+    /// history (FIX 4229).
     pub fn projects_proposals(
         &self,
         conversation: EntityId,
@@ -664,7 +646,7 @@ impl Memory<'_> {
         let mut cards = Vec::new();
         for row in CONVERSATION_CARDS.iter_from(&vault.store, &txn, conversation.as_bytes())? {
             let ((_, key), _) = row?;
-            let Some(record) = CARDS.get(&vault.store, &txn, &key)? else {
+            let Some(record) = shown_card(&vault.store, &txn, &key)? else {
                 continue;
             };
             let member = match record.card.source_room_ref.as_deref() {
@@ -689,7 +671,7 @@ impl Memory<'_> {
         let vault = self.vault();
         let actor = self.actor().to_hex();
         self.with_verified_actor_write_txn(|txn| {
-            let mut record = CARDS.get(&vault.store, txn, &key)?.ok_or_else(invalid)?;
+            let mut record = live_card(&vault.store, txn, &key)?.ok_or_else(invalid)?;
             if record.card.principal_ref != actor {
                 return Err(refused("only the card's person dismisses it").into());
             }

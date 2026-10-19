@@ -59,18 +59,32 @@ pub(super) const SCOPE_KIND_COMPANION_PROFILE: &str = "companion_profile";
 
 pub(super) const SCOPE_KIND_CALENDAR: &str = "calendar";
 
+/// The principal a brief share's inert history names once its recipient was
+/// erased (FIX 4231): no one. No live decoder reads it as an id.
+const ERASED_PRINCIPAL: &str = crate::receipt::ERASED_CALL_IDENTITY;
+
 /// Encodes an AccessGrant body in canonical MessagePack field order.
 pub fn encode_access_grant_body(grant: &AccessGrant) -> Result<Vec<u8>> {
+    encode_body(grant, Value::from(grant.principal_ref.to_hex()))
+}
+
+/// `grant`'s body as a brief share's inert history once its recipient was
+/// erased (FIX 4231): its live body, its principal naming no one.
+pub(crate) fn encode_erased_share_body(grant: &AccessGrant) -> Result<Vec<u8>> {
+    if !matches!(grant.scope, AccessGrantScope::SharedBrief { .. }) {
+        return Err(invalid_grant());
+    }
+    encode_body(grant, Value::from(ERASED_PRINCIPAL))
+}
+
+fn encode_body(grant: &AccessGrant, principal: Value) -> Result<Vec<u8>> {
     grant.validate()?;
     let value = Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(ACCESS_GRANT_SCHEMA_VERSION),
         ),
-        (
-            Value::from(KEY_PRINCIPAL_REF),
-            Value::from(grant.principal_ref.to_hex()),
-        ),
+        (Value::from(KEY_PRINCIPAL_REF), principal),
         (Value::from(KEY_SCOPE), encode_scope(&grant.scope)),
         (
             "authority_scope".into(),
@@ -100,21 +114,80 @@ pub fn encode_access_grant_body(grant: &AccessGrant) -> Result<Vec<u8>> {
 
 /// Decodes and validates an AccessGrant body.
 pub fn decode_access_grant_body(bytes: &[u8]) -> Result<AccessGrant> {
+    let value = read_body(bytes)?;
+    let (principal, terms) = decode_body(&value)?;
+    let grant = terms.granted_to(decode_entity_ref(principal)?);
+    grant.validate()?;
+    Ok(grant)
+}
+
+/// [`decode_access_grant_body`] for a walk over every stored grant: a brief
+/// share's inert history (FIX 4231) grants nothing, so it reads as none.
+pub(crate) fn decode_live_access_grant_body(bytes: &[u8]) -> Result<Option<AccessGrant>> {
+    match decode_access_grant_body(bytes) {
+        Ok(grant) => Ok(Some(grant)),
+        Err(_) if decode_erased_share_body(bytes).is_ok() => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// A brief share's inert history body (FIX 4231): the terms its live body
+/// held, its principal naming no one.
+pub(crate) fn decode_erased_share_body(bytes: &[u8]) -> Result<GrantTerms> {
+    let value = read_body(bytes)?;
+    let (principal, terms) = decode_body(&value)?;
+    if principal.as_str() != Some(ERASED_PRINCIPAL)
+        || !matches!(terms.scope, AccessGrantScope::SharedBrief { .. })
+        || terms.capability != terms.scope.required_capability()
+    {
+        return Err(invalid_grant());
+    }
+    Ok(terms)
+}
+
+/// A live body, or a brief share's inert history (FIX 4231).
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn validate_access_grant_body_bytes(bytes: &[u8]) -> Result<()> {
+    decode_live_access_grant_body(bytes).map(|_| ())
+}
+
+/// An AccessGrant body's terms but its principal.
+pub(crate) struct GrantTerms {
+    pub(crate) authority_scope: crate::federation::Scope,
+    pub(crate) scope: AccessGrantScope,
+    pub(crate) capability: AccessGrantCapability,
+    pub(crate) status: AccessGrantStatus,
+    pub(crate) created_at: u64,
+    pub(crate) revoked_at: Option<u64>,
+    pub(crate) expires_at: Option<u64>,
+}
+
+impl GrantTerms {
+    fn granted_to(self, principal_ref: EntityId) -> AccessGrant {
+        AccessGrant {
+            authority_scope: self.authority_scope,
+            principal_ref,
+            scope: self.scope,
+            capability: self.capability,
+            status: self.status,
+            created_at: self.created_at,
+            revoked_at: self.revoked_at,
+            expires_at: self.expires_at,
+        }
+    }
+}
+
+fn read_body(bytes: &[u8]) -> Result<Value> {
     let mut cursor = Cursor::new(bytes);
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_grant())?;
     if cursor.position() != bytes.len() as u64 {
         return Err(invalid_grant());
     }
-
-    decode_access_grant_value(&value)
+    Ok(value)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn validate_access_grant_body_bytes(bytes: &[u8]) -> Result<()> {
-    decode_access_grant_body(bytes).map(|_| ())
-}
-
-fn decode_access_grant_value(value: &Value) -> Result<AccessGrant> {
+/// A body's principal as stored, beside its other terms.
+fn decode_body(value: &Value) -> Result<(&Value, GrantTerms)> {
     let Value::Map(entries) = value else {
         return Err(invalid_grant());
     };
@@ -140,7 +213,7 @@ fn decode_access_grant_value(value: &Value) -> Result<AccessGrant> {
         return Err(invalid_grant());
     }
 
-    let principal_ref = decode_entity_ref(required_value(entries, KEY_PRINCIPAL_REF)?)?;
+    let principal = required_value(entries, KEY_PRINCIPAL_REF)?;
     let scope = decode_scope(required_value(entries, KEY_SCOPE)?)?;
     let capability = required_value(entries, KEY_CAPABILITY)?
         .as_str()
@@ -170,7 +243,7 @@ fn decode_access_grant_value(value: &Value) -> Result<AccessGrant> {
         Some(Value::Nil) => None,
         Some(value) => Some(value.as_u64().ok_or_else(invalid_grant)?),
     };
-    let grant = AccessGrant {
+    let terms = GrantTerms {
         authority_scope: if legacy {
             crate::federation::scope_codec::read_preset()
         } else {
@@ -180,7 +253,6 @@ fn decode_access_grant_value(value: &Value) -> Result<AccessGrant> {
             )?)
             .map_err(|_| invalid_grant())?
         },
-        principal_ref,
         scope,
         capability,
         status,
@@ -188,8 +260,7 @@ fn decode_access_grant_value(value: &Value) -> Result<AccessGrant> {
         revoked_at,
         expires_at,
     };
-    grant.validate()?;
-    Ok(grant)
+    Ok((principal, terms))
 }
 
 pub(super) fn encode_scope(scope: &AccessGrantScope) -> Value {
