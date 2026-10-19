@@ -409,6 +409,7 @@ fn answer_app_message(
                 &stamp,
             )?]
         } else if request.method.starts_with("residence.") {
+            state.countersigned |= request.method == "residence.authority.checkpoint.countersign";
             let bound = auth.clone();
             // The machine this socket proved, judged again now: residence
             // reads serve it by its own world read settings (OF-534 G6).
