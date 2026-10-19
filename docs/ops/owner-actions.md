@@ -1173,6 +1173,37 @@ revoked ones included. `POST /v1/owner/decisions/rules/revoke` with
 `{"id": "<32 hex>"}` revokes one (the undo). After that the row answers
 nothing, and the question goes up the ladder again.
 
+## Place signing fields on a PDF (the field editor)
+
+`GET /sign/editor` opens the field geography editor. It needs your
+owner-grade credential, as before: your top-scope slip with its holder
+proof, or your managed vault's attested owner. The page reads the PDF and
+the geography pack from your own files; it reads no private PDF from the
+vault and stores nothing there. Export saves the pack as a local download.
+
+Each time the page loads it gets a fresh editor token, kept only in the
+page's memory. It sends the token with its two computations, page geometry
+(`POST /sign/geometry`) and field layout (`POST /sign/layout`). The server
+keeps only the token's digest. The token admits new computations for an
+hour; one already running finishes. After that hour, or after the server
+restarts, the page says the session has ended: reload the editor and carry
+on.
+
+- No ceiling on the PDF, the pack or a select field's choices. A larger PDF
+  spools to disk and is inspected whole; only the vault's disk floor
+  (`limits.disk_reserve_bytes`) stops it, with a 507.
+- A text field still offers `max_bytes` 4096 to its signer: that is the
+  field's contract, not an upload limit.
+- Two computations run at once. The rest wait their turn; none is refused
+  for being busy.
+- A PDF past `limits.esign_geometry_body_bytes` (16 MiB), or a layout past
+  `limits.esign_body_bytes` (3 MiB), asks you whether everything is okay,
+  in the decision ladder's asks (the section above), and the work still runs.
+
+A request with no editor token, from a client that is not this page, keeps
+the old public bounds: 3 MiB layouts, 16 MiB PDFs, and two free slots with
+60 requests a minute, else 429.
+
 ## The vault key on a new host
 
 A vault's data key unlocks from any of its wraps: this device's keystore, the vault password, a

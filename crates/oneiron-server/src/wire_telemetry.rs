@@ -183,6 +183,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::EsignSignatureDocumentBytes),
         Self::Engine(EngineLimit::EsignSignatureRecipientImages),
         Self::Engine(EngineLimit::EsignBodyBytes),
+        Self::Engine(EngineLimit::EsignGeometryBodyBytes),
         Self::Engine(EngineLimit::SealOutputBytes),
         Self::Engine(EngineLimit::SealGrowthBytes),
         Self::Engine(EngineLimit::SealPdfObjects),
