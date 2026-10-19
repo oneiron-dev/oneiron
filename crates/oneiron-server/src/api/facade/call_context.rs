@@ -179,6 +179,18 @@ impl<'a> FacadeCall<'a> {
         }
     }
 
+    /// This call naming the hook pause it resumes, as a held socket's
+    /// `rpc.req` call context spells it (FIX 5526): read as
+    /// [`HOOK_ASK_HEADER`] is, a malformed one refused where the row reads
+    /// it. The handle names the pause only: the call keeps its credential,
+    /// and a pause that is gone refuses rather than running as a new call.
+    pub(crate) fn resuming_hook_ask(self, hook_ask: Option<&str>) -> Self {
+        Self {
+            hook_ask: Carried::spelled(hook_ask.map(Some), |ask| EntityId::from_hex(ask).ok()),
+            ..self
+        }
+    }
+
     /// A credential caller's call the drain runs again once its hook's ask
     /// settled proceed (ARCH-0080 §3 Ask), under its credential as it
     /// verified again now: the room turn and invocation the call named, and

@@ -1,13 +1,18 @@
 //! `host.turn.generate` (ARCH-0080 §5) around the executor's model call. The
 //! pre chain runs before a step's request is built, so a block a hook adds
 //! lands this turn; the post chain runs once the model answered, and a block
-//! it adds lands the next turn.
+//! it adds lands the next turn. A run bound to an off-record session runs its
+//! turns' hooks in its room, on the route the run captured (FIX 5563): the
+//! room keeps their records, never the vault, a hook's ask pauses the turn
+//! in RAM as a room's call does (FIX 5524), and 2c's Room rules hold for
+//! what a hook would land.
 
 use serde_json::{Value, json};
 
 use super::driver::EngineNativeExecutor;
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::ExecutorStorage;
+use crate::runtime_hooks::verb::RoomHookCall;
 use crate::runtime_hooks::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop};
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{ContentPart, LlmResponse};
@@ -15,27 +20,32 @@ use crate::{ContentPart, LlmResponse};
 /// The host verb a turn's model call runs under.
 const HOST_TURN_GENERATE: &str = "host.turn.generate";
 
-/// A turn past its pre chain, as its post chain picks it up. `None` for a run
-/// bound to an off-record session: its receipts would land on record.
-pub(super) struct TurnHooks(Option<VerbHookPre>);
+/// A turn past its pre chain, as its post chain picks it up, by the storage
+/// that owns the chain: its post chain runs in the same one.
+pub(super) enum TurnHooks {
+    /// The vault's, for a canonical run.
+    Vault(VerbHookPre),
+    /// The run's room's, on the route it captured (FIX 5563).
+    Room(VerbHookPre),
+}
 
 impl EngineNativeExecutor<'_> {
     /// Runs the pre chain of `host.turn.generate` for step `step_seq`, before
     /// the step's request is built. `Err(stop)` when a hook skipped the turn,
-    /// or asked first: the turn ends there, with the stop's reason.
+    /// or asked first: the turn ends there, with the stop's reason. A run
+    /// bound to an off-record session runs it in its room; a turn there
+    /// whose hooks cannot be read runs without them, as it did before they
+    /// ran in a room.
     ///
     /// # Errors
     ///
-    /// Storage errors as they occur.
+    /// Storage errors as they occur; in a room, its authority refusals.
     pub(super) fn pre_turn_hooks(
         &self,
         config: &EngineExecutorConfig,
         step_seq: u64,
     ) -> EngineExecutorResult<Result<TurnHooks, VerbHookStop>> {
-        let ExecutorStorage::Canonical(vault) = &self.storage else {
-            return Ok(Ok(TurnHooks(None)));
-        };
-        // A canonical run sits in no room and freezes no board epoch.
+        // A run sits in no room turn and freezes no board epoch.
         let args = json!({"room": Value::Null, "scope": Value::Null, "board_epoch": Value::Null});
         let call = VerbCall {
             verb: HOST_TURN_GENERATE.to_owned(),
@@ -50,9 +60,25 @@ impl EngineNativeExecutor<'_> {
             reader: None,
         };
         let check = |rewritten: &Value| host_args_kept(&args, rewritten);
-        Ok(vault
-            .pre_verb_hooks(call, args.clone(), &check)?
-            .map(|pre| TurnHooks(Some(pre))))
+        Ok(match &self.storage {
+            ExecutorStorage::Canonical(vault) => vault
+                .pre_verb_hooks(call, args.clone(), &check)?
+                .map(TurnHooks::Vault),
+            ExecutorStorage::Session(binding) => {
+                let how = RoomHookCall {
+                    answers_unread: true,
+                    ..RoomHookCall::default()
+                };
+                let (pre, _) = binding.session.pre_verb_hooks_in_room(
+                    &binding.route,
+                    call,
+                    args.clone(),
+                    &check,
+                    how,
+                )?;
+                pre.map(TurnHooks::Room)
+            }
+        })
     }
 
     /// Runs the post chain of `host.turn.generate` over the model's answer.
@@ -67,9 +93,6 @@ impl EngineNativeExecutor<'_> {
         turn: TurnHooks,
         response: &LlmResponse,
     ) -> EngineExecutorResult<()> {
-        let (Some(pre), ExecutorStorage::Canonical(vault)) = (turn.0, &self.storage) else {
-            return Ok(());
-        };
         let text: String = response
             .message
             .content
@@ -84,7 +107,17 @@ impl EngineNativeExecutor<'_> {
             "finish_reason": response.finish_reason,
             "usage": response.usage,
         });
-        let _ = vault.post_verb_hooks(pre, result)?;
+        match (turn, &self.storage) {
+            (TurnHooks::Vault(pre), ExecutorStorage::Canonical(vault)) => {
+                let _ = vault.post_verb_hooks(pre, result)?;
+            }
+            (TurnHooks::Room(pre), ExecutorStorage::Session(binding)) => {
+                let session = &binding.session;
+                let _ = session.post_verb_hooks_in_room(&binding.route, pre, result, true)?;
+            }
+            // A turn's storage is its run's, which never changes mid-run.
+            (TurnHooks::Vault(_) | TurnHooks::Room(_), _) => {}
+        }
         Ok(())
     }
 }

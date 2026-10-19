@@ -104,8 +104,13 @@ impl HostSelfDispatcher<'_> {
         // The call's step names the logical verb its hooks fire once for, the
         // same across replays of the step, and a call a hook's ask parked
         // keeps its invocation into a later step (ARCH-0080 §3). A hook's
-        // stop goes back to the dispatcher as `Error::VerbHook`.
-        let invocation = self.verb_invocation(&SelfCall::AgentVerb(call.clone()), site)?;
+        // stop goes back to the dispatcher as `Error::VerbHook`. That call
+        // names the ask it parked on beside its invocation, as an HTTP retry
+        // names its pause (FIX 5526): the door's memory resumes that pause,
+        // or refuses one that is gone rather than running a new call.
+        let parked = SelfCall::AgentVerb(call.clone());
+        let invocation = self.verb_invocation(&parked, site)?;
+        let origin = origin.with_hook_ask(self.parked_ask(&parked, site)?);
         let Some(site) = site.filter(|_| call.verb.writes()) else {
             let answer = door.call(&call, &origin, invocation)?;
             return Ok(connector_call_answer(
