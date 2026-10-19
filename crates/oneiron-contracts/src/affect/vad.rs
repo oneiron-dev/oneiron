@@ -1,7 +1,7 @@
 //! Core VAD value types: ranges, validation, and annotation records shared by every affect child.
 
 use serde::{Deserialize, Serialize};
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Vad {
     pub valence: f32,
     pub arousal: f32,

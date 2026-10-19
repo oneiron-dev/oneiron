@@ -791,6 +791,12 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.skills.pack_receipt", post(facade_route))
         .route("/vault.skills.outcomes.project", post(facade_route))
         .route("/vault.skills.outcomes.get", post(facade_route))
+        .route("/vault.models.manifest.read", post(facade_route))
+        .route("/vault.models.manifest.replace", post(facade_route))
+        .route("/vault.models.routes.read", post(facade_route))
+        .route("/vault.models.routes.replace", post(facade_route))
+        .route("/vault.models.roles.read", post(facade_route))
+        .route("/vault.models.roles.invoke", post(facade_route))
         .route("/vault.skills.attribution.settle", post(facade_route))
         .route("/vault.skills.attribution.read", post(facade_route))
         .route(

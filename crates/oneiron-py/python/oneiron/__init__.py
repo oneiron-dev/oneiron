@@ -3879,6 +3879,15 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         @property
+        def manifest(self) -> "Oneiron._VaultModelsManifestVerbs":
+            return Oneiron._VaultModelsManifestVerbs(self._client)
+        @property
+        def routes(self) -> "Oneiron._VaultModelsRoutesVerbs":
+            return Oneiron._VaultModelsRoutesVerbs(self._client)
+        @property
+        def roles(self) -> "Oneiron._VaultModelsRolesVerbs":
+            return Oneiron._VaultModelsRolesVerbs(self._client)
+        @property
         def catalog(self) -> "Oneiron._VaultModelsCatalogVerbs":
             return Oneiron._VaultModelsCatalogVerbs(self._client)
         @property
@@ -3887,6 +3896,33 @@ class Oneiron:
         @property
         def bindings(self) -> "Oneiron._VaultModelsBindingsVerbs":
             return Oneiron._VaultModelsBindingsVerbs(self._client)
+    class _VaultModelsManifestVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """Reads the owner-pinned v2 model manifest, or none when no manifest is configured."""
+            return json.loads(_translate(lambda: self._client.vault_models_manifest_read(json.dumps(spec))))
+        def replace(self, spec):
+            """Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."""
+            return json.loads(_translate(lambda: self._client.vault_models_manifest_replace(json.dumps(spec))))
+    class _VaultModelsRoutesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """Reads one independent model slot route with its manifest pin and effective resident narrowing."""
+            return json.loads(_translate(lambda: self._client.vault_models_routes_read(json.dumps(spec))))
+        def replace(self, spec):
+            """Replaces one model slot route within its manifest pin without changing any other slot or role binding."""
+            return json.loads(_translate(lambda: self._client.vault_models_routes_replace(json.dumps(spec))))
+    class _VaultModelsRolesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """Reads one resolved role binding with its revision-pinned model, slot, route, provider and registered catalog fingerprint; grants no execution authority."""
+            return json.loads(_translate(lambda: self._client.vault_models_roles_read(json.dumps(spec))))
+        def invoke(self, spec):
+            """Invokes a pinned model role through the configured generative, retrieval-embedder or extraction-encoder door and returns its typed output and resolved-model receipt."""
+            return json.loads(_translate(lambda: self._client.vault_models_roles_invoke(json.dumps(spec))))
     class _VaultModelsCatalogVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

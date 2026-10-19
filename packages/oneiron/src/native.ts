@@ -753,6 +753,12 @@ selfSkillsCallables(input: unknown): unknown
 vaultSkillsPackReceipt(input: unknown): unknown
 vaultSkillsOutcomesProject(input: unknown): unknown
 vaultSkillsOutcomesGet(input: unknown): unknown
+vaultModelsManifestRead(input: unknown): unknown
+vaultModelsManifestReplace(input: unknown): unknown
+vaultModelsRoutesRead(input: unknown): unknown
+vaultModelsRoutesReplace(input: unknown): unknown
+vaultModelsRolesRead(input: unknown): unknown
+vaultModelsRolesInvoke(input: unknown): unknown
 vaultSkillsAttributionSettle(input: unknown): unknown
 vaultSkillsAttributionRead(input: unknown): unknown
 vaultSkillsAttributionEvidenceRecord(input: unknown): unknown

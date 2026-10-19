@@ -86,6 +86,7 @@ pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::mesh_doors::*;
 pub(crate) use super::model_catalog_doors::*;
+pub(crate) use super::model_manifest_doors::*;
 pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
@@ -1167,7 +1168,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.booking.cancel" => crate::api::host_action::require_host_owner_act(server, auth)
             .map(drop)
             .map_err(|error| super::FacadeApiError::from(error).into_memory_error()),
-        "ai.steps.submit"
+        "vault.models.manifest.read"
+        | "vault.models.manifest.replace"
+        | "vault.models.routes.read"
+        | "vault.models.routes.replace"
+        | "vault.models.roles.read"
+        | "vault.models.roles.invoke"
+        | "ai.steps.submit"
         | "ai.steps.receipt"
         | "ai.streams.open"
         | "ai.streams.subscribe"

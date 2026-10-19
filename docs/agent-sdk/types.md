@@ -2974,11 +2974,32 @@ class Oneiron:
             """Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once."""
     class _VaultModelsVerbs:
         @property
+        def manifest(self) -> "Oneiron._VaultModelsManifestVerbs": ...
+        @property
+        def routes(self) -> "Oneiron._VaultModelsRoutesVerbs": ...
+        @property
+        def roles(self) -> "Oneiron._VaultModelsRolesVerbs": ...
+        @property
         def catalog(self) -> "Oneiron._VaultModelsCatalogVerbs": ...
         @property
         def trials(self) -> "Oneiron._VaultModelsTrialsVerbs": ...
         @property
         def bindings(self) -> "Oneiron._VaultModelsBindingsVerbs": ...
+    class _VaultModelsManifestVerbs:
+        def read(self, spec: Facade.EmptyRequest) -> Facade.ModelManifest | None:
+            """Reads the owner-pinned v2 model manifest, or none when no manifest is configured."""
+        def replace(self, spec: Facade.ModelManifestReplace) -> Facade.ModelManifest:
+            """Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."""
+    class _VaultModelsRoutesVerbs:
+        def read(self, spec: Facade.ModelRouteRead) -> Facade.ModelRouteView:
+            """Reads one independent model slot route with its manifest pin and effective resident narrowing."""
+        def replace(self, spec: Facade.ModelRouteReplace) -> Facade.ModelRouteView:
+            """Replaces one model slot route within its manifest pin without changing any other slot or role binding."""
+    class _VaultModelsRolesVerbs:
+        def read(self, spec: Facade.ModelRoleRead) -> Facade.ModelRoleReceipt:
+            """Reads one resolved role binding with its revision-pinned model, slot, route, provider and registered catalog fingerprint; grants no execution authority."""
+        def invoke(self, spec: Facade.ModelRoleInvoke) -> Facade.ModelRoleInvocation:
+            """Invokes a pinned model role through the configured generative, retrieval-embedder or extraction-encoder door and returns its typed output and resolved-model receipt."""
     class _VaultModelsCatalogVerbs:
         def refresh(self, spec: Facade.ModelCatalogRefresh) -> Facade.ModelCatalogRevision:
             """Refreshes priced model catalog rows and external-score diffs under an immutable revision; changes no role binding."""

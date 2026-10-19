@@ -729,6 +729,12 @@ both bindings and their export-census tests in one change.
 - `vault.skills.pack_receipt`
 - `vault.skills.outcomes.project`
 - `vault.skills.outcomes.get`
+- `vault.models.manifest.read`
+- `vault.models.manifest.replace`
+- `vault.models.routes.read`
+- `vault.models.routes.replace`
+- `vault.models.roles.read`
+- `vault.models.roles.invoke`
 - `vault.skills.attribution.settle`
 - `vault.skills.attribution.read`
 - `vault.skills.attribution.evidence.record`
