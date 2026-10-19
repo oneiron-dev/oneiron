@@ -7492,6 +7492,7 @@ class TrainingOffer(TypedDict):
     what_changed: NotRequired[str | None]
     check_at: int
     offered_at: int
+    source_rows: NotRequired[list[EntityId] | None]
     digest: str
 OfferAnswer = Literal["keep_baseline", "approve_switch", "approve_train", "decline", "postpone"]
 OfferIntentSwitchBody = TypedDict("OfferIntentSwitchBody", {"seat": EvalSeat, "from": OfferModelPin, "to": OfferModelPin})
@@ -7522,6 +7523,7 @@ class OfferCheck(TypedDict):
     held: NotRequired[bool | None]
     note: NotRequired[str | None]
     at: int
+    source_rows: NotRequired[list[EntityId] | None]
 class OfferView(TypedDict):
     offer: TrainingOffer
     answer: NotRequired[OfferAnswerRecord | None]

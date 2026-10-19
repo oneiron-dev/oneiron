@@ -214,9 +214,11 @@ pub use self::offer::{
     OfferCheck, OfferCheckInput, OfferCost, OfferEvidence, OfferIntent, OfferModelPin, OfferOption,
     SeatWorkload, TrainingOffer, TrainingOfferDraft, eval_authoring_skill_id, offer_skill_cell,
     pending_training_offers, record_offer_check, record_training_offer, training_offer,
-    training_offer_checks, training_offer_skill_id, training_offers,
+    training_offer_checks, training_offer_skill_id, training_offers, union_source_rows,
 };
-pub(crate) use self::offer::{pending_training_offer_in_txn, settle_training_offer_in_txn};
+pub(crate) use self::offer::{
+    erase_offer_source_in_txn, pending_training_offer_in_txn, settle_training_offer_in_txn,
+};
 pub(crate) use self::offer_switch::erase_switch_actor_in_txn;
 pub use self::offer_switch::{
     OfferSwitchReceipt, OfferSwitchUndo, SwitchOwner, model_role_seat, seat_model_role,
