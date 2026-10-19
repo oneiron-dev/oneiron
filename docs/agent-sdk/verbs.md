@@ -427,6 +427,10 @@ both bindings and their export-census tests in one change.
 - `vault.consent.create_standing_grant`
 - `vault.consent.registry`
 - `vault.consent.revoke`
+- `vault.consent.bypass_grant_warning`
+- `vault.consent.create_bypass_grant`
+- `vault.consent.active_bypass_grants`
+- `vault.consent.bypassed_effect_receipts`
 - `vault.consent.graduation.policy`
 - `vault.consent.graduation.policy.set`
 - `vault.consent.graduation.policy.clear`

@@ -3667,6 +3667,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_consent_bypass_grant_warning(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.bypass_grant_warning", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_create_bypass_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.create_bypass_grant", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_active_bypass_grants(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.active_bypass_grants", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_bypassed_effect_receipts(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.bypassed_effect_receipts", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_consent_graduation_policy(
         &self,
         input: serde_json::Value,

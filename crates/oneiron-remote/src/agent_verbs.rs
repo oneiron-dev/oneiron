@@ -1334,6 +1334,18 @@ impl OneironClient {
                 "vault.consent.revoke" => remote_agent_verb_output::<
                     oneiron::consent::lifecycle::ConsentActReceipt,
                 >(client, verb, &input),
+                "vault.consent.bypass_grant_warning" => remote_agent_verb_output::<
+                    oneiron::consent::bypass_lifecycle::BypassGrantWarningView,
+                >(client, verb, &input),
+                "vault.consent.create_bypass_grant" => remote_agent_verb_output::<
+                    Vec<oneiron::consent::lifecycle::ConsentActReceipt>,
+                >(client, verb, &input),
+                "vault.consent.active_bypass_grants" => remote_agent_verb_output::<
+                    Vec<oneiron::consent::bypass_lifecycle::BypassActiveState>,
+                >(client, verb, &input),
+                "vault.consent.bypassed_effect_receipts" => remote_agent_verb_output::<
+                    Vec<oneiron::consent::bypass_lifecycle::BypassedEffectReceipt>,
+                >(client, verb, &input),
                 "vault.consent.graduation.policy" => remote_agent_verb_output::<
                     oneiron::consent_graduation::api::GraduationPolicies,
                 >(client, verb, &input),
@@ -8201,6 +8213,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consent.revoke", value)
+    }
+    pub fn vault_consent_bypass_grant_warning(
+        &self,
+        input: &oneiron::consent::bypass_lifecycle::BypassGrantWarningRequest,
+    ) -> Result<oneiron::consent::bypass_lifecycle::BypassGrantWarningView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.bypass_grant_warning", value)
+    }
+    pub fn vault_consent_create_bypass_grant(
+        &self,
+        input: &oneiron::consent::bypass_lifecycle::CreateBypassGrantRequest,
+    ) -> Result<Vec<oneiron::consent::lifecycle::ConsentActReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.create_bypass_grant", value)
+    }
+    pub fn vault_consent_active_bypass_grants(
+        &self,
+        input: &oneiron::consent::bypass_lifecycle::ActiveBypassGrantsRequest,
+    ) -> Result<Vec<oneiron::consent::bypass_lifecycle::BypassActiveState>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.active_bypass_grants", value)
+    }
+    pub fn vault_consent_bypassed_effect_receipts(
+        &self,
+        input: &oneiron::consent::bypass_lifecycle::BypassedEffectReceiptsRequest,
+    ) -> Result<Vec<oneiron::consent::bypass_lifecycle::BypassedEffectReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.bypassed_effect_receipts", value)
     }
     pub fn vault_consent_graduation_policy(
         &self,
