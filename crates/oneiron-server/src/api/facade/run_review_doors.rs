@@ -1,9 +1,12 @@
 //! The owner's cross-kind review and run compensation, on the caller's own
 //! credential handle. The facade refuses a non-owner before any hook runs.
+//! A settlement or a revert records where his request reached this install
+//! (`surface`, the host's own reading of it): audit only (FIX 4650).
 
 use super::host_doors::{Listed, credential_listing, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
+use oneiron::authority::ActSurface;
 use oneiron::memory::run_review::{
     RevertRunOutcome, RevertRunRequest, RunReview, RunReviewRequest, RunSettleRequest,
     RunSettlement, RunSettlementRequest,
@@ -42,6 +45,7 @@ pub(crate) async fn vault_runs_settle(
     auth: &CoreAuth,
     caller: (EntityId, EdgeActorClass),
     _invocation: Option<InvocationId>,
+    surface: ActSurface,
     input: RunSettleRequest,
 ) -> Listed<RunSettlement> {
     const VERB: &str = "vault.runs.settle";
@@ -56,7 +60,9 @@ pub(crate) async fn vault_runs_settle(
         }
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        memory.settle_run_as_owner(&proof, &input)
+        memory
+            .with_owner_surface(surface)
+            .settle_run_as_owner(&proof, &input)
     })
     .await
 }
@@ -90,6 +96,7 @@ pub(crate) async fn vault_revert_run(
     auth: &CoreAuth,
     caller: (EntityId, EdgeActorClass),
     _invocation: Option<InvocationId>,
+    surface: ActSurface,
     input: RevertRunRequest,
 ) -> Listed<RevertRunOutcome> {
     const VERB: &str = "vault.revert_run";
@@ -104,7 +111,9 @@ pub(crate) async fn vault_revert_run(
         }
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        memory.revert_run_as_owner(&proof, &input)
+        memory
+            .with_owner_surface(surface)
+            .revert_run_as_owner(&proof, &input)
     })
     .await
 }
