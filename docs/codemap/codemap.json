@@ -21484,7 +21484,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 4,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -21640,6 +21640,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DreamerCheckpointDue"
+     ],
+     "path": "src/dreamer_runner/wake_park.rs",
+     "purpose": "The runner side of the normal Checkpoint resume (DOOR-144): the parks it reads, and the projection the…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DreamerTournamentEvidenceStore"
      ],
      "path": "src/dreamer_tournament/evidence.rs",
@@ -21731,7 +21744,8 @@
      "purpose": "Monotonic wake-pass clock and cooperative cancellation flag",
      "surface": {
       "const": 3,
-      "fn": 9,
+      "crate-vis": 3,
+      "fn": 14,
       "struct": 2
      }
     },
@@ -21772,6 +21786,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/driver/observe.rs",
+     "purpose": "The wake observation's seams in the pass (DOOR-144): its header and end, the attempt generations it admits…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "WakeGrain"
      ],
@@ -21803,9 +21827,9 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 1,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -21816,6 +21840,71 @@
      "purpose": "Budgeted interest-queue spending",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WakeCallState",
+      "WakeObservedAttempt",
+      "WakeObservedCall",
+      "WakeObservedCallEnd",
+      "WakeObservedCheckpoint",
+      "WakeObservedEnd",
+      "WakeObservedHeader",
+      "WakeObservedResume",
+      "WakeRef"
+     ],
+     "path": "src/dreamer_wake/observation.rs",
+     "purpose": "The wake observation (DOOR-144): what one wake pass recorded of itself",
+     "surface": {
+      "crate-vis": 10,
+      "enum": 1,
+      "fn": 3,
+      "re-export": 1,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/observation/checkpoint.rs",
+     "purpose": "The wake observation's Checkpoint half: the cut a park's own write records, the check the deadline lane arms…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/observation/live.rs",
+     "purpose": "The live half of the wake observation: the passes and admitted calls running on one open vault",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WakeLiveCall",
+      "WakeLiveState",
+      "WakeObservation",
+      "WakeObservationCursor",
+      "WakeObservationRequest",
+      "WakeObservationSelector",
+      "WakeObservedGeneration"
+     ],
+     "path": "src/dreamer_wake/observation/read.rs",
+     "purpose": "The wake observation's typed read: an attempt's or a pass's durable rows from one snapshot, one page at a…",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 1,
+      "struct": 5
      }
     },
     {
@@ -60820,7 +60909,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60834,7 +60923,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 33,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61837,7 +61926,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3772,
+   "source_files": 3778,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69955,7 +70044,7 @@
      "purpose": "Guard handle: admission, abort, reads, and settlement entry points",
      "surface": {
       "crate-vis": 1,
-      "fn": 16,
+      "fn": 17,
       "struct": 1
      }
     },
@@ -70071,6 +70160,7 @@
       "BudgetAdmission",
       "BudgetExhaustionPolicy",
       "BudgetLadderEvent",
+      "BudgetLeaseState",
       "BudgetRead",
       "BudgetSettlement",
       "BudgetSignalDeliveryChannel",
@@ -70081,7 +70171,7 @@
      "purpose": "Public budget DTOs and the exhaustion policy",
      "surface": {
       "const": 1,
-      "enum": 3,
+      "enum": 4,
       "fn": 4,
       "struct": 5
      }
