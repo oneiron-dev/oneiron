@@ -3067,7 +3067,7 @@
      "purpose": "A raw open's own machine profile, from the host's root secret (FIX 4730)",
      "surface": {
       "enum": 1,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -3140,7 +3140,7 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 11,
       "struct": 3
@@ -12686,6 +12686,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/dispatcher/agent_verb/session_write.rs",
+     "purpose": "The two writes a run bound to an off-record session stages in its room (DOOR-127; WILL L11-01, S01-2a)…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/dispatcher/connector_answer.rs",
      "purpose": "`connector.answer` (ONE-2510): a run's answer to the questions one of its connector calls waits on, sent…",
      "surface": {
@@ -13304,6 +13314,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/storage/session_write.rs",
+     "purpose": "One write a run bound to an off-record session stages in its room, kept on its receipt in the same segment…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/storage/speech_identity.rs",
      "purpose": "Deterministic conversation, turn and message ids derived from a run's identity",
      "surface": {
@@ -13426,8 +13446,25 @@
       "const": 2,
       "enum": 7,
       "fn": 20,
+      "re-export": 1,
       "struct": 30,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SessionWriteAdmission",
+      "SessionWriteCeiling"
+     ],
+     "path": "src/code_run/types/session_write.rs",
+     "purpose": "What a run bound to an off-record session writes its room under (WILL L11-01, S01-2a): the answer of its…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -35134,7 +35171,7 @@
      "path": "src/memory/session_reads.rs",
      "purpose": "The reads a code run bound to an off-record session serves through the room's own view (WILL L11-01, S01-1)…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -35145,6 +35182,16 @@
      "purpose": "NOTE and claim writes through an off-record session's handle (DOOR-127; Engine ruling 10-18 on ARCH-0052…",
      "surface": {
       "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/session_writes/routed.rs",
+     "purpose": "The room's two writes, prepared before they stage (WILL L11-01, S01-2a)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -36754,13 +36801,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/off_record/lifecycle/overlay_writes.rs",
      "purpose": "Session-bound NOTE and claim writes (DOOR-127; Engine ruling 10-18 on ARCH-0052 D1/D2): a row written…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -46151,7 +46198,7 @@
      "path": "src/session_overlay/overlay/rows.rs",
      "purpose": "Row staging, preflight, budget checks, read probes",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -61061,7 +61108,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 89,
+     "files": 92,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61663,7 +61710,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 221,
+     "files": 222,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62344,7 +62391,7 @@
    },
    "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3811,
+   "source_files": 3815,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71046,14 +71093,15 @@
      "purpose": "VaultBridge root and ActorScopedVault handle plus the facade() accessor",
      "surface": {
       "crate-vis": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "NapiHostRootProfile",
       "NapiPaired",
       "NapiWitnessTurnInput",
       "NativeClient"
@@ -71061,8 +71109,8 @@
      "path": "src/facade/client.rs",
      "purpose": "Remote-backed NativeClient SDK seam with its stamped-turn input",
      "surface": {
-      "fn": 10,
-      "struct": 3
+      "fn": 12,
+      "struct": 4
      }
     },
     {
@@ -71314,7 +71362,7 @@
      "path": "src/lib/vault.rs",
      "purpose": "Legacy buffer-oriented NapiVault binding and all its verbs",
      "surface": {
-      "fn": 29,
+      "fn": 30,
       "struct": 1
      }
     },
@@ -72221,6 +72269,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/embedded/host_root.rs",
+     "purpose": "The embedded half of [`crate::OneironClient::open_with_host_root`] (FIX 4730): the shared open, then this…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/error.rs",
      "purpose": "The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7)",
      "surface": {
@@ -72275,16 +72333,17 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "HostRootProfile",
       "OneironClient",
       "OpenOptions"
      ],
      "path": "src/lib.rs",
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
-      "fn": 17,
+      "fn": 19,
       "mod": 1,
       "re-export": 5,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -72453,10 +72512,10 @@
      "purpose": "Shared boundary caps live with the engine DTOs so HTTP ingress and SDK dispatch use the same validators"
     },
     "embedded": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The embedded backend: path resolution, the process-local vault registry, and the single-writer lease…"
     },
     "error": {
@@ -72504,7 +72563,7 @@
    },
    "over_bar": 1,
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
-   "source_files": 17,
+   "source_files": 18,
    "test_files": 8
   },
   "oneiron-retrieval": {
@@ -76823,6 +76882,16 @@
      "purpose": "A run's receipt screenshots kept for the caller its guest call came from (FIX 2150)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/code_mode_verbs/session_write.rs",
+     "purpose": "A room write a session-bound code run stages, at this connector's door (WILL L11-01, S01-2a)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -84206,7 +84275,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 444,
+     "files": 445,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -84642,7 +84711,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 816,
+   "source_files": 817,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -88373,6 +88442,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "HostRootProfile"
+     ],
+     "path": "src/host_root.rs",
+     "purpose": "`Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "Oneiron"
      ],
      "path": "src/lib.rs",
@@ -88380,7 +88462,7 @@
      "surface": {
       "const": 1,
       "fn": 10,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 1
      }
     },
@@ -88456,6 +88538,13 @@
      "layout": "file",
      "purpose": "—"
     },
+    "host_root": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the…"
+    },
     "pairing": {
      "files": 1,
      "impl_vault": false,
@@ -88466,7 +88555,7 @@
    },
    "over_bar": 4,
    "purpose": "The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound",
-   "source_files": 10,
+   "source_files": 11,
    "test_files": 0
   },
   "oneiron-vault-contract": {
