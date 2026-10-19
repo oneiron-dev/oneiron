@@ -117,6 +117,7 @@ pub(crate) use wire_decode::{
 };
 mod wire_encode;
 mod world_privacy_wait;
+pub use world_privacy_wait::{WorldPrivacyWaitResult, WorldPrivacyWaitStatus};
 pub(crate) use world_privacy_wait::{
     deliver_world_privacy_wait_for_in_txn, deliver_world_privacy_wait_in_txn,
 };
