@@ -21,7 +21,9 @@ use crate::owner::schedule::OwnerHost;
 /// Both directories are made here, private, when missing, and checked with a
 /// write. One that is missing or cannot be written is said with its reason,
 /// and the host is attached all the same: status still answers, and a backup
-/// or rehearsal names its own failure until the storage is there.
+/// or rehearsal names its own failure until the storage is there. One with no
+/// fscrypt policy, or whose policy cannot be read, is said too, and used as
+/// it is ([`say_if_unencrypted`]).
 pub(super) fn owner_host(
     config: &ServeConfig,
     rehearsal_config: oneiron::VaultConfig,
@@ -41,6 +43,8 @@ pub(super) fn owner_host(
                 error = %format!("{error:#}"),
                 "owner storage is not usable; its backups or rehearsals fail until it is"
             );
+        } else {
+            say_if_unencrypted(storage, dir);
         }
     }
     host
@@ -67,6 +71,8 @@ pub(super) fn linear_responses(config: &ServeConfig) {
             error = %format!("{error:#}"),
             "owner storage is not usable; the Linear mirror fails until it is"
         );
+    } else {
+        say_if_unencrypted("linear-responses", dir);
     }
 }
 
@@ -90,6 +96,8 @@ pub(super) fn organ_dir(managed: &super::args::ManagedArgs) -> PathBuf {
             error = %format!("{error:#}"),
             "owner storage is not usable; pack organ installs fail until it is"
         );
+    } else {
+        say_if_unencrypted("organs", &dir);
     }
     dir
 }
@@ -113,6 +121,44 @@ fn beside(data_dir: &Path, suffix: &str) -> PathBuf {
         |name| name.to_string_lossy().into_owned(),
     );
     data_dir.with_file_name(format!("{name}.{suffix}"))
+}
+
+/// Says when `dir`, made and written, has no fscrypt policy, or when its
+/// policy cannot be read (FIX 5606), opening it read-only and never through a
+/// link. It only says so: the storage is used as it is either way, a policy
+/// other than the data directory's says nothing, and nothing is changed on
+/// disk. fscrypt is Linux's; elsewhere nothing is said.
+fn say_if_unencrypted(storage: &str, dir: &Path) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        use super::isolation::{FscryptPolicy, fscrypt_policy};
+        let policy = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(dir)
+            .map_or_else(FscryptPolicy::Unverified, |held| fscrypt_policy(&held));
+        match policy {
+            FscryptPolicy::Present => {}
+            FscryptPolicy::Absent => tracing::warn!(
+                reason = "owner_storage_unencrypted",
+                storage,
+                dir = %dir.display(),
+                "owner storage has no fscrypt policy: fscrypt does not encrypt this directory at \
+                 rest; it is used as it is"
+            ),
+            FscryptPolicy::Unverified(error) => tracing::warn!(
+                reason = "owner_storage_encryption_unverified",
+                storage,
+                dir = %dir.display(),
+                %error,
+                "could not read owner storage's fscrypt policy; it is used as it is"
+            ),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (storage, dir);
 }
 
 /// Makes `dir` owner-only when it is missing, and proves a file can be

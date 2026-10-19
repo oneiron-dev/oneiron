@@ -91,7 +91,12 @@ force: the owner's backup setting, else `[backup]`. A vault our cloud hosts (man
 keeps its backups in
 `<data_dir>.backups` and makes each rehearsal's scratch copy in `<data_dir>.rehearsals`, both
 private and on the vault's own disk (`/vault/data.backups` and `/vault/data.rehearsals` in the
-vault VM); one it cannot create or write is logged at start (`owner_storage_unavailable`). The
+vault VM); one it cannot create or write is logged at start (`owner_storage_unavailable`). One
+with no fscrypt policy is logged too (`owner_storage_unencrypted`), as is one whose policy cannot
+be read (`owner_storage_encryption_unverified`); either is used as it is, and a backup stays
+sealed in its own format. A running server's backup written to a `dir` on another disk keeps the
+free-space reserve (`limits.disk_reserve_bytes`) on that disk as well as on the vault's, as a
+rehearsal's copy does. The
 server also takes a backup on demand: `POST /v1/owner/backups`. `GET /v1/owner/backups` lists the
 backups.
 
@@ -131,7 +136,11 @@ verifies its gate receipts against the vault's current key custody, and reports:
 `serve` runs; on the server, retention waits until the rehearsal has read its backup. `--scratch DIR` names a new directory the rehearsal creates and keeps, with the
 copy in `DIR/vault`; without it the copy goes in a new temp directory that is deleted
 afterwards. A failed rehearsal removes what it created. On a running server:
-`POST /v1/owner/backups/rehearse` with `{}` (the newest backup) or `{"file": "<name>"}`.
+`POST /v1/owner/backups/rehearse` with `{}` (the newest backup) or `{"file": "<name>"}`. A copy
+that is deleted afterwards is marked so (`.oneiron-disposable-scratch` in its directory, locked
+while the rehearsal runs); one a server stopped midway leaves is removed when the server next
+starts, from the server's own rehearsal directory only. A `--scratch` copy is never marked or
+touched.
 
 ## Restore
 
