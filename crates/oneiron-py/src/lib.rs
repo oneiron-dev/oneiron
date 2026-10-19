@@ -6173,6 +6173,102 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_skills_attribution_settle(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.attribution.settle")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.skills.attribution.settle", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_attribution_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.attribution.read")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.skills.attribution.read", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_attribution_evidence_record(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.skills.attribution.evidence.record")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.skills.attribution.evidence.record", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_attribution_project(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.attribution.project")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.skills.attribution.project", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_attribution_judgments(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.attribution.judgments")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.skills.attribution.judgments", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_attribution_proposals(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.attribution.proposals")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.skills.attribution.proposals", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_attribution_positive_retire(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.skills.attribution.positive.retire")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.skills.attribution.positive.retire", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn ai_steps_submit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "ai.steps.submit")?;
         let output = py

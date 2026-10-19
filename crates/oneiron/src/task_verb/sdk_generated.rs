@@ -3708,6 +3708,34 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<SkillPackCreditRequest>(),
             ),
             (
+                "vault.skills.attribution.settle",
+                crate::code_run::vault_read::request_schema::<ProposalDeltaSettleRequest>(),
+            ),
+            (
+                "vault.skills.attribution.read",
+                crate::code_run::vault_read::request_schema::<ProposalDeltaReadRequest>(),
+            ),
+            (
+                "vault.skills.attribution.evidence.record",
+                crate::code_run::vault_read::request_schema::<AttributionEvidenceRequest>(),
+            ),
+            (
+                "vault.skills.attribution.project",
+                crate::code_run::vault_read::request_schema::<AttributionProjectRequest>(),
+            ),
+            (
+                "vault.skills.attribution.judgments",
+                crate::code_run::vault_read::request_schema::<AttributionListRequest>(),
+            ),
+            (
+                "vault.skills.attribution.proposals",
+                crate::code_run::vault_read::request_schema::<AttributionListRequest>(),
+            ),
+            (
+                "vault.skills.attribution.positive.retire",
+                crate::code_run::vault_read::request_schema::<PositiveRetireRequest>(),
+            ),
+            (
                 "ai.steps.submit",
                 crate::code_run::vault_read::request_schema::<
                     crate::llm::model_step::ModelStepSubmit,
@@ -5956,6 +5984,13 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.create_deck",
     "vault.artifacts.inspect_deck",
     "vault.artifacts.propose_deck",
+    "vault.skills.attribution.settle",
+    "vault.skills.attribution.read",
+    "vault.skills.attribution.evidence.record",
+    "vault.skills.attribution.project",
+    "vault.skills.attribution.judgments",
+    "vault.skills.attribution.proposals",
+    "vault.skills.attribution.positive.retire",
     "ai.steps.submit",
     "ai.steps.receipt",
     "ai.reply",
@@ -7469,6 +7504,31 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.artifacts.propose_deck" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::DeckProposeOutcome,
         >(),
+        "vault.skills.attribution.settle" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ProposalDeltaSettlement,
+        >(),
+        "vault.skills.attribution.read" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ProposalDeltaRead,
+        >(),
+        "vault.skills.attribution.evidence.record" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::task_verb::sdk::AttributionEvidenceReceipt,
+            >()
+        }
+        "vault.skills.attribution.project" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AttributionProjection,
+        >(),
+        "vault.skills.attribution.judgments" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AttributionJudgmentsView,
+        >(),
+        "vault.skills.attribution.proposals" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AttributionProposalsView,
+        >(),
+        "vault.skills.attribution.positive.retire" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::task_verb::sdk::PositiveRetireReceipt,
+            >()
+        }
         "ai.steps.submit" => crate::code_run::vault_read::request_schema::<
             crate::llm::model_step::ModelStepReceipt,
         >(),
@@ -12936,6 +12996,55 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.skills.attribution.settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.attribution.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.attribution.evidence.record" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.attribution.project" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.attribution.judgments" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.attribution.proposals" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.attribution.positive.retire" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.steps.submit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -17306,6 +17415,27 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.skills.outcomes.get" => {
             let _input: SkillPackCreditRequest = decode(value.clone())?;
         }
+        "vault.skills.attribution.settle" => {
+            let _input: ProposalDeltaSettleRequest = decode(value.clone())?;
+        }
+        "vault.skills.attribution.read" => {
+            let _input: ProposalDeltaReadRequest = decode(value.clone())?;
+        }
+        "vault.skills.attribution.evidence.record" => {
+            let _input: AttributionEvidenceRequest = decode(value.clone())?;
+        }
+        "vault.skills.attribution.project" => {
+            let _input: AttributionProjectRequest = decode(value.clone())?;
+        }
+        "vault.skills.attribution.judgments" => {
+            let _input: AttributionListRequest = decode(value.clone())?;
+        }
+        "vault.skills.attribution.proposals" => {
+            let _input: AttributionListRequest = decode(value.clone())?;
+        }
+        "vault.skills.attribution.positive.retire" => {
+            let _input: PositiveRetireRequest = decode(value.clone())?;
+        }
         "ai.steps.submit" => {
             let _input: crate::llm::model_step::ModelStepSubmit = decode(value.clone())?;
         }
@@ -19760,6 +19890,27 @@ pub fn invoke(
             encode(vault_skills_outcomes_project(memory, decode(value)?)?)
         }
         "vault.skills.outcomes.get" => encode(vault_skills_outcomes_get(memory, decode(value)?)?),
+        "vault.skills.attribution.settle" => {
+            encode(vault_skills_attribution_settle(memory, decode(value)?)?)
+        }
+        "vault.skills.attribution.read" => {
+            encode(vault_skills_attribution_read(memory, decode(value)?)?)
+        }
+        "vault.skills.attribution.evidence.record" => encode(
+            vault_skills_attribution_evidence_record(memory, decode(value)?)?,
+        ),
+        "vault.skills.attribution.project" => {
+            encode(vault_skills_attribution_project(memory, decode(value)?)?)
+        }
+        "vault.skills.attribution.judgments" => {
+            encode(vault_skills_attribution_judgments(memory, decode(value)?)?)
+        }
+        "vault.skills.attribution.proposals" => {
+            encode(vault_skills_attribution_proposals(memory, decode(value)?)?)
+        }
+        "vault.skills.attribution.positive.retire" => encode(
+            vault_skills_attribution_positive_retire(memory, decode(value)?)?,
+        ),
         "ai.steps.submit" => encode(ai_steps_submit(memory, decode(value)?)?),
         "ai.steps.receipt" => encode(ai_steps_receipt(memory, decode(value)?)?),
         "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
@@ -26137,6 +26288,76 @@ pub fn vault_skills_outcomes_get(
     crate::task_verb::sdk::skill_pack_credit_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.outcomes.get")?,
+        &input,
+    )
+}
+pub fn vault_skills_attribution_settle(
+    memory: &Memory<'_>,
+    input: ProposalDeltaSettleRequest,
+) -> MemoryResult<crate::task_verb::sdk::ProposalDeltaSettlement> {
+    crate::task_verb::sdk::skill_attribution_settle_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.attribution.settle")?,
+        &input,
+    )
+}
+pub fn vault_skills_attribution_read(
+    memory: &Memory<'_>,
+    input: ProposalDeltaReadRequest,
+) -> MemoryResult<crate::task_verb::sdk::ProposalDeltaRead> {
+    crate::task_verb::sdk::skill_attribution_read_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.attribution.read")?,
+        &input,
+    )
+}
+pub fn vault_skills_attribution_evidence_record(
+    memory: &Memory<'_>,
+    input: AttributionEvidenceRequest,
+) -> MemoryResult<crate::task_verb::sdk::AttributionEvidenceReceipt> {
+    crate::task_verb::sdk::skill_attribution_evidence_record_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.attribution.evidence.record")?,
+        &input,
+    )
+}
+pub fn vault_skills_attribution_project(
+    memory: &Memory<'_>,
+    input: AttributionProjectRequest,
+) -> MemoryResult<crate::task_verb::sdk::AttributionProjection> {
+    crate::task_verb::sdk::skill_attribution_project_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.attribution.project")?,
+        &input,
+    )
+}
+pub fn vault_skills_attribution_judgments(
+    memory: &Memory<'_>,
+    input: AttributionListRequest,
+) -> MemoryResult<crate::task_verb::sdk::AttributionJudgmentsView> {
+    crate::task_verb::sdk::skill_attribution_judgments_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.attribution.judgments")?,
+        &input,
+    )
+}
+pub fn vault_skills_attribution_proposals(
+    memory: &Memory<'_>,
+    input: AttributionListRequest,
+) -> MemoryResult<crate::task_verb::sdk::AttributionProposalsView> {
+    crate::task_verb::sdk::skill_attribution_proposals_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.attribution.proposals")?,
+        &input,
+    )
+}
+pub fn vault_skills_attribution_positive_retire(
+    memory: &Memory<'_>,
+    input: PositiveRetireRequest,
+) -> MemoryResult<crate::task_verb::sdk::PositiveRetireReceipt> {
+    crate::task_verb::sdk::skill_attribution_positive_retire_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.attribution.positive.retire")?,
         &input,
     )
 }

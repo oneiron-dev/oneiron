@@ -21861,7 +21861,7 @@
      "purpose": "Amendment evidence doors and the judging pass",
      "surface": {
       "crate-vis": 4,
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -21911,7 +21911,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 4,
       "type": 1
      }
@@ -45799,7 +45799,7 @@
      "path": "src/skill_attribution/split.rs",
      "purpose": "The one split path both lanes judge through (ARCH-0056 §5): per-hunk answers in, a label + share vector out…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -52685,7 +52685,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 66,
+      "re-export": 67,
       "struct": 40
      }
     },
@@ -53122,7 +53122,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1010
+      "fn": 1017
      }
     },
     {
@@ -53886,6 +53886,52 @@
      "surface": {
       "fn": 4,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "AmendmentDeltaView",
+      "AmendmentEvidenceView",
+      "AmendmentJudgmentView",
+      "AmendmentShareView",
+      "AttemptJudgmentView",
+      "AttributionEvidenceReceipt",
+      "AttributionEvidenceRequest",
+      "AttributionJudgmentsView",
+      "AttributionLabel",
+      "AttributionListRequest",
+      "AttributionProjectRequest",
+      "AttributionProjection",
+      "AttributionProposalsView",
+      "FollowedStateInput",
+      "OpsSummaryView",
+      "PositiveProposalView",
+      "PositiveRetireReceipt",
+      "PositiveRetireRequest",
+      "PreferenceProposalView",
+      "ProposalAmendmentCause",
+      "ProposalArtifactView",
+      "ProposalDeltaRead",
+      "ProposalDeltaReadRequest",
+      "ProposalDeltaSettleRequest",
+      "ProposalDeltaSettlement",
+      "ProposalHunkVerdict",
+      "ProposalOpSpanView",
+      "ProposalReplacement",
+      "ProposalShareClaim",
+      "SettledHunkView",
+      "SkillEditProposalView",
+      "UnclearAttributionView",
+      "UnclearNoteView"
+     ],
+     "path": "src/task_verb/sdk_skill_attribution.rs",
+     "purpose": "Owner doors for proposal-delta settlement and skill attribution evidence",
+     "surface": {
+      "enum": 3,
+      "fn": 7,
+      "struct": 30
      }
     },
     {
@@ -60681,7 +60727,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 183,
+     "files": 184,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60849,9 +60895,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 200,
+   "over_bar": 201,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3708,
+   "source_files": 3709,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69483,7 +69529,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 981
+      "fn": 988
      }
     },
     {
@@ -70577,7 +70623,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 982
+      "fn": 989
      }
     },
     {
@@ -74131,7 +74177,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 158
+      "crate-vis": 159
      }
     },
     {
@@ -74562,6 +74608,16 @@
      "purpose": "The owner's evidence replay and recorded shared-scheduler observations",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/skill_attribution_doors.rs",
+     "purpose": "Proposal-delta settlement and skill attribution evidence, owner-only",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -82229,7 +82285,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 424,
+     "files": 425,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82658,7 +82714,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 781,
+   "source_files": 782,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82937,6 +82993,10 @@
       "AiVideoTicket",
       "AiVoice",
       "AllRelationships",
+      "AmendmentDeltaView",
+      "AmendmentEvidenceView",
+      "AmendmentJudgmentView",
+      "AmendmentShareView",
       "Anchor",
       "AnnotationAnchorView",
       "AnnotationAssignRequest",
@@ -83039,11 +83099,19 @@
       "AttemptConfession",
       "AttemptHandle",
       "AttemptId",
+      "AttemptJudgmentView",
       "AttemptLanding",
       "AttemptLandingReserve",
       "AttemptResumePoint",
       "AttemptState",
       "AttemptView",
+      "AttributionEvidenceReceipt",
+      "AttributionEvidenceRequest",
+      "AttributionJudgmentsView",
+      "AttributionLabel",
+      "AttributionProjectRequest",
+      "AttributionProjection",
+      "AttributionProposalsView",
       "AuditCase",
       "AuditCoverage",
       "AuditDraw",
@@ -84058,6 +84126,7 @@
       "FoldUnfoldRequest",
       "FoldUnfolded",
       "FolderItemInput",
+      "FollowedStateInput",
       "ForceCancelGrounds",
       "ForeignCodeApproval",
       "ForeignCodeEffect",
@@ -84830,6 +84899,7 @@
       "OpaqueChange",
       "OpenInput",
       "OpenSpendLeaseRequest",
+      "OpsSummaryView",
       "OracleReceipt",
       "OrgAdminConfigureRequest",
       "OrgAdminConfigured",
@@ -84987,10 +85057,14 @@
       "PolicySignature",
       "PolicySkipReason",
       "PolicyVerdictCategory",
+      "PositiveProposalView",
+      "PositiveRetireReceipt",
+      "PositiveRetireRequest",
       "PostmarkAtom",
       "PptxInspection",
       "PptxShapeIdentity",
       "PptxSlideIdentity",
+      "PreferenceProposalView",
       "PrepItem",
       "PrepPack",
       "PrepSection",
@@ -85039,13 +85113,23 @@
       "PromotionDisposition",
       "PromotionEvidenceReason",
       "PromotionMode",
+      "ProposalAmendmentCause",
+      "ProposalArtifactView",
       "ProposalAsk",
       "ProposalAskRefusal",
       "ProposalBundle",
+      "ProposalDeltaRead",
+      "ProposalDeltaReadRequest",
+      "ProposalDeltaSettleRequest",
+      "ProposalDeltaSettlement",
       "ProposalHeader",
+      "ProposalHunkVerdict",
       "ProposalMember",
+      "ProposalOpSpanView",
+      "ProposalReplacement",
       "ProposalSettleRequest",
       "ProposalSettlement",
+      "ProposalShareClaim",
       "ProposeInput",
       "ProposeOutput",
       "ProseSpan",
@@ -85547,6 +85631,7 @@
       "SetNoteOverridesRequest",
       "SettleVerb",
       "SettleVerdict",
+      "SettledHunkView",
       "SettledStepRequest",
       "SettledStepView",
       "ShapeApplyItem",
@@ -85661,6 +85746,7 @@
       "SkillConvertReceipt",
       "SkillConvertRequest",
       "SkillEditPreflight",
+      "SkillEditProposalView",
       "SkillForkLineage",
       "SkillForkRequest",
       "SkillGovernanceSetRequest",
@@ -86010,6 +86096,8 @@
       "TypeRef",
       "TypeStamp",
       "TypedDecision",
+      "UnclearAttributionView",
+      "UnclearNoteView",
       "UncutFamily",
       "UndoneKeep",
       "UnitAbstention",
@@ -86179,8 +86267,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 808,
-      "struct": 2515
+      "enum": 811,
+      "struct": 2544
      }
     },
     {

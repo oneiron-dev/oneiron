@@ -3396,6 +3396,41 @@ export_facade! {
     let output = client.vault_skills_outcomes_get(&input)?;
     crate::codec::lift_record("vault.skills.outcomes.get", &output)
 };
+"vault.skills.attribution.settle" => fn vault_skills_attribution_settle(&self, input: ProposalDeltaSettleRequest) -> ProposalDeltaSettlement = |client| {
+    let input: oneiron::task_verb::sdk::ProposalDeltaSettleRequest = crate::codec::lower_record("vault.skills.attribution.settle", input)?;
+    let output = client.vault_skills_attribution_settle(&input)?;
+    crate::codec::lift_record("vault.skills.attribution.settle", &output)
+};
+"vault.skills.attribution.read" => fn vault_skills_attribution_read(&self, input: ProposalDeltaReadRequest) -> ProposalDeltaRead = |client| {
+    let input: oneiron::task_verb::sdk::ProposalDeltaReadRequest = crate::codec::lower_record("vault.skills.attribution.read", input)?;
+    let output = client.vault_skills_attribution_read(&input)?;
+    crate::codec::lift_record("vault.skills.attribution.read", &output)
+};
+"vault.skills.attribution.evidence.record" => fn vault_skills_attribution_evidence_record(&self, input: AttributionEvidenceRequest) -> AttributionEvidenceReceipt = |client| {
+    let input: oneiron::task_verb::sdk::AttributionEvidenceRequest = crate::codec::lower_record("vault.skills.attribution.evidence.record", input)?;
+    let output = client.vault_skills_attribution_evidence_record(&input)?;
+    crate::codec::lift_record("vault.skills.attribution.evidence.record", &output)
+};
+"vault.skills.attribution.project" => fn vault_skills_attribution_project(&self, input: AttributionProjectRequest) -> AttributionProjection = |client| {
+    let input: oneiron::task_verb::sdk::AttributionProjectRequest = crate::codec::lower_record("vault.skills.attribution.project", input)?;
+    let output = client.vault_skills_attribution_project(&input)?;
+    crate::codec::lift_record("vault.skills.attribution.project", &output)
+};
+"vault.skills.attribution.judgments" => fn vault_skills_attribution_judgments(&self) -> AttributionJudgmentsView = |client| {
+    let input: oneiron::task_verb::sdk::AttributionListRequest = crate::codec::lower_empty("vault.skills.attribution.judgments")?;
+    let output = client.vault_skills_attribution_judgments(&input)?;
+    crate::codec::lift_record("vault.skills.attribution.judgments", &output)
+};
+"vault.skills.attribution.proposals" => fn vault_skills_attribution_proposals(&self) -> AttributionProposalsView = |client| {
+    let input: oneiron::task_verb::sdk::AttributionListRequest = crate::codec::lower_empty("vault.skills.attribution.proposals")?;
+    let output = client.vault_skills_attribution_proposals(&input)?;
+    crate::codec::lift_record("vault.skills.attribution.proposals", &output)
+};
+"vault.skills.attribution.positive.retire" => fn vault_skills_attribution_positive_retire(&self, input: PositiveRetireRequest) -> PositiveRetireReceipt = |client| {
+    let input: oneiron::task_verb::sdk::PositiveRetireRequest = crate::codec::lower_record("vault.skills.attribution.positive.retire", input)?;
+    let output = client.vault_skills_attribution_positive_retire(&input)?;
+    crate::codec::lift_record("vault.skills.attribution.positive.retire", &output)
+};
 "ai.steps.submit" => fn ai_steps_submit(&self, input: ModelStepSubmit) -> ModelStepReceipt = |client| {
     let input: oneiron::llm::model_step::ModelStepSubmit = crate::codec::lower_record("ai.steps.submit", input)?;
     let output = client.ai_steps_submit(&input)?;
