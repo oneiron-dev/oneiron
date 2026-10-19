@@ -6,6 +6,7 @@ use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::validate::{lease_claimed_record, validate_lease_owner};
 use crate::attempt_queue::{AttemptId, AttemptRecord, ClaimAttempt, ClaimOutcome};
 use crate::error::Result;
+use crate::limit_ask::EngineLimit;
 
 impl AttemptQueue<'_> {
     /// Claims one known ready row with the ordinary claim's admission: the
@@ -75,6 +76,10 @@ impl AttemptQueue<'_> {
     }
 
     /// Finds a unique retry tip in the transaction that releases the next step.
+    ///
+    /// A row visited twice is a cycle and refuses; a long lineage does not.
+    /// Past the `[limits]` `attempt_retry_tip_rows` row the walk asks whether
+    /// everything is okay and still reads the whole lineage (Rule 5).
     pub(crate) fn retry_tip_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -93,9 +98,12 @@ impl AttemptQueue<'_> {
             }
         }
         loop {
-            if !seen.insert(current.id) || seen.len() > 1024 {
-                return Err(invalid_transition("retry_tip", "cycle_or_bound"));
+            if !seen.insert(current.id) {
+                return Err(invalid_transition("retry_tip", "cycle"));
             }
+            self.store
+                .limit_watch
+                .measure(EngineLimit::AttemptRetryTipRows, seen.len() as u64);
             let Some(mut candidates) = children.remove(&current.id) else {
                 return Ok(current);
             };

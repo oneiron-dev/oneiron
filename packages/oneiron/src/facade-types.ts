@@ -465,7 +465,7 @@ export type TaskCancelReceipt = { approval: ClaimApprovalStatus; effected: boole
 /** `oneiron::task_verb::sdk_self::SteerRequest` */
 export type SteerRequest = { task_ref: string; instruction: string; key: string }
 /** `oneiron::run_tree::signal::RunSignalState` */
-export type RunSignalState = "Pending" | "Settled" | "RefusedCancelCapacity" | "RefusedCancelUnavailable"
+export type RunSignalState = "Pending" | "Settled" | "RefusedCancelUnavailable"
 /** `oneiron::task_verb::sdk_self::SteerReceipt` */
 export type SteerReceipt = { task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState }
 /** `oneiron::task_verb::highway_types::AttemptHandle` */

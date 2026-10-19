@@ -3745,8 +3745,6 @@ pub enum RunSignalState {
     Pending,
     #[serde(rename = "Settled")]
     Settled,
-    #[serde(rename = "RefusedCancelCapacity")]
-    RefusedCancelCapacity,
     #[serde(rename = "RefusedCancelUnavailable")]
     RefusedCancelUnavailable,
 }
