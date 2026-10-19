@@ -700,11 +700,21 @@ pub(crate) async fn observe_http(
         .get::<axum::extract::MatchedPath>()
         .map_or("unmatched", axum::extract::MatchedPath::as_str);
     let verb = format!("{} {route}", request.method());
-    let auth = crate::auth::CoreAuth::from_headers(
+    // The request's one caller, as its door takes it: on a managed vault the
+    // owner his supervisor attested counts as himself.
+    let auth = crate::auth::CoreAuth::for_managed_request(
         request.headers(),
-        &server.config,
-        server.vault().as_ref(),
+        request.extensions(),
+        request.uri().path(),
+        &server,
     )
+    .unwrap_or_else(|| {
+        crate::auth::CoreAuth::from_headers(
+            request.headers(),
+            &server.config,
+            server.vault().as_ref(),
+        )
+    })
     .ok();
     let actor = auth
         .as_ref()
