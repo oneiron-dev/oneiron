@@ -418,7 +418,8 @@ fn start(oneiron: &Path, settings_file: Option<&Path>, deadline: Instant) -> Bou
 }
 
 /// Whether a live process other than `child` holds the vault's writer
-/// lease, by the pid the lease's lock file records for whoever took it.
+/// lease, by the pid the lease's lock file records for whoever took it: the
+/// line's first word, as a lease held for one owner act adds a mark after it.
 fn held_by_another(vault: &Path, child: u32) -> bool {
     // Neither a link nor a FIFO, which could hold the hook past its deadline.
     let Ok(file) = std::fs::OpenOptions::new()
@@ -432,9 +433,10 @@ fn held_by_another(vault: &Path, child: u32) -> bool {
     file.metadata().is_ok_and(|metadata| metadata.is_file())
         && file.take(32).read_to_string(&mut pid).is_ok()
         && pid
-            .trim()
-            .parse::<u32>()
-            .is_ok_and(|pid| pid != child && local_servers::alive(pid))
+            .split_whitespace()
+            .next()
+            .and_then(|pid| pid.parse::<u32>().ok())
+            .is_some_and(|pid| pid != child && local_servers::alive(pid))
 }
 
 /// Whether an Oneiron server answers at `url`: `GET /.well-known/oneiron`
