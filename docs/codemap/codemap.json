@@ -46232,8 +46232,7 @@
      "path": "src/skill_hub/bootstrap.rs",
      "purpose": "Build-embedded bootstrap skills; import and activation commit together on first open",
      "surface": {
-      "crate-vis": 5,
-      "fn": 1
+      "crate-vis": 8
      }
     },
     {
@@ -46288,6 +46287,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "DefaultSkillHub",
       "ModelCatalogSync"
      ],
      "path": "src/skill_hub/default_hub.rs",
@@ -46295,8 +46295,8 @@
      "surface": {
       "const": 1,
       "crate-vis": 3,
-      "fn": 11,
-      "struct": 1
+      "fn": 13,
+      "struct": 2
      }
     },
     {
@@ -52850,7 +52850,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 67,
+      "re-export": 68,
       "struct": 40
      }
     },
@@ -53287,7 +53287,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1037
+      "fn": 1040
      }
     },
     {
@@ -54102,6 +54102,19 @@
       "enum": 3,
       "fn": 7,
       "struct": 30
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BootstrapSkillView"
+     ],
+     "path": "src/task_verb/sdk_skill_defaults.rs",
+     "purpose": "Owner-bound bootstrap inventory, pinned first-hub read and explicit defaults restore",
+     "surface": {
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -60897,7 +60910,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 184,
+     "files": 185,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61067,7 +61080,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3717,
+   "source_files": 3718,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69710,7 +69723,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1008
+      "fn": 1011
      }
     },
     {
@@ -70806,7 +70819,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1009
+      "fn": 1012
      }
     },
     {
@@ -74360,7 +74373,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 163
+      "crate-vis": 164
      }
     },
     {
@@ -74831,6 +74844,16 @@
      "purpose": "Proposal-delta settlement and skill attribution evidence, owner-only",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/skill_default_doors.rs",
+     "purpose": "The owner's first-hub and bootstrap reads and explicit defaults re-import",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -82498,7 +82521,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 428,
+     "files": 429,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82927,7 +82950,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 785,
+   "source_files": 786,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -83391,6 +83414,7 @@
       "BookingPageTokenResponse",
       "BookingRescheduleInput",
       "BookingRescheduleRequest",
+      "BootstrapSkillView",
       "BornFromArtifact",
       "BornFromRequest",
       "BornFromSource",
@@ -84106,6 +84130,7 @@
       "DeckTransactionRefusal",
       "DeckVisualChoices",
       "DeclaredMaximum",
+      "DefaultSkillHub",
       "DelegatedGrant",
       "DelegatedGrantScope",
       "DeliveryStatus",
@@ -86540,7 +86565,7 @@
      "purpose": "—",
      "surface": {
       "enum": 816,
-      "struct": 2595
+      "struct": 2597
      }
     },
     {
