@@ -609,7 +609,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/companion_preset/storage.rs` | src | s | 6 crate-vis | — | Companion proposal row storage, token hashing, and error constructors |
 | `src/booking/companion_preset/tap.rs` | src | s | 3 fn | — | Proposal taps, the authorized common intersection, and soft confirmation |
 | `src/booking/companion_preset/tests.rs` | test | m | — | — | Companion preset and proposal test suite |
-| `src/booking/config.rs` | src | m | 5 struct · 1 enum · 6 fn · 7 const · 11 crate-vis | BookingEventTypeClaimValue, ClaimClassDescriptorRow, EventTypeConfig, HostAvailabilityConfig, RoutingMode, WeeklyWallWindow | ONE-1823 [BK-00] booking-page event-type configuration |
+| `src/booking/config.rs` | src | m | 5 struct · 1 enum · 6 fn · 7 const · 13 crate-vis | BookingEventTypeClaimValue, ClaimClassDescriptorRow, EventTypeConfig, HostAvailabilityConfig, RoutingMode, WeeklyWallWindow | ONE-1823 [BK-00] booking-page event-type configuration |
 | `src/booking/constraint.rs` | src | L | 13 struct · 3 enum · 1 trait · 8 fn · 2 const · 5 crate-vis | BookingDecisions, BookingError, ConstraintObject, ConstraintParseConfig, ConstraintParseDisposition, ConstraintParseRequest, ConstraintSessionCaps, ConstraintSessionState +9 | ONE-1816 [BK-05] booking constraint seam |
 | `src/booking/conversion.rs` | src | m | 5 struct · 5 fn · 2 re-export | BookingFaq, BookingLandingContent, BookingSlotPreview, BookingSnippetLink, BookingSnippetSelection | Renderer-neutral booking conversion data, derived only from public slots and owner copy |
 | `src/booking/conversion/policy.rs` | src | s | 2 struct · 2 enum · 4 fn | BookingConversionPolicy, BookingConversionPolicyRow, BookingPolicyPrecedence, BookingPolicyScope | Resolved BK-07 conversion choices, never booking authority |
@@ -639,7 +639,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/invite_grant/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | ONE-1814 [BK-A-3] the booking page's standing invite grant |
 | `src/booking/invite_grant/tests/mod.rs` | test | L | — | — | Lane tests for the booking page's standing invite grant |
 | `src/booking/invite_grant/types.rs` | src | s | 3 struct · 1 crate-vis | BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest | Caller-facing shapes for the booking page's standing invite grant |
-| `src/booking/lifecycle/claim.rs` | src | m | 1 struct · 6 fn · 11 crate-vis | BookingConfirmationContext | Booking facts on the EVENT: the four exact claims, their writes and supersessions, the family validator, and… |
+| `src/booking/lifecycle/claim.rs` | src | m | 1 struct · 6 fn · 12 crate-vis | BookingConfirmationContext | Booking facts on the EVENT: the four exact claims, their writes and supersessions, the family validator, and… |
 | `src/booking/lifecycle/confirmation_state.rs` | src | s | 4 crate-vis | — | The confirmation receipt's session and invite-identity bindings, read and bound inside the caller's… |
 | `src/booking/lifecycle/door.rs` | src | m | 2 struct · 1 enum · 5 fn | BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest | The public verb door and the home-node consumer turn: enqueue, checkout lease, and one claimed attempt run… |
 | `src/booking/lifecycle/emergency.rs` | src | m | 5 crate-vis | — | BK-09's emergency-reschedule transitions: the home-node guard, the durable pick row, and the commit that… |
@@ -655,7 +655,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/lifecycle/types.rs` | src | m | 14 struct · 5 enum · 5 fn · 13 const · 6 crate-vis | BookingBookerContactValue, BookingEventTypeRefValue, BookingLifecycleAttempt, BookingSourcePageValue, BookingStatus, BookingStatusValue, BookingVerb, BookingVerbReceipt +11 | The lifecycle's domain types: pinned constants and predicates, the verb enum, the request specs, the hold… |
 | `src/booking/mod.rs` | src | s | 14 mod · 12 re-export | — | Engine-generic booking module |
 | `src/booking/public_lens.rs` | src | m | 6 struct · 2 enum · 8 fn · 1 const · 1 crate-vis | BookingPageLens, BookingPageModel, BookingPageModelError, ConstraintFieldConfig, EventTypeCard, PublicBookingAction, PublicBookingPageToken, ThemeTokens | Public booking model and projection onto the existing lens atom kit |
-| `src/booking/publication.rs` | src | m | 2 struct · 4 fn · 2 const · 2 re-export · 2 crate-vis | BookingPagePublication, PublicBookingAvailability | Owner-controlled public booking publication on the ordinary claim store |
+| `src/booking/publication.rs` | src | m | 2 struct · 5 fn · 2 const · 2 re-export · 2 crate-vis | BookingPagePublication, PublicBookingAvailability | Owner-controlled public booking publication on the ordinary claim store |
 | `src/booking/publication/mutation.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | PublicBookingAuthority | Snapshot carried by public attempts, rechecked by the lifecycle writer |
 | `src/booking/publication/regressions.rs` | src | m | — | — | — |
 | `src/booking/publication/tests.rs` | test | m | — | — | — |
@@ -666,7 +666,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/solver/hold_source.rs` | src | s | 1 struct · 1 trait | ActiveHoldSource, NoActiveHolds | The live-hold read trait and its empty implementation |
 | `src/booking/solver/interval.rs` | src | s | 1 fn · 6 crate-vis | — | Half-open interval algebra and the public slot-mask projection |
 | `src/booking/solver/mod.rs` | src | s | 4 re-export | — | ONE-1823 [BK-00] availability solver and slot-mask projection |
-| `src/booking/solver/oracle.rs` | src | s | 1 struct | BookingSolver | BookingSolver: the SlotOracle implementation and pipeline driver |
+| `src/booking/solver/oracle.rs` | src | m | 1 struct · 1 fn | BookingSolver | BookingSolver: the SlotOracle implementation and pipeline driver |
 | `src/booking/solver/stages.rs` | src | m | 12 crate-vis | — | The eight pure pipeline stages and their small helpers |
 | `src/booking/tests.rs` | test | s | — | — | ONE-1816 [BK-05] constraint-front oracles |
 | `src/branch_store_oracle/mod.rs` | src | s | — | — | BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725) |
@@ -700,7 +700,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/connectors/resource.rs` | src | s | 5 crate-vis | — | One UID is one remote resource: master plus every live detached exception |
 | `src/calendar/connectors/seat.rs` | src | m | 4 struct · 1 enum · 8 fn · 4 const · 2 crate-vis | CalendarConnectorError, CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig, CalendarConnectorSeatState, CalendarConnectorSyncPayload | Seat configs, cursors, kill switch, error type, and sync verbs |
 | `src/calendar/door.rs` | src | s | 1 struct · 1 enum · 1 fn | CalendarEventCreateRequest, CalendarEventCreated | Typed, caller-bound calendar origin creation |
-| `src/calendar/freebusy.rs` | src | s | 1 struct · 2 fn · 1 type | BusyInterval | Busy-only freebusy projection (CAL-09, C5) |
+| `src/calendar/freebusy.rs` | src | s | 1 struct · 3 fn · 1 type | BusyInterval | Busy-only freebusy projection (CAL-09, C5) |
 | `src/calendar/google_internal.rs` | src | s | 1 struct · 1 trait · 3 fn · 2 const | GoogleInternalConnector, GoogleInternalWire | Workspace-Internal Google calendar adapter (CAL-05, ONE-1787) |
 | `src/calendar/ics/emit.rs` | src | m | 1 struct · 2 fn · 2 const · 1 crate-vis | ImipEmitRequest | ICS emit half (CAL-04, ONE-1786): meeting state into deterministic iMIP bytes |
 | `src/calendar/ics/mod.rs` | src | s | 2 re-export · 3 crate-vis | — | ICS (RFC 5545) codec: feed parse half plus iMIP emit half |
@@ -1114,7 +1114,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/mod.rs` | src | s | 7 mod · 5 re-export | — | Sandbox boundary contract for code-mode execution |
 | `src/code_sandbox/paths.rs` | src | s | 2 struct · 1 enum · 10 fn · 5 const | SandboxMount, SandboxMountTable, SandboxVirtualPath | The stable /mnt guest namespace: mounts, virtual paths and host-path resolution |
 | `src/code_sandbox/proposal.rs` | src | s | 7 struct · 2 enum · 10 fn · 1 re-export · 1 crate-vis | SandboxClaimProposal, SandboxDirectoryOpaqueProposal, SandboxFileDeleteProposal, SandboxFileEditProposal, SandboxFileRenameProposal, SandboxFileWriteProposal, SandboxProposalDelta, SandboxProposalKind +1 | The proposal-delta channel a guest write becomes instead of a direct mutation |
-| `src/code_sandbox/proposal/body.rs` | src | s | 3 struct · 13 fn | SandboxProposalBody, SandboxProposalBodyReader, SandboxProposalBodyWriter | A proposed file's bytes, spooled to an anonymous host temp file as they arrive |
+| `src/code_sandbox/proposal/body.rs` | src | s | 3 struct · 14 fn | SandboxProposalBody, SandboxProposalBodyReader, SandboxProposalBodyWriter | A proposed file's bytes, spooled to an anonymous host temp file as they arrive |
 | `src/code_sandbox/quickjs.rs` | src | s | 1 struct · 3 fn | QuickJsRuntimeFactory | Hash-pinned, readiness-checked QuickJS artifact factory |
 | `src/code_sandbox/quickjs/tests.rs` | test | m | — | — | Acceptance tests require the real artifacts produced by the pinned build |
 | `src/code_sandbox/tests.rs` | test | s | — | — | — |
@@ -1525,12 +1525,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dispatch_byoa/connector.rs` | src | m | 6 struct · 5 enum · 12 fn · 5 const · 24 crate-vis | ByoEndpointProtocol, ByoEndpointSpec, ByoaAttemptPayload, ByoaConnectorKind, ByoaConnectorSpec, ByoaDispatchOutcome, ByoaDispatchStatus, CliSandboxSpec +3 | Connector shapes, wire enums, attempt-payload codec, and serde adapters |
 | `src/dispatch_byoa/dispatcher.rs` | src | L | 2 struct · 3 trait · 11 fn · 3 crate-vis | ByoEndpointBackendFactory, ByoaCliExecutor, ByoaDispatcher, ByoaExecutionFence, ByoaMcpExecutor | Dispatcher organ with dispatch, execute, authorize, and capture doors |
 | `src/dispatch_byoa/dreamer_provider.rs` | src | s | 2 struct · 3 fn | OfficialDreamerSeat, OfficialSeatDreamerProvider | Registration of the named official seats as Dreamer providers (OF-137) |
-| `src/dispatch_byoa/error.rs` | src | s | 1 enum · 1 type · 46 crate-vis | ByoaError | Error enum, literal refusal reasons, result alias, and the invalid() constructor |
+| `src/dispatch_byoa/error.rs` | src | s | 1 enum · 1 type · 48 crate-vis | ByoaError | Error enum, literal refusal reasons, result alias, and the invalid() constructor |
 | `src/dispatch_byoa/exhaust.rs` | src | m | 4 struct · 1 enum · 1 trait · 8 fn · 2 const · 13 crate-vis | ByoaEgressLease, ByoaEgressPort, ByoaExhaust, ByoaTerminalDisposition, ByoaTerminalReceipt, CaptureByoaExhaust | Exhaust types, terminal receipts, artifact and result-ref addressing, and capture helpers |
-| `src/dispatch_byoa/mod.rs` | src | s | 1 mod · 10 re-export | — | Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents… |
+| `src/dispatch_byoa/mod.rs` | src | s | 1 mod · 11 re-export | — | Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents… |
 | `src/dispatch_byoa/official_seats.rs` | src | L | 14 struct · 5 enum · 1 trait · 22 fn · 5 const | ClaudeAgentSdkSeatAdapter, ClaudeCodeSeatAdapter, CodexSeatAdapter, DispatchOfficialSeat, DrySeatDecision, DrySeatFallback, GrokApiKeySeatAdapter, OfficialSeatAdapter +12 | Official subscription seats (OF-375): the owner's own vendor login, reached only through the vendor's… |
 | `src/dispatch_byoa/provider.rs` | src | s | 5 struct · 1 trait · 5 fn · 3 const | ClaudeCodeRunner, CodexRunner, DreamerProviderAdapter, DreamerProviderInput, OpenCodeRunner, ProviderAdapterRegistry | Named propose-only Dreamer runners over the existing foreign CLI sandbox |
 | `src/dispatch_byoa/seat.rs` | src | m | 5 struct · 5 enum · 13 fn · 2 const · 2 crate-vis | HostedSeatBound, OnSeatSpent, RunnerSeat, RunnerSeatPolicy, RunnerWork, SeatAuth, SeatIdentity, SeatRoute +2 | Owner-chosen runner seats (OF-137): which named runner takes a Dreamer's work under whose sign-in, and where… |
+| `src/dispatch_byoa/staged_input.rs` | src | s | 1 struct · 1 trait · 1 fn · 7 crate-vis | ByoaInputStager, StagedInputPin | A CLI run's job carried as a file in its checkout, never in argv: one argv entry has an OS limit (Linux… |
 | `src/dispatch_byoa/stream.rs` | src | m | 2 struct · 9 fn · 5 crate-vis | ByoaStream, ByoaStreamWriter | One exhaust stream, held whole however long it runs: in memory up to the inline budget, and past it in an… |
 | `src/dispatch_byoa/tests.rs` | test | L | — | — | — |
 | `src/dispatch_byoa/tests/successor.rs` | test | m | — | — | Successor Qodo regressions for terminal custody and runtime attribution |
@@ -2000,7 +2001,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/stale.rs` | src | m | 1 struct · 1 enum · 9 fn · 3 const · 9 crate-vis | FederationStaleReason, WorldStaleStamp | Terminal-pact per-world stale stamping (FED-04) |
 | `src/federation/tests.rs` | test | XL | — | — | — |
 | `src/federation/vault_id_decimal.rs` | src | s | 2 crate-vis | — | A shared vault's id on the wire (OF-158): a decimal string, since a `u64` past 2^53 does not survive a… |
-| `src/feedback/bundle.rs` | src | m | 7 struct · 3 enum · 21 fn · 15 const · 1 crate-vis | FeedbackBundle, FeedbackCategory, FeedbackConfigSnapshot, FeedbackDagHop, FeedbackEncoding, FeedbackHealerDiagnosis, FeedbackHnswSnapshot, FeedbackPlatform +2 | Feedback bundle wire contract: bundle, config, and diagnosis types plus the MessagePack codec and digest |
+| `src/feedback/bundle.rs` | src | m | 7 struct · 3 enum · 21 fn · 13 const · 2 crate-vis | FeedbackBundle, FeedbackCategory, FeedbackConfigSnapshot, FeedbackDagHop, FeedbackEncoding, FeedbackHealerDiagnosis, FeedbackHnswSnapshot, FeedbackPlatform +2 | Feedback bundle wire contract: bundle, config, and diagnosis types plus the MessagePack codec and digest |
 | `src/feedback/consent.rs` | src | m | 4 struct · 2 enum · 1 trait · 20 fn · 3 const · 3 crate-vis | FeedbackApproval, FeedbackApprovalScope, FeedbackPreview, FeedbackRedactionError, FeedbackRedactor, FeedbackSendRoute, UnredactedFeedback | Feedback consent: send routes, approval scope, redaction seam, preview, disclosure card, and approval… |
 | `src/feedback/conversation_training.rs` | src | m | 3 struct · 4 enum · 2 trait · 2 fn · 1 const · 5 re-export | ConversationSource, ConversationText, ConversationTrainingChoice, Eligibility, NoChoicesYet, PublisherTrainingSink, ShareOutcome, ShareWithheld +1 | "Learn from my conversations" (FIX 4489, OF-420): the one check real conversation text passes before it may… |
 | `src/feedback/conversation_training/crypto.rs` | src | s | 2 struct · 3 fn · 3 crate-vis | IntakeReceiptKey, IntakeRecipient | The publisher training files' crypto (OF-420): the install signature on what the vault writes (C1, D6), the… |
