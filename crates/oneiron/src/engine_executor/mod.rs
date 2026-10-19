@@ -17,6 +17,7 @@ pub mod continuation;
 mod driver;
 pub mod history;
 mod host;
+mod program_entry;
 mod record;
 mod repl;
 mod skill_call;
@@ -30,6 +31,8 @@ pub(crate) use self::attempt_cancels::{AttemptCancels, stop_attempt_step};
 pub use self::cancel::{CANCEL_POLL_SLICE, StepCancellation};
 pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason};
 pub use self::driver::EngineNativeExecutor;
+// DOOR-141 PR3b: a turn program's pinned entry, for its runtime alone.
+pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
 #[cfg(test)]
 use self::record::step_state_hash;
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};

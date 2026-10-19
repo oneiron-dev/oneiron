@@ -8368,6 +8368,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_runs_program_checkpoint(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.runs.program_checkpoint", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_consolidation_home_get(
         &self,
         input: serde_json::Value,
