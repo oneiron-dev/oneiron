@@ -69,7 +69,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 /// Bump on any projector change; part of every memo key.
-pub const PROJECTOR_VERSION: &str = "live-deck-projector/8";
+pub const PROJECTOR_VERSION: &str = "live-deck-projector/9";
 
 /// A live-born shape (or a free connector) with no own extent: one inch
 /// square.
@@ -957,7 +957,8 @@ fn born(
     if let (NodeKind::Shape, Some(NodePayload::CustomGeometry { paths })) =
         (node.kind, &node.payload)
     {
-        points::write(work.next_mut(), part, added, paths)?;
+        let glued = points::glued_sites(deck, id);
+        points::write(work.next_mut(), part, added, paths, &glued)?;
         work.changed.insert(part.to_owned());
     }
     Ok(added)
@@ -1204,7 +1205,8 @@ fn project_payload(
         }
         Some(NodePayload::CustomGeometry { paths }) => {
             if held::custom_paths(&tree, at).as_deref() != Some(paths.as_slice()) {
-                let done = points::write(work.next_mut(), part, native, paths)?;
+                let glued = points::glued_sites(deck, id);
+                let done = points::write(work.next_mut(), part, native, paths, &glued)?;
                 work.changed.insert(part.to_owned());
                 work.converted(id, done);
             }

@@ -7,7 +7,10 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use super::{ArtifactKind, ArtifactVersionView, ArtifactView, BornFromArtifact, BornFromSource};
+use super::{
+    ArtifactKind, ArtifactVersionView, ArtifactView, BornFromArtifact, BornFromSource,
+    VersionReconciliation,
+};
 use super::{DeckProposeRejection, DeckTransaction};
 use crate::claim::ClaimReadStatus;
 use crate::edge::EdgeActorClass;
@@ -353,6 +356,11 @@ pub struct KeptProposal {
     pub remapped: usize,
     pub drifted: usize,
     pub receipt: ReceiptRecord,
+    /// The kept output forked from the version it was made against while
+    /// the head was another; that head stays beside it as its own version
+    /// (FIX 2700). `None` when it did not fork.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconciliation: Option<VersionReconciliation>,
 }
 
 /// A discarded proposal's receipt.
@@ -1052,6 +1060,7 @@ impl Memory<'_> {
             remapped: outcome.reanchor.remapped.len(),
             drifted: outcome.reanchor.drifted.len(),
             receipt: outcome.receipt,
+            reconciliation: outcome.reconciliation,
         })
     }
 

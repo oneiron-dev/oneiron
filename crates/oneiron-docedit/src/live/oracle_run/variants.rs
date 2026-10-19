@@ -5,14 +5,17 @@
 //! before any edit over it counts.
 
 use super::record::{Res, text};
-use crate::ooxml::{DOCUMENT_RELATIONSHIPS, XmlTree};
+use crate::ooxml::XmlTree;
+use crate::pptx_comments::{
+    PptxAuthor, PptxCommentAction, PptxCommentEdit, PptxCommentLimits, PptxCommentTarget,
+    SlideMints, comment_patch, inspect_pptx,
+};
 use crate::retained_opc::Package;
 use std::cmp::Reverse;
 use std::ops::Range;
 
 pub(super) const P: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";
 pub(super) const A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
-const P14: &str = "http://schemas.microsoft.com/office/powerpoint/2010/main";
 pub(super) const P188: &str = "http://schemas.microsoft.com/office/powerpoint/2018/8/main";
 pub(super) const PC: &str = "http://schemas.microsoft.com/office/powerpoint/2013/main/command";
 
@@ -25,21 +28,17 @@ pub(super) const SHAPE_PROBE: &str = "shape";
 /// The probe in the slide's own extension list.
 pub(super) const SLIDE_PROBE: &str = "slide";
 
-const SLIDE_ID_EXT: &str = "{BB962C8B-B14F-4D97-AF65-F5344CB8AC3E}";
-const COMMENT_EXT: &str = "{6950BFC3-D8DA-4A85-94F7-54DA5524770B}";
 pub(super) const COMMENT_REL: &str =
     "http://schemas.microsoft.com/office/2018/10/relationships/comments";
-const AUTHOR_REL: &str = "http://schemas.microsoft.com/office/2018/10/relationships/authors";
 pub(super) const AUTHORS: &str = "ppt/authors.xml";
-const COMMENTS_TYPE: &str = "application/vnd.ms-powerpoint.comments+xml";
-const AUTHORS_TYPE: &str = "application/vnd.ms-powerpoint.authors+xml";
 pub(super) const COMMENT_TEXT: &str = "Deck oracle comment: keep me through the edit";
 const COMMENT_ID: &str = "{5A0E1C3B-7D2F-4E8A-9B61-0C4D3E2F1A10}";
 const AUTHOR_ID: &str = "{5A0E1C3B-7D2F-4E8A-9B61-0C4D3E2F1A11}";
+const AUTHOR_NAME: &str = "Deck oracle";
+/// When the fixture's comment was made: 2026-10-18T00:00:00.000Z.
+const CREATED_MS: u64 = 1_792_281_600_000;
 /// The slide creation id the comment variant mints when its slide has none.
 const SLIDE_CREATION_ID: u32 = 3_051_000_510;
-
-const DECLARATION: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n";
 
 /// One part's text.
 pub(super) fn part_text(package: &Package, name: &str) -> Res<String> {
@@ -93,31 +92,15 @@ fn probe_ext(prefix: &str, ns: &str, name: &str) -> String {
 /// Splice whole `p:ext` elements into the slide's `p:extLst`, making one at
 /// the end of `p:sld` (its last child in the schema) when it has none.
 fn slide_exts(tree: &XmlTree, exts: &str) -> Res<(Range<usize>, String)> {
-    ext_list(tree, false, exts)
-}
-
-/// Splice whole `p:ext` elements into an extension list: the slide's own
-/// (the last child of `p:sld`) or, when `common`, the one closing
-/// `p:cSld`, where the engine's comment writer puts a slide creation id
-/// and where `DeckView` reads it. The list is made at the end of its parent
-/// (its last child in the schema) when there is none.
-fn ext_list(tree: &XmlTree, common: bool, exts: &str) -> Res<(Range<usize>, String)> {
     let root = &tree.nodes[0];
     if !root.is(P, "sld") {
         return Err("the part is not a slide".to_owned());
     }
-    let (at, parent) = if common {
-        tree.child(0, P, "cSld")
-            .map_err(text)?
-            .ok_or("the slide has no p:cSld")?
-    } else {
-        (0, root)
-    };
     let whole = format!("<p:extLst xmlns:p=\"{P}\">{exts}</p:extLst>");
-    Ok(match tree.child(at, P, "extLst").map_err(text)? {
+    Ok(match tree.child(0, P, "extLst").map_err(text)? {
         Some((_, list)) if !list.empty => (list.content.end..list.content.end, exts.to_owned()),
         Some((_, list)) => (list.span.clone(), whole),
-        None => (parent.content.end..parent.content.end, whole),
+        None => (root.content.end..root.content.end, whole),
     })
 }
 
@@ -170,63 +153,62 @@ pub(super) struct CommentSlide<'a> {
     pub(super) creation_id: Option<u32>,
 }
 
-/// The baseline with one modern comment thread on the slide, written as the
-/// engine's comment writer writes it: the author list, the comment part and
-/// its relationship, the slide's `p188:commentRel`, and a slide creation id
-/// for the anchor when the slide had none.
+/// The baseline with one modern comment thread on the slide, written by the
+/// engine's comment writer ([`comment_patch`], FIX 3776) under the
+/// fixture's pinned author, comment id, time and text: the author list, the
+/// comment part and its relationship, the slide's `p188:commentRel`, and a
+/// slide creation id for the anchor when the slide had none.
 pub(super) fn commented(package: &Package, slide: &CommentSlide<'_>) -> Res<Vec<u8>> {
-    let mut next = package.clone();
-    let creation = slide.creation_id.unwrap_or(SLIDE_CREATION_ID);
-    let file = format!(
-        "ppt/comments/modernComment_{}_{creation:08X}.xml",
-        slide.sld_id
-    );
-    next.add_part(
-        &file,
-        COMMENTS_TYPE,
-        comment_xml(slide.sld_id, creation).into_bytes(),
-    )
-    .map_err(text)?;
-    if next.part(AUTHORS).map_err(text)?.is_none() {
-        let presentation = presentation_part(&next)?;
-        next.add_part(AUTHORS, AUTHORS_TYPE, authors_xml().into_bytes())
-            .map_err(text)?;
-        next.relate(&presentation, AUTHOR_REL, AUTHORS)
-            .map_err(text)?;
-    }
-    let rid = next.relate(slide.part, COMMENT_REL, &file).map_err(text)?;
-    let xml = part_text(&next, slide.part)?;
-    let tree = xml_tree(&next, &xml)?;
-    // The creation id goes where the comment writer puts it (`common: true`,
-    // under `p:cSld`); the comment relationship stays under the slide root.
-    let mut edits = vec![slide_exts(
-        &tree,
-        &format!(
-            "<p:ext xmlns:p=\"{P}\" uri=\"{COMMENT_EXT}\"><p188:commentRel xmlns:p188=\"{P188}\" xmlns:r=\"{DOCUMENT_RELATIONSHIPS}\" r:id=\"{rid}\"/></p:ext>"
-        ),
-    )?];
-    if slide.creation_id.is_none() {
-        edits.push(ext_list(
-            &tree,
-            true,
-            &format!(
-                "<p:ext xmlns:p=\"{P}\" uri=\"{SLIDE_ID_EXT}\"><p14:creationId xmlns:p14=\"{P14}\" val=\"{creation}\"/></p:ext>"
-            ),
-        )?);
-    }
-    rewrite(next, slide.part, splice(&xml, edits))
+    let base = package.export().map_err(text)?;
+    let limits = comment_limits(package);
+    let number = inspect_pptx(&base, &limits)
+        .map_err(text)?
+        .slides
+        .iter()
+        .find(|seen| seen.part == slide.part && seen.sld_id == slide.sld_id)
+        .map(|seen| seen.slide)
+        .ok_or_else(|| format!("{} is not a slide of the deck", slide.part))?;
+    let mints = match slide.creation_id {
+        Some(_) => Vec::new(),
+        None => vec![(number, SLIDE_CREATION_ID)],
+    };
+    let edit = PptxCommentEdit {
+        author: PptxAuthor {
+            guid: AUTHOR_ID.to_owned(),
+            name: AUTHOR_NAME.to_owned(),
+        },
+        thread_id: COMMENT_ID.to_owned(),
+        comment_id: COMMENT_ID.to_owned(),
+        at: CREATED_MS,
+        action: PptxCommentAction::Add {
+            target: PptxCommentTarget {
+                slide: number,
+                slide_creation_id: slide.creation_id,
+                shape_creation_id: None,
+                shape_fingerprint: None,
+            },
+            text: COMMENT_TEXT.to_owned(),
+        },
+    };
+    comment_patch(&base, &[edit], SlideMints::Replay(&mints), &limits)
+        .map(|effects| effects.new_bytes)
+        .map_err(text)
 }
 
-fn comment_xml(sld_id: u32, creation: u32) -> String {
-    format!(
-        "{DECLARATION}<p188:cmLst xmlns:a=\"{A}\" xmlns:r=\"{DOCUMENT_RELATIONSHIPS}\" xmlns:p188=\"{P188}\"><p188:cm id=\"{COMMENT_ID}\" authorId=\"{AUTHOR_ID}\" created=\"2026-10-18T00:00:00.000Z\"><pc:sldMkLst xmlns:pc=\"{PC}\"><pc:docMk/><pc:sldMk cId=\"{creation}\" sldId=\"{sld_id}\"/></pc:sldMkLst><p188:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>{COMMENT_TEXT}</a:t></a:r></a:p></p188:txBody></p188:cm></p188:cmLst>"
-    )
-}
-
-fn authors_xml() -> String {
-    format!(
-        "{DECLARATION}<p188:authorLst xmlns:a=\"{A}\" xmlns:r=\"{DOCUMENT_RELATIONSHIPS}\" xmlns:p188=\"{P188}\"><p188:author id=\"{AUTHOR_ID}\" name=\"Deck oracle\" initials=\"DO\" userId=\"Deck oracle\" providerId=\"None\"/></p188:authorLst>"
-    )
+/// The comment writer's codec ceilings: the package's own.
+fn comment_limits(package: &Package) -> PptxCommentLimits {
+    let limits = package.limits();
+    PptxCommentLimits {
+        max_archive_bytes: limits.archive_bytes,
+        max_entries: limits.entries,
+        max_part_bytes: limits.part_bytes,
+        max_expanded_bytes: limits.expanded_bytes,
+        max_xml_bytes: limits.part_bytes,
+        max_xml_attributes: limits.xml.max_nodes,
+        max_xml_namespaces: limits.xml.max_nodes,
+        max_xml_depth: limits.xml.max_depth,
+        max_xml_nodes: limits.xml.max_nodes,
+    }
 }
 
 /// The baseline with one click build on paragraph 0 of `spid`, built by

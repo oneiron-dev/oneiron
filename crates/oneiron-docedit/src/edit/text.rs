@@ -16,10 +16,10 @@
 //! paragraph's end for a new run. Extra paragraphs copy the `a:pPr`, first
 //! run properties and `a:endParaRPr` of the paragraph before them; surplus
 //! ones are removed.
-use super::check::Declared;
+use super::check::{self, Declared};
 use super::xml::{self, A, P, Splice};
 use super::{EditRefusal, FitUnverified, RunProps, Written};
-use crate::deck::{ShapeView, SlideView, TargetRole, TextRange};
+use crate::deck::{DeckView, ShapeView, SlideView, TargetRole, TextRange};
 use crate::ooxml::{XmlTree, escape_text};
 use crate::retained_opc::Package;
 use build::{broken_run, insert_paragraphs, new_run, run_bytes};
@@ -28,6 +28,17 @@ mod build;
 
 /// U+000B: an `a:br` in paragraph text, as PowerPoint writes it.
 pub(crate) const BREAK: char = '\u{b}';
+
+/// The app properties' namespace (`docProps/app.xml`).
+const EP: &str = "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties";
+
+/// The app properties' elements a text write recounts: the slides' words
+/// and paragraphs, and the part titles listing each slide's title.
+const RECOUNTED: [check::Path; 3] = [
+    &[(EP, "Words")],
+    &[(EP, "Paragraphs")],
+    &[(EP, "TitlesOfParts")],
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -162,7 +173,7 @@ fn write_body(
             .zip(&new)
             .any(|(old, new)| old.text.len() != new.len());
     check_animation(slide, &tree, id, structure, lengths)?;
-    finish(next, slide, id, &bytes, edits)
+    finish_text(next, slide, id, &bytes, edits)
 }
 
 pub(super) fn replace_run_text(
@@ -208,7 +219,7 @@ pub(super) fn replace_run_text(
             run_bytes(&bytes, &tree, item.node, text)?,
         )]
     };
-    finish(next, slide, id, &bytes, edits)
+    finish_text(next, slide, id, &bytes, edits)
 }
 
 /// Run properties over the characters `range` of paragraph `paragraph`,
@@ -444,6 +455,35 @@ fn finish(
             shape: id,
         }),
     })
+}
+
+/// [`finish`] for a write of the body's text (FIX 3699): the app properties
+/// are recounted over the edited deck, as the live export recounts them, so
+/// a title placeholder's new text is its slide's entry in `TitlesOfParts`
+/// and the words and paragraphs count it; the part joins the edit's allowed
+/// parts with those elements declared. App properties that do not read so
+/// are left as they were.
+fn finish_text(
+    next: &mut Package,
+    slide: &SlideView,
+    id: u32,
+    bytes: &[u8],
+    edits: Vec<Splice>,
+) -> Result<Written, EditRefusal> {
+    let changed = !edits.is_empty();
+    let mut written = finish(next, slide, id, bytes, edits)?;
+    if changed
+        && let Ok(view) = DeckView::read(next)
+        && let Ok(Some(part)) = super::recount_slide_text(next, &view)
+    {
+        written.declared.extend(
+            RECOUNTED
+                .iter()
+                .map(|&path| Declared::element(&part, None, path)),
+        );
+        written.allowed.push(part);
+    }
+    Ok(written)
 }
 
 /// The splices that turn the body's paragraphs into `new`, and the paragraph

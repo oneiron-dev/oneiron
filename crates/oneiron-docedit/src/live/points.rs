@@ -6,13 +6,16 @@
 //! inherits its geometry, becomes a freeform, as Edit Points converts it.
 //! PowerPoint's own connection-site guides (`connsiteX<n>`, `connsiteY<n>`)
 //! and the sites that name them are redrawn at the new vertices, and a text
-//! rectangle naming a guide the write dropped spans the shape again. The
-//! written outline must read back as the live paths.
+//! rectangle naming a guide the write dropped spans the shape again. A site
+//! a glued connector names keeps its index, position and guides (FIX 5671),
+//! so no glued end names a site the shape no longer has. The written
+//! outline must read back as the live paths.
 
 use super::LiveError;
 use super::conversion::Conversion;
 use super::convert::element_of;
-use super::held::children;
+use super::held::{children, within};
+use super::pptx::{LiveDeck, NodeId, NodePayload};
 use crate::edit::xml::{self, A, P};
 use crate::ooxml::XmlTree;
 use crate::retained_opc::Package;
@@ -365,10 +368,19 @@ fn path_list(a: &str, paths: &[GeomPath]) -> String {
     out
 }
 
+/// One connection site drawn at a vertex: its two guides and its `a:cxn`.
+struct Site {
+    guides: String,
+    cxn: String,
+    /// The number its guides are named by.
+    number: u32,
+}
+
 /// PowerPoint's connection-site guides and sites at the paths' vertices
 /// (each in shape units: a vertex scaled by the shape's extent over its
-/// path's size), and how many.
-fn sites(a: &str, paths: &[GeomPath]) -> (String, String, u32) {
+/// path's size), one per vertex, their guides numbered past any name in
+/// `taken`.
+fn sites(a: &str, paths: &[GeomPath], taken: &BTreeSet<String>) -> Vec<Site> {
     let q = |name: &str| xml::qualify(a, name);
     let scale = |coord: &Coord, size: Option<i64>, side: &str| {
         let fmla = match size {
@@ -377,33 +389,75 @@ fn sites(a: &str, paths: &[GeomPath]) -> (String, String, u32) {
         };
         xml::escape_attribute(&fmla)
     };
-    let (mut guides, mut sites, mut count) = (String::new(), String::new(), 0u32);
+    let free = |n: u32| {
+        !taken.contains(&format!("connsiteX{n}")) && !taken.contains(&format!("connsiteY{n}"))
+    };
+    let (mut out, mut number) = (Vec::new(), 0u32);
     for path in paths {
         for to in path.commands.iter().filter_map(PathCommand::end) {
-            guides.push_str(&format!(
-                r#"<{gd} name="connsiteX{count}" fmla="{}"/><{gd} name="connsiteY{count}" fmla="{}"/>"#,
-                scale(&to.x, path.w, "w"),
-                scale(&to.y, path.h, "h"),
-                gd = q("gd"),
-            ));
-            sites.push_str(&format!(
-                r#"<{cxn} ang="0"><{pos} x="connsiteX{count}" y="connsiteY{count}"/></{cxn}>"#,
-                cxn = q("cxn"),
-                pos = q("pos"),
-            ));
-            count = count.saturating_add(1);
+            while !free(number) {
+                number = number.saturating_add(1);
+            }
+            out.push(Site {
+                guides: format!(
+                    r#"<{gd} name="connsiteX{number}" fmla="{}"/><{gd} name="connsiteY{number}" fmla="{}"/>"#,
+                    scale(&to.x, path.w, "w"),
+                    scale(&to.y, path.h, "h"),
+                    gd = q("gd"),
+                ),
+                cxn: format!(
+                    r#"<{cxn} ang="0"><{pos} x="connsiteX{number}" y="connsiteY{number}"/></{cxn}>"#,
+                    cxn = q("cxn"),
+                    pos = q("pos"),
+                ),
+                number,
+            });
+            number = number.saturating_add(1);
         }
     }
-    (guides, sites, count)
+    out
+}
+
+/// The connection sites of the node `node` that the live deck's connectors
+/// glue to.
+pub(super) fn glued_sites(deck: &LiveDeck, node: NodeId) -> BTreeSet<u32> {
+    deck.nodes
+        .values()
+        .filter_map(|held| match &held.payload {
+            Some(NodePayload::Connector { start, end, .. }) => Some([*start, *end]),
+            _ => None,
+        })
+        .flatten()
+        .flatten()
+        .filter(|end| end.node == node)
+        .map(|end| end.site)
+        .collect()
+}
+
+/// The connection sites of the shape `native` that the slide's connectors
+/// are glued to (`a:stCxn`, `a:endCxn`).
+fn slide_glue(tree: &XmlTree, native: u32) -> impl Iterator<Item = u32> + '_ {
+    within(tree, 0)
+        .filter(move |&at| tree.nodes[at].is(A, "stCxn") || tree.nodes[at].is(A, "endCxn"))
+        .filter(move |&at| {
+            tree.nodes[at]
+                .attr("id")
+                .and_then(|id| id.trim().parse::<u32>().ok())
+                == Some(native)
+        })
+        .filter_map(move |at| tree.nodes[at].attr("idx")?.trim().parse().ok())
 }
 
 /// Write `paths` as the outline of the shape `native` on `slide`, as Edit
-/// Points does; what it did.
+/// Points does; what it did. `glued` names the sites the live deck's
+/// connectors glue to; with those the slide's connectors are glued to, they
+/// are kept as they are.
 pub(super) fn write(
     package: &mut Package,
     slide: &str,
     native: u32,
     paths: &[GeomPath],
+    glued: &BTreeSet<u32>,
 ) -> Result<Vec<Conversion>, LiveError> {
     let (bytes, tree) = xml::read(package, slide)?;
     let shape = element_of(&tree, native, "sp").ok_or(LiveError::UnknownNode)?;
@@ -413,9 +467,16 @@ pub(super) fn write(
         paths: u32::try_from(paths.len()).unwrap_or(u32::MAX),
     }];
     let edits = match xml::child(&tree, properties, A, "custGeom") {
-        Some(geometry) => redraw(&bytes, &tree, geometry, paths, &mut done),
+        Some(geometry) => {
+            let mut glued = glued.clone();
+            glued.extend(slide_glue(&tree, native));
+            redraw(&bytes, &tree, (geometry, &glued), paths, &mut done)
+        }
         None => {
-            let (site_guides, site_list, count) = sites("a", paths);
+            let drawn = sites("a", paths, &BTreeSet::new());
+            let count = u32::try_from(drawn.len()).unwrap_or(u32::MAX);
+            let site_guides: String = drawn.iter().map(|site| site.guides.as_str()).collect();
+            let site_list: String = drawn.iter().map(|site| site.cxn.as_str()).collect();
             let geometry = format!(
                 r#"<a:custGeom xmlns:a="{A}"><a:avLst/><a:gdLst>{site_guides}</a:gdLst><a:ahLst/><a:cxnLst>{site_list}</a:cxnLst><a:rect l="l" t="t" r="r" b="b"/>{}</a:custGeom>"#,
                 path_list("a", paths)
@@ -450,11 +511,14 @@ pub(super) fn write(
 /// The edits that draw `paths` over a shape's own custom geometry: its path
 /// list replaced, PowerPoint's connection-site guides and sites redrawn at
 /// the new vertices (unless a path names one), and a text rectangle that
-/// names a guide no longer defined reset to the shape's bounds.
+/// names a guide no longer defined reset to the shape's bounds. A site at an
+/// index in `glued`, and a site that is no vertex site, keeps its index,
+/// bytes and guides; the vertex sites take the other indices in order, then
+/// follow the list.
 fn redraw(
     bytes: &[u8],
     tree: &XmlTree,
-    geometry: usize,
+    (geometry, glued): (usize, &BTreeSet<u32>),
     paths: &[GeomPath],
     done: &mut Vec<Conversion>,
 ) -> Vec<xml::Splice> {
@@ -484,30 +548,62 @@ fn redraw(
         && !held_sites.is_empty()
         && !guides(paths).into_iter().any(site_guide)
     {
-        let (site_guides, site_list, count) = sites(a, paths);
-        for &gd in &held_sites {
-            edits.push((tree.nodes[gd].span.clone(), Vec::new()));
+        let cxns: Vec<usize> = xml::child(tree, geometry, A, "cxnLst")
+            .map(|list| children(tree, list, A, "cxn").collect())
+            .unwrap_or_default();
+        let slots = kept_slots(tree, &cxns, glued, paths);
+        // The site guides a kept site names, and those their formulas name.
+        let mut kept: BTreeSet<String> = cxns
+            .iter()
+            .zip(&slots)
+            .filter(|&(_, &slot)| slot == Slot::Kept)
+            .filter_map(|(&cxn, _)| xml::child(tree, cxn, A, "pos"))
+            .flat_map(|pos| ["x", "y"].map(|axis| named(pos, axis)))
+            .flatten()
+            .filter(|name| site_guide(name))
+            .collect();
+        for &gd in held_sites.iter().rev() {
+            if named(gd, "name").is_some_and(|name| kept.contains(&name)) {
+                let fmla = tree.nodes[gd].attr("fmla").unwrap_or_default();
+                kept.extend(
+                    fmla.split_whitespace()
+                        .filter(|token| site_guide(token))
+                        .map(str::to_owned),
+                );
+            }
         }
+        let drawn = sites(a, paths, &kept);
+        let count = u32::try_from(drawn.len()).unwrap_or(u32::MAX);
+        for &gd in &held_sites {
+            if !named(gd, "name").is_some_and(|name| kept.contains(&name)) {
+                edits.push((tree.nodes[gd].span.clone(), Vec::new()));
+            }
+        }
+        let site_guides: String = drawn.iter().map(|site| site.guides.as_str()).collect();
         edits.push(xml::insert_last(
             bytes,
             &tree.nodes[guide_list],
             &site_guides,
         ));
+        let numbers: Vec<u32> = drawn.iter().map(|site| site.number).collect();
+        let mut fresh = drawn.into_iter().map(|site| site.cxn);
         match xml::child(tree, geometry, A, "cxnLst") {
             Some(list) => {
-                for cxn in children(tree, list, A, "cxn") {
-                    let on_site = xml::child(tree, cxn, A, "pos").is_some_and(|pos| {
-                        ["x", "y"]
-                            .iter()
-                            .any(|axis| tree.nodes[pos].attr(axis).is_some_and(site_guide))
-                    });
-                    if on_site {
-                        edits.push((tree.nodes[cxn].span.clone(), Vec::new()));
+                for (&cxn, slot) in cxns.iter().zip(&slots) {
+                    match slot {
+                        Slot::Kept => {}
+                        Slot::Redrawn => {
+                            let site = fresh.next().unwrap_or_default();
+                            edits.push((tree.nodes[cxn].span.clone(), site.into_bytes()));
+                        }
+                        Slot::Dropped => edits.push((tree.nodes[cxn].span.clone(), Vec::new())),
                     }
                 }
-                edits.push(xml::insert_last(bytes, &tree.nodes[list], &site_list));
+                let rest: String = fresh.collect();
+                edits.push(xml::insert_last(bytes, &tree.nodes[list], &rest));
             }
             None => {
+                let site_list: String = fresh.collect();
                 // CT_CustomGeometry2D: avLst?, gdLst?, ahLst?, cxnLst?, rect?, pathLst.
                 let element = format!("<{list}>{site_list}</{list}>", list = q("cxnLst"));
                 let before = xml::child(tree, geometry, A, "rect")
@@ -521,9 +617,12 @@ fn redraw(
                 });
             }
         }
-        defined.retain(|name| !site_guide(name));
-        defined
-            .extend((0..count).flat_map(|at| [format!("connsiteX{at}"), format!("connsiteY{at}")]));
+        defined.retain(|name| !site_guide(name) || kept.contains(name));
+        defined.extend(
+            numbers
+                .iter()
+                .flat_map(|n| [format!("connsiteX{n}"), format!("connsiteY{n}")]),
+        );
         done.push(Conversion::VertexSitesRedrawn { sites: count });
     }
     if let Some(rect) = xml::child(tree, geometry, A, "rect") {
@@ -543,4 +642,64 @@ fn redraw(
         }
     }
     edits
+}
+
+/// What a redraw does with a held connection site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    /// Kept as it is: glued, no vertex site, or holding the index of a kept
+    /// site after it once the vertex sites ran out.
+    Kept,
+    /// The next vertex site takes its index.
+    Redrawn,
+    /// Removed: a vertex site past the vertices and every kept site.
+    Dropped,
+}
+
+/// What the redraw of `paths` does with each held site `cxns`: a site a
+/// glued connector names (`glued`), or one not on PowerPoint's site guides,
+/// is kept at its index; each other site takes the next new vertex site;
+/// once those run out, a site before a kept one is kept to hold its index,
+/// and the rest are dropped.
+fn kept_slots(
+    tree: &XmlTree,
+    cxns: &[usize],
+    glued: &BTreeSet<u32>,
+    paths: &[GeomPath],
+) -> Vec<Slot> {
+    let on_site = |cxn: usize| {
+        xml::child(tree, cxn, A, "pos").is_some_and(|pos| {
+            ["x", "y"]
+                .iter()
+                .any(|axis| tree.nodes[pos].attr(axis).is_some_and(site_guide))
+        })
+    };
+    let held: Vec<bool> = cxns
+        .iter()
+        .enumerate()
+        .map(|(index, &cxn)| {
+            !on_site(cxn) || u32::try_from(index).is_ok_and(|index| glued.contains(&index))
+        })
+        .collect();
+    let last_held = held.iter().rposition(|&held| held);
+    let mut vertices = paths
+        .iter()
+        .flat_map(|path| &path.commands)
+        .filter_map(PathCommand::end)
+        .count();
+    held.iter()
+        .enumerate()
+        .map(|(index, &held)| {
+            if held {
+                Slot::Kept
+            } else if vertices > 0 {
+                vertices -= 1;
+                Slot::Redrawn
+            } else if last_held.is_some_and(|last| last > index) {
+                Slot::Kept
+            } else {
+                Slot::Dropped
+            }
+        })
+        .collect()
 }

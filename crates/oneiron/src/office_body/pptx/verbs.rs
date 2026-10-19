@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{PptxBody, PptxReview};
-use crate::blob_artifact::BlobVersionProvenance;
+use crate::blob_artifact::{BlobVersionProvenance, VersionReconciliation};
 use crate::edge::EdgeActorClass;
 use crate::edit_settle::PendingProposalView;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -117,7 +117,9 @@ pub struct DeckReviewView {
 
 /// `vault.artifacts.body.deck.export`: the projection, and the version it
 /// landed. Nothing lands while the gate is closed (the projection is a
-/// proposal) or when the deck equals its retained package.
+/// proposal, waiting unless the deck equals its retained package) or when
+/// the deck equals its retained package and that package is the artifact's
+/// head.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeckExportView {
     pub frontier: Vec<u8>,
@@ -135,6 +137,11 @@ pub struct DeckExportView {
     /// A closed-gate projection waiting beside the artifact for Keep under
     /// the request's run ref; `None` when it landed or changed nothing.
     pub proposed: Option<PendingProposalView>,
+    /// The export landed while the artifact's head was a version the deck
+    /// was not bound to: it forked from the deck's version, and that head
+    /// stays beside it as its own version (FIX 2700). `None` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconciliation: Option<VersionReconciliation>,
 }
 
 /// Whether a closed-gate export waits as a proposal for Keep (CALLS
@@ -268,7 +275,17 @@ impl Memory<'_> {
     ) -> MemoryResult<DeckExportView> {
         let artifact = self.body_ref(&input.artifact_ref)?;
         let export = self.vault().export_pptx_body(&artifact)?;
-        let record = if export.authoritative && !export.outcome.noop {
+        // With the gate open an unchanged deck still lands when the head is a
+        // version that landed outside it (FIX 2700): the head becomes the
+        // deck's, and that version stays beside it.
+        let lands = export.authoritative
+            && (!export.outcome.noop
+                || self
+                    .vault()
+                    .blob_artifact_head(&artifact)?
+                    .is_some_and(|head| head.version != export.base_version));
+        let mut reconciliation = None;
+        let record = if lands {
             let actor = self.body_actor();
             let made_by = self.body_made_by(input.made_by.as_ref(), "office_body.deck_export")?;
             let provenance = if actor.actor_class() == EdgeActorClass::Human {
@@ -278,9 +295,10 @@ impl Memory<'_> {
                     run_ref: input.run_ref.clone(),
                 }
             };
-            let version =
+            let (version, reconciled) =
                 self.vault()
                     .land_pptx_export(&artifact, &export, actor, &made_by, &provenance)?;
+            reconciliation = reconciled;
             self.vault()
                 .office_body_export(&artifact, version.version)?
         } else {
@@ -309,6 +327,7 @@ impl Memory<'_> {
             changed_parts: export.outcome.changed_parts,
             record,
             proposed,
+            reconciliation,
         })
     }
 

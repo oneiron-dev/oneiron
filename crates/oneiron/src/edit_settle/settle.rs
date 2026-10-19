@@ -425,6 +425,7 @@ impl Vault {
             version,
             reanchor,
             receipt,
+            reconciliation: None,
         })
     }
 
