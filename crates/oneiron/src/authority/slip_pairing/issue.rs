@@ -140,6 +140,7 @@ impl Vault {
         crate::world_keys::os_fill(&mut challenge)?;
         let pin = self.authority_checkpoint_pin_in_txn(&txn, challenge)?;
         let pin_ref = pin.as_ref().map(PairingPinRef::of).transpose()?;
+        let comm = effective_slip_comm(principal.comm);
         let pending = PairingPending {
             expires_at,
             slip_lifetime_secs,
@@ -156,6 +157,7 @@ impl Vault {
             code,
             expires_at,
             pin: pin_ref,
+            comm,
         })
     }
 }

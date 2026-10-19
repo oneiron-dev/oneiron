@@ -13,8 +13,12 @@ use crate::Vault;
 use crate::authority::HostSlipIssuer;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
+use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::receipt::{GuestRevokeResponse, project_guest_revoke};
+
+/// The producer of a guest revoke's owner notice.
+const GUEST_REVOKE_NOTIFICATION_PRODUCER: &str = "guest_revoke";
 
 /// `vault.guests.revoke`'s input: the guest's FEDERATION_GRANT, an ask
 /// guest's or a Connect peer's, and where to send the courtesy deletes.
@@ -25,7 +29,9 @@ pub struct GuestRevokeRequest {
     /// The former peer's host origin, `https://host[:port]`, as
     /// `vault.courtesy_delete.send` takes it: the server queues one
     /// courtesy-delete ask to it per courtesy target. No grant or pact
-    /// records it; omitted, the revoke sends nothing.
+    /// records it; omitted, the revoke sends nothing. The revoke always
+    /// commits: a `peer` a verb hook rewrote that fails the origin check
+    /// skips only the asks, and the answer says why (`courtesy_skipped`).
     #[serde(
         default = "default_guest_revoke_peer",
         skip_serializing_if = "Option::is_none"
@@ -69,4 +75,38 @@ pub fn revoke_guest_embedded(
         "vault.guests.revoke signs each pact disconnect with the host's own key; an embedded vault holds none",
         &[super::sdk_host::SERVED_CLIENT_HINT],
     ))
+}
+
+/// Tells the revoking owner, in their inbox, that `revoked` sent no
+/// courtesy-delete ask and why (`reason`, as `revoked.courtesy_skipped`
+/// says it): a Finding whose result names the withdrawn grant (FIX 4186).
+/// Keyed by grant and revoke time, so a repeat revoke finds its row.
+pub fn notify_guest_revoke_courtesy_skipped(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    revoked: &GuestRevokeResponse,
+    reason: &str,
+) -> crate::Result<()> {
+    let grant = revoked.grant_ref.to_hex();
+    vault.with_write_txn(|txn| {
+        let recipient = owner.revalidate_in_txn(vault, txn)?;
+        vault.record_notification_in_txn(
+            txn,
+            &NotificationEvent {
+                kind: NotificationKind::Finding,
+                source: NotificationSource {
+                    producer: GUEST_REVOKE_NOTIFICATION_PRODUCER.to_owned(),
+                    event: format!("{grant}:{}:courtesy_skipped", revoked.revoked_at),
+                    result: Some(grant.clone()),
+                    detail: Some(reason.to_owned()),
+                    ..NotificationSource::default()
+                },
+                subject_refs: Vec::new(),
+                recipient: Some(recipient),
+                created_at: revoked.revoked_at,
+                origin_conversation: None,
+            },
+        )?;
+        Ok(())
+    })
 }

@@ -69,6 +69,13 @@ pub struct HostSelfDispatcher<'a> {
     /// Where that owner's say-so reached the host, for the owner's act an
     /// owner setting records (WILL-PLAN L13 row 01). Audit only.
     pub(super) owner_surface: Option<crate::authority::ActSurface>,
+    /// The credential lineage the host admitted this run under (FIX 4705):
+    /// its verified slip and that slip's parent, the pair an owner proof's
+    /// lineage names. A request the run opens carries it, so no answer from
+    /// it settles that request. Only [`Self::with_opener_credential`] sets
+    /// it, from a slip the verifier produced; no guest call reaches it. A
+    /// run no credential admitted (a pumped agent run) has none.
+    opener_lineage: Vec<[u8; 32]>,
     /// ONE-1314. Whether this run's effect history is already known to carry
     /// an EXTERNAL effect, so the memory writes it seals afterwards must be
     /// stamped with tool-output lineage rather than bare `Generated`.
@@ -228,6 +235,7 @@ impl<'a> HostSelfDispatcher<'a> {
             code_emission: None,
             owner_proof: None,
             owner_surface: None,
+            opener_lineage: Vec::new(),
             external_effect_seen: Cell::new(false),
             agent_verbs: None,
             hook_view: RefCell::new(None),
@@ -342,6 +350,19 @@ impl<'a> HostSelfDispatcher<'a> {
         surface: Option<crate::authority::ActSurface>,
     ) -> Self {
         self.owner_surface = surface;
+        self
+    }
+
+    /// Binds the credential the host admitted the run's caller under (FIX
+    /// 4705): its slip and that slip's parent become the run's own lineage,
+    /// which never settles a request the run opens. The ids come from the
+    /// verified slip itself, never from a guest or wire value.
+    #[must_use]
+    pub fn with_opener_credential(mut self, credential: &crate::authority::VerifiedSlip) -> Self {
+        let claims = credential.claims();
+        self.opener_lineage = std::iter::once(claims.slip_id)
+            .chain(claims.parent_id)
+            .collect();
         self
     }
 

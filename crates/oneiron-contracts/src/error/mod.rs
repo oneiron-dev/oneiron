@@ -202,6 +202,8 @@ pub enum ErrorKind {
     RetrievalStageCut,
     /// No provider answered a model call that may be sent again later.
     ProviderUnavailable,
+    /// A refusal that names its bound; its message is the whole answer.
+    Refused,
     #[cfg(feature = "sync")]
     CrdtDecodeError,
     #[cfg(feature = "sync")]
@@ -469,6 +471,11 @@ pub enum Error {
     /// so the run parks on the outage rather than its guest handling it.
     #[error("no provider answered; retry in {retry_after} s")]
     ProviderUnavailable { retry_after: u64 },
+    /// A refusal that names its bound: what the caller funds, configures or
+    /// changes before asking again. Its message is caller-safe and is the
+    /// whole answer.
+    #[error("{0}")]
+    Refused(String),
     /// A host credential asked to act as the vault's owner where no host
     /// acts as a person: a hosted operator's root, or any vault that is not
     /// self-hosted (FIX 2222). The operator keeps its own admin commands;
@@ -628,6 +635,7 @@ impl Error {
             Self::UpstreamToolFailure { .. } => ErrorKind::UpstreamToolFailure,
             Self::RetrievalStageCut => ErrorKind::RetrievalStageCut,
             Self::ProviderUnavailable { .. } => ErrorKind::ProviderUnavailable,
+            Self::Refused(_) => ErrorKind::Refused,
             Self::HostActionRequiresSupportGrant => ErrorKind::HostActionRequiresSupportGrant,
             Self::Artifact(inner) => inner.kind(),
             Self::Claim(inner) => inner.kind(),
