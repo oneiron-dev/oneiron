@@ -12,8 +12,12 @@
 //! owner device's request at all (the development hatch, a host root, an
 //! agent, a managed vault's attested owner with no slip of his own) and
 //! hands the rest over raw. On a managed vault the device's own forwarded
-//! slip and machine proof renew it as anywhere else (FIX 5126). Every engine
-//! refusal is the same 401.
+//! slip and machine proof renew it as anywhere else (FIX 5126). An engine
+//! refusal names its reason (FIX 4651, `super::pairing::with_issuer`): a
+//! credential that may not renew, or no standing own-device Grant and
+//! enrolled machine, is a 403 for the owner-device scope; a stale or
+//! unadmitted proof is a 401; a lifetime past the ceilings is a 400 on
+//! `lifetime_secs`. Any other engine refusal stays a bare 401.
 
 use std::sync::Arc;
 

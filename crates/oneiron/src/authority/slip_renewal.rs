@@ -26,21 +26,24 @@ use crate::federation::Scope;
 use crate::{EntityId, Vault};
 
 /// K04, authority: the credential is not a live owner's own unattenuated,
-/// parentless human device credential.
-const RENEWAL_K04: &str = "only a live owner's unattenuated parentless human device credential \
-                           may renew; agent, support and attenuated credentials require a fresh \
-                           owner mint";
+/// parentless human device credential. Each `RENEWAL_*` reason is public so
+/// a transport can name its refusal (FIX 4651).
+pub const RENEWAL_K04: &str =
+    "only a live owner's unattenuated parentless human device credential may renew; agent, \
+     support and attenuated credentials require a fresh owner mint";
 /// Authority and key possession: the holder's own-device Grant does not
 /// stand, or no enrolled machine of the holder's proved this request.
-const RENEWAL_GRANT_AND_DEVICE: &str = "renewal requires this owner's live own-device Grant and \
-                                        the enrolled device's proof for the original credential";
+pub const RENEWAL_GRANT_AND_DEVICE: &str = "renewal requires this owner's live own-device Grant \
+                                            and the enrolled device's proof for the original \
+                                            credential";
 /// Integrity: the presented credential is not the admitted, live, logged one,
 /// or its holder proof is stale or was not admitted once for its key.
-const RENEWAL_PROOF_NOT_FRESH: &str = "renewal proof is not fresh or admitted for this credential";
+pub const RENEWAL_PROOF_NOT_FRESH: &str =
+    "renewal proof is not fresh or admitted for this credential";
 /// The lifetime bound: positive, and never past the original paired duration
 /// or the owner's current ceiling.
-const RENEWAL_LIFETIME: &str = "renewal lifetime must be positive and cannot exceed the original \
-                                paired duration or the current owner ceiling";
+pub const RENEWAL_LIFETIME: &str = "renewal lifetime must be positive and cannot exceed the \
+                                    original paired duration or the current owner ceiling";
 
 /// The machine half of one renewal request: the slip token it presented,
 /// the timestamp and nonce of the holder proof it rode
