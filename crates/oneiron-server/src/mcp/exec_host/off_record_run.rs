@@ -6,7 +6,7 @@ use std::sync::Arc;
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
     AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, GatedActorWrite,
-    RunCall, SelfAgentVerbCall,
+    RunCall, SelfAgentVerbCall, SessionWriteAdmission, SessionWriteCeiling,
 };
 use oneiron::engine_executor::{EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime};
 use oneiron::memory::HostWriteOrigin;
@@ -16,7 +16,8 @@ use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::{EntityId, Vault, WriteActor};
 
 use super::{ActiveRun, McpCodeExecutionError, McpCodeModeProvider, McpEngineNativeCodeHost};
-use crate::auth::CoreAuth;
+use crate::auth::{CoreAuth, CoreScope};
+use crate::error::ApiError;
 
 /// The durable run id `run_ref` names in the off-record session
 /// `session_ref` for `actor` (DOOR-127): the same handle in the same live
@@ -62,13 +63,59 @@ pub(crate) struct OffRecordRunSession {
 /// the place its connection sits. A read the run serves through the room
 /// reads under the key this caller's own handle builds again at each read,
 /// so its Grant and ceiling bind it as they bind the caller's other reads,
-/// wherever the caller or the vault runs. It forwards no verb (a run's verbs
-/// stage in the room or are refused there), and admits every call the run
-/// serves itself as a host that binds no door does.
+/// wherever the caller or the vault runs. A write the run stages in the room
+/// is admitted the same way, under the room's own write gate, and its
+/// credential is checked again where the write lands (S01-2a). It forwards
+/// no verb (a run's verbs stage in the room or are refused there), and
+/// admits every call the run serves itself as a host that binds no door
+/// does.
 struct OffRecordRunDoor {
     vault: Arc<Vault>,
     caller: CoreAuth,
     actor: WriteActor,
+}
+
+impl OffRecordRunDoor {
+    /// The key this door's caller reads under, built again now by the
+    /// caller's own handle at the place its connection sits.
+    fn caller_key(&self) -> Result<ScopedReadActorKey, AgentVerbRefusal> {
+        let actor = self.actor;
+        crate::api::credential_memory(
+            &self.vault,
+            Some(&self.caller),
+            actor.entity_ref(),
+            actor.actor_class(),
+        )
+        .at(self.caller.locality())
+        .read_key()
+        .map_err(|refused| AgentVerbRefusal { code: refused.code })
+    }
+}
+
+/// The ceiling a room write of an [`OffRecordRunDoor`]'s run lands under:
+/// the caller's credential, live in the write's own transaction.
+struct LiveCaller {
+    vault: Arc<Vault>,
+    caller: CoreAuth,
+}
+
+impl SessionWriteCeiling for LiveCaller {
+    fn holds_in(&self, txn: &heed::RwTxn<'_>) -> Result<(), AgentVerbRefusal> {
+        if self
+            .caller
+            .credential_is_live_in_write_txn(&self.vault, txn)
+        {
+            return Ok(());
+        }
+        Err(api_refusal(&ApiError::unauthorized()))
+    }
+}
+
+/// An API refusal as the run's guest reads it: its stable code.
+fn api_refusal(refused: &ApiError) -> AgentVerbRefusal {
+    AgentVerbRefusal {
+        code: refused.code().as_str().to_owned(),
+    }
 }
 
 impl AgentVerbDoor for OffRecordRunDoor {
@@ -88,16 +135,29 @@ impl AgentVerbDoor for OffRecordRunDoor {
     }
 
     fn admit_session_read(&self, _: AgentVerb) -> Result<ScopedReadActorKey, AgentVerbRefusal> {
-        let actor = self.actor;
-        crate::api::credential_memory(
-            &self.vault,
-            Some(&self.caller),
-            actor.entity_ref(),
-            actor.actor_class(),
-        )
-        .at(self.caller.locality())
-        .read_key()
-        .map_err(|refused| AgentVerbRefusal { code: refused.code })
+        self.caller_key()
+    }
+
+    /// A room write meets the room's own write gate, as the session's
+    /// direct write doors run it: a credential live now, holding Write over
+    /// the whole record scope, checked again in the write's own transaction.
+    /// The caller's key opens the room's view a claim's subject resolves
+    /// in; a credential that grants no read still writes, as those doors
+    /// let it, its subjects resolved as the vault resolves them.
+    fn admit_session_write(&self, _: AgentVerb) -> Result<SessionWriteAdmission, AgentVerbRefusal> {
+        if !self.caller.credential_is_live(&self.vault) {
+            return Err(api_refusal(&ApiError::unauthorized()));
+        }
+        self.caller
+            .require(CoreScope::Write)
+            .map_err(|refused| api_refusal(&refused))?;
+        Ok(SessionWriteAdmission::new(
+            self.caller_key().ok(),
+            Arc::new(LiveCaller {
+                vault: Arc::clone(&self.vault),
+                caller: self.caller.clone(),
+            }),
+        ))
     }
 }
 

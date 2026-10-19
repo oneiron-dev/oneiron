@@ -38,6 +38,7 @@
 //! outlives the guest's image queue and the guest.
 
 mod receipt_evidence;
+mod session_write;
 
 use self::receipt_evidence::ReceiptWriter;
 use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
@@ -1071,6 +1072,16 @@ impl AgentVerbDoor for McpCodeModeVerbs {
                 code: error.kind.to_owned(),
             })?;
         self.credential_lane()
+    }
+
+    /// A room write a session-bound run stages (WILL L11-01, S01-2a) meets
+    /// this connector's door as its session reads do, and lands under the
+    /// credential's live ceiling (`session_write`).
+    fn admit_session_write(
+        &self,
+        verb: AgentVerb,
+    ) -> Result<oneiron::code_run::SessionWriteAdmission, AgentVerbRefusal> {
+        self::session_write::admit(self, verb)
     }
 
     /// A result the run retained leaves this device again only while every

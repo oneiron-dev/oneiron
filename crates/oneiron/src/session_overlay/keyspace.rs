@@ -198,12 +198,20 @@ impl KeyspaceState {
     }
 
     /// The bytes this keyspace's rows spend of the room's budget: every row
-    /// but the room's bookkeeping ([`unbudgeted_row`]).
-    fn byte_size(&self, keyspace: OverlayKeyspace) -> usize {
+    /// but the room's bookkeeping ([`unbudgeted_row`], and the rows in
+    /// `bookkeeping` a write marked as its own).
+    fn byte_size(
+        &self,
+        keyspace: OverlayKeyspace,
+        bookkeeping: Option<&BTreeSet<Vec<u8>>>,
+    ) -> usize {
         match self {
             Self::Single { rows, .. } => rows
                 .iter()
-                .filter(|(key, _)| !unbudgeted_row(keyspace, key))
+                .filter(|(key, _)| {
+                    !unbudgeted_row(keyspace, key)
+                        && !bookkeeping.is_some_and(|marked| marked.contains(*key))
+                })
                 .map(|(key, value)| {
                     key.len()
                         + match value {
@@ -233,6 +241,12 @@ pub(super) struct OverlayState {
     /// so a retired entry's identity never names a later one.
     pub(super) next_journal_seq: u64,
     pub(super) bytes_used: usize,
+    /// The rows the room holds as a write's own bookkeeping, by keyspace
+    /// slot: a run's write receipt (WILL L11-01 S01-2a), marked by
+    /// [`OverlayMutation::Bookkeeping`]. As [`unbudgeted_row`] rows, they
+    /// spend none of the room's budget for as long as the room holds them; a
+    /// delete of the row, or a clear of its keyspace, ends the mark.
+    pub(super) bookkeeping: Arc<BTreeMap<usize, BTreeSet<Vec<u8>>>>,
 }
 
 impl OverlayState {
@@ -244,6 +258,7 @@ impl OverlayState {
             journal: Arc::new(Vec::new()),
             next_journal_seq: 0,
             bytes_used: 0,
+            bookkeeping: Arc::new(BTreeMap::new()),
         }
     }
 
@@ -252,7 +267,12 @@ impl OverlayState {
             .keyspaces
             .iter()
             .enumerate()
-            .map(|(slot, state)| state.byte_size(OverlayKeyspace::from_slot(slot)))
+            .map(|(slot, state)| {
+                state.byte_size(
+                    OverlayKeyspace::from_slot(slot),
+                    self.bookkeeping.get(&slot),
+                )
+            })
             .chain(self.journal.iter().map(|entry| entry.byte_size()))
             .fold(0_usize, usize::saturating_add);
     }
@@ -297,6 +317,13 @@ pub(super) enum OverlayMutation {
     Clear {
         keyspace: OverlayKeyspace,
     },
+    /// Marks `key` of `keyspace` as the room's bookkeeping of a write for as
+    /// long as the room holds it ([`OverlayState::bookkeeping`]). A
+    /// single-valued keyspace's row only.
+    Bookkeeping {
+        keyspace: OverlayKeyspace,
+        key: Vec<u8>,
+    },
 }
 
 // Segment mutations (including failed preflights and aborts) have their own
@@ -308,7 +335,7 @@ impl Drop for OverlayMutation {
                 key.zeroize();
                 value.zeroize();
             }
-            Self::Delete { key, .. } => key.zeroize(),
+            Self::Delete { key, .. } | Self::Bookkeeping { key, .. } => key.zeroize(),
             Self::Clear { .. } => {}
         }
     }
@@ -345,11 +372,51 @@ fn apply_mutation(state: &mut OverlayState, mutation: &OverlayMutation) -> Resul
         OverlayMutation::Put { keyspace, .. }
         | OverlayMutation::Delete { keyspace, .. }
         | OverlayMutation::DeleteDuplicate { keyspace, .. }
-        | OverlayMutation::Clear { keyspace } => *keyspace,
+        | OverlayMutation::Clear { keyspace }
+        | OverlayMutation::Bookkeeping { keyspace, .. } => *keyspace,
     };
     let slot = keyspace.slot();
+    // A write's bookkeeping mark lives as long as its row: a delete of the
+    // row or a clear of its keyspace ends it.
+    let unmarks = match mutation {
+        OverlayMutation::Clear { .. } => state.bookkeeping.contains_key(&slot),
+        OverlayMutation::Delete { key, .. } => state
+            .bookkeeping
+            .get(&slot)
+            .is_some_and(|marked| marked.contains(key)),
+        _ => false,
+    };
+    if unmarks {
+        let marks = Arc::make_mut(&mut state.bookkeeping);
+        match mutation {
+            OverlayMutation::Delete { key, .. } => {
+                let emptied = marks.get_mut(&slot).is_some_and(|marked| {
+                    marked.remove(key);
+                    marked.is_empty()
+                });
+                if emptied {
+                    marks.remove(&slot);
+                }
+            }
+            _ => {
+                marks.remove(&slot);
+            }
+        }
+    }
     if matches!(mutation, OverlayMutation::Clear { .. }) {
         state.keyspaces[slot] = Arc::new(KeyspaceState::cleared(keyspace));
+        return Ok(());
+    }
+    if let OverlayMutation::Bookkeeping { key, .. } = mutation {
+        if keyspace.is_dupsort() {
+            return Err(Error::InvariantViolation(
+                "a bookkeeping mark names a DUP_SORT overlay keyspace",
+            ));
+        }
+        Arc::make_mut(&mut state.bookkeeping)
+            .entry(slot)
+            .or_default()
+            .insert(key.clone());
         return Ok(());
     }
     let keyspace_state = Arc::make_mut(&mut state.keyspaces[slot]);
@@ -429,6 +496,7 @@ fn apply_mutation(state: &mut OverlayState, mutation: &OverlayMutation) -> Resul
             ));
         }
         (_, OverlayMutation::Clear { .. }) => unreachable!("clear handled above"),
+        (_, OverlayMutation::Bookkeeping { .. }) => unreachable!("bookkeeping handled above"),
     }
     Ok(())
 }

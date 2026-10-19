@@ -9,6 +9,7 @@ mod reader_jobs;
 mod records;
 mod replay_capsule;
 mod routing;
+mod session_write;
 mod speech_identity;
 mod wait_delivery;
 
