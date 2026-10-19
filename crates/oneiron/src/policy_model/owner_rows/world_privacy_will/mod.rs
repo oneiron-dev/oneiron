@@ -195,8 +195,11 @@ impl Vault {
             ActAuthority::Owner(owner, surface) => {
                 self.holder_world_privacy(owner, *surface, world, settings, seen, true)
             }
+            // An agent's act that reaches this door, not its run's
+            // (`agent_world_privacy`), names no run credential: a Grant
+            // carries none, so its ask has no opener lineage.
             ActAuthority::Agent(granted) => {
-                self.granted_world_privacy(granted, world, settings, seen)
+                self.granted_world_privacy(granted, Vec::new(), world, settings, seen)
             }
         }
     }
