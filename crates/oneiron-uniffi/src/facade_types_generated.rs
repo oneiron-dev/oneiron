@@ -39140,6 +39140,10 @@ pub enum CallPurpose {
     Voice,
     #[serde(rename = "eval")]
     Eval,
+    #[serde(rename = "autonomy.for_human")]
+    AutonomyForHuman,
+    #[serde(rename = "autonomy.own_time")]
+    AutonomyOwnTime,
     #[serde(rename = "other")]
     Other {
         #[serde(rename = "name")]
