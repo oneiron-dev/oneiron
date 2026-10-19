@@ -27,6 +27,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::coach::COACH_TYPE_TREE_UPKEEP_FACET;
 use super::type_tree_gate::{drive, record_team_shape_outcomes, team_leader};
+use super::type_tree_prior::donor_prior_winner;
 use crate::agent_dispatch::{
     TASK_TYPE_TREE_FILE, load_team_type_tree, team_shape_skill, team_shape_skill_in_force,
 };
@@ -361,6 +362,31 @@ pub(super) fn held_out_hits(tree: &TaskTypeTree, held_out: &[&TypeEvidence]) -> 
     hits
 }
 
+/// [`held_out_hits`] with `donor`, the vault tree, lent to a project tree's
+/// reads: a thin leaf on its exact donor path reads its winner with the
+/// donor's counts blended in ([`donor_prior_winner`]). With no donor, or on
+/// the vault tree, it reads as [`held_out_hits`] does.
+pub(super) fn held_out_hits_with_donor(
+    tree: &TaskTypeTree,
+    held_out: &[&TypeEvidence],
+    donor: Option<&TaskTypeTree>,
+) -> u64 {
+    let mut hits = 0_u64;
+    for row in held_out {
+        let Some(node) = tree.resolve_ref(&row.type_ref) else {
+            continue;
+        };
+        for decision in &row.decisions {
+            if donor_prior_winner(tree, &node.node_id, decision.axis, donor).as_deref()
+                == Some(decision.winner.as_str())
+            {
+                hits += 1;
+            }
+        }
+    }
+    hits
+}
+
 /// The name [`TaskTypeTree::split`] gives a child, which a readable one
 /// replaces.
 fn generated_name(node: &TaskTypeNode) -> Option<String> {
@@ -576,7 +602,7 @@ impl Vault {
     /// a project with no team-shape fork of its own in force), with its
     /// decisions; then the same, less every team of a leader whose pack
     /// receipt `reserved` holds, with the decisions read without them.
-    fn vault_type_evidence(
+    pub(super) fn vault_type_evidence(
         &self,
         teams: &[TeamReceipt],
         reserved: &BTreeSet<String>,

@@ -19,6 +19,13 @@
 //! revert of the win settles that evidence for good; new teams name new
 //! evidence. No judge, no held-out run yet, or a judge that abstains leaves
 //! the revision open for a later night.
+//!
+//! Every tree read here, the reshape's held-out check and both arms of the
+//! judge, lends the pass's donor ([`super::super::type_tree_prior`]): a thin
+//! leaf on its exact vault path reads with the vault tree's counts blended
+//! in. The donor is a read only: it is never counted into a revision, and
+//! the evidence a revision is minted for does not name it, so a settled
+//! revision stays settled whatever the vault head does.
 mod state;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,8 +34,9 @@ use self::state::{StoredCandidate, UpkeepKey, UpkeepRow, UpkeepState};
 use super::super::applied;
 use super::super::coach::COACH_FORK_PROMOTE_FACET;
 use super::super::type_tree_gate::{TreeReplayScorer, record_team_shape_outcomes, team_leader};
+use super::super::type_tree_prior::DonorTree;
 use super::super::type_tree_upkeep::{
-    Reshape, TypeEvidence, fit_split, held_out_hits, recount, reshape, type_evidence,
+    Reshape, TypeEvidence, fit_split, held_out_hits_with_donor, recount, reshape, type_evidence,
 };
 use super::{
     FORK_SKILL_PREFIX, ForkPromoteReport, PROJECT_TREE_FORK_ADMITS, SKILL_PAGE, fork_files,
@@ -60,6 +68,9 @@ struct Upkeep<'a> {
     actor: WriteActor,
     /// The TASK each recorded team start ran.
     tasks: BTreeMap<String, String>,
+    /// The pass's donor, lent to the project tree reads (FIX 5176): the
+    /// reshape's held-out check and both arms of the judge.
+    donor: Option<&'a DonorTree>,
     now: u64,
 }
 
@@ -74,9 +85,10 @@ struct Incumbent {
 
 /// The upkeep over every project: each project entity, read page by page to
 /// the end, each project an open journal row names and each project in
-/// `by_project` (the settled teams, by project). A refusal of one project's
-/// revision is counted and the pass moves on. Returns every project it
-/// looked at, for the promote step.
+/// `by_project` (the settled teams, by project). Its tree reads borrow on
+/// `donor`, the pass's vault tree; the evidence each revision is minted for
+/// does not name it. A refusal of one project's revision is counted and the
+/// pass moves on. Returns every project it looked at, for the promote step.
 ///
 /// # Errors
 ///
@@ -87,6 +99,7 @@ pub(super) fn run(
     attempt: &DreamerAdmittedAttempt,
     scorer: Option<&dyn HeldOutReplayNotes>,
     by_project: &BTreeMap<EntityId, Vec<TeamReceipt>>,
+    donor: Option<&DonorTree>,
     now: u64,
     report: &mut ForkPromoteReport,
 ) -> Result<BTreeSet<EntityId>> {
@@ -104,6 +117,7 @@ pub(super) fn run(
         attempt: id,
         actor: vault.dreamer_actor_for_attempt(id)?,
         tasks: team_run_tasks(vault)?,
+        donor,
         now,
     };
     let mut largest = 0_usize;
@@ -274,7 +288,8 @@ impl Upkeep<'_> {
             &incumbent.id,
             incumbent.tree.clone(),
             teams,
-        )?;
+        )?
+        .with_donor(self.donor);
         let judge: &dyn HeldOutReplayNotes = &judge;
         // The reserve as it stood when scored, which the write checks again.
         let scored_reserve = held_out_receipts(vault, &incumbent.id)?;
@@ -377,8 +392,9 @@ impl Upkeep<'_> {
     /// The revision `teams` ask of the project's tree in force: its shape
     /// recounted on the fit runs (every team of a leader `reserve` holds left
     /// out first) and reshaped, kept when it reads the fit's held-out
-    /// decisions no worse, then counted on every fit run with no held-out
-    /// count carried. `None` when the shape does not change.
+    /// decisions no worse (both shapes read with the pass's donor lent),
+    /// then counted on every fit run with no held-out count carried; the
+    /// donor's counts never enter it. `None` when the shape does not change.
     fn reshaped(
         &self,
         incumbent: &Incumbent,
@@ -398,8 +414,11 @@ impl Upkeep<'_> {
         let (held_out, fit) = fit_split(&pool, &incumbent.id);
         let (in_force, _) = recount(&incumbent.tree, &fit);
         let mut shaped = in_force.clone();
+        // Both shapes' held-out reads borrow on the pass's donor alike.
+        let lent = self.donor.map(|donor| &donor.tree);
         if reshape(&mut shaped) == Reshape::default()
-            || held_out_hits(&shaped, &held_out) < held_out_hits(&in_force, &held_out)
+            || held_out_hits_with_donor(&shaped, &held_out, lent)
+                < held_out_hits_with_donor(&in_force, &held_out, lent)
         {
             return None;
         }
