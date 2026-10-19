@@ -172,6 +172,20 @@ pub struct UsageRun {
     /// The payer-needed ask on which the owners approved billing the vault,
     /// when the PERSON's own account could not be resolved.
     pub payer_ask: Option<u64>,
+    /// The label the call was admitted with (FIX 4453): its envelope
+    /// purpose, or a paid connector call's bound item's; `None` for a paid
+    /// connector call on an unbound run.
+    #[serde(default)]
+    pub purpose: Option<String>,
+    /// The free-time cycle, item and spend scope a bound run's call served,
+    /// as the engine stamped them before the run began; `None` on every
+    /// unbound run.
+    #[serde(default)]
+    pub cycle: Option<String>,
+    #[serde(default)]
+    pub item: Option<String>,
+    #[serde(default)]
+    pub spend_scope: Option<String>,
     pub reserved_units: u64,
     pub settled_units: u64,
     pub unit: String,
@@ -255,6 +269,16 @@ impl UsageEvent {
             ("service", &self.service),
         ] {
             validate_optional_dimension(field, value.as_deref())?;
+        }
+        if let Some(run) = &self.run {
+            for (field, value) in [
+                ("run.purpose", &run.purpose),
+                ("run.cycle", &run.cycle),
+                ("run.item", &run.item),
+                ("run.spendScope", &run.spend_scope),
+            ] {
+                validate_optional_dimension(field, value.as_deref())?;
+            }
         }
         super::keys::validate_key(&super::keys::usage_event_key(
             &self.owner,
