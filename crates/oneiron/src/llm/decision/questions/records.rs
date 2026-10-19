@@ -403,12 +403,14 @@ pub struct AnswerProposal {
     pub paired: Vec<PairedReading>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AnswerRecord {
     #[serde(with = "super::super::codec::entity")]
+    #[schemars(with = "String")]
     pub claim: EntityId,
     #[serde(with = "super::super::codec::entity")]
+    #[schemars(with = "String")]
     pub unit: EntityId,
     pub decision: TypedDecision,
     /// Engine-computed hash of the live source row and its document frontier.

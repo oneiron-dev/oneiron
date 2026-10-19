@@ -165,9 +165,62 @@ impl GraphAskRequest {
     }
 }
 
+/// `vault.graph.admit`'s input: one graph unit and the provider
+/// measurement the caller already holds for it, admitted in place of the
+/// host ladder's. `decision` is the engine's `TypedDecision`: its receipt
+/// must name `question` at its version, the caller as its principal and
+/// only the providers that measured it. The engine validates the whole
+/// decision — its provider-bound paired and person readings included —
+/// against the unit's sources again in the write that lands it, so a
+/// measurement no listed provider took, a duplicate provider, a reading
+/// of the answered question itself, a zero version or an out-of-range
+/// probability is refused before any claim is minted. The receipt's
+/// evidence and evidence versions are the engine's own pins of the
+/// sources it re-reads; a missing paired reading stays missing, never a
+/// fabricated zero.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GraphAdmitRequest {
+    /// The typed question, as `vault.graph.ask` takes it.
+    pub question: DecisionQuestion,
+    /// The one graph unit the measurement answers, read under the
+    /// caller's own scoped read; a unit it cannot read is passed over as
+    /// a missing one is, as in `vault.graph.ask`.
+    pub unit: EntityId,
+    /// The provider measurement to admit for `unit`.
+    pub decision: TypedDecision,
+}
+
+impl GraphAdmitRequest {
+    /// The admission's own bounds, checked before the unit is read: the
+    /// question itself, and a decision that names it at its version. The
+    /// rest of the decision — principal, contract, probability, providers
+    /// and their bound readings — is the engine's graph-ask validation,
+    /// run by the door over the caller's principal.
+    pub fn validate(&self) -> MemoryResult<()> {
+        self.question.validate().map_err(|_| {
+            MemoryError::bad_request_with(
+                "the question is not a valid typed question",
+                &[
+                    "Give it a version of 1 or more, 1 to 16384 bytes of text, a class other than provenance and a valid contract.",
+                ],
+            )
+        })?;
+        if self.decision.receipt.question != self.question.id
+            || self.decision.receipt.question_version != self.question.version
+        {
+            return Err(MemoryError::bad_request_with(
+                "the admitted decision does not name the question at its version",
+                &["Name the question and its version on the decision receipt."],
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// A unit whose answerer declined through a full decision, with that
 /// decision: its providers, clock and owner-ask reason.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GraphAskDeclined {
     pub unit: EntityId,
     pub decision: TypedDecision,
@@ -175,7 +228,7 @@ pub struct GraphAskDeclined {
 
 /// `vault.graph.ask`'s answer. Each answer is a proposed, receipt-bearing
 /// claim private to the asker, waiting for Keep; none is kept on its own.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum GraphAskOutcome {
     /// Every readable unit ran.

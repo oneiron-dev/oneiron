@@ -5566,6 +5566,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_artifacts_admit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.admit", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_critic_review(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.critic.review", js_json(input))
@@ -6548,6 +6557,12 @@ impl NativeClient {
     pub fn vault_graph_ask(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.graph.ask", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_graph_admit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.graph.admit", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

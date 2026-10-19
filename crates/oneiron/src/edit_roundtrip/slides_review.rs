@@ -100,7 +100,7 @@ pub trait SlideRenderer: Send + Sync {
 
 /// User-configured display words, including the severity words in comments.
 /// No question, glossary, prompt or user-facing label is compiled into Rust.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SlideReviewLabels {
     pub yes: String,
     pub no: String,

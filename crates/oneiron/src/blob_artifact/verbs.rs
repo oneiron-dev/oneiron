@@ -18,7 +18,7 @@ use crate::edit_roundtrip::slides_review::{
 };
 use crate::edit_roundtrip::{
     ArtifactAsk, DeckEditContext, DeckEditOutcome, FolderAsk, FolderItem, ParagraphAsk, RangeRef,
-    SheetRowsAsk, UnitAbstention, UnitDecider, UnitRefusal,
+    SheetRowsAsk, UnitAbstention, UnitCall, UnitDecider, UnitRefusal,
 };
 use crate::edit_settle::{
     KeepUndo, NativeOutput, OrganWaitView, PendingProposalView, SettleConsent,
@@ -27,6 +27,7 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::llm::decision::{
     DecisionBandPolicy, DecisionDial, DecisionQuestion, Reversibility, SlideReviewLimits,
+    TypedDecision,
 };
 use crate::memory::{
     MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult, resolve_image_ref,
@@ -165,8 +166,10 @@ pub struct SlideReviewSubmit {
     /// The run ref the proposal is held under: the consume-once key.
     pub run_ref: String,
     pub units: Vec<SlideReviewUnitInput>,
-    /// The typed question (`DecisionQuestion`), as JSON.
-    pub question: serde_json::Value,
+    /// The typed question every unit is asked: the engine's shared
+    /// `DecisionQuestion` (`{id, version, text, class, contract,
+    /// accept_type}`), the same shape `vault.graph.ask` takes.
+    pub question: DecisionQuestion,
     /// Who the comments are by (`PptxAuthor`), as JSON.
     pub author: serde_json::Value,
     /// The display words, severity words included (`SlideReviewLabels`), as JSON.
@@ -236,8 +239,10 @@ pub struct ArtifactAskSubmit {
     pub artifact_ref: String,
     /// The run ref the proposal is held under: the consume-once key.
     pub run_ref: String,
-    /// The typed question (`DecisionQuestion`), as JSON.
-    pub question: serde_json::Value,
+    /// The typed question every unit is asked: the engine's shared
+    /// `DecisionQuestion` (`{id, version, text, class, contract,
+    /// accept_type}`), the same shape `vault.graph.ask` takes.
+    pub question: DecisionQuestion,
     pub units: ArtifactAskUnits,
     /// `reversible_read` (the default) or `outbound_effect`.
     #[serde(default)]
@@ -306,11 +311,31 @@ pub struct FolderItemInput {
 /// What an ask did: the proposal held for Keep (none when no unit was
 /// answered), the units left unanswered with their receipts, and those it
 /// refused.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ArtifactAskOutcome {
     pub proposed: Option<PendingProposalView>,
     pub abstained: Vec<UnitAbstention>,
     pub refused: Vec<UnitRefusal>,
+}
+
+/// `vault.artifacts.admit`'s input: one artifact ask whose provider output
+/// the caller already holds, admitted unit by unit instead of measured by
+/// the host's ladder. `decisions` are consumed in the order the ask reads
+/// its units (sheet rows in row order, paragraphs in `blocks` order,
+/// folder items in `items` order); a unit the ask refuses or that abstains
+/// for missing input consumes none. Each decision's receipt must name
+/// `ask.question` at its version, the caller as its principal and only
+/// the providers that measured it: the engine validates every decision —
+/// its provider-bound paired and person readings included — before any
+/// proposal is held, so an invalid measurement mints nothing. A missing
+/// paired reading stays missing; no zero is fabricated.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactAdmitSubmit {
+    pub ask: ArtifactAskSubmit,
+    /// The provider measurements to admit, one per unit the ask decides,
+    /// in unit order.
+    pub decisions: Vec<TypedDecision>,
 }
 
 /// Whether a held organ call was let go.
@@ -346,6 +371,30 @@ pub struct UndoneKeep {
 
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())
+}
+
+/// The decider an artifact admission runs under: the caller's submitted
+/// measurements, taken one per unit the ask decides, in unit order. It
+/// measures nothing itself and reads no images; `ArtifactAsk::decide`
+/// validates each decision it hands back before anything is held.
+struct AdmittedDecider {
+    decisions: std::sync::Mutex<std::collections::VecDeque<TypedDecision>>,
+}
+
+impl UnitDecider for AdmittedDecider {
+    fn reads_images(&self) -> bool {
+        false
+    }
+
+    fn decide_unit(&self, _call: &UnitCall<'_>) -> crate::Result<TypedDecision> {
+        self.decisions
+            .lock()
+            .map_err(|_| invalid("artifact admission decisions"))?
+            .pop_front()
+            .ok_or_else(|| {
+                invalid("an artifact admission names fewer decisions than units asked")
+            })
+    }
 }
 
 fn entity(text: &str) -> MemoryResult<EntityId> {
@@ -569,9 +618,8 @@ impl Memory<'_> {
                 }
                 Ok(value.clone())
             };
-        let question: DecisionQuestion =
-            json_field(Some(required(&input.question, "question")?), "question")?
-                .ok_or_else(|| invalid("a slide review names its question"))?;
+        let question = input.question.clone();
+        question.validate()?;
         let author: PptxAuthor = json_field(Some(required(&input.author, "author")?), "author")?
             .ok_or_else(|| invalid("a slide review names its author"))?;
         let labels: SlideReviewLabels =
@@ -743,11 +791,8 @@ impl Memory<'_> {
         policy: &DecisionBandPolicy,
     ) -> MemoryResult<ArtifactAskOutcome> {
         let artifact = entity(&input.artifact_ref)?;
-        if input.question.is_null() {
-            return Err(invalid("an artifact ask names its question").into());
-        }
-        let question: DecisionQuestion = json_field(Some(input.question.clone()), "question")?
-            .ok_or_else(|| invalid("an artifact ask names its question"))?;
+        let question = input.question.clone();
+        question.validate()?;
         let reversibility: Reversibility =
             json_field(input.reversibility.clone(), "reversibility")?
                 .unwrap_or(Reversibility::ReversibleRead);
@@ -879,6 +924,43 @@ impl Memory<'_> {
             abstained: run.abstained,
             refused: run.refused,
         })
+    }
+
+    /// `vault.artifacts.admit` on an embedded handle: a server's host door
+    /// answers it, beside `vault.artifacts.ask`.
+    pub fn artifacts_admit(
+        &self,
+        _input: &ArtifactAdmitSubmit,
+    ) -> MemoryResult<ArtifactAskOutcome> {
+        Err(MemoryError::new(
+            MEMORY_CODE_MODEL_UNAVAILABLE,
+            "an artifact admission lands through a server's host door",
+            &["Call vault.artifacts.admit on a server."],
+        ))
+    }
+
+    /// `vault.artifacts.admit` through a server's door: the caller's own
+    /// provider measurements, admitted as the bound actor in place of the
+    /// host ladder's. Each unit's decision goes through the same
+    /// `ArtifactAsk::decide` validation an ask's does — receipt question,
+    /// version and principal, contract, probability, providers and their
+    /// bound paired/person readings — before the proposal is held, so a
+    /// measurement no listed provider took, a duplicate provider, a
+    /// reading of the answered question itself, a zero version or an
+    /// out-of-range probability is refused and mints no proposal.
+    pub fn artifacts_admit_through(
+        &self,
+        input: &ArtifactAdmitSubmit,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+    ) -> MemoryResult<ArtifactAskOutcome> {
+        if input.decisions.is_empty() {
+            return Err(invalid("an artifact admission names its decisions").into());
+        }
+        let decider = AdmittedDecider {
+            decisions: std::sync::Mutex::new(input.decisions.iter().cloned().collect()),
+        };
+        self.artifacts_ask_through(&input.ask, &decider, dial, policy)
     }
 
     /// `vault.artifacts.waits`: the organ calls held beside one artifact

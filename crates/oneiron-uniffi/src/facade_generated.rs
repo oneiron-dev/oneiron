@@ -3156,6 +3156,11 @@ export_facade! {
     let output = client.vault_artifacts_ask(&input)?;
     crate::codec::lift_record("vault.artifacts.ask", &output)
 };
+"vault.artifacts.admit" => fn vault_artifacts_admit(&self, input: ArtifactAdmitSubmit) -> ArtifactAskOutcome = |client| {
+    let input: oneiron::blob_artifact::ArtifactAdmitSubmit = crate::codec::lower_record("vault.artifacts.admit", input)?;
+    let output = client.vault_artifacts_admit(&input)?;
+    crate::codec::lift_record("vault.artifacts.admit", &output)
+};
 "vault.critic.review" => fn vault_critic_review(&self, input: CriticReviewSubmit) -> CriticReviewOutcome = |client| {
     let input: oneiron::critic::review::CriticReviewSubmit = crate::codec::lower_record("vault.critic.review", input)?;
     let output = client.vault_critic_review(&input)?;
@@ -3730,6 +3735,11 @@ export_facade! {
     let input: oneiron::receipt::GraphAskRequest = crate::codec::lower_record("vault.graph.ask", input)?;
     let output = client.vault_graph_ask(&input)?;
     crate::codec::lift_record("vault.graph.ask", &output)
+};
+"vault.graph.admit" => fn vault_graph_admit(&self, input: GraphAdmitRequest) -> GraphAskOutcome = |client| {
+    let input: oneiron::receipt::GraphAdmitRequest = crate::codec::lower_record("vault.graph.admit", input)?;
+    let output = client.vault_graph_admit(&input)?;
+    crate::codec::lift_record("vault.graph.admit", &output)
 };
 "vault.questions.create" => fn vault_questions_create(&self, input: QuestionCreateRequest) -> QuestionRecord = |client| {
     let input: oneiron::receipt::QuestionCreateRequest = crate::codec::lower_record("vault.questions.create", input)?;

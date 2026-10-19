@@ -9778,6 +9778,19 @@
       "section": false
     },
     {
+      "name": "vault.artifacts.admit",
+      "description": "Admits the caller's own provider measurements for one artifact ask's units in place of the host ladder's, validating each decision and its provider-bound paired readings before holding the answers as one proposal for Keep or Discard.",
+      "input": "crate::blob_artifact::ArtifactAdmitSubmit",
+      "output": "crate::blob_artifact::ArtifactAskOutcome",
+      "call": "memory.artifacts_admit(&input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.critic.review",
       "description": "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target.",
       "input": "crate::critic::review::CriticReviewSubmit",
@@ -11721,6 +11734,22 @@
         "validate": "input.validate()?;"
       },
       "section": false
+    },
+    {
+      "name": "vault.graph.admit",
+      "description": "Admits the caller's own provider measurement for one graph unit in place of the host ladder's, validating the whole decision and its provider-bound paired readings before landing it as a proposed claim private to the caller.",
+      "input": "crate::receipt::GraphAdmitRequest",
+      "output": "crate::receipt::GraphAskOutcome",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.graph.admit\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "proposes": true,
+      "admission": {
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.questions.create",

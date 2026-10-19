@@ -23,7 +23,7 @@ pub use artifact_refresh::{
     ArtifactRefreshBatch, ArtifactRefreshFailure, refresh_due_artifact_questions,
 };
 pub use backfill::schedule_backfill;
-pub(crate) use graph_ask::validate_decision as validate_unit_decision;
+pub use graph_ask::validate_decision as validate_unit_decision;
 pub use graph_ask::{
     GraphAnswerer, GraphAskFailure, GraphAskReceipts, GraphAskResult, GraphContextSource,
     GraphDecision, GraphPrediction, GraphTypeSelection, GraphUnitContext, run_graph_ask,

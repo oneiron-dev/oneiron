@@ -1709,6 +1709,8 @@ export class Oneiron {
       review_slides: (request: Facade.SlideReviewSubmit): Facade.SlideReviewOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReviewSlides(keyedJson(request))) as Facade.SlideReviewOutcome; return result }),
       /** Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard. */
       ask: (input: Facade.ArtifactAskSubmit): Facade.ArtifactAskOutcome => this.#call(() => this.#client.vaultArtifactsAsk(input) as Facade.ArtifactAskOutcome),
+      /** Admits the caller's own provider measurements for one artifact ask's units in place of the host ladder's, validating each decision and its provider-bound paired readings before holding the answers as one proposal for Keep or Discard. */
+      admit: (input: Facade.ArtifactAdmitSubmit): Facade.ArtifactAskOutcome => this.#call(() => this.#client.vaultArtifactsAdmit(input) as Facade.ArtifactAskOutcome),
       /** Proposes a closed typed deck outline as a brief NOTE for the person to keep or decline. */
       propose_outline: (input: Facade.DeckOutlineProposeRequest): Facade.DeckOutlineView => this.#call(() => this.#client.vaultArtifactsProposeOutline(input) as Facade.DeckOutlineView),
       /** Reads a typed deck outline, its current NOTE frontier, its keep and its freshness. */
@@ -2138,6 +2140,8 @@ export class Oneiron {
     },
     graph: {
       ask: (input: Facade.GraphAskRequest): Facade.GraphAskOutcome => this.#call(() => this.#client.vaultGraphAsk(input) as Facade.GraphAskOutcome),
+      /** Admits the caller's own provider measurement for one graph unit in place of the host ladder's, validating the whole decision and its provider-bound paired readings before landing it as a proposed claim private to the caller. */
+      admit: (input: Facade.GraphAdmitRequest): Facade.GraphAskOutcome => this.#call(() => this.#client.vaultGraphAdmit(input) as Facade.GraphAskOutcome),
     },
     questions: {
       create: (input: Facade.QuestionCreateRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsCreate(input) as Facade.QuestionRecord),
