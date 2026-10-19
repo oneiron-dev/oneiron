@@ -9,7 +9,9 @@
 //! offer check reads the meter against an approved offer's promise. The
 //! seal's checks put each pending confession recheck and random audit to a
 //! judge that did not produce the result ([`seal_checks`]). Type-tree upkeep
-//! names each new split type on the Coach's seat ([`type_tree_upkeep`]).
+//! names each new split type on the Coach's seat ([`type_tree_upkeep`]), and
+//! the project fork pass lends the replay judge that scores each project's
+//! own team-shape fork against the head ([`fork_promote`]).
 //! The research job, queued each round while a campaign has host work,
 //! advances its autoresearch continuations (FIX 886). An owner-authorized
 //! training run trains on its own thread, then scores ([`super::training_pack`]).
@@ -23,11 +25,12 @@ use oneiron::actor_claims::{
 };
 use oneiron::autoreason_campaign::research::research_work_pending;
 use oneiron::dreamer_runner::maintenance::coach::{
-    COACH_ATTRIBUTION_AUDITS_FACET, COACH_EVAL_AUTHORING_FACET, COACH_JUDGE_LABEL_RECHECKS_FACET,
-    COACH_JUDGE_SWAP_FACET, COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET,
-    COACH_RESEARCH_RUN_FACET, COACH_SEAL_CHECKS_FACET, COACH_SKILL_DISCOVERY_FACET,
-    COACH_SKILL_DISTILL_FACET, COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET,
-    COACH_TRAINING_RUN_FACET, COACH_TYPE_TREE_UPKEEP_FACET, PersonThresholdPolicy,
+    COACH_ATTRIBUTION_AUDITS_FACET, COACH_EVAL_AUTHORING_FACET, COACH_FORK_PROMOTE_FACET,
+    COACH_JUDGE_LABEL_RECHECKS_FACET, COACH_JUDGE_SWAP_FACET, COACH_OFFER_CHECK_FACET,
+    COACH_PERSON_THRESHOLD_FACET, COACH_RESEARCH_RUN_FACET, COACH_SEAL_CHECKS_FACET,
+    COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET, COACH_TRADEOFF_ROUTE_FACET,
+    COACH_TRAINING_OFFER_FACET, COACH_TRAINING_RUN_FACET, COACH_TYPE_TREE_UPKEEP_FACET,
+    PersonThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
@@ -42,6 +45,7 @@ use super::code_fix::{HostModels, clip, message};
 use crate::server::SyncServer;
 
 mod attribution_audits;
+mod fork_promote;
 mod judge_label_rechecks;
 mod seal_checks;
 mod type_tree_upkeep;
@@ -164,6 +168,7 @@ fn run_one(
         COACH_ATTRIBUTION_AUDITS_FACET => attribution_audits::run(server, admitted, now),
         COACH_JUDGE_LABEL_RECHECKS_FACET => judge_label_rechecks::run(server, admitted, now),
         COACH_TYPE_TREE_UPKEEP_FACET => type_tree_upkeep::run(server, admitted, now),
+        COACH_FORK_PROMOTE_FACET => fork_promote::run(server, admitted, now),
         COACH_RESEARCH_RUN_FACET => vault.run_coach_research(admitted, now),
         COACH_TRADEOFF_ROUTE_FACET => {
             let report = vault.run_coach_tradeoff_route(admitted, now)?;

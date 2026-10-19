@@ -18567,7 +18567,7 @@
      "purpose": "Multi-critic review node primitives",
      "surface": {
       "const": 3,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 14,
       "mod": 1,
@@ -20940,7 +20940,7 @@
      "purpose": "Dreamer maintenance that applies at once (OF-023, owner ruling 10-18: \"autoapply + revert rather than…",
      "surface": {
       "const": 3,
-      "crate-vis": 7,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -20979,7 +20979,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 28,
+      "const": 29,
       "crate-vis": 9,
       "fn": 14,
       "trait": 1
@@ -21169,6 +21169,20 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ForkPromoteReport"
+     ],
+     "path": "src/dreamer_runner/maintenance/fork_promote.rs",
+     "purpose": "The project tree fork (ARCH-0079 #task-type, OF-420): a project whose receipts disagree with the vault tree…",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -21247,7 +21261,7 @@
       "const": 3,
       "crate-vis": 9,
       "fn": 1,
-      "mod": 17,
+      "mod": 18,
       "re-export": 8
      }
     },
@@ -21441,7 +21455,7 @@
      "path": "src/dreamer_runner/maintenance/type_tree_gate.rs",
      "purpose": "The held-out gate on a team-shape tree revision (ARCH-0079 #task-type, OF-420): \"revised by the loop from…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -46839,7 +46853,7 @@
      "path": "src/skill_hub/admission_guard.rs",
      "purpose": "Imported and hub-derived instruction authority at the single SKILL materialization door",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -58303,7 +58317,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 45,
+      "crate-vis": 47,
       "enum": 3,
       "fn": 17,
       "re-export": 15,
@@ -60909,7 +60923,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 67,
+     "files": 68,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61926,7 +61940,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3778,
+   "source_files": 3779,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73201,6 +73215,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/coach_host/fork_promote.rs",
+     "purpose": "The host side of the project tree fork (ARCH-0079 #task-type, OF-420): the engine forks a project's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/coach_host/judge_label_rechecks.rs",
      "purpose": "The host's judge-label re-checker (ARCH-0042 judge re-pin, OF-420): after an edit of the judge's rubric, the…",
      "surface": {
@@ -83634,7 +83658,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 50,
+     "files": 51,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84070,7 +84094,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 806,
+   "source_files": 807,
    "test_files": 182
   },
   "oneiron-spawn": {
