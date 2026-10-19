@@ -284,6 +284,32 @@ It exits nonzero when a sweep failed or could not finish some of its records. It
 the repair for a vault refused after an analyzer or dictionary change. A running server answers
 `POST /v1/owner/maintain` with the same report, without the repairs.
 
+## A managed host's vault UID table
+
+A managed vault that holds real data opens only on a data directory with an fscrypt policy, owned
+by a dedicated non-root UID with no group or other access, and allocated to that vault in the
+host's UID table; only a vault marked as a synthetic canary opens without them. Whoever runs the
+host as root, normally its supervisor, keeps the table at `/etc/oneiron/vault-uids`: creating a
+vault adds its row, under the supervisor's create lock, and retiring the vault removes it. Write
+the whole table to a temporary file beside it and rename that into place, so a reader sees the old
+table or the new one and never a part. The file must be a regular file (a symlink is refused, not
+followed), owned by root (`root:root`, mode `0644`), writable by no group or other user, and at
+most 1 MiB; a table that fails any of these allocates nothing, and every real vault on the host is
+refused at its next start, naming the missing UID allocation.
+
+Each row is one line of three fields separated by literal TAB characters:
+`uid<TAB>vault-name<TAB>canonical-data-directory`. The UID is the vault's own, a nonzero `u32`; the
+name is the vault's `--vault-name`; the directory is its `--data-dir` as an absolute path with no
+links left to resolve. Empty lines and lines starting `#` are skipped. Any other line that is not
+three fields with a numeric UID first makes the whole table unreadable. No two rows may hold the
+same UID, name or directory: a vault opens only when exactly one row holds its UID, its name and
+its directory together.
+
+The grammar's authority is `oneiron_vault_contract::vault_uids`: its `PATH`, `OWNER_UID`, `MODE`,
+`REFUSED_MODE_BITS` and `MAX_BYTES` (the 1 MiB bound) constants, `parse`, which the vault reads the
+table with, `binding_matches`, the rule a vault opens by, and `serialize`, which writes a table
+and refuses one the vault could never admit. A supervisor writes the table with `serialize`.
+
 ## Export
 
 ```sh
@@ -891,6 +917,13 @@ delegate or guest of the vault reads it with `GET /v1/owner/conversation-learnin
 set it ("Training is on. Set by <admin>." and, when people may opt out, "You can leave your own
 messages out."). Nothing leaves while no machine-only intake is configured. Training a model of
 your own on your own data (the training pack) needs no sharing.
+
+`oneiron init` asks this once, when it creates the vault on a terminal: only `y` or `yes` turns it
+on, and Enter, `n`, `no` or no terminal leave it off and write nothing. A yes is written as the
+vault's owner on this install, once the configured auth secret (`auth_secret` or
+`ONEIRON_AUTH_SECRET`) has rooted the vault and enrolled this install as `serve`'s first start
+would. With no auth secret configured, init says the setting stays off and how to turn it on
+later. A rerun over an existing vault never asks.
 
 While it is on, everything in the vault counts: every live conversation, offered once, with the
 turns of people, agents and guests alike. A turn counts when its writer is a live actor of this
