@@ -54,6 +54,9 @@ impl SyncConnection {
             tokio::time::interval(Duration::from_secs(SEALED_RELAY_INTERVAL_SECS));
         sealed_relay.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut sealed_task: Option<tokio::task::JoinHandle<()>> = None;
+        // The committed pad tombstones no postcommit published (FIX 3849): one
+        // retry at a time on the same tick, every lane, federation's included.
+        let mut tombstone_task: Option<tokio::task::JoinHandle<()>> = None;
         // The machine-claim history this machine is owed (FIX 3820): rounds on
         // their own sockets, off this loop, at connect, every retry interval,
         // and once an import or a round lands rows it waits on.
@@ -277,6 +280,17 @@ impl SyncConnection {
                 }
 
                 _ = sealed_relay.tick() => {
+                    if tombstone_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished) {
+                        let vault = std::sync::Arc::clone(self.manager.vault());
+                        let events = event_tx.clone();
+                        tombstone_task = Some(tokio::task::spawn_blocking(move || {
+                            if let Err(error) = crate::sync::residence::retry_pending_tombstones(&vault) {
+                                let _ = events.send(SyncEvent::Error(format!(
+                                    "Pending tombstone retry failed: {error}"
+                                )));
+                            }
+                        }));
+                    }
                     if self.config.client_config.federation_peer.is_none()
                         && sealed_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished)
                     {

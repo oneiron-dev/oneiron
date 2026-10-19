@@ -7,6 +7,8 @@ become `IllegalStateException`; a missing entity alone returns `null`.
 
 Use the app-private files directory for production vaults. Close each instance
 before reopening the same root. Do not mutate `nativeHandle` with reflection.
+A phone app opens with `EmbeddedVault(path, DeviceClass.PHONE)`: the class is
+the host's to declare, never read off the OS, and `COMPUTER` is the default.
 The engine checks each body against its kind. Kind 4 is a conversation, and its
 body must be a MessagePack map (`ConversationBody`, every field optional).
 

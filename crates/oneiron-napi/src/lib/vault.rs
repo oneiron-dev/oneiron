@@ -6,7 +6,8 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use oneiron::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, EdgeActorClass, EntityId,
-    Memory, RawEntityPut, RepoRef, TimeRange, Vault, VaultConfig, parse_actor_key,
+    Memory, RawEntityPut, RepoRef, TimeRange, Vault, VaultConfig, authority::MachineDeviceClass,
+    parse_actor_key,
 };
 
 use super::boundary::{
@@ -48,6 +49,21 @@ fn refuse_unserved_media(media: Option<NapiRecallMedia>) -> napi::Result<()> {
         CONTEXT_PACK_MEDIA_UNSERVED,
         &["Pack media through a server that serves the space's rung under [models.media.embed]."],
     )))
+}
+
+/// The class a host declares on a raw open (FIX 3833; CALLS:
+/// HOST_OPEN_DEVICE_CLASS = ExplicitHostInput): `"computer"`, the generic
+/// default when omitted, or `"phone"`. Never read off the operating system.
+pub(crate) fn host_device_class(
+    device_class: Option<&str>,
+) -> std::result::Result<MachineDeviceClass, String> {
+    match device_class {
+        None | Some("computer") => Ok(MachineDeviceClass::Computer),
+        Some("phone") => Ok(MachineDeviceClass::Phone),
+        Some(other) => Err(format!(
+            "unknown deviceClass {other:?}; pass \"computer\" or \"phone\""
+        )),
+    }
 }
 
 /// What a bound vault says to a write it has no caller-bound door for
@@ -116,14 +132,21 @@ impl NapiVault {
     /// pass the bundle path (`Bundle.main.resourcePath + "/oneiron-dicts"`).
     /// When a language's dict is absent, oneiron falls back to a Portable
     /// (ICU4X + n-gram) analyzer for that language.
+    ///
+    /// `deviceClass` is what kind of machine this install is, as the host
+    /// declares it (FIX 3833): `"computer"`, the default, or `"phone"`. It is
+    /// set before the vault opens, so the install enrols as it.
     #[napi(constructor)]
     pub fn new(
         path: String,
         dimensions: Option<u32>,
         dict_search_paths: Option<Vec<String>>,
+        device_class: Option<String>,
     ) -> napi::Result<Self> {
         crate::facade::before_vault_open();
         let mut config = VaultConfig::device();
+        config.machine_device_class =
+            host_device_class(device_class.as_deref()).map_err(napi::Error::from_reason)?;
         if let Some(dims) = dimensions {
             config.dimensions = dims as usize;
         }
@@ -150,18 +173,20 @@ impl NapiVault {
     /// secret first, as a new local-origin vault. A secret that cannot
     /// profile the install refuses the open with the engine's reason; a
     /// secret that is not the vault's settled root, over a profile that
-    /// already stands, opens and says so in `wrongHostRoot`.
+    /// already stands, opens and says so in `wrongHostRoot`. `deviceClass`
+    /// is `new`'s (FIX 3833).
     #[napi(factory)]
     pub fn open_with_host_root(
         path: String,
         dimensions: Option<u32>,
         dict_search_paths: Option<Vec<String>>,
         options: HostRootOpenOptions,
+        device_class: Option<String>,
     ) -> napi::Result<Self> {
         let request = options
             .before_open(&path)
             .map_err(napi::Error::from_reason)?;
-        let mut opened = Self::new(path, dimensions, dict_search_paths)?;
+        let mut opened = Self::new(path, dimensions, dict_search_paths, device_class)?;
         opened.wrong_host_root = request.profile(&opened.vault).map_err(to_napi_err)?;
         Ok(opened)
     }

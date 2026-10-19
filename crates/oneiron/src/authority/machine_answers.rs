@@ -77,7 +77,8 @@ fn answer_parent_bound(named: usize) -> Error {
 /// The first roster revision of a joining machine: its own identity
 /// material, the owner's answer and revision 1. A machine joins the roster's
 /// chain once; a later answer changes its role through
-/// [`Vault::set_machine_role`], and nothing that joins replaces its key.
+/// [`Vault::set_machine_role`] and its class through
+/// [`class_revision_profile`], and nothing that joins replaces its key.
 fn joining_profile(
     fold: &AuthorityFold,
     owner: EntityId,
@@ -107,6 +108,58 @@ fn joining_profile(
     })
 }
 
+/// The class-only revision of a machine the roster already holds (FIX 3835;
+/// CALLS: MACHINE_CLASS_REVISION = SameIdentityFreshProof): its host now
+/// declares another class, and its request carries the machine's fresh proof
+/// over it, which the owner approves as he approves an enrolment. Only for a
+/// live machine under the same id and both the same keys, in the role it
+/// stands in: its role stays [`Vault::set_machine_role`]'s, its keys are
+/// never replaced, and a removed or conflicted machine never comes back. The
+/// next revision tops every chain's, as a role change's does.
+fn class_revision_profile(
+    fold: &AuthorityFold,
+    owner: EntityId,
+    request: &MachineEnrolmentRequest,
+    role: MachineRole,
+) -> Result<MachineProfile> {
+    let folded = fold
+        .machine(request.machine)
+        .ok_or_else(invalid_authority)?;
+    let mut heads: Vec<_> = folded.chains().map(|(_, head)| head).collect();
+    heads.sort_by_key(|head| head.profile.revision);
+    let current = heads.last().ok_or_else(invalid_authority)?;
+    if fold.vault_id != Some(request.vault_id)
+        || !folded.roster.as_ref().is_some_and(MachineRevision::is_live)
+        || heads.iter().any(|head| {
+            head.removed
+                || head.conflicted
+                || head.profile.machine_key != request.machine_key
+                || head.profile.encryption_key != request.encryption_key
+        })
+        || current.profile.role != role
+        || current.profile.device_class == request.device_class
+    {
+        return Err(invalid_authority());
+    }
+    let profile = MachineProfile {
+        owner,
+        device_class: request.device_class,
+        machine_proof: request.machine_proof,
+        revision: current
+            .profile
+            .revision
+            .checked_add(1)
+            .ok_or_else(invalid_authority)?,
+        carrier: None,
+        act: None,
+        ..current.profile.clone()
+    };
+    if !profile.proof_verifies(&request.vault_id) {
+        return Err(invalid_authority());
+    }
+    Ok(profile)
+}
+
 impl Vault {
     /// The owner adds a machine, from any surface where he is authenticated
     /// (`surface`, audit only; the mesh ruling, 10-19). `role` is the owner's
@@ -117,12 +170,17 @@ impl Vault {
     /// the portable credentials again for the roster it changed. `seen` is
     /// the machine's revision the deciding surface showed him
     /// ([`FoldedMachine::answer_revision`], zero for a machine no revision
-    /// names); a stale one is a conflict, never a silent overwrite.
+    /// names); a stale one is a conflict, never a silent overwrite. A
+    /// machine the roster already holds takes its class-only revision here
+    /// instead (FIX 3835): the class its host now declares, under the fresh
+    /// proof its request carries, in the role it stands in.
     ///
     /// # Errors
     /// [`Error::ConcurrentWrite`] when `seen` is not the machine's current
     /// revision; [`Error::InvalidConfig`] when this install carries no live
-    /// profile or the answer would name more parents than one entry may.
+    /// profile or the answer would name more parents than one entry may;
+    /// [`invalid_authority`] for a held machine that is not live, is removed
+    /// or conflicted, names other keys or another role, or keeps its class.
     pub fn enroll_machine(
         &self,
         owner: &AuthenticatedOwner,
@@ -202,7 +260,16 @@ impl Vault {
         role: MachineRole,
     ) -> Result<FoldedMachine> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        let profile = joining_profile(&fold, answer.owner, request, role)?;
+        // A machine the roster holds never joins again; only its class is
+        // revised here (FIX 3835).
+        let profile = if fold
+            .machine(request.machine)
+            .is_some_and(|folded| folded.roster.is_some())
+        {
+            class_revision_profile(&fold, answer.owner, request, role)?
+        } else {
+            joining_profile(&fold, answer.owner, request, role)?
+        };
         self.ensure_machine_row_in_txn(txn, request.machine)?;
         self.append_owner_answer_in_txn(txn, &fold, answer, profile)
     }

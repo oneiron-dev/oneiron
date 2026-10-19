@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use super::boundary::{boundary_error, facade_error};
 use crate::host_root::HostRootOpenOptions;
+use crate::vault::host_device_class;
 
 // ── classes ─────────────────────────────────────────────────────────────
 
@@ -20,11 +21,19 @@ pub struct VaultBridge {
 
 #[napi]
 impl VaultBridge {
-    /// Opens (or creates) a vault at `path` with the device preset.
+    /// Opens (or creates) a vault at `path` with the device preset, as the
+    /// `deviceClass` its host declares (FIX 3833): `"computer"`, the
+    /// default, or `"phone"`, set before the vault opens.
     #[napi(factory)]
-    pub fn open(path: String, dimensions: Option<u32>) -> napi::Result<Self> {
+    pub fn open(
+        path: String,
+        dimensions: Option<u32>,
+        device_class: Option<String>,
+    ) -> napi::Result<Self> {
         crate::facade::before_vault_open();
         let mut config = VaultConfig::device();
+        config.machine_device_class =
+            host_device_class(device_class.as_deref()).map_err(boundary_error)?;
         if let Some(dimensions) = dimensions {
             config.dimensions = dimensions as usize;
         }
@@ -44,15 +53,17 @@ impl VaultBridge {
     /// secret first, as a new local-origin vault. A secret that cannot
     /// profile the install refuses the open with the engine's reason; a
     /// secret that is not the vault's settled root, over a profile that
-    /// already stands, opens and says so in `wrongHostRoot`.
+    /// already stands, opens and says so in `wrongHostRoot`. `deviceClass`
+    /// is `open`'s (FIX 3833).
     #[napi(factory)]
     pub fn open_with_host_root(
         path: String,
         dimensions: Option<u32>,
         options: HostRootOpenOptions,
+        device_class: Option<String>,
     ) -> napi::Result<Self> {
         let request = options.before_open(&path).map_err(boundary_error)?;
-        let mut opened = Self::open(path, dimensions)?;
+        let mut opened = Self::open(path, dimensions, device_class)?;
         opened.wrong_host_root = request
             .profile(&opened.vault)
             .map_err(|e| boundary_error(format!("failed to profile this install: {e}")))?;

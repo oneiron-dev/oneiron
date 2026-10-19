@@ -15,7 +15,7 @@ use jni::{
 };
 use oneiron::{
     EdgeActorClass, EdgeInfo, EdgeKind, EntityId, Memory, RawEntityPut, ScoredEntity, TimeRange,
-    Vault, VaultConfig, parse_actor_key,
+    Vault, VaultConfig, authority::MachineDeviceClass, parse_actor_key,
 };
 use std::sync::{Arc, MutexGuard};
 
@@ -83,11 +83,16 @@ impl NativeVault {
             }
         })
     }
-    fn open(path: &str) -> Result<Self, String> {
+    /// Opens `path` as the class its Kotlin host declared, set before the
+    /// install enrols (FIX 3833; CALLS: HOST_OPEN_DEVICE_CLASS =
+    /// ExplicitHostInput): never read off the operating system.
+    fn open(path: &str, device_class: MachineDeviceClass) -> Result<Self, String> {
         // Crash output never carries world text: the engine's hook goes in before
         // any vault opens (owner ruling 2026-10-14, fix 6).
         oneiron::panic_report::install_panic_hook();
-        Vault::open(path, VaultConfig::device())
+        let mut config = VaultConfig::device();
+        config.machine_device_class = device_class;
+        Vault::open(path, config)
             .map(|vault| Self::unbound(Arc::new(vault)))
             .map_err(display)
     }
@@ -274,16 +279,23 @@ fn run<T: Default>(
     }
 }
 
-/// JNI implementation of the private Kotlin constructor hook.
+/// JNI implementation of the private Kotlin constructor hook. `phone` is
+/// the class the Kotlin host declared (FIX 3833): a phone, else a computer.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_oneiron_EmbeddedVault_openNative(
     mut env: JNIEnv<'_>,
     object: JObject<'_>,
     path: JString<'_>,
+    phone: jboolean,
 ) {
     run(&mut env, |env| {
         let path: String = env.get_string(&path).map_err(display)?.into();
-        let vault = NativeVault::open(&path)?;
+        let device_class = if phone != 0 {
+            MachineDeviceClass::Phone
+        } else {
+            MachineDeviceClass::Computer
+        };
+        let vault = NativeVault::open(&path, device_class)?;
         // SAFETY: Kotlin owns the private long field, initialized to zero.
         // All native hooks execute under that instance's synchronized monitor.
         unsafe { env.set_rust_field(&object, "nativeHandle", vault) }.map_err(display)

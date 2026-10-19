@@ -77,9 +77,6 @@ pub fn discover_local_window_keys(vault: &Vault) -> Result<Vec<WindowKey>> {
     }
     // A snapshot's whole label names its window; an update or pending tombstone names it by
     // the first segment of its key.
-    let first_segment = |name: &str, prefix: &str| {
-        WindowKey::try_new(name[prefix.len()..].split(':').next().unwrap_or(""))
-    };
     for row in vault
         .store
         .port_window_doc_rows_raw(&txn, |window, _| WindowKey::try_new(window.as_str()))?
@@ -96,16 +93,55 @@ pub fn discover_local_window_keys(vault: &Vault) -> Result<Vec<WindowKey>> {
             keys.insert(key.to_string());
         }
     }
-    for row in vault
-        .store
-        .port_pending_tombstone_rows_raw(&txn, |name, _| first_segment(name, "pt:"))?
-    {
-        if let Some(key) = row? {
-            keys.insert(key.to_string());
-        }
-    }
+    keys.extend(pending_tombstone_windows_in_txn(vault, &txn)?);
     keys.into_iter()
         .map(WindowKey::try_new)
         .collect::<Option<Vec<_>>>()
         .ok_or(Error::InvalidKey)
+}
+
+/// The window an update or pending tombstone key names by its first segment.
+fn first_segment(name: &str, prefix: &str) -> Option<WindowKey> {
+    WindowKey::try_new(name[prefix.len()..].split(':').next().unwrap_or(""))
+}
+
+/// The windows whose committed `pt:` tombstones wait here, once each.
+fn pending_tombstone_windows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<String>> {
+    let mut windows = BTreeSet::new();
+    for row in vault
+        .store
+        .port_pending_tombstone_rows_raw(txn, |name, _| first_segment(name, "pt:"))?
+    {
+        if let Some(key) = row? {
+            windows.insert(key.to_string());
+        }
+    }
+    Ok(windows)
+}
+
+/// Publishes every window's committed `pt:` tombstones now rather than at
+/// its next load (FIX 3849): a raw transaction that staged them, outside
+/// `BatchBuilder::commit` and `write_txn_door`, installs no postcommit
+/// publication. A live lane's residence upkeep tick runs it. A window that
+/// fails keeps its markers for the next tick or its load, and is logged.
+pub(crate) fn retry_pending_tombstones(vault: &Vault) -> Result<u32> {
+    let windows = pending_tombstone_windows_in_txn(vault, &vault.store.env.read_txn()?)?;
+    let mut published = 0;
+    for window in windows {
+        let Some(key) = WindowKey::try_new(window.as_str()) else {
+            continue;
+        };
+        match crate::sync::window::publish_pending_tombstones(vault, &key) {
+            Ok(count) => published += count,
+            Err(error) => tracing::warn!(
+                %error,
+                window = %window,
+                "pending tombstones left to the next upkeep tick or the window's load"
+            ),
+        }
+    }
+    Ok(published)
 }
