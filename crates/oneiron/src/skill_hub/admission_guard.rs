@@ -580,7 +580,7 @@ fn has_import_origin(store: &Store, txn: &heed::RoTxn<'_>, record: &SkillRecord)
     let mut parent = record.forked_from;
     let mut seen = std::collections::BTreeSet::new();
     while let Some(id) = parent {
-        if seen.len() >= 128 || !seen.insert(id) {
+        if !seen.insert(id) {
             return Err(invalid("invalid skill fork ancestry"));
         }
         if ORIGIN.contains(store, txn, &id)? {
