@@ -613,6 +613,10 @@ impl<'a> HostSelfDispatcher<'a> {
                     generation,
                 })
             }
+            // A world-privacy request a holder applied or declined (FIX 4706).
+            Ok(TaskAskWait::WorldPrivacyReady(request)) => SelfDispatchOutcome::TaskAskStatus(
+                crate::task_verb::TaskAskStatus::WorldPrivacy(request),
+            ),
             Ok(TaskAskWait::Pending { .. }) => failed(
                 SelfEffect::TasksWait,
                 crate::memory::MemoryError::bad_request("external wait on engine step"),

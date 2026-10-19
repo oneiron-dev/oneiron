@@ -21496,6 +21496,26 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/fork_promote/project_upkeep.rs",
+     "purpose": "Project tree upkeep (ARCH-0079 #task-type, OF-420): a project on a tree of its own keeps reshaping it from…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/fork_promote/project_upkeep/state.rs",
+     "purpose": "The project tree upkeep journal: one row per project and body of its evidence, naming the Candidate revision…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -21795,6 +21815,7 @@
      "purpose": "Type-tree upkeep (ARCH-0079 #task-type, OF-541, OF-420): \"Splits, merges and names task types from the…",
      "surface": {
       "const": 4,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 3,
       "struct": 3,
@@ -42797,7 +42818,21 @@
       "crate-vis": 18,
       "enum": 2,
       "fn": 8,
+      "re-export": 1,
       "struct": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CanonicalPeerOrigin"
+     ],
+     "path": "src/recovery/canonical/peer_origins.rs",
+     "purpose": "The peer origins a window carries (FIX 2902), through canonical capture and rebuild (FIX 4550)",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
      }
     },
     {
@@ -47648,7 +47683,7 @@
      "path": "src/skill_hub/admission_guard.rs",
      "purpose": "Imported and hub-derived instruction authority at the single SKILL materialization door",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -51790,7 +51825,7 @@
      "path": "src/sync/ingest/mod.rs",
      "purpose": "One ingest entry per replicated container: every entities-map value and every tombstone takes the same…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -51810,7 +51845,7 @@
      "path": "src/sync/ingest/peer_import.rs",
      "purpose": "Which rows of a window a federation peer's import brought (Docs Q04)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -51998,7 +52033,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 24,
       "re-export": 16
      }
@@ -61901,7 +61936,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 80,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62447,7 +62482,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -62918,7 +62953,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3860,
+   "source_files": 3863,
    "test_files": 902
   },
   "oneiron-android": {
@@ -80264,6 +80299,21 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinearConfig",
+      "LinearMode"
+     ],
+     "path": "src/config/linear.rs",
+     "purpose": "`[linear]`: the Linear mirror this server runs and the tracker mapping its signed webhook applies under…",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -80294,9 +80344,9 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 14,
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -80585,12 +80635,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "IngressAuth",
       "ServeConfig",
       "SyncServerConfig"
      ],
      "path": "src/config/server_config.rs",
      "purpose": "Resolved server configuration: `SyncServerConfig` and `ServeConfig`",
      "surface": {
+      "enum": 1,
       "fn": 4,
       "struct": 2
      }
@@ -81581,7 +81633,7 @@
      "path": "src/linear_host/direct.rs",
      "purpose": "The server's direct Linear GraphQL mirror, using the production adapter",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
@@ -82053,7 +82105,7 @@
      "path": "src/managed/owner_storage.rs",
      "purpose": "The owner host a managed vault serves with: its backups and restore rehearsals on the tenant's own disk, in…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -82109,7 +82161,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/managed/settings.rs",
@@ -85009,7 +85061,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 44,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -85375,7 +85427,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 828,
+   "source_files": 829,
    "test_files": 182
   },
   "oneiron-spawn": {

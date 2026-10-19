@@ -1,16 +1,18 @@
 //! `vault.worlds.privacy.set`, the agent's door (FIX 4480): its input names a
 //! world, the settings and the revision read, never an owner or a Grant; its
 //! answer says whether the change applied, waits as a proposal, or waits as an
-//! ask. The run's own actor is the agent whose request it is.
+//! ask. The run's own actor is the agent whose request it is, and the one
+//! actor that waits on it, by the handle its answer names (FIX 4706).
 
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::authority::{ModelOrder, PolicyRevision, ReadLocation, SealedCopies, WorldPrivacy};
 use crate::error::{Error, Result};
+use crate::task_verb::TaskAskHandle;
 
 use super::WorldPrivacyOutcome;
-use super::record::parse_revision;
+use super::record::{WorldPrivacyRequest, parse_revision};
 
 /// Where the world may be read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -103,31 +105,50 @@ pub enum WorldPrivacySetOutput {
     /// The settings changed, within the agent's Grant: the receipt id. Every
     /// holder was told, with a one-tap undo.
     Applied { receipt: String },
-    /// A tighten no Grant line names waits for a holder: the proposal id.
-    Proposed { proposal: String },
-    /// A widen waits for the holders' yes: the request id, and the decision
-    /// ask its holders see once queued. The run may wait on it; the widen is
-    /// never the agent's own act.
+    /// A tighten no Grant line names waits for a holder: the proposal id,
+    /// and the handle `wait` (or the run's `tasks.wait({request})`) waits on
+    /// it by, until a holder applies or declines it.
+    Proposed {
+        proposal: String,
+        wait: TaskAskHandle,
+    },
+    /// A widen waits for the holders' yes: the request id, the decision ask
+    /// its holders see once queued, and the handle `wait` (or the run's
+    /// `tasks.wait({request})`) waits on it by, until a holder applies or
+    /// declines it. The widen is never the agent's own act.
     Asked {
         ask: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         ask_seq: Option<u64>,
+        wait: TaskAskHandle,
     },
 }
 
-impl From<&WorldPrivacyOutcome> for WorldPrivacySetOutput {
-    fn from(outcome: &WorldPrivacyOutcome) -> Self {
-        match outcome {
+impl TryFrom<&WorldPrivacyOutcome> for WorldPrivacySetOutput {
+    type Error = Error;
+
+    /// # Errors
+    /// [`Error::CorruptedIndex`] for a request whose id does not read back.
+    fn try_from(outcome: &WorldPrivacyOutcome) -> Result<Self> {
+        // The request's immutable id is its wait's (FIX 4706).
+        let wait = |request: &WorldPrivacyRequest| -> Result<TaskAskHandle> {
+            Ok(TaskAskHandle {
+                group_ref: request.id()?,
+            })
+        };
+        Ok(match outcome {
             WorldPrivacyOutcome::Applied(receipt) => Self::Applied {
                 receipt: receipt.receipt_id.clone(),
             },
             WorldPrivacyOutcome::Proposed(request) => Self::Proposed {
                 proposal: request.request_id.clone(),
+                wait: wait(request)?,
             },
             WorldPrivacyOutcome::Asked(request) => Self::Asked {
                 ask: request.request_id.clone(),
                 ask_seq: request.ask,
+                wait: wait(request)?,
             },
-        }
+        })
     }
 }
