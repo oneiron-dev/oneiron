@@ -5,6 +5,7 @@
 pub(super) mod tests;
 
 mod bundle_access;
+mod checkpoint_roots;
 mod machine_history;
 
 use base64::Engine;
@@ -325,6 +326,15 @@ pub(super) fn run(
             "residence.authority.append" => authority_append(server, peer, request.params),
             "residence.authority.range" => authority_range(server, peer, request.params),
             "residence.authority.checkpoint" => authority_checkpoint(server, peer, request.params),
+            "residence.authority.checkpoint.roots" => {
+                checkpoint_roots::roots(server, peer, request.params)
+            }
+            "residence.authority.checkpoint.attest" => {
+                checkpoint_roots::attest(server, peer, request.params)
+            }
+            "residence.authority.checkpoint.countersign" => {
+                checkpoint_roots::countersign(server, peer, request.params)
+            }
             "residence.machine-history" => {
                 machine_history::machine_history(server, auth, peer, request.params)
             }

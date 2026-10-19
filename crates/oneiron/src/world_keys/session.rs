@@ -48,6 +48,8 @@ pub(crate) struct WorldKeySession {
     pub(crate) ring: Mutex<HashMap<WorldKeyId, Arc<WorldKey>>>,
     /// The vault data key, once unlocked on this handle (OF-570 E1).
     pub(crate) vault_key: Mutex<Option<Arc<super::vault_key::VaultDataKey>>>,
+    /// The checkpoint root signers the host holds here (FIX 4882).
+    pub(crate) checkpoint_roots: Mutex<Vec<Arc<dyn crate::authority::CheckpointRootSigner>>>,
     /// Each world's question, at its latest crossing.
     frontier: Mutex<BTreeMap<EntityId, WorldKeyFrontierCheck>>,
     /// Held while a sealed window's mirror is read, extended and written back.

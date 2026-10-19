@@ -19,6 +19,12 @@
 //! attested is attested again on a later tick, growth or not, without
 //! writing the image again. These rows are this install's own bookkeeping:
 //! no image carries them.
+//!
+//! A head built under another root policy than the one the vault counts now
+//! gives way to a new image on the next tick, growth or not, so the roots the
+//! owner chose have one to attest (FIX 4882). A host whose root that policy
+//! does not name writes the image and leaves it awaiting those roots
+//! (`checkpoint_root_status`): it never attests in their place.
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -96,8 +102,11 @@ struct CheckpointProgress {
 pub enum AuthorityCheckpointUpkeep {
     /// No cutoff was due and no attestation owed.
     Idle,
-    /// A new image was written and host-attested.
+    /// A new image was written, and its attestations reached the policy.
     Written([u8; 32]),
+    /// A new image was written and awaits its policy's roots
+    /// ([`Vault::authority_checkpoint_roots`], FIX 4882).
+    WrittenAwaitingRoots([u8; 32]),
     /// The head, which this host's root had not attested, was attested.
     Attested([u8; 32]),
 }
@@ -108,6 +117,24 @@ pub(super) fn checkpoint_head_in_txn(
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<[u8; 32]>> {
     CHECKPOINT_HEAD.get(store, txn, &())
+}
+
+/// The id of this vault's newest kept image and, when this install built it,
+/// the digest of the root policy it was built under.
+pub(super) fn checkpoint_head_built_under_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<([u8; 32], Option<[u8; 32]>)>> {
+    let Some(head) = CHECKPOINT_HEAD.get(store, txn, &())? else {
+        return Ok(None);
+    };
+    let progress = CHECKPOINT_PROGRESS.get(store, txn, &())?;
+    Ok(Some((
+        head,
+        progress
+            .filter(|progress| progress.head == head)
+            .and_then(|progress| progress.built_under),
+    )))
 }
 
 /// Keeps `bytes` at `id` and makes it the head, in the caller's transaction.
@@ -322,7 +349,8 @@ impl Vault {
     }
 
     /// The host's checkpoint upkeep (OF-469), run on every lifecycle tick:
-    /// when a cutoff is due, writes and host-attests a new image
+    /// when a cutoff is due, or the root policy moved past the head's (FIX
+    /// 4882), writes and host-attests a new image
     /// ([`Vault::write_authority_checkpoint_v2`]); otherwise, when this
     /// install built the head under the vault's current root policy and
     /// `issuer`'s root, eligible under it, has not attested it, attests it
@@ -343,6 +371,10 @@ impl Vault {
                 &txn,
                 progress.as_ref(),
                 crate::unix_seconds_now(),
+            )? || self.checkpoint_policy_moved_in_txn(
+                &txn,
+                head,
+                progress.as_ref().and_then(|progress| progress.built_under),
             )? {
                 (true, None)
             } else {
@@ -365,9 +397,12 @@ impl Vault {
             }
         };
         if due {
-            return self
-                .write_authority_checkpoint_v2(issuer)
-                .map(AuthorityCheckpointUpkeep::Written);
+            let id = self.write_authority_checkpoint_v2(issuer)?;
+            return Ok(if self.checkpoint_image_reached_policy(id)? {
+                AuthorityCheckpointUpkeep::Written(id)
+            } else {
+                AuthorityCheckpointUpkeep::WrittenAwaitingRoots(id)
+            });
         }
         let Some(head) = owed else {
             return Ok(AuthorityCheckpointUpkeep::Idle);
