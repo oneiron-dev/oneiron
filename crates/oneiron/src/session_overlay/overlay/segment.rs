@@ -7,7 +7,7 @@ use std::sync::atomic::AtomicU64;
 use crate::error::{Error, Result};
 
 use super::super::journal::{JournalEntry, PublishedEntry};
-use super::super::keyspace::{OverlayKeyspace, OverlayMutation, OverlayState, project_mutation};
+use super::super::keyspace::{OverlayMutation, OverlayState, project_mutation};
 use super::ACTIVE_SEGMENT;
 use super::lifecycle::{Lease, OverlayLifecycleState, SessionOverlay};
 use crate::error::OffRecordError;
@@ -23,10 +23,6 @@ pub(in crate::session_overlay) struct TxnSegment {
     )]
     pub(super) journal: Vec<JournalEntry>,
     pub(super) journal_bytes: usize,
-    /// The one row this segment stages as its write's bookkeeping, marked by
-    /// `SessionOverlay::admit_bookkeeping_put`: its put is not refused for
-    /// the room's budget.
-    pub(super) bookkeeping: Option<(OverlayKeyspace, Vec<u8>)>,
     _lease: Lease,
 }
 
@@ -109,7 +105,6 @@ impl SessionOverlay {
             mutations: Vec::new(),
             journal: Vec::new(),
             journal_bytes: 0,
-            bookkeeping: None,
             _lease: lease,
         };
         let install_result = ACTIVE_SEGMENT.with(|slot| {

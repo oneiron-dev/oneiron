@@ -8,11 +8,11 @@
 //! of the step would make again.
 //!
 //! The receipt is the write's bookkeeping, as a row's record position is
-//! (#3160): the room's budget does not refuse its put, so a room at its
-//! limit takes exactly the writes it took before, receipt and all, while
-//! the write's own rows are budgeted as before. The receipt's bytes count in
-//! the room's total once staged, so every later write of the room, the
-//! run's own checkpoints included, meets them (Engine 10-19 15:1x).
+//! (#3160): for as long as the room holds it, its row is neither refused
+//! for the room's budget nor counted in its total, so a room at its limit
+//! takes exactly the writes and checkpoints it took before, receipt and all.
+//! The write's own rows, the run's checkpoints and every other row stay
+//! budgeted as before (Engine 10-19 15:1x).
 
 use std::cell::Cell;
 
@@ -69,10 +69,10 @@ impl SessionBinding<'_> {
                         )
                         .map(|row| answered.bridge_calls.push(row)),
                     )?;
-                    // The receipt's own put, past the room's budget: a
-                    // replay record row in `vault_meta`, as the side table
-                    // stages it.
-                    kept(self.session.overlay().admit_bookkeeping_put(
+                    // The receipt's row is the write's bookkeeping, past
+                    // the room's budget: a replay record row in
+                    // `vault_meta`, as the side table stages it.
+                    kept(self.session.overlay().mark_bookkeeping_row(
                         OverlayKeyspace::VaultMeta,
                         &REPLAY_RECORDS.key_bytes(&answered.run_id),
                     ))?;
