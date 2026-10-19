@@ -658,6 +658,14 @@ impl From<Error> for MemoryError {
                 message,
                 &["Do what the message names (fund, bind or configure it), then ask again."],
             ),
+            // A legal order binding the host keeps the record (WILL-PLAN L01
+            // rows 01 and 03): the record's state refuses, not the request,
+            // and the message names the order's bound.
+            ErrorKind::LegalHold => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[crate::error::LEGAL_HOLD_SUGGESTION],
+            ),
             // The host skipped a setup step, so neither the request nor the
             // caller's standing is what has to change.
             ErrorKind::EngineIdentitiesNotProvisioned => Self::new(
