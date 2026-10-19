@@ -14,9 +14,11 @@ impl ScopedRead<'_> {
         policy: &crate::gate::PolicyManifestResolution,
     ) -> Result<bool> {
         // A migrated NOTE retains author metadata but stores markdown on its
-        // document plane. Apply the same privacy rule to that logical body.
+        // document plane. Apply the same privacy rule to that logical body,
+        // read where this read reads the row: a room's NOTE has its own. Its
+        // kind, author, link and consent are judged on base.
         #[cfg(feature = "sync")]
-        let resolved = crate::entity_doc::resolve_record_body(&self.vault.store, txn, id, bytes)?;
+        let resolved = crate::entity_doc::resolve_record_body(&self.store_read(), txn, id, bytes)?;
         #[cfg(feature = "sync")]
         let bytes = resolved.as_slice();
         #[cfg(not(feature = "sync"))]
@@ -66,8 +68,10 @@ impl ScopedRead<'_> {
         let Some(raw) = self.entity_record_in(txn, id)?.map(|row| row.encode()) else {
             return Ok(false);
         };
+        // The NOTE's position, where this read reads it: a room's NOTE under
+        // the birth facet its write staged (WILL L11-01).
         let Some(scope) =
-            crate::federation::record_scope::scope_for_blob(&self.vault.store, txn, *id, &raw)?
+            crate::federation::record_scope::scope_for_blob(&self.store_read(), txn, *id, &raw)?
         else {
             return Ok(false);
         };

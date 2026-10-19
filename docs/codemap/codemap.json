@@ -2557,10 +2557,25 @@
      "purpose": "A root of the vault's counted policy attests another host's checkpoint image (FIX 4882)",
      "surface": {
       "const": 3,
-      "crate-vis": 2,
+      "crate-vis": 5,
       "enum": 3,
-      "fn": 5,
+      "fn": 4,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RootAttestationDelivery",
+      "RootAttestationDeliveryState"
+     ],
+     "path": "src/authority/checkpoint_root_delivery.rs",
+     "purpose": "What a root held here signed for a home's checkpoint head (FIX 5109), kept until the home's intake has it",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -2576,6 +2591,21 @@
       "const": 1,
       "enum": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CountersignStageCharge",
+      "CountersignStaged"
+     ],
+     "path": "src/authority/checkpoint_root_stage.rs",
+     "purpose": "The home's countersign stage (FIX 4882, 5111): the image a linked machine sends this home a part at a time…",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "trait": 1
      }
     },
     {
@@ -3216,7 +3246,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 27,
-      "re-export": 52
+      "re-export": 54
      }
     },
     {
@@ -12755,6 +12785,16 @@
      "surface": {
       "crate-vis": 10,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/session_verbs.rs",
+     "purpose": "The reads a run bound to an off-record session serves through the room's view (WILL L11-01, S01-1)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -25351,7 +25391,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 24,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -30275,7 +30315,7 @@
      "purpose": "OF-063: typed, resolvable record refs",
      "surface": {
       "const": 5,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 7,
       "struct": 6
@@ -34173,7 +34213,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 25,
       "re-export": 53
      }
@@ -34456,7 +34496,7 @@
      "path": "src/memory/reads.rs",
      "purpose": "Entity/claim read surface plus BM25 and neighbor queries",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 11,
       "struct": 5
      }
@@ -34840,6 +34880,16 @@
       "enum": 1,
       "fn": 4,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/session_reads.rs",
+     "purpose": "The reads a code run bound to an off-record session serves through the room's own view (WILL L11-01, S01-1)…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -36531,7 +36581,7 @@
      "path": "src/off_record/lifecycle/session.rs",
      "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 38,
       "fn": 12,
       "struct": 2
      }
@@ -45739,7 +45789,7 @@
      "path": "src/session_overlay/keyspace.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -50385,7 +50435,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/checkpoint_roots.rs",
@@ -60482,7 +60532,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 172,
+     "files": 174,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60657,7 +60707,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 88,
+     "files": 89,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61259,7 +61309,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 218,
+     "files": 219,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61940,7 +61990,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3779,
+   "source_files": 3783,
    "test_files": 902
   },
   "oneiron-android": {
@@ -80087,7 +80137,7 @@
      "path": "src/handler/conn_state.rs",
      "purpose": "Per-connection budgets, quotas, and sync-mode binding",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {

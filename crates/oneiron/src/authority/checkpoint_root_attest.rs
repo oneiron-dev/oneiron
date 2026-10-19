@@ -22,11 +22,14 @@
 //! ([`HostSlipIssuer`]) is today's only one; a device-held owner key (FIX
 //! 4921) is another behind the same two calls. A host holds its signers on
 //! the vault handle ([`Vault::hold_checkpoint_root_signer`]) for the device
-//! sync's steady pass. Nothing an attestation here makes is stored: it goes
-//! to the writing host, which verifies it again.
+//! sync's steady pass. An attestation made here goes to the writing host,
+//! which verifies it again, and never into this install's attestation table,
+//! so its own attested head never moves to another host's image. One made
+//! for a home's head is kept in a delivery cache until the home has it (FIX
+//! 5109, [`Vault::attest_home_checkpoint_as_root`]). The home stages the
+//! image a machine sends it in parts in `checkpoint_root_stage`.
 
 use std::collections::BTreeSet;
-use std::collections::btree_map::Entry;
 use std::sync::{Arc, PoisonError};
 
 use super::checkpoint_attest::{KEY_BINDINGS, attest_refused, root_row_key};
@@ -115,6 +118,24 @@ pub enum RootCheckpointAttest {
     Waiting(&'static str),
 }
 
+/// What a root signed of another host's image: its id, the posture it was
+/// folded in, the digest of the root policy it names, and the attestation.
+pub(super) struct RootSigned {
+    pub(super) image: [u8; 32],
+    pub(super) posture: crate::HostingPrivacyPosture,
+    pub(super) policy: [u8; 32],
+    pub(super) attestation: AuthorityCheckpointAttestation,
+}
+
+impl RootSigned {
+    pub(super) fn into_attest(self) -> RootCheckpointAttest {
+        RootCheckpointAttest::Attested {
+            image: self.image,
+            attestation: Box::new(self.attestation),
+        }
+    }
+}
+
 /// Whether `peer` is a live linked machine of the vault on the key it
 /// proved, in any role, as the authority tail admits one.
 pub(super) fn linked_machine(fold: &AuthorityFold, peer: PeerMachine) -> bool {
@@ -158,12 +179,26 @@ impl Vault {
     /// (FIX 4882): see the module notes. Certifies this install's checkpoint
     /// key for the root first when no binding of it is kept; stores no
     /// attestation. Refused for bytes that are not a canonical image or name
-    /// another vault.
+    /// another vault. A root that attests a home's head keeps what it made
+    /// through [`Vault::attest_home_checkpoint_as_root`] instead.
     pub fn attest_checkpoint_image_as_root(
         &self,
         image: &[u8],
         signer: &dyn CheckpointRootSigner,
     ) -> Result<RootCheckpointAttest> {
+        Ok(match self.sign_checkpoint_image_as_root(image, signer)? {
+            Ok(signed) => signed.into_attest(),
+            Err(reason) => RootCheckpointAttest::Waiting(reason),
+        })
+    }
+
+    /// [`Vault::attest_checkpoint_image_as_root`], with what the root signed
+    /// in full; `Err` names why it does not sign now.
+    pub(super) fn sign_checkpoint_image_as_root(
+        &self,
+        image: &[u8],
+        signer: &dyn CheckpointRootSigner,
+    ) -> Result<core::result::Result<RootSigned, &'static str>> {
         let candidate = AuthorityCheckpointV2::decode(image)?;
         let id = checkpoint_image_id(image);
         let root = signer.root();
@@ -179,23 +214,26 @@ impl Vault {
             if let Some(reason) =
                 self.root_checkpoint_wait_in_txn(&txn, &candidate, image, &root)?
             {
-                return Ok(RootCheckpointAttest::Waiting(reason));
+                return Ok(Err(reason));
             }
             (*self.vault_id().as_bytes(), genesis)
         };
         let binding = self.root_checkpoint_binding(&root, signer, vault_id, genesis)?;
+        let policy = candidate.root_policy.digest()?;
         let attestation = self.sign_checkpoint_attestation(
             vault_id,
             genesis,
             id,
-            candidate.root_policy.digest()?,
+            policy,
             binding,
             |transcript| signer.sign_checkpoint_statement(transcript),
         )?;
-        Ok(RootCheckpointAttest::Attested {
+        Ok(Ok(RootSigned {
             image: id,
-            attestation: Box::new(attestation),
-        })
+            posture: candidate.aggregate.posture,
+            policy,
+            attestation,
+        }))
     }
 
     /// [`Vault::attest_checkpoint_image_as_root`] for a linked machine of the
@@ -214,69 +252,6 @@ impl Vault {
             }
         }
         self.attest_checkpoint_image_as_root(image, signer)
-    }
-
-    /// Takes part `part` at `offset` of image `image`, `total` bytes long,
-    /// that the linked machine `peer` sends this home to countersign (FIX
-    /// 4882). The parts are held in memory on this handle, one image per
-    /// machine, and a part at offset zero starts it again. Returns the
-    /// image's bytes once whole. Refused for any other peer, a part that is
-    /// not the next one, and a length past the image size cap.
-    pub fn stage_countersign_part(
-        &self,
-        peer: PeerMachine,
-        image: [u8; 32],
-        total: u64,
-        offset: u64,
-        part: &[u8],
-    ) -> Result<Option<Vec<u8>>> {
-        {
-            let txn = self.store.env.read_txn()?;
-            if !linked_machine(&self.authority_fold_readonly_in_txn(&txn)?, peer) {
-                return Err(peer_refused());
-            }
-        }
-        let PeerMachine::Proven { machine, .. } = peer else {
-            return Err(peer_refused());
-        };
-        let end = offset.saturating_add(part.len() as u64);
-        if part.is_empty()
-            || part.len() > AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX
-            || end > total
-            || total > AUTHORITY_CHECKPOINT_V2_MAX_BYTES as u64
-        {
-            return Err(attest_refused("the countersign part is malformed"));
-        }
-        let mut stages = self
-            .world_keys
-            .checkpoint_countersign
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if offset == 0 {
-            stages.insert(
-                machine,
-                crate::world_keys::CountersignStage {
-                    image,
-                    total,
-                    bytes: Vec::new(),
-                },
-            );
-        }
-        match stages.entry(machine) {
-            Entry::Occupied(mut held)
-                if held.get().image == image
-                    && held.get().total == total
-                    && held.get().bytes.len() as u64 == offset =>
-            {
-                held.get_mut().bytes.extend_from_slice(part);
-                Ok((end == total).then(|| held.remove().bytes))
-            }
-            Entry::Occupied(held) => {
-                held.remove();
-                Err(attest_refused("the countersign part is not the next one"))
-            }
-            Entry::Vacant(_) => Err(attest_refused("the countersign part is not the next one")),
-        }
     }
 
     /// Why `root` may not sign `candidate`, whose canonical bytes are

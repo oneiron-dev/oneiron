@@ -3,12 +3,20 @@
 
 use std::sync::Arc;
 
-use oneiron::code_run::GatedActorWrite;
+use oneiron::claim::ScopedReadActorKey;
+use oneiron::code_run::{
+    AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, GatedActorWrite,
+    RunCall, SelfAgentVerbCall,
+};
 use oneiron::engine_executor::{EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime};
+use oneiron::memory::HostWriteOrigin;
 use oneiron::off_record::OffRecordCreator;
+use oneiron::runtime_hooks::InvocationId;
+use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::{EntityId, Vault, WriteActor};
 
 use super::{ActiveRun, McpCodeExecutionError, McpCodeModeProvider, McpEngineNativeCodeHost};
+use crate::auth::CoreAuth;
 
 /// The durable run id `run_ref` names in the off-record session
 /// `session_ref` for `actor` (DOOR-127): the same handle in the same live
@@ -41,9 +49,56 @@ pub(crate) fn off_record_run_id(session_ref: &str, actor: EntityId, run_ref: &st
 /// 03); `None` for the vault's owner, who manages every stretch entered
 /// alone. The run binds it again on its own thread, so a name taken again
 /// since its door's check never lends the run another creator's stretch.
+/// `caller` is the request the run was admitted on: the run's reads in the
+/// room read under that caller's own key (WILL L11-01).
 pub(crate) struct OffRecordRunSession {
     pub(crate) session_ref: String,
     pub(crate) creator: Option<OffRecordCreator>,
+    pub(crate) caller: CoreAuth,
+}
+
+/// The door a run bound to an off-record session binds (WILL L11-01): the
+/// caller its request was admitted for, with that request's credential and
+/// the place its connection sits. A read the run serves through the room
+/// reads under the key this caller's own handle builds again at each read,
+/// so its Grant and ceiling bind it as they bind the caller's other reads,
+/// wherever the caller or the vault runs. It forwards no verb (a run's verbs
+/// stage in the room or are refused there), and admits every call the run
+/// serves itself as a host that binds no door does.
+struct OffRecordRunDoor {
+    vault: Arc<Vault>,
+    caller: CoreAuth,
+    actor: WriteActor,
+}
+
+impl AgentVerbDoor for OffRecordRunDoor {
+    fn call(
+        &self,
+        _: &SelfAgentVerbCall,
+        _: &HostWriteOrigin,
+        _: InvocationId,
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        Ok(Err(AgentVerbRefusal {
+            code: AGENT_VERB_SESSION_BOUND.to_owned(),
+        }))
+    }
+
+    fn admit_run_call(&self, _: RunCall) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        Ok(None)
+    }
+
+    fn admit_session_read(&self, _: AgentVerb) -> Result<ScopedReadActorKey, AgentVerbRefusal> {
+        let actor = self.actor;
+        crate::api::credential_memory(
+            &self.vault,
+            Some(&self.caller),
+            actor.entity_ref(),
+            actor.actor_class(),
+        )
+        .at(self.caller.locality())
+        .read_key()
+        .map_err(|refused| AgentVerbRefusal { code: refused.code })
+    }
 }
 
 impl McpEngineNativeCodeHost {
@@ -106,7 +161,7 @@ impl McpEngineNativeCodeHost {
 /// then the paired session constructors, the gated write and the executor,
 /// as a session's reader child pairs them.
 fn run_in_off_record_session(
-    vault: &Vault,
+    vault: &Arc<Vault>,
     provider: &dyn McpCodeModeProvider,
     target: &OffRecordRunSession,
     actor: WriteActor,
@@ -129,12 +184,18 @@ fn run_in_off_record_session(
             "provider changed the session run's identity".into(),
         ));
     }
+    let door = Arc::new(OffRecordRunDoor {
+        vault: Arc::clone(vault),
+        caller: target.caller.clone(),
+        actor,
+    });
     let gated_write = GatedActorWrite::for_off_record_session(
         &session,
         actor,
         format!("off_record.execute:{run_ref}"),
     )
-    .map_err(binding)?;
+    .map_err(binding)?
+    .with_agent_verb_door(door);
     let reactor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
