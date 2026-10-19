@@ -320,7 +320,7 @@ impl Vault {
         match change {
             RootChange::Pin { root } => {
                 let report = self.pin_owner_root_in_txn(txn, request.act.owner, secret, root)?;
-                Ok(change_closes(report.awaiting).then_some(OwnerWorkOutcome::Enacted))
+                Ok(change_closes(report.awaiting).then_some(OwnerWorkOutcome::enacted()))
             }
             RootChange::Activate | RootChange::Restore { .. } | RootChange::Anchor { .. } => {
                 Ok(None)

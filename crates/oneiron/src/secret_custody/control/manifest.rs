@@ -1,69 +1,77 @@
 //! A sealed register whose surface stated no `manifest_ref` (CALLS
-//! CUSTODY_MANIFEST_UNSTATED). Its recorder sees only ciphertext, so it
-//! cannot read which manifest the record names. It attaches the vault's one
-//! current approved manifest beside the envelope, under the digest the
-//! request names, or binds an explicit "no manifest" mark there instead. The
-//! holder checks a record that names the attached manifest against it. It
-//! registers every other one, and one that disagrees, without a manifest
-//! check, and says so: an unstated register never refuses on a manifest
-//! mismatch, it reports it. A stated `manifest_ref` keeps its refusal (CALLS
+//! CUSTODY_MANIFEST_UNSTATED, CUSTODY_MANIFEST_UNSTATED_MULTI). Its recorder
+//! sees only ciphertext, so it cannot read which manifest the record names.
+//! It attaches every secret manifest the vault publishes beside the envelope,
+//! under the digest the request names, or binds an explicit "no manifest" or
+//! "unread" mark there instead. The holder selects the one the record names
+//! and checks the record against it. It registers every other one, and one
+//! that disagrees, without a manifest check, and its signed result says so:
+//! an unstated register never refuses on a manifest mismatch, it reports it.
+//! A stated `manifest_ref` keeps its refusal (CALLS
 //! CUSTODY_MANIFEST_RECHECK).
 
+use oneiron_authority::authority::{CustodyRegisterCheck, CustodyUncheckedReason};
+
 use super::super::owner_door::recheck_manifest_snapshot_in_txn;
-use super::input::{Attached, attach_current_manifest, attach_no_manifest};
+use super::input::{
+    Attached, AttachedManifest, attach_no_manifest, attach_published_manifests, attach_unread,
+};
 use crate::Vault;
 use crate::authority::OwnerWorkRefusal;
 use crate::error::Result;
 use crate::secret_custody::SecretCustodyRecord;
 use crate::store::Store;
 
-/// What a sealed register whose surface stated no `manifest_ref` is checked
-/// against (CALLS CUSTODY_MANIFEST_UNSTATED).
+/// What a sealed register whose surface stated no `manifest_ref` meets on a
+/// manifest mismatch (CALLS CUSTODY_MANIFEST_UNSTATED).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CustodyManifestUnstated {
-    /// The recorder attaches the vault's one current approved manifest: the
-    /// manifest file at the commit the vault publishes now for a branch of a
-    /// repository it serves, when exactly one such commit holds one. When
-    /// none does, or several do, it binds an explicit "no manifest" mark
-    /// under the digest instead. The holder checks a record that names the
-    /// attached manifest against it in its committing transaction. A record
-    /// that names none, names another, or disagrees with it registers without
-    /// a manifest check, and the receipt says which: an unstated register
-    /// never refuses on a manifest mismatch, it reports it (Engine 10-19
-    /// 15:0x). A snapshot the surface sealed beside the record stays the one
-    /// checked, with its refusal. Nothing asks where the holder runs.
-    AttachCurrentApprovedOrRecordNone,
+    /// It never refuses on one: a record that names no manifest, names one
+    /// the vault does not publish, or disagrees with the one it names
+    /// registers without a manifest check, and its holder's signed result
+    /// says which (Engine 10-19 15:0x). A snapshot the surface sealed beside
+    /// the record stays the one checked, with its refusal. Nothing asks
+    /// where the holder runs.
+    ReportNeverRefuse,
 }
 
 const CUSTODY_MANIFEST_UNSTATED: CustodyManifestUnstated =
-    CustodyManifestUnstated::AttachCurrentApprovedOrRecordNone;
+    CustodyManifestUnstated::ReportNeverRefuse;
+
+/// Which manifests the recorder of an unstated register attaches, and which
+/// one its holder checks (CALLS CUSTODY_MANIFEST_UNSTATED_MULTI).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CustodyManifestUnstatedMulti {
+    /// The recorder attaches every secret manifest the vault publishes now:
+    /// the manifest file at the commit it publishes for each branch of each
+    /// repository it serves, ordered by `manifest_ref`. It caps no count and
+    /// leaves none out: past one row's bound the input travels in numbered
+    /// parts (Rule 5). With none published it binds a "no manifest" mark,
+    /// and when they cannot be read an "unread" mark. The holder selects the
+    /// one whose ref the record names and checks the record against it in
+    /// its committing transaction. What the recorder attached is its
+    /// evidence (`Published`); the holder's signed result is the judgment.
+    AttachEveryPublishedHolderSelects,
+}
+
+const CUSTODY_MANIFEST_UNSTATED_MULTI: CustodyManifestUnstatedMulti =
+    CustodyManifestUnstatedMulti::AttachEveryPublishedHolderSelects;
 
 /// What the holder of a register the owner's surface sealed without stating
-/// a `manifest_ref` checked its record against, or will (CALLS
-/// CUSTODY_MANIFEST_UNSTATED). Manifest refs only, never a value.
+/// a `manifest_ref` checked its record against, or what its recorder
+/// attached for it (CALLS CUSTODY_MANIFEST_UNSTATED_MULTI). Manifest refs
+/// only, never a value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CustodyManifestCheck {
-    /// The vault's one current approved manifest, by its `manifest_ref`,
-    /// attached for a holder that is not this install: it checks a record
-    /// that names it against it, and registers any other unchecked.
-    Current(String),
-    /// The record names the vault's one current approved manifest and agrees
-    /// with it.
-    Checked(String),
-    /// No current approved manifest applied, or the record names none:
-    /// registered without a manifest check.
-    Unchecked,
-    /// The record names another manifest than the one the vault publishes:
-    /// registered without a manifest check.
-    OtherManifest {
-        /// The `manifest_ref` the record names.
-        record: String,
-        /// The one the vault publishes now.
-        published: String,
-    },
-    /// The record names the manifest the vault publishes but disagrees with
-    /// it: registered without a manifest check.
-    Disagrees(String),
+    /// The recorder's evidence, for a holder that is not this install: every
+    /// secret manifest the vault publishes now, by its `manifest_ref`,
+    /// attached beside the envelope. The holder checks a record that names
+    /// one of them against it, and registers any other unchecked.
+    Published(Vec<String>),
+    /// What the record was, or will be, registered on: the holder's
+    /// judgment, as its signed result carries it, or for a recorder that
+    /// attached no manifest, the one judgment its holder can reach.
+    Judged(CustodyRegisterCheck),
 }
 
 impl CustodyManifestCheck {
@@ -71,60 +79,123 @@ impl CustodyManifestCheck {
     /// check.
     #[must_use]
     pub fn unchecked(&self) -> bool {
-        matches!(
-            self,
-            Self::Unchecked | Self::OtherManifest { .. } | Self::Disagrees(_)
-        )
+        matches!(self, Self::Judged(check) if check.unchecked())
     }
 
     /// The words a surface shows, naming the manifests involved.
     #[must_use]
     pub fn text(&self) -> String {
         match self {
-            Self::Current(published) => format!(
-                "this vault publishes {published}; the holder checks a record that names it \
-                 against it, and registers any other without a manifest check"
+            Self::Published(published) => format!(
+                "this vault publishes {}; the holder checks a record that names {} against it, \
+                 and registers any other without a manifest check",
+                published.join(", "),
+                if published.len() == 1 {
+                    "it"
+                } else {
+                    "one of them"
+                }
             ),
-            Self::Checked(published) => {
-                format!("checked against {published}, which this vault publishes")
-            }
-            Self::Unchecked => "registered without a manifest check".to_owned(),
-            Self::OtherManifest { record, published } => format!(
-                "the record names {record}, this vault publishes {published}; registered \
-                 without a manifest check"
-            ),
-            Self::Disagrees(published) => format!(
-                "the record disagrees with {published}, which this vault publishes; registered \
-                 without a manifest check"
-            ),
+            Self::Judged(check) => judgment_text(check),
         }
     }
 }
 
+/// The words a surface shows for a holder's judgment, naming the manifests
+/// it involves.
+pub(super) fn judgment_text(check: &CustodyRegisterCheck) -> String {
+    let (reason, refs) = match check {
+        CustodyRegisterCheck::Checked { manifest_ref } => {
+            return format!("checked against {manifest_ref}, which this vault publishes");
+        }
+        CustodyRegisterCheck::Unchecked { reason, refs } => (reason, refs.split_first()),
+    };
+    let found = match (reason, refs) {
+        (CustodyUncheckedReason::NoneNamed, _) => "the record names no manifest".to_owned(),
+        (CustodyUncheckedReason::NonePublished, _) => {
+            "this vault publishes no secret manifest".to_owned()
+        }
+        (CustodyUncheckedReason::Unread, _) => {
+            "this vault's published secret manifests could not be read".to_owned()
+        }
+        (CustodyUncheckedReason::OtherManifest, Some((record, []))) => {
+            format!("the record names {record}, which this vault does not publish")
+        }
+        (CustodyUncheckedReason::OtherManifest, Some((record, published))) => format!(
+            "the record names {record}, which this vault does not publish (it publishes {})",
+            published.join(", ")
+        ),
+        (CustodyUncheckedReason::Disagrees, Some((named, _))) => {
+            format!("the record disagrees with {named}, which this vault publishes")
+        }
+        (CustodyUncheckedReason::OtherManifest | CustodyUncheckedReason::Disagrees, None) => {
+            "the record's manifest did not check".to_owned()
+        }
+    };
+    format!("{found}; registered without a manifest check")
+}
+
+/// A judgment that the record registers without a manifest check, for
+/// `reason`, naming `refs`.
+fn unchecked(reason: CustodyUncheckedReason, refs: Vec<String>) -> CustodyRegisterCheck {
+    CustodyRegisterCheck::Unchecked { reason, refs }
+}
+
 /// The input a recorder records for a sealed register whose surface stated
-/// no `manifest_ref`, and what its holder checks the record against: the
-/// envelope with the vault's one current approved manifest attached, else
-/// with the "no manifest" mark. It never refuses: past one input's bound the
-/// envelope goes bare (`None`), unchecked as before.
+/// no `manifest_ref`, and what it attached for its holder (CALLS
+/// CUSTODY_MANIFEST_UNSTATED_MULTI): the envelope with every secret manifest
+/// the vault publishes, else with the "no manifest" mark, or the "unread"
+/// mark when they cannot be read. It never refuses a register for its
+/// manifests and never leaves one out: past one row's bound the input
+/// travels in numbered parts.
+///
+/// # Errors
+/// Only an attachment past its own frame (a length beyond a `u32`).
 pub(super) fn unstated_input(
     vault: &Vault,
     envelope: &[u8],
-) -> (Option<Vec<u8>>, CustodyManifestCheck) {
-    match CUSTODY_MANIFEST_UNSTATED {
-        CustodyManifestUnstated::AttachCurrentApprovedOrRecordNone => {
-            if let Some(current) = vault.current_origin_secret_manifest()
-                && let Ok(input) =
-                    attach_current_manifest(envelope, &current.manifest_ref, &current.text)
-            {
-                return (
-                    Some(input),
-                    CustodyManifestCheck::Current(current.manifest_ref),
-                );
+) -> Result<(Vec<u8>, CustodyManifestCheck)> {
+    match CUSTODY_MANIFEST_UNSTATED_MULTI {
+        CustodyManifestUnstatedMulti::AttachEveryPublishedHolderSelects => {
+            match vault.published_origin_secret_manifests() {
+                Ok(published) if !published.is_empty() => {
+                    let input = {
+                        let attached: Vec<(&str, &str)> = published
+                            .iter()
+                            .map(|manifest| {
+                                (manifest.manifest_ref.as_str(), manifest.text.as_str())
+                            })
+                            .collect();
+                        attach_published_manifests(envelope, &attached)?
+                    };
+                    let refs = published
+                        .into_iter()
+                        .map(|manifest| manifest.manifest_ref)
+                        .collect();
+                    Ok((input, CustodyManifestCheck::Published(refs)))
+                }
+                Ok(_) => Ok((
+                    attach_no_manifest(envelope)?,
+                    CustodyManifestCheck::Judged(unchecked(
+                        CustodyUncheckedReason::NonePublished,
+                        Vec::new(),
+                    )),
+                )),
+                Err(error) => {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "the vault's published secret manifests were not read; the register \
+                         is taken without a manifest check"
+                    );
+                    Ok((
+                        attach_unread(envelope)?,
+                        CustodyManifestCheck::Judged(unchecked(
+                            CustodyUncheckedReason::Unread,
+                            Vec::new(),
+                        )),
+                    ))
+                }
             }
-            (
-                attach_no_manifest(envelope).ok(),
-                CustodyManifestCheck::Unchecked,
-            )
         }
     }
 }
@@ -132,8 +203,8 @@ pub(super) fn unstated_input(
 /// What a holder makes of a register it opened against its manifest.
 pub(super) enum RegisterVerdict {
     /// Register it; for a surface that stated no `manifest_ref`, what it was
-    /// checked against.
-    Register(Option<CustodyManifestCheck>),
+    /// checked against: the judgment its result signs.
+    Register(Option<CustodyRegisterCheck>),
     /// Refuse it.
     Refuse(OwnerWorkRefusal),
 }
@@ -143,9 +214,9 @@ pub(super) enum RegisterVerdict {
 /// its sealed body, else against what its recorder `attached`. The snapshot
 /// sealed in, or resolved for a stated ref, which must be the record's, is
 /// checked with its refusal (CALLS CUSTODY_MANIFEST_RECHECK). For a surface
-/// that stated none, the vault's current approved manifest is checked when
-/// the record names it, and any mismatch registers unchecked and says so
-/// (CALLS CUSTODY_MANIFEST_UNSTATED).
+/// that stated none, the published manifest the record names is checked, and
+/// any mismatch registers unchecked and says why (CALLS
+/// CUSTODY_MANIFEST_UNSTATED, CUSTODY_MANIFEST_UNSTATED_MULTI).
 pub(super) fn check_register_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -169,37 +240,60 @@ pub(super) fn check_register_in_txn(
         (_, Some(Attached::Stated(_))) => {
             Ok(RegisterVerdict::Refuse(OwnerWorkRefusal::InvalidInput))
         }
-        (Some(framed), Some(Attached::Current(_) | Attached::NoManifest)) => {
+        (Some(framed), Some(Attached::Published(_) | Attached::NoManifest | Attached::Unread)) => {
             strict(Some(framed.as_str()))
         }
-        (None, Some(Attached::NoManifest)) => Ok(RegisterVerdict::Register(Some(
-            CustodyManifestCheck::Unchecked,
-        ))),
-        (None, Some(Attached::Current(current))) => {
-            let check = match CUSTODY_MANIFEST_UNSTATED {
-                CustodyManifestUnstated::AttachCurrentApprovedOrRecordNone => {
-                    if record.manifest_ref.is_empty() {
-                        CustodyManifestCheck::Unchecked
-                    } else if record.manifest_ref != current.manifest_ref {
-                        CustodyManifestCheck::OtherManifest {
-                            record: record.manifest_ref.clone(),
-                            published: current.manifest_ref,
-                        }
-                    } else if recheck_manifest_snapshot_in_txn(
-                        store,
-                        txn,
-                        record,
-                        Some(current.text.as_str()),
-                    )?
-                    .is_some()
-                    {
-                        CustodyManifestCheck::Disagrees(current.manifest_ref)
-                    } else {
-                        CustodyManifestCheck::Checked(current.manifest_ref)
-                    }
-                }
+        (None, Some(Attached::NoManifest)) => Ok(RegisterVerdict::Register(Some(unchecked(
+            CustodyUncheckedReason::NonePublished,
+            Vec::new(),
+        )))),
+        (None, Some(Attached::Unread)) => Ok(RegisterVerdict::Register(Some(unchecked(
+            CustodyUncheckedReason::Unread,
+            Vec::new(),
+        )))),
+        (None, Some(Attached::Published(published))) => {
+            let check = match (CUSTODY_MANIFEST_UNSTATED_MULTI, CUSTODY_MANIFEST_UNSTATED) {
+                (
+                    CustodyManifestUnstatedMulti::AttachEveryPublishedHolderSelects,
+                    CustodyManifestUnstated::ReportNeverRefuse,
+                ) => judge_unstated_in_txn(store, txn, record, published)?,
             };
             Ok(RegisterVerdict::Register(Some(check)))
         }
     }
+}
+
+/// The holder's judgment of an unstated register against every manifest its
+/// recorder attached: it selects the one whose ref the record names and
+/// checks the record against it. A record that names none, names one not
+/// attached, or disagrees registers without a manifest check, and the
+/// judgment says why, by refs alone.
+fn judge_unstated_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    record: &SecretCustodyRecord,
+    mut published: Vec<AttachedManifest>,
+) -> Result<CustodyRegisterCheck> {
+    if record.manifest_ref.is_empty() {
+        return Ok(unchecked(CustodyUncheckedReason::NoneNamed, Vec::new()));
+    }
+    let Some(index) = published
+        .iter()
+        .position(|manifest| manifest.manifest_ref == record.manifest_ref)
+    else {
+        let refs = std::iter::once(record.manifest_ref.clone())
+            .chain(published.into_iter().map(|manifest| manifest.manifest_ref))
+            .collect();
+        return Ok(unchecked(CustodyUncheckedReason::OtherManifest, refs));
+    };
+    let named = published.swap_remove(index);
+    let disagrees =
+        recheck_manifest_snapshot_in_txn(store, txn, record, Some(named.text.as_str()))?.is_some();
+    Ok(if disagrees {
+        unchecked(CustodyUncheckedReason::Disagrees, vec![named.manifest_ref])
+    } else {
+        CustodyRegisterCheck::Checked {
+            manifest_ref: named.manifest_ref,
+        }
+    })
 }

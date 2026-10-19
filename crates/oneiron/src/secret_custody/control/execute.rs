@@ -16,8 +16,12 @@
 //! transition, the rotation receipt and the output binding commit together,
 //! and the pickup's enacted result joins them in the same commit. A missing
 //! input, secret or record leaves the request pending; nothing is elected and
-//! nobody takes over.
+//! nobody takes over. A register whose surface stated no `manifest_ref`
+//! carries what this holder checked the record against in that enacted
+//! result, and in its output binding, so a retry answers with it too (FIX
+//! 5334).
 
+use oneiron_authority::authority::CustodyRegisterCheck;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::super::codec::{decode_bind_input, decode_register_input};
@@ -27,8 +31,10 @@ use super::super::doors::{
 };
 use super::super::transition::{Enactment, custody_portable, write_custody_transition_in_txn};
 use super::super::types::{SecretBinding, SecretCustodyRecord, SecretCustodyStatus};
-use super::input::{Attached, InputBinding, drop_input_in_txn, held_input_in_txn, split_attached};
-use super::manifest::{CustodyManifestCheck, RegisterVerdict, check_register_in_txn};
+use super::input::{
+    Attached, InputBinding, assembled_input_in_txn, drop_input_in_txn, split_attached,
+};
+use super::manifest::{RegisterVerdict, check_register_in_txn, judgment_text};
 use super::permits::permitted_keys;
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, CustodyChange, OwnerWorkBody, OwnerWorkOutcome,
@@ -43,17 +49,23 @@ use crate::{EntityId, Vault};
 
 /// What each custody request's executor committed, by the request's entry
 /// hash: the digest of the transition it signed, then the rotation receipt
-/// it wrote (zero for none). Written once, in the work's own commit.
+/// it wrote (zero for none), then for a register whose surface stated no
+/// `manifest_ref` the manifest judgment its result signs, as JSON, by refs
+/// alone. Written once, in the work's own commit.
 const OUTPUTS: SideTable<[u8; 32], Vec<u8>, Raw> =
     SideTable::new(&side_table::SECRET_CUSTODY_OUTPUT);
+
+/// An output row's binding: the transition digest and the receipt id.
+const OUTPUT_BINDING_BYTES: usize = 32 + 16;
 
 /// How a custody request meets a retry (CALLS CUSTODY_RETRY).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CustodyRetry {
     /// One request is done once, at the generation it approves. Its result,
     /// or its committed output, is its answer before any mutation: a pickup
-    /// that finds the output reconciles to enacted and writes nothing, so a
-    /// rotation never runs twice. A surface that sends the same protected
+    /// that finds the output reconciles to enacted, with the manifest
+    /// judgment the output keeps, and writes nothing, so a rotation never
+    /// runs twice. A surface that sends the same protected
     /// input again gets the request that names it; a fresh upload is a fresh
     /// request.
     SameRequestSameGeneration,
@@ -82,20 +94,27 @@ pub(crate) enum Material<'a> {
 /// What the executor did with one request.
 #[derive(Debug)]
 pub(crate) struct Enacted {
+    /// Its result's outcome. Enacted, for a register whose surface stated
+    /// no `manifest_ref`, it carries what this holder checked the record
+    /// against (CALLS CUSTODY_MANIFEST_UNSTATED_MULTI).
     pub(crate) outcome: OwnerWorkOutcome,
     /// The rotation receipt a rotate wrote here, in this commit.
     pub(crate) rotation: Option<RotationReceipt>,
-    /// For a register whose surface stated no `manifest_ref`, what this
-    /// holder checked the record against (CALLS CUSTODY_MANIFEST_UNSTATED).
-    pub(crate) manifest: Option<CustodyManifestCheck>,
 }
 
 impl Enacted {
     fn done(rotation: Option<RotationReceipt>) -> Self {
         Self {
-            outcome: super::enacted(),
+            outcome: super::enacted(None),
             rotation,
-            manifest: None,
+        }
+    }
+
+    /// Enacted, with the manifest judgment its result carries, if any.
+    fn judged(check: Option<CustodyRegisterCheck>) -> Self {
+        Self {
+            outcome: super::enacted(check),
+            rotation: None,
         }
     }
 
@@ -103,28 +122,26 @@ impl Enacted {
         Self {
             outcome: OwnerWorkOutcome::Refused { reason },
             rotation: None,
-            manifest: None,
         }
     }
 
-    /// A register of record `id`, enacted, with what it was checked against
-    /// (CALLS CUSTODY_MANIFEST_UNSTATED); one taken unchecked is logged by
-    /// its manifest refs, never a value.
-    fn checked_against(self, id: EntityId, manifest: Option<CustodyManifestCheck>) -> Self {
-        if self.outcome != super::enacted() {
-            return self;
-        }
-        if let Some(check) = &manifest
-            && check.unchecked()
-        {
-            tracing::info!(
-                secret = %id.to_hex(),
-                manifest = %check.text(),
-                "custody register taken without a manifest check"
-            );
-        }
-        Self { manifest, ..self }
+    /// What this holder checked a register against, as its result says.
+    pub(crate) fn manifest_check(&self) -> Option<&CustodyRegisterCheck> {
+        self.outcome.register_check()
     }
+}
+
+/// A register as its holder takes it: the record, value in it, and what it
+/// checked the record against when its surface stated no `manifest_ref`.
+struct Taken {
+    record: Held,
+    check: Option<CustodyRegisterCheck>,
+}
+
+/// What one request's executor committed here, as its output row keeps it.
+struct Output {
+    /// The manifest judgment its result signs, if any.
+    check: Option<CustodyRegisterCheck>,
 }
 
 /// The rewrap a holder does: of which record, at which generation, and for
@@ -155,27 +172,43 @@ impl Drop for Held {
     }
 }
 
-/// Whether request `request`'s executor committed its output here.
-fn output_held_in_txn(
+/// What request `request`'s executor committed here, when it did.
+fn held_output_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     request: &AuthorityEntryHash,
-) -> Result<bool> {
-    Ok(OUTPUTS.get(store, txn, request)?.is_some())
+) -> Result<Option<Output>> {
+    let Some(row) = OUTPUTS.get(store, txn, request)? else {
+        return Ok(None);
+    };
+    let check = match row.get(OUTPUT_BINDING_BYTES..) {
+        None | Some([]) => None,
+        Some(judged) => Some(
+            serde_json::from_slice(judged)
+                .map_err(|_| Error::CorruptedIndex("a custody output's manifest judgment"))?,
+        ),
+    };
+    Ok(Some(Output { check }))
 }
 
 /// Keeps what request `request`'s executor committed: its transition's
-/// digest, and the rotation receipt's id when it wrote one.
+/// digest, the rotation receipt's id when it wrote one, and the manifest
+/// judgment its result signs, if any.
 fn put_output_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     request: &AuthorityEntryHash,
-    transition: [u8; 32],
-    receipt: Option<EntityId>,
+    (transition, receipt): ([u8; 32], Option<EntityId>),
+    check: Option<&CustodyRegisterCheck>,
 ) -> Result<()> {
-    let mut row = Vec::with_capacity(48);
+    let mut row = Vec::with_capacity(OUTPUT_BINDING_BYTES);
     row.extend_from_slice(&transition);
     row.extend_from_slice(&receipt.map_or([0; 16], |id| *id.as_bytes()));
+    if let Some(check) = check {
+        let judged = serde_json::to_vec(check)
+            .map_err(|_| Error::InvariantViolation("a manifest judgment encodes as JSON"))?;
+        row.extend_from_slice(&judged);
+    }
     OUTPUTS.put(&vault.store, txn, request, &row)
 }
 
@@ -207,8 +240,8 @@ impl Vault {
         let id = request.act.target;
         match CUSTODY_RETRY {
             CustodyRetry::SameRequestSameGeneration => {
-                if output_held_in_txn(&self.store, txn, &hash)? {
-                    return Ok(Some(Enacted::done(None)));
+                if let Some(output) = held_output_in_txn(&self.store, txn, &hash)? {
+                    return Ok(Some(Enacted::judged(output.check)));
                 }
             }
         }
@@ -241,8 +274,11 @@ impl Vault {
         };
         match change {
             CustodyChange::Register => {
-                let (record, manifest) = match material {
-                    Material::Record(record, _) => (Held(record.clone()), None),
+                let taken = match material {
+                    Material::Record(record, _) => Taken {
+                        record: Held(record.clone()),
+                        check: None,
+                    },
                     Material::Input(secret) => match self
                         .opened_input_in_txn(txn, &binding, *input, secret)?
                     {
@@ -258,8 +294,8 @@ impl Vault {
                             // The manifest the recorder sealed beside the
                             // record, the one it resolved for the
                             // manifest_ref a surface stated, which must be
-                            // the record's, or the vault's current approved
-                            // one for a surface that stated none.
+                            // the record's, or for a surface that stated
+                            // none, the published one the record names.
                             match check_register_in_txn(
                                 &self.store,
                                 txn,
@@ -267,7 +303,7 @@ impl Vault {
                                 attached,
                                 &record.0,
                             )? {
-                                RegisterVerdict::Register(manifest) => (record, manifest),
+                                RegisterVerdict::Register(check) => Taken { record, check },
                                 RegisterVerdict::Refuse(refusal) => {
                                     return Ok(Some(Enacted::refused(refusal)));
                                 }
@@ -278,9 +314,7 @@ impl Vault {
                         return Ok(Some(Enacted::refused(OwnerWorkRefusal::InvalidInput)));
                     }
                 };
-                Ok(self
-                    .register_from_in_txn(txn, id, *generation, record, enactment, at)?
-                    .map(|done| done.checked_against(id, manifest)))
+                self.register_from_in_txn(txn, id, *generation, taken, enactment, at)
             }
             CustodyChange::Rotate => {
                 let value = match material {
@@ -344,10 +378,10 @@ impl Vault {
         let Some(digest) = digest else {
             return Ok(Opened::Invalid);
         };
-        let Some(kept) = held_input_in_txn(&self.store, txn, &digest)? else {
+        let Some(kept) = assembled_input_in_txn(&self.store, txn, &digest)? else {
             return Ok(Opened::Missing);
         };
-        let Some((envelope, attached)) = split_attached(&kept.envelope) else {
+        let Some((envelope, attached)) = split_attached(&kept) else {
             return Ok(Opened::Invalid);
         };
         Ok(binding
@@ -357,16 +391,19 @@ impl Vault {
 
     /// A register: a new portable record under the request's id, at the
     /// generation it approves, its name free here or reclaimed from a record
-    /// revoked one generation below.
+    /// revoked one generation below, enacted with what this holder checked
+    /// it against. One taken unchecked is logged by its manifest refs, never
+    /// a value.
     fn register_from_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         id: EntityId,
         generation: u32,
-        mut record: Held,
+        taken: Taken,
         enactment: Enactment<'_>,
         at: u64,
     ) -> Result<Option<Enacted>> {
+        let Taken { mut record, check } = taken;
         if !custody_portable(&record.0) {
             return Ok(Some(Enacted::refused(OwnerWorkRefusal::SecretNotPortable)));
         }
@@ -397,8 +434,17 @@ impl Vault {
             Err(error) => return Err(error),
         }
         let transition = write_custody_transition_in_txn(self, txn, id, &record.0, enactment, at)?;
-        self.close_out_in_txn(txn, enactment, transition.digest(), None)?;
-        Ok(Some(Enacted::done(None)))
+        self.close_out_in_txn(txn, enactment, (transition.digest(), None), check.as_ref())?;
+        if let Some(check) = &check
+            && check.unchecked()
+        {
+            tracing::info!(
+                secret = %id.to_hex(),
+                manifest = %judgment_text(check),
+                "custody register taken without a manifest check"
+            );
+        }
+        Ok(Some(Enacted::judged(check)))
     }
 
     /// A rotate: the record this install holds at the generation below the
@@ -439,8 +485,8 @@ impl Vault {
         self.close_out_in_txn(
             txn,
             enactment,
-            transition.digest(),
-            Some(rotation.receipt_id),
+            (transition.digest(), Some(rotation.receipt_id)),
+            None,
         )?;
         Ok(Some(Enacted::done(Some(rotation))))
     }
@@ -499,7 +545,7 @@ impl Vault {
             put_secret_custody_in_txn(self, txn, &id, &record.0, at)?;
         }
         let transition = write_custody_transition_in_txn(self, txn, id, &record.0, enactment, at)?;
-        self.close_out_in_txn(txn, enactment, transition.digest(), None)?;
+        self.close_out_in_txn(txn, enactment, (transition.digest(), None), None)?;
         Ok(Some(Enacted::done(None)))
     }
 
@@ -523,16 +569,17 @@ impl Vault {
         })
     }
 
-    /// The output binding of the request `enactment` names, and the input
-    /// it consumed forgotten here.
+    /// The output binding of the request `enactment` names, with the
+    /// manifest judgment its result signs, and the input it consumed, every
+    /// part of it, forgotten here.
     fn close_out_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         enactment: Enactment<'_>,
-        transition: [u8; 32],
-        receipt: Option<EntityId>,
+        binding: ([u8; 32], Option<EntityId>),
+        check: Option<&CustodyRegisterCheck>,
     ) -> Result<()> {
-        put_output_in_txn(self, txn, &enactment.request, transition, receipt)?;
+        put_output_in_txn(self, txn, &enactment.request, binding, check)?;
         if let Some(digest) = enactment.input {
             drop_input_in_txn(self, txn, &digest)?;
         }

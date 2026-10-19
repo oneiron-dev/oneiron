@@ -45,6 +45,7 @@ mod revoked;
 #[cfg(feature = "sync")]
 mod roster;
 
+use oneiron_authority::authority::CustodyRegisterCheck;
 use zeroize::Zeroizing;
 
 pub use self::doors::{CustodyCandidate, SealedCustodyChange, SecretCustodyView};
@@ -128,10 +129,12 @@ pub(crate) fn custody_work_executor(
 }
 
 /// The outcome an executor's result records once its custody change is
-/// committed (CALLS CUSTODY_COMPLETION).
-fn enacted() -> OwnerWorkOutcome {
+/// committed (CALLS CUSTODY_COMPLETION), with what a register's holder
+/// checked the record against when its surface stated no `manifest_ref`
+/// (FIX 5334).
+fn enacted(check: Option<CustodyRegisterCheck>) -> OwnerWorkOutcome {
     match CUSTODY_COMPLETION {
-        CustodyCompletion::CommitNotDelivery => OwnerWorkOutcome::Enacted,
+        CustodyCompletion::CommitNotDelivery => OwnerWorkOutcome::Enacted { detail: check },
     }
 }
 
@@ -237,8 +240,10 @@ pub struct SecretCustodyWork {
     pub delivery: CustodyDelivery,
     /// For a register the owner's surface sealed without stating a
     /// `manifest_ref`, what its holder checked the record against when this
-    /// install is the holder, else what this install attached for it (CALLS
-    /// CUSTODY_MANIFEST_UNSTATED); `None` for any other change.
+    /// install is the holder, else what this install attached for it: every
+    /// manifest the vault publishes (CALLS CUSTODY_MANIFEST_UNSTATED_MULTI).
+    /// A remote holder's own judgment reaches `work.manifest_check` with its
+    /// signed result. `None` for any other change.
     pub manifest: Option<CustodyManifestCheck>,
 }
 
@@ -273,23 +278,27 @@ impl SecretCustodyWork {
     #[must_use]
     pub fn text(&self) -> &'static str {
         match (&self.work, self.kept_here) {
-            (Some(receipt), _) => receipt.unassigned.map_or_else(
-                || self.status_text(receipt.status),
-                OwnerWorkUnassigned::text,
-            ),
+            (Some(receipt), _) => receipt
+                .unassigned
+                .map_or_else(|| self.status_text(receipt), OwnerWorkUnassigned::text),
             (None, Some(why)) => why.text(),
             (None, None) => "not recorded",
         }
     }
 
     /// A recorded request's words: a register taken, or to be taken,
-    /// without a manifest check says so (CALLS CUSTODY_MANIFEST_UNSTATED).
-    fn status_text(&self, status: OwnerWorkStatus) -> &'static str {
+    /// without a manifest check says so, by this install's word or its
+    /// holder's signed result (CALLS CUSTODY_MANIFEST_UNSTATED).
+    fn status_text(&self, receipt: &OwnerWorkReceipt) -> &'static str {
         let unchecked = self
             .manifest
             .as_ref()
-            .is_some_and(CustodyManifestCheck::unchecked);
-        match (status, unchecked) {
+            .is_some_and(CustodyManifestCheck::unchecked)
+            || receipt
+                .manifest_check
+                .as_ref()
+                .is_some_and(CustodyRegisterCheck::unchecked);
+        match (receipt.status, unchecked) {
             (OwnerWorkStatus::RecordedAwaitingHolder, true) => {
                 "recorded, awaiting a holder; to be registered without a manifest check"
             }
@@ -482,6 +491,7 @@ impl Vault {
                     sealed_at: at,
                     request: hash,
                     witness: request_witness_in_txn(self, txn, &hash)?,
+                    part: None,
                     envelope,
                 },
             )?;
@@ -501,9 +511,12 @@ impl Vault {
                         reason.as_str()
                     )));
                 }
-                self.append_owner_work_result_in_txn(txn, hash, machine, done.outcome)?;
+                manifest = done
+                    .manifest_check()
+                    .cloned()
+                    .map(CustodyManifestCheck::Judged);
                 rotation = done.rotation;
-                manifest = done.manifest;
+                self.append_owner_work_result_in_txn(txn, hash, machine, done.outcome)?;
             }
         }
         let after = self.authority_view_readonly_in_txn(txn)?;
@@ -523,8 +536,9 @@ impl Vault {
     /// active change whose secret an admitted revoke names is refused as
     /// stale; any other is executed from its protected input, opened with
     /// `secret`, or for a rewrap that carries none from the record held here
-    /// ([`execute`]). `None` leaves it pending: no secret, input or record
-    /// here yet.
+    /// ([`execute`]); an enacted register carries what this holder checked
+    /// it against, signed in its result (FIX 5334). `None` leaves it pending:
+    /// no secret, input or record, or part of a split input, here yet.
     pub(crate) fn custody_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -540,7 +554,7 @@ impl Vault {
         let at = self.instant_in_txn(txn)?.secs();
         if *change == CustodyChange::Revoke {
             settle_revoked_in_txn(self, txn, &id, at)?;
-            return Ok(Some(enacted()));
+            return Ok(Some(enacted(None)));
         }
         if fold.custody_revoked(&id) {
             return Ok(Some(OwnerWorkOutcome::Refused {

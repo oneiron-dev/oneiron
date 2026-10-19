@@ -141,7 +141,7 @@ impl Vault {
             let ran = self
                 .with_write_txn(|txn| self.run_owner_work_in_txn(txn, *request, machine, secret));
             match ran {
-                Ok(Ran::Answered(OwnerWorkOutcome::Enacted)) => drain.enacted += 1,
+                Ok(Ran::Answered(OwnerWorkOutcome::Enacted { .. })) => drain.enacted += 1,
                 Ok(Ran::Answered(OwnerWorkOutcome::Refused { .. })) => drain.refused += 1,
                 Ok(Ran::Pending) => drain.pending += 1,
                 Ok(Ran::Gone) => {}
@@ -203,7 +203,7 @@ impl Vault {
         let Some(outcome) = outcome else {
             return Ok(Ran::Pending);
         };
-        self.append_owner_work_result_in_txn(txn, hash, machine, outcome)?;
+        self.append_owner_work_result_in_txn(txn, hash, machine, outcome.clone())?;
         Ok(Ran::Answered(outcome))
     }
 
@@ -256,7 +256,7 @@ impl Vault {
         let after = self.authority_view_readonly_in_txn(txn)?;
         Ok(self
             .world_key_work_complete(txn, &after, world)?
-            .then_some(OwnerWorkOutcome::Enacted))
+            .then_some(OwnerWorkOutcome::enacted()))
     }
 
     /// The first recheck a world key request fails in this transaction.
