@@ -333,17 +333,14 @@ impl Vault {
         }
         let live = git.read_ref(repo, &record.ref_name)?;
         let already_applied = live.as_ref() == Some(&record.new_oid);
-        if !already_applied
-            && self
-                .require_origin_authority(repo, record.publication_id)
-                .is_err()
-        {
+        // An erased actor's publication starts no effect (FIX 3877).
+        if !already_applied && let Some(failure) = self.origin_new_effect_refusal(repo, &record) {
             return self.refuse_origin_publication(
                 git,
                 repo,
                 record,
                 GitWireRejection::Unauthorized,
-                "origin authority epoch no longer permits this publication",
+                failure,
                 learned_at,
             );
         }

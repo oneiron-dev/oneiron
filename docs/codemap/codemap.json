@@ -3127,7 +3127,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 27,
-      "re-export": 47
+      "re-export": 48
      }
     },
     {
@@ -3228,6 +3228,16 @@
      "purpose": "Custody work in the fold (WILL L04 row 04): the revision a custody request's `seen` is over, and the…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/owner_work/privacy_basis.rs",
+     "purpose": "The fold's one judgment of key work a world settings edit left (FIX 4704): a request that carries a…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -12349,7 +12359,7 @@
       "const": 2,
       "crate-vis": 1,
       "enum": 1,
-      "fn": 11,
+      "fn": 14,
       "struct": 3
      }
     },
@@ -14776,12 +14786,58 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 10,
       "mod": 1,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConversationCompactionUnavailable",
+      "ConversationEvidence",
+      "ConversationFlight",
+      "ConversationFlightOutcome",
+      "ConversationTurnSpan"
+     ],
+     "path": "src/compaction/conversation.rs",
+     "purpose": "A conversation's self-written compaction (FIX 4465 D): a self agent's chat turn compacts on its own live fork",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 4,
+      "re-export": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ChatLog",
+      "ChatLogLine"
+     ],
+     "path": "src/compaction/conversation/log.rs",
+     "purpose": "`chat_compaction_sources` (FIX 4465 D): a self agent's model-facing chat log, read from the retained ledger…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/compaction/conversation/storage.rs",
+     "purpose": "A conversation's landed self-written summaries (FIX 4465 D): one durable receipt per SUMMARY, written in its…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -14793,6 +14849,16 @@
      "surface": {
       "crate-vis": 4,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/compaction/driver/integration/conversation.rs",
+     "purpose": "A conversation's self-written summary lands (FIX 4465 D): its packet is admitted on the door's conversation…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -15033,10 +15099,10 @@
      "purpose": "The agent as its own compaction writer (FIX 4465, owner 10-19: \"the toggle sets WHO writes, not which model\")",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
-      "enum": 2,
+      "crate-vis": 13,
+      "enum": 3,
       "fn": 4,
-      "struct": 7
+      "struct": 6
      }
     },
     {
@@ -17621,6 +17687,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChatBreakpoint",
+      "ChatBreakpointRung",
+      "ChatBreakpointStale"
+     ],
+     "path": "src/conversation/chat_breakpoint.rs",
+     "purpose": "`chat_breakpoint_storage` (FIX 4465 D): a self agent's per-reply chat breakpoint, the restart-readable seed…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 6,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -17671,8 +17754,8 @@
      "path": "src/conversation/mod.rs",
      "purpose": "Room bodies, membership windows, session presence and audience visibility",
      "surface": {
-      "crate-vis": 8,
-      "re-export": 8
+      "crate-vis": 9,
+      "re-export": 9
      }
     },
     {
@@ -19607,7 +19690,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 4,
       "re-export": 18
      }
@@ -20156,7 +20239,17 @@
      "path": "src/dreamer_consolidation/turn_text.rs",
      "purpose": "The read-only text of one TURN as a consolidation branch sees it",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/turn_text/compaction_span.rs",
+     "purpose": "`conversation_check_evidence` (FIX 4465 D): the Dreamer's read of the span a conversation's self-written…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -20845,10 +20938,20 @@
      "purpose": "The Dreamer's check of a self-written compaction (FIX 4465 B; owner 10-19: the Dreamer \"checks the agent's…",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/compaction_check/conversation.rs",
+     "purpose": "The Dreamer's check of a conversation's self-written summary (FIX 4465 D), on the same maintenance queue and…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -36503,6 +36606,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/actor_erase.rs",
+     "purpose": "An erased actor out of origin's claim bodies (FIX 3877)",
+     "surface": {
+      "crate-vis": 27
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -36512,7 +36625,7 @@
      "purpose": "Commit-hash keyed LEDGER change identities",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 1
      }
@@ -36748,6 +36861,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
+      "crate-vis": 1,
       "mod": 11,
       "re-export": 1
      }
@@ -36877,7 +36991,7 @@
      "path": "src/origin/residence.rs",
      "purpose": "Explicit owner-controlled origin epochs",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 16,
       "enum": 2,
       "fn": 7,
       "struct": 2
@@ -37008,7 +37122,7 @@
      "path": "src/origin/smart_http/evidence.rs",
      "purpose": "Receive-pack wire types and the admission/outcome evidence claims: producer receipts plus the…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "fn": 1,
       "struct": 4
      }
@@ -37081,10 +37195,20 @@
      "path": "src/origin/smart_http/intent.rs",
      "purpose": "The crash-durable per-ref intent journal and its reconcile/resume path",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/intent_erase.rs",
+     "purpose": "An erased actor out of the receive-pack intent journal (FIX 3877)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -37158,7 +37282,7 @@
      "path": "src/origin/smart_http/mod.rs",
      "purpose": "Git smart-HTTP serving over the vault (ARCH-0068 Phase A, ONE-1908)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "re-export": 12
      }
     },
@@ -39435,7 +39559,7 @@
      "purpose": "Who changes a world's settings, and how (FIX 4480: the owner's rulings of 10-19 01:23 and 02:0x, under…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 2,
       "re-export": 4
@@ -50696,7 +50820,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 24,
       "re-export": 16
      }
@@ -50749,6 +50873,16 @@
      "purpose": "Remove active NOTE carriers in the same window commit as a tombstone",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/origin_claims.rs",
+     "purpose": "Origin claim carriers under an erase (FIX 3877)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -58845,7 +58979,7 @@
      "path": "src/world_keys/owner_work/record.rs",
      "purpose": "Recording one owner work request in the act's own transaction, and the one rule that names its executor",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -60032,7 +60166,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 166,
+     "files": 167,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60284,7 +60418,7 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 22,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -60361,7 +60495,7 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -60445,7 +60579,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 67,
+     "files": 68,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60473,7 +60607,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60851,7 +60985,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 63,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61292,7 +61426,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 192,
+     "files": 193,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61490,7 +61624,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3746,
+   "source_files": 3757,
    "test_files": 902
   },
   "oneiron-android": {
@@ -61801,7 +61935,8 @@
       "OwnerWorkRequest",
       "OwnerWorkResult",
       "RootChange",
-      "WorldKeyMode"
+      "WorldKeyMode",
+      "WorldPrivacyWorkBasis"
      ],
      "path": "src/authority/owner_work.rs",
      "purpose": "The owner's work requests and their results, and their wire codec: the key, custody or root work an owner…",
@@ -61809,9 +61944,9 @@
       "const": 4,
       "crate-vis": 6,
       "enum": 6,
-      "fn": 14,
+      "fn": 16,
       "re-export": 1,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -72766,7 +72901,17 @@
      "path": "src/ai_host/compaction.rs",
      "purpose": "Compaction for code mode's runs (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/compaction/chat.rs",
+     "purpose": "A self agent's chat compaction (FIX 4465 D, Engine D4): the conversation constructor of the shared writer…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -72939,7 +73084,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "fn": 22,
       "re-export": 1,
       "struct": 2
@@ -73124,7 +73269,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/turn_actions.rs",
@@ -73180,7 +73325,17 @@
      "path": "src/api/ai/chat.rs",
      "purpose": "`POST /v1/ai/chat`: one chat turn on the generative seat",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/chat/compaction.rs",
+     "purpose": "A self agent's chat turn on its own live fork (FIX 4465 D)",
+     "surface": {
+      "crate-vis": 15
      }
     },
     {
@@ -80910,7 +81065,7 @@
      "path": "src/models/ladder/live_fork.rs",
      "purpose": "The live fork's rung (FIX 4465 C): the one rung a run's live request is bound to at a compaction breakpoint…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -83041,14 +83196,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 49,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 438,
+     "files": 439,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -83477,7 +83632,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 796,
+   "source_files": 798,
    "test_files": 182
   },
   "oneiron-spawn": {

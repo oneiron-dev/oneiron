@@ -23,6 +23,7 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::office_body::erase_in_txn,
     crate::edit_roundtrip::deck_create::erase_in_txn,
     crate::memory::erase_stream_seeds_in_txn,
+    crate::conversation::erase_chat_breakpoints_in_txn,
     crate::store::legal_hold::erase_in_txn,
     crate::workspace_roster::erase_room_side_rows,
     crate::task_verb::erase_report_journal_in_txn,

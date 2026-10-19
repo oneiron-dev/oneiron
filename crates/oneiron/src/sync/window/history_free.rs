@@ -622,6 +622,9 @@ fn scrub_for_export(
         crate::sync::document_pins::scrub_document_pins(vault, doc, Some(key))?;
     let message_docs_scrubbed =
         crate::sync::message_docs::scrub_message_docs(vault, doc, Some(key))?;
+    // FIX 3877: and an origin claim carrier that names an erased actor.
+    let origin_claims_scrubbed =
+        crate::sync::origin_claims::scrub_origin_claims(vault, doc, Some(key))?;
     // Every update and replacement ships each held revision of a PROJECT row the window
     // carries, whatever month it was learned in (Astra #1434 F2).
     if super::project_history::carry_project_history(vault, doc)? {
@@ -636,6 +639,7 @@ fn scrub_for_export(
         || room_facts_scrubbed
         || document_pins_scrubbed
         || message_docs_scrubbed
+        || origin_claims_scrubbed
         || history_free_window_required(vault, key)?
     {
         Some(HistoryCheck::read(vault, key, doc)?)
