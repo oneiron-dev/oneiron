@@ -844,7 +844,7 @@ impl Memory<'_> {
                 // would scale the scores of the rows the caller reads.
                 pipeline = pipeline
                     .filter_candidates(&admitted)
-                    .caller_off_device(lane.off_device());
+                    .for_destination(lane.actor_key().destination());
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     pipeline = pipeline.in_session(telemetry);
                 }

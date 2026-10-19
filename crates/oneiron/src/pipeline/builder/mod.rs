@@ -293,13 +293,14 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
-    /// Reads for a caller off this device: no candidate a device-local world
-    /// keeps enters the run (DEC-0005). It only narrows.
-    pub(crate) fn caller_off_device(mut self, off_device: bool) -> Self {
-        if off_device {
-            self.destination
-                .meet(&crate::claim::CallerLocality::OffDevice.into());
-        }
+    /// Reads for a caller whose rows go to `destination`: no candidate a
+    /// world withholds from one of its machines enters the run (DEC-0005,
+    /// mesh PR2b). It only narrows.
+    pub(crate) fn for_destination(
+        mut self,
+        destination: &crate::settings::ReadDestination,
+    ) -> Self {
+        self.destination.meet(destination);
         self
     }
 
