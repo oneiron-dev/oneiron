@@ -2587,7 +2587,7 @@ export type GuestRevokeDisclosure = { copied_bytes_recallable: NotRecallable; re
 /** `oneiron::receipt::guest_revoke::GuestRevokeCourtesyTargetView` */
 export type GuestRevokeCourtesyTargetView = { pact: string; peer_vault_id: string; epoch_cutoff: number; deletion_request_status: GuestDeletionRequestStatus; request?: string | null; error?: string | null }
 /** `oneiron::receipt::guest_revoke::GuestRevokeResponse` */
-export type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure; courtesy_targets?: GuestRevokeCourtesyTargetView[] }
+export type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure; courtesy_targets?: GuestRevokeCourtesyTargetView[]; courtesy_skipped?: string | null }
 /** `oneiron::task_verb::sdk_shared_members::GuestSlipMintRequest` */
 export type GuestSlipMintRequest = { grant_ref: EntityId; holder_key: string; expires_at: number; comm?: CommReach | null }
 /** `oneiron::task_verb::sdk_shared_members::GuestSlipMinted` */
@@ -4501,7 +4501,7 @@ export type SpawnIntentReply = { intent_key: string; phase: SpawnPhase; placed?:
 /** `oneiron::task_verb::run_doors::CancelForceRequest` */
 export type CancelForceRequest = { task_ref: EntityId; reason?: string | null }
 /** `oneiron::agent_run_status::AgentRunStatus` */
-export type AgentRunStatus = "spawned" | "working" | "needs_input" | "delivered" | "archived" | "failed" | "abandoned"
+export type AgentRunStatus = "spawned" | "working" | "needs_input" | "delivered" | "archived" | "failed" | "abandoned" | "cancelled"
 /** `oneiron::run_tree::signal::RunAskQuestion` */
 export type RunAskQuestion = { who: string; prompt: string; options: string[]; deadline?: number | null }
 /** `oneiron::run_tree::signal::RunAskAnswerKind` */

@@ -17,7 +17,6 @@ use anyhow::Context as _;
 
 use crate::config::merge::{settings_schema_keys, settle_managed_settings};
 use crate::config::{EmbedderProvider, KeystoreBackend, ServeArgs, ServeConfig};
-use crate::runtime::RuntimeMode;
 
 use super::args::{ManagedArgs, ManagedError, SettingsRefusal};
 
@@ -186,15 +185,11 @@ pub(super) fn settle(
     settle_managed_settings(config, table, path.parent())
         .with_context(|| format!("settings file {}", path.display()))?;
 
-    // A bring-your-own-key route reads its key from the environment, which
-    // managed mode never reads.
-    if names_runtime && config.runtime.byo_key_env.is_some() {
-        let field = if config.runtime.mode == RuntimeMode::ByoCloudKey {
-            "runtime.mode"
-        } else {
-            "runtime.role_defaults"
-        };
-        return Err(refused(&[field], SettingsRefusal::EnvironmentSecret).into());
+    // Managed mode reads no environment: a bring-your-own-key route takes
+    // its key from `runtime.byo_key_secret` alone, and the default variable
+    // a BYO mode names when the file names no source is dropped, never read.
+    if names_runtime {
+        config.runtime.byo_key_env = None;
     }
     // The key directory is the supervisor's: a keystore without one would
     // be looked for under HOME.

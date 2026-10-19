@@ -19299,6 +19299,12 @@ pub struct GuestRevokeResponse {
         skip_serializing_if = "Option::is_none"
     )]
     pub courtesy_targets: Option<Vec<GuestRevokeCourtesyTargetView>>,
+    #[serde(
+        rename = "courtesy_skipped",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub courtesy_skipped: Option<String>,
 }
 
 /// `oneiron::task_verb::sdk_shared_members::GuestSlipMintRequest`.
@@ -33820,6 +33826,8 @@ pub enum AgentRunStatus {
     Failed,
     #[serde(rename = "abandoned")]
     Abandoned,
+    #[serde(rename = "cancelled")]
+    Cancelled,
 }
 
 /// `oneiron::run_tree::signal::RunAskQuestion`.

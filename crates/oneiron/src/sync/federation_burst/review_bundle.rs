@@ -43,7 +43,8 @@ impl Vault {
     }
 
     pub(super) fn federation_burst_review_bundles_in_txn(
-        &self, txn: &heed::RoTxn<'_>,
+        &self,
+        txn: &heed::RoTxn<'_>,
     ) -> Result<Vec<FederationBurstReviewBundle>> {
         let mut bundles = BTreeMap::<[u8; 32], Vec<FederationIsolatedUpdate>>::new();
         for row in self
@@ -83,10 +84,15 @@ impl Vault {
             })
             .collect::<Vec<_>>();
         for bundle in &mut retained {
-            bundle.quarantined = pending.iter().any(|row| row.bundle_ref == bundle.bundle_ref);
+            bundle.quarantined = pending
+                .iter()
+                .any(|row| row.bundle_ref == bundle.bundle_ref);
         }
         for bundle in pending {
-            if !retained.iter().any(|row| row.bundle_ref == bundle.bundle_ref) {
+            if !retained
+                .iter()
+                .any(|row| row.bundle_ref == bundle.bundle_ref)
+            {
                 retained.push(bundle);
             }
         }
