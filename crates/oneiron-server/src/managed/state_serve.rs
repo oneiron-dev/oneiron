@@ -1533,6 +1533,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     if let Some(voice) = voice {
         voice.stop().await;
     }
+    // So does every public live voice session, its journal finished, and
+    // none starts after (FIX 5324). A reap's freeze leaves them open; only
+    // this stop ends them.
+    sync_server.live_voice.stop_all().await;
     // Drain observation writes without thawing a previously quiescent process.
     let telemetry_drained = state.freeze();
     // No new durable background work from here on.
