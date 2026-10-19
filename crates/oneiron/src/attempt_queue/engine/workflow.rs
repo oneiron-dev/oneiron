@@ -78,8 +78,8 @@ impl AttemptQueue<'_> {
     /// Finds a unique retry tip in the transaction that releases the next step.
     ///
     /// A row visited twice is a cycle and refuses; a long lineage does not.
-    /// Past the `[limits]` `attempt_retry_tip_rows` row the walk asks whether
-    /// everything is okay and still reads the whole lineage (Rule 5).
+    /// The whole lineage is read; past the `[limits]` `attempt_retry_tip_rows`
+    /// row the finished walk asks whether everything is okay (Rule 5).
     pub(crate) fn retry_tip_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -101,10 +101,10 @@ impl AttemptQueue<'_> {
             if !seen.insert(current.id) {
                 return Err(invalid_transition("retry_tip", "cycle"));
             }
-            self.store
-                .limit_watch
-                .measure(EngineLimit::AttemptRetryTipRows, seen.len() as u64);
             let Some(mut candidates) = children.remove(&current.id) else {
+                self.store
+                    .limit_watch
+                    .measure(EngineLimit::AttemptRetryTipRows, seen.len() as u64);
                 return Ok(current);
             };
             if candidates.len() != 1 {
