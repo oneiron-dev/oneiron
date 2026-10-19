@@ -1445,6 +1445,30 @@ async fn vault_budgets_local(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_budgets_reservations(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.budgets.reservations")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.budgets.reservations", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.budgets.reservations", value).await?;
+    let (output, listed) = super::host_doors::vault_budgets_reservations(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_budgets_settlements(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -17988,6 +18012,118 @@ async fn vault_delete(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_writes_critical_confirm_pending(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.writes.critical_confirm.pending")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.writes.critical_confirm.pending", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.writes.critical_confirm.pending", value).await?;
+    let (output, listed) = super::host_doors::vault_writes_critical_confirm_pending(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_writes_critical_confirm_clear(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.writes.critical_confirm.clear")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.writes.critical_confirm.clear", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.writes.critical_confirm.clear", value).await?;
+    let (output, listed) = super::host_doors::vault_writes_critical_confirm_clear(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_writes_critical_confirm_decline(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.writes.critical_confirm.decline")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.writes.critical_confirm.decline", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.writes.critical_confirm.decline", value).await?;
+    let (output, listed) = super::host_doors::vault_writes_critical_confirm_decline(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_writes_critical_confirm_receipt(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.writes.critical_confirm.receipt")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.writes.critical_confirm.receipt", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.writes.critical_confirm.receipt", value).await?;
+    let (output, listed) = super::host_doors::vault_writes_critical_confirm_receipt(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_writes_pending(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -19399,6 +19535,54 @@ async fn vault_runs_checkpoint(
         auth,
         caller,
         Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consolidation_home_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consolidation.home.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consolidation.home.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consolidation.home.get", value).await?;
+    let (output, listed) = super::host_doors::vault_consolidation_home_get(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consolidation_lineage(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consolidation.lineage")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consolidation.lineage", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consolidation.lineage", value).await?;
+    let (output, listed) = super::host_doors::vault_consolidation_lineage(
+        server,
+        auth,
         facade_input(hooks.args.clone())?,
     )
     .await;
@@ -22692,6 +22876,7 @@ pub(crate) async fn call_verb(
         "vault.budgets.hold" => vault_budgets_hold(server, call, input).await,
         "vault.budgets.hold.resume" => vault_budgets_hold_resume(server, call, input).await,
         "vault.budgets.local" => vault_budgets_local(server, call, input).await,
+        "vault.budgets.reservations" => vault_budgets_reservations(server, call, input).await,
         "vault.budgets.settlements" => vault_budgets_settlements(server, call, input).await,
         "vault.budgets.rsi.configure" => vault_budgets_rsi_configure(server, call, input).await,
         "vault.budgets.rsi" => vault_budgets_rsi(server, call, input).await,
@@ -23704,6 +23889,18 @@ pub(crate) async fn call_verb(
         "vault.claims.read_filtered" => vault_claims_read_filtered(server, call, input).await,
         "vault.claims.history" => vault_claims_history(server, call, input).await,
         "vault.delete" => vault_delete(server, call, input).await,
+        "vault.writes.critical_confirm.pending" => {
+            vault_writes_critical_confirm_pending(server, call, input).await
+        }
+        "vault.writes.critical_confirm.clear" => {
+            vault_writes_critical_confirm_clear(server, call, input).await
+        }
+        "vault.writes.critical_confirm.decline" => {
+            vault_writes_critical_confirm_decline(server, call, input).await
+        }
+        "vault.writes.critical_confirm.receipt" => {
+            vault_writes_critical_confirm_receipt(server, call, input).await
+        }
         "vault.writes.pending" => vault_writes_pending(server, call, input).await,
         "vault.hydrate" => vault_hydrate(server, call, input).await,
         "vault.get" => vault_get(server, call, input).await,
@@ -23795,6 +23992,8 @@ pub(crate) async fn call_verb(
         "vault.consolidation.status" => vault_consolidation_status(server, call, input).await,
         "vault.runs.step" => vault_runs_step(server, call, input).await,
         "vault.runs.checkpoint" => vault_runs_checkpoint(server, call, input).await,
+        "vault.consolidation.home.get" => vault_consolidation_home_get(server, call, input).await,
+        "vault.consolidation.lineage" => vault_consolidation_lineage(server, call, input).await,
         "vault.consolidation.promote" => vault_consolidation_promote(server, call, input).await,
         "vault.consolidation.evidence" => vault_consolidation_evidence(server, call, input).await,
         "vault.sieve.evidence" => vault_sieve_evidence(server, call, input).await,

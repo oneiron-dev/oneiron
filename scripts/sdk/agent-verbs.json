@@ -1040,6 +1040,21 @@
       "openapi": true
     },
     {
+      "name": "vault.budgets.reservations",
+      "description": "The owner reads a device-local runner budget counter and one page of the child reservations held against it, without creating or refilling it.",
+      "input": "crate::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest",
+      "output": "crate::agent_dispatch::budget_doors::RunnerBudgetReservationsView",
+      "call": "crate::agent_dispatch::budget_doors::runner_budget_reservations_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.reservations\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.budgets.settlements",
       "description": "The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced.",
       "input": "crate::agent_dispatch::budget_doors::RunSettlementsRequest",
@@ -12752,6 +12767,70 @@
       }
     },
     {
+      "name": "vault.writes.critical_confirm.pending",
+      "description": "The owner reads a candidate's exact critical confirmation, with its nonce, effect digest, policy frontier and deadline.",
+      "input": "crate::memory::CriticalWriteConfirmPendingRequest",
+      "output": "Option<crate::memory::CriticalWriteConfirmPending>",
+      "call": "memory.critical_write_confirm_pending_as_owner(&memory.embedded_owner(\"vault.writes.critical_confirm.pending\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.writes.critical_confirm.clear",
+      "description": "The owner clears exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt.",
+      "input": "crate::memory::CriticalWriteConfirmRequest",
+      "output": "crate::memory::CriticalWriteConfirmSettlement",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.writes.critical_confirm.clear\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.writes.critical_confirm.decline",
+      "description": "The owner declines exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt.",
+      "input": "crate::memory::CriticalWriteConfirmRequest",
+      "output": "crate::memory::CriticalWriteConfirmSettlement",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.writes.critical_confirm.decline\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.writes.critical_confirm.receipt",
+      "description": "The owner reads a critical confirmation's existing signed authority receipt without settling or rewriting the claim.",
+      "input": "crate::memory::CriticalWriteConfirmReceiptRequest",
+      "output": "crate::memory::CriticalWriteConfirmReceipt",
+      "call": "memory.critical_write_confirm_receipt_as_owner(&memory.embedded_owner(\"vault.writes.critical_confirm.receipt\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.writes.pending",
       "description": "Gated writes parked for consent, newest first.",
       "uniffi": {
@@ -14159,6 +14238,36 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.home.get",
+      "description": "The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything.",
+      "input": "EmptyRequest",
+      "output": "crate::dreamer_runner::ConsolidationHomeView",
+      "call": "crate::dreamer_runner::consolidation_home_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.home.get\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.lineage",
+      "description": "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model.",
+      "input": "crate::dreamer_runner::ConsolidationLineageRequest",
+      "output": "Option<crate::dreamer_runner::ConsolidationLineageView>",
+      "call": "crate::dreamer_runner::consolidation_lineage_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.lineage\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true

@@ -232,6 +232,9 @@ impl OneironClient {
                 "vault.budgets.local" => remote_agent_verb_output::<
                     oneiron::agent_dispatch::budget_doors::LocalRunnerBudgetView,
                 >(client, verb, &input),
+                "vault.budgets.reservations" => remote_agent_verb_output::<
+                    oneiron::agent_dispatch::budget_doors::RunnerBudgetReservationsView,
+                >(client, verb, &input),
                 "vault.budgets.settlements" => remote_agent_verb_output::<
                     oneiron::agent_dispatch::budget_doors::RunSettlementsView,
                 >(client, verb, &input),
@@ -2420,6 +2423,18 @@ impl OneironClient {
                 "vault.delete" => {
                     remote_agent_verb_output::<oneiron::memory::DeleteReceipt>(client, verb, &input)
                 }
+                "vault.writes.critical_confirm.pending" => remote_agent_verb_output::<
+                    Option<oneiron::memory::CriticalWriteConfirmPending>,
+                >(client, verb, &input),
+                "vault.writes.critical_confirm.clear" => remote_agent_verb_output::<
+                    oneiron::memory::CriticalWriteConfirmSettlement,
+                >(client, verb, &input),
+                "vault.writes.critical_confirm.decline" => remote_agent_verb_output::<
+                    oneiron::memory::CriticalWriteConfirmSettlement,
+                >(client, verb, &input),
+                "vault.writes.critical_confirm.receipt" => remote_agent_verb_output::<
+                    oneiron::memory::CriticalWriteConfirmReceipt,
+                >(client, verb, &input),
                 "vault.writes.pending" => remote_agent_verb_output::<
                     Vec<oneiron::memory::PendingWrite>,
                 >(client, verb, &input),
@@ -2598,6 +2613,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.runs.checkpoint" => remote_agent_verb_output::<
                     Option<oneiron::engine_executor::checkpoint_read::CheckpointView>,
+                >(client, verb, &input),
+                "vault.consolidation.home.get" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::ConsolidationHomeView,
+                >(client, verb, &input),
+                "vault.consolidation.lineage" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::ConsolidationLineageView>,
                 >(client, verb, &input),
                 "vault.consolidation.promote" => remote_agent_verb_output::<
                     oneiron::memory::consolidation::ConsolidationPromotion,
@@ -3802,6 +3823,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.budgets.local", value)
+    }
+    pub fn vault_budgets_reservations(
+        &self,
+        input: &oneiron::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest,
+    ) -> Result<oneiron::agent_dispatch::budget_doors::RunnerBudgetReservationsView, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.budgets.reservations", value)
     }
     pub fn vault_budgets_settlements(
         &self,
@@ -12526,6 +12560,54 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.delete", value)
     }
+    pub fn vault_writes_critical_confirm_pending(
+        &self,
+        input: &oneiron::memory::CriticalWriteConfirmPendingRequest,
+    ) -> Result<Option<oneiron::memory::CriticalWriteConfirmPending>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.writes.critical_confirm.pending", value)
+    }
+    pub fn vault_writes_critical_confirm_clear(
+        &self,
+        input: &oneiron::memory::CriticalWriteConfirmRequest,
+    ) -> Result<oneiron::memory::CriticalWriteConfirmSettlement, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.writes.critical_confirm.clear", value)
+    }
+    pub fn vault_writes_critical_confirm_decline(
+        &self,
+        input: &oneiron::memory::CriticalWriteConfirmRequest,
+    ) -> Result<oneiron::memory::CriticalWriteConfirmSettlement, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.writes.critical_confirm.decline", value)
+    }
+    pub fn vault_writes_critical_confirm_receipt(
+        &self,
+        input: &oneiron::memory::CriticalWriteConfirmReceiptRequest,
+    ) -> Result<oneiron::memory::CriticalWriteConfirmReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.writes.critical_confirm.receipt", value)
+    }
     pub fn vault_writes_pending(
         &self,
         input: &oneiron::task_verb::sdk::ReceiptsRequest,
@@ -13281,6 +13363,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.runs.checkpoint", value)
+    }
+    pub fn vault_consolidation_home_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::dreamer_runner::ConsolidationHomeView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consolidation.home.get", value)
+    }
+    pub fn vault_consolidation_lineage(
+        &self,
+        input: &oneiron::dreamer_runner::ConsolidationLineageRequest,
+    ) -> Result<Option<oneiron::dreamer_runner::ConsolidationLineageView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consolidation.lineage", value)
     }
     pub fn vault_consolidation_promote(
         &self,
