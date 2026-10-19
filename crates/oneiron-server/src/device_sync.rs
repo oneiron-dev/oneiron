@@ -397,6 +397,11 @@ impl Link {
     /// (FIX 3377): the old connection stops and ends before the new one is
     /// built. Each connection's own loop reconnects with backoff. Every
     /// status goes to `statuses`, which closes when the last run ends.
+    ///
+    /// A renewed credential is written here, never by the request that
+    /// fetched it (FIX 3563). A stop sent before the write wins, and the file
+    /// stays as it was; a write once begun ends before the stop is seen, and
+    /// stays. The old connection stops only once the write has landed.
     async fn run(
         self,
         mut connection: Arc<oneiron::sync::SyncConnection>,
@@ -413,20 +418,34 @@ impl Link {
                 tokio::pin!(observed);
                 let renewed = loop {
                     tokio::select! {
+                        biased;
+                        _ = &mut stop => break None,
                         ran = &mut observed => {
                             stopped(home, ran);
                             return;
                         }
-                        _ = &mut stop => break None,
-                        renewed = renewal.next() => match self.client_config(&renewed.credential) {
-                            Ok(config) => break Some(config),
-                            Err(error) => tracing::warn!(
-                                %home,
-                                error = %format!("{error:#}"),
-                                "device sync keeps its connection: the renewed credential \
-                                 configures none"
-                            ),
-                        },
+                        candidate = renewal.next() => {
+                            // Configured before the write, so a credential
+                            // that configures none leaves the file as it was.
+                            let config = match self.client_config(&candidate.credential) {
+                                Ok(config) => config,
+                                Err(error) => {
+                                    renewal.failed(&format!(
+                                        "the renewed credential configures no connection: \
+                                         {error:#}"
+                                    ));
+                                    continue;
+                                }
+                            };
+                            // Nothing is awaited from this look to the
+                            // write's end.
+                            if stop_sent(&mut stop) {
+                                break None;
+                            }
+                            if renewal.commit(&candidate) {
+                                break Some(config);
+                            }
+                        }
                     }
                 };
                 let _ = end.send(());
@@ -437,6 +456,12 @@ impl Link {
                 };
                 if let Err(error) = ran {
                     tracing::warn!(%home, %error, "device sync ended on its old credential");
+                }
+                // A stop sent while the old connection ended opens no new
+                // one; the renewed credential, already written, stays.
+                if stop_sent(&mut stop) {
+                    tracing::info!(%home, "device sync stopped");
+                    return;
                 }
                 config
             };
@@ -474,6 +499,13 @@ fn observer(
         SyncEvent::Error(error) => tracing::warn!(%home, %error, "device sync"),
         _ => {}
     }
+}
+
+/// Whether `stop` was sent, or its sender dropped, without waiting for it.
+/// Once it says so, `stop` is spent: the caller ends without polling it.
+#[cfg(feature = "mesh")]
+fn stop_sent(stop: &mut oneshot::Receiver<()>) -> bool {
+    !matches!(stop.try_recv(), Err(oneshot::error::TryRecvError::Empty))
 }
 
 /// How a connection's run ended.
