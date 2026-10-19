@@ -66275,7 +66275,7 @@
      "path": "src/deck/shapes.rs",
      "purpose": "The shape walk: every shape in document order with its identity evidence, placeholder, resolved geometry and…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -66490,7 +66490,7 @@
      "path": "src/edit/mod.rs",
      "purpose": "Narrow value and text edits in place (ARCH-0077, \"Edit in place with passthrough\"): `set_text`…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 3,
       "fn": 1,
       "mod": 2,
@@ -66635,7 +66635,17 @@
      "path": "src/edit/text.rs",
      "purpose": "`set_text`, `replace_run_text` and `set_run_props`",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit/text/build.rs",
+     "purpose": "The new XML the text mapping writes: a run with new text, a run of the paragraph's end properties, and new…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -66989,7 +66999,17 @@
      "path": "src/live/oracle_run/edits.rs",
      "purpose": "The path every exported edit takes: apply the operations to the import, project over the retained package…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/journal.rs",
+     "purpose": "The run's durable journal, `results.jsonl`: a header line with the run's pins before any case, one complete…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -67043,7 +67063,7 @@
      "path": "src/live/oracle_run/record.rs",
      "purpose": "What a run writes: candidates with their hashes and owed Office checks, each step's engine cases, and the…",
      "surface": {
-      "crate-vis": 40
+      "crate-vis": 46
      }
     },
     {
@@ -67074,6 +67094,16 @@
      "purpose": "One pinned baseline through steps 1 to 7: its no-op export, the probed variant and every mutation over it…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/text_check.rs",
+     "purpose": "Step 3's text comparison: a model text body against its re-import, by paragraph text and level and by the…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -67563,7 +67593,7 @@
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
     "edit": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67591,7 +67621,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 18,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67656,7 +67686,7 @@
    },
    "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 90,
+   "source_files": 93,
    "test_files": 14
   },
   "oneiron-driver": {
