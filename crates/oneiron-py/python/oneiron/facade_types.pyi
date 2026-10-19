@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 988 facade rows, 3378 declarations.
+Census: 988 facade rows, 3381 declarations.
 Inputs: 931 of 988 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 890 of 988 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -2222,6 +2222,16 @@ class RetrievalMeta(TypedDict):
     limit_clamped: NotRequired[bool]
 class RetrievalRunId(TypedDict):
     bytes: list[int]
+RecallResidenceSource = Literal["home", "local_only"]
+class RecallResidenceHit(TypedDict):
+    id: str
+    score: float
+    window: str
+class RecallResidence(TypedDict):
+    source: RecallResidenceSource
+    complete: bool
+    capped: bool
+    hits: list[RecallResidenceHit]
 class MemoryPack(TypedDict):
     items: list[MemoryItem]
     scope_honesty: ScopeHonesty
@@ -2230,6 +2240,7 @@ class MemoryPack(TypedDict):
     rendered: NotRequired[str | None]
     narrowing: ScopedReadReceipt
     retrieval_run_id: NotRequired[RetrievalRunId | None]
+    residence: NotRequired[RecallResidence | None]
 class AccessFactorPolicy(TypedDict):
     half_life_secs: float
     floor: float
