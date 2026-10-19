@@ -49826,7 +49826,7 @@
      "path": "src/sync/client/connect.rs",
      "purpose": "Public Connect delivery/rejoin over the production guest admission path",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -49850,7 +49850,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -49860,7 +49860,7 @@
      "path": "src/sync/client/federation_replay.rs",
      "purpose": "Durable inbound federation drain, entered on startup, receive and timer ticks",
      "surface": {
-      "fn": 2
+      "fn": 4
      }
     },
     {
@@ -50284,6 +50284,27 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/sync/federation_burst/import_guard.rs",
+     "purpose": "Revalidate the retained batch and its acting proof in every import writer",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/federation_burst/ledger.rs",
+     "purpose": "Payload-free batch receipts, kept after durable work completes",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "FederationBurstDecision",
       "FederationPeer"
@@ -50291,10 +50312,10 @@
      "path": "src/sync/federation_burst/mod.rs",
      "purpose": "Peer-relative federation admission with durable, automatically replayable work",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 1,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 1
      }
     },
@@ -50305,7 +50326,7 @@
      "path": "src/sync/federation_burst/observations.rs",
      "purpose": "Transactional per-principal/grant observations, independent of connections",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -50315,17 +50336,28 @@
      "path": "src/sync/federation_burst/peer_health.rs",
      "purpose": "Relative signals for one peer; policy compares ratios, never write counts",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/federation_burst/policy.rs",
+     "purpose": "Owner policy changes and the peer's own observed baseline",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/federation_burst/queue.rs",
      "purpose": "Actual deferred payloads and their identity-bound, idempotent completion",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -50338,8 +50370,20 @@
      "path": "src/sync/federation_burst/review_bundle.rs",
      "purpose": "One advisory proposal per peer, with an actual isolated ledger subgraph",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/federation_burst/review_doors.rs",
+     "purpose": "Retained coalesced review evidence and owner release/reject acts",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3
      }
     },
     {
@@ -50363,6 +50407,34 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FederationBurstBaseline",
+      "FederationBurstBaselineState",
+      "FederationBurstDisposition",
+      "FederationBurstOutcome",
+      "FederationBurstPeerRequest",
+      "FederationBurstPolicy",
+      "FederationBurstPolicySetRequest",
+      "FederationBurstReceipt",
+      "FederationBurstReplayRequest",
+      "FederationBurstReviewReceipt",
+      "FederationBurstReviewRequest",
+      "FederationBurstScope",
+      "FederationBurstWorkState",
+      "FederationBurstWorld"
+     ],
+     "path": "src/sync/federation_burst/types.rs",
+     "purpose": "Public peer-relative burst policy, receipts and retained-work addresses",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 5,
+      "fn": 1,
+      "struct": 9
      }
     },
     {
@@ -51207,7 +51279,7 @@
      "path": "src/sync/selector/authorize.rs",
      "purpose": "Grant and pact authorization resolving the requested position under the grant ceiling, guest-share…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -51308,7 +51380,7 @@
      "path": "src/sync/selector/mod.rs",
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "re-export": 7
      }
     },
@@ -53155,7 +53227,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 68,
+      "re-export": 69,
       "struct": 40
      }
     },
@@ -53568,6 +53640,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/sdk_federation_burst.rs",
+     "purpose": "Typed facade calls over the engine's peer-relative federation burst doors",
+     "surface": {
+      "fn": 7
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -53598,7 +53680,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1063
+      "fn": 1072
      }
     },
     {
@@ -61209,7 +61291,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 187,
+     "files": 192,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61237,7 +61319,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 185,
+     "files": 186,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61407,7 +61489,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3740,
+   "source_files": 3746,
    "test_files": 902
   },
   "oneiron-android": {
@@ -70065,7 +70147,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1034
+      "fn": 1043
      }
     },
     {
@@ -71161,7 +71243,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1035
+      "fn": 1044
      }
     },
     {
@@ -74612,6 +74694,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/federation_burst_doors.rs",
+     "purpose": "Signed Connect ingress and owner lifecycle doors over the shared burst engine",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/federation_connect_doors.rs",
      "purpose": "The typed owner federation doors share the existing owner HTTP operations",
      "surface": {
@@ -74725,7 +74817,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 167
+      "crate-vis": 168
      }
     },
     {
@@ -82955,7 +83047,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 437,
+     "files": 438,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -83384,7 +83476,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 795,
+   "source_files": 796,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -84780,10 +84872,26 @@
       "FanoutSlotTerminal",
       "FanoutStatement",
       "FatalLlmError",
+      "FederationBurstBaseline",
+      "FederationBurstBaselineState",
+      "FederationBurstDisposition",
+      "FederationBurstOutcome",
+      "FederationBurstPeerRequest",
+      "FederationBurstPolicy",
+      "FederationBurstPolicySetRequest",
+      "FederationBurstReceipt",
+      "FederationBurstReplayRequest",
+      "FederationBurstReviewBundle",
+      "FederationBurstReviewReceipt",
+      "FederationBurstReviewRequest",
+      "FederationBurstScope",
+      "FederationBurstWorkState",
+      "FederationBurstWorld",
       "FederationDelegateRequest",
       "FederationDirectionScope",
       "FederationGrantRole",
       "FederationGrantScope",
+      "FederationIsolatedUpdate",
       "FederationMemberGrant",
       "FederationPactScope",
       "FederationPactStatus",
@@ -87053,8 +87161,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 825,
-      "struct": 2643
+      "enum": 830,
+      "struct": 2654
      }
     },
     {
