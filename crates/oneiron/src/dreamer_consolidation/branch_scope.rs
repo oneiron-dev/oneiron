@@ -179,6 +179,20 @@ pub(super) fn execution_scope_in(
             cursor = payload.parent_attempt;
             continue;
         }
+        // A Timer wake's plan parent (FIX 336) only groups the children it
+        // planned: they take what its own parent bounds, and with none, no
+        // inherited bound, as under a recipe receipt.
+        if row.kind == crate::dreamer_runner::DreamerConsolidationScope::Macro.attempt_kind()
+            && payload.attempt_type == crate::dreamer_wake::nightly::PLAN_ATTEMPT
+            && vault.dreamer_attempt_authority_in_txn(txn, id)?.is_some()
+        {
+            if payload.parent_attempt.is_none() {
+                recipe_root = true;
+                break;
+            }
+            cursor = payload.parent_attempt;
+            continue;
+        }
         if row.kind == crate::dreamer_runner::DREAMER_RECIPE_WAKE_ATTEMPT_KIND
             && payload.attempt_type == crate::dreamer_runner::DREAMER_RECIPE_WAKE_ATTEMPT_KIND
             && payload.parent_attempt.is_none()

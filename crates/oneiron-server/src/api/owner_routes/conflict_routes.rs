@@ -4,7 +4,9 @@
 //! active; dismissing answers the marker and changes no member. The Dreamer
 //! settles them through its ladder in every vault from birth; the owner
 //! holds its review on one subject or the whole vault, releases the hold,
-//! and reverts any settlement it made.
+//! and reverts any settlement it made. A candidate the marker's round
+//! dropped is listed apart from the stored members, as retained on the
+//! marker; keeping it by its id lands it (FIX 496).
 
 use std::sync::Arc;
 
@@ -57,6 +59,9 @@ struct ConflictView {
     /// Whether the owner reverted a settlement of it: the Dreamer leaves it.
     reverted: bool,
     members: Vec<MemberView>,
+    /// Candidates the marker's round dropped, retained on the marker: no
+    /// stored claim, never active truth. `keep` with an id lands that one.
+    alternatives: Vec<AlternativeView>,
 }
 
 #[derive(Debug, Serialize)]
@@ -67,6 +72,16 @@ struct MemberView {
     source: Option<&'static str>,
     approval: &'static str,
     lifecycle: &'static str,
+    confidence: f32,
+}
+
+#[derive(Debug, Serialize)]
+struct AlternativeView {
+    id: String,
+    predicate: String,
+    value: JsonValue,
+    /// The trust of the evidence its round read for it.
+    source: &'static str,
     confidence: f32,
 }
 
@@ -112,6 +127,8 @@ struct SettlementReverted {
     copied: Vec<[String; 2]>,
     /// Members a later write closed, left as they are.
     left_closed: Vec<String>,
+    /// The retained alternative the settlement landed, retracted.
+    retracted: Option<String>,
     receipt_ref: String,
 }
 
@@ -161,6 +178,17 @@ fn view(vault: &oneiron::Vault, conflict: OpenConflict) -> OwnerResult<ConflictV
             confidence: body.confidence,
         });
     }
+    let alternatives = conflict
+        .alternatives
+        .iter()
+        .map(|alternative| AlternativeView {
+            id: alternative.id.to_hex(),
+            predicate: alternative.predicate.clone(),
+            value: crate::commands::msgpack_value_json(&alternative.value),
+            source: alternative.source.as_str(),
+            confidence: alternative.confidence,
+        })
+        .collect();
     Ok(ConflictView {
         marker: conflict.marker.to_hex(),
         subject: conflict.subject.to_hex(),
@@ -168,6 +196,7 @@ fn view(vault: &oneiron::Vault, conflict: OpenConflict) -> OwnerResult<ConflictV
         proposed: conflict.body.approval == oneiron::claim::ClaimApprovalStatus::Proposed,
         reverted: conflict.reverted,
         members,
+        alternatives,
     })
 }
 
@@ -330,6 +359,7 @@ async fn revert(
                 .map(|(member, copy)| [member.to_hex(), copy.to_hex()])
                 .collect(),
             left_closed: hex(&receipt.reverted.left_closed),
+            retracted: receipt.reverted.retracted.map(|id| id.to_hex()),
             receipt_ref: receipt.receipt_ref,
         })
     })
