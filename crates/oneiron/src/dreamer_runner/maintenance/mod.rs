@@ -46,6 +46,7 @@ pub mod stewardship;
 #[cfg(test)]
 mod tests;
 mod type_tree_gate;
+pub(crate) mod type_tree_prior;
 pub mod type_tree_upkeep;
 use super::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptPayload,
