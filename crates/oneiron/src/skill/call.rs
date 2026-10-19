@@ -111,7 +111,7 @@ fn callable_tier(vault: &Vault, record: &crate::skill::SkillRecord) -> Result<Sa
     Err(invalid("callable ancestry exceeds sandbox trust bound"))
 }
 
-fn matches_shape(value: &JsonValue, shape: &JsonValue) -> bool {
+pub(crate) fn matches_shape(value: &JsonValue, shape: &JsonValue) -> bool {
     match shape {
         JsonValue::String(kind) => match kind.as_str() {
             "string" => value.is_string(),

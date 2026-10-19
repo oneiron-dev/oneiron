@@ -63,6 +63,7 @@ pub(crate) mod trained_serving;
 mod training_offer;
 pub(crate) mod training_pack;
 mod turn_actions;
+mod turn_program;
 mod turns;
 pub(crate) mod waves;
 mod weave_lens;
@@ -388,6 +389,9 @@ impl AiHandle {
                 Ok(_) => handle.attempt_queued(),
                 Err(error) => tracing::warn!(%error, ?subject, "turn wake not queued"),
             }
+            // DOOR-141: a program this turn woke is admitted from the wake
+            // its commit recorded; at boot, every wake a stop or crash left.
+            turn_program::drain_turn_programs(&vault);
         }))
     }
 

@@ -88,6 +88,13 @@ pub const DREAMER_TASK_REALIZE_ATTEMPT_KIND: &str =
 ///
 /// Doubles as the payload `job_type`.
 pub const DREAMER_WEAVE_LENS_ATTEMPT_KIND: &str = "dreamer.weave_lens";
+/// A turn-woken program (DOOR-141): one attempt per armed program per landed
+/// turn of its actor, admitted under that actor's own authority and stamped
+/// as that actor, never as a base agent. Vault-local: it is no partition.
+/// Only its own admission leases it.
+///
+/// Doubles as the payload `job_type`.
+pub const DREAMER_TURN_PROGRAM_ATTEMPT_KIND: &str = "dreamer.turn_program";
 /// The Coach's live heal queue kind (ARCH-0066 #coach): one attempt per
 /// failure-ladder case the escalation hands to the Coach. Host-run, like agent
 /// dispatch: the wake driver never admits it; a host Coach leases it with

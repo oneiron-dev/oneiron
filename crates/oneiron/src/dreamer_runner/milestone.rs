@@ -120,6 +120,16 @@ pub(super) fn apply_milestone_claim_in_txn(
     attempt: &AttemptRecord,
     milestone: DreamerMilestoneClaim,
 ) -> Result<()> {
+    // A turn-woken program's milestones are its waking actor's (DOOR-141),
+    // never the Dreamer's.
+    if attempt.kind == super::DREAMER_TURN_PROGRAM_ATTEMPT_KIND {
+        super::program::require_program_actor_in_txn(
+            vault,
+            &*wtxn,
+            attempt.id,
+            milestone.envelope.actor(),
+        )?;
+    }
     let milestone = stamp_agent_dispatch_milestone(attempt, milestone)?;
     let value = dreamer_milestone_value(attempt.id, milestone.kind, milestone.occurred.start);
     let candidate = ClaimCandidate::new(
