@@ -409,14 +409,14 @@ impl CoreAuth {
     }
 
     /// The caller `headers` name. On a managed vault that is the caller's
-    /// own forwarded slip, or with none the host's root as the supervisor
-    /// it serves ([`Self::managed_caller`]); a slip is never replaced. It
-    /// reads headers alone, so it never names an attested owner: a door
-    /// that may take one asks [`Self::for_request`] or
+    /// own forwarded slip ([`Self::managed_caller`]), never replaced; with
+    /// none the request is anonymous and refused, never the host's root
+    /// (FIX 2222). It reads headers alone, so it never names an attested
+    /// owner: a door that may take one asks [`Self::for_request`] or
     /// [`Self::for_managed_request`].
     pub(crate) fn for_server(headers: &HeaderMap, server: &SyncServer) -> Result<Self, ApiError> {
-        if let Some(issuer) = server.managed_issuer.as_ref() {
-            return Self::managed_caller(headers, server, issuer);
+        if server.managed_issuer.is_some() {
+            return Self::managed_caller(headers, server);
         }
         Self::from_headers(headers, &server.config, server.vault().as_ref())
     }
