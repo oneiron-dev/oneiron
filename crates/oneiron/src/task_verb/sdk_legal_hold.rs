@@ -9,8 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
-    LegalHold, LegalHoldEvent, LegalHoldTarget, LiftAndEraseOutcome, LiftAndEraseStatus,
+    ErasePendingReason, LegalHold, LegalHoldEvent, LegalHoldTarget, LiftAndEraseOutcome,
+    LiftAndEraseStatus,
 };
+use crate::error::LegalHoldBound;
 use crate::memory::MemoryResult;
 use crate::{EntityId, Vault};
 
@@ -46,19 +48,32 @@ pub struct LegalHoldLiftAndEraseRequest {
     pub records: Vec<EntityId>,
 }
 
-/// What the owner's one confirm did to one record.
+/// What the owner's one confirm did to one record, by one rule wherever the
+/// bytes live (WILL-PLAN L01 row 04).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum LegalHoldEraseState {
-    /// Self-hosted: the hold is lifted and the record erased.
+    /// The hold is lifted and the record erased: its deletion receipt has
+    /// both completion times (C4). No receipt when nothing was there.
     Erased { receipt_ref: Option<String> },
     /// "erase confirmed; completion pending"
-    /// ([`crate::deletion::ERASE_COMPLETION_PENDING`]): where Oneiron hosts
-    /// the bytes, until the deletion receipt completes. Not erased yet.
-    CompletionPending,
-    /// A legal order Oneiron must obey keeps the bytes; the erase runs when
-    /// the order lifts. Not erased.
-    KeptByLegalOrder,
+    /// ([`crate::deletion::ERASE_COMPLETION_PENDING`]): the erase ran and
+    /// `reason` is still outstanding on `receipt_ref`, or, with neither, an
+    /// order the owner may not be told of keeps the bytes. Not erased yet.
+    CompletionPending {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        receipt_ref: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<ErasePendingReason>,
+    },
+    /// A legal order binding Oneiron's hosting keeps the bytes: `bound`
+    /// names its law, and the note says what self-hosting changes. The erase
+    /// runs when the order lifts. Not erased.
+    RetainedForLaw {
+        bound: LegalHoldBound,
+        works_self_hosted: bool,
+        self_hosted_note: String,
+    },
     /// The hold was lifted, then the erase failed; a plain delete retries it.
     Failed { message: String },
 }
@@ -67,8 +82,18 @@ impl From<LiftAndEraseStatus> for LegalHoldEraseState {
     fn from(status: LiftAndEraseStatus) -> Self {
         match status {
             LiftAndEraseStatus::Erased { receipt_ref } => Self::Erased { receipt_ref },
-            LiftAndEraseStatus::CompletionPending => Self::CompletionPending,
-            LiftAndEraseStatus::KeptByLegalOrder => Self::KeptByLegalOrder,
+            LiftAndEraseStatus::CompletionPending {
+                receipt_ref,
+                reason,
+            } => Self::CompletionPending {
+                receipt_ref,
+                reason,
+            },
+            LiftAndEraseStatus::RetainedForLaw(notice) => Self::RetainedForLaw {
+                bound: notice.bound,
+                works_self_hosted: notice.works_self_hosted,
+                self_hosted_note: notice.self_hosted_note,
+            },
             LiftAndEraseStatus::Failed { message } => Self::Failed { message },
         }
     }

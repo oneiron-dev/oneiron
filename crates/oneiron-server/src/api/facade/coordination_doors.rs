@@ -20,7 +20,7 @@ use oneiron::dreamer_runner::{
     ConsolidationHomePickReceipt, ConsolidationHomePickRequest, ConsolidationHomeView,
     ConsolidationLineageRequest, ConsolidationLineageView,
 };
-use oneiron::memory::{MemoryError, MemoryResult};
+use oneiron::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_type::PlacementDecisions;
 use oneiron::task_verb::run_doors::{
@@ -43,6 +43,8 @@ use crate::server::{SyncServer, seated_planner};
 /// The placement adapter the owner's served launch is stated under: this
 /// host's own placement and planner, which keep no idempotency key.
 const OWNER_SPAWN_ADAPTER: &str = "server.owner_spawn.v1";
+/// What the owner does when the host's planner does not load.
+const PLANNER_LOAD_FIX: &str = "The host could not read its planner seats' AGENT_DEFs or its seeded planner skills; check the server log and the vault's store, then ask again. The intent key is still free.";
 
 /// A pin names the fork it stored the tree on.
 pub(crate) async fn vault_task_types_pin(
@@ -174,16 +176,22 @@ fn owner_planner<'s>(
     };
     let vault = server.vault();
     let principal = owner.revalidate(vault)?;
-    // The template seat's config, of which only the model is read: no run
-    // is entered on it, so the owner's id stands in for a run's.
-    let template = provider.executor_config(vault, principal, "")?;
+    let model = provider.template_model(vault, principal)?;
+    // The seats' AGENT_DEF reads and the seeded skills are the host's own
+    // loads, so a failure is the host's, not the owner's ask (FIX 4660).
     seated_planner(
         vault,
         settings,
-        template.model.as_str(),
+        model.as_str(),
         server.decision_host().host_planner_decisions(principal),
     )
-    .map_err(MemoryError::bad_request)
+    .map_err(|error| {
+        MemoryError::new(
+            MEMORY_CODE_INTERNAL,
+            format!("this host's planner did not load: {error}"),
+            &[PLANNER_LOAD_FIX],
+        )
+    })
 }
 
 /// A spawn read names the attempt, every attempt that launched with it and

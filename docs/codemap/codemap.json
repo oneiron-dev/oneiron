@@ -21229,14 +21229,26 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "ForkPromoteReport"
+      "ForkPromoteReport",
+      "UpstreamSeat"
      ],
      "path": "src/dreamer_runner/maintenance/fork_promote.rs",
      "purpose": "The project tree fork (ARCH-0079 #task-type, OF-420): a project whose receipts disagree with the vault tree…",
      "surface": {
-      "const": 1,
+      "const": 2,
       "fn": 1,
-      "struct": 1
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/fork_promote/leaf_promote.rs",
+     "purpose": "The promote step of the project tree fork pass (ARCH-0079 #task-type, OF-420): a type a project's own tree…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -61034,7 +61046,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62051,7 +62063,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3786,
+   "source_files": 3787,
    "test_files": 902
   },
   "oneiron-android": {
