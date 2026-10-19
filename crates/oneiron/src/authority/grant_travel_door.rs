@@ -76,11 +76,16 @@ impl Vault {
     /// current one, else the choice is a conflict, never a silent overwrite.
     /// `None` takes the current revision (a caller that showed none).
     ///
-    /// The choice names the main-log heads, this machine's standing rows
-    /// and the grant's live choices, so it supersedes every choice this
-    /// install folds. More than one entry may name refuses, atomically: a
-    /// choice is never split, and no restrictive head is dropped to make
-    /// room (FIX 2998).
+    /// The choice names the main-log heads alone. A choice is a main-log
+    /// entry, so the grant's live choices and this machine's standing rows
+    /// are among those heads or their ancestors: the fold at the heads
+    /// carries them, and the choice supersedes every choice this install
+    /// folds. Naming them again would put covered rows off a checkpoint
+    /// image's frontier among its parents, which only the whole history
+    /// folds (FIX 4455); the fold check below refuses a choice its parents
+    /// do not carry. More heads than one entry may name refuses,
+    /// atomically: a choice is never split, and no restrictive head is
+    /// dropped to make room (FIX 2998).
     pub(crate) fn append_grant_travel_set_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -109,16 +114,10 @@ impl Vault {
         }
         let signer = AuthorityKey::Ed25519(public_key);
         let seq = next_sequence(&fold, &signer)?;
-        let mut parents = fold.append_heads.clone();
-        parents.extend(standing_rows(&fold, machine));
-        parents.extend(
-            fold.signed_grant_travel(grant)
-                .into_iter()
-                .flat_map(|folded| folded.live.keys().copied()),
-        );
+        let parents = fold.append_heads.clone();
         if parents.len() > MAX_PARENTS {
             return Err(Error::InvalidConfig(
-                "this grant has more concurrent travel choices than one choice may name; \
+                "the authority log has more concurrent heads than one travel choice may name; \
                  nothing was written"
                     .to_owned(),
             ));

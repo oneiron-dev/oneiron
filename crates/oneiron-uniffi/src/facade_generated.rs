@@ -1311,6 +1311,31 @@ export_facade! {
     let output = client.vault_mesh_path_receipts(&input)?;
     crate::codec::lift_record("vault.mesh.path_receipts", &output)
 };
+"vault.mesh.identity" => fn vault_mesh_identity(&self) -> MeshBindingIdentity = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.mesh.identity")?;
+    let output = client.vault_mesh_identity(&input)?;
+    crate::codec::lift_record("vault.mesh.identity", &output)
+};
+"vault.mesh.bind_machine" => fn vault_mesh_bind_machine(&self, input: MeshMachineBinding) -> MeshMachineBound = |client| {
+    let input: oneiron::task_verb::sdk::MeshMachineBinding = crate::codec::lower_record("vault.mesh.bind_machine", input)?;
+    let output = client.vault_mesh_bind_machine(&input)?;
+    crate::codec::lift_record("vault.mesh.bind_machine", &output)
+};
+"vault.mesh.set_alpn_grant" => fn vault_mesh_set_alpn_grant(&self, input: MeshAlpnGrant) -> MeshAlpnGrant = |client| {
+    let input: oneiron::task_verb::sdk::MeshAlpnGrant = crate::codec::lower_record("vault.mesh.set_alpn_grant", input)?;
+    let output = client.vault_mesh_set_alpn_grant(&input)?;
+    crate::codec::lift_record("vault.mesh.set_alpn_grant", &output)
+};
+"vault.mesh.revoke_machine" => fn vault_mesh_revoke_machine(&self, input: MeshMachineRevokeRequest) -> MeshMachineRevoked = |client| {
+    let input: oneiron::task_verb::sdk::MeshMachineRevokeRequest = crate::codec::lower_record("vault.mesh.revoke_machine", input)?;
+    let output = client.vault_mesh_revoke_machine(&input)?;
+    crate::codec::lift_record("vault.mesh.revoke_machine", &output)
+};
+"vault.mesh.dial" => fn vault_mesh_dial(&self, input: MeshDialRequest) -> MeshPathReceipt = |client| {
+    let input: oneiron::task_verb::sdk::MeshDialRequest = crate::codec::lower_record("vault.mesh.dial", input)?;
+    let output = client.vault_mesh_dial(&input)?;
+    crate::codec::lift_record("vault.mesh.dial", &output)
+};
 "vault.inspection.resolve" => fn vault_inspection_resolve(&self, input: InspectionResolveRequest) -> InspectionResolved = |client| {
     let input: oneiron::lens::InspectionResolveRequest = crate::codec::lower_record("vault.inspection.resolve", input)?;
     let output = client.vault_inspection_resolve(&input)?;

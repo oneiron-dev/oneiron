@@ -266,6 +266,11 @@ pub enum AgentVerb {
     VaultSlimDropHeavy,
     VaultSlimResume,
     VaultMeshPathReceipts,
+    VaultMeshIdentity,
+    VaultMeshBindMachine,
+    VaultMeshSetAlpnGrant,
+    VaultMeshRevokeMachine,
+    VaultMeshDial,
     VaultInspectionResolve,
     VaultSharedProposeDelete,
     VaultSharedProposeTransfer,
@@ -1290,6 +1295,11 @@ impl AgentVerb {
         Self::VaultSlimDropHeavy,
         Self::VaultSlimResume,
         Self::VaultMeshPathReceipts,
+        Self::VaultMeshIdentity,
+        Self::VaultMeshBindMachine,
+        Self::VaultMeshSetAlpnGrant,
+        Self::VaultMeshRevokeMachine,
+        Self::VaultMeshDial,
         Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
         Self::VaultSharedProposeTransfer,
@@ -2317,6 +2327,11 @@ impl AgentVerb {
             Self::VaultSlimDropHeavy => "vault.slim.drop_heavy",
             Self::VaultSlimResume => "vault.slim.resume",
             Self::VaultMeshPathReceipts => "vault.mesh.path_receipts",
+            Self::VaultMeshIdentity => "vault.mesh.identity",
+            Self::VaultMeshBindMachine => "vault.mesh.bind_machine",
+            Self::VaultMeshSetAlpnGrant => "vault.mesh.set_alpn_grant",
+            Self::VaultMeshRevokeMachine => "vault.mesh.revoke_machine",
+            Self::VaultMeshDial => "vault.mesh.dial",
             Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
             Self::VaultSharedProposeTransfer => "vault.shared.propose_transfer",
@@ -3369,6 +3384,11 @@ impl AgentVerb {
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
+                | Self::VaultMeshIdentity
+                | Self::VaultMeshBindMachine
+                | Self::VaultMeshSetAlpnGrant
+                | Self::VaultMeshRevokeMachine
+                | Self::VaultMeshDial
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -4420,6 +4440,11 @@ impl AgentVerb {
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
+                | Self::VaultMeshIdentity
+                | Self::VaultMeshBindMachine
+                | Self::VaultMeshSetAlpnGrant
+                | Self::VaultMeshRevokeMachine
+                | Self::VaultMeshDial
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -5570,6 +5595,11 @@ impl AgentVerb {
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
+                | Self::VaultMeshIdentity
+                | Self::VaultMeshBindMachine
+                | Self::VaultMeshSetAlpnGrant
+                | Self::VaultMeshRevokeMachine
+                | Self::VaultMeshDial
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -6437,6 +6467,10 @@ impl AgentVerb {
                 | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
+                | Self::VaultMeshBindMachine
+                | Self::VaultMeshSetAlpnGrant
+                | Self::VaultMeshRevokeMachine
+                | Self::VaultMeshDial
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -7191,6 +7225,11 @@ impl AgentVerb {
             Self::VaultSlimDropHeavy => &["spec"],
             Self::VaultSlimResume => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
+            Self::VaultMeshIdentity => &["spec"],
+            Self::VaultMeshBindMachine => &["spec"],
+            Self::VaultMeshSetAlpnGrant => &["spec"],
+            Self::VaultMeshRevokeMachine => &["spec"],
+            Self::VaultMeshDial => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
@@ -8216,6 +8255,11 @@ impl AgentVerb {
             Self::VaultSlimDropHeavy => &["spec"],
             Self::VaultSlimResume => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
+            Self::VaultMeshIdentity => &["spec"],
+            Self::VaultMeshBindMachine => &["spec"],
+            Self::VaultMeshSetAlpnGrant => &["spec"],
+            Self::VaultMeshRevokeMachine => &["spec"],
+            Self::VaultMeshDial => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
@@ -9755,6 +9799,21 @@ impl AgentVerb {
             }
             Self::VaultMeshPathReceipts => {
                 "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."
+            }
+            Self::VaultMeshIdentity => {
+                "This install's public mesh keys and both binding proofs, for the owner; no private key or grant is returned."
+            }
+            Self::VaultMeshBindMachine => {
+                "Bind a paired MACHINE's address and transport key using both possession proofs; the binding starts with no ALPN grants."
+            }
+            Self::VaultMeshSetAlpnGrant => {
+                "Allow or revoke one exact ALPN for a paired MACHINE and endpoint key, under the caller's own owner proof."
+            }
+            Self::VaultMeshRevokeMachine => {
+                "Permanently revoke a MACHINE's mesh admission and all its ALPN grants; a new enrollment needs a new MACHINE and pairing."
+            }
+            Self::VaultMeshDial => {
+                "Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream."
             }
             Self::VaultInspectionResolve => {
                 "Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item."

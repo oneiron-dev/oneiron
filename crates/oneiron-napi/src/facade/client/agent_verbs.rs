@@ -2260,6 +2260,45 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_mesh_identity(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mesh.identity", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mesh_bind_machine(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mesh.bind_machine", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mesh_set_alpn_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mesh.set_alpn_grant", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mesh_revoke_machine(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mesh.revoke_machine", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mesh_dial(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mesh.dial", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_inspection_resolve(
         &self,
         input: serde_json::Value,

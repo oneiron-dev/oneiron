@@ -1116,6 +1116,11 @@ fn mcp_agent_verb_input(
         "vault.slim.drop_heavy" => a.spec.clone().ok_or_else(invalid),
         "vault.slim.resume" => a.spec.clone().ok_or_else(invalid),
         "vault.mesh.path_receipts" => a.spec.clone().ok_or_else(invalid),
+        "vault.mesh.identity" => a.spec.clone().ok_or_else(invalid),
+        "vault.mesh.bind_machine" => a.spec.clone().ok_or_else(invalid),
+        "vault.mesh.set_alpn_grant" => a.spec.clone().ok_or_else(invalid),
+        "vault.mesh.revoke_machine" => a.spec.clone().ok_or_else(invalid),
+        "vault.mesh.dial" => a.spec.clone().ok_or_else(invalid),
         "vault.inspection.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.propose_delete" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.propose_transfer" => a.spec.clone().ok_or_else(invalid),
@@ -2827,6 +2832,21 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.mesh.path_receipts" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mesh.identity" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mesh.bind_machine" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mesh.set_alpn_grant" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mesh.revoke_machine" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.mesh.dial" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.inspection.resolve" => {
@@ -9661,6 +9681,98 @@ async fn execute_agent_verb_row(
             );
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mesh.identity" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.mesh.identity", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_mesh_identity(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mesh.bind_machine" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.mesh.bind_machine", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::MeshMachineBinding =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_mesh_bind_machine(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mesh.set_alpn_grant" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.mesh.set_alpn_grant", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::MeshAlpnGrant =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_mesh_set_alpn_grant(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mesh.revoke_machine" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.mesh.revoke_machine", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::MeshMachineRevokeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_mesh_revoke_machine(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.mesh.dial" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.mesh.dial", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::MeshDialRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_mesh_dial(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.inspection.resolve" => {
