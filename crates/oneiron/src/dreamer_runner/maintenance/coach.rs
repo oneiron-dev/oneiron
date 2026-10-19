@@ -114,6 +114,12 @@ pub const COACH_JUDGE_LABEL_RECHECKS_FACET: &str = "coach.judge_label_rechecks";
 /// named on the host, and a changed tree put in force (see
 /// [`super::type_tree_upkeep`]).
 pub const COACH_TYPE_TREE_UPKEEP_FACET: &str = "coach.type_tree_upkeep";
+/// Project tree forks (ARCH-0079 #task-type, OF-420): each project whose own
+/// settled teams read a clear winner the vault tree does not gets its own
+/// fork of the team-shape skill, scored against the head on the project's
+/// held-out runs on the host and put in force when it wins (see
+/// [`super::fork_promote`]).
+pub const COACH_FORK_PROMOTE_FACET: &str = "coach.fork_promote";
 /// Room upkeep (ARCH-0067 §8, OF-417): each room in the Coach's room reach
 /// (refs and turn times of what the Dreamer reads) gets its summary declared
 /// when its turns moved, and each quiet thread with open TASKs a Proposed
@@ -130,7 +136,7 @@ pub const COACH_ROOM_NUDGE_PREDICATE: &str = "coach.room_upkeep.nudge";
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 11] = [
+const HOST_FACETS: [&str; 12] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -140,6 +146,7 @@ const HOST_FACETS: [&str; 11] = [
     COACH_TRADEOFF_ROUTE_FACET,
     COACH_SEAL_CHECKS_FACET,
     COACH_TYPE_TREE_UPKEEP_FACET,
+    COACH_FORK_PROMOTE_FACET,
     COACH_ATTRIBUTION_AUDITS_FACET,
     COACH_JUDGE_LABEL_RECHECKS_FACET,
 ];

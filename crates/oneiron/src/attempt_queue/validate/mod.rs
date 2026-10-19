@@ -20,18 +20,17 @@ pub(super) use self::cancel_receipt_landing::{
 pub(crate) use self::field_validators::validate_lease_owner;
 
 pub(super) use self::field_validators::{
-    ERR_ABANDONED_WITHOUT_REASON, ERR_ABANDONED_WITHOUT_RESULT, ERR_CANCEL_RECEIPTS_FULL,
-    ERR_CANCELLATION_MISPLACED, ERR_DEDUPE_ACTOR_WITHOUT_KEY, ERR_HANDOFF_WITHOUT_RESUME_POINT,
-    ERR_LANDING_RECORD_MISPLACED, ERR_LANDING_WITH_BACKOFF, ERR_LANDING_WITHOUT_LEASE,
-    ERR_LANDING_WITHOUT_RECORD, ERR_LEASE_TIMEOUT_ZERO, ERR_RESERVE_SPEND_ZERO,
-    lease_claimed_record, validate_attempt_events, validate_attempt_manifest,
-    validate_cancel_actor, validate_cancel_standing, validate_cleanup_leases_input,
-    validate_failure_reason, validate_intervention_actor, validate_kind, validate_manifest_entry,
-    validate_optional_cancel_status, validate_optional_dedupe, validate_optional_dedupe_actor_ref,
-    validate_optional_failure_reason, validate_optional_intervention_note,
-    validate_optional_result_ref, validate_optional_resume_point, validate_optional_run_id,
-    validate_reserve_percent, validate_result_rebind, validate_result_ref, validate_resume_point,
-    validate_transition_lease,
+    ERR_ABANDONED_WITHOUT_REASON, ERR_ABANDONED_WITHOUT_RESULT, ERR_CANCELLATION_MISPLACED,
+    ERR_DEDUPE_ACTOR_WITHOUT_KEY, ERR_HANDOFF_WITHOUT_RESUME_POINT, ERR_LANDING_RECORD_MISPLACED,
+    ERR_LANDING_WITH_BACKOFF, ERR_LANDING_WITHOUT_LEASE, ERR_LANDING_WITHOUT_RECORD,
+    ERR_LEASE_TIMEOUT_ZERO, ERR_RESERVE_SPEND_ZERO, lease_claimed_record, validate_attempt_events,
+    validate_attempt_manifest, validate_cancel_actor, validate_cancel_standing,
+    validate_cleanup_leases_input, validate_failure_reason, validate_intervention_actor,
+    validate_kind, validate_manifest_entry, validate_optional_cancel_status,
+    validate_optional_dedupe, validate_optional_dedupe_actor_ref, validate_optional_failure_reason,
+    validate_optional_intervention_note, validate_optional_result_ref,
+    validate_optional_resume_point, validate_optional_run_id, validate_reserve_percent,
+    validate_result_rebind, validate_result_ref, validate_resume_point, validate_transition_lease,
 };
 
 // Names the sibling test suite reaches through `super::validate::` in
