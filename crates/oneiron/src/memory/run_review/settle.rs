@@ -103,10 +103,12 @@ impl Memory<'_> {
                     RunReviewChange::Topology { event_ref } => {
                         let event = EntityId::from_hex(event_ref)?;
                         let applied = if verdict == RunChangeVerdict::Waiting {
+                            // Where his request reached this install, as
+                            // the host bound it (FIX 4650): audit only.
                             let seal =
                                 TopologySeal::decision(crate::authority::ActAuthority::Owner(
                                     owner.clone(),
-                                    crate::authority::ActSurface::ThisInstall,
+                                    self.owner_surface(),
                                 ));
                             let write = IdentityOpWrite {
                                 source: crate::claim::ClaimSource::UserStated,

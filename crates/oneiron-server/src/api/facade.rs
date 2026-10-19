@@ -1051,9 +1051,13 @@ fn facade_invoke_in_turn(
                 // owner-authored writes carry their own confirmation. Any other
                 // caller writes as itself; the owner's credential that no longer
                 // holds is refused. The work-companion setting takes the
-                // person's own proof instead (OF-417).
+                // person's own proof instead (OF-417). His acts record where
+                // the request reached this install, as its headers proved it
+                // (`FacadeCall::surface`, audit only, FIX 4650).
                 let memory = match direct_authorship(auth, server, verb)? {
-                    Some(owner) => memory.with_owner_authorship(&owner),
+                    Some(owner) => memory
+                        .with_owner_authorship(&owner)
+                        .with_owner_surface(call.surface()),
                     None => memory,
                 };
                 if verb == GUEST_REVOKING_DELETE_VERB {
@@ -1196,7 +1200,9 @@ fn facade_invoke_born(
             Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
             None => {
                 let memory = match direct_authorship(auth, server, verb)? {
-                    Some(owner) => memory.with_owner_authorship(&owner),
+                    Some(owner) => memory
+                        .with_owner_authorship(&owner)
+                        .with_owner_surface(call.surface()),
                     None => memory,
                 };
                 oneiron::task_verb::sdk::invoke(&memory, verb, value)?

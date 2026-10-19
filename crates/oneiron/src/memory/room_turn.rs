@@ -202,6 +202,7 @@ impl<'v> Memory<'v> {
                 birth_position: self.birth_position,
                 // A thread's read writes nothing as the owner in person.
                 owner_authorship: None,
+                owner_surface: crate::authority::ActSurface::ThisInstall,
                 host_slip_issuer: None,
                 invocation: self.invocation,
                 invocation_slip: self.invocation_slip.clone(),

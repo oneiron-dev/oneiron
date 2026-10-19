@@ -5890,6 +5890,7 @@ async fn execute_agent_verb_row(
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 memory.invocation(),
+                crate::api::facade::owner_binding::act_surface(auth),
                 input,
             )
             .await;
@@ -7222,8 +7223,13 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::clustering::ClusterProposeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_cluster_propose(server, auth, input).await;
+            let (output, listed) = crate::api::facade::host_doors::vault_cluster_propose(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -7240,8 +7246,13 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::clustering::ClusterMergeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_cluster_merge(server, auth, input).await;
+            let (output, listed) = crate::api::facade::host_doors::vault_cluster_merge(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -7258,8 +7269,13 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::clustering::ClusterSplitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_cluster_split(server, auth, input).await;
+            let (output, listed) = crate::api::facade::host_doors::vault_cluster_split(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -7276,9 +7292,13 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::clustering::ClusterResolveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_cluster_resolve_proposal(server, auth, input)
-                    .await;
+            let (output, listed) = crate::api::facade::host_doors::vault_cluster_resolve_proposal(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -20229,9 +20249,13 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::ConsolidationHomePickRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_consolidation_home_pick(server, auth, input)
-                    .await;
+            let (output, listed) = crate::api::facade::host_doors::vault_consolidation_home_pick(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -21675,6 +21699,7 @@ async fn execute_agent_verb_row(
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 memory.invocation(),
+                crate::api::facade::owner_binding::act_surface(auth),
                 input,
             )
             .await;
@@ -21723,6 +21748,7 @@ async fn execute_agent_verb_row(
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 memory.invocation(),
+                crate::api::facade::owner_binding::act_surface(auth),
                 input,
             )
             .await;
@@ -21742,8 +21768,13 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentityMergeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_identity_merge(server, auth, input).await;
+            let (output, listed) = crate::api::facade::host_doors::vault_identity_merge(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -21760,8 +21791,13 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentitySplitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_identity_split(server, auth, input).await;
+            let (output, listed) = crate::api::facade::host_doors::vault_identity_split(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -21778,8 +21814,13 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentityFacetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_identity_facet(server, auth, input).await;
+            let (output, listed) = crate::api::facade::host_doors::vault_identity_facet(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -21796,9 +21837,13 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentityAssertDistinctRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_identity_assert_distinct(server, auth, input)
-                    .await;
+            let (output, listed) = crate::api::facade::host_doors::vault_identity_assert_distinct(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -21815,8 +21860,13 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentityProposeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_identity_propose(server, auth, input).await;
+            let (output, listed) = crate::api::facade::host_doors::vault_identity_propose(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -21833,8 +21883,13 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentityUndoRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_identity_undo(server, auth, input).await;
+            let (output, listed) = crate::api::facade::host_doors::vault_identity_undo(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -21890,7 +21945,10 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_identity_proposals_resolve(
-                    server, auth, input,
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
                 )
                 .await;
             // Derived from the rows its reads listed, when its path lists them.

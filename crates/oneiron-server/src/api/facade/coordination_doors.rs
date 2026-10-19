@@ -310,15 +310,16 @@ pub(crate) async fn vault_consolidation_home_get(
 }
 
 /// A pick names the AUTHORITY_LOG row it landed as. The act records where
-/// the owner said so (audit only): the hosted console for a managed vault's
-/// attested owner, else this install.
+/// the owner said so (audit only): `surface`, the host's own reading of the
+/// request (the facade call's verified headers, or the MCP connection's
+/// proven peer), never its input (FIX 4650).
 pub(crate) async fn vault_consolidation_home_pick(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    surface: oneiron::authority::ActSurface,
     input: ConsolidationHomePickRequest,
 ) -> MaybeListed<ConsolidationHomePickReceipt> {
     const VERB: &str = "vault.consolidation.home.pick";
-    let surface = super::owner_binding::act_surface(auth);
     as_person_naming(
         server,
         VERB,

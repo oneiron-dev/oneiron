@@ -1228,14 +1228,17 @@ struct SlackInstallRequest {
 /// `POST /v1/owner/packs/slack/install`: one link that installs the Slack
 /// app to the owner's workspace (OF-519). Slack's redirect redeems it once,
 /// within ten minutes, and the host stores and checks the bot token under
-/// this owner's proof.
+/// this owner's proof, recording where this request reached it (FIX 4650).
 async fn slack_install(
     auth: CoreAuth,
+    headers: axum::http::HeaderMap,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<SlackInstallRequest>, JsonRejection>,
 ) -> OwnerReply<crate::builtin_host::SlackInstallLink> {
     let owner = owner(&auth, &server)?;
+    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
     let request = json_payload(payload)?;
-    let link = blocking(move || start_slack_install(&server, owner, request.source)).await?;
+    let link =
+        blocking(move || start_slack_install(&server, owner, surface, request.source)).await?;
     Ok(Json(link))
 }

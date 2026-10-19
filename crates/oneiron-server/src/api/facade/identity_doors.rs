@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use oneiron::authority::ActSurface;
 use oneiron::dreamer_runner::maintenance::identity::{
     IdentityAnswerEvidenceRequest, IdentityMentionView, IdentitySettled, MentionProvenance,
 };
@@ -70,11 +71,14 @@ pub(crate) async fn vault_identity_mention(
     .await
 }
 
+/// The owner's answer records where his request reached this install
+/// (`surface`, the host's own reading of it): audit only (FIX 4650).
 pub(crate) async fn self_identity_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     caller: (EntityId, EdgeActorClass),
     _invocation: Option<InvocationId>,
+    surface: ActSurface,
     input: IdentityAnswerEvidenceRequest,
 ) -> Listed<IdentitySettled> {
     const VERB: &str = "self.identity.answer";
@@ -83,7 +87,9 @@ pub(crate) async fn self_identity_answer(
         Err(error) => return refused(error),
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        memory.identity_answer_with_evidence_as_owner(&owner, &input)
+        memory
+            .with_owner_surface(surface)
+            .identity_answer_with_evidence_as_owner(&owner, &input)
     })
     .await
 }

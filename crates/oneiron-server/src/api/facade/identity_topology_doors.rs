@@ -1,6 +1,9 @@
 //! Typed identity-topology host doors under the caller's own owner proof.
+//! Each owner write records where his request reached this install
+//! (`surface`, the host's own reading of it): audit only (FIX 4650).
 use std::sync::Arc;
 
+use oneiron::authority::ActSurface;
 use oneiron::task_verb::sdk::{
     self, IdentityAssertDistinctRequest, IdentityEntityRequest, IdentityEventRequest,
     IdentityFacetRequest, IdentityMergeRequest, IdentityPairProposals, IdentityPairRequest,
@@ -17,13 +20,14 @@ use crate::server::SyncServer;
 pub(crate) async fn vault_identity_merge(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    surface: ActSurface,
     input: IdentityMergeRequest,
 ) -> Listed<IdentityTopologyResult> {
     as_owner_naming(
         server,
         auth,
         "vault.identity.merge",
-        move |server, owner| sdk::merge_identity_as_owner(server.vault(), owner, input),
+        move |server, owner| sdk::merge_identity_as_owner(server.vault(), owner, surface, input),
         IdentityTopologyResult::rows,
     )
     .await
@@ -32,13 +36,14 @@ pub(crate) async fn vault_identity_merge(
 pub(crate) async fn vault_identity_split(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    surface: ActSurface,
     input: IdentitySplitRequest,
 ) -> Listed<IdentityTopologyResult> {
     as_owner_naming(
         server,
         auth,
         "vault.identity.split",
-        move |server, owner| sdk::split_identity_as_owner(server.vault(), owner, input),
+        move |server, owner| sdk::split_identity_as_owner(server.vault(), owner, surface, input),
         IdentityTopologyResult::rows,
     )
     .await
@@ -47,13 +52,14 @@ pub(crate) async fn vault_identity_split(
 pub(crate) async fn vault_identity_facet(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    surface: ActSurface,
     input: IdentityFacetRequest,
 ) -> Listed<IdentityTopologyResult> {
     as_owner_naming(
         server,
         auth,
         "vault.identity.facet",
-        move |server, owner| sdk::facet_identity_as_owner(server.vault(), owner, input),
+        move |server, owner| sdk::facet_identity_as_owner(server.vault(), owner, surface, input),
         IdentityTopologyResult::rows,
     )
     .await
@@ -62,13 +68,16 @@ pub(crate) async fn vault_identity_facet(
 pub(crate) async fn vault_identity_assert_distinct(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    surface: ActSurface,
     input: IdentityAssertDistinctRequest,
 ) -> Listed<IdentityTopologyResult> {
     as_owner_naming(
         server,
         auth,
         "vault.identity.assert_distinct",
-        move |server, owner| sdk::assert_distinct_identity_as_owner(server.vault(), owner, input),
+        move |server, owner| {
+            sdk::assert_distinct_identity_as_owner(server.vault(), owner, surface, input)
+        },
         IdentityTopologyResult::rows,
     )
     .await
@@ -77,13 +86,14 @@ pub(crate) async fn vault_identity_assert_distinct(
 pub(crate) async fn vault_identity_propose(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    surface: ActSurface,
     input: IdentityProposeRequest,
 ) -> Listed<IdentityTopologyResult> {
     as_owner_naming(
         server,
         auth,
         "vault.identity.propose",
-        move |server, owner| sdk::propose_identity_as_owner(server.vault(), owner, input),
+        move |server, owner| sdk::propose_identity_as_owner(server.vault(), owner, surface, input),
         IdentityTopologyResult::rows,
     )
     .await
@@ -92,13 +102,14 @@ pub(crate) async fn vault_identity_propose(
 pub(crate) async fn vault_identity_undo(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    surface: ActSurface,
     input: IdentityUndoRequest,
 ) -> Listed<IdentityTopologyResult> {
     as_owner_naming(
         server,
         auth,
         "vault.identity.undo",
-        move |server, owner| sdk::undo_identity_as_owner(server.vault(), owner, input),
+        move |server, owner| sdk::undo_identity_as_owner(server.vault(), owner, surface, input),
         IdentityTopologyResult::rows,
     )
     .await
@@ -137,13 +148,16 @@ pub(crate) async fn vault_identity_events_get(
 pub(crate) async fn vault_identity_proposals_resolve(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    surface: ActSurface,
     input: IdentityProposalResolveRequest,
 ) -> Listed<IdentityProposalResolutionResult> {
     as_owner_naming(
         server,
         auth,
         "vault.identity.proposals.resolve",
-        move |server, owner| sdk::resolve_identity_proposal_as_owner(server.vault(), owner, input),
+        move |server, owner| {
+            sdk::resolve_identity_proposal_as_owner(server.vault(), owner, surface, input)
+        },
         IdentityProposalResolutionResult::rows,
     )
     .await

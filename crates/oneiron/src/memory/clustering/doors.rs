@@ -2,7 +2,7 @@
 
 use super::operation::{id, references};
 use super::*;
-use crate::authority::{ActAuthority, ActSurface, OwnerActKind};
+use crate::authority::{ActAuthority, OwnerActKind};
 use crate::claim::{
     ClaimApprovalStatus, ClaimReadStatus, ClaimSource, PointRead, ScopedRead, ScopedReadResult,
 };
@@ -120,13 +120,15 @@ impl Memory<'_> {
     }
 
     /// The caller's own proof or its own named Grant. No engine-seal fallback.
+    /// The owner's act records where his request reached this install, as
+    /// the host bound it (FIX 4650): audit only.
     fn cluster_authority(
         &self,
         owner: Option<&AuthenticatedOwner>,
         grant: Option<&str>,
     ) -> MemoryResult<ActAuthority> {
         match (owner, grant) {
-            (Some(owner), None) => Ok(ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall)),
+            (Some(owner), None) => Ok(ActAuthority::Owner(owner.clone(), self.owner_surface())),
             (None, Some(grant)) if self.actor_class() == EdgeActorClass::Agent => {
                 Ok(ActAuthority::Agent(self.vault().granted_act(
                     self.actor(),

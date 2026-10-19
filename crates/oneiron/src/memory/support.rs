@@ -430,6 +430,10 @@ pub struct Memory<'v> {
     /// The vault owner's authentication, when a host bound the owner's own
     /// direct request (`with_owner_authorship`).
     pub(super) owner_authorship: Option<crate::consent::AuthenticatedOwner>,
+    /// Where the owner's request reached this install, as its host verified
+    /// it (`with_owner_surface`): the audit record of an owner act this
+    /// surface makes, never authority (FIX 4650).
+    pub(super) owner_surface: crate::authority::ActSurface,
     /// The host's own slip issuer, when a host bound it
     /// (`with_host_slip_issuer`, FIX 3875).
     pub(super) host_slip_issuer: Option<&'v crate::authority::HostSlipIssuer>,
@@ -584,6 +588,7 @@ impl Vault {
             producers: None,
             birth_position: Default::default(),
             owner_authorship: None,
+            owner_surface: crate::authority::ActSurface::ThisInstall,
             host_slip_issuer: None,
             invocation: None,
             invocation_slip: None,
@@ -632,6 +637,7 @@ impl Vault {
             producers: None,
             birth_position: Default::default(),
             owner_authorship: None,
+            owner_surface: crate::authority::ActSurface::ThisInstall,
             host_slip_issuer: None,
             invocation: None,
             invocation_slip: None,
@@ -688,6 +694,7 @@ impl<'v> Memory<'v> {
                 // A room turn writes into the room's talk, not as the owner
                 // in person.
                 owner_authorship: None,
+                owner_surface: crate::authority::ActSurface::ThisInstall,
                 host_slip_issuer: None,
                 // The same logical verb, run inside the turn.
                 invocation: self.invocation,
@@ -813,6 +820,18 @@ impl Memory<'_> {
     #[must_use]
     pub fn with_owner_authorship(mut self, owner: &crate::consent::AuthenticatedOwner) -> Self {
         self.owner_authorship = Some(owner.clone());
+        self
+    }
+
+    /// Binds where the owner's request reached this install, as the host
+    /// verified it on that request (FIX 4650): the hosted console, a linked
+    /// machine its connection proved, or this install. An owner act this
+    /// surface records carries it, for audit and receipts only. No rule reads
+    /// it, so it grants, proves and admits nothing, and a host never takes it
+    /// from the request's input. A surface without it records this install.
+    #[must_use]
+    pub fn with_owner_surface(mut self, surface: crate::authority::ActSurface) -> Self {
+        self.owner_surface = surface;
         self
     }
 
@@ -1105,6 +1124,17 @@ impl Memory<'_> {
         self.owner_authorship.as_ref()
     }
 
+    /// Where the owner's request reached this install
+    /// ([`Self::with_owner_surface`]), for the audit record of his act:
+    /// this install's own on a surface that writes for someone else, as
+    /// [`Self::owner_authorship`] binds no proof there.
+    pub(crate) fn owner_surface(&self) -> crate::authority::ActSurface {
+        if self.host_origin.is_some() || self.machine_signer.is_some() {
+            return crate::authority::ActSurface::ThisInstall;
+        }
+        self.owner_surface
+    }
+
     /// Binds this surface's claim writes to a host-owned origin: every claim
     /// door then stamps the origin's source, lineage and provenance, and the
     /// caller's declared source is not read. Approval still follows from that
@@ -1197,6 +1227,9 @@ impl Memory<'_> {
     /// authorship, a host origin, a machine signer, a producer list, a birth
     /// position, a TASK host, a decision path, an off-record session or a
     /// door's rewrite admission. Where the caller sits decides nothing here.
+    /// An owner surface ([`Self::with_owner_surface`]) does not stop a plain
+    /// resume: the rebuilt handle records the default `ThisInstall`, as every
+    /// act did before FIX 4650, since the surface is audit only.
     /// `None` resumes only on the caller's retry.
     pub(crate) fn plain_resume(&self) -> Option<crate::runtime_hooks::verb::PlainRowResume> {
         let rebuilt = !self.credential

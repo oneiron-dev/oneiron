@@ -9,6 +9,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
+use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::secret_custody::{CustodyTier, RevealTarget, SecretBindRequest, SecretBound};
@@ -87,13 +88,17 @@ impl From<SecretBound> for BoundView {
 }
 
 /// `POST /v1/owner/secrets/bind` with `{"handle"}` or `{"name"}`,
-/// `"effector"`, and optionally `"tier_ceiling"` and `"scopes"`.
+/// `"effector"`, and optionally `"tier_ceiling"` and `"scopes"`. A portable
+/// record's rewrap records where this request reached this install
+/// (`machine_routes::act_surface`): audit only (FIX 4650).
 async fn bind(
     auth: CoreAuth,
+    headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<BindBody>, JsonRejection>,
 ) -> OwnerReply<BoundView> {
     let owner = owner(&auth, &server)?;
+    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
     let body = json_payload(payload)?;
     let bound = blocking(move || -> OwnerResult<BoundView> {
         let target = match (body.handle, body.name) {
@@ -123,7 +128,7 @@ async fn bind(
         };
         let vault = server.vault();
         Ok(vault
-            .bind_secret_as_owner(&owner, &request, vault.now_recorded_at())?
+            .bind_secret_as_owner(&owner, surface, &request, vault.now_recorded_at())?
             .into())
     })
     .await?;
