@@ -16754,13 +16754,10 @@ async fn vault_models_manifest_read(
     facade_outside_room_turn(call, "vault.models.manifest.read")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.models.manifest.read", &value)?;
-    let hooks = facade_hooks_pre(server, call, "vault.models.manifest.read", value).await?;
-    let (output, listed) = super::host_doors::vault_models_manifest_read(
-        server,
-        auth,
-        facade_input(hooks.args.clone())?,
-    )
-    .await;
+    let mut hooks = facade_hooks_pre(server, call, "vault.models.manifest.read", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_models_manifest_read(server, auth, facade_door_input(&mut hooks)?)
+            .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -16778,11 +16775,11 @@ async fn vault_models_manifest_replace(
     facade_outside_room_turn(call, "vault.models.manifest.replace")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.models.manifest.replace", &value)?;
-    let hooks = facade_hooks_pre(server, call, "vault.models.manifest.replace", value).await?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.models.manifest.replace", value).await?;
     let (output, listed) = super::host_doors::vault_models_manifest_replace(
         server,
         auth,
-        facade_input(hooks.args.clone())?,
+        facade_door_input(&mut hooks)?,
     )
     .await;
     let output = facade_output(output?)?;
@@ -16802,13 +16799,10 @@ async fn vault_models_routes_read(
     facade_outside_room_turn(call, "vault.models.routes.read")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.models.routes.read", &value)?;
-    let hooks = facade_hooks_pre(server, call, "vault.models.routes.read", value).await?;
-    let (output, listed) = super::host_doors::vault_models_routes_read(
-        server,
-        auth,
-        facade_input(hooks.args.clone())?,
-    )
-    .await;
+    let mut hooks = facade_hooks_pre(server, call, "vault.models.routes.read", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_models_routes_read(server, auth, facade_door_input(&mut hooks)?)
+            .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -16826,11 +16820,11 @@ async fn vault_models_routes_replace(
     facade_outside_room_turn(call, "vault.models.routes.replace")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.models.routes.replace", &value)?;
-    let hooks = facade_hooks_pre(server, call, "vault.models.routes.replace", value).await?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.models.routes.replace", value).await?;
     let (output, listed) = super::host_doors::vault_models_routes_replace(
         server,
         auth,
-        facade_input(hooks.args.clone())?,
+        facade_door_input(&mut hooks)?,
     )
     .await;
     let output = facade_output(output?)?;
@@ -16850,9 +16844,9 @@ async fn vault_models_roles_read(
     facade_outside_room_turn(call, "vault.models.roles.read")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.models.roles.read", &value)?;
-    let hooks = facade_hooks_pre(server, call, "vault.models.roles.read", value).await?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.models.roles.read", value).await?;
     let (output, listed) =
-        super::host_doors::vault_models_roles_read(server, auth, facade_input(hooks.args.clone())?)
+        super::host_doors::vault_models_roles_read(server, auth, facade_door_input(&mut hooks)?)
             .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
@@ -16871,13 +16865,10 @@ async fn vault_models_roles_invoke(
     facade_outside_room_turn(call, "vault.models.roles.invoke")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.models.roles.invoke", &value)?;
-    let hooks = facade_hooks_pre(server, call, "vault.models.roles.invoke", value).await?;
-    let (output, listed) = super::host_doors::vault_models_roles_invoke(
-        server,
-        auth,
-        facade_input(hooks.args.clone())?,
-    )
-    .await;
+    let mut hooks = facade_hooks_pre(server, call, "vault.models.roles.invoke", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_models_roles_invoke(server, auth, facade_door_input(&mut hooks)?)
+            .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
