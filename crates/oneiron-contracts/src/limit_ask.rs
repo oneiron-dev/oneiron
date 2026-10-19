@@ -118,6 +118,15 @@ pub enum EngineLimit {
     /// (skill-index, skill and actor-claim loads). Past it, the row asks
     /// whether everything is okay and every entry is kept.
     AttemptManifestEntries,
+    /// Receipts accumulated in one attempt's append-only cancel protocol
+    /// history (requests, refusals, landing rows and the terminal receipt).
+    /// Past it, the row asks whether everything is okay and every receipt is
+    /// kept.
+    AttemptCancelReceipts,
+    /// Attempt rows one retry-tip walk visits along a single retry lineage.
+    /// Past it, the row asks whether everything is okay while the whole
+    /// lineage is still read.
+    AttemptRetryTipRows,
     /// Bytes of the judge's rubric (the active shared `judge` skill's text)
     /// one judgment or label re-check reads. Past it the rubric is read whole.
     JudgeRubricBytes,
@@ -208,7 +217,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 53] = [
+    pub const ALL: [Self; 55] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -236,6 +245,8 @@ impl EngineLimit {
         Self::PackScriptOutputBytes,
         Self::PackScriptOutputRows,
         Self::AttemptManifestEntries,
+        Self::AttemptCancelReceipts,
+        Self::AttemptRetryTipRows,
         Self::JudgeRubricBytes,
         Self::MaintenanceRowItems,
         Self::MaintenanceTextBytes,
@@ -294,6 +305,8 @@ impl EngineLimit {
             Self::PackScriptOutputBytes => "limits.pack_script_output_bytes",
             Self::PackScriptOutputRows => "limits.pack_script_output_rows",
             Self::AttemptManifestEntries => "limits.attempt_manifest_entries",
+            Self::AttemptCancelReceipts => "limits.attempt_cancel_receipts",
+            Self::AttemptRetryTipRows => "limits.attempt_retry_tip_rows",
             Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
             Self::MaintenanceRowItems => "limits.maintenance_row_items",
             Self::MaintenanceTextBytes => "limits.maintenance_text_bytes",
@@ -356,6 +369,12 @@ impl EngineLimit {
             // Sixteen times the 4,096 entries the append door refused past
             // before Rule 5.
             Self::AttemptManifestEntries => 65_536,
+            // Sixteen times the 256 receipts the append door refused past
+            // before Rule 5.
+            Self::AttemptCancelReceipts => 4_096,
+            // Sixteen times the 1,024 rows the walk refused past before
+            // Rule 5.
+            Self::AttemptRetryTipRows => 16_384,
             // The shipped rubric is about 1 KiB; the judgment's state holds
             // at most 64 KiB in all.
             Self::JudgeRubricBytes => 8_192,

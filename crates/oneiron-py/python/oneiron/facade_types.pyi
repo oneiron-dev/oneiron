@@ -1170,7 +1170,7 @@ class SteerRequest(TypedDict):
     task_ref: str
     instruction: str
     key: str
-RunSignalState = Literal["Pending", "Settled", "RefusedCancelCapacity", "RefusedCancelUnavailable"]
+RunSignalState = Literal["Pending", "Settled", "RefusedCancelUnavailable"]
 class SteerReceipt(TypedDict):
     task_ref: str
     branch: str

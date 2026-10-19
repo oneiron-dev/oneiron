@@ -50,8 +50,6 @@ pub enum RunSignalKind {
 pub enum RunSignalState {
     Pending,
     Settled,
-    /// Permanent cancel refusal when the nonterminal receipt reserve is full.
-    RefusedCancelCapacity,
     /// A cancel target ceased being available before its breakpoint.
     RefusedCancelUnavailable,
 }
@@ -257,24 +255,6 @@ impl RunTreeAdapter<'_> {
         if !live(record.state) {
             return Err(Error::InvalidConfig("Signal branch not live".into()));
         }
-        if matches!(input.kind, RunSignalKind::Cancel { .. }) {
-            let pending = record
-                .signals
-                .iter()
-                .filter(|signal| {
-                    signal.state == RunSignalState::Pending
-                        && matches!(signal.kind, RunSignalKind::Cancel { .. })
-                })
-                .count();
-            if !crate::attempt_queue::signal_cancel_headroom(
-                record.cancel_receipts().len(),
-                pending,
-            ) {
-                return Err(Error::InvalidConfig(
-                    "Signal cancel receipt capacity exhausted".into(),
-                ));
-            }
-        }
         if let RunSignalKind::AskAnswer {
             handle,
             who,
@@ -399,8 +379,8 @@ impl RunTreeAdapter<'_> {
             .filter(|s| s.state == RunSignalState::Pending)
             .cloned()
             .collect();
-        // Each cancel has its own outcome. A permanent rail refusal cannot
-        // roll back earlier accepted requests or starve later instructions.
+        // Each cancel has its own outcome. An unavailable target cannot roll
+        // back earlier accepted requests or starve later instructions.
         let mut cancel_results = Vec::new();
         for signal in &pending {
             if let RunSignalKind::Cancel { standing, reason } = &signal.kind {
@@ -425,9 +405,6 @@ impl RunTreeAdapter<'_> {
                         | CancelRequestOutcome::NotRunning(_)
                         | CancelRequestOutcome::AlreadySettled(_),
                     ) => RunSignalState::RefusedCancelUnavailable,
-                    Err(error) if crate::attempt_queue::signal_cancel_receipts_full(&error) => {
-                        RunSignalState::RefusedCancelCapacity
-                    }
                     Err(error) => return Err(error),
                 };
                 cancel_results.push((signal.key.clone(), state));

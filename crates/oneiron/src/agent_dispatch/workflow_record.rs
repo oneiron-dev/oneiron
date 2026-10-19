@@ -10,6 +10,7 @@ use crate::context_projection::ContextSpec;
 use crate::context_projection::WorkflowOutputContextRef;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::error::Result;
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use serde::{Deserialize, Serialize};
 
@@ -160,12 +161,8 @@ impl super::AgentDispatcher<'_> {
         // the attempted leaf descends from that cursor without taking the
         // queue's write-only retry-tip lock in a read-side context door.
         let mut cursor = current.clone();
-        let mut hops = 0;
+        let mut seen = std::collections::HashSet::from([cursor.id]);
         while cursor.id != record.active {
-            hops += 1;
-            if hops > 1024 {
-                return Err(invalid("workflow context retry bound"));
-            }
             let previous = queue
                 .get_in_txn(
                     &txn,
@@ -181,8 +178,16 @@ impl super::AgentDispatcher<'_> {
             {
                 return Err(invalid("workflow context retry lineage differs"));
             }
+            if !seen.insert(previous.id) {
+                return Err(invalid("workflow context retry cycle"));
+            }
             cursor = previous;
         }
+        // A long lineage is read whole and asks through the retry-tip row
+        // (Rule 5); only a cycle refuses.
+        self.vault
+            .limit_watch()
+            .measure(EngineLimit::AttemptRetryTipRows, seen.len() as u64);
         let payload = decode_dreamer_attempt_payload(&current.payload)?;
         if payload.parent_attempt != Some(root) || current.run_id != record.intent.run_id {
             return Err(invalid("workflow context step has foreign lineage"));

@@ -25,9 +25,7 @@ pub use types::{
     AttemptCancelState, AttemptCancellation, AttemptLanding, AttemptLandingReserve,
     AttemptResumePoint, CancelMode, CancelStanding, ForceCancelAuthority, ForceCancelGrounds,
     LANDING_RESERVE_PERCENT, LEASE_LANDING_WARNING_PERCENT, LandingTrigger,
-    MAX_ATTEMPT_CANCEL_RECEIPTS, MAX_LANDING_RESERVE_PERCENT,
-    MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS, SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD,
-    TERMINAL_CANCEL_RECEIPT_RESERVE,
+    MAX_LANDING_RESERVE_PERCENT, SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD,
 };
 pub use verbs::{
     AcceptAttemptLanding, AttemptLeaseWarningReport, CancelRejectionOutcome, CancelRequestOutcome,

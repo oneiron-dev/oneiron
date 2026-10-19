@@ -3,12 +3,12 @@
 use crate::attempt_queue::cancel::{
     AttemptCancelPressure, AttemptCancelReceipt, AttemptCancelReceiptKind, AttemptCancelState,
     AttemptLanding, AttemptResumePoint, CancelStanding, ForceCancelGrounds, LandingTrigger,
-    MAX_ATTEMPT_CANCEL_RECEIPTS, MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS,
 };
 use crate::attempt_queue::types::{
     AttemptEvent, AttemptInterventionKind, AttemptRecord, MAX_ATTEMPT_EVENTS_PER_RECORD,
 };
 use crate::error::{Error, Result};
+use crate::limit_ask::{EngineLimit, LimitWatch};
 
 use super::field_validators::{
     ERR_CANCEL_NO_STANDING, ERR_CANCEL_RECEIPT_FIELD_FORBIDDEN, ERR_CANCEL_RECEIPT_FIELD_MISSING,
@@ -16,9 +16,9 @@ use super::field_validators::{
     ERR_CANCEL_RECEIPT_MISSING_REQUEST_REF, ERR_CANCEL_RECEIPT_MISSING_RESUME_POINT,
     ERR_CANCEL_RECEIPT_MISSING_TRIGGER, ERR_CANCEL_RECEIPT_REQUEST_REF,
     ERR_CANCEL_RECEIPT_RESERVE_UNITS, ERR_CANCEL_RECEIPT_SEQUENCE,
-    ERR_CANCEL_RECEIPT_TERMINAL_ORDER, ERR_CANCEL_RECEIPTS_FULL, ERR_CANCELLATION_MALFORMED,
-    ERR_RESERVE_OVERSPENT, validate_intervention_actor, validate_optional_cancel_status,
-    validate_optional_failure_reason, validate_optional_resume_point,
+    ERR_CANCEL_RECEIPT_TERMINAL_ORDER, ERR_CANCELLATION_MALFORMED, ERR_RESERVE_OVERSPENT,
+    validate_intervention_actor, validate_optional_cancel_status, validate_optional_failure_reason,
+    validate_optional_resume_point,
 };
 use crate::error::ArtifactError;
 
@@ -201,11 +201,6 @@ fn validate_landing(landing: &AttemptLanding) -> Result<()> {
 
 /// Validates the whole ONE-1896 sub-record read back off a row.
 pub(in crate::attempt_queue) fn validate_cancel_state(state: &AttemptCancelState) -> Result<()> {
-    if state.receipts.len() > MAX_ATTEMPT_CANCEL_RECEIPTS {
-        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-            ERR_CANCEL_RECEIPTS_FULL,
-        )));
-    }
     let mut previous_sequence = 0;
     let last_index = state.receipts.len().saturating_sub(1);
     for (index, receipt) in state.receipts.iter().enumerate() {
@@ -214,10 +209,10 @@ pub(in crate::attempt_queue) fn validate_cancel_state(state: &AttemptCancelState
                 ERR_CANCEL_RECEIPT_SEQUENCE,
             )));
         }
-        // The reserved terminal slot is spendable exactly once and only at the
-        // end: a settled row that carried a terminal receipt in the middle
-        // would be a row that kept writing history after it stopped, and two
-        // of them would mean one terminal receipt had been overwritten.
+        // A terminal receipt lands exactly once and only at the end: a settled
+        // row that carried a terminal receipt in the middle would be a row
+        // that kept writing history after it stopped, and two of them would
+        // mean one terminal receipt had been overwritten.
         if receipt.kind.is_terminal() && index != last_index {
             return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
                 ERR_CANCEL_RECEIPT_TERMINAL_ORDER,
@@ -273,7 +268,8 @@ pub(in crate::attempt_queue) fn validate_cancel_state(state: &AttemptCancelState
     Ok(())
 }
 
-/// One append-only cancel receipt row, refusing at the cap instead of draining.
+/// One append-only cancel receipt row, never drained and never refused on a
+/// count.
 #[derive(Debug, Default)]
 pub(in crate::attempt_queue) struct CancelReceiptDraft {
     pub(in crate::attempt_queue) standing: Option<CancelStanding>,
@@ -286,31 +282,22 @@ pub(in crate::attempt_queue) struct CancelReceiptDraft {
     pub(in crate::attempt_queue) request_sequence: Option<u64>,
 }
 
-/// Appends one protocol row, refusing at the cap instead of draining — with the
-/// last slot held for the terminal receipt.
+/// Appends one protocol row. Never drains and never refuses on a count, so
+/// `Landed` / `ForceCancelled` — including the runtime's lease-expiry cleanup
+/// — always have room: landing finish and the hard rung settle atomically and
+/// never silently omit their evidence.
 ///
-/// A full history must not make an attempt unsettleable. Non-terminal rows
-/// refuse at [`MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS`], leaving the reserved
-/// slot; `Landed` / `ForceCancelled` — including the runtime's lease-expiry
-/// cleanup — may spend it, so landing finish and the hard rung always settle
-/// atomically and never silently omit their evidence.
+/// Past the `[limits]` `attempt_cancel_receipts` row the append asks through
+/// `watch` whether everything is okay and lands (Rule 5); only storage
+/// capacity (LMDB's value ceiling, a full map) refuses the record write.
 pub(in crate::attempt_queue) fn append_cancel_receipt(
+    watch: &LimitWatch,
     record: &mut AttemptRecord,
     kind: AttemptCancelReceiptKind,
     actor: String,
     draft: CancelReceiptDraft,
     now: u64,
 ) -> Result<()> {
-    let cap = if kind.is_terminal() {
-        MAX_ATTEMPT_CANCEL_RECEIPTS
-    } else {
-        MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS
-    };
-    if record.cancel_state.receipts.len() >= cap {
-        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-            ERR_CANCEL_RECEIPTS_FULL,
-        )));
-    }
     let sequence = match record.cancel_state.receipts.last() {
         Some(receipt) => receipt
             .sequence
@@ -337,6 +324,10 @@ pub(in crate::attempt_queue) fn append_cancel_receipt(
     // and a malformed draft leaves the record — and storage — untouched.
     validate_cancel_receipt_fields(&receipt)?;
     record.cancel_state.receipts.push(receipt);
+    watch.measure(
+        EngineLimit::AttemptCancelReceipts,
+        record.cancel_state.receipts.len() as u64,
+    );
     Ok(())
 }
 
