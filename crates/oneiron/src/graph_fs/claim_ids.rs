@@ -108,7 +108,11 @@ impl GraphFsResolver<'_, '_> {
         loop {
             let run = ids_after(scanned.as_ref(), fetch)?;
             scanned = run.resume_after;
-            ids.extend(self.scoped_read.vault().off_device_readable(run.ids)?);
+            ids.extend(
+                self.scoped_read
+                    .vault()
+                    .off_device_readable_for(run.ids, self.scoped_read.actor_key().destination())?,
+            );
             if scanned.is_none() || ids.len() >= fetch {
                 break;
             }

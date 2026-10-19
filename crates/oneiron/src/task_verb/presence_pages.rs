@@ -177,13 +177,13 @@ pub(super) fn retain_readable_owners<J>(
     Ok(())
 }
 
-/// Every TASK admitted at `locality`, for a census that must see them all
-/// (rule 5): past the threshold row the walk raises the owner's check for
+/// Every TASK admitted toward `destination`, for a census that must see them
+/// all (rule 5): past the threshold row the walk raises the owner's check for
 /// `scope` and reads on. `txn` is the caller's, so a crossing is deferred.
 pub(super) fn all_admitted_tasks_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    locality: crate::claim::CallerLocality,
+    destination: impl Into<crate::settings::ReadDestination>,
     scope: &[u8],
 ) -> Result<Vec<EntityId>> {
     let mut count = crate::scan_check::ScanCount::start(
@@ -195,7 +195,7 @@ pub(super) fn all_admitted_tasks_in(
     let scan = scan_admitted_tasks_with_limits_in(
         vault,
         txn,
-        locality,
+        destination,
         super::presence_scan::TASK_PRESENCE_PAGE_SIZE,
         usize::MAX,
     )?;
@@ -210,18 +210,18 @@ pub(super) fn all_admitted_tasks_in(
     Ok(tasks)
 }
 
-/// The admitted-TASK walk under explicit page and cap limits: a TASK a
-/// device-local world keeps at `locality` takes no place in a page or the
-/// cap (DEC-0005). Tests inject small limits.
+/// The admitted-TASK walk under explicit page and cap limits: a TASK a world
+/// withholds from a machine `destination` names takes no place in a page or
+/// the cap (DEC-0005, mesh PR2b). Tests inject small limits.
 pub(super) fn scan_admitted_tasks_with_limits_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    locality: crate::claim::CallerLocality,
+    destination: impl Into<crate::settings::ReadDestination>,
     page_size: usize,
     scan_cap: usize,
 ) -> Result<TaskEntityPageScan> {
     let store = &vault.store;
-    let kept = crate::settings::device_local_worlds_at(vault, txn, locality)?;
+    let kept = crate::settings::device_local_worlds_for(vault, txn, &destination.into())?;
     let mut index_after = None;
     scan_task_entity_pages(page_size, scan_cap, |_, limit| {
         let mut page = Vec::new();

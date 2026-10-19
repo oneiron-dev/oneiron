@@ -42,7 +42,7 @@ impl Memory<'_> {
     /// `false` when it is absent or withheld; both read the same.
     fn codebase_readable(&self, id: EntityId) -> MemoryResult<bool> {
         self.produced_from([id]);
-        Ok(self.get_entity(&id.to_hex())?.value.is_some())
+        Ok(self.get_entity_tolerant(&id.to_hex())?.value.is_some())
     }
 
     /// The CALL behind the snapshot selector: `repo` is the imported

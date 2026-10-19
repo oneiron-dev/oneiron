@@ -37,11 +37,19 @@ pub(crate) fn withdrawn_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
+    Ok(lapsed_in_txn(store, txn, id)?
+        || crate::store::legal_hold::use_limit_in_txn(store, txn, id)?.is_some())
+}
+
+/// [`withdrawn_in_txn`] less a legal-hold use limit: deleted or stale.
+fn lapsed_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
     // The deletion state already walks the staleness sources once.
     let state = super::TombstoneStoreRead::port_deletion_state(store, txn, id)?;
-    Ok(state.deleted
-        || state.stale
-        || crate::store::legal_hold::use_limit_in_txn(store, txn, id)?.is_some())
+    Ok(state.deleted || state.stale)
 }
 
 /// What a door makes of a stored body's own `stale: true`.
@@ -96,6 +104,27 @@ pub(crate) fn raw_readable_in_txn(
     id: &EntityId,
     raw: &[u8],
 ) -> Result<bool> {
+    let (body, stale) = stored_body(raw);
+    body_readable_in_txn(store, txn, id, body, stale)
+}
+
+/// [`raw_readable_in_txn`] with a legal-hold use limit left out, for a named
+/// read that asks that conjunct on its own once every other gate admits the
+/// row (FIX 5226): deleted, stale or source-withdrawn words still refuse.
+pub(crate) fn raw_readable_apart_from_use_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    let (body, stale) = stored_body(raw);
+    Ok(!lapsed_in_txn(store, txn, id)?
+        && stale.admits(body)
+        && !super::integrity::source_withdrawn_in(store, txn, id)?)
+}
+
+/// A stored envelope's body and the raw doors' stale rule for its kind.
+fn stored_body(raw: &[u8]) -> (&[u8], BodyStale) {
     let stale = match crate::batch::EntityMetadataHeader::parse(raw) {
         Some(header) => BodyStale::for_kind(header.entity_type),
         None => BodyStale::Withdrawn,
@@ -103,7 +132,7 @@ pub(crate) fn raw_readable_in_txn(
     let body = raw
         .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
         .unwrap_or_default();
-    body_readable_in_txn(store, txn, id, body, stale)
+    (body, stale)
 }
 
 pub(crate) fn body_is_stale(bytes: &[u8]) -> bool {

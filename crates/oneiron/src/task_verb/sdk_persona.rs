@@ -3,13 +3,13 @@
 use serde::{Deserialize, Serialize};
 
 use crate::access_grant::AccessRequestStatus;
-use crate::claim::CallerLocality;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::persona_snapshot::{
     PersonaSnapshotArtifact, PersonaSnapshotCompileOptions, PersonaSnapshotCopyEditRequest,
     PersonaSnapshotCopyRequest,
 };
+use crate::settings::ReadDestination;
 use crate::{EntityId, Vault};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
@@ -164,13 +164,13 @@ pub fn preview_persona_snapshot_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: PersonaSnapshotPreviewRequest,
-    locality: CallerLocality,
+    destination: impl Into<ReadDestination>,
 ) -> MemoryResult<PersonaSnapshotPreview> {
     owner.revalidate(vault)?;
     let compile = vault.compile_persona_snapshot(
         &input.subject,
         &PersonaSnapshotCompileOptions {
-            locality,
+            destination: destination.into(),
             ..Default::default()
         },
     )?;
@@ -218,10 +218,10 @@ pub fn export_persona_snapshot_copy_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: PersonaSnapshotCopyRequest,
-    locality: CallerLocality,
+    destination: impl Into<ReadDestination>,
 ) -> MemoryResult<PersonaSnapshotExportedCopy> {
     exported_copy(
-        vault.export_persona_snapshot_copy_as(owner, &input, locality)?,
+        vault.export_persona_snapshot_copy_as(owner, &input, destination)?,
         None,
     )
 }
@@ -230,11 +230,11 @@ pub fn edit_persona_snapshot_copy_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: PersonaSnapshotCopyEditRequest,
-    locality: CallerLocality,
+    destination: impl Into<ReadDestination>,
 ) -> MemoryResult<PersonaSnapshotExportedCopy> {
     let previous = input.export_id;
     exported_copy(
-        vault.edit_persona_snapshot_copy_as(owner, &input, locality)?,
+        vault.edit_persona_snapshot_copy_as(owner, &input, destination)?,
         Some(previous),
     )
 }

@@ -94,8 +94,7 @@ impl Memory<'_> {
             .ok_or_else(|| MemoryError::not_found("artifact export is absent or withheld"))?;
         self.produced_from([export_owner]);
         Ok(self
-            .get_entity(&export_owner.to_hex())?
-            .value
+            .collection_view(&export_owner)?
             .is_some()
             .then_some(pointer))
     }

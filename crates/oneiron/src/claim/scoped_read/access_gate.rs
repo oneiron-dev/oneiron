@@ -35,8 +35,26 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (Option<EntityId>, bool) {
 /// The relationship authority the row checks of one read share in its one
 /// snapshot: loaded at the first row that needs it, then reused, so a batch
 /// read resolves the reader's grants and memberships once, not per row.
+/// The second field names the one row whose legal non-use conjunct a named
+/// read asks on its own ([`Self::asking_use_of`]).
 #[derive(Default)]
-pub(super) struct HeldAuthority<'v>(RefCell<Option<AccessContext<'v>>>);
+pub(super) struct HeldAuthority<'v>(RefCell<Option<AccessContext<'v>>>, Option<EntityId>);
+
+impl HeldAuthority<'_> {
+    /// The row checks of a named read of `id` that asks `id`'s legal non-use
+    /// conjunct on its own, after every other gate (FIX 5226): `id` is judged
+    /// by every other gate as before, and every other row, each source `id`
+    /// was written from included, keeps that conjunct.
+    pub(super) fn asking_use_of(id: EntityId) -> Self {
+        Self(RefCell::default(), Some(id))
+    }
+
+    /// Whether the read leaves `id`'s legal non-use conjunct to the named
+    /// read that asks it on its own.
+    pub(super) fn asks_use_of(&self, id: &EntityId) -> bool {
+        self.1.as_ref() == Some(id)
+    }
+}
 
 impl<'v> ScopedRead<'v> {
     /// Persist grant time before the read snapshot, never inside it. Inside

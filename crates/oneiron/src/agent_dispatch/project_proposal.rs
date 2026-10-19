@@ -142,7 +142,7 @@ impl AgentDispatcher<'_> {
         let read = self
             .vault
             .memory(house, EdgeActorClass::Agent)
-            .get_entity(&source.message.to_hex())
+            .get_entity_tolerant(&source.message.to_hex())
             .map_err(|error| Error::InvalidConfig(format!("project question source: {error}")))?;
         Ok(read
             .value

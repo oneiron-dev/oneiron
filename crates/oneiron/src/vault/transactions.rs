@@ -180,16 +180,17 @@ impl Vault {
         )
     }
 
-    /// [`Self::latest_learned_at_excluding_entity_types`] for a caller at
-    /// `locality`: no row a device-local world keeps dates it for one off
-    /// this device (DEC-0005).
+    /// [`Self::latest_learned_at_excluding_entity_types`] for a caller whose
+    /// rows go to `destination`: no row a world withholds from one of its
+    /// machines dates it for one off this device (DEC-0005, mesh PR2b).
     pub fn latest_learned_at_excluding_entity_types_at(
         &self,
         excluded_types: &[u8],
-        locality: crate::claim::CallerLocality,
+        destination: impl Into<crate::settings::ReadDestination>,
     ) -> Result<Option<u64>> {
+        let destination: crate::settings::ReadDestination = destination.into();
         let txn = self.store.env.read_txn()?;
-        let flagged = crate::settings::device_local_worlds_at(self, &txn, locality)?;
+        let flagged = crate::settings::device_local_worlds_for(self, &txn, &destination)?;
         for row in self.store.port_entity_timeline(
             &txn,
             crate::ports::TimelineQuery {

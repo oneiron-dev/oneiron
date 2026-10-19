@@ -17,6 +17,11 @@ use crate::vault::ReadMode;
 /// `None` is a reference that resolves to nothing, never a withheld row.
 pub(super) type ReadTargetSlot = Option<(EntityId, ReadMode)>;
 
+/// One slot of a named read's views ([`Memory::read_named_views`]): the
+/// view, `None` where a collection read omits the row, or the refusal of the
+/// legal order that keeps a row the caller otherwise reads from use.
+pub(super) type NamedView = std::result::Result<Option<EntityView>, Error>;
+
 impl Memory<'_> {
     /// Opens the bound actor's scoped read.
     ///
@@ -322,30 +327,14 @@ impl Memory<'_> {
         whole_body: bool,
         after_read: impl FnOnce(),
     ) -> MemoryResult<ScopedReadResult<Vec<Option<EntityView>>>> {
-        let reads: Vec<_> = targets
-            .iter()
-            .flatten()
-            .map(|(id, mode)| PointRead::id(*id).at(*mode))
-            .collect();
-        lane.read_projected(&reads, None, |txn, value| {
+        lane.read_projected(&point_reads(targets), None, |txn, value| {
             after_read();
             let mut rows = value.into_iter();
             let mut views = Vec::with_capacity(targets.len());
             for target in targets {
                 let view = match target {
                     Some((_, mode)) => match rows.next().flatten() {
-                        Some(row) => {
-                            let refused = whole_body
-                                && row
-                                    .body
-                                    .as_deref()
-                                    .is_some_and(crate::batch::export::write_door_refuses_body);
-                            self.entity_view_of_in_txn(lane, txn, row, *mode)?
-                                .map(|view| EntityView {
-                                    body: view.body.filter(|_| !refused),
-                                    ..view
-                                })
-                        }
+                        Some(row) => self.slot_view_in(lane, txn, row, *mode, whole_body)?,
                         None => None,
                     },
                     None => None,
@@ -354,6 +343,98 @@ impl Memory<'_> {
             }
             Ok::<_, MemoryError>(views)
         })
+    }
+
+    /// [`Self::read_views`] for a read whose caller named each target (FIX
+    /// 5226): a row a legal order keeps from use answers that order's
+    /// refusal in its own slot, where [`Self::read_views`] and every other
+    /// collection read omit it as before. One slot's refusal never stops
+    /// another's view.
+    pub(super) fn read_named_views(
+        &self,
+        lane: &ScopedRead<'_>,
+        targets: &[ReadTargetSlot],
+    ) -> MemoryResult<ScopedReadResult<Vec<NamedView>>> {
+        lane.read_named_projected(&point_reads(targets), None, |txn, value| {
+            let mut slots = value.into_iter();
+            let mut views = Vec::with_capacity(targets.len());
+            for target in targets {
+                let view = match target.map(|(_, mode)| (mode, slots.next())) {
+                    Some((mode, Some(Ok(Some(row))))) => {
+                        Ok(self.slot_view_in(lane, txn, row, mode, false)?)
+                    }
+                    Some((_, Some(Err(refusal)))) => Err(refusal),
+                    _ => Ok(None),
+                };
+                views.push(view);
+            }
+            Ok::<_, MemoryError>(views)
+        })
+    }
+
+    /// [`Self::read_named_views`] for one target, under the read's receipt:
+    /// the legal order's refusal carries that receipt as a `NOT_FOUND` does.
+    pub(super) fn read_named_view(
+        &self,
+        lane: &ScopedRead<'_>,
+        target: ReadTargetSlot,
+    ) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
+        let ScopedReadResult { value, receipt } = self.read_named_views(lane, &[target])?;
+        match value.into_iter().next() {
+            Some(Err(refusal)) => Err(MemoryError::from(refusal).with_read_receipt(receipt)),
+            view => Ok(ScopedReadResult {
+                value: view.and_then(std::result::Result::ok).flatten(),
+                receipt,
+            }),
+        }
+    }
+
+    /// [`Self::get_entity`] as a collection read serves it, for an internal
+    /// probe or listing that skips, answers `None` or judges `false` on a row
+    /// it cannot read: a row a legal order keeps from use reads as absent
+    /// there, as before, never as the named read's refusal (FIX 5226).
+    pub fn get_entity_tolerant(
+        &self,
+        entity_ref: &str,
+    ) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
+        let (reference, mode) = match entity_ref.rsplit_once('@') {
+            Some((reference, revision)) => (
+                reference,
+                ReadMode::Pinned(crate::vault::RevisionRef::from_hex(revision)?),
+            ),
+            None => (entity_ref, ReadMode::Live),
+        };
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let target = self.read_target(reference, mode)?;
+        Ok(self.read_views(&lane, &[target])?.single())
+    }
+
+    /// [`Self::get_entity_tolerant`]'s live view of `id`.
+    pub(super) fn collection_view(&self, id: &EntityId) -> MemoryResult<Option<EntityView>> {
+        Ok(self.get_entity_tolerant(&id.to_hex())?.value)
+    }
+
+    /// One admitted row's view at `mode`. With `whole_body` a body the write
+    /// door refuses is withheld whole ([`Self::read_views_whole_body`]).
+    fn slot_view_in(
+        &self,
+        lane: &ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        row: ReadRow,
+        mode: ReadMode,
+        whole_body: bool,
+    ) -> MemoryResult<Option<EntityView>> {
+        let refused = whole_body
+            && row
+                .body
+                .as_deref()
+                .is_some_and(crate::batch::export::write_door_refuses_body);
+        Ok(self
+            .entity_view_of_in_txn(lane, txn, row, mode)?
+            .map(|view| EntityView {
+                body: view.body.filter(|_| !refused),
+                ..view
+            }))
     }
 
     /// Reads the immutable birth in the same snapshot as the admitted row.
@@ -443,6 +524,15 @@ impl Memory<'_> {
             body,
         }))
     }
+}
+
+/// The point read of each resolved target, in order.
+fn point_reads(targets: &[ReadTargetSlot]) -> Vec<PointRead<'static>> {
+    targets
+        .iter()
+        .flatten()
+        .map(|(id, mode)| PointRead::id(*id).at(*mode))
+        .collect()
 }
 
 /// Folds a later read on the same lane into the verb's receipt.

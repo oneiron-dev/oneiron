@@ -148,7 +148,7 @@ fn compile(
 ) -> OwnerResult<PersonaSnapshotCompile> {
     let subject_id = entity_id("subject", subject)?;
     let options = PersonaSnapshotCompileOptions {
-        locality,
+        destination: locality.into(),
         ..PersonaSnapshotCompileOptions::default()
     };
     vault

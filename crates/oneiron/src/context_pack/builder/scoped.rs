@@ -8,12 +8,16 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
-    /// Assembles for a caller off this device: no row a device-local world
-    /// keeps enters its retrieval or its edge walk (DEC-0005), so no count,
-    /// reason or clamp sees one. It only narrows.
-    pub(crate) fn caller_off_device(mut self, off_device: bool) -> Self {
-        self.off_device |= off_device;
-        self.pipeline = self.pipeline.caller_off_device(off_device);
+    /// Assembles for a caller whose rows go to `destination`: no row a world
+    /// withholds from one of its machines enters its retrieval or its edge
+    /// walk (DEC-0005, mesh PR2b), so no count, reason or clamp sees one. It
+    /// only narrows: each machine is a conjunct.
+    pub(crate) fn for_destination(
+        mut self,
+        destination: &crate::settings::ReadDestination,
+    ) -> Self {
+        self.destination.meet(destination);
+        self.pipeline = self.pipeline.for_destination(destination);
         self
     }
 

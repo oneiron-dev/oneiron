@@ -50,7 +50,7 @@ impl Memory<'_> {
                 continue;
             }
             self.produced_from([row]);
-            if self.get_entity(&row.to_hex())?.value.is_none() {
+            if self.get_entity_tolerant(&row.to_hex())?.value.is_none() {
                 return Ok(false);
             }
         }

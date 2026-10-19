@@ -390,8 +390,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         world: Option<EntityId>,
     ) -> Result<bool> {
         if let Some(world) = world
-            && self.scoped_read.off_device()
-            && crate::settings::device_local_keeps_in(self.scoped_read.vault(), rtxn, &world)?
+            && self.device_keeps_world(rtxn, &world)?
         {
             return Ok(false);
         }

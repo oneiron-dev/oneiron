@@ -339,7 +339,7 @@ impl crate::Vault {
 
         let kept = {
             let rtxn = self.store.env.read_txn()?;
-            crate::settings::device_local_worlds_at(self, &rtxn, options.locality)?
+            crate::settings::device_local_worlds_for(self, &rtxn, &options.destination)?
         };
         let mut read_receipt = None;
         let subject_claims = self.persona_snapshot_candidate_claims(

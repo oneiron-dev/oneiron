@@ -29,7 +29,7 @@ pub(crate) async fn vault_notes_editor_bind(
         caller,
         "vault.notes.editor.bind",
         move |server, _, memory| {
-            let admitted = memory.get_entity(&input.note_ref)?;
+            let admitted = memory.get_entity_tolerant(&input.note_ref)?;
             if admitted.value.is_none() {
                 return Ok(ScopedReadResult {
                     value: None,

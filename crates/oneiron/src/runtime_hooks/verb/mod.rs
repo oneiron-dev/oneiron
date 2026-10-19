@@ -173,7 +173,7 @@ impl VerbCall {
                 memory.actor().to_hex(),
                 memory.actor_class().gate_actor_class(),
             )
-            .map(|key| Some(key.at(memory.locality())))
+            .map(|key| Some(key.for_destination(memory.destination())))
             .ok_or(error),
         }
     }

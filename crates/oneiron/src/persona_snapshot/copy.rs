@@ -10,9 +10,9 @@ use super::{
     PersonaSnapshotArtifact, PersonaSnapshotCompile, PersonaSnapshotCompileOptions,
     PersonaSnapshotExportConsent, PersonaSnapshotRowKind, PersonaSnapshotStrikeList,
 };
-use crate::claim::CallerLocality;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
+use crate::settings::ReadDestination;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
@@ -77,14 +77,14 @@ impl Vault {
         &self,
         owner: &AuthenticatedOwner,
         request: &PersonaSnapshotCopyRequest,
-        locality: CallerLocality,
+        destination: impl Into<ReadDestination>,
     ) -> Result<PersonaSnapshotArtifact> {
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let compile = self.compile_persona_snapshot(
             &request.subject,
             &PersonaSnapshotCompileOptions {
-                locality,
+                destination: destination.into(),
                 ..Default::default()
             },
         )?;
@@ -117,12 +117,13 @@ impl Vault {
     }
 
     /// Edits one accepted copy. A fresh compile only checks the source stamp
-    /// and locality; it never silently refreshes or replaces the accepted text.
+    /// and destination; it never silently refreshes or replaces the accepted
+    /// text.
     pub fn edit_persona_snapshot_copy_as(
         &self,
         owner: &AuthenticatedOwner,
         request: &PersonaSnapshotCopyEditRequest,
-        locality: CallerLocality,
+        destination: impl Into<ReadDestination>,
     ) -> Result<PersonaSnapshotArtifact> {
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
@@ -141,7 +142,7 @@ impl Vault {
         let current = self.compile_persona_snapshot(
             &compile.subject_ref,
             &PersonaSnapshotCompileOptions {
-                locality,
+                destination: destination.into(),
                 ..Default::default()
             },
         )?;

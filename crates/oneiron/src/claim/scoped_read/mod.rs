@@ -25,6 +25,7 @@ mod diagnostic_reads;
 mod facet_gate;
 mod graph_reads;
 mod note_visibility;
+mod named_reads;
 mod pinned_reads;
 mod point_reads;
 mod reactions;

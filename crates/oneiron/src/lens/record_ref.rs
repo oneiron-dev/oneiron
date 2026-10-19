@@ -715,7 +715,7 @@ impl Memory<'_> {
                 break;
             }
             read_to = index + 1;
-            let read = match self.get_entity(&id.to_hex()) {
+            let read = match self.get_entity_tolerant(&id.to_hex()) {
                 Ok(read) => read,
                 Err(error)
                     if error.code == MEMORY_CODE_NOT_FOUND

@@ -634,7 +634,7 @@ impl Memory<'_> {
         let tasks = super::presence_pages::all_admitted_tasks_in(
             self.vault(),
             txn,
-            self.locality(),
+            self.destination(),
             self.actor().as_bytes(),
         )?;
         // Before an authority root exists, only the seeded vault owner has
@@ -751,7 +751,7 @@ impl Memory<'_> {
         let tasks = super::presence_pages::all_admitted_tasks_in(
             self.vault(),
             txn,
-            self.locality(),
+            self.destination(),
             self.actor().as_bytes(),
         )?;
         let mut found = None;

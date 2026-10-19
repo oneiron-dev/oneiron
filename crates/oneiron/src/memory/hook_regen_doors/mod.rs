@@ -84,7 +84,7 @@ impl Memory<'_> {
     fn hook_regen_reads(&self, rows: [EntityId; 3]) -> MemoryResult<bool> {
         for row in rows {
             if self.vault.get_entity_type(&row)?.is_some()
-                && self.get_entity(&row.to_hex())?.value.is_none()
+                && self.get_entity_tolerant(&row.to_hex())?.value.is_none()
             {
                 return Ok(false);
             }

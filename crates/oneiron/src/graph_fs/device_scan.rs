@@ -1,11 +1,11 @@
 //! The device-local pass of a capped Graph-FS scan (DEC-0005). Off this
 //! device a scan steps past every row a device-local world keeps before the
 //! row takes a place in its cap, so the cap never stops on one and no
-//! continuation hints that such rows filled it.
+//! continuation hints that such rows filled it. Each world is judged for
+//! the machine the reader's rows go to (mesh PR2b), in the scan's snapshot.
 
 use heed::RoTxn;
 
-use crate::claim::CallerLocality;
 use crate::edge::EdgeInfo;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -67,13 +67,11 @@ impl<'vault> GraphFsResolver<'_, 'vault> {
         'vault: 'a,
     {
         let store = &self.scoped_read.vault().store;
-        let locality = if self.scoped_read.off_device() {
-            CallerLocality::OffDevice
-        } else {
-            CallerLocality::OnDevice
-        };
-        let withheld =
-            crate::settings::device_local_worlds_at(self.scoped_read.vault(), rtxn, locality)?;
+        let withheld = crate::settings::device_local_worlds_for(
+            self.scoped_read.vault(),
+            rtxn,
+            self.scoped_read.actor_key().destination(),
+        )?;
         if withheld.is_empty() {
             return Ok(rows);
         }
@@ -87,5 +85,17 @@ impl<'vault> GraphFsResolver<'_, 'vault> {
                 Err(error) => Some(Err(error)),
             }
         })))
+    }
+
+    /// Whether a world withheld from a machine this reader's rows go to
+    /// keeps `world`'s own row, judged in `rtxn`: never on this device.
+    pub(super) fn device_keeps_world(&self, rtxn: &RoTxn<'_>, world: &EntityId) -> Result<bool> {
+        let vault = self.scoped_read.vault();
+        let destination = self.scoped_read.actor_key().destination();
+        if !destination.is_off_device() {
+            return Ok(false);
+        }
+        let withheld = crate::settings::device_local_worlds_for(vault, rtxn, destination)?;
+        crate::settings::device_local_keeps_among(&vault.store, rtxn, &withheld, world)
     }
 }

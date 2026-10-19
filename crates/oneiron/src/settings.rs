@@ -20,8 +20,7 @@ pub use destination::{
 };
 pub(crate) use destination::{machine_recipient_hold_in, recipient_limits_in, withheld_worlds_in};
 pub(crate) use device_local::{
-    device_local_keeps_among, device_local_keeps_in, device_local_worlds_at,
-    device_local_worlds_for,
+    device_local_keeps_among, device_local_worlds_at, device_local_worlds_for,
 };
 pub(crate) use device_only::{
     CarriedWorlds, carried_worlds_in, device_only_withholds, device_only_withholds_raw,

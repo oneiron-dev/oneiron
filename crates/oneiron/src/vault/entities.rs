@@ -500,16 +500,18 @@ impl Vault {
         Ok(ids)
     }
 
-    /// [`Self::entities_by_type`] for a caller at `locality`. Off this device
-    /// a row a device-local world keeps is skipped (DEC-0005); it is still a
-    /// row read, so the owner-local check counts it.
+    /// [`Self::entities_by_type`] for a caller whose rows go to
+    /// `destination` (a bare locality names no machine). Off this device a
+    /// row a world withholds from one of its machines is skipped (DEC-0005,
+    /// mesh PR2b); it is still a row read, so the owner-local check counts it.
     pub fn entities_by_type_at(
         &self,
         entity_type: u8,
-        locality: crate::claim::CallerLocality,
+        destination: impl Into<crate::settings::ReadDestination>,
     ) -> Result<Vec<EntityId>> {
+        let destination: crate::settings::ReadDestination = destination.into();
         let rtxn = self.store.env.read_txn()?;
-        let flagged = crate::settings::device_local_worlds_at(self, &rtxn, locality)?;
+        let flagged = crate::settings::device_local_worlds_for(self, &rtxn, &destination)?;
         let mut count = ScanCount::start(
             &self.store,
             &rtxn,
@@ -634,15 +636,17 @@ impl Vault {
         self.count_entities_by_type_at(entity_type, crate::claim::CallerLocality::OnDevice)
     }
 
-    /// [`Self::count_entities_by_type`] for a caller at `locality`: one off
-    /// this device counts no row a device-local world keeps (DEC-0005).
+    /// [`Self::count_entities_by_type`] for a caller whose rows go to
+    /// `destination`: one off this device counts no row a world withholds
+    /// from one of its machines (DEC-0005, mesh PR2b).
     pub fn count_entities_by_type_at(
         &self,
         entity_type: u8,
-        locality: crate::claim::CallerLocality,
+        destination: impl Into<crate::settings::ReadDestination>,
     ) -> Result<u64> {
+        let destination: crate::settings::ReadDestination = destination.into();
         let rtxn = self.store.env.read_txn()?;
-        let flagged = crate::settings::device_local_worlds_at(self, &rtxn, locality)?;
+        let flagged = crate::settings::device_local_worlds_for(self, &rtxn, &destination)?;
         let mut total = 0_u64;
         for entry in self
             .store
