@@ -347,8 +347,8 @@ pub struct ServeConfig {
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     /// The owner's "Help improve Oneiron" choice, as given: `None` takes the
-    /// deployment's default, on when hosted and off on self-host
-    /// ([`oneiron::config::failure_signals::default_exports`]).
+    /// deployment's default, on for our managed serve and off on every plain
+    /// serve ([`oneiron::config::failure_signals::default_exports`]).
     pub failure_signal_export: Option<bool>,
     pub failure_signal_training: bool,
     /// Opaque host-managed KMS key reference. `Some` only for the managed
@@ -582,12 +582,11 @@ impl ServeConfig {
         config.machine_device_class = self.device_class;
         config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
+        // A plain serve is self-run whatever posture it declares, so "Help
+        // improve Oneiron" stays off until its owner turns it on; only the
+        // managed serve entry sets the managed deployment (CALLS 1459).
         config.failure_signals = oneiron::config::failure_signals::FailureSignalConfig {
-            deployment: if self.privacy_posture == HostingPrivacyPosture::Hosted {
-                oneiron::config::failure_signals::DeploymentTier::Managed
-            } else {
-                oneiron::config::failure_signals::DeploymentTier::SelfHost
-            },
+            deployment: oneiron::config::failure_signals::DeploymentTier::SelfHost,
             export_opt_in: self.failure_signal_export,
             training_opt_in: self.failure_signal_training,
         };

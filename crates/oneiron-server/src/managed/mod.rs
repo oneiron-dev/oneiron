@@ -12,12 +12,16 @@
 //! - **Off by default.** Managed mode is reachable only through
 //!   `--managed-by-hypnos`. Without it, [`crate::commands::serve`] never
 //!   enters this module and the unmanaged path is exactly what it was.
-//! - **Argv is the whole configuration.** Managed mode never loads settings from
-//!   a config file, the `ONEIRON_*` environment (including `ONEIRON_AUTH_SECRET` —
-//!   bearer auth is the supervisor's job) or the XDG layers. Explicit privacy
-//!   environment settings and `ONEIRON_CONFIG` are refused by presence alone.
-//!   Only [`HYPNOS_LISTEN_FD`] supplies an environment value; even dictionary
-//!   search roots come from argv rather than the usual `HOME`/`XDG_*` probe.
+//! - **Argv and one settings file are the whole configuration.** The owner's
+//!   feature settings arrive in the one file the supervisor names
+//!   (`--settings-file`), refused leaf by leaf where a leaf is the
+//!   supervisor's and settled once (`managed::settings`). Managed mode never
+//!   loads settings from another config file, the `ONEIRON_*` environment
+//!   (including `ONEIRON_AUTH_SECRET` — bearer auth is the supervisor's job)
+//!   or the XDG layers. Explicit privacy environment settings and
+//!   `ONEIRON_CONFIG` are refused by presence alone. Only [`HYPNOS_LISTEN_FD`]
+//!   supplies an environment value; even dictionary search roots come from
+//!   argv or the settings file rather than the usual `HOME`/`XDG_*` probe.
 //! - **The engine schedules nothing.** There is no timer here. Alarms are
 //!   pushed by the supervisor over the ctl socket; the ledger tells it when to
 //!   push them.
@@ -41,6 +45,7 @@ mod peer;
 pub mod preview;
 mod relay;
 pub use relay::{IROH_RELAY_REVISION, RelayConfig, run_relay};
+mod settings;
 mod shed;
 pub(crate) use self::peer::UnixPeer;
 mod state_serve;
@@ -55,7 +60,7 @@ mod vm_schedule;
 #[cfg(target_os = "linux")]
 pub use self::vm_host::{SleepOutcome, VaultVm, VaultVmConfig, VaultVmRun, run_vault_vm};
 
-pub use self::args::{ManagedArgs, ManagedError, NO_FD};
+pub use self::args::{ManagedArgs, ManagedError, NO_FD, SettingsRefusal};
 pub use self::key_sync::{
     KeyInvalidation, KeyInvalidationAck, KeyInvalidationKind, account_keys,
     account_keys_from_vault_config, apply_key_invalidation, verdict_lease_from_vault,
