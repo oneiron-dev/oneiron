@@ -79,6 +79,9 @@ const MAX_EVIDENCE_REFS: usize = 64;
 const MAX_EVIDENCE_REF_BYTES: usize = 256;
 const MAX_SUGGESTED_EDIT_BYTES: usize = 8192;
 const DEFAULT_UCB_EXPLORATION: f64 = 0.35;
+/// How an erased critic's ref begins (FIX 4477; a call): the erased spelling
+/// and a colon, then an opaque id of its own that hashes no actor.
+const ERASED_CRITIC_REF_PREFIX: &str = "erased:";
 
 pub const OF366_SEED_LENS_CATALOG_JSON: &str = r#"{
   "schema_version": 1,
@@ -237,6 +240,13 @@ impl CritiqueProvenance {
         ))
     }
 
+    /// Whether the critic was erased: its ref is an opaque id, not an actor,
+    /// and [`Self::actor`] refuses it (FIX 4477).
+    #[must_use]
+    pub fn is_erased(&self) -> bool {
+        self.critic_ref.starts_with(ERASED_CRITIC_REF_PREFIX)
+    }
+
     pub fn executor(&self) -> Result<String> {
         if self.critic_class == crate::EdgeActorClass::Human as u8 {
             return Ok(self.critic_ref.clone());
@@ -316,6 +326,22 @@ impl CritiqueArtifact {
         validate_critique_artifact(&artifact)?;
         Ok(artifact)
     }
+
+    /// Names the erased critic by `token`, from [`erased_critic_ref`], here
+    /// and in the calibration executor that copied its id (FIX 4477). The
+    /// verdict, lens, evidence and times stay.
+    pub(crate) fn forget_critic(&mut self, token: &str) {
+        if self.calibration.executor.as_deref() == Some(self.provenance.critic_ref.as_str()) {
+            self.calibration.executor = Some(token.to_owned());
+        }
+        self.provenance.critic_ref = token.to_owned();
+    }
+}
+
+/// An erased critic's opaque ref: [`ERASED_CRITIC_REF_PREFIX`] and the fresh
+/// id `opaque`, one per erased critic per record, so no two critics share it.
+pub(crate) fn erased_critic_ref(opaque: EntityId) -> String {
+    format!("{ERASED_CRITIC_REF_PREFIX}{}", opaque.to_hex())
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]

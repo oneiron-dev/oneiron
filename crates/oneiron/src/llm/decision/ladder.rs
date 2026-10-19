@@ -429,11 +429,11 @@ pub trait HumanDecisionQueue: Send + Sync {
 #[serde(tag = "role", rename_all = "snake_case")]
 pub enum AskRole {
     /// The actor responsible for what the question is over (a schedule's, a question's or
-    /// a unit's), as the caller binds it; with a project, the chain then walks that
-    /// project's boards.
+    /// a unit's), as the caller binds it, and no one once it was erased (FIX 4588); with a
+    /// project, the chain then walks that project's boards.
     Responsible {
-        #[serde(with = "super::codec::entity")]
-        actor: EntityId,
+        #[serde(with = "super::codec::answer_actor")]
+        actor: super::AnswerActor,
         #[serde(default, with = "super::codec::optional_entity")]
         project: Option<EntityId>,
     },
