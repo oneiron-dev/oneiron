@@ -341,7 +341,8 @@ impl ByoaConnectorSpec {
 /// A request to dispatch one foreign agent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchByoa {
-    /// Host-stamped credential ownership. User CLI logins cannot run on hosted nodes.
+    /// Host-stamped credential ownership. A user login runs on a hosted node
+    /// unless a hosted-only bound keeps it off ([`super::hosted_seat_bound`]).
     pub user_login: bool,
     pub connector: ByoaConnectorSpec,
     pub task_ref: Option<EntityId>,
