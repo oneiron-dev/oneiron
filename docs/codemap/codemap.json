@@ -3370,7 +3370,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "Folds the owner's work requests and their results: which install is to do the key, custody or root work an…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 17
      }
     },
     {
@@ -28889,9 +28889,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/identity_topology/seal_standing.rs",
-     "purpose": "A decision seal's causal evidence (FIX 4649, FIX 4652): the act each decision seal names for…",
+     "purpose": "A decision seal's causal evidence (FIX 4649, FIX 4652, FIX 5248): the act each decision seal names for…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
