@@ -1890,6 +1890,7 @@ fn mcp_agent_verb_input(
         "vault.artifacts.read" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.enqueue" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.status" => a.spec.clone().ok_or_else(invalid),
+        "vault.consolidation.wake.status" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.step" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.checkpoint" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.home.get" => a.spec.clone().ok_or_else(invalid),
@@ -4861,6 +4862,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consolidation.status" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consolidation.wake.status" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.runs.step" => {
@@ -20140,6 +20144,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::ConsolidationStatusRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_consolidation_status(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consolidation.wake.status" => {
+            let input: oneiron::memory::ConsolidationWakeStatusRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_consolidation_wake_status(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

@@ -12424,9 +12424,9 @@
     },
     {
       "name": "vault.questions.refresh",
-      "description": "Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it.",
+      "description": "Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it.",
       "input": "crate::receipt::QuestionRefreshRequest",
-      "output": "Vec<crate::llm::decision::questions::AnswerRecord>",
+      "output": "Vec<crate::receipt::QuestionAnswer>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.refresh\", &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -15343,6 +15343,23 @@
       "input": "ConsolidationStatusRequest",
       "output": "Option<crate::memory::DreamerAttemptView>",
       "call": "memory_requests::dreamer_attempt_status(memory, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.wake.status",
+      "description": "Reads one page of a consolidation wake pass observation by attempt or wake reference: its clock and ceiling, admitted attempts, each model call with its lease, the Checkpoint parks it cut and the pass as it runs now.",
+      "input": "crate::memory::ConsolidationWakeStatusRequest",
+      "output": "Option<crate::memory::DreamerWakeView>",
+      "call": "memory_requests::dreamer_wake_status(memory, input)?",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true

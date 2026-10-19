@@ -21,13 +21,16 @@
 //! - `seal.verify`: `{now_ms, config}`, one `application/pdf` input. It
 //!   never asks.
 //! - `config`: `{trust_anchors: [bin], timestamp_authorities: [{url,
-//!   policy_oid?}], limits?: {max_input_bytes, max_output_growth_bytes,
-//!   max_pdf_objects}}`.
+//!   policy_oid?}]}`. The seal's only size limits are format bounds, its
+//!   own (`SealResourceLimits::default`); nothing on size is configured.
 //!
 //! Reports: `{sealed: {evidence_sha256, requested, achieved, degraded,
 //! self_verify}}` with the output `sealed.pdf`, `{verified: verdict}`, or
 //! `{failed: <seal error>}`. A verdict is `{verdict, reasons, achieved,
 //! self_verify_ok, report}`; the error names the seal's own stage and code.
+//! Beside the outcome every report carries `observed`, what the native
+//! analysis counted (`SealObserved`), on a failure too: the engine measures
+//! each count against its `[limits]` row before it reads the outcome.
 
 use std::future::Future;
 use std::pin::pin;
@@ -48,9 +51,10 @@ use serde::{Deserialize, Serialize};
 use crate::api::{
     BackendError, BackendRejectCode, BackendSignature, FetchError, FetchMethod, FetchPolicy,
     FetchPurpose, FetchRequest, FetchResponse, PadesProfile, PdfSealEngine, PreparedRevision,
-    ProfileDegradeReason, SealBackend, SealClock, SealConfig, SealFetcher, SealRequest,
-    SealResourceLimits, SealWarning, SignDigestRequest, SignRevisionRequest, SignatureAlgorithm,
-    SigningIdentity, TsaEndpoint, VerifyFindingCode, VerifyReport, VerifyVerdict,
+    ProfileDegradeReason, SealBackend, SealClock, SealConfig, SealFetcher, SealObservations,
+    SealRequest, SealResourceLimits, SealWarning, SignDigestRequest, SignRevisionRequest,
+    SignatureAlgorithm, SigningIdentity, TsaEndpoint, VerifyFindingCode, VerifyReport,
+    VerifyVerdict,
 };
 use crate::error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
 use crate::native::NativeSealEngine;
@@ -142,8 +146,6 @@ struct ConfigArgs {
     trust_anchors: Vec<ByteBuf>,
     #[serde(default)]
     timestamp_authorities: Vec<TsaArgs>,
-    #[serde(default)]
-    limits: Option<LimitArgs>,
 }
 
 #[derive(Deserialize)]
@@ -151,13 +153,6 @@ struct TsaArgs {
     url: String,
     #[serde(default)]
     policy_oid: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct LimitArgs {
-    max_input_bytes: u64,
-    max_output_growth_bytes: u64,
-    max_pdf_objects: u64,
 }
 
 #[derive(Serialize)]
@@ -320,9 +315,10 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
             })
         })
         .collect::<Result<Vec<_>, OrganError>>()?;
-    let engine = match engine(args.config, args.now_ms, began, call.asker())? {
+    let (observed, engine) = engine(args.config, args.now_ms, began, call.asker())?;
+    let engine = match engine {
         Ok(engine) => engine,
-        Err(err) => return report(&SealReport::Failed(Failure::of(err)?)),
+        Err(err) => return report(&SealReport::Failed(Failure::of(err)?), &observed),
     };
     let request = SealRequest {
         operation_id: args.operation_id,
@@ -330,7 +326,7 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
     };
     let sealed = match block_on(engine.seal_pdf_in_revisions(pdf, &request, &revisions)) {
         Ok(sealed) => sealed,
-        Err(err) => return report(&SealReport::Failed(Failure::of(err)?)),
+        Err(err) => return report(&SealReport::Failed(Failure::of(err)?), &observed),
     };
     let degraded = sealed
         .warnings
@@ -347,13 +343,16 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
             },
         })
         .collect();
-    let mut answer = report(&SealReport::Sealed {
-        evidence_sha256: ByteBuf::from(sealed.evidence_sha256.to_vec()),
-        requested: sealed.requested_profile,
-        achieved: sealed.achieved_profile,
-        degraded,
-        self_verify: Verdict::of(&sealed.self_verify_report)?,
-    })?;
+    let mut answer = report(
+        &SealReport::Sealed {
+            evidence_sha256: ByteBuf::from(sealed.evidence_sha256.to_vec()),
+            requested: sealed.requested_profile,
+            achieved: sealed.achieved_profile,
+            degraded,
+            self_verify: Verdict::of(&sealed.self_verify_report)?,
+        },
+        &observed,
+    )?;
     answer.outputs.push(OutputBytes {
         name: SEALED_OUTPUT.to_owned(),
         media_type: PDF.to_owned(),
@@ -366,11 +365,11 @@ fn verify(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> 
     let args: VerifyArgs = from_value(call.args, "verify args")?;
     let pdf = the_pdf(call)?;
     // Verification never signs or fetches: an asker with no engine.
-    let checked = engine(args.config, args.now_ms, began, Asker::default())?
-        .and_then(|engine| engine.verify_sealed_pdf(pdf));
+    let (observed, engine) = engine(args.config, args.now_ms, began, Asker::default())?;
+    let checked = engine.and_then(|engine| engine.verify_sealed_pdf(pdf));
     match checked {
-        Ok(checked) => report(&VerifyReply::Verified(Verdict::of(&checked)?)),
-        Err(err) => report(&VerifyReply::Failed(Failure::of(err)?)),
+        Ok(checked) => report(&VerifyReply::Verified(Verdict::of(&checked)?), &observed),
+        Err(err) => report(&VerifyReply::Failed(Failure::of(err)?), &observed),
     }
 }
 
@@ -382,20 +381,22 @@ fn the_pdf<'a>(call: &'a CallContext<'_>) -> Result<&'a [u8], OrganError> {
     }
 }
 
-/// The native engine over this call's asks. The outer error is the args;
-/// the inner one is the seal's own, which the reply carries.
+/// The native engine over this call's asks, and where it counts. The outer
+/// error is the args; the inner one is the seal's own, which the reply
+/// carries.
 fn engine(
     config: ConfigArgs,
     now_ms: u64,
     began: Instant,
     asker: Asker,
-) -> Result<Result<NativeSealEngine, SealError>, OrganError> {
+) -> Result<(SealObservations, Result<NativeSealEngine, SealError>), OrganError> {
     let config = seal_config(config)?;
+    let observed = config.resource_limits.observed.clone();
     let asks = Arc::new(CallAsks {
         asker,
         spent: AtomicBool::new(false),
     });
-    Ok(NativeSealEngine::new(
+    let engine = NativeSealEngine::new(
         config,
         Arc::new(AskedBackend {
             asks: Arc::clone(&asks),
@@ -403,7 +404,8 @@ fn engine(
         }),
         Arc::new(AskedFetcher { asks }),
         Arc::new(CallClock { now_ms, began }),
-    ))
+    );
+    Ok((observed, engine))
 }
 
 /// This call's asks, shared by the signer and the fetcher. After one
@@ -444,15 +446,8 @@ fn seal_config(args: ConfigArgs) -> Result<SealConfig, OrganError> {
             })
         })
         .collect::<Result<_, _>>()?;
-    let size = |value: u64| usize::try_from(value).map_err(|_| bad("a limit is too large"));
-    let resource_limits = match args.limits {
-        None => SealResourceLimits::default(),
-        Some(limits) => SealResourceLimits {
-            max_input_bytes: size(limits.max_input_bytes)?,
-            max_output_growth_bytes: size(limits.max_output_growth_bytes)?,
-            max_pdf_objects: size(limits.max_pdf_objects)?,
-        },
-    };
+    // A fresh set of counts for this call alone, under the format bounds.
+    let resource_limits = SealResourceLimits::default();
     Ok(SealConfig {
         trust_anchors_der: args
             .trust_anchors
@@ -667,9 +662,18 @@ fn bad(detail: impl Into<String>) -> OrganError {
     OrganError::new(ErrorCode::BadRequest, detail)
 }
 
-fn report<T: Serialize>(report: &T) -> Result<Answer, OrganError> {
+/// The outcome as the report's one tagged entry, and the call's counts
+/// beside it as `observed`.
+fn report<T: Serialize>(report: &T, observed: &SealObservations) -> Result<Answer, OrganError> {
+    let mut value = to_value(report)?;
+    if let rmpv::Value::Map(entries) = &mut value {
+        entries.push((
+            rmpv::Value::from("observed"),
+            to_value(&observed.observed())?,
+        ));
+    }
     Ok(Answer {
-        report: to_value(report)?,
+        report: value,
         ..Answer::default()
     })
 }

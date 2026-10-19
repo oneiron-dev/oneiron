@@ -181,6 +181,16 @@ impl LimitRow {
         Self::Engine(EngineLimit::EsignSignaturePngBytes),
         Self::Engine(EngineLimit::EsignSignatureDocumentBytes),
         Self::Engine(EngineLimit::EsignSignatureRecipientImages),
+        Self::Engine(EngineLimit::SealOutputBytes),
+        Self::Engine(EngineLimit::SealGrowthBytes),
+        Self::Engine(EngineLimit::SealPdfObjects),
+        Self::Engine(EngineLimit::SealRawDefinitions),
+        Self::Engine(EngineLimit::SealCallFrameBytes),
+        Self::Engine(EngineLimit::SealReplyFrameBytes),
+        Self::Engine(EngineLimit::SealStructuralWork),
+        Self::Engine(EngineLimit::SealRevisions),
+        Self::Engine(EngineLimit::SealPrefixBytes),
+        Self::Engine(EngineLimit::SealDssDecodeBytes),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.

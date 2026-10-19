@@ -85,6 +85,12 @@ export interface CallVerbRequest {
 export interface LensFrameEventRequest {
   readonly event: Facade.GeneratedUiActionEvent;
   readonly idempotencyKey: string;
+  /**
+   * Selections this credential made on the card, each the `selectionRef`
+   * `vault.lenses.select` answered (FIX 3268): context for a model round
+   * trip, never approval or action authority; any other action ignores it.
+   */
+  readonly selectedContext?: readonly string[];
 }
 
 /**
@@ -393,8 +399,10 @@ export class HttpBaseClient {
 
   /**
    * `POST /v1/core/lens-frames/{cardId}/events` — one event on a lens card
-   * this server rendered (OF-181), under the credential that rendered it.
-   * `request.event.cardId` must name the same card. `LensFrameEventReply`
+   * this server rendered (OF-181), authored by this client's credential,
+   * whoever rendered the card (FIX 3267). `request.event.cardId` must name
+   * the same card. A deterministic tool's reply carries its dispatched
+   * verb's `x-oneiron-receipt-ref` (FIX 2887). `LensFrameEventReply`
    * types the 2xx body; a card the server no longer holds answers
    * `404 NOT_FOUND` (render the lens again).
    */
@@ -417,8 +425,8 @@ export class HttpBaseClient {
   }
 
   /**
-   * `DELETE /v1/core/lens-frames/{cardId}` — closes a lens card this server
-   * rendered and frees its frame (OF-181). It sends no body.
+   * `DELETE /v1/core/lens-frames/{cardId}` — closes a lens card this
+   * credential rendered and frees its frame (OF-181). It sends no body.
    * `CloseLensFrameReply` types the 2xx body; a card the server does not
    * hold answers `{ closed: false }`.
    */

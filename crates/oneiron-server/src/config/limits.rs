@@ -299,6 +299,16 @@ impl LimitsConfig {
             esign_signature_png_bytes,
             esign_signature_document_bytes,
             esign_signature_recipient_images,
+            seal_output_bytes,
+            seal_growth_bytes,
+            seal_pdf_objects,
+            seal_raw_definitions,
+            seal_call_frame_bytes,
+            seal_reply_frame_bytes,
+            seal_structural_work,
+            seal_revisions,
+            seal_prefix_bytes,
+            seal_dss_decode_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -426,6 +436,16 @@ impl LimitsConfig {
                 EngineLimit::EsignSignatureRecipientImages,
                 esign_signature_recipient_images,
             ),
+            (EngineLimit::SealOutputBytes, seal_output_bytes),
+            (EngineLimit::SealGrowthBytes, seal_growth_bytes),
+            (EngineLimit::SealPdfObjects, seal_pdf_objects),
+            (EngineLimit::SealRawDefinitions, seal_raw_definitions),
+            (EngineLimit::SealCallFrameBytes, seal_call_frame_bytes),
+            (EngineLimit::SealReplyFrameBytes, seal_reply_frame_bytes),
+            (EngineLimit::SealStructuralWork, seal_structural_work),
+            (EngineLimit::SealRevisions, seal_revisions),
+            (EngineLimit::SealPrefixBytes, seal_prefix_bytes),
+            (EngineLimit::SealDssDecodeBytes, seal_dss_decode_bytes),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -596,4 +616,14 @@ pub(super) struct LimitsConfigOverride {
     pub(super) esign_signature_png_bytes: Option<u64>,
     pub(super) esign_signature_document_bytes: Option<u64>,
     pub(super) esign_signature_recipient_images: Option<u64>,
+    pub(super) seal_output_bytes: Option<u64>,
+    pub(super) seal_growth_bytes: Option<u64>,
+    pub(super) seal_pdf_objects: Option<u64>,
+    pub(super) seal_raw_definitions: Option<u64>,
+    pub(super) seal_call_frame_bytes: Option<u64>,
+    pub(super) seal_reply_frame_bytes: Option<u64>,
+    pub(super) seal_structural_work: Option<u64>,
+    pub(super) seal_revisions: Option<u64>,
+    pub(super) seal_prefix_bytes: Option<u64>,
+    pub(super) seal_dss_decode_bytes: Option<u64>,
 }

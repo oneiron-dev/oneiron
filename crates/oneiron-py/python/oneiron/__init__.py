@@ -4025,7 +4025,7 @@ class Oneiron:
         def answers(self, spec):
             return json.loads(_translate(lambda: self._client.vault_questions_answers(json.dumps(spec))))
         def refresh(self, spec):
-            """Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it."""
+            """Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it."""
             return json.loads(_translate(lambda: self._client.vault_questions_refresh(json.dumps(spec))))
         @property
         def outcomes(self) -> "Oneiron._VaultQuestionsOutcomesVerbs":
@@ -4302,6 +4302,9 @@ class Oneiron:
             """Reads the status of one consolidation attempt by its durable job reference."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_status(json.dumps(spec))))
         @property
+        def wake(self) -> "Oneiron._VaultConsolidationWakeVerbs":
+            return Oneiron._VaultConsolidationWakeVerbs(self._client)
+        @property
         def home(self) -> "Oneiron._VaultConsolidationHomeVerbs":
             return Oneiron._VaultConsolidationHomeVerbs(self._client)
         def lineage(self, spec):
@@ -4322,6 +4325,12 @@ class Oneiron:
         def evidence(self, spec):
             """Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_evidence(json.dumps(spec))))
+    class _VaultConsolidationWakeVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def status(self, spec):
+            """Reads one page of a consolidation wake pass observation by attempt or wake reference: its clock and ceiling, admitted attempts, each model call with its lease, the Checkpoint parks it cut and the pass as it runs now."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_wake_status(json.dumps(spec))))
     class _VaultConsolidationHomeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

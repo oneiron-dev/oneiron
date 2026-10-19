@@ -238,11 +238,49 @@ pub enum EngineLimit {
     /// Signature images one recipient of a signing document holds. Past it
     /// the envelope's sender is asked, and the image is stored and bound.
     EsignSignatureRecipientImages,
+    /// Bytes of one sealed PDF the seal host accepted. Past it the row asks
+    /// whether everything is okay, and the sealed PDF is kept whole.
+    SealOutputBytes,
+    /// Bytes one seal adds to its prepared PDF: the signature revision, its
+    /// validation material and timestamps. Past it the row asks, and the
+    /// sealed PDF is kept whole.
+    SealGrowthBytes,
+    /// Objects of one PDF snapshot the seal parses. Past it the row asks
+    /// and the PDF is sealed or verified whole; only ISO 32000-1's
+    /// 8,388,607 objects refuse it.
+    SealPdfObjects,
+    /// Raw object definitions in one revision of a PDF the seal analyzes,
+    /// shadowed and unindexed ones included. Past it the row asks and every
+    /// definition is accounted for.
+    SealRawDefinitions,
+    /// Bytes of the largest frame the seal host sends its organ in one call,
+    /// as encoded: the call, or an answer. Past it the row asks and the
+    /// frame is sent whole.
+    SealCallFrameBytes,
+    /// Bytes of the largest frame the seal organ sends back in one call, as
+    /// encoded: its reply, which carries the sealed PDF inline on macOS, or
+    /// an ask. Past it the row asks and the frame is read whole.
+    SealReplyFrameBytes,
+    /// Tokens one structural pass of the seal lexes: a revision analysis, or
+    /// one classic xref section. Past it the row asks and the pass runs to
+    /// its end.
+    SealStructuralWork,
+    /// Revisions in the xref chain of a PDF the seal reads. Past it the row
+    /// asks and every revision is followed.
+    SealRevisions,
+    /// Prefix bytes one pass of the seal over a revision chain parses,
+    /// summed over its revisions. Past it the row asks and every prefix is
+    /// parsed.
+    SealPrefixBytes,
+    /// Bytes one extraction of a PDF's DSS validation material decodes,
+    /// across its Certs, CRLs and OCSPs. Past it the row asks and the
+    /// material is read whole; one stream still decodes to at most 256 MiB.
+    SealDssDecodeBytes,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 62] = [
+    pub const ALL: [Self; 72] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -305,6 +343,16 @@ impl EngineLimit {
         Self::EsignSignaturePngBytes,
         Self::EsignSignatureDocumentBytes,
         Self::EsignSignatureRecipientImages,
+        Self::SealOutputBytes,
+        Self::SealGrowthBytes,
+        Self::SealPdfObjects,
+        Self::SealRawDefinitions,
+        Self::SealCallFrameBytes,
+        Self::SealReplyFrameBytes,
+        Self::SealStructuralWork,
+        Self::SealRevisions,
+        Self::SealPrefixBytes,
+        Self::SealDssDecodeBytes,
     ];
 
     /// The config key that sets the row.
@@ -372,6 +420,16 @@ impl EngineLimit {
             Self::EsignSignaturePngBytes => "limits.esign_signature_png_bytes",
             Self::EsignSignatureDocumentBytes => "limits.esign_signature_document_bytes",
             Self::EsignSignatureRecipientImages => "limits.esign_signature_recipient_images",
+            Self::SealOutputBytes => "limits.seal_output_bytes",
+            Self::SealGrowthBytes => "limits.seal_growth_bytes",
+            Self::SealPdfObjects => "limits.seal_pdf_objects",
+            Self::SealRawDefinitions => "limits.seal_raw_definitions",
+            Self::SealCallFrameBytes => "limits.seal_call_frame_bytes",
+            Self::SealReplyFrameBytes => "limits.seal_reply_frame_bytes",
+            Self::SealStructuralWork => "limits.seal_structural_work",
+            Self::SealRevisions => "limits.seal_revisions",
+            Self::SealPrefixBytes => "limits.seal_prefix_bytes",
+            Self::SealDssDecodeBytes => "limits.seal_dss_decode_bytes",
         }
     }
 
@@ -462,6 +520,26 @@ impl EngineLimit {
             Self::EsignSignaturePngBytes => 2 << 20,
             Self::EsignSignatureDocumentBytes => 64 << 20,
             Self::EsignSignatureRecipientImages => 16,
+            // The output, growth, object, definition, frame, work, revision,
+            // prefix and DSS-decode ceilings the seal refused past before
+            // Rule 5. The reply frame's was 97 MiB on macOS, where outputs
+            // ride inline, and the 64 MiB default elsewhere.
+            Self::SealOutputBytes => 96 << 20,
+            Self::SealGrowthBytes => 32 << 20,
+            Self::SealPdfObjects => 1_000_000,
+            Self::SealRawDefinitions => 1_000_000,
+            Self::SealCallFrameBytes => 64 << 20,
+            Self::SealReplyFrameBytes => {
+                if cfg!(target_os = "macos") {
+                    97 << 20
+                } else {
+                    64 << 20
+                }
+            }
+            Self::SealStructuralWork => 8_000_000,
+            Self::SealRevisions => 32,
+            Self::SealPrefixBytes => 2 << 30,
+            Self::SealDssDecodeBytes => 256 << 20,
         }
     }
 }
