@@ -449,7 +449,8 @@ fn settle_tail(
     // grant travel, checkpoint policy, home pick or training choice), on a
     // row with no state here (a frontier row the image holds rejected, a
     // rejected tail row) is folded again with that row crossed
-    // (`world_refold`), which only the whole history does (FIX 4881, 5463).
+    // (`world_refold`), which only the whole history does (FIX 4881, 5463),
+    // as is a root request or the owner's cancel of one (FIX 5584).
     if judged.iter().any(|(hash, entry)| {
         super::world_refold::refolds(&entry.op)
             && !states.contains_key(hash)

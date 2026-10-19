@@ -524,7 +524,10 @@ pub(super) fn counted_request<'s>(
 /// The requests `machine` carried that have no result yet, for its next
 /// profile revision's acknowledged set
 /// ([`super::world_privacy::live_edits_by`]): a removal the owner signs
-/// after them keeps them counting.
+/// after them keeps them counting. A root request this fold closed (the
+/// owner cancelled it, or a newer request on its target superseded it) never
+/// runs, so it leaves the set (FIX 5583, CALLS ROOT_WORK_CANCEL,
+/// ROOT_WORK_SUPERSESSION); every open and every other request stays.
 pub(super) fn pending_carried_by(
     fold: &AuthorityFold,
     machine: EntityId,
@@ -533,7 +536,9 @@ pub(super) fn pending_carried_by(
         .requests
         .iter()
         .filter(move |(hash, folded)| {
-            folded.request.carrier == machine && !fold.owner_work.results.contains_key(*hash)
+            folded.request.carrier == machine
+                && !fold.owner_work.results.contains_key(*hash)
+                && !cancel::closed(&fold.owner_work, hash, &folded.request)
         })
         .map(|(hash, _)| *hash)
 }
