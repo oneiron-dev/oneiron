@@ -130,9 +130,12 @@ is `POST /v1/core/lens-frames/{cardId}/events` with the
 /v1/core/lens-frames/{cardId}`. Both return the original `Response`;
 `LensFrameEventReply` (`{ $state }`, `{ outcome, readReceipt }`, or a model
 round trip's `202` `{ queued, callbackId }`) and
-`CloseLensFrameReply` (`{ closed }`) type their 2xx bodies. Send them with the
-credential that rendered the card: the frame lives on that server, under that
-principal.
+`CloseLensFrameReply` (`{ closed }`) type their 2xx bodies. Send them to the
+server that rendered the card, where its frame lives. The credential that sends
+an event authors the card's action, whoever rendered it; only the credential
+that rendered a card closes it. An optional `selectedContext` lists the
+`selectionRef`s this credential made on the card, context for a model round
+trip.
 
 ## What this client will not do
 

@@ -109,7 +109,7 @@ impl Slot {
                 return Err(self.unavailable(reason.clone()));
             }
         }
-        let process = self.start(&mut state, config, deadline)?;
+        let process = self.start(&mut state, &self.spec, config, deadline)?;
         state.process = Some(Arc::clone(&process));
         Ok(process)
     }
@@ -121,20 +121,30 @@ impl Slot {
         self: &Arc<Self>,
         config: &HostConfig,
         deadline: Option<Instant>,
+        memory_bytes: Option<u64>,
     ) -> Result<Arc<OrganProcess>, HostError> {
         let mut state = self.lock();
         if let Some(reason) = &state.unavailable {
             return Err(self.unavailable(reason.clone()));
         }
-        let process = self.start(&mut state, config, deadline)?;
+        // A call sized by its caller starts under its own memory grant;
+        // the install grant's other terms, its pin and its verbs hold.
+        let sized = memory_bytes.map(|memory_bytes| OrganSpec {
+            memory_bytes,
+            ..self.spec.clone()
+        });
+        let spec = sized.as_ref().unwrap_or(&self.spec);
+        let process = self.start(&mut state, spec, config, deadline)?;
         state.one_call.push(Arc::clone(&process));
         Ok(process)
     }
 
-    /// Starts a process, once the backoff has passed, and tracks it.
+    /// Starts a process under `spec`, once the backoff has passed, and
+    /// tracks it.
     fn start(
         self: &Arc<Self>,
         state: &mut SlotState,
+        spec: &OrganSpec,
         config: &HostConfig,
         deadline: Option<Instant>,
     ) -> Result<Arc<OrganProcess>, HostError> {
@@ -156,7 +166,7 @@ impl Slot {
                 slot.prune();
             }
         };
-        match OrganProcess::spawn(&self.spec, config, deadline, forget) {
+        match OrganProcess::spawn(spec, config, deadline, forget) {
             Ok(process) => {
                 state.generations.retain(|old| !old.has_ended());
                 state.generations.push(Arc::clone(&process));

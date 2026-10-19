@@ -113,6 +113,21 @@ impl LensPrincipalBinding {
         )
     }
 
+    /// The binding `key`'s own actor acts under, holding that one key: an
+    /// agent's task, a system job, else a person's view. A card's event is
+    /// authored under it by the credential that clicked (FIX 3267).
+    pub fn of_read_key(key: ScopedReadActorKey) -> Result<Self> {
+        let principal_ref = key.actor_ref().to_owned();
+        let class = key.actor_class();
+        if class == Some(EdgeActorClass::Agent.gate_actor_class()) {
+            Self::agent_task(principal_ref, key.clone(), vec![key])
+        } else if class == Some(EdgeActorClass::System.gate_actor_class()) {
+            Self::system_job(principal_ref, key.clone(), vec![key])
+        } else {
+            Self::human_view(principal_ref, key.clone(), vec![key])
+        }
+    }
+
     fn new(
         principal_ref: impl Into<String>,
         kind: LensActingPrincipalKind,

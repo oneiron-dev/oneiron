@@ -27,7 +27,8 @@ pub use api::{
 #[cfg(feature = "native")]
 pub use api::{
     FetchError, FetchMethod, FetchPolicy, FetchPurpose, FetchRequest, FetchResponse,
-    OfflineFetcher, SealConfig, SealFetcher, SealResourceLimits, TsaEndpoint,
+    OfflineFetcher, PDF_FORMAT_BYTES, PDF_FORMAT_OBJECTS, STREAM_DECODE_BYTES, SealConfig,
+    SealFetcher, SealObservations, SealObserved, SealResourceLimits, TsaEndpoint,
 };
 pub use error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
 
