@@ -2006,7 +2006,7 @@
      "purpose": "Retry/intervene/manifest append plus lease-cleanup mutation doors",
      "surface": {
       "crate-vis": 7,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -74782,7 +74782,17 @@
      "path": "src/api/esign.rs",
      "purpose": "Session-less signing ceremony",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/esign/delivery_outbox.rs",
+     "purpose": "The e-sign delivery outbox (OF-415, FIX 3577): the seam that hands each authorized `esign.delivery` intent…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -76692,7 +76702,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 43
+      "crate-vis": 44
      }
     },
     {
@@ -83837,7 +83847,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 442,
+     "files": 443,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -84273,7 +84283,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 809,
+   "source_files": 810,
    "test_files": 182
   },
   "oneiron-spawn": {
