@@ -1156,6 +1156,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         Arc::clone(&sync_server),
         admitted(),
     ));
+    // Authorized e-sign mail goes to the supervisor's sender through its
+    // outbox, under the same admission; without the flag none runs (OF-415).
+    ladder_workers.extend(config.esign_delivery_outbox_dir.clone().map(|dir| {
+        crate::api::spawn_esign_delivery_outbox(Arc::clone(&sync_server), admitted(), dir)
+    }));
     // Due standing questions are answered through the ladder (OF-506).
     if !ai.bind_question_timer(&sync_server) {
         ladder_workers.push(crate::decision_graph::spawn(&sync_server, admitted()));

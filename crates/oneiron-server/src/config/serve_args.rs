@@ -203,6 +203,14 @@ pub struct ServeArgs {
     #[arg(long = "seal-organ")]
     pub seal_organ: Option<PathBuf>,
 
+    /// The directory the vault hands its authorized e-sign mail to (OF-415):
+    /// each `esign.delivery` intent is written there as
+    /// `esign-delivery-<key>.json` for the host's sender, which answers with
+    /// `esign-delivery-<key>.ack.json`. Self-hosted or managed (an absolute
+    /// path there); without it no outbox runs and the intents stay queued.
+    #[arg(long = "esign-delivery-outbox-dir")]
+    pub esign_delivery_outbox_dir: Option<PathBuf>,
+
     /// Host address to bind to.
     #[arg(long)]
     pub host: Option<String>,
@@ -469,6 +477,7 @@ impl fmt::Debug for ServeArgs {
             .field("seal_tsa_url", &self.seal_tsa_url)
             .field("seal_signing_url", &self.seal_signing_url)
             .field("seal_organ", &self.seal_organ)
+            .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)

@@ -730,31 +730,20 @@ pub(crate) async fn describe_self_for_auth(
     body: &serde_json::Value,
 ) -> Result<(serde_json::Value, Vec<oneiron::EntityId>), crate::error::ApiError> {
     auth.require_unrestricted_record_scope()?;
-    oneiron::task_verb::sdk::validate_input("describe", body).map_err(|_| {
-        crate::error::ApiError::bad_request("invalid describe(self) input", Some("self"))
-    })?;
     let request: oneiron::task_verb::sdk::DescribeRequest = serde_json::from_value(body.clone())
         .map_err(|_| {
             crate::error::ApiError::bad_request("invalid describe(self) input", Some("self"))
         })?;
-    if !request.self_target || request.task_ref.is_some() || auth.actor_class() != Some("agent") {
+    // describe(self) names the run's own brief and nothing else: any other
+    // target beside it is refused by the one selector check (FIX 3256),
+    // never silently dropped.
+    request
+        .validate()
+        .map_err(|error| crate::error::ApiError::bad_request(error.message, Some("self")))?;
+    if !request.self_target || auth.actor_class() != Some("agent") {
         return Err(crate::error::ApiError::bad_request(
             "describe(self) requires an agent run",
             Some("self"),
-        ));
-    }
-    // describe(self) names the run's own brief and nothing else: a card key
-    // or a highway handle beside it is refused, never silently dropped.
-    if request.key.is_some() {
-        return Err(crate::error::ApiError::bad_request(
-            "describe(self) names no board card key",
-            Some("key"),
-        ));
-    }
-    if request.handle.is_some() || request.after.is_some() {
-        return Err(crate::error::ApiError::bad_request(
-            "describe(self) names no task highway handle",
-            Some("handle"),
         ));
     }
     let actor = auth
