@@ -117,13 +117,21 @@ pub(super) fn remember_response(
     let Some(authority) = authority else {
         return Ok(());
     };
-    let bytes = serde_json::to_vec(&CachedAvailability {
-        query: query(input, authority),
-        response: response.clone(),
-        sources: Some(sources.iter().map(EntityId::to_hex).collect()),
-    })
-    .map_err(|_| ApiError::internal_server_error("booking slot cache encoding failed"))?;
-    remember_slot_list_body(server, &page, Some(&input.event_type), &bytes)?;
+    let entry = |sources: Option<Vec<String>>| {
+        serde_json::to_vec(&CachedAvailability {
+            query: query(input, authority),
+            response: response.clone(),
+            sources,
+        })
+        .map_err(|_| ApiError::internal_server_error("booking slot cache encoding failed"))
+    };
+    // The rows ride beside the answer when the entry still fits the cache's
+    // bound; otherwise the answer is cached exactly as before, and a hit on
+    // it lists unknown.
+    let listed = entry(Some(sources.iter().map(EntityId::to_hex).collect()))?;
+    if remember_slot_list_body(server, &page, Some(&input.event_type), &listed).is_err() {
+        remember_slot_list_body(server, &page, Some(&input.event_type), &entry(None)?)?;
+    }
     Ok(())
 }
 
