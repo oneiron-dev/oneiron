@@ -20,7 +20,7 @@ use super::super::doors::{
 };
 use super::super::transition::{custody_portable, transition_named_in_txn};
 use super::super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus};
-use super::input::MAX_INPUT_BYTES;
+use super::input::{MAX_INPUT_BYTES, attach_manifest};
 use super::permits::candidate_for;
 use super::{
     ActiveChange, CustodyDelivery, CustodyPlan, Material, SecretCustodyWork,
@@ -80,6 +80,11 @@ pub struct SecretCustodyView {
 /// A register or rotate whose protected input the owner's surface sealed to
 /// the holder itself, under the binding [`SecretCustodyView`] gave it.
 pub struct SealedCustodyChange<'a> {
+    /// For a register, the `manifest_ref` the sealed record names, as the
+    /// surface states it: this install attaches the manifest it resolves
+    /// for it, for the holder to check the record against (CALLS
+    /// CUSTODY_MANIFEST_RECHECK).
+    pub manifest_ref: Option<&'a str>,
     pub change: CustodyChange,
     pub secret_id: EntityId,
     /// The generation the change approves.
@@ -102,6 +107,7 @@ impl std::fmt::Debug for SealedCustodyChange<'_> {
             .field("generation", &self.generation)
             .field("holder", &self.holder)
             .field("recipients", &self.recipients.len())
+            .field("manifest_ref", &self.manifest_ref)
             .finish_non_exhaustive()
     }
 }
@@ -317,15 +323,21 @@ impl Vault {
     /// surface sealed to the holder itself: this install sees only its
     /// ciphertext and digest. When this install is the holder it opens the
     /// input with its own secret and executes the change in the same commit;
-    /// any other holder gets the input relayed. The same input sent again is
-    /// the request already recorded (CALLS CUSTODY_RETRY). `surface` is
-    /// audit only.
+    /// any other holder gets the input relayed. A register whose surface
+    /// states the `manifest_ref` its record names gets the manifest this
+    /// install resolves for it attached to its input, under the digest the
+    /// request names, and its holder checks the record against it (CALLS
+    /// CUSTODY_MANIFEST_RECHECK). The same input sent again is the request
+    /// already recorded (CALLS CUSTODY_RETRY). `surface` is audit only.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is no
     /// longer the live owner's; [`SecretError::SecretCustodyNotActive`] once
     /// an admitted revoke ended the secret; a change other than a register
-    /// or rotate; an empty or oversized input; a revision that moved since
+    /// or rotate; an empty or oversized input;
+    /// [`SecretError::SecretManifestNotFound`], naming it, for a stated
+    /// `manifest_ref` this install does not resolve, and a rotate that states
+    /// one; a revision that moved since
     /// the surface read it; a permit that no longer stands, or permits out
     /// of order; a holder that is no live linked install with an importable
     /// key; this install carrying no owner act; this install, the holder,
@@ -348,6 +360,19 @@ impl Vault {
         if sealed.input.is_empty() || sealed.input.len() > MAX_INPUT_BYTES {
             return Err(refused("the sealed input is empty or larger than 4 MiB"));
         }
+        // Read before the writer is taken: the manifest comes out of git.
+        let attached = match (sealed.change, sealed.manifest_ref) {
+            (_, None) => None,
+            (CustodyChange::Register, Some(manifest_ref)) => {
+                let manifest = self.origin_secret_manifest_at(manifest_ref)?;
+                Some(attach_manifest(
+                    sealed.input,
+                    &manifest.manifest_ref,
+                    &manifest.text,
+                )?)
+            }
+            (_, Some(_)) => return Err(refused("only a register names a manifest")),
+        };
         self.load_install_signing_if_minted()?;
         let this = {
             let rtxn = self.store.env.read_txn()?;
@@ -388,7 +413,7 @@ impl Vault {
                 generation: sealed.generation,
                 plan: &plan,
                 material: secret.as_ref().map_or(Material::Held, Material::Input),
-                sealed: Some(sealed.input),
+                sealed: Some(attached.as_deref().unwrap_or(sealed.input)),
                 seen: Some(sealed.seen),
                 permits: Some(sealed.recipients),
             },

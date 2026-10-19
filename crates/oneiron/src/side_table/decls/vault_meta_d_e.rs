@@ -190,9 +190,10 @@ side_tables! {
     /// Owner approval/decline record for a representation proposal review. Key: id16.
     DREAMER_REPRESENTATION_APPROVAL: VaultMeta b"dreamer:representation:v1:approval:" LegacyJson
         => crate::dreamer_runner::maintenance::representation::erase_approval_actor_in_txn;
-    /// Evidence-citing user-voice representation proposal record, keyed by proposal claim id. Key:
-    /// id16.
-    DREAMER_REPRESENTATION_PROPOSAL: VaultMeta b"dreamer:representation:v1:proposal:" LegacyJson;
+    /// Evidence-citing user-voice representation plan from when it is queued: its packet, the
+    /// owner it is for and its landing, keyed by proposal claim id. Key: id16.
+    DREAMER_REPRESENTATION_PROPOSAL: VaultMeta b"dreamer:representation:v1:proposal:" LegacyJson
+        => crate::dreamer_runner::maintenance::representation::erase_proposal_actor_in_txn;
     /// OF-490: the resident one dreaming attempt runs as, its own stamp, and the Gate receipt that
     /// admitted it. Key: id16 (attempt).
     DREAMER_RESIDENT_ATTEMPT: VaultMeta b"dreamer:resident:attempt:v1:" Named;
