@@ -4,9 +4,11 @@
 //! The host mints a fresh parentless slip carrying the logged original's
 //! claims and binding key; only the slip id, `issued_at`, `expires_at` and
 //! `ttl_secs` change. It is no attenuation (it extends time, so it is never a
-//! child of the old slip), no new enrolment, key or grant: the authority is
-//! the pairing's own, held by a device that proves on one request both its
-//! holder key and its enrolled machine's install key. The old slip is not
+//! child of the old slip), but its logged mint names the slip it renews
+//! (FIX 5481), so the credential lineage a proposal freezes follows it. It is
+//! no new enrolment, key or grant: the authority is the pairing's own, held
+//! by a device that proves on one request both its holder key and its
+//! enrolled machine's install key. The old slip is not
 //! revoked. It runs out on its own, so a lost reply leaves the device the old
 //! credential to retry with. An expired or revoked slip refuses, with no
 //! grace: that device pairs again.
@@ -26,21 +28,24 @@ use crate::federation::Scope;
 use crate::{EntityId, Vault};
 
 /// K04, authority: the credential is not a live owner's own unattenuated,
-/// parentless human device credential.
-const RENEWAL_K04: &str = "only a live owner's unattenuated parentless human device credential \
-                           may renew; agent, support and attenuated credentials require a fresh \
-                           owner mint";
+/// parentless human device credential. Each `RENEWAL_*` reason is public so
+/// a transport can name its refusal (FIX 4651).
+pub const RENEWAL_K04: &str =
+    "only a live owner's unattenuated parentless human device credential may renew; agent, \
+     support and attenuated credentials require a fresh owner mint";
 /// Authority and key possession: the holder's own-device Grant does not
 /// stand, or no enrolled machine of the holder's proved this request.
-const RENEWAL_GRANT_AND_DEVICE: &str = "renewal requires this owner's live own-device Grant and \
-                                        the enrolled device's proof for the original credential";
+pub const RENEWAL_GRANT_AND_DEVICE: &str = "renewal requires this owner's live own-device Grant \
+                                            and the enrolled device's proof for the original \
+                                            credential";
 /// Integrity: the presented credential is not the admitted, live, logged one,
 /// or its holder proof is stale or was not admitted once for its key.
-const RENEWAL_PROOF_NOT_FRESH: &str = "renewal proof is not fresh or admitted for this credential";
+pub const RENEWAL_PROOF_NOT_FRESH: &str =
+    "renewal proof is not fresh or admitted for this credential";
 /// The lifetime bound: positive, and never past the original paired duration
 /// or the owner's current ceiling.
-const RENEWAL_LIFETIME: &str = "renewal lifetime must be positive and cannot exceed the original \
-                                paired duration or the current owner ceiling";
+pub const RENEWAL_LIFETIME: &str = "renewal lifetime must be positive and cannot exceed the \
+                                    original paired duration or the current owner ceiling";
 
 /// The machine half of one renewal request: the slip token it presented,
 /// the timestamp and nonce of the holder proof it rode
@@ -285,6 +290,10 @@ impl Vault {
         if ttl_secs == 0 {
             return Err(lifetime());
         }
+        // FIX 5481: the mint names the slip it renews, so the replacement
+        // stays in the original's lineage; still parentless, it narrows
+        // nothing and no revocation of the old slip reaches it.
+        let renews = Some(original.slip_id);
         let claims = SlipClaims {
             slip_id: random_slip_id(),
             parent_id: None,
@@ -294,7 +303,8 @@ impl Vault {
             single_use: false,
             ..original
         };
-        let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
+        let slip =
+            self.mint_slip_action_in_txn(&mut txn, issuer, SlipMintAction { claims, renews })?;
         txn.commit()?;
         Ok(slip)
     }

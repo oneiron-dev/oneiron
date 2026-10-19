@@ -149,8 +149,9 @@ pub(crate) async fn execute_mcp_execute_code(
     // Judged by the rows its verb answers listed, as its record keeps them
     // beside each answer, fresh or replayed, and as this call's verb calls
     // listed them, recorded or not.
-    let named = super::device_release::mcp_run_named_rows(&server.vault, &structured)
-        .zip(outcome.replay_record.agent_verb_rows())
+    let record = &outcome.replay_record;
+    let named = super::device_release::mcp_run_named_rows(server, actor, &structured, record)
+        .zip(record.agent_verb_rows())
         .map(|(mut named, recorded)| {
             named.extend(recorded);
             named.extend(verbs.served());

@@ -262,14 +262,16 @@ impl Oneiron {
 }
 
 /// Redeems a one-use pairing link and returns the origin and credential
-/// `connect` takes, with the checkpoint pin the link named, if any.
+/// `connect` takes, with the checkpoint pin the link named, if any, and the
+/// credential's comm reach.
 #[uniffi::export]
 pub fn pair(link: String) -> Result<Paired, OneironError> {
-    let (url, credential, pin) = oneiron_remote::OneironClient::pair_pinned(&link)?;
+    let (url, credential, pin, comm) = oneiron_remote::OneironClient::pair_pinned(&link)?;
     Ok(Paired {
         url,
         credential,
         pin: pin.as_ref().map(CheckpointPin::from),
+        comm: comm.as_str().to_owned(),
     })
 }
 

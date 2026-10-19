@@ -72,7 +72,8 @@ impl NapiWitnessTurnInput {
 }
 
 /// What `pair` returns: the server origin, the credential `connect` takes,
-/// and the checkpoint pin the link named (OF-469).
+/// the checkpoint pin the link named (OF-469) and the credential's comm
+/// reach (FIX 5058).
 #[napi(object)]
 pub struct NapiPaired {
     pub url: String,
@@ -81,6 +82,9 @@ pub struct NapiPaired {
     /// omitted when the vault has no attested checkpoint. The caller keeps
     /// it beside the credential for a local replica to adopt by.
     pub pin: Option<NapiCheckpointPin>,
+    /// Whom the paired credential may address, as the server took it:
+    /// `parent`, `subtree`, `project` or `vault`.
+    pub comm: String,
 }
 
 /// What `openWithHostRoot` did with the host root it was given (FIX 4730).
@@ -166,16 +170,17 @@ impl NativeClient {
         Ok(Self { inner })
     }
 
-    /// Redeems a pairing link once; returns the origin, the credential and
-    /// the checkpoint pin the link named, if any.
+    /// Redeems a pairing link once; returns the origin, the credential, the
+    /// checkpoint pin the link named, if any, and the credential's comm reach.
     #[napi]
     pub fn pair(link: String) -> napi::Result<NapiPaired> {
-        let (url, credential, pin) =
+        let (url, credential, pin, comm) =
             oneiron_remote::OneironClient::pair_pinned(&link).map_err(facade_error)?;
         Ok(NapiPaired {
             url,
             credential,
             pin: pin.as_ref().map(pin_from_engine).transpose()?,
+            comm: comm.as_str().to_owned(),
         })
     }
 

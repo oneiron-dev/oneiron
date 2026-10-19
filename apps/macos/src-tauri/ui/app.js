@@ -19,6 +19,15 @@ function renderCopy(text) {
   el("stop-button").textContent = text.stop;
 }
 
+// The wrong-root fact for this launch, fixed until the app restarts, so it
+// renders once and no state refresh or error clears it. It only informs:
+// nothing here blocks the window or re-keys the vault (FIX 5346).
+function renderRootWarning(message) {
+  const box = el("root-warning");
+  box.textContent = message ?? "";
+  box.hidden = !message;
+}
+
 function clock(seconds) {
   return new Date(seconds * 1000).toLocaleTimeString();
 }
@@ -77,6 +86,11 @@ async function send(command) {
 
 async function boot() {
   renderCopy(await invoke("recorder_copy"));
+  try {
+    renderRootWarning(await invoke("root_warning"));
+  } catch {
+    // A warning that cannot be read never stops the window.
+  }
   el("affirm-button").addEventListener("click", () =>
     send("affirm_disclosure"),
   );

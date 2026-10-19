@@ -27,6 +27,8 @@ use serde::Deserialize;
 
 #[cfg(feature = "engine")]
 mod embedded_engine;
+// FIX 5342: the rooted-only host-root open.
+mod host_root;
 mod pairing;
 
 /// One message inside a witnessed turn, with the SDK's optional fields.
@@ -195,6 +197,26 @@ impl NativeClient {
         Ok(Self { inner })
     }
 
+    /// `open`, then this install's own machine profile from the vault's host
+    /// root secret, its exact bytes borrowed for this call (FIX 5342).
+    #[staticmethod]
+    #[pyo3(signature = (path, host_root_secret, dimensions=None))]
+    fn open_with_host_root(
+        py: Python<'_>,
+        path: Option<std::path::PathBuf>,
+        host_root_secret: &[u8],
+        dimensions: Option<usize>,
+    ) -> PyResult<Self> {
+        let inner = host_root::open(py, path, host_root_secret, dimensions)?;
+        Ok(Self { inner })
+    }
+
+    /// What `open_with_host_root` did with its root, as JSON; `None` on
+    /// every other handle.
+    fn host_root_profile(&self) -> PyResult<Option<String>> {
+        host_root::profile(&self.inner)
+    }
+
     /// Binds a remote `oneiron-server`. `key` is the credential `pair`
     /// returned; every request is signed with it, and write identity is the
     /// server's.
@@ -206,8 +228,9 @@ impl NativeClient {
         Ok(Self { inner })
     }
 
-    /// Redeems a pairing link once; returns the `{url, credential, pin}`
-    /// JSON `pairing::Paired` writes, the pin the link named or `null`.
+    /// Redeems a pairing link once; returns the `{url, credential, pin, comm}`
+    /// JSON `pairing::Paired` writes: the pin the link named or `null`, and
+    /// the credential's comm reach.
     #[staticmethod]
     fn pair(py: Python<'_>, link: String) -> PyResult<String> {
         let paired = py

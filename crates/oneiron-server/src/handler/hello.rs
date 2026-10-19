@@ -3,7 +3,7 @@
 use axum::extract::ws::Message as WsMessage;
 use futures_util::{SinkExt, Stream};
 
-use super::protocol_close::ProtocolRefusal;
+use super::protocol_close::{CodecReadError, ProtocolRefusal};
 use super::transport::GuardedTransport;
 use crate::protocol::{self, close_codes};
 
@@ -16,8 +16,9 @@ pub(super) enum HelloOutcome {
     Valid(u8),
     /// Hello missing/malformed/mismatched/timed out — close with
     /// `close_codes::VERSION_MISMATCH` and its reason — or a first frame the
-    /// transport refused, closed with that refusal's own code. Either is the
-    /// connection's refused call, receipted before the close (FIX 3303).
+    /// transport or the WebSocket codec refused (FIX 5549), closed with that
+    /// refusal's own code. Either is the connection's refused call,
+    /// receipted before the close (FIX 3303).
     Reject(ProtocolRefusal),
     /// Client went away before sending a hello — nothing to close.
     Disconnected,
@@ -34,6 +35,7 @@ const fn mismatch(reason: &'static str) -> HelloOutcome {
 pub(super) async fn await_protocol_hello<S, E>(transport: &mut GuardedTransport<S>) -> HelloOutcome
 where
     S: SinkExt<WsMessage> + Stream<Item = Result<WsMessage, E>> + Unpin,
+    E: CodecReadError,
 {
     let deadline = tokio::time::Duration::from_secs(HELLO_TIMEOUT_SECS);
     let outcome = tokio::time::timeout(deadline, async {
@@ -55,8 +57,14 @@ where
                 Some(Ok(WsMessage::Text(_))) => {
                     return mismatch("expected binary protocol hello");
                 }
-                Some(Ok(WsMessage::Close(_))) | Some(Err(_)) => {
-                    return HelloOutcome::Disconnected;
+                Some(Ok(WsMessage::Close(_))) => return HelloOutcome::Disconnected,
+                // A first frame the WebSocket codec refused is a refusal, not
+                // a disconnect (FIX 5549); any other read error is the peer's
+                // link ending.
+                Some(Err(error)) => {
+                    return error
+                        .codec_refusal()
+                        .map_or(HelloOutcome::Disconnected, HelloOutcome::Reject);
                 }
                 // A frame the transport refused is the server's rejection,
                 // carried up to the carrier, not a peer that went away.
