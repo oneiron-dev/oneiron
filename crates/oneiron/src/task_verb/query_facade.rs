@@ -112,7 +112,7 @@ impl Memory<'_> {
     }
 
     fn section_rows(&self) -> MemoryResult<TasksSectionRows> {
-        let snapshot = task_presence_at(self.vault(), self.locality())?;
+        let snapshot = task_presence_at(self.vault(), self.destination())?;
         for failure in &snapshot.read_failures {
             tracing::warn!(
                 task_ref = %failure.task_ref.to_hex(),

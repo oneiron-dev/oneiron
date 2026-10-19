@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1013 code-mode rows (989 host rows, 24 run rows), 3384 declarations.
-// Replies: 908 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1015 code-mode rows (991 host rows, 24 run rows), 3386 declarations.
+// Replies: 910 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1045,6 +1045,8 @@ declare namespace Sdk {
   type AuthorityAuditPage = { rows: AuthorityAuditRow[]; next_after?: EntityId | null; order: AuthorityAuditOrder; scanned: number; cold_attested?: ColdAuthorityAuditRow[] };
   type SignedAuthorityHistory = { entries: string[] };
   type AuthorityHistoryImported = { entry_refs: string[] };
+  type WireThresholds = { window_secs: number; per_verb: number; per_actor: number };
+  type WireThresholdsReceipt = { previous: WireThresholds; thresholds: WireThresholds };
   type SlimIdlePolicy = { long_outbound_wait_secs: number; exits_on_idle: boolean; lazy_rebuild: boolean };
   type SlimResumeStep = { kind: "outbound_intent"; intent_id: string; attempt_id: string; call_seq: number; updated_ms: number } | { kind: "model"; attempt_id: string; step_hash: string; updated_ms: number };
   type SlimResidueView = { step: SlimResumeStep; entered_at_ms: number };
@@ -5897,6 +5899,14 @@ declare const vault: Sdk.VaultHost & {
     approve(input: Sdk.WidenProposalAnswer): Promise<Sdk.WidenProposalView | StoredResult>;
     /** The owner, as the board above, declines one context-widen proposal for good; the decline stays on record. */
     decline(input: Sdk.WidenProposalAnswer): Promise<Sdk.WidenProposalView | StoredResult>;
+  };
+  wire_health: {
+    thresholds: {
+      /** The owner reads the serving host's per-verb and per-actor wire detection thresholds and their window; crossings ask a health question, never refuse for rate. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.WireThresholds | StoredResult>;
+      /** The owner replaces the serving host's positive wire detection thresholds and window, receiving the previous and installed policy without adding a rate refusal. */
+      set(input: Sdk.WireThresholds): Promise<Sdk.WireThresholdsReceipt | StoredResult>;
+    };
   };
   /** Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch. */
   witness(input: Sdk.WitnessTurn): Promise<Sdk.WitnessReceipt | StoredResult>;

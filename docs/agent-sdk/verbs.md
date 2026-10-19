@@ -129,6 +129,12 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.trace`
 - `vault.retrieval.export`
 - `vault.retrieval.replay`
+- `vault.retrieval.policy.get`
+- `vault.retrieval.policy.pin`
+- `vault.retrieval.policy.train`
+- `vault.retrieval.policy.evaluate`
+- `vault.retrieval.policy.admit`
+- `vault.retrieval.policy.update`
 - `vault.export`
 - `self.credential.attenuate`
 - `vault.scope.position`
@@ -244,6 +250,8 @@ both bindings and their export-census tests in one change.
 - `vault.authority.audit`
 - `vault.authority.history.export`
 - `vault.authority.history.import`
+- `vault.wire_health.thresholds.get`
+- `vault.wire_health.thresholds.set`
 - `vault.slim.policy`
 - `vault.slim.state`
 - `vault.slim.resume_step`

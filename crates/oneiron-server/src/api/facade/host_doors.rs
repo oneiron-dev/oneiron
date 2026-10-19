@@ -49,8 +49,8 @@ use crate::server::{MediaRefusal, SyncServer};
 
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::artifact_hosting_doors::*;
-pub(crate) use super::deck_creation_doors::*;
 pub(crate) use super::authority_history_doors::*;
+pub(crate) use super::deck_creation_doors::*;
 // The run-bound board STREAM doors (DOOR-121), likewise.
 pub(crate) use super::board_stream_doors::*;
 pub(crate) use super::booking_doors::*;
@@ -82,8 +82,8 @@ pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
-pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_catalog_doors::*;
+pub(crate) use super::model_step_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 pub(crate) use super::run_review_doors::*;
@@ -141,6 +141,7 @@ pub(crate) use super::secret_lift_doors::*;
 pub(crate) use super::wave_doors::*;
 // The owner's context-widen proposal doors (OF-568), likewise.
 pub(crate) use super::widen_proposal_doors::*;
+pub(crate) use super::wire_health_doors::*;
 // The owner's craft-candidate review doors (OF-490), likewise.
 pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
@@ -190,9 +191,9 @@ pub(crate) use super::vector_doors::*;
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
-pub(crate) use super::critical_confirm_doors::*;
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;
+pub(crate) use super::critical_confirm_doors::*;
 // The owner's sieve interest-queue, policy and lease doors (DOOR-130), likewise.
 pub(crate) use super::sieve_doors::*;
 // The owner's standing-block and dreaming-choice doors (DOOR-134), likewise.
@@ -1290,6 +1291,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.hyde.configure"
         | "vault.retrieval.hyde.get"
         | "vault.affect.claims.consolidate"
+        | "vault.wire_health.thresholds.get"
+        | "vault.wire_health.thresholds.set"
         | "vault.affect.coping.record"
         | "vault.affect.coping.update"
         | "vault.affect.coping.aggregate"

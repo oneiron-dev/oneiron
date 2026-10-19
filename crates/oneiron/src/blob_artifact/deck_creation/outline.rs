@@ -35,15 +35,25 @@ pub struct OutlinePage {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum OutlineDivision { Fixed, Split }
+pub enum OutlineDivision {
+    Fixed,
+    Split,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum OutlinePriority { Required, Optional }
+pub enum OutlinePriority {
+    Required,
+    Optional,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum OutlineCarrier { Chart, Table, Share }
+pub enum OutlineCarrier {
+    Chart,
+    Table,
+    Share,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -110,7 +120,10 @@ pub struct OutlineDataset {
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
-pub enum OutlineCell { Number(f64), Text(String) }
+pub enum OutlineCell {
+    Number(f64),
+    Text(String),
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -126,7 +139,11 @@ pub struct OutlineColumn {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum OutlineColumnKind { Number, Text, Date }
+pub enum OutlineColumnKind {
+    Number,
+    Text,
+    Date,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -159,4 +176,7 @@ pub struct OutlineAsset {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum OutlineAssetKind { Factual, Illustration }
+pub enum OutlineAssetKind {
+    Factual,
+    Illustration,
+}

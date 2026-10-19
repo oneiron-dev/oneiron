@@ -990,6 +990,14 @@ export class Oneiron {
         acknowledge: (input: Facade.HandoffAlarmRequest): Facade.AuthorityHandoffAlarm => this.#call(() => this.#client.vaultAuthorityHandoffAlarmsAcknowledge(input) as Facade.AuthorityHandoffAlarm),
       }),
     },
+    wire_health: {
+      thresholds: {
+        /** The owner reads the serving host's per-verb and per-actor wire detection thresholds and their window; crossings ask a health question, never refuse for rate. */
+        get: (input: Facade.EmptyRequest): Facade.WireThresholds => this.#call(() => this.#client.vaultWireHealthThresholdsGet(input) as Facade.WireThresholds),
+        /** The owner replaces the serving host's positive wire detection thresholds and window, receiving the previous and installed policy without adding a rate refusal. */
+        set: (input: Facade.WireThresholds): Facade.WireThresholdsReceipt => this.#call(() => this.#client.vaultWireHealthThresholdsSet(input) as Facade.WireThresholdsReceipt),
+      },
+    },
     slim: {
       /** Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild. */
       policy: (input: Facade.EmptyRequest): Facade.SlimIdlePolicy => this.#call(() => this.#client.vaultSlimPolicy(input) as Facade.SlimIdlePolicy),

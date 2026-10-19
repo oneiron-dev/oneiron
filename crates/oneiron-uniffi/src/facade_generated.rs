@@ -1221,6 +1221,16 @@ export_facade! {
     let output = client.vault_authority_history_import(&input)?;
     crate::codec::lift_record("vault.authority.history.import", &output)
 };
+"vault.wire_health.thresholds.get" => fn vault_wire_health_thresholds_get(&self) -> WireThresholds = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.wire_health.thresholds.get")?;
+    let output = client.vault_wire_health_thresholds_get(&input)?;
+    crate::codec::lift_record("vault.wire_health.thresholds.get", &output)
+};
+"vault.wire_health.thresholds.set" => fn vault_wire_health_thresholds_set(&self, input: WireThresholds) -> WireThresholdsReceipt = |client| {
+    let input: oneiron::task_verb::sdk::WireThresholds = crate::codec::lower_record("vault.wire_health.thresholds.set", input)?;
+    let output = client.vault_wire_health_thresholds_set(&input)?;
+    crate::codec::lift_record("vault.wire_health.thresholds.set", &output)
+};
 "vault.slim.policy" => fn vault_slim_policy(&self) -> SlimIdlePolicy = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.slim.policy")?;
     let output = client.vault_slim_policy(&input)?;
