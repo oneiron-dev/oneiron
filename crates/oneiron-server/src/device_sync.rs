@@ -207,7 +207,12 @@ async fn open(
         machine,
     };
     let connection = link.connection(link.client_config(&credential)?)?;
-    let renewal = renewal::Renewal::new(&link.url, credential_file, Arc::clone(&server.vault));
+    let renewal = renewal::Renewal::new(
+        &link.url,
+        credential_file,
+        Arc::clone(&server.vault),
+        link.mesh_dialer.clone(),
+    );
     let (stop, stop_rx) = oneshot::channel();
     let home = home.to_hex();
     let over = if mesh.is_some() { "mesh" } else { "url" };
@@ -574,7 +579,9 @@ fn direct(url: &str) -> anyhow::Result<()> {
 /// paired mesh address. It may when it is enrolled and live, not the elected
 /// home, and `home` is a live machine. A machine `oneiron device enrol` added
 /// (`enrolled`) is enrolled at the home: its own profile, and the home's,
-/// reach this vault on the first authority catch-up.
+/// reach this vault on the first authority catch-up. A profile the owner has
+/// not answered yet (an unanswered serving install's own) counts here as no
+/// profile, so it dials and is dialled as before it had one (selfprofile).
 #[cfg(feature = "mesh")]
 fn standing(
     vault: &oneiron::Vault,
@@ -584,10 +591,15 @@ fn standing(
     let live = |machine: &oneiron::authority::FoldedMachine| {
         machine.chains().any(|(_, chain)| chain.is_live())
     };
+    let answered = |machine: &&oneiron::authority::FoldedMachine| {
+        machine
+            .chains()
+            .any(|(_, chain)| chain.profile.role.answered())
+    };
     let local = vault
         .local_machine()?
         .ok_or_else(|| anyhow::anyhow!("this install is not a machine yet"))?;
-    match &local.profile {
+    match local.profile.as_ref().filter(answered) {
         Some(profile) => anyhow::ensure!(
             live(profile),
             "this machine is not enrolled live in the vault"
@@ -603,7 +615,7 @@ fn standing(
         "this machine is the elected home, which dials no one (name the home's \
          sync_node_id as home_node_id to hold it as home instead)"
     );
-    match vault.authority_fold()?.machine(home) {
+    match vault.authority_fold()?.machine(home).filter(answered) {
         Some(machine) => anyhow::ensure!(
             live(machine),
             "home_machine {} is not a live machine",

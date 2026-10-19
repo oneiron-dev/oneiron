@@ -8,7 +8,7 @@ pub(crate) const BLOCKED_REPORT_MESSAGE_TYPE: &str = "executor.report_blocked";
 
 const PREFIX: &str = "oneiron:report_blocked:v1:";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BlockedCategory {
     Tool,

@@ -21,13 +21,68 @@ use crate::skill_hub::HubFile;
 use crate::skill_hub::pack_catalog::{PackInstallDisposition, PackInstallReceipt};
 use crate::skill_hub::pack_catalog::{PackSetupAnswer, PackSetupCardAction, PackSetupView};
 
-/// One file of a pack folder.
+/// One file of a pack folder, its content an explicit choice: text, stored as
+/// its UTF-8 bytes, or any bytes (an image, a font, a Wasm module) as
+/// standard base64. `vault.packs.put` and `POST /v1/owner/packs` both take it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum PackFileInput {
+    Text(PackTextFile),
+    Bytes(PackBytesFile),
+}
+
+/// A pack file sent as text.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct PackFileInput {
+pub struct PackTextFile {
     /// Relative to the pack folder, `/`-separated.
     pub path: String,
     pub text: String,
+}
+
+/// A pack file sent as bytes.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PackBytesFile {
+    /// Relative to the pack folder, `/`-separated.
+    pub path: String,
+    /// The file's bytes, RFC 4648 standard base64.
+    pub content_base64: String,
+}
+
+/// A pack file whose `content_base64` does not decode.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("pack file {path}: content_base64 is not standard base64")]
+pub struct PackFileDecodeError {
+    pub path: String,
+}
+
+impl PackFileInput {
+    /// The file as the pack source reads it, its content decoded.
+    ///
+    /// # Errors
+    /// [`PackFileDecodeError`] when its base64 does not decode.
+    pub fn into_hub_file(self) -> Result<HubFile, PackFileDecodeError> {
+        match self {
+            Self::Text(file) => Ok(HubFile::new(file.path, file.text.into_bytes())),
+            Self::Bytes(file) => match STANDARD.decode(file.content_base64.as_bytes()) {
+                Ok(bytes) => Ok(HubFile::new(file.path, bytes)),
+                Err(_) => Err(PackFileDecodeError { path: file.path }),
+            },
+        }
+    }
+}
+
+/// A pack folder's files as the pack source reads them, each decoded before
+/// the install door sees any of them.
+///
+/// # Errors
+/// [`PackFileDecodeError`] naming the first file whose base64 does not decode.
+pub fn decode_pack_files(files: Vec<PackFileInput>) -> Result<Vec<HubFile>, PackFileDecodeError> {
+    files
+        .into_iter()
+        .map(PackFileInput::into_hub_file)
+        .collect()
 }
 
 /// `vault.packs.put`'s input: the pack folder's files. The put installs the
@@ -40,12 +95,11 @@ pub struct PackPutRequest {
 
 impl PackPutRequest {
     /// The folder as the pack source reads it.
-    #[must_use]
-    pub fn into_files(self) -> Vec<HubFile> {
-        self.files
-            .into_iter()
-            .map(|file| HubFile::new(file.path, file.text.into_bytes()))
-            .collect()
+    ///
+    /// # Errors
+    /// A bad request naming the first file whose base64 does not decode.
+    pub fn into_files(self) -> MemoryResult<Vec<HubFile>> {
+        decode_pack_files(self.files).map_err(|error| MemoryError::bad_request(error.to_string()))
     }
 }
 
@@ -98,7 +152,7 @@ pub fn put_pack_as_owner(
     owner: &crate::consent::AuthenticatedOwner,
     input: PackPutRequest,
 ) -> MemoryResult<PackPutReceipt> {
-    Ok(vault.put_pack(owner, input.into_files())?.into())
+    Ok(vault.put_pack(owner, input.into_files()?)?.into())
 }
 
 /// `vault.packs.put` on an embedded handle: the vault's embedded owner's put.
@@ -107,7 +161,7 @@ pub fn put_pack_embedded(
     input: PackPutRequest,
 ) -> MemoryResult<PackPutReceipt> {
     Ok(memory
-        .put_pack_as_embedded_owner(input.into_files())?
+        .put_pack_as_embedded_owner(input.into_files()?)?
         .into())
 }
 
@@ -426,7 +480,7 @@ pub enum AiVoice {
 
 /// One `ai.*` call's answer: the model that answered, its parts, and what
 /// its provider counted.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiAnswer {
     pub model: String,
     pub parts: Vec<AiPart>,
@@ -560,7 +614,8 @@ pub struct AiVerdictRequest {
     pub contract: crate::llm::decision::AnswerContract,
     /// Entity refs (short refs or 32-hex ids, each optionally `@<revision>`)
     /// the answer reads. Each must be readable by the caller; the providers
-    /// read their views in the call's state.
+    /// read their views in the call's state, every text in them cut to fit
+    /// it when the views do not fit whole (`evidence_cut_at_bytes`).
     #[serde(default)]
     pub evidence: Vec<String>,
     /// What else the question reads, beside the evidence.
@@ -635,6 +690,11 @@ pub struct AiVerdict {
     /// passes it on as the next step's `until_ms`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until_ms: Option<u64>,
+    /// The bytes every text in the evidence views was cut to, when the views
+    /// did not fit the ladder's state whole: the ladder read them cut. The
+    /// refs, kinds and the caller's own state are never cut.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_cut_at_bytes: Option<u64>,
 }
 
 impl From<crate::llm::decision::TypedDecision> for AiVerdict {
@@ -648,6 +708,7 @@ impl From<crate::llm::decision::TypedDecision> for AiVerdict {
             outcome: None,
             screenshot: false,
             until_ms: None,
+            evidence_cut_at_bytes: None,
         }
     }
 }

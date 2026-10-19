@@ -18,6 +18,27 @@ impl IsolationEvidence {
     pub(super) fn admits(&self) -> bool {
         self.fscrypt && self.dedicated_uid
     }
+
+    /// Each real-tenant facility this probe did not find, as the refusal
+    /// names it: the data directory held as itself, its fscrypt policy, and
+    /// a dedicated non-root UID that owns it. Empty only for evidence that
+    /// counts as isolation.
+    pub(super) fn missing(&self) -> Vec<&'static str> {
+        [
+            (
+                self.directory.is_some(),
+                "the data directory held open as itself (an absolute, canonical path to a directory)",
+            ),
+            (self.fscrypt, "an fscrypt policy on the data directory"),
+            (
+                self.dedicated_uid,
+                "a dedicated non-root UID, allocated to this vault in the host's UID table, owning the data directory with no group or other access",
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(found, facility)| (!found).then_some(facility))
+        .collect()
+    }
 }
 #[cfg(target_os = "linux")]
 pub(super) fn probe(path: &Path, name: &str) -> IsolationEvidence {

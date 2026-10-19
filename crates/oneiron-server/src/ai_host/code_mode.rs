@@ -26,7 +26,7 @@ use super::compaction::CodeModeCompaction;
 use super::status::StatusCell;
 use crate::config::models::{CodeCheckSettings, ModelsConfig};
 use crate::mcp::McpQuickJsProvider;
-use crate::models::ModelRuntime;
+use crate::models::{ModelRuntime, RoleCall, RoleRefusal};
 use crate::server::SyncServer;
 
 /// Binds `execute_code` on `server` when `models` asks for it and the
@@ -104,6 +104,12 @@ pub(super) async fn bind(
         guard: guard.clone(),
         payer: None,
     });
+    // Each run's compaction seat reads the rung its step's call is admitted
+    // on, at the breakpoint, through this same admission (FIX 4465 C).
+    let live_admission = Arc::new(LiveStepAdmission {
+        vault: Arc::clone(server.vault()),
+        models: Arc::clone(runtime),
+    });
     // A reader child's calls take the same admission: on its own child
     // scope's guard when its run spends under a scope, else on code mode's
     // own, lent below as the host's meter. A room-paid scope's calls bill
@@ -167,8 +173,14 @@ pub(super) async fn bind(
         total: models.code_mode.max_runs,
         wait: server.config.limits.queue_wait(),
     };
+    if let Some(backend) = compaction.host_backend() {
+        let _ = server.ai.host_compaction.set(backend);
+    }
     let embedder = server.embedder.clone();
-    server.with_mcp_quickjs_provider(compaction.attach(provider, status, embedder), runs)
+    server.with_mcp_quickjs_provider(
+        compaction.attach(provider, status, embedder, live_admission),
+        runs,
+    )
 }
 
 /// Shadow mode's checker, per `[models.code_mode.check]`; none when the mode
@@ -247,20 +259,47 @@ struct CodeModeBackend {
 /// server keeps no per-call state.
 const CODE_MODE_RUN: &str = "code-mode";
 
+/// A code-mode call's admission on the chat role, as every step's call is
+/// admitted: the model a durable seat bound when its envelope carries the
+/// seat's effort, else the role's live route. Says which.
+fn admit_code_mode_call(
+    models: &ModelRuntime,
+    vault: &Vault,
+    request: LlmRequest,
+) -> Result<(RoleCall, bool), RoleRefusal> {
+    let seat_bound = request.envelope.seat_effort.is_some();
+    let call = if seat_bound {
+        models.admit_seat_bound(vault, CHAT_ROLE, request)
+    } else {
+        models.admit_role(vault, CHAT_ROLE, request)
+    }?;
+    Ok((call, seat_bound))
+}
+
+/// The live admission a run's compaction seat reads at a breakpoint (FIX
+/// 4465 C): the step's request admitted exactly as [`CodeModeBackend`]
+/// admits it, on the same role, before the call is sent. It sends nothing,
+/// spends nothing and keeps no request: the seat's capture holds the one
+/// copy, on its flight, under the run's own actor and meter.
+struct LiveStepAdmission {
+    vault: Arc<Vault>,
+    models: Arc<ModelRuntime>,
+}
+
+impl super::compaction::LiveAdmission for LiveStepAdmission {
+    fn admit_live(&self, request: LlmRequest) -> Result<RoleCall, RoleRefusal> {
+        admit_code_mode_call(&self.models, &self.vault, request).map(|(call, _)| call)
+    }
+}
+
 impl LlmBackend for CodeModeBackend {
     fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
-            let seat_bound = request.envelope.seat_effort.is_some();
-            let call = if seat_bound {
-                self.models
-                    .admit_seat_bound(&self.vault, CHAT_ROLE, request)
-            } else {
-                self.models.admit_role(&self.vault, CHAT_ROLE, request)
-            }
-            .map_err(|refusal| {
-                tracing::warn!(%refusal, "a code-mode model call was refused");
-                LlmError::BudgetDenied(BudgetDenied::AdmissionDenied)
-            })?;
+            let (call, seat_bound) = admit_code_mode_call(&self.models, &self.vault, request)
+                .map_err(|refusal| {
+                    tracing::warn!(%refusal, "a code-mode model call was refused");
+                    LlmError::BudgetDenied(BudgetDenied::AdmissionDenied)
+                })?;
             let run = self
                 .models
                 .funded_run(CODE_MODE_RUN, self.guard.clone(), self.payer.clone());

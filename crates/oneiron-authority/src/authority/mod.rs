@@ -10,6 +10,8 @@
 //! `oneiron::authority` surface is unchanged. Nothing here folds authority, mints a verified
 //! witness or applies an op to fold state.
 
+mod checkpoint_policy;
+mod comm_reach;
 mod confirm;
 mod constants;
 mod crypto;
@@ -32,6 +34,8 @@ mod wire_encode;
 mod world_key_wraps;
 mod world_privacy;
 
+pub use checkpoint_policy::*;
+pub use comm_reach::*;
 pub use confirm::*;
 pub use constants::*;
 pub use crypto::*;

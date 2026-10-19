@@ -263,6 +263,8 @@ pub struct ServeConfig {
     pub trusted_proxies: Vec<TrustedProxy>,
     pub lease_vault_id: u64,
     pub dimensions: usize,
+    /// MRL graph prefix, fixed at vault open; unset until the model's prefix is measured.
+    pub fast_dims: Option<u16>,
     pub map_size: usize,
     pub log_level: String,
     pub dict_search_paths: Vec<PathBuf>,
@@ -344,7 +346,10 @@ pub struct ServeConfig {
     pub line: LineConfig,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
-    pub failure_signal_export: bool,
+    /// The owner's "Help improve Oneiron" choice, as given: `None` takes the
+    /// deployment's default, on when hosted and off on self-host
+    /// ([`oneiron::config::failure_signals::default_exports`]).
+    pub failure_signal_export: Option<bool>,
     pub failure_signal_training: bool,
     /// Opaque host-managed KMS key reference. `Some` only for the managed
     /// posture; relay and self-host keep no host reference at all. Never key
@@ -384,6 +389,7 @@ impl Default for ServeConfig {
             trusted_proxies: server.trusted_proxies,
             lease_vault_id: server.lease_vault_id,
             dimensions: vault.dimensions,
+            fast_dims: vault.fast_dims,
             map_size: vault.map_size,
             log_level: "info".to_owned(),
             dict_search_paths: vault.dict_search_paths,
@@ -426,7 +432,7 @@ impl Default for ServeConfig {
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
-            failure_signal_export: false,
+            failure_signal_export: None,
             failure_signal_training: false,
             hosted_kms_key_ref: None,
             hooks: true,
@@ -451,6 +457,7 @@ impl fmt::Debug for ServeConfig {
             .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("dimensions", &self.dimensions)
+            .field("fast_dims", &self.fast_dims)
             .field("map_size", &self.map_size)
             .field("log_level", &self.log_level)
             .field("dict_search_paths", &self.dict_search_paths)
@@ -567,6 +574,7 @@ impl ServeConfig {
     pub fn vault_config(&self) -> oneiron::VaultConfig {
         let mut config = oneiron::VaultConfig::server();
         config.dimensions = self.dimensions;
+        config.fast_dims = self.fast_dims;
         config.map_size = self.map_size;
         config.dict_search_paths = self.dict_search_paths.clone();
         config.assistant_display_names = self.assistant_display_names.clone();
@@ -586,7 +594,7 @@ impl ServeConfig {
         // An active embedder pins the vault's embedding space. The engine then
         // refuses any embedder whose `model_id` disagrees with what the vault
         // already holds, which is the door that keeps one vault to one space.
-        // No `fast_dims`: the default local model has no MRL to truncate to.
+        // The prefix stays unset unless the host explicitly selects a measured MRL width.
         let embedder = self
             .embedder
             .as_ref()

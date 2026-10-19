@@ -39,11 +39,12 @@
 //! spans go in the queue as it reads, so a pass writes only what it read.
 
 mod chunks;
+pub mod evidence;
 mod policy;
 mod read;
 mod recipes;
-pub use recipes::{SieveAudit, SieveConsumeReceipt};
 pub(crate) use recipes::*;
+pub use recipes::{SieveAudit, SieveConsumeReceipt};
 mod rules;
 #[cfg(test)]
 mod tests;

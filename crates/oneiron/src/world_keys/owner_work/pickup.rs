@@ -31,6 +31,14 @@ pub struct OwnerWorkDrain {
     pub failed: usize,
 }
 
+/// Whether a request's pickup reads this install's hybrid secret: a world's
+/// key work and a root change open keys with it, and a bundle publication
+/// waits for it as it always has. A custody change reads none: a revoke
+/// needs no byte, and an active change's holder opens its own input.
+fn reads_machine_secret(work: &OwnerWorkBody) -> bool {
+    !matches!(work, OwnerWorkBody::Custody { .. })
+}
+
 /// What one request's transaction did.
 enum Ran {
     Answered(OwnerWorkOutcome),
@@ -44,9 +52,12 @@ impl Vault {
     /// have no result yet, in entry-hash order, each in a writer transaction
     /// of its own, checking `keep_running` before each (CALLS
     /// OWNER_WORK_PICKUP: after an authority catch-up and on the served
-    /// lifecycle tick, never on a timer of its own). The machine secret is
-    /// read first, outside every transaction: with no keystore, slot or
-    /// secret here every request stays pending, and nothing is taken over.
+    /// lifecycle tick, never on a timer of its own). First every admitted
+    /// custody revoke is settled here, byte-free (`settle_revoked_custody`
+    /// in `crate::secret_custody`). The machine secret is read outside every
+    /// transaction, and only when a request's kind reads it: with no
+    /// keystore, slot or secret here each such request stays pending, and
+    /// nothing is taken over. A custody request reads none.
     ///
     /// Each request is read again and rechecked in its transaction: its
     /// world is live, its owner still a live vault owner, its target's
@@ -60,29 +71,49 @@ impl Vault {
         keep_running: impl Fn() -> bool,
     ) -> Result<OwnerWorkDrain> {
         let mut drain = OwnerWorkDrain::default();
-        let pending: Vec<AuthorityEntryHash> = {
+        if let Err(error) = self.settle_revoked_custody() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "admitted custody revokes were not settled on this install"
+            );
+        }
+        let (machine, pending): (EntityId, Vec<(AuthorityEntryHash, bool)>) = {
             let txn = self.store.env.read_txn()?;
             let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
                 return Ok(drain);
             };
-            self.authority_view_readonly_in_txn(&txn)?
+            let pending = self
+                .authority_view_readonly_in_txn(&txn)?
                 .pending_owner_work_for(machine)
-                .map(|(hash, _)| hash)
-                .collect()
+                .map(|(hash, request)| (hash, reads_machine_secret(&request.work)))
+                .collect();
+            (machine, pending)
         };
         if pending.is_empty() {
             return Ok(drain);
         }
-        let Ok(secret) = self.machine_secret_outside_txn() else {
-            drain.pending = pending.len();
-            return Ok(drain);
+        // The keys load before any transaction opens: the install key every
+        // result is signed with, and the hybrid secret only for the kinds
+        // that read it.
+        let _ = self.load_install_signing_if_minted();
+        let secret = if pending.iter().any(|(_, reads)| *reads) {
+            self.machine_secret_outside_txn().ok()
+        } else {
+            None
         };
-        for (index, request) in pending.iter().enumerate() {
+        for (index, (request, reads)) in pending.iter().enumerate() {
             if !keep_running() {
                 drain.pending += pending.len() - index;
                 break;
             }
-            match self.with_write_txn(|txn| self.run_owner_work_in_txn(txn, *request, &secret)) {
+            let secret = secret.as_ref();
+            if *reads && secret.is_none() {
+                drain.pending += 1;
+                continue;
+            }
+            let ran = self
+                .with_write_txn(|txn| self.run_owner_work_in_txn(txn, *request, machine, secret));
+            match ran {
                 Ok(Ran::Answered(OwnerWorkOutcome::Enacted)) => drain.enacted += 1,
                 Ok(Ran::Answered(OwnerWorkOutcome::Refused { .. })) => drain.refused += 1,
                 Ok(Ran::Pending) => drain.pending += 1,
@@ -99,29 +130,47 @@ impl Vault {
         Ok(drain)
     }
 
-    /// One request, read again in the caller's write transaction.
+    /// One request, read again in the caller's write transaction, by
+    /// `machine`, this install, with its hybrid `secret` when the request's
+    /// kind reads one (the drain passes it then).
     fn run_owner_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         hash: AuthorityEntryHash,
-        secret: &MachineSecret,
+        machine: EntityId,
+        secret: Option<&MachineSecret>,
     ) -> Result<Ran> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let Some(request) = fold
-            .pending_owner_work_for(secret.machine)
-            .find_map(|(pending, request)| (pending == hash).then_some(*request))
+            .pending_owner_work_for(machine)
+            .find_map(|(pending, request)| (pending == hash).then_some(request))
         else {
             return Ok(Ran::Gone);
         };
-        let outcome = match request.work {
-            OwnerWorkBody::WorldKey { mode } => {
-                self.world_key_work_in_txn(txn, &fold, hash, &request, mode, secret)?
+        let outcome = match (&request.work, secret) {
+            (OwnerWorkBody::WorldKey { mode }, Some(secret)) => {
+                self.world_key_work_in_txn(txn, &fold, hash, request, *mode, secret)?
             }
+            (OwnerWorkBody::Root { change }, Some(secret)) => {
+                self.root_work_in_txn(txn, &fold, request, *change, secret)?
+            }
+            (OwnerWorkBody::PublishBundle { home }, Some(_)) => {
+                self.publish_bundle_work_in_txn(txn, &fold, request, *home, machine)?
+            }
+            (OwnerWorkBody::Custody { change, .. }, _) => {
+                self.custody_work_in_txn(txn, &fold, request, *change)?
+            }
+            (
+                OwnerWorkBody::WorldKey { .. }
+                | OwnerWorkBody::Root { .. }
+                | OwnerWorkBody::PublishBundle { .. },
+                None,
+            ) => None,
         };
         let Some(outcome) = outcome else {
             return Ok(Ran::Pending);
         };
-        self.append_owner_work_result_in_txn(txn, hash, secret.machine, outcome)?;
+        self.append_owner_work_result_in_txn(txn, hash, machine, outcome)?;
         Ok(Ran::Answered(outcome))
     }
 

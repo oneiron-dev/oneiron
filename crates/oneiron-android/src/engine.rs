@@ -7,23 +7,28 @@
 //! it out and releases the field before it blocks, so no lock and no Kotlin
 //! monitor is held while the engine calls back into the app's `AppHost`. A
 //! Kotlin `EngineConnection` holds its connection the same way, with a share
-//! of the engine it belongs to.
+//! of the engine it belongs to; one on the artifact app's own origin (`/a/`)
+//! is an `EngineConnection` too.
+//!
+//! An engine failure throws `org.oneiron.EngineException`, an
+//! `IllegalStateException` carrying its cause's stable code; every other
+//! failure throws a plain `IllegalStateException`, as the vault's do.
 
 use std::path::Path;
 use std::sync::{Arc, MutexGuard};
 use std::time::SystemTime;
 
-use jni::objects::{GlobalRef, JByteArray, JObject, JObjectArray, JString, JValue};
-use jni::sys::{jbyteArray, jint, jlong, jobject, jsize};
+use jni::objects::{GlobalRef, JByteArray, JObject, JObjectArray, JString, JThrowable, JValue};
+use jni::sys::{jboolean, jbyteArray, jint, jlong, jobject, jsize};
 use jni::{JNIEnv, JavaVM};
 use oneiron_server::embedded::{
     BlockingConnection, BlockingEngine, EmbeddedReply, EmbeddedRequest, embedded_serve_config,
-    host_limits, unix_millis,
+    engine_error_kind, host_limits, unix_millis,
 };
 use oneiron_vault_contract::host_adapters::AppHost;
 use zeroize::Zeroizing;
 
-use super::{NativeVault, display, run};
+use super::NativeVault;
 
 /// What a Kotlin `EmbeddedEngine`'s field holds.
 type NativeEngine = Arc<BlockingEngine<JniAppHost>>;
@@ -113,17 +118,75 @@ impl AppHost for JniAppHost {
     }
 }
 
-fn chain(error: anyhow::Error) -> String {
-    format!("{error:#}")
+/// What a JNI engine call throws.
+enum Thrown {
+    /// An engine failure: an `EngineException` with its cause's stable code.
+    Engine { code: &'static str, message: String },
+    /// Any other failure: an `IllegalStateException`.
+    Other(String),
+}
+
+/// An engine failure, by the cause the engine named, never its words.
+fn chain(error: anyhow::Error) -> Thrown {
+    Thrown::Engine {
+        code: engine_error_kind(&error).code(),
+        message: format!("{error:#}"),
+    }
+}
+
+fn other(error: impl std::fmt::Display) -> Thrown {
+    Thrown::Other(error.to_string())
+}
+
+/// `super::run` for an engine call: an engine failure throws an
+/// `EngineException`.
+fn run_engine<T: Default>(
+    env: &mut JNIEnv<'_>,
+    call: impl FnOnce(&mut JNIEnv<'_>) -> Result<T, Thrown>,
+) -> T {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call(env))) {
+        Ok(Ok(value)) => value,
+        Ok(Err(Thrown::Engine { code, message })) => {
+            throw_engine(env, code, &message);
+            T::default()
+        }
+        Ok(Err(Thrown::Other(message))) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", message);
+            T::default()
+        }
+        Err(_) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", "native engine panic");
+            T::default()
+        }
+    }
+}
+
+/// Throws `org.oneiron.EngineException(code, message)`, or, when it cannot
+/// be built, the `IllegalStateException` the message alone is.
+fn throw_engine(env: &mut JNIEnv<'_>, code: &str, message: &str) {
+    let thrown = (|| -> jni::errors::Result<()> {
+        let code = env.new_string(code)?;
+        let text = env.new_string(message)?;
+        let exception = env.new_object(
+            "org/oneiron/EngineException",
+            "(Ljava/lang/String;Ljava/lang/String;)V",
+            &[(&code).into(), (&text).into()],
+        )?;
+        env.throw(JThrowable::from(exception))
+    })();
+    if thrown.is_err() {
+        let _ = env.exception_clear();
+        let _ = env.throw_new("java/lang/IllegalStateException", message);
+    }
 }
 
 /// The engine `object` owns, cloned out of its field, whose lock is released
 /// before this returns.
-fn engine_of(env: &mut JNIEnv<'_>, object: &JObject<'_>) -> Result<NativeEngine, String> {
+fn engine_of(env: &mut JNIEnv<'_>, object: &JObject<'_>) -> Result<NativeEngine, Thrown> {
     // SAFETY: the Kotlin `EmbeddedEngine` alone owns this private field:
     // startNative sets it once and closeNative takes it once.
     let engine: MutexGuard<'_, NativeEngine> =
-        unsafe { env.get_rust_field(object, "nativeHandle") }.map_err(display)?;
+        unsafe { env.get_rust_field(object, "nativeHandle") }.map_err(other)?;
     Ok(Arc::clone(&engine))
 }
 
@@ -139,14 +202,14 @@ pub extern "system" fn Java_org_oneiron_EmbeddedEngine_startNative(
     memory_bytes: jlong,
     cpu_millis_per_second: jint,
 ) {
-    run(&mut env, |env| {
-        let path: String = env.get_string(&path).map_err(display)?.into();
+    run_engine(&mut env, |env| {
+        let path: String = env.get_string(&path).map_err(other)?.into();
         let config_file: Option<String> = if config_file.is_null() {
             None
         } else {
-            Some(env.get_string(&config_file).map_err(display)?.into())
+            Some(env.get_string(&config_file).map_err(other)?.into())
         };
-        let dimensions = usize::try_from(dimensions).map_err(display)?;
+        let dimensions = usize::try_from(dimensions).map_err(other)?;
         let limits = host_limits(
             u64::try_from(memory_bytes).ok().filter(|&bytes| bytes > 0),
             u32::try_from(cpu_millis_per_second)
@@ -154,8 +217,8 @@ pub extern "system" fn Java_org_oneiron_EmbeddedEngine_startNative(
                 .filter(|&millis| millis > 0),
         );
         let host = JniAppHost(Arc::new(JavaHost {
-            vm: env.get_java_vm().map_err(display)?,
-            host: env.new_global_ref(&host).map_err(display)?,
+            vm: env.get_java_vm().map_err(other)?,
+            host: env.new_global_ref(&host).map_err(other)?,
         }));
         // Crash output never carries world text: the engine's hook goes in
         // before any vault opens (owner ruling 2026-10-14, fix 6).
@@ -170,7 +233,7 @@ pub extern "system" fn Java_org_oneiron_EmbeddedEngine_startNative(
             Arc::new(BlockingEngine::start(host, config, limits).map_err(chain)?);
         // SAFETY: Kotlin owns the private long field, zero until this sets it
         // once, before the constructor returns.
-        unsafe { env.set_rust_field(&object, "nativeHandle", engine) }.map_err(display)
+        unsafe { env.set_rust_field(&object, "nativeHandle", engine) }.map_err(other)
     });
 }
 
@@ -185,14 +248,40 @@ pub extern "system" fn Java_org_oneiron_EmbeddedEngine_requestNative(
     header_values: JObjectArray<'_>,
     body: JByteArray<'_>,
 ) -> jobject {
-    run(&mut env, |env| {
+    run_engine(&mut env, |env| {
         let request = EmbeddedRequest {
-            method: env.get_string(&method).map_err(display)?.into(),
-            path: env.get_string(&path).map_err(display)?.into(),
+            method: env.get_string(&method).map_err(other)?.into(),
+            path: env.get_string(&path).map_err(other)?.into(),
             headers: request_headers(env, &header_names, &header_values)?,
-            body: env.convert_byte_array(&body).map_err(display)?,
+            body: env.convert_byte_array(&body).map_err(other)?,
         };
         let reply = engine_of(env, &object)?.request(request).map_err(chain)?;
+        reply_object(env, reply)
+    })
+}
+
+/// JNI implementation of the buffered request on the artifact app's own
+/// origin (`/a/`).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_oneiron_EmbeddedEngine_artifactRequestNative(
+    mut env: JNIEnv<'_>,
+    object: JObject<'_>,
+    method: JString<'_>,
+    path: JString<'_>,
+    header_names: JObjectArray<'_>,
+    header_values: JObjectArray<'_>,
+    body: JByteArray<'_>,
+) -> jobject {
+    run_engine(&mut env, |env| {
+        let request = EmbeddedRequest {
+            method: env.get_string(&method).map_err(other)?.into(),
+            path: env.get_string(&path).map_err(other)?.into(),
+            headers: request_headers(env, &header_names, &header_values)?,
+            body: env.convert_byte_array(&body).map_err(other)?,
+        };
+        let reply = engine_of(env, &object)?
+            .request_artifact(request)
+            .map_err(chain)?;
         reply_object(env, reply)
     })
 }
@@ -202,52 +291,46 @@ fn request_headers(
     env: &mut JNIEnv<'_>,
     names: &JObjectArray<'_>,
     values: &JObjectArray<'_>,
-) -> Result<Vec<(String, Vec<u8>)>, String> {
-    let count = env.get_array_length(names).map_err(display)?;
-    if count != env.get_array_length(values).map_err(display)? {
-        return Err("each header name takes one value".to_owned());
+) -> Result<Vec<(String, Vec<u8>)>, Thrown> {
+    let count = env.get_array_length(names).map_err(other)?;
+    if count != env.get_array_length(values).map_err(other)? {
+        return Err(Thrown::Other("each header name takes one value".to_owned()));
     }
     let mut headers = Vec::new();
     for index in 0..count {
-        let name = JString::from(
-            env.get_object_array_element(names, index)
-                .map_err(display)?,
-        );
-        let value = JByteArray::from(
-            env.get_object_array_element(values, index)
-                .map_err(display)?,
-        );
+        let name = JString::from(env.get_object_array_element(names, index).map_err(other)?);
+        let value = JByteArray::from(env.get_object_array_element(values, index).map_err(other)?);
         let header: (String, Vec<u8>) = (
-            env.get_string(&name).map_err(display)?.into(),
-            env.convert_byte_array(&value).map_err(display)?,
+            env.get_string(&name).map_err(other)?.into(),
+            env.convert_byte_array(&value).map_err(other)?,
         );
-        env.delete_local_ref(name).map_err(display)?;
-        env.delete_local_ref(value).map_err(display)?;
+        env.delete_local_ref(name).map_err(other)?;
+        env.delete_local_ref(value).map_err(other)?;
         headers.push(header);
     }
     Ok(headers)
 }
 
 /// The reply as a Kotlin `EngineReply`.
-fn reply_object(env: &mut JNIEnv<'_>, reply: EmbeddedReply) -> Result<jobject, String> {
-    let count = jsize::try_from(reply.headers.len()).map_err(display)?;
+fn reply_object(env: &mut JNIEnv<'_>, reply: EmbeddedReply) -> Result<jobject, Thrown> {
+    let count = jsize::try_from(reply.headers.len()).map_err(other)?;
     let names = env
         .new_object_array(count, "java/lang/String", JObject::null())
-        .map_err(display)?;
+        .map_err(other)?;
     let values = env
         .new_object_array(count, "[B", JObject::null())
-        .map_err(display)?;
+        .map_err(other)?;
     for (index, (name, value)) in (0..count).zip(&reply.headers) {
-        let name = env.new_string(name).map_err(display)?;
-        let value = env.byte_array_from_slice(value).map_err(display)?;
+        let name = env.new_string(name).map_err(other)?;
+        let value = env.byte_array_from_slice(value).map_err(other)?;
         env.set_object_array_element(&names, index, &name)
-            .map_err(display)?;
+            .map_err(other)?;
         env.set_object_array_element(&values, index, &value)
-            .map_err(display)?;
-        env.delete_local_ref(name).map_err(display)?;
-        env.delete_local_ref(value).map_err(display)?;
+            .map_err(other)?;
+        env.delete_local_ref(name).map_err(other)?;
+        env.delete_local_ref(value).map_err(other)?;
     }
-    let body = env.byte_array_from_slice(&reply.body).map_err(display)?;
+    let body = env.byte_array_from_slice(&reply.body).map_err(other)?;
     env.new_object(
         "org/oneiron/EngineReply",
         "(I[Ljava/lang/String;[[B[B)V",
@@ -259,7 +342,7 @@ fn reply_object(env: &mut JNIEnv<'_>, reply: EmbeddedReply) -> Result<jobject, S
         ],
     )
     .map(JObject::into_raw)
-    .map_err(display)
+    .map_err(other)
 }
 
 /// JNI implementation of the engine wake.
@@ -268,7 +351,7 @@ pub extern "system" fn Java_org_oneiron_EmbeddedEngine_wakeNative(
     mut env: JNIEnv<'_>,
     object: JObject<'_>,
 ) {
-    run(&mut env, |env| {
+    run_engine(&mut env, |env| {
         engine_of(env, &object)?.wake().map_err(chain)
     });
 }
@@ -279,7 +362,7 @@ pub extern "system" fn Java_org_oneiron_EmbeddedEngine_stopNative(
     mut env: JNIEnv<'_>,
     object: JObject<'_>,
 ) {
-    run(&mut env, |env| {
+    run_engine(&mut env, |env| {
         engine_of(env, &object)?.stop().map_err(chain)
     });
 }
@@ -291,11 +374,11 @@ pub extern "system" fn Java_org_oneiron_EmbeddedEngine_closeNative(
     mut env: JNIEnv<'_>,
     object: JObject<'_>,
 ) {
-    run(&mut env, |env| {
+    run_engine(&mut env, |env| {
         // SAFETY: Kotlin's close runs this once; take_rust_field clears the
         // field, so later native calls fail closed.
         let engine: NativeEngine =
-            unsafe { env.take_rust_field(&object, "nativeHandle") }.map_err(display)?;
+            unsafe { env.take_rust_field(&object, "nativeHandle") }.map_err(other)?;
         engine.close().map_err(chain)
     });
 }
@@ -308,41 +391,48 @@ pub extern "system" fn Java_org_oneiron_EmbeddedVault_shareNative(
     object: JObject<'_>,
     engine: JObject<'_>,
 ) {
-    run(&mut env, |env| {
+    run_engine(&mut env, |env| {
         let vault = NativeVault::unbound(engine_of(env, &engine)?.vault().map_err(chain)?);
         // SAFETY: Kotlin owns the private long field, initialized to zero.
         // All native hooks execute under that instance's synchronized monitor.
-        unsafe { env.set_rust_field(&object, "nativeHandle", vault) }.map_err(display)
+        unsafe { env.set_rust_field(&object, "nativeHandle", vault) }.map_err(other)
     });
 }
 
 /// The connection `object` owns, cloned out of its field, whose lock is
 /// released before this returns.
-fn connection_of(env: &mut JNIEnv<'_>, object: &JObject<'_>) -> Result<NativeConnection, String> {
+fn connection_of(env: &mut JNIEnv<'_>, object: &JObject<'_>) -> Result<NativeConnection, Thrown> {
     // SAFETY: the Kotlin `EngineConnection` alone owns this private field:
     // openNative sets it once and closeNative takes it once.
     let connection: MutexGuard<'_, NativeConnection> =
-        unsafe { env.get_rust_field(object, "nativeHandle") }.map_err(display)?;
+        unsafe { env.get_rust_field(object, "nativeHandle") }.map_err(other)?;
     Ok(Arc::clone(&connection))
 }
 
 /// JNI implementation of the Kotlin `EngineConnection` constructor over an
-/// engine: one fresh connection to its server.
+/// engine: one fresh connection to its server, on the artifact app's own
+/// origin (`/a/`) when `artifacts`.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_oneiron_EngineConnection_openNative(
     mut env: JNIEnv<'_>,
     object: JObject<'_>,
     engine: JObject<'_>,
+    artifacts: jboolean,
 ) {
-    run(&mut env, |env| {
+    run_engine(&mut env, |env| {
         let engine = engine_of(env, &engine)?;
+        let connection = if artifacts != 0 {
+            engine.connect_artifact()
+        } else {
+            engine.connect()
+        };
         let connection: NativeConnection = Arc::new(HeldConnection {
-            connection: engine.connect().map_err(chain)?,
+            connection: connection.map_err(chain)?,
             _engine: engine,
         });
         // SAFETY: Kotlin owns the private long field, zero until this sets it
         // once, before the constructor returns.
-        unsafe { env.set_rust_field(&object, "nativeHandle", connection) }.map_err(display)
+        unsafe { env.set_rust_field(&object, "nativeHandle", connection) }.map_err(other)
     });
 }
 
@@ -353,8 +443,8 @@ pub extern "system" fn Java_org_oneiron_EngineConnection_sendNative(
     object: JObject<'_>,
     bytes: JByteArray<'_>,
 ) {
-    run(&mut env, |env| {
-        let bytes = env.convert_byte_array(&bytes).map_err(display)?;
+    run_engine(&mut env, |env| {
+        let bytes = env.convert_byte_array(&bytes).map_err(other)?;
         connection_of(env, &object)?
             .connection
             .send(&bytes)
@@ -369,14 +459,14 @@ pub extern "system" fn Java_org_oneiron_EngineConnection_receiveNative(
     mut env: JNIEnv<'_>,
     object: JObject<'_>,
 ) -> jbyteArray {
-    run(&mut env, |env| {
+    run_engine(&mut env, |env| {
         let bytes = connection_of(env, &object)?
             .connection
             .receive()
             .map_err(chain)?;
         env.byte_array_from_slice(&bytes)
             .map(JByteArray::into_raw)
-            .map_err(display)
+            .map_err(other)
     })
 }
 
@@ -387,11 +477,11 @@ pub extern "system" fn Java_org_oneiron_EngineConnection_closeNative(
     mut env: JNIEnv<'_>,
     object: JObject<'_>,
 ) {
-    run(&mut env, |env| {
+    run_engine(&mut env, |env| {
         // SAFETY: Kotlin's close runs this once; take_rust_field clears the
         // field, so later native calls fail closed.
         let connection: NativeConnection =
-            unsafe { env.take_rust_field(&object, "nativeHandle") }.map_err(display)?;
+            unsafe { env.take_rust_field(&object, "nativeHandle") }.map_err(other)?;
         connection.connection.close().map_err(chain)
     });
 }

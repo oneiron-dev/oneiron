@@ -73,7 +73,7 @@ pub(crate) fn valid_holder_ref(holder: &str) -> bool {
 
 /// Evidence emitted by the offline bench runner. This is an operator receipt,
 /// not a signature or a substitute for trusting the model-repository runner.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TeacherProbeApproval {
     pub probe_id: String,

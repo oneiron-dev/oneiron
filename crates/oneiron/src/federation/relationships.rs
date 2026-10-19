@@ -32,7 +32,17 @@ pub const MAX_RELATIONSHIP_LABEL_BYTES: usize = 64;
 /// The word lists are FIXED: there is no Unicode folding and no synonym model,
 /// so an unrecognized but well-formed label lands on [`Self::Unlabeled`] rather
 /// than being guessed into a class.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 pub enum RelationshipTrustClass {
     /// Partner-grade closeness.
     Intimate,
@@ -49,7 +59,9 @@ pub enum RelationshipTrustClass {
 }
 
 /// Resolved label context for a member bound to a PERSON.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct MemberRelationshipContext {
     /// PERSON entity the member is bound to.
     pub person: EntityId,
@@ -62,7 +74,9 @@ pub struct MemberRelationshipContext {
 }
 
 /// Relationship state of a federation grant's `member_ref`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub enum MemberRelationship {
     /// Bound to a person carrying a valid label.
     Labeled(MemberRelationshipContext),
@@ -90,11 +104,21 @@ pub fn resolve_member_relationship(
     vault: &Vault,
     member_ref: EntityId,
 ) -> Result<MemberRelationship> {
+    resolve_member_relationship_filtered(vault, member_ref, |_| Ok(true))
+}
+
+/// The same deterministic resolver, restricted to rows the caller's read admits.
+pub(crate) fn resolve_member_relationship_filtered(
+    vault: &Vault,
+    member_ref: EntityId,
+    mut admits: impl FnMut(EntityId) -> Result<bool>,
+) -> Result<MemberRelationship> {
     let person = relationship_claims(
         vault,
         member_ref,
         PREDICATE_RELATIONSHIP_PERSON_REF,
         |value| decode_canonical_entity_ref(value).ok(),
+        &mut admits,
     )?
     .into_iter()
     .max_by_key(|claim| (claim.learned_at, claim.claim))
@@ -104,10 +128,19 @@ pub fn resolve_member_relationship(
         return Ok(MemberRelationship::Unbound);
     };
 
-    let label = relationship_claims(vault, person, PREDICATE_RELATIONSHIP_LABEL, |value| {
-        let label = value.as_str()?;
-        is_relationship_label(label).then(|| label.to_owned())
-    })?
+    if !admits(person)? {
+        return Ok(MemberRelationship::Unbound);
+    }
+    let label = relationship_claims(
+        vault,
+        person,
+        PREDICATE_RELATIONSHIP_LABEL,
+        |value| {
+            let label = value.as_str()?;
+            is_relationship_label(label).then(|| label.to_owned())
+        },
+        &mut admits,
+    )?
     .into_iter()
     .max_by_key(|claim| (claim.approved, claim.learned_at, claim.claim));
 
@@ -270,9 +303,13 @@ fn relationship_claims<T>(
     subject: EntityId,
     predicate: &str,
     parse: impl Fn(&Value) -> Option<T>,
+    admits: &mut impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<Vec<RelationshipClaimCandidate<T>>> {
     let mut candidates = Vec::new();
     for claim in vault.claims_for_subject(&subject)? {
+        if !admits(claim)? {
+            continue;
+        }
         let Some(body) = vault.get_claim(&claim)? else {
             continue;
         };
