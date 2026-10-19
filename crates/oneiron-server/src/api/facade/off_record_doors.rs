@@ -95,6 +95,7 @@ impl Caller {
 /// owner's attestation keeps no slip to check again, so neither is the
 /// second.
 fn caller(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<Caller> {
+    super::owner_binding::host_preflight(server, auth)?;
     if let Ok(owner) = crate::api::owner_routes::owner(auth, server) {
         return Ok(Caller::Owner(owner));
     }

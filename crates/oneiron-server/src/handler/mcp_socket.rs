@@ -22,7 +22,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
-use axum::extract::ws::{CloseFrame, Message as WsMessage, Utf8Bytes, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::http::{Extensions, HeaderMap, HeaderValue, Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
@@ -30,7 +30,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tower::ServiceExt;
 
-use super::hello::HelloOutcome;
+use super::protocol_close;
 use super::socket_stop::StoppingTransport;
 use super::transport::{GuardedTransport, WS_MAX_WRITE_BUFFER_SIZE, WS_WRITE_BUFFER_SIZE};
 use crate::auth::{CoreAuth, RevokedTokenJtis};
@@ -230,23 +230,21 @@ async fn serve(
     .with_inbound_cap(server.config.max_frame_size);
     // Its hello and sends give way to the engine's stop.
     let mut transport = StoppingTransport::new(transport, stop.clone());
-    match transport.hello().await {
-        HelloOutcome::Valid(version)
+    // FIX 3303: each refusal below is its connection's receipt, then the close.
+    match protocol_close::hello(&mut transport, &server, conn_id).await {
+        Some(version)
             if version >= oneiron::sync::transport::APP_TIER_PROTOCOL_VERSION_VERSION => {}
-        HelloOutcome::Valid(_) => {
-            close(
+        Some(_) => {
+            protocol_close::refuse_hello_version(
                 &mut transport,
+                &server,
                 close_codes::CLOSE_RPC_VERSION_MISMATCH,
                 "app tier needs protocol 8",
             )
             .await;
             return;
         }
-        HelloOutcome::Reject(reason) => {
-            close(&mut transport, close_codes::VERSION_MISMATCH, reason).await;
-            return;
-        }
-        HelloOutcome::Disconnected => return,
+        None => return,
     }
     let routes = mcp_routes(Arc::clone(&server));
     let caller = Arc::new(caller);
@@ -279,11 +277,17 @@ async fn serve(
             ))) => {
                 continue;
             }
-            Event::Inbound(Some(Ok(WsMessage::Close(_)) | Err(_)) | None) => break,
+            Event::Inbound(Some(Ok(WsMessage::Close(_)) | Err(_))) => break,
+            // A frame the transport refused is a refusal, not a disconnect.
+            Event::Inbound(None) => {
+                protocol_close::close_read_refusal(&server, &mut transport).await;
+                break;
+            }
         };
         if data.len() > server.config.max_frame_size {
-            close(
+            protocol_close::refuse_frame(
                 &mut transport,
+                &server,
                 close_codes::FRAME_TOO_LARGE,
                 "frame too large",
             )
@@ -292,8 +296,9 @@ async fn serve(
         }
         // Only app RPCs: no sync message is served on this socket.
         let Some((&TAG_RPC, payload)) = data.split_first() else {
-            close(
+            protocol_close::refuse_frame(
                 &mut transport,
+                &server,
                 close_codes::UNKNOWN_TAG,
                 "this socket carries MCP calls only",
             )
@@ -301,8 +306,9 @@ async fn serve(
             break;
         };
         let Ok(request) = crate::livequery::decode_rpc(payload) else {
-            close(
+            protocol_close::refuse_frame(
                 &mut transport,
+                &server,
                 close_codes::DECODE_ERROR,
                 "invalid app envelope",
             )
@@ -338,8 +344,9 @@ async fn serve(
             .flatten()
             .filter(|call| surfaces.contains(&call.surface.as_str()));
         let Some(call) = call else {
-            close(
+            protocol_close::refuse_frame(
                 &mut transport,
+                &server,
                 close_codes::DECODE_ERROR,
                 "expected an mcp call",
             )
@@ -397,13 +404,4 @@ async fn answer(
         }
     };
     crate::livequery::rpc_result(id, json!({ "status": status.as_u16(), "body": body }))
-}
-
-async fn close(transport: &mut StoppingTransport, code: u16, reason: &'static str) {
-    transport
-        .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
-            code,
-            reason: Utf8Bytes::from_static(reason),
-        })))
-        .await;
 }

@@ -439,7 +439,7 @@ fn slide_reviewer(
     server: &SyncServer,
     auth: &CoreAuth,
 ) -> MemoryResult<(EntityId, EdgeActorClass)> {
-    super::facade_actor(server, auth).map_err(|_| {
+    super::owner_binding::facade_caller_or(server, auth, || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "a slide review binds its proposal to an authenticated principal",
@@ -485,7 +485,7 @@ fn artifact_asker(
     server: &SyncServer,
     auth: &CoreAuth,
 ) -> MemoryResult<(EntityId, EdgeActorClass)> {
-    super::facade_actor(server, auth).map_err(|_| {
+    super::owner_binding::facade_caller_or(server, auth, || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "an artifact ask binds its proposal to an authenticated principal",
@@ -539,7 +539,7 @@ pub(crate) async fn vault_artifacts_body_deck_preview(
 ) -> Listed<oneiron::office_body::DeckPreview> {
     const VERB: &str = "vault.artifacts.body.deck.preview";
     let admitted = || -> MemoryResult<(EntityId, EdgeActorClass)> {
-        let caller = super::facade_actor(server, auth).map_err(|_| {
+        let caller = super::owner_binding::facade_caller_or(server, auth, || {
             MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 "a deck preview reads as the credential's own principal",
@@ -977,7 +977,7 @@ pub(crate) async fn self_memory_diary_query(
 
 /// The principal a diary query reads as.
 fn diary_reader(server: &SyncServer, auth: &CoreAuth) -> MemoryResult<(EntityId, EdgeActorClass)> {
-    super::facade_actor(server, auth).map_err(|_| {
+    super::owner_binding::facade_caller_or(server, auth, || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "self.memory.diary.query reads as the credential's own principal",
@@ -1165,9 +1165,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.booking.availability"
         | "vault.booking.book"
         | "vault.booking.reschedule"
-        | "vault.booking.cancel" => crate::api::host_action::require_host_owner_act(server, auth)
-            .map(drop)
-            .map_err(|error| super::FacadeApiError::from(error).into_memory_error()),
+        | "vault.booking.cancel" => {
+            super::owner_binding::host_preflight(server, auth)?;
+            crate::api::host_action::require_host_owner_act(server, auth)
+                .map(drop)
+                .map_err(|error| super::FacadeApiError::from(error).into_memory_error())
+        }
         "vault.models.manifest.read"
         | "vault.models.manifest.replace"
         | "vault.models.routes.read"
@@ -2090,13 +2093,7 @@ pub(super) fn owner_proof(
     server: &SyncServer,
     verb: &str,
 ) -> MemoryResult<oneiron::consent::AuthenticatedOwner> {
-    crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{verb} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })
+    super::owner_binding::facade_owner(server, auth, verb)
 }
 
 /// `vault.lenses.activate`: the owner selects a proposed lens revision for

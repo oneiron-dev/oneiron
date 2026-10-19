@@ -168,7 +168,7 @@ impl CoreAuth {
     /// beside another person's attestation is refused. The caller is then
     /// placed where its connection sits, toward the machine it proved, at
     /// the invitee door its path names and inside the session it names.
-    pub(super) async fn for_request(parts: &Parts, server: &SyncServer) -> Result<Self, ApiError> {
+    pub(crate) async fn for_request(parts: &Parts, server: &SyncServer) -> Result<Self, ApiError> {
         let auth = Self::for_server_async(&parts.headers, server).await?;
         auth.of_request(
             &parts.headers,

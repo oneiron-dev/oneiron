@@ -51,6 +51,15 @@ const FRAME_BYTES: usize = 8 + 32;
 /// CUSTODY_MANIFEST_RECHECK). The request names the digest of the whole, so
 /// the manifest is the recorder's as the envelope is the surface's.
 const ATTACHED_LABEL: &[u8] = b"oneiron/custody-input-attached/v1\0";
+/// The label of a sealed register's input whose surface stated no
+/// `manifest_ref`: the envelope, then the vault's one current approved
+/// manifest its recorder found (CALLS CUSTODY_MANIFEST_UNSTATED).
+const CURRENT_LABEL: &[u8] = b"oneiron/custody-input-current/v1\0";
+/// The label of a sealed register's input whose surface stated no
+/// `manifest_ref` and for which its recorder found no current approved
+/// manifest: the envelope alone, registered without a manifest check (CALLS
+/// CUSTODY_MANIFEST_UNSTATED).
+const NO_MANIFEST_LABEL: &[u8] = b"oneiron/custody-input-no-manifest/v1\0";
 
 /// Each input this vault keeps to relay, or keeps as its holder until it
 /// answers, by its ciphertext digest.
@@ -169,35 +178,87 @@ pub(crate) struct AttachedManifest {
     pub(crate) text: String,
 }
 
+/// What a sealed register's recorder attached beside the envelope its
+/// owner's surface sealed, under the digest the request names.
+pub(crate) enum Attached {
+    /// The manifest it resolved for the `manifest_ref` the surface stated
+    /// (CALLS CUSTODY_MANIFEST_RECHECK).
+    Stated(AttachedManifest),
+    /// The surface stated none: the vault's one current approved manifest
+    /// (CALLS CUSTODY_MANIFEST_UNSTATED).
+    Current(AttachedManifest),
+    /// The surface stated none and no current approved manifest applied:
+    /// the record registers without a manifest check.
+    NoManifest,
+}
+
 /// A sealed register's `envelope` with the manifest its recorder resolved
 /// for it attached: what the request then names the digest of.
 pub(crate) fn attach_manifest(envelope: &[u8], manifest_ref: &str, text: &str) -> Result<Vec<u8>> {
+    frame_attached(ATTACHED_LABEL, envelope, Some((manifest_ref, text)))
+}
+
+/// A sealed register's `envelope` whose surface stated no `manifest_ref`,
+/// with the vault's one current approved manifest attached (CALLS
+/// CUSTODY_MANIFEST_UNSTATED).
+pub(crate) fn attach_current_manifest(
+    envelope: &[u8],
+    manifest_ref: &str,
+    text: &str,
+) -> Result<Vec<u8>> {
+    frame_attached(CURRENT_LABEL, envelope, Some((manifest_ref, text)))
+}
+
+/// A sealed register's `envelope` whose surface stated no `manifest_ref`,
+/// marked as carrying no manifest (CALLS CUSTODY_MANIFEST_UNSTATED).
+pub(crate) fn attach_no_manifest(envelope: &[u8]) -> Result<Vec<u8>> {
+    frame_attached(NO_MANIFEST_LABEL, envelope, None)
+}
+
+/// `label`, the envelope's length and bytes, then the manifest's ref
+/// length, ref and text when there is one; refused past one input's bound.
+fn frame_attached(
+    label: &[u8],
+    envelope: &[u8],
+    manifest: Option<(&str, &str)>,
+) -> Result<Vec<u8>> {
     let too_large = || {
         refused("the sealed input and its manifest are larger than one custody transition carries")
     };
     let envelope_len = u32::try_from(envelope.len()).map_err(|_| too_large())?;
-    let ref_len = u32::try_from(manifest_ref.len()).map_err(|_| too_large())?;
-    let mut out = Vec::with_capacity(
-        ATTACHED_LABEL.len() + 8 + envelope.len() + manifest_ref.len() + text.len(),
-    );
-    out.extend_from_slice(ATTACHED_LABEL);
+    let (manifest_ref, text) = manifest.unwrap_or_default();
+    let mut out =
+        Vec::with_capacity(label.len() + 8 + envelope.len() + manifest_ref.len() + text.len());
+    out.extend_from_slice(label);
     out.extend_from_slice(&envelope_len.to_be_bytes());
     out.extend_from_slice(envelope);
-    out.extend_from_slice(&ref_len.to_be_bytes());
-    out.extend_from_slice(manifest_ref.as_bytes());
-    out.extend_from_slice(text.as_bytes());
+    if manifest.is_some() {
+        let ref_len = u32::try_from(manifest_ref.len()).map_err(|_| too_large())?;
+        out.extend_from_slice(&ref_len.to_be_bytes());
+        out.extend_from_slice(manifest_ref.as_bytes());
+        out.extend_from_slice(text.as_bytes());
+    }
     if out.len() > MAX_INPUT_BYTES {
         return Err(too_large());
     }
     Ok(out)
 }
 
-/// The envelope a kept input holds, and the manifest its recorder attached,
-/// if any; `None` for a malformed attachment.
-pub(crate) fn split_attached(kept: &[u8]) -> Option<(&[u8], Option<AttachedManifest>)> {
-    let Some(rest) = kept.strip_prefix(ATTACHED_LABEL) else {
-        return Some((kept, None));
-    };
+/// The envelope a kept input holds, and what its recorder attached, if
+/// anything; `None` for a malformed attachment.
+pub(crate) fn split_attached(kept: &[u8]) -> Option<(&[u8], Option<Attached>)> {
+    let (rest, kind): (&[u8], fn(AttachedManifest) -> Attached) =
+        if let Some(rest) = kept.strip_prefix(ATTACHED_LABEL) {
+            (rest, Attached::Stated)
+        } else if let Some(rest) = kept.strip_prefix(CURRENT_LABEL) {
+            (rest, Attached::Current)
+        } else if let Some(rest) = kept.strip_prefix(NO_MANIFEST_LABEL) {
+            let (len, envelope) = rest.split_first_chunk::<4>()?;
+            return (usize::try_from(u32::from_be_bytes(*len)).ok()? == envelope.len())
+                .then_some((envelope, Some(Attached::NoManifest)));
+        } else {
+            return Some((kept, None));
+        };
     let (len, rest) = rest.split_first_chunk::<4>()?;
     let (envelope, rest) =
         rest.split_at_checked(usize::try_from(u32::from_be_bytes(*len)).ok()?)?;
@@ -208,7 +269,7 @@ pub(crate) fn split_attached(kept: &[u8]) -> Option<(&[u8], Option<AttachedManif
         manifest_ref: std::str::from_utf8(manifest_ref).ok()?.to_owned(),
         text: std::str::from_utf8(text).ok()?.to_owned(),
     };
-    Some((envelope, Some(attached)))
+    Some((envelope, Some(kind(attached))))
 }
 
 /// The digest a request names of its input: over the ciphertext alone, so

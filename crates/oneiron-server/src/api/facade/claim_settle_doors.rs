@@ -14,7 +14,7 @@ use std::sync::Arc;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{
     ClaimProposalReview, ClaimProposalReviewRequest, ClaimSettleRequest, ClaimSettlement,
-    MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult,
+    MemoryResult,
 };
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EdgeActorClass, EntityId};
@@ -25,13 +25,7 @@ use crate::server::SyncServer;
 
 /// The vault owner's proof from the request, as `/v1/owner` takes it.
 fn owner(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<AuthenticatedOwner> {
-    crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{verb} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })
+    super::owner_binding::facade_owner(server, auth, verb)
 }
 
 /// `vault.claims.review`: one proposed claim and the handle that settles it.
