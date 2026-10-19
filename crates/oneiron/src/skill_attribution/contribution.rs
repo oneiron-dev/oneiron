@@ -7,7 +7,7 @@
 //!
 //! The forks run elsewhere (the Coach's contribution recipe, on a replay
 //! capsule). This module samples the credited runs worth checking
-//! ([`contribution_check_candidates`]), records a finished pair as one
+//! ([`contribution_check_candidates_after`]), records a finished pair as one
 //! immutable check ([`record_contribution_pair`]) and joins it to learning:
 //! an outcome projected later reads the check
 //! ([`super::project_anchored_pack_outcome`]), and an outcome already
@@ -168,16 +168,22 @@ fn joins(credit: &LateCreditReceipt, followed: bool, skill: EntityId) -> bool {
 }
 
 /// Up to `limit` credited runs whose skills a check should measure, in
-/// credit order: a followed skill or the team pattern that has no direct win
-/// and no check yet, sampled at the `contribution_check_rate` setting.
+/// credit order then skill order, strictly after `after` (a credit key and a
+/// skill; `None` is the head): a followed skill or the team pattern that has
+/// no direct win and no check yet, sampled at the `contribution_check_rate`
+/// setting. Each comes with its own credit key and skill, so a pass can resume
+/// after the last one it examined. A position whose credit is gone, or whose
+/// skill that credit no longer names, starts at the head, so no candidate is
+/// skipped.
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub fn contribution_check_candidates(
+pub fn contribution_check_candidates_after(
     vault: &Vault,
+    after: Option<&(String, EntityId)>,
     limit: usize,
-) -> Result<Vec<ContributionCandidate>> {
+) -> Result<Vec<(String, EntityId, ContributionCandidate)>> {
     let rate = crate::learning_setting::setting_value(
         vault,
         &crate::learning_setting::CONTRIBUTION_CHECK_RATE,
@@ -186,16 +192,34 @@ pub fn contribution_check_candidates(
         return Ok(Vec::new());
     }
     let followed = followed_skills(vault)?;
-    let rtxn = vault.store.env.read_txn()?;
-    let mut out = Vec::new();
-    for (_, credit) in CREDIT_RECEIPT.scan_from(&vault.store, &rtxn, &[])? {
-        let run_followed = followed.get(&credit.attempt_receipt);
-        let skills = run_followed
+    let skills_of = |credit: &LateCreditReceipt| {
+        followed
+            .get(&credit.attempt_receipt)
             .into_iter()
             .flatten()
             .copied()
-            .chain([credit.attribution.pattern]);
-        for skill in skills.collect::<BTreeSet<_>>() {
+            .chain([credit.attribution.pattern])
+            .collect::<BTreeSet<_>>()
+    };
+    let rtxn = vault.store.env.read_txn()?;
+    let after = match after {
+        Some((key, skill)) => CREDIT_RECEIPT
+            .get(&vault.store, &rtxn, key)?
+            .filter(|credit| skills_of(credit).contains(skill))
+            .map(|_| (key, *skill)),
+        None => None,
+    };
+    let start = after.map_or(std::ops::Bound::Unbounded, |(key, _)| {
+        std::ops::Bound::Included(key)
+    });
+    let mut out = Vec::new();
+    for row in CREDIT_RECEIPT.iter_range(&vault.store, &rtxn, start, std::ops::Bound::Unbounded)? {
+        let (key, credit) = row?;
+        let run_followed = followed.get(&credit.attempt_receipt);
+        for skill in skills_of(&credit) {
+            if after.is_some_and(|(at, last)| *at == key && skill <= last) {
+                continue;
+            }
             let followed = run_followed.is_some_and(|skills| skills.contains(&skill));
             if !joins(&credit, followed, skill)
                 || !sampled(&credit.attempt_receipt, skill, &credit.axis, rate)
@@ -209,16 +233,20 @@ pub fn contribution_check_candidates(
             {
                 continue;
             }
-            out.push(ContributionCandidate {
-                attempt_receipt: credit.attempt_receipt.clone(),
-                outcome_receipt: credit.outcome_receipt.clone(),
+            out.push((
+                key.clone(),
                 skill,
-                axis: credit.axis.clone(),
-                goal_revision: credit.goal_revision.clone(),
-                anchor: credit.anchor,
-                executor: credit.attribution.executor.clone(),
-                type_ref: credit.attribution.type_ref.clone(),
-            });
+                ContributionCandidate {
+                    attempt_receipt: credit.attempt_receipt.clone(),
+                    outcome_receipt: credit.outcome_receipt.clone(),
+                    skill,
+                    axis: credit.axis.clone(),
+                    goal_revision: credit.goal_revision.clone(),
+                    anchor: credit.anchor,
+                    executor: credit.attribution.executor.clone(),
+                    type_ref: credit.attribution.type_ref.clone(),
+                },
+            ));
             if out.len() >= limit {
                 return Ok(out);
             }
