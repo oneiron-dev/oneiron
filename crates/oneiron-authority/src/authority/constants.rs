@@ -132,6 +132,10 @@ pub const SLIP_KEY_DELEGATION: &str = "delegation";
 /// Present only on a mint whose owner set a reach, so every other slip's
 /// wire form is unchanged.
 pub const SLIP_KEY_COMM: &str = "comm";
+/// The slip a renewal's mint renews (FIX 5481), after the comm key. Present
+/// only on an owner device's renewal, so every other mint's wire form is
+/// unchanged.
+pub const SLIP_KEY_RENEWS: &str = "renews";
 pub const DELEGATION_KEY_PURPOSE: &str = "purpose";
 pub const DELEGATION_KEY_TICKET_REF: &str = "ticket_ref";
 pub const DELEGATION_KEY_OWNER_REF: &str = "owner_ref";

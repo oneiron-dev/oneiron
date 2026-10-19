@@ -4,9 +4,11 @@
 //! The host mints a fresh parentless slip carrying the logged original's
 //! claims and binding key; only the slip id, `issued_at`, `expires_at` and
 //! `ttl_secs` change. It is no attenuation (it extends time, so it is never a
-//! child of the old slip), no new enrolment, key or grant: the authority is
-//! the pairing's own, held by a device that proves on one request both its
-//! holder key and its enrolled machine's install key. The old slip is not
+//! child of the old slip), but its logged mint names the slip it renews
+//! (FIX 5481), so the credential lineage a proposal freezes follows it. It is
+//! no new enrolment, key or grant: the authority is the pairing's own, held
+//! by a device that proves on one request both its holder key and its
+//! enrolled machine's install key. The old slip is not
 //! revoked. It runs out on its own, so a lost reply leaves the device the old
 //! credential to retry with. An expired or revoked slip refuses, with no
 //! grace: that device pairs again.
@@ -288,6 +290,10 @@ impl Vault {
         if ttl_secs == 0 {
             return Err(lifetime());
         }
+        // FIX 5481: the mint names the slip it renews, so the replacement
+        // stays in the original's lineage; still parentless, it narrows
+        // nothing and no revocation of the old slip reaches it.
+        let renews = Some(original.slip_id);
         let claims = SlipClaims {
             slip_id: random_slip_id(),
             parent_id: None,
@@ -297,7 +303,8 @@ impl Vault {
             single_use: false,
             ..original
         };
-        let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
+        let slip =
+            self.mint_slip_action_in_txn(&mut txn, issuer, SlipMintAction { claims, renews })?;
         txn.commit()?;
         Ok(slip)
     }
