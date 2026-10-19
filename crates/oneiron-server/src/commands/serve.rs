@@ -275,6 +275,8 @@ pub fn open_served_vault<H: oneiron_vault_contract::host::Host>(
     if let Err(error) = vault.collect_result_bodies(4096) {
         tracing::warn!(%error, "result body collection at start failed");
     }
+    // Rehearsal scratch a stopped serve left goes before any rehearsal starts (FIX 5677).
+    owner_host.sweep_rehearsals(&vault);
     Ok(OpenedServedVault {
         vault: Arc::new(vault),
         owner_host,

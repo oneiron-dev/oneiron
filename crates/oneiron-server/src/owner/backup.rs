@@ -40,6 +40,7 @@ use crate::machine::DiskFloor;
 mod custody;
 mod rehearse;
 mod restore;
+mod scratch;
 pub(crate) mod write_budget;
 
 pub(crate) use self::custody::{custody_recovery, custody_status, take_publishing};
@@ -55,6 +56,8 @@ pub(crate) use self::restore::{
 };
 #[cfg(test)]
 use self::restore::{exchange, restore_over_syncing};
+#[cfg(unix)]
+pub(crate) use self::scratch::sweep_rehearsals;
 
 const FILE_SUFFIX: &str = ".oneiron-backup";
 const PARTIAL_SUFFIX: &str = ".partial";
@@ -167,10 +170,12 @@ pub(crate) fn take_as(
     let partial = plan
         .dir
         .join(format!(".{}-{stamp}{PARTIAL_SUFFIX}", plan.label));
-    // The artifact claims its room on the floor the plan was lent, and gives
-    // it back once written or refused (FIX 5479).
+    // The artifact claims its room on the floor the plan was lent, and on the
+    // disk of the directory it lands in when that is another, and gives it
+    // back once written or refused (FIX 5479, FIX 5675).
+    let floors = write_budget::landing_floors(plan.floor.as_ref(), &plan.dir);
     let snapshot = vault.ensure_vault_key().and_then(|()| {
-        let room = write_budget::WriteClaim::on(plan.floor.as_ref());
+        let room = write_budget::WriteClaim::on_each(&floors);
         vault.snapshot_backup_within(&partial, vault.now_recorded_at(), owner, &room)
     });
     let checkpoint_id = match snapshot {
