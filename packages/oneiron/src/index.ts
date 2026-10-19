@@ -149,7 +149,7 @@ export class Oneiron {
    */
   static open(path?: string, opts: OpenOptions = {}): Oneiron {
     try {
-      return new Oneiron(NativeClient.open(path, opts.dimensions))
+      return new Oneiron(NativeClient.open(path, opts.dimensions, opts.deviceClass))
     } catch (error) {
       throw translateNativeError(error)
     }
@@ -180,7 +180,12 @@ export class Oneiron {
   ): HostRootOpened {
     let native: NativeClient
     try {
-      native = NativeClient.openWithHostRoot(path, opts.dimensions, hostRootSecret)
+      native = NativeClient.openWithHostRoot(
+        path,
+        opts.dimensions,
+        hostRootSecret,
+        opts.deviceClass,
+      )
     } catch (error) {
       throw translateNativeError(error)
     }

@@ -63,10 +63,17 @@ pub(crate) struct KitStatusView {
     pub(crate) current: Option<String>,
     pub(crate) kits: Vec<KitView>,
     pub(crate) worlds: Vec<WorldView>,
+    /// The pin digest of the checkpoint image this install adopted, hex; none
+    /// when it adopted none.
+    pub(crate) checkpoint_pin: Option<String>,
 }
 
 pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<KitStatusView> {
     let status = vault.world_kit_status()?;
+    let checkpoint_pin = vault
+        .adopted_authority_checkpoint()?
+        .map(|adopted| adopted.pin().digest().map(|digest| hex(&digest)))
+        .transpose()?;
     Ok(KitStatusView {
         vault_id: status.vault_id.map(|id| hex(&id)),
         pinned_root: status.pinned.map(|root| hex(&root.0)),
@@ -80,6 +87,7 @@ pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<KitStatusView> {
                 state,
             })
             .collect(),
+        checkpoint_pin,
     })
 }
 
