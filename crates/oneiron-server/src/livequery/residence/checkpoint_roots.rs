@@ -4,9 +4,11 @@
 //! the roots this home signs as. `attest` takes one root's attestation of a
 //! kept image through the host intake
 //! ([`oneiron::Vault::import_device_checkpoint_attestation`]). `countersign`
-//! has this home's root attest the machine's own image once this home's
-//! fold rebuilds it ([`oneiron::Vault::countersign_authority_checkpoint_for`]),
-//! and answers what it made for the machine's intake. Each serves a live
+//! takes the machine's own image a part at a time
+//! ([`oneiron::Vault::stage_countersign_part`]), has this home's root attest
+//! it once this home's fold rebuilds it
+//! ([`oneiron::Vault::countersign_authority_checkpoint_for`]), and answers
+//! what it made, on the last part, for the machine's intake. Each serves a live
 //! linked machine of the vault only; any other looks missing or refused.
 //! Nothing a machine sends chooses its trust: every root comes from this
 //! vault's own policy, and the home's root signs only what its own fold
@@ -14,7 +16,7 @@
 
 use base64::Engine;
 use oneiron::authority::{
-    AUTHORITY_CHECKPOINT_COUNTERSIGN_MAX, AuthorityCheckpointAttestation,
+    AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, AuthorityCheckpointAttestation,
     CheckpointAttestationIntake, HostSlipIssuer, PeerMachine, RootCheckpointAttest,
 };
 use serde::Deserialize;
@@ -37,11 +39,15 @@ struct AttestRequest {
     attestation: AuthorityCheckpointAttestation,
 }
 
-/// The machine's own image, its canonical bytes in base64.
+/// One part of the machine's own image: the image's id in base64, its whole
+/// length, the part's offset and the part's bytes in base64.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CountersignRequest {
-    image: String,
+    checkpoint: String,
+    total: u64,
+    offset: u64,
+    part: String,
 }
 
 /// Runs `with` on the root this home signs as: the managed issuer, or the
@@ -127,25 +133,38 @@ pub(super) fn countersign(
 ) -> Result<Answer, AppError> {
     let input: CountersignRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    if input.image.len() > AUTHORITY_CHECKPOINT_COUNTERSIGN_MAX.div_ceil(3) * 4 {
+    let id = one_hash(&input.checkpoint)?;
+    if input.part.len() > AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX.div_ceil(3) * 4 {
         return Err(AppError::invalid_params());
     }
-    let image = base64::engine::general_purpose::STANDARD
-        .decode(input.image)
+    let part = base64::engine::general_purpose::STANDARD
+        .decode(input.part)
         .map_err(|_| AppError::invalid_params())?;
-    let made = with_host_root(server, |issuer| match issuer {
-        Some(issuer) => server
+    let attestations = with_host_root(server, |issuer| {
+        // A home with no root countersigns nothing, and holds no part.
+        let Some(issuer) = issuer else {
+            return Ok(Vec::new());
+        };
+        let Some(image) = server
+            .vault
+            .stage_countersign_part(peer, id, input.total, input.offset, &part)
+            .map_err(|_| AppError::bad_request("countersign part refused", Some("part")))?
+        else {
+            return Ok(Vec::new());
+        };
+        let made = server
             .vault
             .countersign_authority_checkpoint_for(peer, &image, issuer)
             .map_err(|_| {
-                AppError::bad_request("authority checkpoint image refused", Some("image"))
-            }),
-        None => Ok(RootCheckpointAttest::Waiting("this home holds no root")),
+                AppError::bad_request("authority checkpoint image refused", Some("part"))
+            })?;
+        Ok(match made {
+            RootCheckpointAttest::Attested { image, attestation } if image == id => {
+                vec![*attestation]
+            }
+            RootCheckpointAttest::Attested { .. } | RootCheckpointAttest::Waiting(_) => Vec::new(),
+        })
     })?;
-    let attestations = match made {
-        RootCheckpointAttest::Attested { attestation, .. } => vec![*attestation],
-        RootCheckpointAttest::Waiting(_) => Vec::new(),
-    };
     let attestations = serde_json::to_value(attestations).map_err(|_| unavailable())?;
     Ok((json!({ "attestations": attestations }), Some(Vec::new())))
 }

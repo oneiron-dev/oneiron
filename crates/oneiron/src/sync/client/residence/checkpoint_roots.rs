@@ -11,12 +11,12 @@
 //!   attestation to the home's intake (`residence.authority.checkpoint.attest`).
 //!   A hosted node, which never dials, has its images attested this way.
 //! - A root the home holds attests this machine's head. When the home signs
-//!   as a root this machine's head awaits, the machine sends the image whole
-//!   (`residence.authority.checkpoint.countersign`); the home checks it
-//!   against its own fold and signs it, and this machine's own intake takes
-//!   what it made ([`Vault::import_device_checkpoint_attestation`]). A host
-//!   that enrolled with the founding install has its images attested this
-//!   way.
+//!   as a root this machine's head awaits, the machine sends the image a
+//!   part at a time (`residence.authority.checkpoint.countersign`); the home
+//!   checks it against its own fold and signs it, and this machine's own
+//!   intake takes what it made ([`Vault::import_device_checkpoint_attestation`]).
+//!   A host that enrolled with the founding install has its images attested
+//!   this way.
 //!
 //! Neither end trusts the other's fold: each signs only what its own fold
 //! rebuilds, and each intake verifies the root again. A wait or a refusal
@@ -32,7 +32,7 @@ use super::authority::fetch_authority_checkpoint;
 use super::{ResidenceRpc, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::{
-    AUTHORITY_CHECKPOINT_COUNTERSIGN_MAX, AuthorityCheckpointAttestation, AuthorityKey,
+    AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, AuthorityCheckpointAttestation, AuthorityKey,
     CheckpointRootSigner, RootCheckpointAttest,
 };
 use crate::sync::client::SyncClientConfig;
@@ -181,10 +181,10 @@ async fn attest_home_head(
     }
 }
 
-/// Asks the home's roots to attest this machine's head `image`, sent whole,
-/// and takes what they made through this machine's own intake, with the home
-/// as the delivering peer. Returns how many it kept. An image past one
-/// request waits for a root that reads it here.
+/// Asks the home's roots to attest this machine's head `image`, sent a
+/// part at a time, and takes what they made, answered on the last part,
+/// through this machine's own intake, with the home as the delivering peer.
+/// Returns how many it kept.
 async fn ask_home_countersign(
     vault: &Arc<Vault>,
     rpc: &mut ResidenceRpc,
@@ -193,23 +193,34 @@ async fn ask_home_countersign(
     let Some(bundle) = vault.authority_checkpoint_bundle(&image).map_err(storage)? else {
         return Ok(0);
     };
-    if bundle.image.len() > AUTHORITY_CHECKPOINT_COUNTERSIGN_MAX {
-        tracing::debug!(
-            bytes = bundle.image.len(),
-            "this machine's checkpoint is past one countersign request"
-        );
-        return Ok(0);
-    }
-    let reply = match rpc
-        .call(
-            "residence.authority.checkpoint.countersign",
-            json!({ "image": base64::engine::general_purpose::STANDARD.encode(bundle.image) }),
-        )
-        .await?
+    let total = bundle.image.len() as u64;
+    let mut offset = 0_u64;
+    let mut last = None;
+    for part in bundle
+        .image
+        .chunks(AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX)
     {
-        Ok(reply) => serde_json::from_value::<CountersignReply>(reply).map_err(|_| refused())?,
-        Err(_) => return Ok(0),
+        let reply = rpc
+            .call(
+                "residence.authority.checkpoint.countersign",
+                json!({
+                    "checkpoint": base64::engine::general_purpose::STANDARD.encode(image),
+                    "total": total,
+                    "offset": offset,
+                    "part": base64::engine::general_purpose::STANDARD.encode(part),
+                }),
+            )
+            .await?;
+        let Ok(reply) = reply else {
+            return Ok(0);
+        };
+        offset += part.len() as u64;
+        last = Some(reply);
+    }
+    let Some(reply) = last else {
+        return Ok(0);
     };
+    let reply: CountersignReply = serde_json::from_value(reply).map_err(|_| refused())?;
     if reply.attestations.len() > COUNTERSIGN_REPLY_MAX {
         return Err(refused());
     }

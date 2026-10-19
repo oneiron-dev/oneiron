@@ -34,6 +34,13 @@ impl WorldKeyFrontierCheck {
     pub const KIND: &'static str = "world_key_frontier_wide";
 }
 
+/// One image a linked machine sends in parts, as far as it came.
+pub(crate) struct CountersignStage {
+    pub(crate) image: [u8; 32],
+    pub(crate) total: u64,
+    pub(crate) bytes: Vec<u8>,
+}
+
 /// The vault handle's world-key state. Never persisted and never shared
 /// across vaults; the opened keys are wiped when the handle drops.
 #[derive(Default)]
@@ -50,6 +57,9 @@ pub(crate) struct WorldKeySession {
     pub(crate) vault_key: Mutex<Option<Arc<super::vault_key::VaultDataKey>>>,
     /// The checkpoint root signers the host holds here (FIX 4882).
     pub(crate) checkpoint_roots: Mutex<Vec<Arc<dyn crate::authority::CheckpointRootSigner>>>,
+    /// The image each linked machine is sending this home in parts to
+    /// countersign (FIX 4882), until it is whole.
+    pub(crate) checkpoint_countersign: Mutex<BTreeMap<EntityId, CountersignStage>>,
     /// Each world's question, at its latest crossing.
     frontier: Mutex<BTreeMap<EntityId, WorldKeyFrontierCheck>>,
     /// Held while a sealed window's mirror is read, extended and written back.

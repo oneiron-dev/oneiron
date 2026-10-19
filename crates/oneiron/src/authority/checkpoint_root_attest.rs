@@ -26,6 +26,7 @@
 //! to the writing host, which verifies it again.
 
 use std::collections::BTreeSet;
+use std::collections::btree_map::Entry;
 use std::sync::{Arc, PoisonError};
 
 use super::checkpoint_attest::{KEY_BINDINGS, attest_refused, root_row_key};
@@ -35,10 +36,10 @@ use super::*;
 use crate::Vault;
 use crate::error::{Error, Result};
 
-/// The largest image a machine asks its home to countersign in one request:
-/// inside the home's inbound frame once base64 and the RPC envelope are added.
-/// A larger image waits for a root that reads it from its writer.
-pub const AUTHORITY_CHECKPOINT_COUNTERSIGN_MAX: usize = 2 * 1024 * 1024;
+/// The most image bytes one countersign part carries: inside the home's
+/// inbound frame once base64 and the RPC envelope are added. An image goes in
+/// as many parts as it takes, up to the image's own size cap.
+pub const AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX: usize = 2 * 1024 * 1024;
 
 const WAIT_NOT_COUNTED: &str = "the image's root policy is not the one this vault counts now";
 const WAIT_NOT_A_ROOT: &str = "this root is not a root of the image's policy";
@@ -215,6 +216,69 @@ impl Vault {
         self.attest_checkpoint_image_as_root(image, signer)
     }
 
+    /// Takes part `part` at `offset` of image `image`, `total` bytes long,
+    /// that the linked machine `peer` sends this home to countersign (FIX
+    /// 4882). The parts are held in memory on this handle, one image per
+    /// machine, and a part at offset zero starts it again. Returns the
+    /// image's bytes once whole. Refused for any other peer, a part that is
+    /// not the next one, and a length past the image size cap.
+    pub fn stage_countersign_part(
+        &self,
+        peer: PeerMachine,
+        image: [u8; 32],
+        total: u64,
+        offset: u64,
+        part: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        {
+            let txn = self.store.env.read_txn()?;
+            if !linked_machine(&self.authority_fold_readonly_in_txn(&txn)?, peer) {
+                return Err(peer_refused());
+            }
+        }
+        let PeerMachine::Proven { machine, .. } = peer else {
+            return Err(peer_refused());
+        };
+        let end = offset.saturating_add(part.len() as u64);
+        if part.is_empty()
+            || part.len() > AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX
+            || end > total
+            || total > AUTHORITY_CHECKPOINT_V2_MAX_BYTES as u64
+        {
+            return Err(attest_refused("the countersign part is malformed"));
+        }
+        let mut stages = self
+            .world_keys
+            .checkpoint_countersign
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if offset == 0 {
+            stages.insert(
+                machine,
+                crate::world_keys::CountersignStage {
+                    image,
+                    total,
+                    bytes: Vec::new(),
+                },
+            );
+        }
+        match stages.entry(machine) {
+            Entry::Occupied(mut held)
+                if held.get().image == image
+                    && held.get().total == total
+                    && held.get().bytes.len() as u64 == offset =>
+            {
+                held.get_mut().bytes.extend_from_slice(part);
+                Ok((end == total).then(|| held.remove().bytes))
+            }
+            Entry::Occupied(held) => {
+                held.remove();
+                Err(attest_refused("the countersign part is not the next one"))
+            }
+            Entry::Vacant(_) => Err(attest_refused("the countersign part is not the next one")),
+        }
+    }
+
     /// Why `root` may not sign `candidate`, whose canonical bytes are
     /// `bytes`, now; `None` when it may.
     fn root_checkpoint_wait_in_txn(
@@ -225,10 +289,9 @@ impl Vault {
         root: &AuthorityKey,
     ) -> Result<Option<&'static str>> {
         let posture = candidate.aggregate.posture;
+        let view = self.authority_view_readonly_in_txn(txn)?;
         // A policy the roster cannot fix under that posture counts nothing.
-        let Ok(counted) =
-            checkpoint_root_policy_of(&self.authority_view_readonly_in_txn(txn)?, posture)
-        else {
+        let Ok(counted) = checkpoint_root_policy_of(&view, posture) else {
             return Ok(Some(WAIT_NOT_COUNTED));
         };
         if !ROOT_CHECKPOINT_AUTHORITY.signs_under(&counted, &candidate.root_policy) {

@@ -776,6 +776,7 @@ impl Vault {
         )?
         .into_iter()
         .collect();
+        let view = self.authority_view_readonly_in_txn(txn)?;
         let unresolved = AuthorityCheckpointUnresolved {
             held: uncovered.into_iter().collect(),
             missing: missing.into_iter().collect(),
@@ -821,10 +822,7 @@ impl Vault {
             safety,
             unresolved,
             archive_manifests,
-            root_policy: super::checkpoint_policy::checkpoint_root_policy_of(
-                &self.authority_view_readonly_in_txn(txn)?,
-                posture,
-            )?,
+            root_policy: super::checkpoint_policy::checkpoint_root_policy_of(&view, posture)?,
             building_pin: pin,
             parent: None,
         };

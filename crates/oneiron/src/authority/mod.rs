@@ -189,7 +189,7 @@ pub use checkpoint_image::*;
 pub use checkpoint_policy::*;
 pub use checkpoint_policy_choice::CheckpointPolicyView;
 pub use checkpoint_root_attest::{
-    AUTHORITY_CHECKPOINT_COUNTERSIGN_MAX, CheckpointRootSigner, ROOT_CHECKPOINT_AUTHORITY,
+    AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, CheckpointRootSigner, ROOT_CHECKPOINT_AUTHORITY,
     ROOT_CHECKPOINT_PICKUP, RootCheckpointAttest, RootCheckpointAuthority, RootCheckpointPickup,
 };
 pub use checkpoint_root_intake::{

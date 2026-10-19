@@ -294,8 +294,7 @@ impl SyncServer {
         let issuer = Arc::new(oneiron::authority::HostSlipIssuer::from_secret(
             secret.as_bytes(),
         )?);
-        self.vault()
-            .hold_checkpoint_root_signer(Arc::clone(&issuer));
+        self.vault().hold_checkpoint_root_signer(issuer.clone());
         self.vault().upkeep_authority_checkpoint(&issuer)
     }
 
