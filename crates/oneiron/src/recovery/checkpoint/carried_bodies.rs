@@ -8,8 +8,9 @@
 //!
 //! A sealed vault's file is carried as it rests, its envelope's ciphertext,
 //! each frame checked as the artifact reads it; the image names it by the
-//! body's BLAKE3 and length and its instance, and the artifact's manifest by
-//! its stored length and BLAKE3. Its key row travels with the canonical rows,
+//! body's BLAKE3 and length and, beside them, its instance and stored length,
+//! and the artifact's manifest by its stored length and BLAKE3. A plain
+//! vault's image is as it was. Its key row travels with the canonical rows,
 //! wrapped: the image holds no key and no sidecar. A restore opens the key
 //! rows with the checkpoint's key before any file lands, and checks every
 //! frame and its binding before the rows commit: a sealed vault takes the
@@ -28,37 +29,36 @@ use super::{CheckpointImage, codec_error};
 use crate::store::{BODY_KEYS, BodyDir, BodyKeyRow, KeyScope, SealedStream, Store};
 use crate::{Error, Result, Vault};
 
-/// One body file an image carries: the body's BLAKE3 and length, and a
-/// sealed vault's file's envelope.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ImageBody {
-    pub(super) digest: [u8; 32],
-    pub(super) len: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) sealed: Option<SealedFile>,
-}
-
-/// A carried envelope: its instance, and its length as it rests.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// A carried envelope: its instance, and its length as it rests. The image
+/// names it by its place among the bodies, whose BLAKE3 and length are the
+/// body's own; a plain vault's image names none, so its format is as before.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SealedFile {
     pub(super) instance: [u8; 16],
     pub(super) stored_len: u64,
 }
 
-/// Whether the bodies an image names are the streams its artifact's
-/// manifest carries, in order: a plain body's own BLAKE3 and length, an
-/// envelope's length as it rests.
-pub(super) fn matches_artifact(image: &[ImageBody], streams: &[([u8; 32], u64)]) -> bool {
-    image.len() == streams.len()
-        && image
+/// Whether the bodies an image names, `sealed` of them envelopes, are the
+/// streams its artifact's manifest carries, in order: a plain body's own
+/// BLAKE3 and length, an envelope's length as it rests.
+pub(super) fn matches_artifact(
+    bodies: &[([u8; 32], u64)],
+    sealed: &BTreeMap<u64, SealedFile>,
+    streams: &[([u8; 32], u64)],
+) -> bool {
+    bodies.len() == streams.len()
+        && sealed.keys().all(|index| *index < bodies.len() as u64)
+        && bodies
             .iter()
             .zip(streams)
-            .all(|(body, (digest, len))| match &body.sealed {
-                None => body.digest == *digest && body.len == *len,
-                Some(sealed) => sealed.stored_len == *len,
-            })
+            .enumerate()
+            .all(
+                |(index, (body, stream))| match sealed.get(&(index as u64)) {
+                    None => body == stream,
+                    Some(file) => file.stored_len == stream.1,
+                },
+            )
 }
 
 /// The key row a raw `vault_meta` row is, by its digest.
@@ -132,23 +132,23 @@ impl BodyCensus {
         } else {
             Some(store.body_dir()?)
         };
-        let mut bodies = Vec::with_capacity(self.bodies.len());
-        for (digest, len) in self.bodies {
-            let sealed = match (self.keys.get(&digest), &dir) {
-                (Some(row), Some(dir)) => Some(SealedFile {
+        let bodies: Vec<_> = self.bodies.into_iter().collect();
+        let mut sealed = BTreeMap::new();
+        for (index, (digest, len)) in bodies.iter().enumerate() {
+            // A key row whose file is not there names no envelope.
+            if let (Some(row), Some(dir)) = (self.keys.get(digest), &dir)
+                && dir.holds_pair(digest, Some(row))?
+            {
+                let file = SealedFile {
                     instance: row.instance,
-                    stored_len: open_stored(dir, &digest, len, Some(row))?.stored_len()?,
-                }),
-                _ => None,
-            };
-            bodies.push(ImageBody {
-                digest,
-                len,
-                sealed,
-            });
+                    stored_len: open_stored(dir, digest, *len, Some(row))?.stored_len()?,
+                };
+                sealed.insert(index as u64, file);
+            }
         }
         Ok(CarriedFiles {
             bodies,
+            sealed,
             keys: self.keys,
             dir,
         })
@@ -168,15 +168,17 @@ fn open_stored(
 
 /// The files a snapshot carries, ready for its artifact.
 pub(super) struct CarriedFiles {
-    bodies: Vec<ImageBody>,
+    bodies: Vec<([u8; 32], u64)>,
+    sealed: BTreeMap<u64, SealedFile>,
     keys: BTreeMap<[u8; 32], BodyKeyRow>,
     dir: Option<BodyDir>,
 }
 
 impl CarriedFiles {
-    /// What the image names.
-    pub(super) fn image_bodies(&self) -> Vec<ImageBody> {
-        self.bodies.clone()
+    /// What the image names: each body's BLAKE3 and length, and the
+    /// envelopes among them.
+    pub(super) fn image_bodies(&self) -> (Vec<([u8; 32], u64)>, BTreeMap<u64, SealedFile>) {
+        (self.bodies.clone(), self.sealed.clone())
     }
 
     /// What each stream the artifact carries must be: a plain body's own
@@ -185,16 +187,19 @@ impl CarriedFiles {
     pub(super) fn streams(&self) -> Vec<ArtifactBody> {
         self.bodies
             .iter()
-            .map(|body| match &body.sealed {
-                None => ArtifactBody {
-                    len: body.len,
-                    digest: Some(body.digest),
+            .enumerate()
+            .map(
+                |(index, (digest, len))| match self.sealed.get(&(index as u64)) {
+                    None => ArtifactBody {
+                        len: *len,
+                        digest: Some(*digest),
+                    },
+                    Some(file) => ArtifactBody {
+                        len: file.stored_len,
+                        digest: None,
+                    },
                 },
-                Some(sealed) => ArtifactBody {
-                    len: sealed.stored_len,
-                    digest: None,
-                },
-            })
+            )
             .collect()
     }
 
@@ -204,15 +209,15 @@ impl CarriedFiles {
     ///
     /// As [`BodyCensus::finish`].
     pub(super) fn open(&self, index: usize) -> Result<Box<dyn Read + Send>> {
-        let (Some(body), Some(dir)) = (self.bodies.get(index), &self.dir) else {
+        let (Some((digest, len)), Some(dir)) = (self.bodies.get(index), &self.dir) else {
             return Err(codec_error());
         };
-        let row = body
+        let row = self
             .sealed
-            .as_ref()
-            .map(|_| self.keys.get(&body.digest).ok_or_else(codec_error))
+            .get(&(index as u64))
+            .map(|_| self.keys.get(digest).ok_or_else(codec_error))
             .transpose()?;
-        Ok(open_stored(dir, &body.digest, body.len, row)?.into_stored())
+        Ok(open_stored(dir, digest, *len, row)?.into_stored())
     }
 }
 
@@ -250,37 +255,37 @@ pub(super) fn restore(
         }
     }
     let mut sealed_here = Vec::new();
-    for (index, body) in image.bodies.iter().enumerate() {
-        let lines = results.contains(&body.digest);
+    for (index, (digest, len)) in image.bodies.iter().enumerate() {
+        let lines = results.contains(digest);
         let source = bodies.body(index);
-        let Some(carried) = &body.sealed else {
+        let Some(carried) = image.sealed_bodies.get(&(index as u64)) else {
             let mut source = source;
             if target.sealed.is_some() {
-                let staged = target.import_sealing(&body.digest, body.len, &mut source, lines)?;
+                let staged = target.import_sealing(digest, *len, &mut source, lines)?;
                 sealed_here.push((
-                    BODY_KEYS.key_bytes(&body.digest),
+                    BODY_KEYS.key_bytes(digest),
                     BODY_KEYS.encode_value(staged.row())?,
                 ));
             } else if lines {
-                target.import(&body.digest, body.len, &mut source)?;
+                target.import(digest, *len, &mut source)?;
             } else {
-                target.import_asset_body(&body.digest, body.len, &mut source)?;
+                target.import_asset_body(digest, *len, &mut source)?;
             }
             continue;
         };
         let row = keys
-            .get(&body.digest)
-            .filter(|row| row.instance == carried.instance && row.len == body.len)
+            .get(digest)
+            .filter(|row| row.instance == carried.instance && row.len == *len)
             .ok_or_else(codec_error)?;
-        let key = row.open_under(&body.digest, &seal, KeyScope::Vault)?;
+        let key = row.open_under(digest, &seal, KeyScope::Vault)?;
         if target.sealed.is_some() {
-            target.import_sealed(&body.digest, body.len, source, key, lines)?;
+            target.import_sealed(digest, *len, source, key, lines)?;
         } else {
-            let mut plain = SealedStream::plaintext(source, key, body.digest, body.len);
+            let mut plain = SealedStream::plaintext(source, key, *digest, *len);
             if lines {
-                target.import(&body.digest, body.len, &mut plain)?;
+                target.import(digest, *len, &mut plain)?;
             } else {
-                target.import_asset_body(&body.digest, body.len, &mut plain)?;
+                target.import_asset_body(digest, *len, &mut plain)?;
             }
         }
     }

@@ -60,9 +60,12 @@ struct CheckpointImage {
     version: u16,
     created_at: u64,
     databases: BTreeMap<String, CanonicalRows>,
-    /// Each body file the rows name: its BLAKE3 and length, and a sealed
-    /// vault's file's envelope.
-    bodies: Vec<carried_bodies::ImageBody>,
+    /// Each body file the rows name: its BLAKE3 and length.
+    bodies: Vec<([u8; 32], u64)>,
+    /// The envelopes among them, by their place in `bodies`: a sealed
+    /// vault's files (FIX 5348). A plain vault's image names none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    sealed_bodies: BTreeMap<u64, carried_bodies::SealedFile>,
 }
 
 impl CheckpointImage {
@@ -264,7 +267,11 @@ fn read_image<'k>(
     let image: CheckpointImage = rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
     if image.version != 2
         || image.created_at != opened.created_at
-        || !carried_bodies::matches_artifact(&image.bodies, &opened.bodies.list())
+        || !carried_bodies::matches_artifact(
+            &image.bodies,
+            &image.sealed_bodies,
+            &opened.bodies.list(),
+        )
         || image.databases.len() != DB_MANIFEST.len()
         || DB_MANIFEST
             .iter()
@@ -473,11 +480,13 @@ impl Vault {
         // same after its transaction. Each is sealed into the artifact after
         // the image, and never lands anywhere in the clear.
         let files = census.finish(&self.store)?;
+        let (bodies, sealed_bodies) = files.image_bodies();
         let image = CheckpointImage {
             version: 2,
             created_at,
             databases,
-            bodies: files.image_bodies(),
+            bodies,
+            sealed_bodies,
         };
         let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
         let (id, head) = artifact::write_artifact(
