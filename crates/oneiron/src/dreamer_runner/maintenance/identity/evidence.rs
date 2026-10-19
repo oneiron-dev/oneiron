@@ -109,6 +109,34 @@ pub(super) fn record_in_txn(
     )
 }
 
+/// Drops the resolution a Dreamer settle of `ask` as `target` recorded at
+/// `resolved_at`, for the owner's revert of that settle (FIX 3327); one an
+/// owner's answer or a later settle wrote since is left as it is. True when
+/// it dropped it.
+pub(super) fn clear_settle_resolution_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    ask: &IdentityAsk,
+    target: EntityId,
+    resolved_at: u64,
+) -> Result<bool> {
+    let key = (
+        ask.turn,
+        ask_key(&ask.turn, &ask.message, ask.start, ask.end),
+    );
+    let ours = RESOLUTIONS
+        .get(&vault.store, txn, &key)?
+        .is_some_and(|resolution| {
+            resolution.target_ref == target.to_hex()
+                && resolution.resolved_at == resolved_at
+                && resolution.owner_ref.is_none()
+        });
+    if ours {
+        RESOLUTIONS.delete(&vault.store, txn, &key)?;
+    }
+    Ok(ours)
+}
+
 pub(super) fn prove_owner_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

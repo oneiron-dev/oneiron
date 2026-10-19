@@ -3,10 +3,14 @@
 //! effect, its finding at Auto, one typed inverse row and one Gate receipt
 //! together; the owner reverts it through [`Vault::revert_dreamer_maintenance`].
 //! A background identity abstention lands no finding: its row and receipt
-//! name the identity ask it kept provisional. A project's team-shape fork the
-//! Coach put in force (OF-420) lands no finding either: its row and receipt
-//! name the project and the fork, and its revert takes the fork off the
-//! project. The Coach's other findings and the Healer's keep the run tray.
+//! name the identity ask it kept provisional. Nor does a background identity
+//! settle (a saved hint's pick or a decision's choice, FIX 3327): its row and
+//! receipt name the mention's ask key. A project's team-shape fork the Coach
+//! put in force (OF-420) lands no finding either: its row and receipt name
+//! the project and the fork, and its revert takes the fork off the project.
+//! The Coach's other findings and the Healer's keep the run tray. A curator
+//! rung the owner approved in the run tray applies once, as the Dreamer, with
+//! its row and receipt here too (FIX 3223).
 //!
 //! A kind is one `MaintenanceInverse` variant carrying the before-state its
 //! effect changed, one arm in `MaintenanceInverse::label` and one arm in
@@ -28,6 +32,8 @@ pub const MAINTENANCE_APPLY_KIND: &str = "dreamer_maintenance_apply";
 /// The Gate receipt a background identity abstention leaves when it keeps
 /// the names separate for now.
 pub const IDENTITY_PROVISIONAL_KIND: &str = "dreamer_identity_provisional";
+/// The Gate receipt a background identity settle leaves (FIX 3327).
+const IDENTITY_SETTLE_KIND: &str = "dreamer_identity_settle";
 /// The Gate receipt the owner's revert of one leaves.
 pub const MAINTENANCE_REVERT_KIND: &str = "dreamer_maintenance_revert";
 // The ledger takes only `gate.` reason codes.
@@ -35,13 +41,15 @@ const APPLY_REASON: &str = "gate.dreamer.maintenance_applied";
 const REVERT_REASON: &str = "gate.dreamer.maintenance_reverted";
 
 /// What one applied write is filed under: the finding it landed, the
-/// identity ask a background abstention kept provisional, or the project
-/// tree fork the Coach put in force; the last two have no finding claim.
+/// identity ask a background abstention kept provisional or a background
+/// settle decided, or the project tree fork the Coach put in force; the last
+/// two have no finding claim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MaintenanceTarget {
     Finding(EntityId),
-    /// The ask's key, the 64 hex `/v1/owner/identity/asks` lists.
+    /// The ask's key, the 64 hex `/v1/owner/identity/asks` lists while it
+    /// is open; a settle's names the mention as its ask would.
     IdentityAsk([u8; 32]),
     /// A project and the team-shape fork put in force for it.
     ProjectTreeFork {
@@ -129,13 +137,18 @@ pub(super) enum MaintenanceInverse {
     /// The shared digest cadence and presentation rows.
     ProactivityPolicy(Box<digest::ProactivityPolicyInverse>),
     /// A stewardship reach-out: the revert also drops its draft marker and
-    /// withdraws each follow-up plan drafted from it.
+    /// withdraws each follow-up plan drafted from it, closing each one's
+    /// applied row with it.
     ReachOut,
     /// A follow-up plan saved for the owner's send review: the revert
     /// retracts it, which stops any send of it not yet made.
     RepresentationPlan,
     /// A background identity abstention: the ask as it stood before.
     IdentityProvisional(Box<identity::ProvisionalInverse>),
+    /// A background identity settle: the mention, the provisional entities
+    /// and the hint it changed, and the distinct assertions it made, as they
+    /// stood before and after.
+    IdentitySettle(Box<identity::SettleInverse>),
     /// A project's team-shape fork put in force: the revert takes it off the
     /// project's skill forks, and the fork's record stays.
     ProjectTreeFork { project: EntityId, fork: EntityId },
@@ -151,6 +164,7 @@ impl MaintenanceInverse {
             Self::ReachOut => "reach_out",
             Self::RepresentationPlan => "representation_plan",
             Self::IdentityProvisional(_) => "identity_provisional",
+            Self::IdentitySettle(_) => "identity_settle",
             Self::ProjectTreeFork { .. } => "project_tree_fork",
         }
     }
@@ -174,6 +188,9 @@ impl MaintenanceInverse {
             Self::ReachOut => stewardship::revert_reach_out_in_txn(vault, txn, owner, now, out),
             Self::IdentityProvisional(inverse) => {
                 identity::revert_provisional_in_txn(vault, txn, inverse, now, out)
+            }
+            Self::IdentitySettle(inverse) => {
+                identity::revert_settle_in_txn(vault, txn, inverse, owner, now, out)
             }
             Self::ProjectTreeFork { project, fork } => {
                 revert_project_tree_fork_in_txn(vault, txn, *project, *fork, now, out)
@@ -206,13 +223,15 @@ fn revert_project_tree_fork_in_txn(
 #[serde(deny_unknown_fields)]
 struct AppliedRow {
     inverse: MaintenanceInverse,
-    /// The attempt that wrote it; none for an identity abstention, which the
-    /// host's decision loop records.
+    /// The attempt that wrote it; none for an identity abstention or settle,
+    /// which the host's decision loop or the nightly pass records, or for an
+    /// approved curator rung the owner's consent applied.
     attempt: Option<AttemptId>,
     facet: String,
-    /// The BLAKE3 of the finding's body as it landed; none for an identity
-    /// abstention, whose inverse holds the ask it left, or a project tree
-    /// fork, whose inverse names the fork.
+    /// The BLAKE3 of the finding's body as it landed (an approved one's as
+    /// approved); none for an identity abstention or settle, whose inverse
+    /// holds the ask or mention it left, or a project tree fork, whose
+    /// inverse names the fork.
     finding_revision: Option<[u8; 32]>,
     applied_at: u64,
     receipt: GateDecisionId,
@@ -224,10 +243,12 @@ struct AppliedRow {
 pub struct AppliedMaintenance {
     pub target: MaintenanceTarget,
     /// `finding`, `curator`, `proactivity_policy`, `reach_out`,
-    /// `representation_plan`, `identity_provisional` or `project_tree_fork`.
+    /// `representation_plan`, `identity_provisional`, `identity_settle` or
+    /// `project_tree_fork`.
     pub kind: &'static str,
     pub facet: String,
-    /// The attempt that wrote it, as 32 hex; none for an identity abstention.
+    /// The attempt that wrote it, as 32 hex; none for an identity abstention
+    /// or settle, or a curator rung the owner's consent applied.
     pub attempt: Option<String>,
     pub applied_at: u64,
     pub receipt_ref: String,
@@ -240,7 +261,9 @@ pub struct AppliedMaintenance {
 /// (record, copy), the outputs the write made that the revert closed, the
 /// settings rows put back, the identity asks put to the owner (64 hex), and
 /// what a later write changed, left as it is (a record's 32-hex id, an ask's
-/// 64 hex or a settings row's name).
+/// or a mention's 64 hex, or a settings row's name), or what no revert takes
+/// back (a person a settle confirmed). A write closed by its parent's revert
+/// names that parent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MaintenanceRevert {
@@ -252,6 +275,11 @@ pub struct MaintenanceRevert {
     pub asked: Vec<String>,
     pub left_alone: Vec<String>,
     pub receipt_ref: String,
+    /// The applied write whose revert closed this one with it (a reach-out
+    /// whose revert withdrew this follow-up plan, FIX 3329); none for the
+    /// owner's own revert of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<MaintenanceTarget>,
 }
 
 /// The BLAKE3 of a claim's body as it stands; `None` when it is gone.
@@ -278,6 +306,16 @@ pub(super) fn standing_in_txn(
         .is_some_and(|row| row.reverted.is_none()))
 }
 
+/// Whether `finding` has an applied row, standing or reverted: an approved
+/// finding applies once (FIX 3223).
+pub(super) fn recorded_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    finding: EntityId,
+) -> Result<bool> {
+    APPLIED.contains(&vault.store, txn, &MaintenanceTarget::Finding(finding))
+}
+
 /// Records one applied write in its own transaction: the inverse row and the
 /// Dreamer's receipt naming the finding and the revision it landed at.
 #[expect(
@@ -289,6 +327,53 @@ pub(super) fn record_in_txn(
     txn: &mut heed::RwTxn<'_>,
     finding: EntityId,
     attempt: AttemptId,
+    facet: &str,
+    actor: WriteActor,
+    inverse: MaintenanceInverse,
+    now: u64,
+) -> Result<()> {
+    record_finding_in_txn(
+        vault,
+        txn,
+        finding,
+        Some(attempt),
+        facet,
+        actor,
+        inverse,
+        now,
+    )
+}
+
+/// [`record_in_txn`] for a finding the owner approved in the run tray before
+/// its effect applied (FIX 3223): the receipt names the approved revision.
+/// `attempt` is the curator pass that applied it; none when the owner's
+/// consent applied it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one approved finding's attempt, facet, writer and inverse"
+)]
+pub(super) fn record_approved_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    finding: EntityId,
+    attempt: Option<AttemptId>,
+    facet: &str,
+    actor: WriteActor,
+    inverse: MaintenanceInverse,
+    now: u64,
+) -> Result<()> {
+    record_finding_in_txn(vault, txn, finding, attempt, facet, actor, inverse, now)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one applied finding's attempt, facet, writer and inverse"
+)]
+fn record_finding_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    finding: EntityId,
+    attempt: Option<AttemptId>,
     facet: &str,
     actor: WriteActor,
     inverse: MaintenanceInverse,
@@ -316,7 +401,7 @@ pub(super) fn record_in_txn(
         &target,
         &AppliedRow {
             inverse,
-            attempt: Some(attempt),
+            attempt,
             facet: facet.to_owned(),
             finding_revision: Some(finding_revision),
             applied_at: now,
@@ -326,10 +411,11 @@ pub(super) fn record_in_txn(
     )
 }
 
-/// Records one background identity abstention in its transaction: the
-/// inverse row under the ask and the Dreamer's receipt naming the ask. A
-/// later abstention on the same ask (its candidates changed and it was
-/// decided again) takes the row over; the ledger keeps every receipt.
+/// Records one background identity abstention or settle in its transaction:
+/// the inverse row under the ask (a settle's mention keys it as its ask
+/// would) and the Dreamer's receipt naming it. A later abstention or settle
+/// on the same key (its candidates or tags changed and it was decided again)
+/// takes the row over; the ledger keeps every receipt.
 pub(super) fn record_disposition_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -340,14 +426,11 @@ pub(super) fn record_disposition_in_txn(
     now: u64,
 ) -> Result<()> {
     let target = MaintenanceTarget::IdentityAsk(ask);
-    let mut receipt = decision(
-        actor,
-        IDENTITY_PROVISIONAL_KIND,
-        APPLY_REASON,
-        target,
-        ask.to_vec(),
-        now,
-    );
+    let kind = match inverse {
+        MaintenanceInverse::IdentitySettle(_) => IDENTITY_SETTLE_KIND,
+        _ => IDENTITY_PROVISIONAL_KIND,
+    };
+    let mut receipt = decision(actor, kind, APPLY_REASON, target, ask.to_vec(), now);
     vault
         .store
         .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
@@ -435,6 +518,90 @@ pub(super) fn reverted_project_tree_forks_in_txn(
     Ok(reverted)
 }
 
+/// Closes the applied row of `child`, a write the revert of `parent` just
+/// withdrew (a follow-up plan drafted from a reverted reach-out, FIX 3329),
+/// in that revert's transaction: the row keeps a revert naming `parent` and
+/// listing `child` as closed, under `owner`'s own receipt, whose handle is
+/// the child's apply receipt then the parent's. The owner's list shows it
+/// reverted, and a later revert of it returns this one. A row already
+/// reverted, or none, is left as it is.
+pub(super) fn close_with_parent_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    child: EntityId,
+    parent: MaintenanceTarget,
+    owner: WriteActor,
+    now: u64,
+) -> Result<()> {
+    let target = MaintenanceTarget::Finding(child);
+    let Some(mut row) = APPLIED.get(&vault.store, &*txn, &target)? else {
+        return Ok(());
+    };
+    if row.reverted.is_some() {
+        return Ok(());
+    }
+    let parent_row = APPLIED
+        .get(&vault.store, &*txn, &parent)?
+        .ok_or_else(invalid)?;
+    let mut handle = row.receipt.as_bytes().to_vec();
+    handle.extend_from_slice(&parent_row.receipt.as_bytes());
+    let mut receipt = decision(
+        owner,
+        MAINTENANCE_REVERT_KIND,
+        REVERT_REASON,
+        target,
+        handle,
+        now,
+    );
+    vault
+        .store
+        .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+    row.reverted = Some(MaintenanceRevert {
+        target,
+        restored: Vec::new(),
+        copied: Vec::new(),
+        closed: vec![child],
+        settings: Vec::new(),
+        asked: Vec::new(),
+        left_alone: Vec::new(),
+        receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
+        parent: Some(parent),
+    });
+    APPLIED.put(&vault.store, txn, &target, &row)
+}
+
+/// The applied writes the owner has not reverted, as the owner's list shows
+/// them, oldest first: what the digest's after-notice reads (FIX 3226).
+pub(super) fn standing_list_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<AppliedMaintenance>> {
+    let mut standing = Vec::new();
+    for row in APPLIED.iter_from(&vault.store, txn, &[])? {
+        let (target, row) = row?;
+        if row.reverted.is_none() {
+            standing.push(listed(target, row));
+        }
+    }
+    standing.sort_by_key(|row| (row.applied_at, row.target));
+    Ok(standing)
+}
+
+/// One row as the owner's list shows it.
+fn listed(target: MaintenanceTarget, row: AppliedRow) -> AppliedMaintenance {
+    AppliedMaintenance {
+        target,
+        kind: row.inverse.label(),
+        facet: row.facet,
+        attempt: row
+            .attempt
+            .map(|attempt| crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())),
+        applied_at: row.applied_at,
+        receipt_ref: format!("gate:{}", row.receipt.to_hex()),
+        reverted: row.reverted,
+    }
+}
+
 /// One approved Gate receipt by `actor`, naming `target`'s claim when it is
 /// a finding; `diff_handle` is never empty.
 pub(super) fn decision(
@@ -478,17 +645,7 @@ impl Vault {
         let mut applied = Vec::new();
         for row in APPLIED.iter_from(&self.store, &txn, &[])? {
             let (target, row) = row?;
-            applied.push(AppliedMaintenance {
-                target,
-                kind: row.inverse.label(),
-                facet: row.facet,
-                attempt: row
-                    .attempt
-                    .map(|attempt| crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())),
-                applied_at: row.applied_at,
-                receipt_ref: format!("gate:{}", row.receipt.to_hex()),
-                reverted: row.reverted,
-            });
+            applied.push(listed(target, row));
         }
         applied.sort_by_key(|row| std::cmp::Reverse((row.applied_at, row.target)));
         applied.truncate(limit);
@@ -525,6 +682,7 @@ impl Vault {
                 asked: Vec::new(),
                 left_alone: Vec::new(),
                 receipt_ref: String::new(),
+                parent: None,
             };
             row.inverse
                 .revert_in_txn(self, txn, owner_actor, now, &mut out)?;

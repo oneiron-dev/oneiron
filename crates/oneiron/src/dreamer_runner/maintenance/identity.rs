@@ -35,12 +35,19 @@
 //! Someone new confirms the mention's provisional entity as a real, synced
 //! person and asserts it distinct from each real candidate (ARCH-0055 §6), so
 //! no merge of the two is proposed again.
+//!
+//! The Dreamer's own settles, a saved hint's pick and a decision's choice,
+//! apply at once and leave the Dreamer's receipt with what they changed
+//! before and after, which the owner reverts into the question to them
+//! (FIX 3327); an owner's own answer is his act and leaves none.
 mod evidence;
+mod settle_undo;
 pub use evidence::{
     IdentityAnswerEvidenceRequest, IdentityMentionState, IdentityMentionView,
     IdentityResolutionView,
 };
 pub(crate) use evidence::{clear_mention_resolutions_in_txn, erase_mention_resolutions_in_txn};
+pub(super) use settle_undo::{SettleInverse, revert_settle_in_txn};
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1193,7 +1200,7 @@ fn recheck_turn_in_txn(
             continue;
         };
         if let Some(entity) = hinted_in_txn(vault, txn, &ask)? {
-            apply_in_txn(
+            settle_undo::settle_in_txn(
                 vault,
                 txn,
                 &ask,
@@ -1500,15 +1507,18 @@ impl Vault {
                 return Ok(IdentityRuling::Gone);
             }
             match answer {
-                Some(answer) => Ok(IdentityRuling::Settled(settle_ask_in_txn(
-                    self,
-                    txn,
-                    &key,
-                    &current,
-                    answer,
-                    (ClaimSource::Inferred, &dreamer_seal()),
-                    now,
-                )?)),
+                Some(answer) => {
+                    let entity = settle_undo::settle_in_txn(
+                        self,
+                        txn,
+                        &current,
+                        answer,
+                        (ClaimSource::Inferred, &dreamer_seal()),
+                        now,
+                    )?;
+                    ASKS.delete(&self.store, txn, &key)?;
+                    Ok(IdentityRuling::Settled(entity))
+                }
                 None if current.reason == IdentityAskReason::Unsettled => {
                     keep_separate_in_txn(self, txn, &key, current, now)?;
                     Ok(IdentityRuling::KeptSeparate)
@@ -1792,8 +1802,10 @@ impl Memory<'_> {
                     _ => IdentityActNow::Unknown,
                 });
             };
+            // The hint's settle answers the agent at once, and leaves the
+            // Dreamer's receipt the owner reverts (FIX 3327).
             if let Some(entity) = hinted_in_txn(vault, txn, &ask)? {
-                let entity = apply_in_txn(
+                let entity = settle_undo::settle_in_txn(
                     vault,
                     txn,
                     &ask,

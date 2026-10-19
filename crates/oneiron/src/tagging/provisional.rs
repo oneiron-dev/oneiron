@@ -406,6 +406,113 @@ pub(crate) fn provisional_in_txn(
     PROVISIONAL.get(store, txn, id)
 }
 
+/// Seam additions for the identity settle's inverse (FIX 3327): the
+/// Dreamer's automatic settle records the spans and provisional entities it
+/// changes through these reads, and its owner's revert puts back only what
+/// still stands as the settle left it, through this module's own doors.
+impl Vault {
+    /// Every saved span whose stored tag set names `id`, with its turn, in
+    /// turn order.
+    pub(crate) fn mentions_naming_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Vec<(EntityId, tags::TaggedMention)>> {
+        let mut found = Vec::new();
+        for turn in tags::refs_in_txn(&self.store, txn, id)? {
+            let Some(set) = tags::tag_set_in_txn(&self.store, txn, &turn)? else {
+                continue;
+            };
+            for mention in set.mentions {
+                if mention.link.entities().contains(id) {
+                    found.push((turn, mention));
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    /// The stored link of the saved span of `turn` at `message`,
+    /// `start`..`end`; `None` when the turn holds no such span.
+    pub(crate) fn saved_mention_link_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        turn: &EntityId,
+        span: (&EntityId, usize, usize),
+    ) -> Result<Option<tags::MentionLink>> {
+        let (message, start, end) = span;
+        let Some(set) = tags::tag_set_in_txn(&self.store, txn, turn)? else {
+            return Ok(None);
+        };
+        Ok(set
+            .mentions
+            .into_iter()
+            .find(|each| each.message == *message && each.start == start && each.end == end)
+            .map(|each| each.link))
+    }
+
+    /// Holds `id` as the provisional entity `entity` again, as it stood
+    /// before a settle retired it; `false`, holding nothing, while a
+    /// provisional entity or an entity row holds the id.
+    pub(crate) fn rehold_provisional_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        entity: &ProvisionalEntity,
+    ) -> Result<bool> {
+        if PROVISIONAL.contains(&self.store, txn, id)?
+            || crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, id)?
+        {
+            return Ok(false);
+        }
+        mint_in_txn(&self.store, txn, id, entity)?;
+        Ok(true)
+    }
+
+    /// Puts the saved span of `turn` at `message`, `start`..`end` back to
+    /// the link `before` while it still links exactly as `after`, through
+    /// the replace door, so the mention index and every provisional entity
+    /// the set names follow. `false`, writing nothing, when the turn's text
+    /// no longer reads, the span is gone or a later write moved its link.
+    /// Merge evidence the settle dropped stays dropped.
+    pub(crate) fn relink_mention_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        turn: &EntityId,
+        span: (&EntityId, usize, usize),
+        after: &tags::MentionLink,
+        before: &tags::MentionLink,
+    ) -> Result<bool> {
+        let Some(mut set) = tags::readable_in_txn(&self.store, txn, turn)? else {
+            return Ok(false);
+        };
+        let (message, start, end) = span;
+        let Some(mention) = set
+            .mentions
+            .iter_mut()
+            .find(|each| each.message == *message && each.start == start && each.end == end)
+        else {
+            return Ok(false);
+        };
+        if mention.link != *after {
+            return Ok(false);
+        }
+        mention.link = before.clone();
+        tags::replace_in_txn(self, txn, turn, Some(&set))?;
+        Ok(true)
+    }
+
+    /// Settles the provisional entity `id` as a changed tag set would: one
+    /// no tag set names any more is retired.
+    pub(crate) fn settle_provisional_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        settle_in_txn(self, txn, id)
+    }
+}
+
 /// How a window demotion settles a provisional entity whose origin TURN it
 /// removes (OF-534).
 #[cfg(feature = "sync")]

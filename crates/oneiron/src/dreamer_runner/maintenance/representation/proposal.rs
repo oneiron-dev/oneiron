@@ -1,5 +1,5 @@
 //! Pre-materialized author seam and durable maintenance execution. No delivery here.
-use super::super::applied::{MaintenanceInverse, MaintenanceRevert};
+use super::super::applied::{self, MaintenanceInverse, MaintenanceRevert};
 use super::super::proposals;
 use super::approval::ApprovalOwner;
 use super::context::{
@@ -363,8 +363,11 @@ pub(in crate::dreamer_runner::maintenance) fn run(
 }
 
 /// Withdraws, as `owner`, each live plan drafted from `reach_out`, for the
-/// owner's revert of that reach-out, and lists it as closed. The plan's
-/// content and receipts stay as history; one already sent stays sent.
+/// owner's revert of that reach-out, and lists it as closed. Each plan's own
+/// applied row closes with it, naming the reach-out under the owner's
+/// receipt (FIX 3329), so the applied list shows it reverted and its later
+/// revert returns that one. The plan's content and receipts stay as
+/// history; one already sent stays sent.
 pub(in crate::dreamer_runner::maintenance) fn withdraw_follow_ups_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -390,6 +393,7 @@ pub(in crate::dreamer_runner::maintenance) fn withdraw_follow_ups_in_txn(
             .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active)
         {
             vault.retract_claim_in_txn_as(txn, &id, now, Some(owner))?;
+            applied::close_with_parent_in_txn(vault, txn, id, out.target, owner, now)?;
             out.closed.push(id);
         }
     }

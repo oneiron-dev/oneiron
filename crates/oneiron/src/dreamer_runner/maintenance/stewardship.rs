@@ -14,7 +14,8 @@
 //! [`Vault::schedule_stewardship_draft`]). The draft is saved at once for
 //! the owner's send review, and only their approval at
 //! `/v1/owner/representation/approve` schedules a send; nothing here sends.
-//! Reverting the reach-out withdraws the plans drafted from it.
+//! Reverting the reach-out withdraws the plans drafted from it, and each
+//! plan's own applied row closes with it.
 use super::applied::{self, MaintenanceInverse, MaintenanceRevert};
 use super::proposals;
 use super::representation::{
@@ -363,7 +364,8 @@ pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> 
 /// The owner's revert of one applied reach-out, beside its retraction: its
 /// draft marker goes and each follow-up plan drafted from it is withdrawn,
 /// so a draft still queued lands nothing and a plan not yet sent never
-/// sends. A message already sent cannot be unsent.
+/// sends. Each withdrawn plan's applied row is closed in this transaction,
+/// naming the reach-out (FIX 3329). A message already sent cannot be unsent.
 pub(super) fn revert_reach_out_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

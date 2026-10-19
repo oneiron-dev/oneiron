@@ -3,9 +3,10 @@
 //! applied at once (a curator rung, a harness retune finding, an advisory
 //! action mode, a Dreamer-born digest cadence and presentation, a
 //! stewardship reach-out, a follow-up plan saved for send review, an
-//! identity ask whose names were kept separate for now, a project's
-//! team-shape tree fork the Coach put in force), and the owner's revert of
-//! one. The Coach's findings still wait in the run tray.
+//! identity ask whose names were kept separate for now, a mention a saved
+//! hint or a decision settled, a project's team-shape tree fork the Coach put
+//! in force), and the owner's revert of one. The Coach's findings still wait
+//! in the run tray.
 
 use std::sync::Arc;
 
@@ -49,7 +50,8 @@ struct RevertMaintenance {
     /// The applied write's finding, as 32 hex.
     #[serde(default)]
     finding: Option<String>,
-    /// The identity ask a nightly abstention kept separate, as 64 hex.
+    /// The identity ask a nightly abstention kept separate, or the mention
+    /// a settle decided, as 64 hex.
     #[serde(default)]
     ask: Option<String>,
     /// The project a team-shape fork was put in force for, as 32 hex.
@@ -65,14 +67,16 @@ struct AppliedView {
     /// The finding, as 32 hex; none for an identity ask or a project tree
     /// fork.
     finding: Option<String>,
-    /// The identity ask kept separate, as 64 hex.
+    /// The identity ask kept separate, or the mention a settle decided, as
+    /// 64 hex.
     ask: Option<String>,
     /// A project tree fork's project, as 32 hex.
     project: Option<String>,
     /// A project tree fork's fork, as 32 hex.
     fork: Option<String>,
     /// `finding`, `curator`, `proactivity_policy`, `reach_out`,
-    /// `representation_plan`, `identity_provisional` or `project_tree_fork`.
+    /// `representation_plan`, `identity_provisional`, `identity_settle` or
+    /// `project_tree_fork`.
     kind: &'static str,
     facet: String,
     /// The attempt that wrote it; none for an identity ask.
@@ -102,6 +106,10 @@ struct RevertView {
     /// What a later write changed, left as it is.
     left_alone: Vec<String>,
     receipt_ref: String,
+    /// The applied write whose revert closed this one with it, as its
+    /// finding's 32 hex (a reach-out whose revert withdrew this follow-up
+    /// plan); none for the owner's own revert.
+    parent: Option<String>,
 }
 
 /// The target as the views spell it: `(finding, ask)`.
@@ -144,6 +152,7 @@ fn revert_view(revert: MaintenanceRevert) -> RevertView {
         asked: revert.asked,
         left_alone: revert.left_alone,
         receipt_ref: revert.receipt_ref,
+        parent: revert.parent.map(|parent| parent.to_hex()),
     }
 }
 
@@ -186,10 +195,11 @@ async fn applied(
 /// `POST /v1/owner/dreamer/maintenance/revert` with `{"finding"}`,
 /// `{"ask"}` or `{"project", "fork"}`: the owner's revert of one applied
 /// write. Its effect is undone where no later write changed it, its finding
-/// is retracted (an ask kept separate goes to the owner as their question; a
-/// project tree fork comes off its project, which goes back to the vault
-/// tree), and one receipt records the revert; a second revert returns the
-/// first one's result.
+/// is retracted (an ask kept separate goes to the owner as their question,
+/// and so does a settled mention once it links as before; a project tree
+/// fork comes off its project, which goes back to the vault tree), and one
+/// receipt records the revert; a second revert returns the first one's
+/// result.
 async fn revert(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,

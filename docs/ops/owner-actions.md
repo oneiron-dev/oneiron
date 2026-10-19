@@ -634,9 +634,14 @@ Dreamer; its harness audit files a retune finding, which deploys nothing; its ac
 files an advisory mode, which grants nothing; a Dreamer-born digest cadence and presentation
 request sets both rows; a keep-in-touch rule that fell due files a reach-out; and a follow-up the
 host drafted for it is saved as a plan for your send review. Each lands as an `auto` finding, and
-the inbox's finding notice tells you. The Coach's and the healer's findings still wait in the run
-tray. So does any Dreamer finding the Gate holds, and every curator rung on a critical claim: that
-waits for your approval in the run tray and applies on the next curator pass.
+the inbox's finding notice tells you. Your next regular digest also lists each applied write once,
+by its receipt, in its `applied` line (group `dreamer.applied`, pointing here), apart from the
+proposals that wait for you; a write you reverted first is left out. The Coach's and the healer's
+findings still wait in the run tray. So does any Dreamer finding the Gate holds, and every curator
+rung on a critical claim: that waits for your approval in the run tray, and your approval is its
+only consent. The next curator pass applies it once, as the Dreamer, with its receipt, and it lists
+here as a `curator` write you revert like any other. A rung whose claim changed since you approved
+it applies nothing.
 
 A saved plan never sends on its own. `GET /v1/owner/representation?proposal=<id>` shows it,
 `POST /v1/owner/representation/approve` records your send review (a receipt naming its exact
@@ -646,28 +651,38 @@ cannot tell who a name is, it no longer asks you: it keeps the names separate fo
 merges, nothing is confirmed), leaves the ask open in `/v1/owner/identity/asks` with
 `kept_separate_at` set, and decides it again only once its candidates change. You can still answer
 it there. An agent about to send, pay, invite or share on that name is still stopped and shown the
-choice card first.
+choice card first. When a saved hint, or the host's decision on an ask, settles a name on its own,
+the settle applies at once (an agent waiting on the name acts on it at once) and lists here as
+`identity_settle` under the mention's `ask` key.
 
 - `GET /v1/owner/dreamer/maintenance/applied` (optionally `?limit=<n>`): every applied write,
-  reverted ones too, newest first, with its finding (or, for a name kept separate, its `ask`; for
-  a project's team-shape fork, its `project` and `fork`), kind (`finding`, `curator`,
-  `proactivity_policy`, `reach_out`, `representation_plan`, `identity_provisional` or
-  `project_tree_fork`), facet, attempt, receipt and your revert once made.
+  reverted ones too, newest first, with its finding (or, for a name kept separate or settled, its
+  `ask`; for a project's team-shape fork, its `project` and `fork`), kind (`finding`, `curator`,
+  `proactivity_policy`, `reach_out`, `representation_plan`, `identity_provisional`,
+  `identity_settle` or `project_tree_fork`), facet, attempt, receipt and your revert once made. A
+  revert made by another write's revert names that write as its `parent`.
 - `POST /v1/owner/dreamer/maintenance/revert` with `{"finding": "<32 hex>"}` (or
-  `{"ask": "<64 hex>"}` for a name kept separate, or `{"project": "<32 hex>", "fork": "<32 hex>"}`
-  for a project's team-shape fork) undoes its effect, retracts its finding as yours and leaves one
-  receipt. A fork's revert takes it off its project, which goes back to the vault tree, and the
-  Coach does not fork that project again until the vault's team-shape head moves. A curator
-  rung's claim comes back at its prior confidence and rung: in
+  `{"ask": "<64 hex>"}` for a name kept separate or settled, or
+  `{"project": "<32 hex>", "fork": "<32 hex>"}` for a project's team-shape fork) undoes its
+  effect, retracts its finding as yours and leaves one receipt. A fork's revert takes it off its
+  project, which goes back to the vault tree, and the Coach does not fork that project again until
+  the vault's team-shape head moves. A curator rung's claim comes back at its prior confidence and
+  rung: in
   place when a weakening closed a claim with no signed history, else as the Dreamer's fresh copy
   born of it, since a signed claim's history never reopens (the copy carries the default `ClaimOf`
   weight). A digest request puts back the rows it replaced, or the defaults. A reach-out's revert
-  withdraws every plan drafted from it, and a draft still queued lands nothing; a plan's revert
-  stops a send not yet made. A message already sent cannot be unsent. A name kept separate comes
-  back to you as an identity ask, with its inbox notice and choice card. Anything a later write
-  changed is left as it is. The reply lists what stood again, what was copied, what was closed,
-  the settings put back, the asks put to you and what was left alone. A second revert returns the
-  first one's reply, and the Dreamer never applies that finding again.
+  withdraws every plan drafted from it, and a draft still queued lands nothing; each withdrawn
+  plan's own row is reverted with it, naming the reach-out as its `parent`, so reverting the plan
+  later returns that. A plan's revert stops a send not yet made. A message already sent cannot be
+  unsent. A name kept separate comes back to you as an identity ask, with its inbox notice and
+  choice card. A settled name's revert puts back each span the settle changed (and a name it folded
+  into a person, held again), the context hint it saved (`identity_hint`) and its resolution, and
+  retracts the distinct assertions a someone-new answer made; once the mention links as it did, it
+  comes back to you as an identity ask. A person someone new confirmed stays a person and is listed
+  as left alone. Anything a later write changed is left as it is. The reply lists what stood again,
+  what was copied, what was closed, the settings put back, the asks put to you and what was left
+  alone. A second revert returns the first one's reply, and the Dreamer never applies that finding
+  again.
 
 ## Review cleanup
 
