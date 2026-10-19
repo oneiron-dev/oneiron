@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 757 facade rows, 2631 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 713.
+// UniFFI census: 766 facade rows, 2647 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 722.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -13186,6 +13186,262 @@ pub struct CoreferenceUnlinkReceipt {
     pub original_claims_retained: bool,
 }
 
+/// `oneiron::sync::federation_burst::types::FederationBurstScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum FederationBurstScope {
+    #[serde(rename = "vault")]
+    Vault {
+        #[serde(rename = "vault_id")]
+        vault_id: u64,
+    },
+    #[serde(rename = "connect")]
+    Connect {
+        #[serde(rename = "peer_vault_id")]
+        peer_vault_id: String,
+    },
+}
+
+/// `oneiron::sync::federation_burst::types::FederationBurstWorld`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum FederationBurstWorld {
+    #[serde(rename = "all")]
+    All,
+    #[serde(rename = "base")]
+    Base,
+    #[serde(rename = "world")]
+    World {
+        #[serde(rename = "world_ref")]
+        world_ref: String,
+    },
+}
+
+/// `oneiron::sync::federation_burst::types::FederationBurstPeerRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FederationBurstPeerRequest {
+    #[serde(rename = "principal")]
+    pub principal: String,
+    #[serde(rename = "grant")]
+    pub grant: String,
+    #[serde(rename = "scope")]
+    pub scope: FederationBurstScope,
+    #[serde(rename = "world")]
+    pub world: FederationBurstWorld,
+    #[serde(rename = "facets", default, skip_serializing_if = "Option::is_none")]
+    pub facets: Option<Vec<String>>,
+    #[serde(rename = "bands", default, skip_serializing_if = "Option::is_none")]
+    pub bands: Option<Vec<SelectorRange>>,
+}
+
+/// `oneiron::sync::federation_burst::types::FederationBurstBaseline`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FederationBurstBaseline {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "writes_per_sec")]
+    pub writes_per_sec: f64,
+    #[serde(rename = "structural_streak")]
+    pub structural_streak: f64,
+}
+
+/// `oneiron::sync::federation_burst::types::FederationBurstBaselineState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FederationBurstBaselineState {
+    #[serde(rename = "baseline")]
+    pub baseline: FederationBurstBaseline,
+    #[serde(rename = "learned")]
+    pub learned: bool,
+    #[serde(rename = "vault_size")]
+    pub vault_size: u64,
+    #[serde(rename = "recent_writes")]
+    pub recent_writes: u64,
+    #[serde(rename = "rate_ratio")]
+    pub rate_ratio: f64,
+    #[serde(rename = "streak")]
+    pub streak: u32,
+    #[serde(rename = "streak_ratio")]
+    pub streak_ratio: f64,
+}
+
+/// `oneiron::sync::federation_burst::types::FederationBurstOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FederationBurstOutcome {
+    #[serde(rename = "allow")]
+    Allow,
+    #[serde(rename = "isolate-and-propose")]
+    IsolateAndPropose,
+    #[serde(rename = "defer")]
+    Defer,
+}
+
+/// `oneiron::sync::federation_burst::types::FederationBurstPolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FederationBurstPolicy {
+    #[serde(rename = "baseline", default, skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<FederationBurstBaseline>,
+    #[serde(rename = "unusual_rate")]
+    pub unusual_rate: FederationBurstOutcome,
+    #[serde(rename = "unusual_streak")]
+    pub unusual_streak: FederationBurstOutcome,
+}
+
+/// `oneiron::sync::federation_burst::types::FederationBurstPolicySetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FederationBurstPolicySetRequest {
+    #[serde(rename = "peer")]
+    pub peer: FederationBurstPeerRequest,
+    #[serde(rename = "policy")]
+    pub policy: FederationBurstPolicy,
+}
+
+/// `oneiron::task_verb::sdk_federation::ConnectWindow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectWindow {
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "source_vault")]
+    pub source_vault: String,
+    #[serde(rename = "recipient_vault")]
+    pub recipient_vault: String,
+    #[serde(rename = "world_ref")]
+    pub world_ref: String,
+    #[serde(rename = "facets")]
+    pub facets: Vec<String>,
+    #[serde(rename = "bands")]
+    pub bands: Vec<SelectorRange>,
+    #[serde(rename = "window_key")]
+    pub window_key: String,
+    #[serde(rename = "update")]
+    pub update: Vec<u8>,
+}
+
+/// `oneiron::task_verb::sdk_federation::ConnectDelivery`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectDelivery {
+    #[serde(rename = "body")]
+    pub body: ConnectWindow,
+    #[serde(rename = "signature")]
+    pub signature: String,
+}
+
+/// `oneiron::sync::federation_burst::types::FederationBurstDisposition`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "outcome")]
+pub enum FederationBurstDisposition {
+    #[serde(rename = "allow")]
+    Allow,
+    #[serde(rename = "isolate-and-propose")]
+    IsolateAndPropose {
+        #[serde(rename = "bundle_ref")]
+        bundle_ref: String,
+        #[serde(rename = "replay_ref")]
+        replay_ref: String,
+    },
+    #[serde(rename = "defer")]
+    Defer {
+        #[serde(rename = "replay_ref")]
+        replay_ref: String,
+    },
+}
+
+/// `oneiron::sync::federation_burst::types::FederationBurstWorkState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FederationBurstWorkState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "imported")]
+    Imported,
+    #[serde(rename = "rejected")]
+    Rejected,
+}
+
+/// `oneiron::sync::federation_burst::types::FederationBurstReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FederationBurstReceipt {
+    #[serde(rename = "batch_ref")]
+    pub batch_ref: String,
+    #[serde(rename = "principal")]
+    pub principal: String,
+    #[serde(rename = "grant")]
+    pub grant: String,
+    #[serde(rename = "window_key")]
+    pub window_key: String,
+    #[serde(rename = "disposition")]
+    pub disposition: FederationBurstDisposition,
+    #[serde(rename = "state")]
+    pub state: FederationBurstWorkState,
+    #[serde(rename = "baseline")]
+    pub baseline: FederationBurstBaselineState,
+}
+
+/// `oneiron::sync::federation_burst::types::FederationBurstReplayRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FederationBurstReplayRequest {
+    #[serde(rename = "peer")]
+    pub peer: FederationBurstPeerRequest,
+    #[serde(rename = "batch_ref")]
+    pub batch_ref: String,
+}
+
+/// `oneiron::sync::federation_burst::review_bundle::FederationIsolatedUpdate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FederationIsolatedUpdate {
+    #[serde(rename = "request_ref")]
+    pub request_ref: String,
+    #[serde(rename = "window")]
+    pub window: String,
+    #[serde(rename = "admitted_update")]
+    pub admitted_update: Vec<u8>,
+    #[serde(rename = "rate_ratio")]
+    pub rate_ratio: f64,
+    #[serde(rename = "streak_ratio")]
+    pub streak_ratio: f64,
+}
+
+/// `oneiron::sync::federation_burst::review_bundle::FederationBurstReviewBundle`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FederationBurstReviewBundle {
+    #[serde(rename = "bundle_ref")]
+    pub bundle_ref: String,
+    #[serde(rename = "request_refs")]
+    pub request_refs: Vec<String>,
+    #[serde(rename = "updates")]
+    pub updates: Vec<FederationIsolatedUpdate>,
+    #[serde(rename = "quarantined")]
+    pub quarantined: bool,
+    #[serde(rename = "replay_automatic")]
+    pub replay_automatic: bool,
+}
+
+/// `oneiron::sync::federation_burst::types::FederationBurstReviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FederationBurstReviewRequest {
+    #[serde(rename = "bundle_ref")]
+    pub bundle_ref: String,
+}
+
+/// `oneiron::sync::federation_burst::types::FederationBurstReviewReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FederationBurstReviewReceipt {
+    #[serde(rename = "bundle_ref")]
+    pub bundle_ref: String,
+    #[serde(rename = "batches")]
+    pub batches: Vec<FederationBurstReceipt>,
+}
+
 /// `oneiron::task_verb::sdk_federation::ConnectIdentity`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConnectIdentity {
@@ -13435,40 +13691,6 @@ pub struct ConnectExportRequest {
     pub facets: Option<Vec<String>>,
     #[serde(rename = "bands", default, skip_serializing_if = "Option::is_none")]
     pub bands: Option<Vec<SelectorRange>>,
-}
-
-/// `oneiron::task_verb::sdk_federation::ConnectWindow`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectWindow {
-    #[serde(rename = "pact")]
-    pub pact: String,
-    #[serde(rename = "epoch")]
-    pub epoch: u64,
-    #[serde(rename = "source_vault")]
-    pub source_vault: String,
-    #[serde(rename = "recipient_vault")]
-    pub recipient_vault: String,
-    #[serde(rename = "world_ref")]
-    pub world_ref: String,
-    #[serde(rename = "facets")]
-    pub facets: Vec<String>,
-    #[serde(rename = "bands")]
-    pub bands: Vec<SelectorRange>,
-    #[serde(rename = "window_key")]
-    pub window_key: String,
-    #[serde(rename = "update")]
-    pub update: Vec<u8>,
-}
-
-/// `oneiron::task_verb::sdk_federation::ConnectDelivery`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ConnectDelivery {
-    #[serde(rename = "body")]
-    pub body: ConnectWindow,
-    #[serde(rename = "signature")]
-    pub signature: String,
 }
 
 /// `oneiron::task_verb::sdk_federation::ConnectRejoinStatus`.

@@ -1780,6 +1780,87 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_federation_burst_baseline(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.baseline", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_policy(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.policy", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_policy_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.policy.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_ingress(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.ingress", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_disposition(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.disposition", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_review(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.review", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_review_release(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.review.release", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_review_reject(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.review.reject", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_replay(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.replay", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_federation_connect_identity(
         &self,
         input: serde_json::Value,

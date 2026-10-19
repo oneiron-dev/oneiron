@@ -87,7 +87,30 @@ pub(super) fn authorize_selector_export(
     selector: &SyncSelector,
     now_secs: u64,
 ) -> Result<Position> {
-    let raw = live_federation_grant(vault, &selector.grant_id)?;
+    let txn = vault.store.env.read_txn()?;
+    authorize_selector_export_in_txn(vault, &txn, grant_scope, selector, now_secs)
+}
+
+/// The same grant, pact, ceiling and expiry checks in the caller's snapshot.
+pub(in crate::sync) fn authorize_sync_selector_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
+) -> Result<()> {
+    authorize_selector_export_in_txn(
+        vault, txn, grant_scope, selector, vault.now_recorded_at(),
+    ).map(|_| ())
+}
+
+fn authorize_selector_export_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
+    now_secs: u64,
+) -> Result<Position> {
+    let raw = live_federation_grant_in(vault, txn, &selector.grant_id)?;
 
     let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
     // A shared-vault member grant or a Connect guest grant (FIX 3016); an Ask
@@ -107,7 +130,7 @@ pub(super) fn authorize_selector_export(
     // grant is inert until one Active pact with its peer binds it (FIX 3016).
     // The fold is recomputed on every call by design (no caching in this
     // chain).
-    let fold = vault.authority_fold()?;
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
     if !crate::federation::pact_admits_grant(&fold, &selector.grant_id, &grant) {
         return Err(selector_err(SelectorError::GrantInactive));
     }

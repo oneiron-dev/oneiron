@@ -68,6 +68,7 @@ mod embedding_space_doors;
 mod extraction_doors;
 mod fanout_doors;
 mod federation_connect_doors;
+mod federation_burst_doors;
 mod feedback_doors;
 mod fold_doors;
 mod gate_policy_doors;
