@@ -30,7 +30,7 @@ const MCP_OWNER_STREAM_CONTEXT: &str = "oneiron-server 2026-10 mcp managed-owner
 /// other request is the registered connector its credential names
 /// ([`resolve_mcp_gateway_actor`]); beside an attestation that credential
 /// stays the caller, with its own bounds, and must name the attested person.
-pub(super) async fn resolve_mcp_caller(
+pub(crate) async fn resolve_mcp_caller(
     mode: McpSurfaceMode,
     request_id: &str,
     headers: &HeaderMap,
