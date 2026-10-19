@@ -49785,6 +49785,19 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/offer.rs",
+     "purpose": "The Coach's training offer (OF-577): a cheaper stock model or a custom one for a seat, which the owner…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "fn": 9,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "ComputeDestination",
       "OfferAnswer",
@@ -49801,13 +49814,12 @@
       "TrainingOffer",
       "TrainingOfferDraft"
      ],
-     "path": "src/skill_optimize/offer.rs",
-     "purpose": "The Coach's training offer (OF-577): a cheaper stock model or a custom one for a seat, which the owner…",
+     "path": "src/skill_optimize/offer/snapshot.rs",
+     "purpose": "The training offer's snapshot shapes (OF-577): what the Coach drafts, the immutable offer the owner is…",
      "surface": {
-      "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 7,
       "enum": 4,
-      "fn": 9,
+      "fn": 1,
       "struct": 10
      }
     },
@@ -49827,7 +49839,7 @@
      "path": "src/skill_optimize/offer_doors.rs",
      "purpose": "Typed owner doors for the production Coach offer pass and its evidence",
      "surface": {
-      "fn": 6,
+      "fn": 8,
       "struct": 8
      }
     },
@@ -63570,7 +63582,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63831,7 +63843,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3932,
+   "source_files": 3933,
    "test_files": 902
   },
   "oneiron-android": {
@@ -75853,6 +75865,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/training_offer/sources.rs",
+     "purpose": "The rows a Coach brief or check is gathered from (FIX 5482), ids only",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/training_pack.rs",
      "purpose": "An owner-authorized training run on the host (OF-577, OF-552)",
      "surface": {
@@ -80989,7 +81011,7 @@
      "path": "src/commands/credential_file.rs",
      "purpose": "A file holding a credential, readable by its owner alone",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -82222,7 +82244,7 @@
      "path": "src/device_sync/renewal.rs",
      "purpose": "FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -86338,7 +86360,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 54,
+     "files": 55,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86795,7 +86817,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 853,
+   "source_files": 854,
    "test_files": 182
   },
   "oneiron-spawn": {

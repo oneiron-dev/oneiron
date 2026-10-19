@@ -33,12 +33,26 @@ async fn owned_control<T: Send + 'static>(
     (owned(server, auth, verb, act).await, Vec::new())
 }
 
-/// [`owned`] for a door that serves drafted or derived content: the offer
-/// reads serve the Coach's drafted snapshot and its checks, and the pilot
-/// prepare serves the cohort's released eval cases. Each lists (`host_door_lists`)
-/// but its list is unknown (`None`), never `[]`: the snapshot keeps no set of
-/// the rows its draft and checks were read from, and a released case none of
-/// the rows its text derives from (FIX 4780).
+/// [`owned`] for a door that serves the Coach's drafted offers and their
+/// checks: it lists the union of the source rows those snapshots keep
+/// (FIX 5482), read from the answer itself, unknown (`None`) when any
+/// snapshot's is.
+async fn owned_sourced<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&oneiron::Vault, &AuthenticatedOwner) -> oneiron::Result<T> + Send + 'static,
+    listed: impl FnOnce(&T) -> Option<Vec<oneiron::EntityId>>,
+) -> MaybeListed<T> {
+    let answer = owned(server, auth, verb, act).await;
+    let rows = answer.as_ref().ok().and_then(listed);
+    (answer, rows)
+}
+
+/// [`owned`] for a door that serves derived content whose rows are not
+/// kept: the pilot prepare serves the cohort's released eval cases, and a
+/// released case keeps none of the rows its text derives from (FIX 4780). It
+/// lists (`host_door_lists`), but its list is unknown (`None`), never `[]`.
 async fn owned_unlisted<T: Send + 'static>(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -53,11 +67,12 @@ pub(crate) async fn vault_coach_training_offers(
     auth: &CoreAuth,
     input: offer_doors::OfferListRequest,
 ) -> MaybeListed<Vec<oneiron::skill_optimize::offer_doors::OfferView>> {
-    owned_unlisted(
+    owned_sourced(
         server,
         auth,
         "vault.coach.training_offers",
         move |vault, owner| offer_doors::list(vault, owner, input),
+        |views: &Vec<offer_doors::OfferView>| offer_doors::listed_views(views),
     )
     .await
 }
@@ -67,11 +82,12 @@ pub(crate) async fn vault_coach_training_offers_get(
     auth: &CoreAuth,
     input: offer_doors::OfferRef,
 ) -> MaybeListed<Option<oneiron::skill_optimize::offer_doors::OfferView>> {
-    owned_unlisted(
+    owned_sourced(
         server,
         auth,
         "vault.coach.training_offers.get",
         move |vault, owner| offer_doors::get(vault, owner, input),
+        |view: &Option<offer_doors::OfferView>| offer_doors::listed_views(view.as_slice()),
     )
     .await
 }
@@ -95,11 +111,12 @@ pub(crate) async fn vault_coach_training_offers_result(
     auth: &CoreAuth,
     input: offer_doors::OfferPassRef,
 ) -> MaybeListed<Option<oneiron::skill_optimize::offer_doors::OfferPassResult>> {
-    owned_unlisted(
+    owned_sourced(
         server,
         auth,
         "vault.coach.training_offers.result",
         move |vault, owner| offer_doors::result(vault, owner, input),
+        |pass: &Option<offer_doors::OfferPassResult>| offer_doors::listed_pass(pass.as_ref()),
     )
     .await
 }
