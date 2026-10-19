@@ -258,6 +258,9 @@ side_tables! {
     DREAMER_WAKE_RECIPE_INPUT: VaultMeta b"dreamer:wake-policy:recipe-input:v1:" LegacyJson;
     /// Wake cursor and pending state. Key: ().
     DREAMER_WAKE_STATE: VaultMeta b"dreamer:wake-policy:state:v1" LegacyJson;
+    /// Node-local wake-pass observation (DOOR-144): a pass's header, admitted generations, calls
+    /// and Checkpoint cuts. Key: u8(row kind) + ids (`dreamer_wake::observation`).
+    DREAMER_WAKE_OBSERVATION: VaultMeta b"dreamer:wake:observation:v1:" Named;
     /// Digest (32 bytes) of the last queued wake projector image. Key: ().
     DREAMER_WAKE_PROJECTION: VaultMeta b"dreamer:wake:projection:v1" Raw;
     /// Owner-authored wake recipe budgets and rung instructions. Key: ().

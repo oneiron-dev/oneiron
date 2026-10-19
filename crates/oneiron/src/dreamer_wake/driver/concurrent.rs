@@ -27,7 +27,23 @@ impl DreamerWakeDriver<'_> {
             Ok(hooks) => hooks,
             Err(skipped) => return Ok(skipped),
         };
-        self.begin_wake(input.now)?;
+        self.start_wake_observation(&input);
+        let report = self.run_begun_concurrent(input, executors, cancel).await;
+        self.finish_wake_observation(report.as_ref());
+        let report = report?;
+        self.post_wake_hooks(hooks, &report);
+        Ok(report)
+    }
+
+    /// The pass past its hooks: begin, freeze one preparation, poll every
+    /// worker to settle, then sum their reports.
+    async fn run_begun_concurrent<E: DreamerAttemptExecutor>(
+        &mut self,
+        input: RunWakePass,
+        executors: &mut [E],
+        cancel: &WakeCancellation,
+    ) -> Result<WakePassReport> {
+        self.begin_wake(&input)?;
         let prepared = crate::dreamer_consolidation::PreparedWake::capture_with_grants(
             self.vault,
             input.scope,
@@ -138,7 +154,6 @@ impl DreamerWakeDriver<'_> {
                 aggregate.stop = report.stop;
             }
         }
-        self.post_wake_hooks(hooks, &aggregate);
         Ok(aggregate)
     }
 }
