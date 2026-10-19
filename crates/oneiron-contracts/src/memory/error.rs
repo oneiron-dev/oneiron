@@ -643,6 +643,13 @@ impl From<Error> for MemoryError {
                     "Fetch the authority history this vault names (its history request), import it, then retry.",
                 ],
             ),
+            // The vault cannot prove how its decision seals stand (FIX 5248):
+            // the message names the seal or image that failed.
+            ErrorKind::SealStandingUnverifiable => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[crate::error::SEAL_STANDING_RECONCILE_TEXT],
+            ),
             // The vault no longer holds the bytes a restore needs; the
             // request itself was sound.
             ErrorKind::SkillPackageUnavailable => Self::new(

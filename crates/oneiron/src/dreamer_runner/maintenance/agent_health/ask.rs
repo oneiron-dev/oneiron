@@ -1,16 +1,19 @@
 //! Ask the Coach (agent-mind §3.5): a card's reader takes its `ask_coach`
 //! move, and a `coach.agent_health_ask` attempt on the `coach.heal` queue
-//! answers it. The host Coach reads the card, the agent's TASK and, as the
-//! Coach, the agent's sealed pads (never its diary), and its model drafts one
-//! proposal: a skill edit, or a prompt to inject before a fork-resume. The
-//! answer lands on the card for its reader. Nothing is edited or resumed
-//! here, and no judge grades the draft in v1: the owner applies a skill edit
-//! through `apply.rs`, where the held-out gate rules on it.
+//! answers it. The host Coach reads the card, the skills its run loaded
+//! (`loaded.rs`), the agent's TASK and, as the Coach, the agent's sealed pads
+//! (never its diary), and its model drafts one proposal: a whole replacement
+//! of one loaded skill's instructions, bound to that revision, or a prompt to
+//! inject before a fork-resume. The answer lands on the card for its reader.
+//! Nothing is edited or resumed here, and no judge grades the draft in v1:
+//! the owner applies a skill edit through `apply.rs`, where the held-out gate
+//! rules on it.
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::apply::{AgentHealthApplicationState, AgentHealthCoachApplication};
+use super::loaded::{AgentHealthLoadedSkill, AgentHealthSkillTarget, bind_target, run_skills};
 use super::{AgentHealthCard, AgentHealthMove, CARDS, card_ref, may_read, parse_card_ref};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{
@@ -81,21 +84,29 @@ pub enum AgentHealthCoachRoute {
 }
 
 /// One proposal in the Coach's words. The reader decides; only the owner's
-/// approval applies a skill edit (`apply.rs`).
+/// approval of exact bytes applies a skill edit (`apply.rs`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentHealthCoachDraft {
     pub route: AgentHealthCoachRoute,
     /// What the Coach thinks is going on.
     pub diagnosis: String,
-    /// The exact skill edit or prompt it proposes.
+    /// For a skill edit, the whole replacement instructions of `target`; for
+    /// a prompt injection, the exact prompt; else what a person should see.
     pub proposal: String,
+    /// The loaded revision a skill edit replaces, as the apply door takes it.
+    /// `None` for another route, or when the Coach named no revision the
+    /// card's run loaded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<AgentHealthSkillTarget>,
 }
 
 /// What the host's model reads to answer one ask.
 #[derive(Debug, Clone)]
 pub struct CoachHealthBrief {
     pub card: AgentHealthCard,
+    /// The skills the card's run loaded, at their pinned revisions, whole.
+    pub skills: Vec<AgentHealthLoadedSkill>,
     /// The TASK's label, spec and brief, as text.
     pub task: Option<String>,
     /// The sealed pads the Coach read; empty when the read was held.
@@ -239,10 +250,11 @@ impl Vault {
     }
 
     /// The Coach's answer to one ask, under its leased
-    /// `coach.agent_health_ask` attempt: the card, the TASK and the agent's
-    /// sealed pads, read as the Coach, go to the host's model, and its draft
-    /// lands on the card. An ask a newer one replaced, or one already
-    /// answered, is left as it is.
+    /// `coach.agent_health_ask` attempt: the card, the skills its run loaded,
+    /// the TASK and the agent's sealed pads, read as the Coach, go to the
+    /// host's model, and its draft lands on the card, a skill edit bound to
+    /// the loaded revision it replaces. An ask a newer one replaced, or one
+    /// already answered, is left as it is.
     ///
     /// # Errors
     ///
@@ -283,6 +295,7 @@ impl Vault {
             };
             (card, task)
         };
+        let skills = run_skills(self, &card)?;
         let coach = self.coach_authority()?;
         let reason = format!(
             "The Coach answers an ask on agent-health card {handle} ({}).",
@@ -310,12 +323,19 @@ impl Vault {
         };
         // A failed call still lands a draftless answer, so the ask may be
         // asked again, and the attempt fails with the error.
-        let drafted = host.draft(&CoachHealthBrief {
+        let brief = CoachHealthBrief {
             card,
+            skills,
             task,
             pads: entries,
-        });
-        let draft = drafted.as_ref().ok().cloned().flatten();
+        };
+        let drafted = host.draft(&brief);
+        let draft = drafted
+            .as_ref()
+            .ok()
+            .cloned()
+            .flatten()
+            .map(|draft| bind_target(draft, &brief.skills));
         self.with_write_txn_grouped(|txn| {
             let Some(mut card) = CARDS.get(&self.store, txn, &key)? else {
                 return Ok(());

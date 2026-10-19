@@ -1112,7 +1112,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -2481,7 +2481,7 @@
      "path": "src/authority/checkpoint_adopt.rs",
      "purpose": "Checkpoint v2 adoption (OF-469): the one image a vault trusts in place of replaying the history it covers",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 11,
       "struct": 3
      }
@@ -2787,9 +2787,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/fold_resume.rs",
-     "purpose": "A resumed fold: the stored log's reference fold carried over a chain of new rows off its one main head…",
+     "purpose": "A resumed fold: the stored log's reference fold carried over the new rows past its frontier, without folding…",
      "surface": {
       "crate-vis": 26
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/fold_resume/side_tail.rs",
+     "purpose": "A resumed fold's tail as a small DAG (FIX 4881): the main rows still one chain off the base's main head, and…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -21065,7 +21075,7 @@
       "crate-vis": 4,
       "enum": 6,
       "fn": 12,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 7
      }
     },
@@ -21129,6 +21139,20 @@
      "purpose": "`duplicate_work` on action digests (agent-mind §3.4, OF-568): two attempts ran the same action on the same…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentHealthLoadedSkill",
+      "AgentHealthSkillTarget"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/loaded.rs",
+     "purpose": "The skills a card's run loaded (OF-568, FIX 3724): each SKILL revision the pack manifest of the card's…",
+     "surface": {
+      "crate-vis": 5,
+      "struct": 2
      }
     },
     {
@@ -21223,9 +21247,9 @@
      "path": "src/dreamer_runner/maintenance/coach_learning.rs",
      "purpose": "The Coach's own record (ARCH-0066 #coach: \"calibration, meta-learning\"): each anchored outcome of the…",
      "surface": {
-      "const": 1,
-      "crate-vis": 1,
-      "fn": 1
+      "const": 2,
+      "crate-vis": 2,
+      "fn": 2
      }
     },
     {
@@ -25701,6 +25725,16 @@
       "enum": 1,
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/record_scope/asset_body.rs",
+     "purpose": "What a scoped door hands out for a row it admitted (FIX 3677, FIX 5397): a file-plane ASSET leaves as its…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -61262,7 +61296,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 176,
+     "files": 177,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61703,7 +61737,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 79,
+     "files": 80,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61815,7 +61849,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62720,7 +62754,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3843,
+   "source_files": 3846,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66022,6 +66056,7 @@
      "path": "src/error/record.rs",
      "purpose": "Record-domain errors: body validation and identity-collision refusals for the stored record families —…",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
       "enum": 1,
       "struct": 1
@@ -74362,7 +74397,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/skill_discovery.rs",
@@ -85363,12 +85398,14 @@
       "AgentHealthCoachRoute",
       "AgentHealthConfidence",
       "AgentHealthCounter",
+      "AgentHealthLoadedSkill",
       "AgentHealthMove",
       "AgentHealthOutcome",
       "AgentHealthPadRead",
       "AgentHealthPromptInject",
       "AgentHealthRunTree",
       "AgentHealthSignal",
+      "AgentHealthSkillTarget",
       "AgentHealthTone",
       "AgentMcpInput",
       "AgentModel",
@@ -88848,7 +88885,7 @@
      "purpose": "—",
      "surface": {
       "enum": 840,
-      "struct": 2683
+      "struct": 2685
      }
     },
     {
