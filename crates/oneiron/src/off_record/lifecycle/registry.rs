@@ -187,9 +187,9 @@ impl OffRecordSessionRegistry {
         let mut sessions = self.sessions()?;
         let taken = sessions.contains_key(session_ref)
             || (creator.is_some()
-                && sessions.values().any(|entry| {
-                    entry.creator == creator && entry.created_name == created_name
-                }));
+                && sessions
+                    .values()
+                    .any(|entry| entry.creator == creator && entry.created_name == created_name));
         if taken {
             return Err(Error::OffRecord(
                 OffRecordError::OffRecordSessionAlreadyExists {

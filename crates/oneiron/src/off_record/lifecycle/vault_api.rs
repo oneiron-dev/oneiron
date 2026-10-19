@@ -478,7 +478,10 @@ impl Vault {
 fn vet_roomless_session_ref(session_ref: &str) -> Result<()> {
     for (prefix, what) in [
         (super::room::ROOM_KEY_PREFIX, "a room's stretches"),
-        (super::registry::CREATED_KEY_PREFIX, "a creator's stretches by handle"),
+        (
+            super::registry::CREATED_KEY_PREFIX,
+            "a creator's stretches by handle",
+        ),
     ] {
         if session_ref.starts_with(prefix) {
             return Err(Error::InvalidConfig(format!(

@@ -164,13 +164,7 @@ async fn event(
 ) -> Response {
     let mut stamp = CallStamp::Unrecorded;
     let answer = event_answer(
-        auth,
-        server,
-        card_id,
-        headers,
-        extensions,
-        payload,
-        &mut stamp,
+        auth, server, card_id, headers, extensions, payload, &mut stamp,
     )
     .await;
     let mut response = answer.into_response();
@@ -215,10 +209,9 @@ async fn event_answer(
         let event = request.event;
         let selected = request.selected_context;
         tokio::task::spawn_blocking(move || -> MemoryResult<GeneratedUiValidatedAction> {
-            let memory = credential_memory(&server.vault, Some(&auth), actor, class)
-                .at(auth.locality());
-            let validated =
-                memory.lens_frame_event(&held.frame, &held.render, &current, &event)?;
+            let memory =
+                credential_memory(&server.vault, Some(&auth), actor, class).at(auth.locality());
+            let validated = memory.lens_frame_event(&held.frame, &held.render, &current, &event)?;
             // A selection is context for a model round trip alone; any other
             // action ignores it (CALLS "3268 lens selected context").
             let (emitter, callback) = match validated {
@@ -236,8 +229,12 @@ async fn event_answer(
                         .ok_or_else(unselected)
                 })
                 .collect::<MemoryResult<Vec<_>>>()?;
-            let callback =
-                memory.lens_frame_selected_context(&held.frame, &held.render, callback, selected)?;
+            let callback = memory.lens_frame_selected_context(
+                &held.frame,
+                &held.render,
+                callback,
+                selected,
+            )?;
             Ok(GeneratedUiValidatedAction::ModelRoundTrip { emitter, callback })
         })
         .await

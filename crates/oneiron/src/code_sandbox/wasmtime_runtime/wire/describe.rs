@@ -8,7 +8,9 @@ use serde_json::Value;
 
 /// The targets a raw describe can name: the typed row's six, and the run's
 /// own result selectors (`ref`, `name`).
-const TARGETS: [&str; 8] = ["self", "vault", "task_ref", "key", "fold", "handle", "ref", "name"];
+const TARGETS: [&str; 8] = [
+    "self", "vault", "task_ref", "key", "fold", "handle", "ref", "name",
+];
 
 /// Whether the run may route raw describe `input` itself: a string, or an
 /// object naming at most one target, whose `after` polls a handle it names.

@@ -160,8 +160,7 @@ impl FacadeRowDoor {
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
             self.runtime.spawn(async move {
                 let invocation = invocation.to_hex();
-                let context =
-                    super::super::FacadeCall::bound(&auth, None, Some(&invocation), None);
+                let context = super::super::FacadeCall::bound(&auth, None, Some(&invocation), None);
                 let answer =
                     super::super::call_verb(&server, &context, call.verb.as_str(), Ok(call.input))
                         .await
