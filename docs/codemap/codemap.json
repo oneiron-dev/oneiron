@@ -6240,17 +6240,14 @@
       "DeckInspectionView",
       "DeckProposeRejection",
       "DeckRejectionCheck",
-      "DeckRejectionReport",
-      "DeckRejectionSheet",
-      "DeckRejectionSheetDependency",
-      "DeckRejectionSummary"
+      "DeckRejectionReport"
      ],
      "path": "src/blob_artifact/deck_doors.rs",
      "purpose": "The native deck edit door's typed wire (DOOR-142 A, ARCH-0077 \"Edit target choice\")…",
      "surface": {
       "enum": 1,
       "fn": 1,
-      "struct": 8
+      "struct": 5
      }
     },
     {
@@ -14126,6 +14123,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_runtime/wire/describe.rs",
+     "purpose": "How code mode routes a raw `describe` before any typed row: a result the run holds, a secret's handle…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -18658,7 +18665,7 @@
      "path": "src/critic/review.rs",
      "purpose": "Artifact-independent review fan-out and the persisted calibration feedback loop",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 1,
       "re-export": 4,
@@ -18698,7 +18705,7 @@
      "path": "src/critic/review/persistence.rs",
      "purpose": "Transactional review bundles",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -23250,6 +23257,7 @@
       "DeckEditContext",
       "DeckEditOutcome",
       "DeckEditRejection",
+      "DeckRejectionInspection",
       "DeckRender",
       "DeckRenderSide",
       "DeckSettleEvidence"
@@ -23258,7 +23266,7 @@
      "purpose": "Native deck edits (ARCH-0077, \"Edit in place with passthrough\"): one docedit deck transaction over the exact…",
      "surface": {
       "crate-vis": 9,
-      "enum": 2,
+      "enum": 3,
       "fn": 3,
       "struct": 4
      }
@@ -32475,6 +32483,7 @@
      "path": "src/llm/seat/run.rs",
      "purpose": "A run's immutable seat pin: born once per run, loaded again on resume",
      "surface": {
+      "crate-vis": 1,
       "fn": 4,
       "struct": 1
      }
@@ -36609,7 +36618,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -41833,7 +41842,7 @@
       "const": 5,
       "crate-vis": 2,
       "enum": 2,
-      "fn": 11,
+      "fn": 12,
       "struct": 4
      }
     },
@@ -53762,7 +53771,6 @@
       "BoardWakeRequest",
       "CompanionSharingRequest",
       "CompanionSharingSetRequest",
-      "DescribeRequest",
       "EmptyRequest",
       "InboxListRequest",
       "InboxMarkRequest",
@@ -53800,9 +53808,9 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 13,
-      "re-export": 70,
-      "struct": 40
+      "fn": 10,
+      "re-export": 71,
+      "struct": 39
      }
     },
     {
@@ -54066,6 +54074,19 @@
      "surface": {
       "fn": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DescribeRequest"
+     ],
+     "path": "src/task_verb/sdk_describe.rs",
+     "purpose": "`describe`'s typed input and the checks every door runs over it: one target per call (FIX 3256), and whether…",
+     "surface": {
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -55576,7 +55597,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 16
+      "fn": 17
      }
     },
     {
@@ -55825,7 +55846,7 @@
      "path": "src/team/receipt.rs",
      "purpose": "The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 9,
       "struct": 5
@@ -60798,7 +60819,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61904,7 +61925,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 188,
+     "files": 189,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62074,7 +62095,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3788,
+   "source_files": 3790,
    "test_files": 902
   },
   "oneiron-android": {
@@ -74286,7 +74307,7 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -85423,6 +85444,7 @@
       "DeckGateView",
       "DeckIdentityAmbiguity",
       "DeckInspectRequest",
+      "DeckInspection",
       "DeckInspectionView",
       "DeckKeepBinding",
       "DeckNativeRefusal",
@@ -85450,10 +85472,8 @@
       "DeckProposeRequest",
       "DeckRect",
       "DeckRejectionCheck",
+      "DeckRejectionInspection",
       "DeckRejectionReport",
-      "DeckRejectionSheet",
-      "DeckRejectionSheetDependency",
-      "DeckRejectionSummary",
       "DeckRender",
       "DeckRenderSide",
       "DeckReviewView",
@@ -86557,7 +86577,6 @@
       "OfficeBodyReadRequest",
       "OfficeBodyReviewedFork",
       "OfficeBodyView",
-      "OfficeFormat",
       "OmittedKnowledge",
       "OmittedNeighbor",
       "OnlineAxisMeasurement",
@@ -87996,7 +88015,7 @@
      "purpose": "—",
      "surface": {
       "enum": 838,
-      "struct": 2673
+      "struct": 2671
      }
     },
     {

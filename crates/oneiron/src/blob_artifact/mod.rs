@@ -50,8 +50,7 @@ pub use self::born_from::{BornFromArtifact, BornFromSource};
 pub use self::create::ArtifactCreateRequest;
 pub use self::deck_doors::{
     DeckCommentInspection, DeckInspectRequest, DeckInspectionView, DeckProposeRejection,
-    DeckRejectionCheck, DeckRejectionReport, DeckRejectionSheet, DeckRejectionSheetDependency,
-    DeckRejectionSummary,
+    DeckRejectionCheck, DeckRejectionReport,
 };
 pub(crate) use self::family::hash_hex;
 pub use self::family::{ArtifactExport, ArtifactKind, ArtifactVersionView, ArtifactView};
