@@ -18493,6 +18493,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/conversation_dag/reply/thread_reads.rs",
+     "purpose": "What a scoped read reaches of a DAG thread (FIX 5545): a record of a private thread its caller stands in now…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/conversation_dag/retained_path.rs",
      "purpose": "Read-only selected topology over retained TURN and SESSION headers",
      "surface": {
@@ -60071,7 +60081,7 @@
      "path": "src/workspace_roster/rooms/audience.rs",
      "purpose": "Private thread audiences (FIX 2951)",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 22,
       "fn": 1
      }
     },
@@ -60100,7 +60110,7 @@
      "path": "src/workspace_roster/rooms/audience_events.rs",
      "purpose": "A private thread's audience edits (FIX 5545)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1
      }
     },
@@ -60217,7 +60227,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "enum": 2,
       "fn": 6,
       "re-export": 13,
@@ -60373,6 +60383,16 @@
      "purpose": "A trunk's or thread's reply selection from the room's own index (OF-460): every room thread anchored on a…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/thread_reads.rs",
+     "purpose": "A room's threads as one reader reaches them (FIX 5545, Engine ruling 2026-10-19)",
+     "surface": {
+      "crate-vis": 14
      }
     },
     {
@@ -62252,7 +62272,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63351,7 +63371,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 99,
+     "files": 100,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63374,7 +63394,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3895,
+   "source_files": 3897,
    "test_files": 902
   },
   "oneiron-android": {
