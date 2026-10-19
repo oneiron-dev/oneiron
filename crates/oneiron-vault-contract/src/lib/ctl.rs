@@ -2,8 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::WakeEntry;
 use super::wake::validate_wake_fields;
+use super::{ManagedTrainingSetting, WakeEntry};
 
 /// Wire spelling is pinned to the engine's `slim::ShedCause`; the contract
 /// crate must not depend on `oneiron`, so the duplication is deliberate.
@@ -203,11 +203,14 @@ pub const REAP_PAUSE_REFUSAL: CtlRefusal = CtlRefusal {
 pub enum CtlResponse {
     /// Supervisors must run [`validate_wake_entries`](crate::validate_wake_entries)
     /// on `next_wake` before trusting it — deserialization alone does not enforce
-    /// the wire limits.
+    /// the wire limits. `training` is the vault's live training setting at
+    /// `ledger_rev` (contract v3), shape-checked by [`CtlResponse::validate`];
+    /// a reply that carries none matches no variant.
     PrepareReap {
         quiescent: bool,
         ledger_rev: u64,
         next_wake: Vec<WakeEntry>,
+        training: ManagedTrainingSetting,
     },
     Ping {
         ok: bool,
@@ -219,7 +222,7 @@ pub enum CtlResponse {
         ok: bool,
     },
     /// Appended after `Ok`. Required fields {slim, status} are disjoint from every
-    /// variant above ({quiescent, ledger_rev, next_wake},
+    /// variant above ({quiescent, ledger_rev, next_wake, training},
     /// {ok, vault, pid, contract_version}, {ok}), preserving the untagged
     /// declaration-order invariant. Do NOT add a required `ok` field here:
     /// it would let the `Ok` variant shadow this one during untagged
@@ -260,11 +263,14 @@ pub enum CtlResponse {
 }
 
 impl CtlResponse {
-    /// Validate SLIM status, residency, numerics, and blocker combinations after
-    /// parsing. Existing responses keep their prior validation requirements;
-    /// `PrepareReap.next_wake` still uses
-    /// [`validate_wake_entries`](crate::validate_wake_entries).
+    /// Validate SLIM status, residency, numerics, and blocker combinations, and
+    /// the shape of `PrepareReap.training`, after parsing. Existing responses
+    /// keep their prior validation requirements; `PrepareReap.next_wake` still
+    /// uses [`validate_wake_entries`](crate::validate_wake_entries).
     pub fn validate(&self) -> anyhow::Result<()> {
+        if let CtlResponse::PrepareReap { training, .. } = self {
+            training.validate()?;
+        }
         if let CtlResponse::Slim {
             slim,
             status,
