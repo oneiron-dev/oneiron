@@ -10,14 +10,18 @@
 //! a prefix: `{..}` is one non-empty path segment, `{*..}` the non-empty rest
 //! of the path. A route that is not registered still answers 404 or 405.
 //!
-//! Every route here takes a body the buffered verification already holds
-//! (`MAX_REMOTE_REQUEST_BYTES`, 64 MiB). Not here, until a staged
-//! verification keeps their streaming and their ceilings: git smart HTTP and
-//! LFS, `/ws`, the blob artifact uploads (`POST /v1/core/artifacts` and an
-//! artifact's `versions` and `outputs`) and the `/v1/ai` media uploads, which
-//! take up to 96 MiB. Nor are the public doors, whose capability, signature
-//! or provider proof stands alone; only the signing ceremony's action is
-//! here, to class its caller as the owner.
+//! The owner routes take a body the buffered verification holds
+//! (`MAX_REMOTE_REQUEST_BYTES`, 64 MiB): `GET /ws` among them, whose upgrade
+//! carries an empty body; the attestation covers the handshake, never the
+//! frames after it. The staged routes keep their streaming and their own
+//! ceilings: git smart HTTP and LFS, whose bodies have no ceiling, and the
+//! blob artifact uploads (`POST /v1/core/artifacts` and an artifact's
+//! `versions` and `outputs`) and the `/v1/ai` media uploads, which take up
+//! to 96 MiB. Managed ingress stages their bodies on the vault's disk and
+//! verifies them before any handler runs (`owner_stage`). The public doors
+//! are not here: their capability, signature or provider proof stands alone;
+//! only the signing ceremony's action is here, to class its caller as the
+//! owner.
 
 use axum::http::Method;
 
@@ -212,6 +216,110 @@ const OWNER_ROUTES: &[Route] = &[
     ("POST", "/sign/action"),
     // The tool-first MCP endpoint, beside `/mcp`.
     ("POST", "/mcp/tool-first"),
+    // The git and LFS reads that carry no body, and the sync socket's
+    // upgrade.
+    ("GET", "/git/{repo}/info/refs"),
+    ("GET", "/git/lease/{lease}/{repo}/info/refs"),
+    ("GET", "/git/{repo}/info/lfs/objects/{oid}"),
+    ("GET", "/ws"),
+];
+
+/// How far managed ingress stages a staged route's body.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Staged {
+    /// Git smart HTTP and LFS: the whole body, however long; only the
+    /// vault disk's floor ends it.
+    Whole,
+    /// An upload route: no further than the body limit the route itself
+    /// applies.
+    Within(u64),
+}
+
+impl Staged {
+    /// The most a stage reads, if any.
+    pub(super) fn ceiling(self) -> Option<u64> {
+        match self {
+            Self::Whole => None,
+            Self::Within(bytes) => Some(bytes),
+        }
+    }
+}
+
+/// The body limit the upload routes apply themselves:
+/// `api/blob_artifacts.rs`'s `ARTIFACT_BODY_LIMIT` and `api/ai/mod.rs`'s
+/// `MEDIA_BODY_LIMIT`, both 96 MiB. A stage reads no further than its route
+/// would; it is the routes' bound, not one of its own.
+const UPLOAD_BODY_BYTES: u64 = 96 * 1024 * 1024;
+
+/// The API listener's attested routes whose body streams past the buffered
+/// verification: each staged whole, or within its route's own body limit.
+const STAGED_ROUTES: &[(Route, Staged)] = &[
+    // Git smart HTTP's two RPCs, with and without a checkout lease.
+    (("POST", "/git/{repo}/git-upload-pack"), Staged::Whole),
+    (("POST", "/git/{repo}/git-receive-pack"), Staged::Whole),
+    (
+        ("POST", "/git/lease/{lease}/{repo}/git-upload-pack"),
+        Staged::Whole,
+    ),
+    (
+        ("POST", "/git/lease/{lease}/{repo}/git-receive-pack"),
+        Staged::Whole,
+    ),
+    // LFS: the chunk exchange, batch negotiation, an object's upload and
+    // its verify. Each reads its body only at its turn, so a request in line
+    // holds none of it in memory.
+    (("POST", "/git/{repo}/info/lfs/chunks"), Staged::Whole),
+    (
+        ("POST", "/git/{repo}/info/lfs/objects/batch"),
+        Staged::Whole,
+    ),
+    (("PUT", "/git/{repo}/info/lfs/objects/{oid}"), Staged::Whole),
+    (
+        ("POST", "/git/{repo}/info/lfs/objects/{oid}"),
+        Staged::Whole,
+    ),
+    (
+        ("POST", "/git/{repo}/info/lfs/objects/{oid}/verify"),
+        Staged::Whole,
+    ),
+    // The blob artifact uploads.
+    (
+        ("POST", "/v1/core/artifacts"),
+        Staged::Within(UPLOAD_BODY_BYTES),
+    ),
+    (
+        ("POST", "/v1/core/artifacts/{artifact}/versions"),
+        Staged::Within(UPLOAD_BODY_BYTES),
+    ),
+    (
+        ("POST", "/v1/core/artifacts/{artifact}/outputs"),
+        Staged::Within(UPLOAD_BODY_BYTES),
+    ),
+    // The `/v1/ai` media uploads.
+    (("POST", "/v1/ai/image"), Staged::Within(UPLOAD_BODY_BYTES)),
+    (("POST", "/v1/ai/video"), Staged::Within(UPLOAD_BODY_BYTES)),
+    (("POST", "/v1/ai/speech"), Staged::Within(UPLOAD_BODY_BYTES)),
+    (
+        ("POST", "/v1/ai/transcribe"),
+        Staged::Within(UPLOAD_BODY_BYTES),
+    ),
+    (("POST", "/v1/ai/embed"), Staged::Within(UPLOAD_BODY_BYTES)),
+    (
+        ("POST", "/v1/ai/ask_image"),
+        Staged::Within(UPLOAD_BODY_BYTES),
+    ),
+    (
+        ("POST", "/v1/ai/voices/{voice_id}/packs"),
+        Staged::Within(UPLOAD_BODY_BYTES),
+    ),
+    (
+        ("POST", "/v1/ai/voices/{voice_id}/render_consent"),
+        Staged::Within(UPLOAD_BODY_BYTES),
+    ),
+    (
+        ("POST", "/v1/ai/voices/{voice_id}/targets/{target}"),
+        Staged::Within(UPLOAD_BODY_BYTES),
+    ),
 ];
 
 /// The artifact listener's routes: this vault's `/a/`, its names under an
@@ -237,6 +345,15 @@ pub(super) fn owner_route(method: &Method, path: &str) -> bool {
 /// Whether `method` and `path` are one of the artifact listener's routes.
 pub(super) fn artifact_route(method: &Method, path: &str) -> bool {
     listed(ARTIFACT_ROUTES, method, path)
+}
+
+/// How far ingress stages the body of `method` and `path`, when they are
+/// one of the API listener's staged routes.
+pub(super) fn staged_route(method: &Method, path: &str) -> Option<Staged> {
+    STAGED_ROUTES
+        .iter()
+        .find(|((wanted, pattern), _)| method.as_str() == *wanted && registers(pattern, path))
+        .map(|(_, staged)| *staged)
 }
 
 fn listed(routes: &[Route], method: &Method, path: &str) -> bool {

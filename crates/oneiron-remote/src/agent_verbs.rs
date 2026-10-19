@@ -2004,6 +2004,9 @@ impl OneironClient {
                 "vault.workflows.dispatch" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WorkflowRunView,
                 >(client, verb, &input),
+                "vault.workflows.dispatch_bound" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::WorkflowRunView,
+                >(client, verb, &input),
                 "vault.workflows.status" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WorkflowRunView,
                 >(client, verb, &input),
@@ -11130,6 +11133,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.workflows.dispatch", value)
+    }
+    pub fn vault_workflows_dispatch_bound(
+        &self,
+        input: &oneiron::task_verb::sdk::WorkflowPersonDispatchRequest,
+    ) -> Result<oneiron::task_verb::sdk::WorkflowRunView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.workflows.dispatch_bound", value)
     }
     pub fn vault_workflows_status(
         &self,
