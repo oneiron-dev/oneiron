@@ -32,7 +32,6 @@ engine = [
   "dep:oneiron-server",
   "dep:oneiron-vault-contract",
   "dep:anyhow",
-  "dep:zeroize",
 ]
 
 [dependencies]
@@ -47,7 +46,9 @@ oneiron-remote = { path = "../oneiron-remote" }
 oneiron-server = { path = "../oneiron-server", optional = true }
 oneiron-vault-contract = { path = "../oneiron-vault-contract", optional = true }
 anyhow = { version = "1", optional = true }
-zeroize = { version = "1", optional = true }
+# The host-root open's copy of its secret is zeroized (FIX 4730), and with
+# `engine` the app's secrets cross as `Zeroizing` bytes.
+zeroize = "1"
 # Blob bytes cross as `Vec<u8>`; the shared client's blob request carries
 # them base64-encoded.
 base64 = "0.22"

@@ -31,7 +31,9 @@
 //! emulate a facade verb out of lower-level storage routes. It does not mint
 //! or simulate a retrieval lease: embedded, `Effort::High` returns the
 //! engine's own `LEASE_REQUIRED`; remote, the server decides how it serves
-//! high, xhigh and max.
+//! high, xhigh and max. Its one authority read is the host-root open's guard
+//! (FIX 4730): it reads the posture and the given root's roster marks, then
+//! hands the secret to the engine's own profile door, and mints nothing.
 
 #![forbid(unsafe_code)]
 
@@ -78,6 +80,21 @@ pub struct OpenOptions {
     pub dimensions: Option<usize>,
 }
 
+/// What [`OneironClient::open_with_host_root`] did with the host root it
+/// was given (FIX 4730).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostRootProfile {
+    /// This open enrolled this install in the vault as an `Unanswered`
+    /// machine; `false` when its live profile already stood, and nothing was
+    /// written.
+    pub enrolled: bool,
+    /// The given root is not this vault's settled root, so it went unused:
+    /// the install already carried its profile, and the handle stands under
+    /// the settled root as before. Reported, never refused (Engine 10-19
+    /// 15:3x), so the host can show it or re-key. Never with `enrolled`.
+    pub wrong_root: bool,
+}
+
 /// Current wall-clock time, in whole Unix seconds.
 ///
 /// The SDK's own clock read, because the engine's is crate-private. This is
@@ -119,6 +136,9 @@ pub fn parse_effort(value: &str) -> Result<RecallEffort, MemoryError> {
 /// The one client both language bindings call.
 pub struct OneironClient {
     backend: Backend,
+    /// What the host-root open that made this handle did with its root;
+    /// `None` on every other handle, one rebound from it included.
+    host_root: Option<HostRootProfile>,
 }
 
 /// Embedded or remote, decided once at construction.
@@ -156,7 +176,48 @@ impl OneironClient {
     pub fn open(path: Option<&Path>, options: &OpenOptions) -> Result<Self, MemoryError> {
         Ok(Self {
             backend: Backend::Embedded(EmbeddedClient::open(path, options)?),
+            host_root: None,
         })
+    }
+
+    /// [`Self::open`], then this install's own machine profile from the
+    /// vault's host root secret (FIX 4730), so the owner's acts carry from
+    /// it: the core door a raw host-root open uses
+    /// (`Vault::profile_local_open`), on every call, a same-process reopen
+    /// that joins the registry included. [`Self::host_root_profile`] on the
+    /// handle says what it did.
+    ///
+    /// `host_root_secret` is the secret's exact bytes (a server's configured
+    /// `auth_secret` as its UTF-8, or a retained binary root), borrowed for
+    /// this call only. It never enters `options`, so it takes no part in the
+    /// same-vault test, and nothing keeps it or the issuer derived from it.
+    /// Rooted-only: the vault must already be rooted, and nothing here roots
+    /// it. An empty secret is `BAD_REQUEST`, and a vault open under the
+    /// managed or relay posture, or a root the log marks as the provider's,
+    /// is `FORBIDDEN`. A secret that cannot profile this install fails the
+    /// open with the engine's reason; [`Self::open`] stays the rootless
+    /// door. Over a profile that already stands, a secret that is not the
+    /// vault's settled root is reported, never refused. The handle carries
+    /// no owner proof: it binds the generic embedded owner actor, as `open`
+    /// does.
+    pub fn open_with_host_root(
+        path: Option<&Path>,
+        options: &OpenOptions,
+        host_root_secret: &[u8],
+    ) -> Result<Self, MemoryError> {
+        let (embedded, profile) =
+            EmbeddedClient::open_with_host_root(path, options, host_root_secret)?;
+        Ok(Self {
+            backend: Backend::Embedded(embedded),
+            host_root: Some(profile),
+        })
+    }
+
+    /// What [`Self::open_with_host_root`] did with its root, on the handle it
+    /// returned; `None` on every other handle, one rebound from it included.
+    #[must_use]
+    pub const fn host_root_profile(&self) -> Option<HostRootProfile> {
+        self.host_root
     }
 
     /// An embedded handle over a vault this process already opened at
@@ -172,6 +233,7 @@ impl OneironClient {
     ) -> Result<Self, MemoryError> {
         Ok(Self {
             backend: Backend::Embedded(EmbeddedClient::attach(path, vault, options)?),
+            host_root: None,
         })
     }
 
@@ -186,6 +248,7 @@ impl OneironClient {
         let (bearer, holder) = remote::parse_credential(key)?;
         Ok(Self {
             backend: Backend::Remote(RemoteClient::connect(url, &bearer, holder)?),
+            host_root: None,
         })
     }
 
@@ -229,6 +292,7 @@ impl OneironClient {
         match &self.backend {
             Backend::Embedded(embedded) => Ok(Self {
                 backend: Backend::Embedded(embedded.as_actor(actor_key)?),
+                host_root: None,
             }),
             Backend::Remote(_) => Err(forbidden(
                 "a connected handle cannot rebind its actor",
@@ -257,6 +321,7 @@ impl OneironClient {
                 Backend::Embedded(embedded) => Backend::Embedded(embedded.in_room_turn(room)?),
                 Backend::Remote(remote) => Backend::Remote(remote.in_room_turn(room)?),
             },
+            host_root: None,
         })
     }
 
@@ -284,6 +349,7 @@ impl OneironClient {
                     Backend::Remote(remote.in_off_record_session(session_ref)?)
                 }
             },
+            host_root: None,
         })
     }
 
