@@ -118,7 +118,10 @@ side_tables! {
     DREAMER_FREE_TIME_ITEM: VaultMeta b"dreamer:free_time:item:v1:" Named;
     /// FIX 4453: the owner's free-time policy for one agent: the total per cycle, the cycle's
     /// clock and zone, an optional pinned split and the owner's act. Key: id16 (agent definition).
-    DREAMER_FREE_TIME_POLICY: VaultMeta b"dreamer:free_time:policy:v1:" Named;
+    /// FIX 5664: this entry's scrub erases the actor's rows in all five free-time families
+    /// (policy, clock, cycle, item, receipt), so the other four name none.
+    DREAMER_FREE_TIME_POLICY: VaultMeta b"dreamer:free_time:policy:v1:" Named
+        => crate::dreamer_runner::erase_free_time_actor_in_txn;
     /// FIX 4453: one free-time item's terminal receipt, by label; the floor reads these. Key:
     /// id16 (agent) + id16 (cycle) + id16 (item).
     DREAMER_FREE_TIME_RECEIPT: VaultMeta b"dreamer:free_time:receipt:v1:" Named;
