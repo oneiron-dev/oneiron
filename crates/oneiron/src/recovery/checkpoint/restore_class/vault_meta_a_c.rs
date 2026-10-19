@@ -175,6 +175,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::CODE_RUN_FOLD_WORDS, CONTENT),
     (&t::CODE_RUN_FOLDS, CONTENT),
     (&t::CODE_RUN_HEAL_COUNT, CONTENT),
+    (&t::CODE_RUN_PROGRAM_RESUME, LIVE),
     (&t::CODE_RUN_RAW_OUTPUT_SECRET, CONTENT),
     (&t::CODE_RUN_RAW_OUTPUT_TAINT, CONTENT),
     (&t::CODE_RUN_RAW_OUTPUT, CONTENT),

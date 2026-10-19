@@ -299,9 +299,112 @@ pub enum ProgramResultAvailability {
     /// Every record it derives from reads on the caller's lane.
     Readable,
     /// A record it derives from does not read on the caller's lane, or the
-    /// program's actor is erased or deleted: withheld, never refused.
+    /// program's actor is soft-deleted, hard-deleted or erased (an archive
+    /// withholds nothing): withheld, never refused.
     Withheld,
     /// Nothing holds it: the terminal claim or the receipt's answer is gone,
     /// or the send's body was never kept.
     Absent,
+}
+
+/// Where one program's restarter resumes, one page of its settled calls at a
+/// time (DOOR-141 PR3b).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProgramCheckpointRequest {
+    /// 32-hex id of the program's root attempt, or of any try of it (`job:`
+    /// prefix allowed).
+    pub root: String,
+    /// The previous page's `next_cursor`: the call list goes on there.
+    #[serde(default)]
+    pub cursor: Option<String>,
+    /// Calls in this page: 64 when absent, at most 64. Must be positive.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// The resume checkpoint of one program's run, as its restarter reads it:
+/// its head, the frontier its run record joined, and a page of the calls it
+/// answers instead of issuing them. Refs and digests only, never a body.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ProgramCheckpointView {
+    /// 32-hex root attempt its admission queued.
+    pub root: String,
+    /// The waking actor the program runs as.
+    pub actor: EntityId,
+    /// 32-hex code run the program runs as.
+    pub code_run: String,
+    /// The pinned executable; withheld unless its SKILL reads on the
+    /// caller's lane.
+    pub definition: Option<ProgramRecipePin>,
+    /// The checkpoint's head; none before an entry committed one.
+    pub checkpoint: Option<ProgramCheckpointHeadView>,
+    /// The checkpoint frontier the program's run record last joined.
+    pub frontier: Option<ProgramFrontierView>,
+    /// One page of the settled calls, in the order the pinned source makes
+    /// them.
+    pub calls: Vec<ProgramCheckpointCallView>,
+    /// Where the next page starts; none past the last settled call.
+    pub next_cursor: Option<String>,
+    /// The fields withheld from this caller, by name.
+    pub withheld: Vec<String>,
+}
+
+/// A resume checkpoint's head.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ProgramCheckpointHeadView {
+    /// 32-hex try whose entry committed it.
+    pub committed_by: String,
+    /// The pinned revision's content hash and 64-hex call-contract digest
+    /// the run replays.
+    pub content_hash: String,
+    pub contract_digest: String,
+    /// How many entries committed.
+    pub entries: u64,
+    /// The record row the last entry's own pinned call took.
+    pub entry_start: u64,
+    /// The record's rows and its 64-hex last checkpoint state hash, as the
+    /// last entry committed them.
+    pub bridge_calls: u64,
+    pub state_hash: String,
+    /// How many of the pinned source's calls are settled: the applied
+    /// position.
+    pub applied: u64,
+    /// How many of them the last entry answered from an earlier row instead
+    /// of issuing them: the committed injection position.
+    pub injected: u64,
+    /// The wait the last entry parked on, when it did.
+    pub wait: Option<ProgramCheckpointWaitView>,
+    pub at: u64,
+}
+
+/// The wait a program's last entry parked on.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ProgramCheckpointWaitView {
+    /// The record row of the call that parked.
+    pub row: u64,
+    /// 32-hex wait and its generation in the run.
+    pub wait_id: String,
+    pub generation: u64,
+    /// Whether a reply is delivered to it, or it settled with one: the
+    /// program resumes only then.
+    pub delivered: bool,
+}
+
+/// One settled call of a program's pinned source.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ProgramCheckpointCallView {
+    /// Its place in the pinned source's order.
+    pub index: u64,
+    /// Where its result is: `code-run:<32 hex>#<row>`, the row of the run's
+    /// record that settled it.
+    pub result_ref: String,
+    pub row: u64,
+    /// 64-hex digest of that row's canonical request.
+    pub request_digest: String,
+    /// 32-hex wait whose delivered reply answers it, when one does.
+    pub answered_by_wait: Option<String>,
+    /// Whether the last entry answered it from an earlier row instead of
+    /// issuing it.
+    pub injected: bool,
 }

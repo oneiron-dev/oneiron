@@ -3840,6 +3840,9 @@ class Oneiron:
         def program_step(self, spec):
             """Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body."""
             return json.loads(_translate(lambda: self._client.vault_runs_program_step(json.dumps(spec))))
+        def program_checkpoint(self, spec):
+            """Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it."""
+            return json.loads(_translate(lambda: self._client.vault_runs_program_checkpoint(json.dumps(spec))))
         def review(self, spec):
             """The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."""
             return json.loads(_translate(lambda: self._client.vault_runs_review(json.dumps(spec))))

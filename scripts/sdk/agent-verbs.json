@@ -15670,6 +15670,22 @@
       "openapi": true
     },
     {
+      "name": "vault.runs.program_checkpoint",
+      "description": "Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it.",
+      "input": "crate::dreamer_runner::ProgramCheckpointRequest",
+      "output": "Option<crate::dreamer_runner::ProgramCheckpointView>",
+      "call": "crate::dreamer_runner::program_checkpoint(memory, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.consolidation.home.get",
       "description": "The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything.",
       "input": "EmptyRequest",

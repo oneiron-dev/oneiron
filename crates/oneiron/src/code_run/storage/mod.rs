@@ -4,6 +4,7 @@ mod compaction;
 mod continuation;
 mod folds;
 mod lift;
+mod program_resume;
 mod reader_folds;
 mod reader_jobs;
 mod records;
@@ -55,3 +56,10 @@ pub(crate) use self::wait_delivery::{
 pub(crate) use self::wait_delivery::{
     deliver_wait_in_txn, deliver_wait_listing_in_txn, settled_wait_reply_in_txn,
 };
+// DOOR-141 PR3b: a turn program's resume checkpoint and its wait.
+pub(crate) use self::program_resume::{
+    ProgramCheckpointTail, ProgramResumeCall, ProgramResumeCommit, ProgramResumeHead,
+    ProgramResumeWait, load_program_checkpoint_tail, program_resume_call,
+    program_resume_calls_in_txn, program_resume_head_in_txn,
+};
+pub(crate) use self::wait_delivery::wait_delivered_in_txn;

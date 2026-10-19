@@ -2151,6 +2151,8 @@ export class Oneiron {
       program: (input: Facade.ProgramRunRequest): Facade.ProgramRunView | null => this.#call(() => this.#client.vaultRunsProgram(input) as Facade.ProgramRunView | null),
       /** Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body. */
       program_step: (input: Facade.SettledProgramStepRequest): Facade.SettledProgramStepView | null => this.#call(() => this.#client.vaultRunsProgramStep(input) as Facade.SettledProgramStepView | null),
+      /** Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it. */
+      program_checkpoint: (input: Facade.ProgramCheckpointRequest): Facade.ProgramCheckpointView | null => this.#call(() => this.#client.vaultRunsProgramCheckpoint(input) as Facade.ProgramCheckpointView | null),
       /** The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer. */
       review: (input: Facade.RunReviewRequest): Facade.RunReview => this.#call(() => this.#client.vaultRunsReview(input) as Facade.RunReview),
       /** The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle. */

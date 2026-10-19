@@ -8,6 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::program_resume::{ProgramResumeCommit, join_program_resume_in_txn};
 use super::records::{
     MODEL_HEAL_COUNTS, REPLAY_RECORDS, next_additive_heal_count, replay_generation_matches,
 };
@@ -295,6 +296,47 @@ impl ExecutorStorage<'_> {
         receipts: &[ReaderFoldReceipt],
         parked: Option<&ParkedWait>,
     ) -> Result<CodeRunReplayGeneration> {
+        self.put_replay_record_with_receipts_and_resume(
+            record,
+            expected,
+            healed_model,
+            receipts,
+            parked,
+            None,
+        )
+    }
+
+    /// [`Self::put_code_run_replay_record_with_receipts_if_generation`] for
+    /// one pinned entry of a turn program (DOOR-141 PR3b): its resume head
+    /// and pages join the same commit, beside its frontier, and never fail
+    /// it. A room's run is no program's, so its commit joins nothing.
+    pub(crate) fn put_program_entry_replay_record(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        receipts: &[ReaderFoldReceipt],
+        parked: Option<&ParkedWait>,
+        resume: &ProgramResumeCommit,
+    ) -> Result<CodeRunReplayGeneration> {
+        self.put_replay_record_with_receipts_and_resume(
+            record,
+            expected,
+            None,
+            receipts,
+            parked,
+            Some(resume),
+        )
+    }
+
+    fn put_replay_record_with_receipts_and_resume(
+        &self,
+        record: &CodeRunReplayRecord,
+        expected: Option<CodeRunReplayGeneration>,
+        healed_model: Option<&ModelId>,
+        receipts: &[ReaderFoldReceipt],
+        parked: Option<&ParkedWait>,
+        resume: Option<&ProgramResumeCommit>,
+    ) -> Result<CodeRunReplayGeneration> {
         match self {
             Self::Canonical(vault) => vault.put_code_run_replay_record_if_generation_with_heal_and(
                 record,
@@ -311,6 +353,11 @@ impl ExecutorStorage<'_> {
                     // A turn program's frontier joins its checkpoint's own
                     // commit (DOOR-141 PR2); it never fails it.
                     crate::dreamer_runner::join_program_checkpoint_in_txn(vault, wtxn, record);
+                    // So does a pinned entry's resume checkpoint (DOOR-141
+                    // PR3b), in a savepoint of its own.
+                    if let Some(resume) = resume {
+                        join_program_resume_in_txn(vault, wtxn, record, resume);
+                    }
                     Ok(())
                 },
             ),

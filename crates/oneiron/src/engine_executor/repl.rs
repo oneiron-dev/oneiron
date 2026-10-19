@@ -546,7 +546,7 @@ impl EngineNativeExecutor<'_> {
     /// Every entry of a Waiting run parks again, idempotently, so a park that
     /// a crash after the commit skipped is not lost. A bound code consent
     /// wait parks only as its step sealed it (DOOR-079 1b).
-    fn park(
+    pub(super) fn park(
         &self,
         record: &CodeRunReplayRecord,
         wait: &SelfDurableWait,
@@ -566,7 +566,7 @@ impl EngineNativeExecutor<'_> {
     /// before it is read, the result carries the consent evidence by
     /// reference, and the commit consumes the settlement once beside it
     /// (DOOR-079 1b). The cleanup after it is never the consumer.
-    fn resume_delivered_wait(
+    pub(super) fn resume_delivered_wait(
         &mut self,
         record: &mut CodeRunReplayRecord,
         wait: &SelfDurableWait,

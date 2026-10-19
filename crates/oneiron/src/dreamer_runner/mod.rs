@@ -51,21 +51,23 @@ pub use self::program::{
     TurnProgramRegistration,
 };
 pub(crate) use self::program::{
-    PROGRAM_PARK_OWNER, ProgramWrite, TurnProgramAuthority, TurnProgramBinding, TurnProgramBound,
-    TurnProgramEntered, arm_turn_program_in_txn, bind_program_write_in_txn,
+    PROGRAM_PARK_OWNER, ProgramHold, ProgramWrite, TurnProgramAuthority, TurnProgramBinding,
+    TurnProgramBound, TurnProgramEntered, arm_turn_program_in_txn, bind_program_write_in_txn,
     disarm_turn_program_in_txn, drain_turn_program_wakes, erase_turn_program_actor_in_txn,
     join_program_checkpoint_in_txn, note_program_write_uncertain, program_milestone_envelope,
     record_turn_program_wakes_in_txn, settle_program_outbound_in_txn, settle_program_write_in_txn,
     turn_program_erase_details, turn_programs_armed_in_txn,
 };
-// DOOR-141 PR3a: a turn program's reads, for its host doors and the SDK.
+// DOOR-141 PR3a/PR3b: a turn program's reads, for its host doors and the SDK.
 pub use self::program::{
-    ProgramAdmissionOutcomeView, ProgramFrontierView, ProgramHeldView, ProgramQueueView,
-    ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView,
-    ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
+    ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointHeadView,
+    ProgramCheckpointRequest, ProgramCheckpointView, ProgramCheckpointWaitView,
+    ProgramFrontierView, ProgramHeldView, ProgramQueueView, ProgramResultAvailability,
+    ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView, ProgramRunView,
+    ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
     SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
-    TurnProgramAdmissionRequest, TurnProgramAdmissionView, program_run, settled_program_step,
-    turn_program_admission,
+    TurnProgramAdmissionRequest, TurnProgramAdmissionView, program_checkpoint, program_run,
+    settled_program_step, turn_program_admission,
 };
 #[cfg(feature = "sync")]
 pub use self::progress::*;
