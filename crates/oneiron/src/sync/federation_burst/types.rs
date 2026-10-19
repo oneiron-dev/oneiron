@@ -16,7 +16,9 @@ pub enum FederationBurstScope {
 impl FederationBurstScope {
     fn engine(&self) -> Result<FederationGrantScope> {
         Ok(match self {
-            Self::Vault { vault_id } => FederationGrantScope::Vault { vault_id: *vault_id },
+            Self::Vault { vault_id } => FederationGrantScope::Vault {
+                vault_id: *vault_id,
+            },
             Self::Connect { peer_vault_id } => FederationGrantScope::Connect {
                 peer_vault_id: crate::deletion::parse_hex::<32>(peer_vault_id)
                     .ok_or_else(|| Error::InvalidConfig("invalid peer_vault_id".into()))?,
@@ -53,10 +55,16 @@ impl FederationBurstPeerRequest {
         let world = match self.world {
             FederationBurstWorld::All => SyncSelectorWorld::All,
             FederationBurstWorld::Base => SyncSelectorWorld::Base,
-            FederationBurstWorld::World { world_ref } => SyncSelectorWorld::World(crate::entity_id::LocalWorldId::try_from(world_ref)?),
+            FederationBurstWorld::World { world_ref } => {
+                SyncSelectorWorld::World(crate::entity_id::LocalWorldId::try_from(world_ref)?)
+            }
         };
         let selector = SyncSelector::new(
-            self.grant, self.principal, world, self.facets.clone(), self.bands.clone(),
+            self.grant,
+            self.principal,
+            world,
+            self.facets.clone(),
+            self.bands.clone(),
         );
         FederationPeer::authorize(vault, self.principal, self.scope.engine()?, &selector)
     }
@@ -106,10 +114,14 @@ impl FederationBurstPolicy {
     pub(super) fn validate(&self) -> Result<()> {
         if self.baseline.as_ref().is_some_and(|row| {
             row.name.trim().is_empty()
-                || !row.writes_per_sec.is_finite() || row.writes_per_sec <= 0.0
-                || !row.structural_streak.is_finite() || row.structural_streak <= 0.0
+                || !row.writes_per_sec.is_finite()
+                || row.writes_per_sec <= 0.0
+                || !row.structural_streak.is_finite()
+                || row.structural_streak <= 0.0
         }) {
-            return Err(Error::InvalidConfig("burst baseline needs a name and positive finite rates".into()));
+            return Err(Error::InvalidConfig(
+                "burst baseline needs a name and positive finite rates".into(),
+            ));
         }
         Ok(())
     }
@@ -140,7 +152,10 @@ pub enum FederationBurstDisposition {
     #[serde(rename = "allow")]
     Allow,
     #[serde(rename = "isolate-and-propose")]
-    IsolateAndPropose { bundle_ref: String, replay_ref: String },
+    IsolateAndPropose {
+        bundle_ref: String,
+        replay_ref: String,
+    },
     #[serde(rename = "defer")]
     Defer { replay_ref: String },
 }

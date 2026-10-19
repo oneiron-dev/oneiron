@@ -99,8 +99,8 @@ pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
 pub(crate) use super::coreference_doors::*;
 // The owner's subject-bound feedback and report doors, likewise.
-pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::federation_burst_doors::*;
+pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::feedback_doors::*;
 pub(crate) use super::goal_optimize_doors::*;
 pub(crate) use super::guest_document_doors::*;

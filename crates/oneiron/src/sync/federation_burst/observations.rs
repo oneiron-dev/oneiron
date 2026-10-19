@@ -60,7 +60,8 @@ pub(super) fn observe_in_txn(
     let baseline = baseline_from_row(vault, txn, peer, now, &row)?;
     Ok(PeerHealth {
         inputs: crate::llm::NormalizedBurstInputs {
-            rate_ratio: baseline.rate_ratio, streak: baseline.streak,
+            rate_ratio: baseline.rate_ratio,
+            streak: baseline.streak,
         },
         streak_ratio: baseline.streak_ratio,
         baseline,
@@ -69,14 +70,21 @@ pub(super) fn observe_in_txn(
 }
 
 pub(super) fn baseline_in_txn(
-    vault: &Vault, txn: &heed::RoTxn<'_>, peer: &FederationPeer, now: u64,
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    peer: &FederationPeer,
+    now: u64,
 ) -> Result<super::FederationBurstBaselineState> {
     let row = load(vault, txn, &key(peer))?;
     baseline_from_row(vault, txn, peer, now.max(row.tick), &row)
 }
 
 fn baseline_from_row(
-    vault: &Vault, txn: &heed::RoTxn<'_>, peer: &FederationPeer, now: u64, row: &Observation,
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    peer: &FederationPeer,
+    now: u64,
+    row: &Observation,
 ) -> Result<super::FederationBurstBaselineState> {
     // The current tick never trains away its own burst signal.
     let learned_rate = row.completed as f64 / now.saturating_sub(row.first).max(1) as f64;
@@ -87,11 +95,21 @@ fn baseline_from_row(
     let recent = if now == row.tick { row.recent } else { 0 };
     let inputs = normalized_burst_inputs(recent, 1, baseline.writes_per_sec, size, row.streak);
     let streak_ratio = normalized_burst_inputs(
-        u64::from(row.streak), 1, baseline.structural_streak, size, 0,
-    ).rate_ratio;
+        u64::from(row.streak),
+        1,
+        baseline.structural_streak,
+        size,
+        0,
+    )
+    .rate_ratio;
     Ok(super::FederationBurstBaselineState {
-        learned: policy.baseline.is_none(), baseline, vault_size: size,
-        recent_writes: recent, rate_ratio: inputs.rate_ratio, streak: row.streak, streak_ratio,
+        learned: policy.baseline.is_none(),
+        baseline,
+        vault_size: size,
+        recent_writes: recent,
+        rate_ratio: inputs.rate_ratio,
+        streak: row.streak,
+        streak_ratio,
     })
 }
 

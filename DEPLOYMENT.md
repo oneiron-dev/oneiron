@@ -102,9 +102,11 @@ rewrites the host, as nginx does by default (`$proxy_host`), makes every kit
 fetch look missing, so a restore with the kit alone finds nothing at that
 home. In nginx, set `proxy_set_header Host $http_host;` (not `$host`, which
 drops the port). A proxy or tunnel that cannot keep the host can instead
-leave it to `oauth_resource_indicator`: set it to the public URL the kit
-dials, and the server also checks the signature against that URL's host and
-port.
+list the public URLs the kit dials in `kit_bundle_public_urls` (env
+`ONEIRON_KIT_BUNDLE_PUBLIC_URLS`, comma-separated; config file or environment
+only, no flag), one for each tunnel alias the home answers on, and the server
+also checks the signature against each URL's host and port. When that list is
+empty, the server reads `oauth_resource_indicator` as the one public URL.
 
 `artifact_port` (flag `--artifact-port`, env `ONEIRON_ARTIFACT_PORT`) is the
 port of a second listener, on the same host, that serves hosted artifacts
