@@ -5,12 +5,12 @@
 //! recorded receipt. What the batch held is acked only once it was
 //! delivered, so a failed send loses nothing.
 //!
-//! Consent is the deployment's participation
+//! Consent is the owner's "Help improve Oneiron" switch
 //! ([`FailureSignalConfig::exports`](crate::config::failure_signals::FailureSignalConfig::exports)):
-//! the managed terms, or the self-host owner's opt-in. While it holds, the
-//! vault keeps one standing channel grant for the sender's own derived
-//! principal, so the gate admits a batch without a per-send ask; once it
-//! stops, the grant is revoked and nothing is sent. Owner feedback's
+//! on by default hosted with opt-out, off by default self-host with opt-in.
+//! While it holds, the vault keeps one standing channel grant for the sender's
+//! own derived principal, so the gate admits a batch without a per-send ask;
+//! once it stops, the grant is revoked and nothing is sent. Owner feedback's
 //! per-send approval is never involved.
 //!
 //! The engine names no publisher. The host supplies the destination and the

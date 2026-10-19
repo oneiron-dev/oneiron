@@ -1,9 +1,9 @@
 //! The host's failure-signal sender (OF-380). Every pass hands the engine's
 //! delivery door one batch, the tier-1 counts and the sealed code-fix
 //! records, to POST to the configured publisher. The door decides whether
-//! the deployment participates, sends through the outbound pipeline, and
-//! acks only what was delivered, so a pass that fails loses nothing. This
-//! transport carries the bytes and judges nothing.
+//! the owner's "Help improve Oneiron" switch is on, sends through the
+//! outbound pipeline, and acks only what was delivered, so a pass that fails
+//! loses nothing. This transport carries the bytes and judges nothing.
 use std::sync::Arc;
 use std::time::Duration;
 

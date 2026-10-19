@@ -27,6 +27,7 @@ use super::error::{
     ERR_RESULT_REF_SHAPE, ERR_RUNTIME_ACTOR_COLLISION, ERR_STOP_REASON_EMPTY,
     ERR_STOP_REASON_TOO_LONG, invalid,
 };
+use super::seat::SkippedRunnerSeat;
 use super::validate::validate_exhaust;
 use crate::error::ArtifactError;
 /// The proof that one network reach crossed the injected egress port.
@@ -196,6 +197,9 @@ pub struct ByoaTerminalReceipt {
     pub artifact_id: EntityId,
     pub artifact_version: u64,
     pub result_ref: AttemptResultRef,
+    /// Fallback seats a NextSeat route passed over for a hosted-only bound,
+    /// in the owner's order. Empty for every other capture.
+    pub skipped_seats: Vec<SkippedRunnerSeat>,
 }
 
 /// The canonical body one exhaust artifact version holds.

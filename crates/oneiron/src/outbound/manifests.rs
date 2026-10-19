@@ -738,7 +738,7 @@ fn failure_signals_manifest() -> OutboundCapabilityManifest {
             OutboundRetryClass::NonIdempotentInterrupt,
             OutboundPermissionState::Conditional,
             false,
-            "Allowed while the deployment participates (managed terms or the owner's opt-in).",
+            "Allowed while the owner's \"Help improve Oneiron\" switch is on (on by default hosted with opt-out, off by default self-host with opt-in).",
         )],
     )
 }

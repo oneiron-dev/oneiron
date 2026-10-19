@@ -5,11 +5,11 @@
 //! how it signs in. A vendor login stays with the official CLI on the runtime
 //! that runs it, so a login seat names no credential at all: the control
 //! plane never holds a vendor login. An API-key seat names custody handles,
-//! never bytes. Where a login may run follows the runtime contract (ruled
-//! 2026-10-10): Claude Code under the person's own sign-in runs on any
-//! runtime, their hosted vault VM included; every other vendor login runs
-//! only on the person's own machine or self-hosted runtime; an API key runs
-//! anywhere.
+//! never bytes. A login runs on any runtime, the person's hosted vault VM
+//! included, unless a provider's terms keep it off a hosted node
+//! ([`hosted_seat_bound`], ruled 2026-10-19): today OpenAI's, for a
+//! ChatGPT-plan Codex or Sign in with ChatGPT login until OpenAI approves
+//! hosted use. An API key runs anywhere.
 //!
 //! A spent seat is read from the runner's own structured error output with
 //! the words an API refusal is read by ([`crate::llm::limit`]). What happens
@@ -23,6 +23,7 @@ use serde_json::{Value as JsonValue, json};
 use crate::attempt_queue::AttemptId;
 use crate::checkout::CheckoutId;
 use crate::code_sandbox::SandboxCredentialHandle;
+use crate::config::HostingPrivacyPosture;
 use crate::entity_id::EntityId;
 use crate::llm::{RetryableLlmError, SpentKind, limit};
 
@@ -31,7 +32,8 @@ use super::error::{
     ByoaResult, ERR_SEAT_COUNT, ERR_SEAT_INDEX, ERR_SEAT_KEY_HANDLE, ERR_SEAT_LOGIN_HANDLE, invalid,
 };
 use super::exhaust::{ByoaExhaust, ByoaTerminalReceipt};
-use super::provider::{CLAUDE_CODE_PROGRAM, DreamerProviderInput, ProviderAdapterRegistry};
+use super::official_seats::{OfficialSeatRoute, SIWC_RESPONSES_BASE_URL, SeatPlacementApproval};
+use super::provider::{CODEX_PROGRAM, DreamerProviderInput, ProviderAdapterRegistry};
 
 /// The most seats one policy orders.
 pub const MAX_RUNNER_SEATS: usize = 8;
@@ -55,27 +57,190 @@ const SPENT_EVENT_BYTES: usize = 16 * 1024;
 /// is at least this, so a small number after a bar is never read as one.
 const MIN_EPOCH_RESET: u64 = 1_000_000_000;
 
-/// Where a vendor login may run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LoginPlacement {
-    /// Any runtime, the person's hosted vault VM included.
-    AnyRuntime,
-    /// Only the person's own machine or self-hosted runtime.
-    OwnRuntime,
+/// Why a login may not run on a hosted node. Each bound names whose it is,
+/// and the same act works self-hosted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HostedSeatBound {
+    /// A provider's terms keep the login off a hosted node until the
+    /// provider approves hosted use.
+    ProviderTerms {
+        vendor: &'static str,
+        terms_ref: &'static str,
+        approval_ref: &'static str,
+    },
 }
 
-/// Where a login behind `connector` may run. Only the unmodified Claude Code
-/// binary runs anywhere. A Codex plan login, Sign in with ChatGPT and every
-/// other login stay on the person's own runtime until the vendor allows more.
-#[must_use]
-pub fn login_placement(connector: &ByoaConnectorSpec) -> LoginPlacement {
-    match connector {
-        ByoaConnectorSpec::CliSandbox(spec) if spec.program == CLAUDE_CODE_PROGRAM => {
-            LoginPlacement::AnyRuntime
+impl HostedSeatBound {
+    /// The bound's kind, as a surface projects it.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::ProviderTerms { .. } => "provider_terms",
         }
-        _ => LoginPlacement::OwnRuntime,
     }
+
+    /// Whether the same act works self-hosted: always, since the bound holds
+    /// only on a hosted node.
+    #[must_use]
+    pub const fn works_self_hosted(&self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Display for HostedSeatBound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ProviderTerms {
+                vendor,
+                terms_ref,
+                approval_ref,
+            } => write!(
+                f,
+                "Hosted placement is refused by {vendor}'s provider terms ({terms_ref}); \
+                 required approval: {approval_ref}. The same act works self-hosted."
+            ),
+        }
+    }
+}
+
+/// The exact identity a hosted-login prohibition is keyed by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeatIdentity<'a> {
+    /// A CLI runner, by its program.
+    CliProgram(&'a str),
+    /// An endpoint, by its base URL.
+    EndpointBase(&'a str),
+    /// An official seat route.
+    OfficialRoute(OfficialSeatRoute),
+}
+
+impl<'a> SeatIdentity<'a> {
+    /// The identity a generic connector carries: a CLI runner's executable
+    /// name, or an endpoint's base URL without a trailing slash. An MCP
+    /// attach names none.
+    #[must_use]
+    pub fn of(connector: &'a ByoaConnectorSpec) -> Option<Self> {
+        match connector {
+            ByoaConnectorSpec::CliSandbox(spec) => Some(Self::CliProgram(
+                std::path::Path::new(&spec.program)
+                    .file_name()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .unwrap_or(spec.program.as_str()),
+            )),
+            ByoaConnectorSpec::Endpoint(spec) => {
+                Some(Self::EndpointBase(spec.base_url.trim_end_matches('/')))
+            }
+            ByoaConnectorSpec::ProtocolAttach(_) => None,
+        }
+    }
+}
+
+/// The approval OpenAI's hosted-login bounds name.
+const OPENAI_HOSTED_PLAN_APPROVAL: &str = "OpenAI hosted plan approval, OC2 (openai_hosted_plan)";
+
+/// OpenAI's Codex app-server docs: app-server authentication was never
+/// permitted for commercial or hosted services.
+const OPENAI_CODEX_APP_SERVER: HostedSeatBound = HostedSeatBound::ProviderTerms {
+    vendor: "OpenAI",
+    terms_ref: "Codex app-server docs, RESEARCH-0382 O21",
+    approval_ref: OPENAI_HOSTED_PLAN_APPROVAL,
+};
+
+/// OpenAI's Sign in with ChatGPT Terms, and its interest form for a remotely
+/// hosted app.
+const OPENAI_SIGN_IN_WITH_CHATGPT: HostedSeatBound = HostedSeatBound::ProviderTerms {
+    vendor: "OpenAI",
+    terms_ref: "Sign in with ChatGPT Terms and hosted-app interest form, RESEARCH-0382 O5/O9",
+    approval_ref: OPENAI_HOSTED_PLAN_APPROVAL,
+};
+
+/// One hosted-login prohibition: the exact identity it names, its bound,
+/// and the vendor approval that lifts it on a path that carries approvals.
+struct HostedLoginRow {
+    identity: SeatIdentity<'static>,
+    bound: HostedSeatBound,
+    lifted_by: fn(SeatPlacementApproval) -> bool,
+}
+
+fn openai_hosted_plan(approvals: SeatPlacementApproval) -> bool {
+    approvals.openai_hosted_plan
+}
+
+/// Every hosted-login prohibition. A login no row names runs on any runtime.
+const HOSTED_LOGIN_PROHIBITIONS: [HostedLoginRow; 4] = [
+    // A ChatGPT-plan login behind the Codex CLI, as a plain runner or as
+    // the official Codex seat.
+    HostedLoginRow {
+        identity: SeatIdentity::CliProgram(CODEX_PROGRAM),
+        bound: OPENAI_CODEX_APP_SERVER,
+        lifted_by: openai_hosted_plan,
+    },
+    HostedLoginRow {
+        identity: SeatIdentity::OfficialRoute(OfficialSeatRoute::CodexAppServerChatGptPlan),
+        bound: OPENAI_CODEX_APP_SERVER,
+        lifted_by: openai_hosted_plan,
+    },
+    // Sign in with ChatGPT, as the official seat or as the endpoint its
+    // registered adapter shapes.
+    HostedLoginRow {
+        identity: SeatIdentity::OfficialRoute(OfficialSeatRoute::SignInWithChatGpt),
+        bound: OPENAI_SIGN_IN_WITH_CHATGPT,
+        lifted_by: openai_hosted_plan,
+    },
+    HostedLoginRow {
+        identity: SeatIdentity::EndpointBase(SIWC_RESPONSES_BASE_URL),
+        bound: OPENAI_SIGN_IN_WITH_CHATGPT,
+        lifted_by: openai_hosted_plan,
+    },
+];
+
+/// The hosted-only bound that keeps a login off this runtime, if one does:
+/// a user login on a hosted posture whose exact identity a prohibition row
+/// names, unless the path's vendor `approvals` lift it. The generic runner
+/// path carries no approvals. A miss is no prohibition.
+#[must_use]
+pub fn hosted_seat_bound(
+    identity: Option<SeatIdentity<'_>>,
+    user_login: bool,
+    posture: HostingPrivacyPosture,
+    approvals: Option<SeatPlacementApproval>,
+) -> Option<HostedSeatBound> {
+    if !user_login || posture != HostingPrivacyPosture::Hosted {
+        return None;
+    }
+    let identity = identity?;
+    HOSTED_LOGIN_PROHIBITIONS
+        .iter()
+        .find(|row| row.identity == identity)
+        .filter(|row| !approvals.is_some_and(row.lifted_by))
+        .map(|row| row.bound)
+}
+
+/// A fallback seat a route passed over because a hosted-only bound keeps
+/// its login off this runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedRunnerSeat {
+    /// The seat's index in the owner's order.
+    pub seat: usize,
+    /// The runner the seat names.
+    pub runner: String,
+    pub bound: HostedSeatBound,
+}
+
+/// The passed-over seats in words, for a park reason: empty when none was,
+/// else each seat with its runner and its bound, in the owner's order.
+#[must_use]
+pub fn skipped_seats_note(skipped: &[SkippedRunnerSeat]) -> String {
+    skipped
+        .iter()
+        .map(|skip| {
+            format!(
+                "; seat {} ({}) skipped: {}",
+                skip.seat, skip.runner, skip.bound
+            )
+        })
+        .collect()
 }
 
 /// How a seat signs in.
