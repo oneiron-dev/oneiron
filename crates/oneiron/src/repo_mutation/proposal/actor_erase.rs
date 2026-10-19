@@ -181,10 +181,12 @@ pub const ACTOR_ERASE_PENDING_REPO_PROPOSAL: PendingRepoProposalErase =
 /// applied or failed, keeps its row, critiques and outcome and names no one,
 /// and the queue refuses to run it again. One that has not run goes, with any
 /// operation pointer to it, when [`ACTOR_ERASE_PENDING_REPO_PROPOSAL`] says
-/// so, and a reviewed stack that listed it is dropped (FIX 4478). Either way
-/// its journal claims name no one (FIX 4479). Each proposal it judged as a
-/// critic keeps that evidence under an opaque ref (FIX 4477). One-way, in the
-/// erase's own transaction. An id whose entity is no actor scans nothing.
+/// so, and a reviewed stack that listed it is dropped (FIX 4478); a stack that
+/// already ran a member keeps it as an erased slot and ends at its last landed
+/// member instead (FIX 5219). Either way its journal claims name no one (FIX
+/// 4479). Each proposal it judged as a critic keeps that evidence under an
+/// opaque ref (FIX 4477). One-way, in the erase's own transaction. An id whose
+/// entity is no actor scans nothing.
 ///
 /// # Errors
 ///

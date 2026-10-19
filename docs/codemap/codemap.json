@@ -36403,6 +36403,7 @@
      "path": "src/merge_queue/landing.rs",
      "purpose": "Crash-consistent gated landing and trailing-check green/rollback transitions",
      "surface": {
+      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -43806,7 +43807,7 @@
      "path": "src/repo_mutation/reviewed_stack.rs",
      "purpose": "Atomic critic admission and exact-prefix replay for a tested proposal stack",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
     },
     {
