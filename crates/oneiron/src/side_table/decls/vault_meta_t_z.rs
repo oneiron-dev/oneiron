@@ -55,6 +55,14 @@ side_tables! {
     TASK_FACT_SUPPRESSED: VaultMeta b"tasks.fact_suppressed.v1/" Raw;
     /// Follow-up stage idempotency marker. Key: id16 + \x00 + string.
     TASK_FOLLOW_UP_MARKER: VaultMeta b"tasks.followup.v1\0" Raw;
+    /// The lifecycle receipts naming one TASK, by time (FIX 3270), written with each receipt in
+    /// its own transaction. Value: one role byte, 1 on the receipt of the write that settled the
+    /// TASK (FIX 3272), else 0. Key: id16 (TASK) + u64be (occurred_at) + string (receipt id).
+    TASK_LIFECYCLE_RECEIPT_BY_TASK: VaultMeta b"tasks.lifecycle_receipt.by_task.v1/" Raw;
+    /// Every lifecycle receipt by time (FIX 3271), written with each receipt in its own
+    /// transaction, so a query reads the newest first. Empty marker. Key: u64be (occurred_at) +
+    /// string (receipt id).
+    TASK_LIFECYCLE_RECEIPT_BY_TIME: VaultMeta b"tasks.lifecycle_receipt.by_time.v1/" Raw;
     /// One mutating task-highway call's `TaskLifecycle` receipt (OF-220), projected as the receipt
     /// family reads it, written in the call's own transaction. Key: string (the receipt id,
     /// `task_lifecycle:` + 32 hex).
