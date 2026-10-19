@@ -127,6 +127,10 @@ pub enum EngineLimit {
     /// Past it, the row asks whether everything is okay while the whole
     /// lineage is still read.
     AttemptRetryTipRows,
+    /// Steps one saved workflow holds, measured where it is saved, updated
+    /// and snapshotted for a dispatch. Past it, the row asks whether
+    /// everything is okay and every step is kept.
+    WorkflowSteps,
     /// Bytes of the judge's rubric (the active shared `judge` skill's text)
     /// one judgment or label re-check reads. Past it the rubric is read whole.
     JudgeRubricBytes,
@@ -276,7 +280,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 71] = [
+    pub const ALL: [Self; 72] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -306,6 +310,7 @@ impl EngineLimit {
         Self::AttemptManifestEntries,
         Self::AttemptCancelReceipts,
         Self::AttemptRetryTipRows,
+        Self::WorkflowSteps,
         Self::JudgeRubricBytes,
         Self::MaintenanceRowItems,
         Self::MaintenanceTextBytes,
@@ -382,6 +387,7 @@ impl EngineLimit {
             Self::AttemptManifestEntries => "limits.attempt_manifest_entries",
             Self::AttemptCancelReceipts => "limits.attempt_cancel_receipts",
             Self::AttemptRetryTipRows => "limits.attempt_retry_tip_rows",
+            Self::WorkflowSteps => "limits.workflow_steps",
             Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
             Self::MaintenanceRowItems => "limits.maintenance_row_items",
             Self::MaintenanceTextBytes => "limits.maintenance_text_bytes",
@@ -466,6 +472,9 @@ impl EngineLimit {
             // Sixteen times the 1,024 rows the walk refused past before
             // Rule 5.
             Self::AttemptRetryTipRows => 16_384,
+            // Sixteen times the 64 steps a saved workflow refused past before
+            // Rule 5.
+            Self::WorkflowSteps => 1_024,
             // The shipped rubric is about 1 KiB; the judgment's state holds
             // at most 64 KiB in all.
             Self::JudgeRubricBytes => 8_192,

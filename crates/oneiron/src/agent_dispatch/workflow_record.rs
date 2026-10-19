@@ -273,7 +273,6 @@ impl super::AgentDispatcher<'_> {
             || row.run_id != record.intent.run_id
             || payload.input != rmpv::Value::Binary(json(&record.intent)?)
             || record.steps.is_empty()
-            || record.steps.len() > 64
             || record.results.len() > record.steps.len()
         {
             return Err(invalid("workflow admission does not match the wrapper"));
