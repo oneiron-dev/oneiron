@@ -181,6 +181,7 @@ pub fn execute_callable_skill(
         determinism,
         at,
         &StepCancellation::never(),
+        &mut Vec::new(),
     )
 }
 
@@ -189,10 +190,12 @@ pub fn execute_callable_skill(
 /// final load, under a child of `parent`: a stop of the caller stops it,
 /// and its owner's suspension stops it alone. A cancelled invocation fails
 /// with [`crate::error::CodeError::CodeStepCancelled`] and writes no
-/// success witness.
+/// success witness. `loaded_from` lists, as each is read, the skill whose
+/// contract admits the call and the entity its load chose: the stored
+/// source the answer, or a refusal after that read, is made from.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the caller lends its existing lease, runtime, host, deterministic step identity and step token"
+    reason = "the caller lends its existing lease, runtime, host, deterministic step identity, step token and source list"
 )]
 pub(crate) fn execute_callable_skill_cancellable(
     vault: &std::sync::Arc<Vault>,
@@ -207,9 +210,11 @@ pub(crate) fn execute_callable_skill_cancellable(
     determinism: CodeRunDeterminism,
     at: u64,
     parent: &StepCancellation,
+    loaded_from: &mut Vec<EntityId>,
 ) -> Result<CallableSkillAnswer> {
     // Validate before appending a manifest entry; failed argument admission
     // must not assert that the body was loaded.
+    loaded_from.push(*skill);
     let record = vault
         .get_skill_record(skill)?
         .ok_or(Error::EntityNotFound)?;
@@ -238,6 +243,7 @@ pub(crate) fn execute_callable_skill_cancellable(
         .register(*skill, run_id, seq, parent);
     let cancel = invocation.token();
     let loaded = vault.load_leased_callable_skill_pack(leased, skill, executor, at)?;
+    loaded_from.push(loaded.entity);
     let tier = callable_tier(vault, &loaded.record)?;
     let call = loaded
         .record

@@ -557,6 +557,8 @@ impl Memory<'_> {
             };
             ranked.push((hit, row, body));
         }
+        // The hits this read admitted are the rows its answer is read from.
+        self.produced_from(ranked.iter().map(|(hit, ..)| hit.id));
         let scores = crate::context_pack::source_ranking::rank(
             &mut ranked,
             &Default::default(),
