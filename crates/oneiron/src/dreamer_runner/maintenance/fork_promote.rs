@@ -10,7 +10,11 @@
 //! transaction; a strict win puts the fork in force for the project, with
 //! its OF-023 revert row, in one transaction. A tie or a loss leaves the
 //! fork open, and a later night reuses it rather than minting another.
-//! Offering a project's leaf back to the vault tree is not this pass.
+//!
+//! After the forks, a project on a fork of its own offers each leaf its tree
+//! learned that holds up on runs outside the project to the vault tree,
+//! through the shared-skill merge's "useful upstream?" question and held-out
+//! replay ([`leaf_promote`]).
 //!
 //! The owner's revert takes the fork off the project, which goes back to the
 //! vault tree; the pass forks that project again only from a newer head.
@@ -25,7 +29,7 @@ use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::error::ArtifactError;
 use crate::skill::{SkillLifecycle, SkillRecord};
-use crate::skill_hub::{HubFile, HubPackage};
+use crate::skill_hub::{HubFile, HubPackage, SharedSkillMergeDisposition, UsefulUpstreamDecisions};
 use crate::skill_optimize::{HeldOutReplayCase, HeldOutReplayNotes};
 use crate::task_type::{TaskTypeTree, TreeScope};
 use crate::team::run_binding::team_run_tasks;
@@ -33,15 +37,48 @@ use crate::team::{TeamReceipt, team_receipts};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Error, Result, Vault, WriteActor};
 
+mod leaf_promote;
+
 /// A project tree fork that wins on its project's held-out runs goes in
 /// force at once (admission, the project's attachment and its revert row in
 /// one transaction), with no owner step. `false` leaves the winning fork
 /// open for an owner door.
 pub const PROJECT_TREE_FORK_ADMITS: bool = true;
+/// After the forks, each project on a fork of its own offers its leaves to
+/// the vault tree. A leaf's record elsewhere is counted afresh each pass and
+/// never stored: each settled team outside the project (a team in no
+/// project is outside every one) placed under the leaf's parent whose pick
+/// on the leaf's decision (its pattern, or its one model) is the leaf's
+/// winner is one run, won when the team succeeded; a team that picked
+/// otherwise is not counted. A leaf with at least
+/// [`crate::task_type::PROMOTE_MIN_HELD_OUT_RUNS`] such runs, won by a
+/// strict majority, goes to the merge. `false` offers nothing.
+pub const PROJECT_LEAF_PROMOTES: bool = true;
 /// A project's fork takes this skill id, then the project's 32 hex.
 const FORK_SKILL_PREFIX: &str = "team-shape.project.";
+/// A project's local fork of the head that carries a promoted leaf takes
+/// this skill id, then the project's 32 hex.
+const PROMOTE_SKILL_PREFIX: &str = "team-shape.promote.";
 /// Skill records read per page while looking for the open forks.
 const SKILL_PAGE: usize = 128;
+
+/// What the host lends the promote step: the agent the Coach asks "useful
+/// upstream?" for, and the host's useful-upstream ladder, on a fresh clock
+/// for each question.
+pub trait UpstreamSeat {
+    /// The agent definition the question is asked for.
+    fn resident(&self) -> EntityId;
+
+    /// `merge` run with the host's useful-upstream decisions.
+    ///
+    /// # Errors
+    ///
+    /// Host-defined, and `merge`'s own.
+    fn ask(
+        &self,
+        merge: &dyn Fn(&UsefulUpstreamDecisions<'_>) -> Result<SharedSkillMergeDisposition>,
+    ) -> Result<SharedSkillMergeDisposition>;
+}
 
 /// What one pass did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -68,11 +105,29 @@ pub struct ForkPromoteReport {
     /// that the judge abstained on, or whose package moved after it was
     /// scored; each waits for a later night.
     pub refused: u32,
+    /// Live split leaves of the projects' own trees that the vault tree
+    /// lacks, under a live parent it holds.
+    pub leaves: u32,
+    /// Of those, the ones that held up on runs elsewhere
+    /// ([`PROJECT_LEAF_PROMOTES`] says how they are counted).
+    pub held_up: u32,
+    /// The revisions a merge put in force, each the vault head with one
+    /// held-up leaf added to its tree.
+    pub promoted: Vec<EntityId>,
+    /// Held-up leaves whose merge waits on the owner's answer: it widens the
+    /// skill's permissions, or the scan of its bytes asks for review.
+    pub pending_consent: u32,
+    /// Held-up leaves a door refused, that the judge abstained on, that the
+    /// merge ruled out (not useful upstream, or no strict win on the replay),
+    /// or whose same bytes a merge already ruled on.
+    pub promote_refused: u32,
+    /// Held-up leaves with nothing to rule them: no judge, no seat or agent
+    /// to ask for, or no held-out run on the head yet.
+    pub promote_unscored: u32,
 }
 
 /// What one pass reads once.
-struct Pass<'a> {
-    scorer: &'a dyn HeldOutReplayNotes,
+struct Pass {
     attempt: AttemptId,
     actor: WriteActor,
     head: EntityId,
@@ -81,7 +136,8 @@ struct Pass<'a> {
     vault_tree: TaskTypeTree,
     /// The TASK each recorded team start ran.
     tasks: BTreeMap<String, String>,
-    /// The open forks of the head, by skill id.
+    /// The open forks of the head (the projects' and their promote forks),
+    /// by skill id.
     open: BTreeMap<String, EntityId>,
     /// Projects whose fork of the head the owner reverted.
     reverted: BTreeSet<EntityId>,
@@ -99,40 +155,62 @@ impl Vault {
     /// put a strict winner in force for the project when
     /// [`PROJECT_TREE_FORK_ADMITS`]. With no `scorer` nothing is forked.
     ///
+    /// Then, when [`PROJECT_LEAF_PROMOTES`], each project on a fork of its
+    /// own offers each leaf that holds up on runs elsewhere to the vault tree
+    /// through the shared-skill merge: `upstream` asks the Coach's
+    /// useful-upstream question and `scorer` replays the head's held-out
+    /// runs. With either missing, a leaf that holds up is counted and nothing
+    /// is offered.
+    ///
     /// # Errors
     ///
     /// A lease that is not this facet's Coach attempt; storage errors; the
-    /// scorer's errors and the outcome doors' errors. A refusal of one
-    /// project's fork is counted in the report and the pass moves on.
+    /// scorer's errors and the outcome and merge doors' errors. A refusal of
+    /// one project's fork or of one leaf's offer is counted in the report and
+    /// the pass moves on.
     pub fn run_coach_fork_promote(
         &self,
         attempt: &DreamerAdmittedAttempt,
         scorer: Option<&dyn HeldOutReplayNotes>,
+        upstream: Option<&dyn UpstreamSeat>,
         now: u64,
     ) -> Result<ForkPromoteReport> {
         self.require_coach_attempt(attempt, COACH_FORK_PROMOTE_FACET)?;
         let mut report = ForkPromoteReport::default();
-        let Some(scorer) = scorer else {
+        let Some(pass) = self.fork_pass(attempt, now)? else {
             return Ok(report);
         };
-        let Some(pass) = self.fork_pass(attempt, scorer, now)? else {
-            return Ok(report);
-        };
+        let settled: Vec<TeamReceipt> = team_receipts(self, None)?
+            .into_iter()
+            .filter(|receipt| receipt.outcome.is_some())
+            .collect();
         let mut by_project: BTreeMap<EntityId, Vec<TeamReceipt>> = BTreeMap::new();
-        for receipt in team_receipts(self, None)? {
-            if receipt.outcome.is_some()
-                && let Some(project) = receipt.project
-            {
-                by_project.entry(project).or_default().push(receipt);
+        for receipt in &settled {
+            if let Some(project) = receipt.project {
+                by_project.entry(project).or_default().push(receipt.clone());
             }
         }
-        for (project, teams) in by_project {
-            report.projects += 1;
-            match fork_project(self, &pass, project, &teams, &mut report) {
-                Ok(()) => {}
-                Err(Error::Artifact(ArtifactError::InvalidSkillBody(_))) => report.refused += 1,
-                Err(error) => return Err(error),
+        report.projects = u32::try_from(by_project.len()).unwrap_or(u32::MAX);
+        if let Some(scorer) = scorer {
+            for (project, teams) in &by_project {
+                match fork_project(self, &pass, scorer, *project, teams, &mut report) {
+                    Ok(()) => {}
+                    Err(Error::Artifact(ArtifactError::InvalidSkillBody(_))) => {
+                        report.refused += 1;
+                    }
+                    Err(error) => return Err(error),
+                }
             }
+        }
+        if PROJECT_LEAF_PROMOTES {
+            leaf_promote::run(
+                self,
+                &pass,
+                scorer.zip(upstream),
+                by_project.into_keys(),
+                &settled,
+                &mut report,
+            )?;
         }
         Ok(report)
     }
@@ -141,12 +219,7 @@ impl Vault {
     /// and tree, the TASK each team ran, the head's open forks and the
     /// projects whose fork of it the owner took back. `None` when no head is
     /// in force or it carries no package to fork.
-    fn fork_pass<'a>(
-        &self,
-        attempt: &DreamerAdmittedAttempt,
-        scorer: &'a dyn HeldOutReplayNotes,
-        now: u64,
-    ) -> Result<Option<Pass<'a>>> {
+    fn fork_pass(&self, attempt: &DreamerAdmittedAttempt, now: u64) -> Result<Option<Pass>> {
         let Some(head) = team_shape_skill_in_force(self, None)? else {
             return Ok(None);
         };
@@ -170,7 +243,6 @@ impl Vault {
         };
         let id = attempt.status.attempt.id;
         Ok(Some(Pass {
-            scorer,
             attempt: id,
             actor: self.dreamer_actor_for_attempt(id)?,
             head,
@@ -190,7 +262,8 @@ impl Vault {
 /// read no clear winner apart from the vault tree's is left as it is.
 fn fork_project(
     vault: &Vault,
-    pass: &Pass<'_>,
+    pass: &Pass,
+    scorer: &dyn HeldOutReplayNotes,
     project: EntityId,
     teams: &[TeamReceipt],
     report: &mut ForkPromoteReport,
@@ -249,7 +322,7 @@ fn fork_project(
         .ok_or(Error::EntityNotFound)?;
     let judge = TreeReplayScorer::new(
         vault,
-        pass.scorer,
+        scorer,
         &fork,
         &pass.head,
         pass.vault_tree.clone(),
@@ -325,7 +398,7 @@ fn fork_project(
 /// head's, so the judge reads the two apart.
 fn stored_fork(
     vault: &Vault,
-    pass: &Pass<'_>,
+    pass: &Pass,
     project: EntityId,
     tree: &TaskTypeTree,
     report: &mut ForkPromoteReport,
@@ -373,8 +446,8 @@ fn stored_fork(
     Ok(fork)
 }
 
-/// Each open fork of `head` a project took, by skill id; the last listed
-/// where a project has several.
+/// Each open fork of `head` a project took, and each project's open promote
+/// fork of it, by skill id; the last listed where a project has several.
 fn open_forks(vault: &Vault, head: &EntityId) -> Result<BTreeMap<String, EntityId>> {
     let mut open = BTreeMap::new();
     let mut after = None;
@@ -390,7 +463,8 @@ fn open_forks(vault: &Vault, head: &EntityId) -> Result<BTreeMap<String, EntityI
             };
             if record.lifecycle_status == SkillLifecycle::Candidate
                 && record.forked_from == Some(*head)
-                && record.skill_id.starts_with(FORK_SKILL_PREFIX)
+                && (record.skill_id.starts_with(FORK_SKILL_PREFIX)
+                    || record.skill_id.starts_with(PROMOTE_SKILL_PREFIX))
             {
                 open.insert(record.skill_id, *id);
             }

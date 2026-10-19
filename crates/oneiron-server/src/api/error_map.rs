@@ -179,6 +179,21 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             ApiErrorDetails::InvalidState { state: None },
             ["Do what the message names (fund, bind or configure it), then ask again."],
         ),
+        // A legal order binding the host keeps the record (WILL-PLAN L01
+        // rows 01 and 03): its state, and the message naming its bound.
+        ErrorKind::LegalHold => {
+            let state = match &error {
+                oneiron::Error::LegalHold(notice) => notice.state.as_str(),
+                _ => "legal_hold",
+            };
+            ApiError::new(
+                error.to_string(),
+                ApiErrorDetails::InvalidState {
+                    state: Some(state.to_owned()),
+                },
+                [oneiron::error::LEGAL_HOLD_SUGGESTION],
+            )
+        }
         _ => ApiError::internal_server_error(message),
     }
 }
