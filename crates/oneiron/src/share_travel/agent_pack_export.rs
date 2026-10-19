@@ -106,7 +106,10 @@ impl Memory<'_> {
             let lane = self.read_lane(ClaimReadStatus::Recorded)?;
             pack_in(vault, &lane, &agent, &choice, &on_device, None)
         };
-        let (export, notices) = match self.owner_export_lane(ClaimReadStatus::Recorded)? {
+        let owner_lane = self.owner_export_lane(ClaimReadStatus::Recorded)?;
+        // The owner's own export: his share receipt never fails it (FIX 5523).
+        let owner_export = owner_lane.is_some();
+        let (export, notices) = match owner_lane {
             // The owner reads as his own read and keeps no born-with text
             // back; each world his choice would keep from `onward` is named.
             // A row of his that cannot be placed overrides nothing, and nor
@@ -153,6 +156,7 @@ impl Memory<'_> {
             &export.born_with,
             export.omitted.clone(),
             notices,
+            owner_export,
         )?;
         Ok(export)
     }

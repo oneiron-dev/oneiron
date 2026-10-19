@@ -203,8 +203,9 @@ impl NativeClient {
         Ok(Self { inner })
     }
 
-    /// Redeems a pairing link once; returns the `{url, credential, pin}`
-    /// JSON `pairing::Paired` writes, the pin the link named or `null`.
+    /// Redeems a pairing link once; returns the `{url, credential, pin, comm}`
+    /// JSON `pairing::Paired` writes: the pin the link named or `null`, and
+    /// the credential's comm reach.
     #[staticmethod]
     fn pair(py: Python<'_>, link: String) -> PyResult<String> {
         let paired = py

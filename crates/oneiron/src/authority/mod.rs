@@ -272,7 +272,10 @@ pub use slip_pairing::{
     format_pairing_link, format_pinned_pairing_link, pairing_binding_transcript,
     pairing_binding_transcript_pinned, parse_pairing_link, parse_pinned_pairing_link,
 };
-pub use slip_renewal::OwnerDeviceRenewalProof;
+pub use slip_renewal::{
+    OwnerDeviceRenewalProof, RENEWAL_GRANT_AND_DEVICE, RENEWAL_K04, RENEWAL_LIFETIME,
+    RENEWAL_PROOF_NOT_FRESH,
+};
 pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
