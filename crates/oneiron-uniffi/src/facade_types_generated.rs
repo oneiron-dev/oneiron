@@ -26964,6 +26964,12 @@ pub struct SealCheckReceipt {
     pub request: SealCheckRequest,
     #[serde(rename = "outcome", default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<SealCheckOutcome>,
+    #[serde(
+        rename = "last_asked_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_asked_at: Option<u64>,
 }
 
 /// `oneiron::self_heal::audit::SealedAttemptReceipt`.
