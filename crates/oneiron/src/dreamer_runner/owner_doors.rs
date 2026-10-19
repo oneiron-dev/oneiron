@@ -170,6 +170,12 @@ pub struct ConsolidationLineageView {
     /// False when the walk stopped before a try that retries none: a
     /// predecessor this node no longer holds, or a link back into the chain.
     pub chain_complete: bool,
+    /// 32-hex attempt id of the job's newest try, found by following each
+    /// try's one retry forward from the requested one: the requested try
+    /// itself when nothing retries it. Ask for this ref to read the newest
+    /// try's chain and steps. `None` when a try has two retries, the walk
+    /// meets a try twice, or the queue did not read.
+    pub latest_job_ref: Option<String>,
     /// The requested try's committed steps, in step-hash order.
     pub steps: Vec<ConsolidationStepRef>,
     /// Where the next page starts; none past the last step.
@@ -385,12 +391,23 @@ pub fn consolidation_lineage_as(
         return Ok(None);
     };
     let (tries, chain_complete) = retry_chain(&store, &txn, record)?;
+    // An answer the read adds: a queue that does not read leaves it unknown
+    // and fails nothing the read answered before (FIX 4906).
+    let latest_job_ref = store
+        .attempts
+        .newest_retry_in_txn(&txn, job)
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "the consolidation lineage's newest try did not read");
+            None
+        })
+        .map(job_hex);
     let (steps, next_step) =
         crate::llm::committed_steps_in_txn(vault, &txn, job, input.from_step.as_deref(), limit)?;
     Ok(Some(ConsolidationLineageView {
         job_ref: job_hex(job),
         tries,
         chain_complete,
+        latest_job_ref,
         steps: steps
             .into_iter()
             .map(|(step_hash, claim_ref)| ConsolidationStepRef {

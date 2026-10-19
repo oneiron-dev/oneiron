@@ -1,29 +1,31 @@
-use axum::http::HeaderMap;
+use axum::http::request::Parts;
 use oneiron::booking::anti_abuse::booking_ip_hash;
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
 use super::{BookingTransport, BookingTransportContext};
-use crate::api::check_api_auth;
+use crate::api::scoped_auth::check_request_auth;
 use crate::auth::{ClientAddress, CoreAuth};
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
 /// Builds the transport context for one HTTP request.
 ///
-/// The bearer check is the existing `check_api_auth` door; the credential it
-/// verified keys this request's turn past a window. Admission keys on
-/// the client address the connection proves ([`ClientAddress`]): a forwarding
-/// header counts only behind a configured trusted proxy, so rotating one mints
-/// no fresh budget. A connection with no peer to key on fails closed.
+/// The bearer check is the legacy door's `check_request_auth`: on a managed
+/// vault the request's one caller, its supervisor's attested owner included.
+/// The credential it verified keys this request's turn past a window.
+/// Admission keys on the client address the connection proves
+/// ([`ClientAddress`]): a forwarding header counts only behind a configured
+/// trusted proxy, so rotating one mints no fresh budget. A connection with no
+/// peer to key on fails closed.
 /// A booking is an owner act (FIX 2222): a self-hosted root or the dev mode
 /// books as the owner it acts as, a hosted operator's root is refused, and
 /// no request creates an owner to book as.
 pub(super) fn http_transport_context(
-    headers: &HeaderMap,
+    parts: &Parts,
     server: &SyncServer,
     ClientAddress(client): ClientAddress,
 ) -> Result<BookingTransportContext, ApiError> {
-    let auth = check_api_auth(headers, server)?;
+    let auth = check_request_auth(parts, server)?;
     let host_action = crate::api::host_action::require_host_owner_act(server, &auth)?;
     let source_ip = client
         .ok_or_else(|| ApiError::internal_server_error("booking peer context unavailable"))?;

@@ -18,6 +18,27 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::sync::Arc;
 
+/// The session and the room turn a request names in its headers.
+pub(super) fn mcp_request_placement(
+    headers: &HeaderMap,
+) -> Result<(Option<oneiron::EntityId>, Option<oneiron::EntityId>), McpGatewayError> {
+    let session = crate::api::write_facet::request_session(headers).map_err(|()| {
+        McpGatewayError::new(-32602, "tool_args_invalid", "invalid session header")
+    })?;
+    let room_turn = headers
+        .get(crate::api::facade::ROOM_TURN_HEADER)
+        .map(|room| {
+            room.to_str()
+                .ok()
+                .and_then(|room| oneiron::EntityId::from_hex(room.trim()).ok())
+                .ok_or_else(|| {
+                    McpGatewayError::new(-32602, "tool_args_invalid", "invalid room turn header")
+                })
+        })
+        .transpose()?;
+    Ok((session, room_turn))
+}
+
 /// The caller a registered MCP credential names, with its verified auth at
 /// `locality`, where the request's connection sits.
 pub(crate) async fn resolve_mcp_gateway_actor(
@@ -36,20 +57,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     )
     .map_err(|_| mcp_proof_error())?
     .at(locality);
-    let session = crate::api::write_facet::request_session(headers).map_err(|()| {
-        McpGatewayError::new(-32602, "tool_args_invalid", "invalid session header")
-    })?;
-    let room_turn = headers
-        .get(crate::api::facade::ROOM_TURN_HEADER)
-        .map(|room| {
-            room.to_str()
-                .ok()
-                .and_then(|room| oneiron::EntityId::from_hex(room.trim()).ok())
-                .ok_or_else(|| {
-                    McpGatewayError::new(-32602, "tool_args_invalid", "invalid room turn header")
-                })
-        })
-        .transpose()?;
+    let (session, room_turn) = mcp_request_placement(headers)?;
     // A narrower caller's own holder proof, for the home an opened device
     // asks (FIX 2905): the one this request was admitted on.
     let forwarded = (!auth.is_owner_grade())

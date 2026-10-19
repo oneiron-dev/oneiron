@@ -344,6 +344,7 @@ pub(crate) fn canonical_mail_send_digest(
         has_opted_in: request.gate.has_opted_in,
         has_permission: request.gate.has_permission,
         policy_risk: ExternalEffectPolicyRisk::HoldToProposal,
+        send_autonomy: None,
     };
     crate::gate::native_mail_cold_approval_digest(&effect).ok_or_else(invalid)
 }
@@ -518,6 +519,7 @@ pub(crate) fn approval_digest_from_frozen_payload(
         has_opted_in: true,
         has_permission: true,
         policy_risk: ExternalEffectPolicyRisk::HoldToProposal,
+        send_autonomy: None,
     };
     crate::gate::native_mail_cold_approval_digest(&effect)
 }
