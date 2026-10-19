@@ -2482,7 +2482,7 @@
      "purpose": "Checkpoint v2 adoption (OF-469): the one image a vault trusts in place of replaying the history it covers",
      "surface": {
       "crate-vis": 4,
-      "fn": 11,
+      "fn": 12,
       "struct": 3
      }
     },
@@ -2975,6 +2975,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/history_transfer/handoff.rs",
+     "purpose": "The rows a leave handoff stands on, folded with this vault's own (FIX 3797, FIX 3798)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/home_pick.rs",
      "purpose": "Folds the owner's signed picks of his vault's home node (DOOR-101 PR2a; ARCH-0026: \"The owner picks the home…",
      "surface": {
@@ -3080,7 +3090,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/left_notices.rs",
@@ -35132,7 +35142,7 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 3
      }
     },
@@ -46787,7 +46797,7 @@
      "path": "src/settings/destination.rs",
      "purpose": "Where an off-device read's rows go, and the one verdict every door asks about them (mesh PR2b, CALLS `mesh…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 3,
       "fn": 14,
       "struct": 2
@@ -46944,11 +46954,11 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 3,
       "mod": 1,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 3
      }
     },
@@ -46986,7 +46996,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AgentPackExport",
@@ -46996,8 +47006,24 @@
      "path": "src/share_travel/agent_pack_export.rs",
      "purpose": "`vault.agents.export_pack` (OF-491, FIX 2042): the sharing door for an agent",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PackNoticeWording",
+      "WorldRecipientNotice"
+     ],
+     "path": "src/share_travel/pack_notice.rs",
+     "purpose": "The owner's notices on an agent pack's travel (FIX 5493, owner ruling 1-EXPORT = B)",
+     "surface": {
+      "const": 6,
+      "crate-vis": 9,
+      "struct": 2
      }
     },
     {
@@ -48113,7 +48139,7 @@
      "path": "src/skill_hub/pack_catalog/agent_admission.rs",
      "purpose": "The receiving half of the AgentPack another party shared (OF-491, FIX 2041 and 3168)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -48219,6 +48245,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "PackImportPreview"
+     ],
+     "path": "src/skill_hub/pack_catalog/import_notice.rs",
+     "purpose": "The owner's import check for a travelling AgentPack (FIX 5493, owner ruling 1-EXPORT = B plus an import…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/local.rs",
      "purpose": "The owner's own pack install, `vault.packs.put` (ARCH-0080 §8, slice 1), and the vault's `local` pack",
@@ -48266,7 +48306,7 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 7,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -52398,7 +52438,7 @@
       "const": 2,
       "crate-vis": 11,
       "fn": 14,
-      "re-export": 15,
+      "re-export": 16,
       "struct": 2
      }
     },
@@ -52488,7 +52528,22 @@
      "purpose": "What the vault's sealed cloud bundle carries (FIX 922 PR 2): the base section and the section of each world…",
      "surface": {
       "fn": 3,
+      "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RecoveryCheckpointTrust"
+     ],
+     "path": "src/sync/residence/bundle_payload/checkpoint.rs",
+     "purpose": "The checkpoint image a sealed bundle's base section carries, and the kit restore that adopts it (FIX 3583)",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -54374,7 +54429,7 @@
       "crate-vis": 40,
       "fn": 1,
       "mod": 4,
-      "re-export": 26
+      "re-export": 27
      }
     },
     {
@@ -54704,7 +54759,7 @@
      "surface": {
       "enum": 1,
       "fn": 10,
-      "re-export": 72,
+      "re-export": 73,
       "struct": 39
      }
     },
@@ -55185,7 +55240,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1082
+      "fn": 1083
      }
     },
     {
@@ -55569,6 +55624,19 @@
      "purpose": "The typed room off-record doors (ARCH-0052 D5, PRIVACY-07)",
      "surface": {
       "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackPreviewRequest"
+     ],
+     "path": "src/task_verb/sdk_pack_preview.rs",
+     "purpose": "`vault.packs.preview` (FIX 5493): the owner's look at a pack folder before `vault.packs.put`",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -56597,11 +56665,16 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "WorldPrivacyWaitResult",
+      "WorldPrivacyWaitStatus"
+     ],
      "path": "src/task_verb/world_privacy_wait.rs",
      "purpose": "Waiting on a world-privacy request (FIX 4706)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 5,
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -61587,7 +61660,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 178,
+     "files": 179,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62742,7 +62815,7 @@
      "purpose": "Revocable brief read grants"
     },
     "share_travel": {
-     "files": 3,
+     "files": 4,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -62777,7 +62850,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 81,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62847,7 +62920,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 197,
+     "files": 198,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62875,7 +62948,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 195,
+     "files": 196,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63045,7 +63118,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3871,
+   "source_files": 3876,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71791,7 +71864,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1053
+      "fn": 1054
      }
     },
     {
@@ -72912,7 +72985,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1054
+      "fn": 1055
      }
     },
     {
@@ -76580,7 +76653,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 169
+      "crate-vis": 170
      }
     },
     {
@@ -76801,6 +76874,16 @@
      "purpose": "WILL-PLAN L13 row 01: one revalidated binding for a managed vault's attested owner, shared by the policy…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/pack_preview_doors.rs",
+     "purpose": "`vault.packs.preview` (FIX 5493): the owner's look at a pack folder before he puts it, under the proof…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -77662,7 +77745,7 @@
      "path": "src/api/mcp_gateway/owner_call.rs",
      "purpose": "A managed vault's console owner on `/mcp` (WILL-PLAN L14 row 01)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -77693,6 +77776,16 @@
      "purpose": "Tasks verb and response shaping",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/tool_receipt.rs",
+     "purpose": "A `tools/call`'s lasting receipt on MCP (OF-538), as the gateway's one door writes it",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -78294,13 +78387,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/pack_preview_routes.rs",
+     "purpose": "`POST /v1/owner/packs/preview` (FIX 5493): the owner's look at a pack folder before `POST /v1/owner/packs`…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/pack_routes.rs",
      "purpose": "`/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -82304,7 +82407,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 17,
       "fn": 20,
       "struct": 3,
       "type": 1
@@ -84385,7 +84488,6 @@
      "path": "src/usage/ledger.rs",
      "purpose": "Durable idempotent provider-list meters, aggregated only per owner and vault",
      "surface": {
-      "const": 1,
       "crate-vis": 1,
       "fn": 5,
       "struct": 2
@@ -85096,7 +85198,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 450,
+     "files": 453,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -85539,7 +85641,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 831,
+   "source_files": 834,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -87613,7 +87715,6 @@
       "ModelLocality",
       "ModelManifest",
       "ModelManifestReplace",
-      "ModelOrder",
       "ModelRegistryRow",
       "ModelRole",
       "ModelRoleInput",
@@ -87897,12 +87998,14 @@
       "PackConnectorReceipt",
       "PackFileInput",
       "PackHookBinding",
+      "PackImportPreview",
       "PackInstallReceipt",
       "PackInstallStatus",
       "PackKind",
       "PackLearningContext",
       "PackLineAtom",
       "PackPermissions",
+      "PackPreviewRequest",
       "PackPutOutcome",
       "PackPutReceipt",
       "PackPutRequest",
@@ -88148,7 +88251,6 @@
       "QuoteStripStatus",
       "RankedSlot",
       "ReadFilterInput",
-      "ReadLocation",
       "Reasoning",
       "ReasoningCause",
       "ReasoningEffort",
@@ -88571,7 +88673,6 @@
       "SealReceiptView",
       "SealRunReceipt",
       "SealedAttemptReceipt",
-      "SealedCopies",
       "SearchAxis",
       "SearchEvidence",
       "SeatInventory",
@@ -89248,10 +89349,9 @@
       "WorkspaceRosterPreset",
       "WorkspaceRosterRequest",
       "WorkspaceRosterRole",
-      "WorldPrivacy",
-      "WorldPrivacyRequest",
-      "WorldPrivacyRequestKind",
-      "WorldPrivacyRequestStatus",
+      "WorldPrivacyWaitResult",
+      "WorldPrivacyWaitStatus",
+      "WorldRecipientNotice",
       "XlsxAlignment",
       "XlsxArea",
       "XlsxBodyOp",
@@ -89280,8 +89380,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 848,
-      "struct": 2692
+      "enum": 844,
+      "struct": 2694
      }
     },
     {

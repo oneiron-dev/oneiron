@@ -5,12 +5,16 @@
 //! capturing nothing the peer sent
 //! ([`crate::api::call_receipt::record_socket_close`]). The close code is
 //! the one it always was. A peer that went away, a revoked credential and
-//! the engine's stop are no refused call, and write none.
+//! the engine's stop are no refused call, and write none. On a managed
+//! vault a held MCP socket's receipt is admitted under the reap freeze, and
+//! a socket refused while the vault is frozen closes the same way with no
+//! receipt (FIX 5128).
 
 use axum::extract::ws::{CloseFrame, Message as WsMessage, Utf8Bytes};
 
 use super::hello::HelloOutcome;
 use super::socket_stop::StoppingTransport;
+use crate::managed::ManagedCarrierContext;
 use crate::protocol::close_codes;
 use crate::server::SyncServer;
 
@@ -55,10 +59,27 @@ impl ProtocolRefusal {
 
     /// Writes the connection's receipt of this refusal at `verb`, then
     /// closes the socket with it. The receipt is best effort: a row that
-    /// cannot be written is logged and the close goes ahead.
-    async fn close(self, server: &SyncServer, verb: &str, transport: &mut StoppingTransport) {
-        let _ =
-            crate::api::call_receipt::record_socket_close(server, verb, self.code(), self.reason);
+    /// cannot be written is logged and the close goes ahead. A managed
+    /// socket's receipt is written under its reap `admission`, and while the
+    /// vault is frozen none is.
+    async fn close(
+        self,
+        server: &SyncServer,
+        verb: &str,
+        transport: &mut StoppingTransport,
+        admission: Option<&ManagedCarrierContext>,
+    ) {
+        let record = || {
+            crate::api::call_receipt::record_socket_close(server, verb, self.code(), self.reason)
+        };
+        match admission {
+            None => {
+                let _ = record();
+            }
+            Some(admission) => {
+                let _ = admission.admit_receipt(record);
+            }
+        }
         transport
             .send_unguarded_close_frame(self.close_frame())
             .await;
@@ -73,6 +94,7 @@ pub(super) async fn hello(
     transport: &mut StoppingTransport,
     server: &SyncServer,
     conn_id: u32,
+    admission: Option<&ManagedCarrierContext>,
 ) -> Option<u8> {
     match transport.hello().await {
         HelloOutcome::Valid(version) => Some(version),
@@ -82,7 +104,9 @@ pub(super) async fn hello(
                 reason = refusal.reason,
                 "protocol hello rejected — closing"
             );
-            refusal.close(server, HELLO_VERB, transport).await;
+            refusal
+                .close(server, HELLO_VERB, transport, admission)
+                .await;
             None
         }
         HelloOutcome::Disconnected => {
@@ -99,9 +123,10 @@ pub(super) async fn refuse_hello_version(
     server: &SyncServer,
     close_code: u16,
     reason: &'static str,
+    admission: Option<&ManagedCarrierContext>,
 ) {
     ProtocolRefusal::new(close_code, reason)
-        .close(server, HELLO_VERB, transport)
+        .close(server, HELLO_VERB, transport, admission)
         .await;
 }
 
@@ -113,9 +138,10 @@ pub(super) async fn refuse_frame(
     server: &SyncServer,
     close_code: u16,
     reason: &'static str,
+    admission: Option<&ManagedCarrierContext>,
 ) {
     ProtocolRefusal::new(close_code, reason)
-        .close(server, FRAME_VERB, transport)
+        .close(server, FRAME_VERB, transport, admission)
         .await;
 }
 
@@ -123,8 +149,14 @@ pub(super) async fn refuse_frame(
 /// refusing a frame (one that would not unwrap within the cap), receipts that
 /// refusal and closes with it. A read that ended any other way closes
 /// nothing here.
-pub(super) async fn close_read_refusal(server: &SyncServer, transport: &mut StoppingTransport) {
+pub(super) async fn close_read_refusal(
+    server: &SyncServer,
+    transport: &mut StoppingTransport,
+    admission: Option<&ManagedCarrierContext>,
+) {
     if let Some(refusal) = transport.refusal() {
-        refusal.close(server, FRAME_VERB, transport).await;
+        refusal
+            .close(server, FRAME_VERB, transport, admission)
+            .await;
     }
 }
