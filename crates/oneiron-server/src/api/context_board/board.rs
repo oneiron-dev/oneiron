@@ -457,7 +457,8 @@ pub(super) async fn board_people(
     people
         .set_about(&mut |person| server.vault.person_about(person, ceiling))
         .map_err(|error| core_engine_error("board people failed", error))?;
-    people.disclose_names(&server.vault, read.actor_key())
+    people
+        .disclose_names(&server.vault, read.actor_key())
         .map_err(|error| core_engine_error("board people disclosure failed", error))?;
     let run_key = auth
         .principal_ref()

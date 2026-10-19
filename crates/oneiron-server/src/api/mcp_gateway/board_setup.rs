@@ -556,7 +556,8 @@ fn mcp_board_sections(
             read.is_entity_readable(&person)
         })
         .map_err(|error| mcp_engine_error("board people failed", error))?;
-        people.disclose_names(&server.vault, read.actor_key())
+        people
+            .disclose_names(&server.vault, read.actor_key())
             .map_err(|error| mcp_engine_error("board people disclosure failed", error))?;
         people
     };
@@ -1361,7 +1362,8 @@ fn run_board_sections(
             read.is_entity_readable(&person)
         })
         .map_err(|error| mcp_engine_error("board people failed", error))?;
-        people.disclose_names(&server.vault, read.actor_key())
+        people
+            .disclose_names(&server.vault, read.actor_key())
             .map_err(|error| mcp_engine_error("board people disclosure failed", error))?;
         people
     };

@@ -79,8 +79,7 @@ pub fn skill_restore_defaults_as_owner(
                 .into_iter()
                 .next()
                 .ok_or_else(|| {
-                    Error::InvariantViolation("restored default skill has no source receipt")
-                        .into()
+                    Error::InvariantViolation("restored default skill has no source receipt").into()
                 })
         })
         .collect()

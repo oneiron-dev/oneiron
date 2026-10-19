@@ -63,10 +63,14 @@ pub(super) fn put_evaluated_memo(
         let current = load_record_in_txn(vault, txn, request.query_ref, kind)?
             .ok_or(Error::EntityNotFound)?;
         if current.definition != *request.definition {
-            return Err(Error::ConcurrentWrite("saved query changed during evaluation"));
+            return Err(Error::ConcurrentWrite(
+                "saved query changed during evaluation",
+            ));
         }
         if !lane.entities_readable_in_txn(txn, &[request.entity_ref])?[0] {
-            return Err(Error::ConcurrentWrite("saved query owner read changed during evaluation"));
+            return Err(Error::ConcurrentWrite(
+                "saved query owner read changed during evaluation",
+            ));
         }
         MEMOS.put(&vault.store, txn, &row.key, row)?;
         Ok(())

@@ -1,9 +1,16 @@
 //! `/v1/owner/worlds/privacy`: a holder answers the world-privacy requests
 //! agents raised (FIX 4480). He accepts or declines an agent's proposal of
-//! stricter settings, confirms or declines a widen ask, and undoes an agent's
-//! tighten from its notice. Each is his own act from whichever linked surface
-//! he is on (`owner()`), written by the engine's one settings transaction:
-//! a yes is `by: Owner` with `answer` = the request.
+//! stricter settings, confirms or declines a widen ask, undoes an agent's
+//! tighten from its notice, and changes a world's settings himself (`set`).
+//! Each is his own act from whichever linked surface he is on, written by the
+//! engine's one settings transaction: a yes is `by: Owner` with `answer` =
+//! the request.
+//!
+//! These routes admit any holder of a world's settings right, not only the
+//! vault's owners (FIX 4707, [`holder`]): an Admin or a Delegate whose Grant
+//! includes it acts on his own verified human slip, and the engine judges in
+//! the acting transaction that he holds the world's right and that his slip
+//! is still live. His proof lends him no owner authority anywhere else.
 //!
 //! `/v1/owner/worlds/privacy/widen-unanimity`: the vault's "widen needs every
 //! owner" setting and its per-world overrides. Any one owner turns it on; a
@@ -18,21 +25,33 @@ use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
+use oneiron::authority::ActAuthority;
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::policy_model::{
     WidenUnanimity, WidenUnanimityOffRequest, WidenUnanimityOutcome, WorldPrivacyAnswer,
-    WorldPrivacyReceipt, WorldPrivacyRequest,
+    WorldPrivacyOutcome, WorldPrivacyReceipt, WorldPrivacyRequest, WorldPrivacySetInput,
 };
+use oneiron::store::GateDecisionId;
 use serde::Deserialize;
 
 use super::{OwnerReply, blocking, owner};
 use crate::api::{json_payload, query_params};
-use crate::auth::CoreAuth;
+use crate::auth::{CoreAuth, CoreScope};
+use crate::error::ApiError;
 use crate::owner::{OwnerResult, entity_id};
 use crate::server::SyncServer;
+
+/// The grant a holder who does not own the vault needs on his slip to read
+/// the requests (CALLS "FIX 4707 holder slip scope").
+const HOLDER_READS: CoreScope = CoreScope::Read;
+/// The grant he needs on it to answer, undo or set (CALLS "FIX 4707 holder
+/// slip scope").
+const HOLDER_ACTS: CoreScope = CoreScope::Write;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/worlds/privacy/requests", get(list))
+        .route("/worlds/privacy/set", post(set))
         .route("/worlds/privacy/proposals/accept", post(accept))
         .route("/worlds/privacy/proposals/decline", post(decline))
         .route("/worlds/privacy/asks/confirm", post(accept))
@@ -89,22 +108,105 @@ struct SetUnanimity {
     on: Option<bool>,
 }
 
+/// The world-settings door (FIX 4707): the vault's owner as [`owner`] admits
+/// him, or any other live person on their own verified human slip, bound to
+/// it so the engine rechecks it in the acting transaction. Whether that
+/// person holds the world's settings right is the engine's to judge in that
+/// same transaction; the proof lends a non-owner no owner authority. Every
+/// refusal is the owner door's 403, and a managed owner's or a host action's
+/// stays the owner door's own.
+fn holder(
+    auth: &CoreAuth,
+    server: &SyncServer,
+    scope: CoreScope,
+) -> Result<AuthenticatedOwner, ApiError> {
+    let owner_refusal = match owner(auth, server) {
+        Ok(owner) => return Ok(owner),
+        Err(refusal) => refusal,
+    };
+    if auth.managed_owner().is_some()
+        || crate::api::host_action::host_action_of(server.vault(), auth).is_some()
+    {
+        return Err(owner_refusal);
+    }
+    let refused = || ApiError::forbidden_scope("owner");
+    if !admits_other_holders(server) || !auth.has_scope(scope) {
+        return Err(refused());
+    }
+    let slip = auth
+        .verified_slip()
+        .filter(|_| auth.actor_class() == Some("human"))
+        .ok_or_else(refused)?;
+    let principal = auth.principal_ref().ok_or_else(refused)?;
+    let actor = oneiron::EntityId::from_hex(principal).map_err(|_| refused())?;
+    // The slip is the person's own, and no invitee's.
+    if slip.claims().holder_ref != actor.to_hex() || slip.claims().invitation_ref.is_some() {
+        return Err(refused());
+    }
+    let person = server
+        .vault()
+        .authenticate_owner(actor, principal, true, GateDecisionId::now())
+        .map_err(|_| refused())?;
+    // Binding checks the slip is the person's own human slip, not handed
+    // on, and live now.
+    server
+        .vault()
+        .bind_person_credential(person, slip.clone())
+        .map_err(|_| refused())
+}
+
+/// Whether a holder who does not own the vault reaches these routes here. A
+/// managed vault admits only its attested owner until its ingress carries
+/// such a caller (L14's managed-ingress row; CALLS "FIX 4707 managed
+/// holders").
+fn admits_other_holders(server: &SyncServer) -> bool {
+    server.managed_issuer.is_none()
+}
+
 /// `GET /v1/owner/worlds/privacy/requests[?pending=true]`: the requests,
-/// newest first.
+/// newest first. A vault owner sees every one; another holder those on the
+/// worlds whose settings right he holds now.
 async fn list(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<RequestPage>, QueryRejection>,
 ) -> OwnerReply<Vec<WorldPrivacyRequest>> {
-    owner(&auth, &server)?;
+    let holder = holder(&auth, &server, HOLDER_READS)?;
     let page = query_params(query)?;
     let requests = blocking(move || -> OwnerResult<Vec<WorldPrivacyRequest>> {
         Ok(server
             .vault()
-            .world_privacy_requests(page.pending.unwrap_or(false))?)
+            .world_privacy_requests_for(&holder, page.pending.unwrap_or(false))?)
     })
     .await?;
     Ok(Json(requests))
+}
+
+/// `POST /v1/owner/worlds/privacy/set`: a holder changes a world's settings
+/// as his own act, in either direction (`applied`, the receipt), unless his
+/// widen falls under "widen needs every owner" (`asked`, the request his own
+/// yes already counts on). The body is `vault.worlds.privacy.set`'s input; a
+/// `seen` revision other than the current one is a conflict.
+async fn set(
+    auth: CoreAuth,
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<WorldPrivacySetInput>, JsonRejection>,
+) -> OwnerReply<WorldPrivacyOutcome> {
+    let holder = holder(&auth, &server, HOLDER_ACTS)?;
+    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
+    let body = json_payload(payload)?;
+    let outcome = blocking(move || -> OwnerResult<WorldPrivacyOutcome> {
+        let (world, settings, seen) = body.parse()?;
+        Ok(server.vault().set_world_privacy_by(
+            &ActAuthority::Owner(holder, surface),
+            world,
+            settings,
+            seen,
+        )?)
+    })
+    .await?;
+    Ok(Json(outcome))
 }
 
 /// `POST /v1/owner/worlds/privacy/{proposals/accept,asks/confirm}`: the
@@ -137,14 +239,14 @@ async fn answer(
     payload: Result<Json<AnswerRequest>, JsonRejection>,
     yes: bool,
 ) -> OwnerReply<WorldPrivacyAnswer> {
-    let owner = owner(&auth, &server)?;
+    let holder = holder(&auth, &server, HOLDER_ACTS)?;
     let surface = super::machine_routes::act_surface(&server, &auth, &headers);
     let body = json_payload(payload)?;
     let answered = blocking(move || -> OwnerResult<WorldPrivacyAnswer> {
         let request = entity_id("request", &body.request)?;
         Ok(server
             .vault()
-            .answer_world_privacy_request(&owner, surface, request, yes)?)
+            .answer_world_privacy_request(&holder, surface, request, yes)?)
     })
     .await?;
     Ok(Json(answered))
@@ -158,13 +260,13 @@ async fn undo(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<UndoChange>, JsonRejection>,
 ) -> OwnerReply<WorldPrivacyReceipt> {
-    let owner = owner(&auth, &server)?;
+    let holder = holder(&auth, &server, HOLDER_ACTS)?;
     let surface = super::machine_routes::act_surface(&server, &auth, &headers);
     let body = json_payload(payload)?;
     let receipt = blocking(move || -> OwnerResult<WorldPrivacyReceipt> {
         Ok(server
             .vault()
-            .undo_world_privacy_change(&owner, surface, &body.receipt)?)
+            .undo_world_privacy_change(&holder, surface, &body.receipt)?)
     })
     .await?;
     Ok(Json(receipt))
