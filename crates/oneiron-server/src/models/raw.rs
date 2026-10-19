@@ -74,10 +74,14 @@ impl RawInference {
     ) -> Option<(Arc<OfferLadder>, RunAdmission)> {
         let ladder = match &self.models {
             RawModels::Configured(router) => router.served(&request.model)?.1,
-            RawModels::Injected(backend) => Arc::new(OfferLadder::injected(ServedOffer {
-                binding: injected_offer(request)?,
-                backend: Arc::clone(backend),
-            })),
+            RawModels::Injected(backend) => {
+                let binding = injected_offer(request)?;
+                Arc::new(OfferLadder::injected(ServedOffer {
+                    endpoint: super::OfferEndpoint::configured(binding.locality),
+                    binding,
+                    backend: Arc::clone(backend),
+                }))
+            }
         };
         let run = funded_run(
             RAW_RUN,

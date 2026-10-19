@@ -386,7 +386,7 @@ pub(crate) async fn vault_retrieval_recall(
             actor,
             class,
             auth.verified_slip().cloned(),
-            auth.locality(),
+            auth.destination(),
             None,
             input,
             oneiron::memory::HomeRecallCaller::owner(),

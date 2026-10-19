@@ -13,6 +13,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use futures_util::stream;
 use oneiron::Vault;
+use oneiron::authority::PeerMachine;
 use oneiron::origin::lfs::{LFS_CHUNK_MAX, LfsOid};
 use std::io;
 use std::sync::Arc;
@@ -26,6 +27,9 @@ pub(super) async fn exchange(
     body: Body,
 ) -> Result<Response, EnvelopedApiError> {
     let auth = authorize_request(&parts, &server, LfsAccess::Read)?;
+    // The machine the request's connection proved: the selector, the
+    // manifest and every piece are judged for it (FIX 4937).
+    let peer = auth.peer();
     let principal = auth.require_registered_principal()?;
     let principal = oneiron::EntityId::from_hex(principal)
         .map_err(|_| ApiError::forbidden_scope("registered chunk principal"))?;
@@ -57,7 +61,7 @@ pub(super) async fn exchange(
     let scope = crate::handler::selector_grant_scope();
     let (object, bytes, permit) = crate::api::transfer::spawn_worker(move || {
         let object = oneiron::sync::chunks::chunk_request_object(&body)?;
-        oneiron::sync::chunks::serve_chunk_request(&vault, principal, scope, &body)
+        oneiron::sync::chunks::serve_chunk_request_for(&vault, principal, scope, &body, peer)
             .map(|bytes| (object, bytes, permit))
     })
     .await
@@ -68,7 +72,8 @@ pub(super) async fn exchange(
     release_hook::run(&server);
     // A device-only flag may land while the worker builds the reply: the
     // object is judged again as its bytes are released.
-    if oneiron::sync::chunks::lfs_object_withheld(&server.vault, object).unwrap_or(true) {
+    if oneiron::sync::chunks::lfs_object_withheld_for(&server.vault, object, peer).unwrap_or(true)
+    {
         return Err(ApiError::forbidden_scope("lfs chunk selector").into());
     }
     // The declared length makes a reply cut short at the idle limit a broken
@@ -82,7 +87,7 @@ pub(super) async fn exchange(
         ],
         reply(
             Arc::clone(&server.vault),
-            object,
+            (object, peer),
             bytes,
             permit,
             server.transfers.idle,
@@ -94,10 +99,11 @@ pub(super) async fn exchange(
 /// The reply, handed out a piece at a time by a task that holds the memory
 /// room and the transfer permit until the last piece is taken, or until the
 /// client has taken none for `idle`. Only the pieces already handed out
-/// outlive it.
+/// outlive it. Each piece is judged for `peer`, the machine the request
+/// proved.
 fn reply(
     vault: Arc<Vault>,
-    object: LfsOid,
+    (object, peer): (LfsOid, PeerMachine),
     bytes: Vec<u8>,
     permit: ReadHold,
     idle: Duration,
@@ -112,13 +118,15 @@ fn reply(
             }
         }
     });
-    // Each piece is released only while no device-only world keeps the
-    // object; a flag set mid-reply ends the body with an error.
+    // Each piece is released only while no world withheld from the peer
+    // keeps the object; a flag set mid-reply ends the body with an error.
     Body::from_stream(stream::unfold(receiver, move |mut receiver| {
         let vault = Arc::clone(&vault);
         async move {
             let piece = receiver.recv().await?;
-            if oneiron::sync::chunks::lfs_object_withheld(&vault, object).unwrap_or(true) {
+            if oneiron::sync::chunks::lfs_object_withheld_for(&vault, object, peer)
+                .unwrap_or(true)
+            {
                 receiver.close();
                 let kept = io::Error::new(
                     io::ErrorKind::PermissionDenied,

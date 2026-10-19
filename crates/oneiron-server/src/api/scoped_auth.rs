@@ -273,13 +273,14 @@ pub(crate) fn scoped_read_for_core_auth<'a>(
 ) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
     if let Some(action) = super::host_action::host_action_of(vault, auth) {
         let action = action.map_err(super::host_action::host_action_refusal)?;
-        return Ok(vault.scoped_read(action.read_key().at(auth.locality())));
+        return Ok(vault.scoped_read(action.read_key().for_destination(&auth.destination())));
     }
     if let Some(key) = managed_owner_read_key(vault, auth) {
         return Ok(vault.scoped_read(key?));
     }
     if let Some(proof) = auth.verified_slip() {
-        return Ok(vault.scoped_read(credential_read_key(vault, proof)?.at(auth.locality())));
+        let key = credential_read_key(vault, proof)?;
+        return Ok(vault.scoped_read(key.for_destination(&auth.destination())));
     }
     let actor_ref = auth.principal_ref().unwrap_or(auth.principal());
     let mut key = oneiron::claim::ScopedReadActorKey::new(actor_ref)
@@ -290,7 +291,7 @@ pub(crate) fn scoped_read_for_core_auth<'a>(
                 .and_then(|id| oneiron::EntityId::from_hex(id).ok()),
         );
     }
-    Ok(vault.scoped_read(key.at(auth.locality())))
+    Ok(vault.scoped_read(key.for_destination(&auth.destination())))
 }
 
 /// The legacy read lane for the credential [`check_api_auth`] admitted, where
@@ -310,7 +311,8 @@ pub(super) fn scoped_read_for_legacy_api<'a>(
 ) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
     if let Some(proof) = auth.verified_slip() {
         let vault = server.vault().as_ref();
-        return Ok(vault.scoped_read(credential_read_key(vault, proof)?.at(auth.locality())));
+        let key = credential_read_key(vault, proof)?;
+        return Ok(vault.scoped_read(key.for_destination(&auth.destination())));
     }
     if let Some(key) = managed_owner_read_key(server.vault(), auth) {
         return Ok(server.vault().scoped_read(key?));
@@ -333,7 +335,7 @@ fn managed_owner_read_key(
     auth: &CoreAuth,
 ) -> Option<Result<oneiron::claim::ScopedReadActorKey, ApiError>> {
     let holder = auth.managed_owner()?;
-    Some(live_owner_read_key(vault, holder).map(|key| key.at(auth.locality())))
+    Some(live_owner_read_key(vault, holder).map(|key| key.for_destination(&auth.destination())))
 }
 
 /// [`managed_owner_read_key`]'s key for `holder`, before its locality.

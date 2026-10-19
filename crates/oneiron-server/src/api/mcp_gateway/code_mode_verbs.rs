@@ -1118,18 +1118,17 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         &self,
         rows: Option<&[oneiron::EntityId]>,
     ) -> Result<bool, AgentVerbRefusal> {
-        let locality = self.actor.locality();
-        if locality == oneiron::claim::CallerLocality::OnDevice {
+        let destination = self.actor.destination();
+        if !destination.is_off_device() {
             return Ok(false);
         }
         let Some(rows) = rows else {
             return Ok(true);
         };
-        crate::device_local::withholds_retained(&self.server.vault, locality, rows, &[]).map_err(
-            |_| AgentVerbRefusal {
+        crate::device_local::withholds_retained(&self.server.vault, destination, rows, &[])
+            .map_err(|_| AgentVerbRefusal {
                 code: "engine_error".to_owned(),
-            },
-        )
+            })
     }
 }
 
@@ -1138,16 +1137,23 @@ impl AgentVerbDoor for McpCodeModeVerbs {
 /// `self.context`, `self.think` and reads of what it recorded. What the
 /// child read leaves this device again by its parent caller's rule
 /// (DEC-0005), as the door that caller's run binds rules. It holds no
-/// credential of the parent's.
+/// credential of the parent's, and no model endpoint's proof.
 pub(crate) struct ReaderChildDoor {
     vault: Arc<oneiron::Vault>,
-    /// Where the parent run's caller sits.
-    caller: oneiron::claim::CallerLocality,
+    /// Where the parent run's caller's rows go: its locality, with the
+    /// machine its connection proved (FIX 4937).
+    caller: oneiron::settings::ReadDestination,
 }
 
 impl ReaderChildDoor {
-    pub(crate) fn new(vault: Arc<oneiron::Vault>, caller: oneiron::claim::CallerLocality) -> Self {
-        Self { vault, caller }
+    pub(crate) fn new(
+        vault: Arc<oneiron::Vault>,
+        caller: impl Into<oneiron::settings::ReadDestination>,
+    ) -> Self {
+        Self {
+            vault,
+            caller: caller.into(),
+        }
     }
 }
 
@@ -1187,13 +1193,13 @@ impl AgentVerbDoor for ReaderChildDoor {
         &self,
         rows: Option<&[oneiron::EntityId]>,
     ) -> Result<bool, AgentVerbRefusal> {
-        if self.caller == oneiron::claim::CallerLocality::OnDevice {
+        if !self.caller.is_off_device() {
             return Ok(false);
         }
         let Some(rows) = rows else {
             return Ok(true);
         };
-        crate::device_local::withholds_retained(&self.vault, self.caller, rows, &[]).map_err(|_| {
+        crate::device_local::withholds_retained(&self.vault, &self.caller, rows, &[]).map_err(|_| {
             AgentVerbRefusal {
                 code: "engine_error".to_owned(),
             }

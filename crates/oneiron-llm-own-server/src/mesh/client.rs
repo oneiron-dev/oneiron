@@ -1,11 +1,13 @@
 //! The asking side: the first of the owner's nodes that takes the call runs
 //! it; with none, the call waits and says why, trying again until one does.
 
+use std::collections::BTreeMap;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use oneiron::authority::PeerMachine;
 use oneiron::{
     BudgetLease, FatalLlmError, LlmCatalogEntry, LlmGenerateFuture, LlmRequest, LlmResponse,
     LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, RetryableLlmError, Vault,
@@ -34,6 +36,12 @@ pub trait LlmNodes: Send + Sync {
     /// # Errors
     /// The roster could not be read; the call waits and says so.
     fn nodes(&self) -> Result<Vec<MachineId>, String>;
+
+    /// The machine behind a dialled node's authenticated endpoint key, as
+    /// the vault proves it now (FIX 4938); unproved by default.
+    fn proved(&self, _endpoint_key: [u8; 32]) -> PeerMachine {
+        PeerMachine::Unknown
+    }
 }
 
 /// The vault's MACHINE rows whose grant admits model calls, without this
@@ -62,6 +70,15 @@ impl LlmNodes for VaultLlmNodes {
             .filter(|machine| Some(*machine) != here)
             .collect())
     }
+
+    /// The machine the vault's binding, grant and authority proof name for
+    /// `endpoint_key` on the model-call protocol, in one snapshot; unproved
+    /// when any fails or cannot be read.
+    fn proved(&self, endpoint_key: [u8; 32]) -> PeerMachine {
+        self.0
+            .mesh_peer_machine(endpoint_key, LLM_ALPN)
+            .unwrap_or(PeerMachine::Unknown)
+    }
 }
 
 /// An own-server transport over the owner's mesh.
@@ -83,6 +100,8 @@ struct Leg {
     nodes: Arc<dyn LlmNodes>,
     /// Why calls wait now; `None` while a node takes them.
     waiting: Mutex<Option<String>>,
+    /// The machine each node's last authenticated handshake proved.
+    proofs: Mutex<BTreeMap<MachineId, PeerMachine>>,
 }
 
 /// Why one node did not take a call: another may.
@@ -101,6 +120,7 @@ impl MeshLlmTransport {
                 transport,
                 nodes,
                 waiting: Mutex::new(None),
+                proofs: Mutex::default(),
             }),
             runtime,
         }
@@ -272,9 +292,24 @@ impl Leg {
         *lock(&self.waiting) = None;
     }
 
+    /// Notes the machine `conn`'s authenticated handshake proved for the
+    /// node dialled as `machine` (FIX 4938): a proof naming another machine
+    /// proves none.
+    fn note_proof(&self, machine: MachineId, conn: &dyn MeshConnection) {
+        let proved = self.nodes.proved(conn.endpoint_key());
+        let peer = match proved {
+            PeerMachine::Proven { machine: named, .. } if named == machine => proved,
+            _ => PeerMachine::Unknown,
+        };
+        lock(&self.proofs).insert(machine, peer);
+    }
+
     async fn dial(&self, machine: MachineId) -> Result<Box<dyn MeshConnection>, Absent> {
         match tokio::time::timeout(DIAL_TIMEOUT, self.transport.dial(machine, LLM_ALPN)).await {
-            Ok(Ok(conn)) => Ok(conn),
+            Ok(Ok(conn)) => {
+                self.note_proof(machine, &*conn);
+                Ok(conn)
+            }
             Ok(Err(err)) => Err(format!("unreachable: {err}")),
             Err(_) => Err("did not answer".into()),
         }
@@ -461,6 +496,45 @@ impl MeshLlmTransport {
             leg: Arc::clone(&self.leg),
             machine,
             runtime: self.runtime.clone(),
+        }
+    }
+}
+
+/// The machine a node's last authenticated mesh handshake proved (FIX
+/// 4938): what a call to it is judged as, each judge revalidating the proof
+/// in its own snapshot. Unproved until a handshake proved it.
+#[derive(Clone)]
+pub struct MeshPeerProof {
+    leg: Arc<Leg>,
+    machine: MachineId,
+}
+
+impl std::fmt::Debug for MeshPeerProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MeshPeerProof")
+            .field("machine", &self.machine.to_hex())
+            .finish_non_exhaustive()
+    }
+}
+
+impl MeshPeerProof {
+    /// The proved machine, or `Unknown`.
+    #[must_use]
+    pub fn peer(&self) -> PeerMachine {
+        lock(&self.leg.proofs)
+            .get(&self.machine)
+            .copied()
+            .unwrap_or(PeerMachine::Unknown)
+    }
+}
+
+impl MeshPeerTransport {
+    /// What the handshakes with this transport's node proved.
+    #[must_use]
+    pub fn proof(&self) -> MeshPeerProof {
+        MeshPeerProof {
+            leg: Arc::clone(&self.leg),
+            machine: self.machine,
         }
     }
 }

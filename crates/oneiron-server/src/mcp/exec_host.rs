@@ -442,7 +442,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 lent.seat(
                     request.run_id,
                     None,
-                    request.actor.locality(),
+                    request.actor.destination(),
                     provider.reader_window_tokens(),
                 )
             });

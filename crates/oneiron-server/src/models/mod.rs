@@ -86,7 +86,7 @@ pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
 pub use ladder::OfferLadder;
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
-pub use offer::ServedOffer;
+pub use offer::{OfferEndpoint, ServedOffer};
 pub(crate) use raw::{InjectedRuns, RawInference, funded_run};
 pub(crate) use receipts::ServerReceipts;
 pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};
@@ -758,6 +758,7 @@ fn rung(
         wire_model: model.model.clone(),
         prompt,
         offer: ServedOffer {
+            endpoint: OfferEndpoint::configured(binding.locality),
             binding,
             backend: Arc::clone(backend),
         },

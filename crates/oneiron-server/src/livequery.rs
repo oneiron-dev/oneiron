@@ -246,10 +246,14 @@ impl RpcReply {
     }
 }
 
-/// Both identity claims come from the credential, exactly as on the HTTP facade.
+/// Both identity claims come from the credential, exactly as on the HTTP
+/// facade. Its reads go where the connection's rows go: its locality, with
+/// the machine it proved (FIX 4937).
 fn bound_memory<'a>(vault: &'a oneiron::Vault, auth: &CoreAuth) -> Result<Memory<'a>, AppError> {
     let (actor, class) = bound_reader(auth)?;
-    let memory = vault.memory(actor, class).at(auth.locality());
+    let memory = vault
+        .memory(actor, class)
+        .for_destination(&auth.destination());
     // Reads run under the credential this principal presented (ONE-1187-D6).
     Ok(match auth.verified_slip() {
         Some(proof) => memory.with_read_proof(proof),

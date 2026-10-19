@@ -377,7 +377,9 @@ pub(crate) async fn discover(
     Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Json<DiscoverResponse>, ApiError> {
-    let auth = check_request_auth(&parts, &server)?.at(locality);
+    let auth = check_request_auth(&parts, &server)?
+        .at(locality)
+        .toward(crate::auth::proved_peer(&parts.headers, &parts.extensions));
     discover_response(&server, &auth).map(Json)
 }
 
@@ -397,14 +399,14 @@ fn discovers_whole_vault(server: &SyncServer, auth: &CoreAuth) -> Result<bool, A
     Ok(super::credential_read_key(server.vault(), proof)?.reads_as_vault_owner())
 }
 
-/// The vault's inventory as `auth` may learn it, where its connection sits:
-/// one off this device counts, dates and names no row a device-local world
-/// keeps (DEC-0005).
+/// The vault's inventory as `auth` may learn it, where its connection's rows
+/// go: one off this device counts, dates and names no row a world withheld
+/// from there keeps (DEC-0005, FIX 4937).
 pub(crate) fn discover_response(
     server: &SyncServer,
     auth: &CoreAuth,
 ) -> Result<DiscoverResponse, ApiError> {
-    let locality = auth.locality();
+    let destination = auth.destination();
     let lane = if discovers_whole_vault(server, auth)? {
         None
     } else {
@@ -428,7 +430,7 @@ pub(crate) fn discover_response(
         // threshold row the scan raises the owner's check and reads on.
         let ids = server
             .vault
-            .entities_by_type_at(entity_type, locality)
+            .entities_by_type_at(entity_type, &destination)
             .inspect_err(|e| {
                 tracing::error!(error = %e, entity_type, "discover count scan failed");
             })

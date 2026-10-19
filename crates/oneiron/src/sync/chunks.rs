@@ -7,6 +7,7 @@ use super::loro_support::{map_for_each_value_bytes, map_insert_bytes};
 use super::schema::create_window_doc;
 use super::selector::{
     SyncSelector, decode_sync_selector, encode_sync_selector, filtered_window_doc,
+    filtered_window_doc_for_peer,
 };
 use super::types::WindowKey;
 use crate::authority::PeerMachine;
@@ -92,6 +93,20 @@ pub fn serve_chunk_request(
     scope: FederationGrantScope,
     bytes: &[u8],
 ) -> Result<Vec<u8>> {
+    serve_chunk_request_for(vault, principal, scope, bytes, PeerMachine::Unknown)
+}
+
+/// [`serve_chunk_request`] for the machine `peer` its transport already
+/// proved for this request (FIX 4937): the selector's export and the
+/// manifest are judged for that machine, its proof revalidated in each read;
+/// an unproved peer is judged exactly as before.
+pub fn serve_chunk_request_for(
+    vault: &Vault,
+    principal: EntityId,
+    scope: FederationGrantScope,
+    bytes: &[u8],
+    peer: PeerMachine,
+) -> Result<Vec<u8>> {
     let request: ChunkSyncRequest = decode(bytes)?;
     if request.have.len() > MAX_WANT_CHUNKS
         || request
@@ -136,8 +151,13 @@ pub fn serve_chunk_request(
         }
     }
     source.commit();
-    let selected =
-        filtered_window_doc(vault, &source, &WindowKey::new("1970-01"), scope, &selector)?;
+    let window = WindowKey::new("1970-01");
+    let selected = match peer {
+        PeerMachine::Proven { .. } => {
+            filtered_window_doc_for_peer(vault, &source, &window, scope, &selector, peer)?
+        }
+        PeerMachine::Unknown => filtered_window_doc(vault, &source, &window, scope, &selector)?,
+    };
     let mut admitted = false;
     map_for_each_value_bytes(&selected.get_map("entities"), |key, value| {
         if key == object.asset_id.to_hex() && value.is_some() {
@@ -147,7 +167,7 @@ pub fn serve_chunk_request(
     if !admitted {
         return Err(invalid());
     }
-    respond(vault, request, PeerMachine::Unknown)
+    respond(vault, request, peer)
 }
 
 /// Whether a device-only world keeps an object's bytes on this device: every

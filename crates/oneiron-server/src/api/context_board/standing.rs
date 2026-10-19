@@ -45,13 +45,15 @@ pub(super) async fn standing_prefix(
         };
     };
     let mut blocks = server.vault.standing_blocks(actor).map_err(|_| bad())?;
-    // Off this device a block pinned to a device-local world is none of the
-    // agent's: it is neither chosen nor named (DEC-0005).
-    if auth.locality() == oneiron::claim::CallerLocality::OffDevice {
+    // Off this device a block pinned to a world withheld from where the
+    // caller's rows go is none of the agent's: it is neither chosen nor named
+    // (DEC-0005, FIX 4937).
+    let destination = auth.destination();
+    if destination.is_off_device() {
         let worlds = blocks.iter().map(StandingBlockHandle::world).collect();
         let readable = server
             .vault
-            .off_device_readable(worlds)
+            .off_device_readable_for(worlds, &destination)
             .map_err(|_| bad())?;
         blocks.retain(|block| readable.contains(&block.world()));
     }
@@ -84,7 +86,7 @@ pub(super) async fn standing_prefix(
             .ok_or_else(bad)?
             .require_access_grants(Some(actor)),
     }
-    .at(auth.locality());
+    .for_destination(&destination);
     let mut cache = server.standing_block_cache.lock().await;
     let pinned = server
         .vault

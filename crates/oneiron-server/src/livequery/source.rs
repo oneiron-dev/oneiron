@@ -209,7 +209,7 @@ impl LiveQuerySource for BoundSource {
                         .principal_ref()
                         .ok_or_else(AppError::unauthorized)?,
                     view.world_ref.as_deref(),
-                    self.auth.locality(),
+                    self.auth.destination(),
                     limit,
                 )
                 .map_err(|_| AppError::internal_server_error("scoped receipts read failed"))?;
@@ -228,7 +228,7 @@ impl LiveQuerySource for BoundSource {
                         .principal_ref()
                         .ok_or_else(AppError::unauthorized)?,
                     view.world_ref.as_deref(),
-                    self.auth.locality(),
+                    self.auth.destination(),
                     limit,
                 )
                 .map_err(|_| AppError::internal_server_error("scoped consent read failed"))?;
@@ -496,8 +496,8 @@ impl LiveQuerySource for BoundSource {
     }
 
     fn withholds(&self, pushes: &[subscriptions::Push]) -> Result<bool, AppError> {
-        let locality = self.auth.locality();
-        if locality == oneiron::claim::CallerLocality::OnDevice {
+        let destination = self.auth.destination();
+        if !destination.is_off_device() {
             return Ok(false);
         }
         let bodies: Vec<_> = pushes.iter().filter(|push| push.result.is_some()).collect();
@@ -514,7 +514,7 @@ impl LiveQuerySource for BoundSource {
         let results: Vec<_> = bodies.iter().map(|push| &push.result).collect();
         let bytes = serde_json::to_vec(&results)
             .map_err(|_| AppError::internal_server_error("live-query release check failed"))?;
-        crate::device_local::withholds_retained(server.vault(), locality, &rows, &bytes)
+        crate::device_local::withholds_retained(server.vault(), destination, &rows, &bytes)
             .map_err(|_| AppError::internal_server_error("device-local admission read failed"))
     }
 

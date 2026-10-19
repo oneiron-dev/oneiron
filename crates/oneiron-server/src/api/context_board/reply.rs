@@ -193,7 +193,11 @@ async fn reply(
     if let Some(disclosure) = &memories.disclosure {
         frozen = frozen.disclosure_stamp(&disclosure.emit_stamp);
     }
-    if crate::device_local::withholds_retained(&server.vault, reads_at, rows, system.as_bytes())
+    // The prompt goes to the model and its answer to the caller: a row a
+    // world withholds from either keeps it here (FIX 4937).
+    let prompt_for =
+        crate::device_local::prompt_destination(auth.destination(), request.envelope.locality);
+    if crate::device_local::withholds_retained(&server.vault, prompt_for, rows, system.as_bytes())
         .map_err(MemoryError::from)?
     {
         return Err(MemoryError::new(
