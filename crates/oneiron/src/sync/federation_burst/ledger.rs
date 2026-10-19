@@ -1,7 +1,9 @@
 //! Payload-free batch receipts, kept after durable work completes.
-use super::{DeferredWork, FederationBurstBaselineState, FederationBurstDecision,
-    FederationBurstDisposition, FederationBurstReceipt, FederationBurstWorkState,
-    FederationPeer, corrupt};
+use super::{
+    DeferredWork, FederationBurstBaselineState, FederationBurstDecision,
+    FederationBurstDisposition, FederationBurstReceipt, FederationBurstWorkState, FederationPeer,
+    corrupt,
+};
 use crate::{Result, Vault};
 
 fn key(id: &[u8; 32]) -> Vec<u8> {
@@ -11,12 +13,18 @@ fn key(id: &[u8; 32]) -> Vec<u8> {
 }
 
 pub(super) fn load(
-    vault: &Vault, txn: &heed::RoTxn<'_>, peer: &FederationPeer, id: &[u8; 32],
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    peer: &FederationPeer,
+    id: &[u8; 32],
 ) -> Result<Option<FederationBurstReceipt>> {
-    let Some(bytes) = vault.store.sync_queue.get(txn, &key(id))? else { return Ok(None) };
+    let Some(bytes) = vault.store.sync_queue.get(txn, &key(id))? else {
+        return Ok(None);
+    };
     let row: FederationBurstReceipt = rmp_serde::from_slice(&bytes).map_err(|_| corrupt())?;
     if row.batch_ref != blake3::Hash::from(*id).to_hex().to_string()
-        || row.principal != peer.principal() || row.grant != peer.grant()
+        || row.principal != peer.principal()
+        || row.grant != peer.grant()
     {
         return Err(corrupt());
     }
@@ -31,8 +39,12 @@ fn put(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &FederationBurstReceipt) -
 }
 
 pub(super) fn record(
-    vault: &Vault, txn: &mut heed::RwTxn<'_>, peer: &FederationPeer, work: &DeferredWork,
-    decision: FederationBurstDecision, baseline: FederationBurstBaselineState,
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    peer: &FederationPeer,
+    work: &DeferredWork,
+    decision: FederationBurstDecision,
+    baseline: FederationBurstBaselineState,
 ) -> Result<()> {
     let batch_ref = blake3::Hash::from(work.id).to_hex().to_string();
     let disposition = match decision {
@@ -42,26 +54,45 @@ pub(super) fn record(
         },
         FederationBurstDecision::IsolateAndPropose { bundle_id, .. } => {
             FederationBurstDisposition::IsolateAndPropose {
-                bundle_ref: format!("federation-review:{}", blake3::Hash::from(bundle_id).to_hex()),
+                bundle_ref: format!(
+                    "federation-review:{}",
+                    blake3::Hash::from(bundle_id).to_hex()
+                ),
                 replay_ref: batch_ref.clone(),
             }
         }
     };
-    put(vault, txn, &FederationBurstReceipt {
-        batch_ref, principal: peer.principal(), grant: peer.grant(),
-        window_key: work.window.clone(), disposition, state: FederationBurstWorkState::Pending,
-        baseline,
-    })
+    put(
+        vault,
+        txn,
+        &FederationBurstReceipt {
+            batch_ref,
+            principal: peer.principal(),
+            grant: peer.grant(),
+            window_key: work.window.clone(),
+            disposition,
+            state: FederationBurstWorkState::Pending,
+            baseline,
+        },
+    )
 }
 
 pub(super) fn settle(
-    vault: &Vault, txn: &mut heed::RwTxn<'_>, peer: &FederationPeer,
-    work: &DeferredWork, rejected: bool,
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    peer: &FederationPeer,
+    work: &DeferredWork,
+    rejected: bool,
 ) -> Result<()> {
     if let Some(mut receipt) = load(vault, txn, peer, &work.id)? {
-        if receipt.state != FederationBurstWorkState::Pending { return Ok(()) }
-        receipt.state = if rejected { FederationBurstWorkState::Rejected }
-            else { FederationBurstWorkState::Imported };
+        if receipt.state != FederationBurstWorkState::Pending {
+            return Ok(());
+        }
+        receipt.state = if rejected {
+            FederationBurstWorkState::Rejected
+        } else {
+            FederationBurstWorkState::Imported
+        };
         put(vault, txn, &receipt)?;
     }
     Ok(())
@@ -70,7 +101,10 @@ pub(super) fn settle(
 impl Vault {
     /// The owner inspects retained work without impersonating its peer.
     pub fn federation_burst_disposition_as_owner(
-        &self, owner: &crate::consent::AuthenticatedOwner, peer: &FederationPeer, batch_ref: &str,
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        peer: &FederationPeer,
+        batch_ref: &str,
     ) -> Result<FederationBurstReceipt> {
         let id = crate::deletion::parse_hex::<32>(batch_ref)
             .ok_or_else(|| crate::Error::InvalidConfig("invalid batch_ref".into()))?;
@@ -82,7 +116,9 @@ impl Vault {
 
     /// Only this peer's own batch can be read through a peer door.
     pub fn federation_burst_disposition(
-        &self, peer: &FederationPeer, batch_ref: &str,
+        &self,
+        peer: &FederationPeer,
+        batch_ref: &str,
     ) -> Result<FederationBurstReceipt> {
         let id = crate::deletion::parse_hex::<32>(batch_ref)
             .ok_or_else(|| crate::Error::InvalidConfig("invalid batch_ref".into()))?;
