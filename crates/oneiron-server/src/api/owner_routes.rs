@@ -991,11 +991,9 @@ async fn send_feedback(
     let owner = owner(&auth, &server)?;
     let host = feedback_host(&server)?;
     let request = json_payload(payload)?;
-    let sent = blocking(move || {
-        let redactor = crate::feedback_redaction::feedback_redactor(&server);
-        feedback::send(server.vault(), &host, &owner, &request, &redactor)
-    })
-    .await?;
+    // FIX 5212: the send carries the bytes the preview kept and runs no
+    // filter.
+    let sent = blocking(move || feedback::send(server.vault(), &host, &owner, &request)).await?;
     Ok(Json(sent))
 }
 
