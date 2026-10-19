@@ -129,6 +129,12 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.trace`
 - `vault.retrieval.export`
 - `vault.retrieval.replay`
+- `vault.retrieval.policy.get`
+- `vault.retrieval.policy.pin`
+- `vault.retrieval.policy.train`
+- `vault.retrieval.policy.evaluate`
+- `vault.retrieval.policy.admit`
+- `vault.retrieval.policy.update`
 - `vault.export`
 - `self.credential.attenuate`
 - `vault.scope.position`
@@ -679,6 +685,13 @@ both bindings and their export-census tests in one change.
 - `vault.skills.pack_receipt`
 - `vault.skills.outcomes.project`
 - `vault.skills.outcomes.get`
+- `vault.skills.attribution.settle`
+- `vault.skills.attribution.read`
+- `vault.skills.attribution.evidence.record`
+- `vault.skills.attribution.project`
+- `vault.skills.attribution.judgments`
+- `vault.skills.attribution.proposals`
+- `vault.skills.attribution.positive.retire`
 - `ai.steps.submit`
 - `ai.steps.receipt`
 - `ai.reply`

@@ -674,6 +674,40 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.retrieval.policy.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.retrieval.policy.pin",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalPolicyPinRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.policy.train",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalPolicyTrainRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.policy.evaluate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalPolicyEvaluateRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.policy.admit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalPolicyAdmitRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.policy.update",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalPolicyTrainRequest,
+                >(),
+            ),
+            (
                 "vault.export",
                 crate::code_run::vault_read::request_schema::<crate::memory::ExportOptions>(),
             ),
@@ -3674,6 +3708,34 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<SkillPackCreditRequest>(),
             ),
             (
+                "vault.skills.attribution.settle",
+                crate::code_run::vault_read::request_schema::<ProposalDeltaSettleRequest>(),
+            ),
+            (
+                "vault.skills.attribution.read",
+                crate::code_run::vault_read::request_schema::<ProposalDeltaReadRequest>(),
+            ),
+            (
+                "vault.skills.attribution.evidence.record",
+                crate::code_run::vault_read::request_schema::<AttributionEvidenceRequest>(),
+            ),
+            (
+                "vault.skills.attribution.project",
+                crate::code_run::vault_read::request_schema::<AttributionProjectRequest>(),
+            ),
+            (
+                "vault.skills.attribution.judgments",
+                crate::code_run::vault_read::request_schema::<AttributionListRequest>(),
+            ),
+            (
+                "vault.skills.attribution.proposals",
+                crate::code_run::vault_read::request_schema::<AttributionListRequest>(),
+            ),
+            (
+                "vault.skills.attribution.positive.retire",
+                crate::code_run::vault_read::request_schema::<PositiveRetireRequest>(),
+            ),
+            (
                 "ai.steps.submit",
                 crate::code_run::vault_read::request_schema::<
                     crate::llm::model_step::ModelStepSubmit,
@@ -5577,6 +5639,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.retrieval.trace",
     "vault.retrieval.export",
     "vault.retrieval.replay",
+    "vault.retrieval.policy.get",
+    "vault.retrieval.policy.pin",
+    "vault.retrieval.policy.train",
+    "vault.retrieval.policy.evaluate",
+    "vault.retrieval.policy.admit",
+    "vault.retrieval.policy.update",
     "self.credential.attenuate",
     "vault.scope.position",
     "vault.scope.ceiling",
@@ -5916,6 +5984,13 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.create_deck",
     "vault.artifacts.inspect_deck",
     "vault.artifacts.propose_deck",
+    "vault.skills.attribution.settle",
+    "vault.skills.attribution.read",
+    "vault.skills.attribution.evidence.record",
+    "vault.skills.attribution.project",
+    "vault.skills.attribution.judgments",
+    "vault.skills.attribution.proposals",
+    "vault.skills.attribution.positive.retire",
     "ai.steps.submit",
     "ai.steps.receipt",
     "ai.reply",
@@ -6377,6 +6452,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.retrieval.replay" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::RetrievalDiagnosticReplay,
+        >(),
+        "vault.retrieval.policy.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::RetrievalPolicyView,
+        >(),
+        "vault.retrieval.policy.pin" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::RetrievalPolicyView,
+        >(),
+        "vault.retrieval.policy.train" => {
+            crate::code_run::vault_read::request_schema::<crate::store::RetrievalPolicyCandidate>()
+        }
+        "vault.retrieval.policy.evaluate" => {
+            crate::code_run::vault_read::request_schema::<crate::store::RetrievalPolicyEvaluation>()
+        }
+        "vault.retrieval.policy.admit" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::RetrievalPolicyAdmitReceipt,
+        >(),
+        "vault.retrieval.policy.update" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::RetrievalPolicyUpdateReceipt,
         >(),
         "self.credential.attenuate" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::CredentialAttenuated,
@@ -7411,6 +7504,31 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.artifacts.propose_deck" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::DeckProposeOutcome,
         >(),
+        "vault.skills.attribution.settle" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ProposalDeltaSettlement,
+        >(),
+        "vault.skills.attribution.read" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ProposalDeltaRead,
+        >(),
+        "vault.skills.attribution.evidence.record" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::task_verb::sdk::AttributionEvidenceReceipt,
+            >()
+        }
+        "vault.skills.attribution.project" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AttributionProjection,
+        >(),
+        "vault.skills.attribution.judgments" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AttributionJudgmentsView,
+        >(),
+        "vault.skills.attribution.proposals" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AttributionProposalsView,
+        >(),
+        "vault.skills.attribution.positive.retire" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::task_verb::sdk::PositiveRetireReceipt,
+            >()
+        }
         "ai.steps.submit" => crate::code_run::vault_read::request_schema::<
             crate::llm::model_step::ModelStepReceipt,
         >(),
@@ -9014,6 +9132,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.retrieval.replay" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.policy.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.policy.pin" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.policy.train" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.policy.evaluate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.policy.admit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.policy.update" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -12836,6 +12996,55 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.skills.attribution.settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.attribution.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.attribution.evidence.record" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.attribution.project" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.attribution.judgments" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.attribution.proposals" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.attribution.positive.retire" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.steps.submit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -15379,6 +15588,25 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.retrieval.replay" => {
             let _input: crate::task_verb::sdk::RetrievalDiagnosticRequest = decode(value.clone())?;
         }
+        "vault.retrieval.policy.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.policy.pin" => {
+            let _input: crate::task_verb::sdk::RetrievalPolicyPinRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.policy.train" => {
+            let _input: crate::task_verb::sdk::RetrievalPolicyTrainRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.policy.evaluate" => {
+            let _input: crate::task_verb::sdk::RetrievalPolicyEvaluateRequest =
+                decode(value.clone())?;
+        }
+        "vault.retrieval.policy.admit" => {
+            let _input: crate::task_verb::sdk::RetrievalPolicyAdmitRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.policy.update" => {
+            let _input: crate::task_verb::sdk::RetrievalPolicyTrainRequest = decode(value.clone())?;
+        }
         "vault.export" => {
             let _input: crate::memory::ExportOptions = decode(value.clone())?;
         }
@@ -17187,6 +17415,27 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.skills.outcomes.get" => {
             let _input: SkillPackCreditRequest = decode(value.clone())?;
         }
+        "vault.skills.attribution.settle" => {
+            let _input: ProposalDeltaSettleRequest = decode(value.clone())?;
+        }
+        "vault.skills.attribution.read" => {
+            let _input: ProposalDeltaReadRequest = decode(value.clone())?;
+        }
+        "vault.skills.attribution.evidence.record" => {
+            let _input: AttributionEvidenceRequest = decode(value.clone())?;
+        }
+        "vault.skills.attribution.project" => {
+            let _input: AttributionProjectRequest = decode(value.clone())?;
+        }
+        "vault.skills.attribution.judgments" => {
+            let _input: AttributionListRequest = decode(value.clone())?;
+        }
+        "vault.skills.attribution.proposals" => {
+            let _input: AttributionListRequest = decode(value.clone())?;
+        }
+        "vault.skills.attribution.positive.retire" => {
+            let _input: PositiveRetireRequest = decode(value.clone())?;
+        }
         "ai.steps.submit" => {
             let _input: crate::llm::model_step::ModelStepSubmit = decode(value.clone())?;
         }
@@ -18590,6 +18839,20 @@ pub fn invoke(
         "vault.retrieval.trace" => encode(vault_retrieval_trace(memory, decode(value)?)?),
         "vault.retrieval.export" => encode(vault_retrieval_export(memory, decode(value)?)?),
         "vault.retrieval.replay" => encode(vault_retrieval_replay(memory, decode(value)?)?),
+        "vault.retrieval.policy.get" => encode(vault_retrieval_policy_get(memory, decode(value)?)?),
+        "vault.retrieval.policy.pin" => encode(vault_retrieval_policy_pin(memory, decode(value)?)?),
+        "vault.retrieval.policy.train" => {
+            encode(vault_retrieval_policy_train(memory, decode(value)?)?)
+        }
+        "vault.retrieval.policy.evaluate" => {
+            encode(vault_retrieval_policy_evaluate(memory, decode(value)?)?)
+        }
+        "vault.retrieval.policy.admit" => {
+            encode(vault_retrieval_policy_admit(memory, decode(value)?)?)
+        }
+        "vault.retrieval.policy.update" => {
+            encode(vault_retrieval_policy_update(memory, decode(value)?)?)
+        }
         "vault.export" => encode(vault_export(memory, decode(value)?)?),
         "self.credential.attenuate" => encode(self_credential_attenuate(memory, decode(value)?)?),
         "vault.scope.position" => encode(vault_scope_position(memory, decode(value)?)?),
@@ -19627,6 +19890,27 @@ pub fn invoke(
             encode(vault_skills_outcomes_project(memory, decode(value)?)?)
         }
         "vault.skills.outcomes.get" => encode(vault_skills_outcomes_get(memory, decode(value)?)?),
+        "vault.skills.attribution.settle" => {
+            encode(vault_skills_attribution_settle(memory, decode(value)?)?)
+        }
+        "vault.skills.attribution.read" => {
+            encode(vault_skills_attribution_read(memory, decode(value)?)?)
+        }
+        "vault.skills.attribution.evidence.record" => encode(
+            vault_skills_attribution_evidence_record(memory, decode(value)?)?,
+        ),
+        "vault.skills.attribution.project" => {
+            encode(vault_skills_attribution_project(memory, decode(value)?)?)
+        }
+        "vault.skills.attribution.judgments" => {
+            encode(vault_skills_attribution_judgments(memory, decode(value)?)?)
+        }
+        "vault.skills.attribution.proposals" => {
+            encode(vault_skills_attribution_proposals(memory, decode(value)?)?)
+        }
+        "vault.skills.attribution.positive.retire" => encode(
+            vault_skills_attribution_positive_retire(memory, decode(value)?)?,
+        ),
         "ai.steps.submit" => encode(ai_steps_submit(memory, decode(value)?)?),
         "ai.steps.receipt" => encode(ai_steps_receipt(memory, decode(value)?)?),
         "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
@@ -21455,6 +21739,66 @@ pub fn vault_retrieval_replay(
     crate::task_verb::sdk::retrieval_replay_as_owner(
         memory,
         &memory.embedded_owner("vault.retrieval.replay")?,
+        input,
+    )
+}
+pub fn vault_retrieval_policy_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::RetrievalPolicyView> {
+    crate::task_verb::sdk::retrieval_policy_get_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.policy.get")?,
+        _input,
+    )
+}
+pub fn vault_retrieval_policy_pin(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalPolicyPinRequest,
+) -> MemoryResult<crate::task_verb::sdk::RetrievalPolicyView> {
+    crate::task_verb::sdk::retrieval_policy_pin_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.policy.pin")?,
+        input,
+    )
+}
+pub fn vault_retrieval_policy_train(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalPolicyTrainRequest,
+) -> MemoryResult<crate::store::RetrievalPolicyCandidate> {
+    crate::task_verb::sdk::retrieval_policy_train_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.policy.train")?,
+        input,
+    )
+}
+pub fn vault_retrieval_policy_evaluate(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalPolicyEvaluateRequest,
+) -> MemoryResult<crate::store::RetrievalPolicyEvaluation> {
+    crate::task_verb::sdk::retrieval_policy_evaluate_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.policy.evaluate")?,
+        input,
+    )
+}
+pub fn vault_retrieval_policy_admit(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalPolicyAdmitRequest,
+) -> MemoryResult<crate::task_verb::sdk::RetrievalPolicyAdmitReceipt> {
+    crate::task_verb::sdk::retrieval_policy_admit_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.policy.admit")?,
+        input,
+    )
+}
+pub fn vault_retrieval_policy_update(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalPolicyTrainRequest,
+) -> MemoryResult<crate::task_verb::sdk::RetrievalPolicyUpdateReceipt> {
+    crate::task_verb::sdk::retrieval_policy_update_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.policy.update")?,
         input,
     )
 }
@@ -25944,6 +26288,76 @@ pub fn vault_skills_outcomes_get(
     crate::task_verb::sdk::skill_pack_credit_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.outcomes.get")?,
+        &input,
+    )
+}
+pub fn vault_skills_attribution_settle(
+    memory: &Memory<'_>,
+    input: ProposalDeltaSettleRequest,
+) -> MemoryResult<crate::task_verb::sdk::ProposalDeltaSettlement> {
+    crate::task_verb::sdk::skill_attribution_settle_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.attribution.settle")?,
+        &input,
+    )
+}
+pub fn vault_skills_attribution_read(
+    memory: &Memory<'_>,
+    input: ProposalDeltaReadRequest,
+) -> MemoryResult<crate::task_verb::sdk::ProposalDeltaRead> {
+    crate::task_verb::sdk::skill_attribution_read_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.attribution.read")?,
+        &input,
+    )
+}
+pub fn vault_skills_attribution_evidence_record(
+    memory: &Memory<'_>,
+    input: AttributionEvidenceRequest,
+) -> MemoryResult<crate::task_verb::sdk::AttributionEvidenceReceipt> {
+    crate::task_verb::sdk::skill_attribution_evidence_record_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.attribution.evidence.record")?,
+        &input,
+    )
+}
+pub fn vault_skills_attribution_project(
+    memory: &Memory<'_>,
+    input: AttributionProjectRequest,
+) -> MemoryResult<crate::task_verb::sdk::AttributionProjection> {
+    crate::task_verb::sdk::skill_attribution_project_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.attribution.project")?,
+        &input,
+    )
+}
+pub fn vault_skills_attribution_judgments(
+    memory: &Memory<'_>,
+    input: AttributionListRequest,
+) -> MemoryResult<crate::task_verb::sdk::AttributionJudgmentsView> {
+    crate::task_verb::sdk::skill_attribution_judgments_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.attribution.judgments")?,
+        &input,
+    )
+}
+pub fn vault_skills_attribution_proposals(
+    memory: &Memory<'_>,
+    input: AttributionListRequest,
+) -> MemoryResult<crate::task_verb::sdk::AttributionProposalsView> {
+    crate::task_verb::sdk::skill_attribution_proposals_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.attribution.proposals")?,
+        &input,
+    )
+}
+pub fn vault_skills_attribution_positive_retire(
+    memory: &Memory<'_>,
+    input: PositiveRetireRequest,
+) -> MemoryResult<crate::task_verb::sdk::PositiveRetireReceipt> {
+    crate::task_verb::sdk::skill_attribution_positive_retire_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.attribution.positive.retire")?,
         &input,
     )
 }

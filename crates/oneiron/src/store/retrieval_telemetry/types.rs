@@ -140,6 +140,225 @@ impl Default for RetrievalBlendTuningConfig {
     }
 }
 
+/// One owner-pinned blend weight. A pinned signal's normalized share stays at
+/// `value`; learned updates may move only the unpinned remainder.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RetrievalPolicyPin {
+    pub signal: RetrievalBlendSignal,
+    pub value: f32,
+}
+
+/// The stored owner pins over the retrieval blend weights.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RetrievalPolicyPins {
+    #[serde(default)]
+    pub pins: Vec<RetrievalPolicyPin>,
+}
+
+impl RetrievalPolicyPins {
+    #[must_use]
+    pub fn value_for(&self, signal: RetrievalBlendSignal) -> Option<f32> {
+        self.pins
+            .iter()
+            .find(|pin| pin.signal == signal)
+            .map(|pin| pin.value)
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        let invalid = |reason: &str| Error::InvalidConfig(reason.to_owned());
+        let mut total = 0.0_f32;
+        for (index, pin) in self.pins.iter().enumerate() {
+            if !pin.value.is_finite() || !(0.0..=1.0).contains(&pin.value) {
+                return Err(invalid("retrieval policy pin value must be within 0..=1"));
+            }
+            if self.pins[..index]
+                .iter()
+                .any(|earlier| earlier.signal == pin.signal)
+            {
+                return Err(invalid("retrieval policy pins name each signal once"));
+            }
+            total += pin.value;
+        }
+        if total > 1.0 + f32::EPSILON {
+            return Err(invalid("retrieval policy pins may not exceed total mass 1"));
+        }
+        if self.pins.len() == 4 && (total - 1.0).abs() > 1e-6 {
+            return Err(invalid(
+                "retrieval policy pins over every signal must sum to 1",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The weights with every pin held at its declared share and the
+    /// unpinned signals scaled proportionally over the remaining mass.
+    pub fn apply(&self, weights: RetrievalBlendWeights) -> Result<RetrievalBlendWeights> {
+        self.validate()?;
+        if self.pins.is_empty() {
+            return weights.normalized();
+        }
+        let signals = [
+            RetrievalBlendSignal::Recency,
+            RetrievalBlendSignal::Salience,
+            RetrievalBlendSignal::Confidence,
+            RetrievalBlendSignal::Gravity,
+        ];
+        let pinned_total: f32 = self.pins.iter().map(|pin| pin.value).sum();
+        let remainder = (1.0 - pinned_total).max(0.0);
+        let unpinned_total: f32 = signals
+            .iter()
+            .filter(|signal| self.value_for(**signal).is_none())
+            .map(|signal| weights.weight(*signal))
+            .sum();
+        let unpinned_count = signals
+            .iter()
+            .filter(|signal| self.value_for(**signal).is_none())
+            .count();
+        let value = |signal: RetrievalBlendSignal| -> f32 {
+            if let Some(pinned) = self.value_for(signal) {
+                return pinned;
+            }
+            if unpinned_total > f32::EPSILON {
+                weights.weight(signal) / unpinned_total * remainder
+            } else if unpinned_count > 0 {
+                remainder / unpinned_count as f32
+            } else {
+                0.0
+            }
+        };
+        RetrievalBlendWeights::new(
+            value(RetrievalBlendSignal::Recency),
+            value(RetrievalBlendSignal::Salience),
+            value(RetrievalBlendSignal::Confidence),
+            value(RetrievalBlendSignal::Gravity),
+        )
+        .normalized()
+    }
+
+    /// Whether `weights` already holds every pin at its declared share.
+    #[must_use]
+    pub fn respects(&self, weights: RetrievalBlendWeights) -> bool {
+        self.pins.iter().all(|pin| {
+            (weights.weight(pin.signal) - pin.value).abs() <= 1e-6
+        })
+    }
+}
+
+/// Where one served blend weight came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalWeightOrigin {
+    Bootstrap,
+    Learned,
+    OwnerPin,
+}
+
+/// One blend weight with its origin, as the policy receipts report it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RetrievalWeightRow {
+    pub signal: RetrievalBlendSignal,
+    pub weight: f32,
+    pub origin: RetrievalWeightOrigin,
+    pub pinned: bool,
+}
+
+/// The per-signal receipt rows for a weight set under the given pins.
+#[must_use]
+pub fn retrieval_weight_rows(
+    weights: RetrievalBlendWeights,
+    pins: &RetrievalPolicyPins,
+    unpinned_origin: RetrievalWeightOrigin,
+) -> Vec<RetrievalWeightRow> {
+    [
+        RetrievalBlendSignal::Recency,
+        RetrievalBlendSignal::Salience,
+        RetrievalBlendSignal::Confidence,
+        RetrievalBlendSignal::Gravity,
+    ]
+    .into_iter()
+    .map(|signal| {
+        let pinned = pins.value_for(signal).is_some();
+        RetrievalWeightRow {
+            signal,
+            weight: weights.weight(signal),
+            origin: if pinned {
+                RetrievalWeightOrigin::OwnerPin
+            } else {
+                unpinned_origin
+            },
+            pinned,
+        }
+    })
+    .collect()
+}
+
+impl RetrievalBlendWeightTableEntry {
+    /// This active entry's receipt rows under the current pins.
+    #[must_use]
+    pub fn weight_rows(&self, pins: &RetrievalPolicyPins) -> Vec<RetrievalWeightRow> {
+        let origin = if self.provenance.get("source").map(String::as_str)
+            == Some(RETRIEVAL_BLEND_BOOTSTRAP_SOURCE)
+        {
+            RetrievalWeightOrigin::Bootstrap
+        } else {
+            RetrievalWeightOrigin::Learned
+        };
+        retrieval_weight_rows(self.weights, pins, origin)
+    }
+}
+
+/// The held-out gate's answer for a candidate weight set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalPolicyVerdict {
+    /// The candidate did no worse than the active weights on held-out runs.
+    NotWorse,
+    /// The candidate scored below the active weights on held-out runs.
+    Regression,
+    /// Too little gated evidence to judge; the candidate stays an offer.
+    Insufficient,
+}
+
+/// Held-out scoring of a candidate against the active weights. The score is
+/// the gated reward (accuracy shaped by latency and hop cost) the held-out
+/// runs credit to each weight set, so the delta is the accuracy/cost tradeoff.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RetrievalPolicyHeldOut {
+    pub candidate_score: f64,
+    pub active_score: f64,
+    pub reward_count: u32,
+    pub verdict: RetrievalPolicyVerdict,
+}
+
+/// A trained but not yet admitted retrieval-policy candidate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RetrievalPolicyCandidate {
+    pub weights: RetrievalBlendWeights,
+    pub rows: Vec<RetrievalWeightRow>,
+    pub data_window: RetrievalBlendWeightDataWindow,
+    /// Digest of the exact training/evaluation manifest this candidate was
+    /// trained and judged on; admission requires the same manifest.
+    pub manifest_digest: String,
+    pub held_out: RetrievalPolicyHeldOut,
+    pub training_reward_count: u32,
+    /// Outcome rows without gate-attributed reward evidence never train or
+    /// judge an update; this counts the ones the scan passed over.
+    pub ungated_outcomes_skipped: u32,
+    pub algorithm: String,
+}
+
+/// A held-out evaluation of caller-supplied candidate weights.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RetrievalPolicyEvaluation {
+    pub candidate_weights: RetrievalBlendWeights,
+    pub active_weights: RetrievalBlendWeights,
+    pub rows: Vec<RetrievalWeightRow>,
+    pub manifest_digest: String,
+    pub held_out: RetrievalPolicyHeldOut,
+    pub pins_respected: bool,
+    pub ungated_outcomes_skipped: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalScoreBreakdown {
     pub result_id: [u8; 16],

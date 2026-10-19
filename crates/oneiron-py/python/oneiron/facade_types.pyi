@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 975 facade rows, 3329 declarations.
-Inputs: 918 of 975 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 877 of 975 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 988 facade rows, 3381 declarations.
+Inputs: 931 of 988 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 890 of 988 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -2827,6 +2827,96 @@ class RetrievalReplayRun(TypedDict):
 class RetrievalDiagnosticReplay(TypedDict):
     contract_version: str
     runs: list[RetrievalReplayRun]
+class RetrievalBlendWeights(TypedDict):
+    recency: float
+    salience: float
+    confidence: float
+    gravity: float
+class RetrievalBlendWeightDataWindow(TypedDict):
+    run_count: int
+    outcome_count: int
+    candidate_count: int
+    started_at_min: NotRequired[int | None]
+    started_at_max: NotRequired[int | None]
+    outcome_updated_at_min: NotRequired[int | None]
+    outcome_updated_at_max: NotRequired[int | None]
+class RetrievalBlendWeightTableEntry(TypedDict):
+    version: int
+    weights: RetrievalBlendWeights
+    tuned_at: int
+    provenance: dict[str, str]
+    data_window: RetrievalBlendWeightDataWindow
+RetrievalBlendSignal = Literal["recency", "salience", "confidence", "gravity"]
+RetrievalWeightOrigin = Literal["bootstrap", "learned", "owner_pin"]
+class RetrievalWeightRow(TypedDict):
+    signal: RetrievalBlendSignal
+    weight: float
+    origin: RetrievalWeightOrigin
+    pinned: bool
+class RetrievalPolicyPin(TypedDict):
+    signal: RetrievalBlendSignal
+    value: float
+ModelSlot = Literal["llm", "embedder", "oneironer"]
+ModelLocality = Literal["on_device", "own_server", "third_party"]
+class RetrievalRoutingPin(TypedDict):
+    slot: ModelSlot
+    locality: ModelLocality
+class RetrievalPolicyView(TypedDict):
+    policy_version: int
+    active: RetrievalBlendWeightTableEntry
+    rows: list[RetrievalWeightRow]
+    pins: list[RetrievalPolicyPin]
+    posterior_tuned_at: int
+    posterior_labeled_runs: int
+    posterior_observations: int
+    routing_manifest_digest: NotRequired[str | None]
+    routing: list[RetrievalRoutingPin]
+class RetrievalPolicyPinRequest(TypedDict):
+    signal: RetrievalBlendSignal
+    value: NotRequired[float | None]
+class RetrievalPolicyTrainRequest(TypedDict):
+    max_runs: NotRequired[int | None]
+    learning_rate: NotRequired[float | None]
+    min_reward_count: NotRequired[int | None]
+RetrievalPolicyVerdict = Literal["not_worse", "regression", "insufficient"]
+class RetrievalPolicyHeldOut(TypedDict):
+    candidate_score: float
+    active_score: float
+    reward_count: int
+    verdict: RetrievalPolicyVerdict
+class RetrievalPolicyCandidate(TypedDict):
+    weights: RetrievalBlendWeights
+    rows: list[RetrievalWeightRow]
+    data_window: RetrievalBlendWeightDataWindow
+    manifest_digest: str
+    held_out: RetrievalPolicyHeldOut
+    training_reward_count: int
+    ungated_outcomes_skipped: int
+    algorithm: str
+class RetrievalPolicyEvaluateRequest(TypedDict):
+    weights: RetrievalBlendWeights
+    config: NotRequired[RetrievalPolicyTrainRequest]
+class RetrievalPolicyEvaluation(TypedDict):
+    candidate_weights: RetrievalBlendWeights
+    active_weights: RetrievalBlendWeights
+    rows: list[RetrievalWeightRow]
+    manifest_digest: str
+    held_out: RetrievalPolicyHeldOut
+    pins_respected: bool
+    ungated_outcomes_skipped: int
+class RetrievalPolicyAdmitRequest(TypedDict):
+    weights: RetrievalBlendWeights
+    manifest_digest: str
+    config: NotRequired[RetrievalPolicyTrainRequest]
+class RetrievalPolicyAdmitReceipt(TypedDict):
+    evaluation: RetrievalPolicyEvaluation
+    view: RetrievalPolicyView
+RetrievalPolicyDisposition = Literal["applied", "offered"]
+class RetrievalPolicyUpdateReceipt(TypedDict):
+    disposition: RetrievalPolicyDisposition
+    reason: NotRequired[str | None]
+    candidate: RetrievalPolicyCandidate
+    view: RetrievalPolicyView
 class ExportOptions(TypedDict):
     format: NotRequired[str | None]
     include_secrets: NotRequired[bool | None]
@@ -8016,7 +8106,6 @@ class PolicyManifestReceipt(TypedDict):
     read_frontier_hash: str
 class PolicyManifestPropose(TypedDict):
     manifest: PolicyManifest
-ModelSlot = Literal["llm", "embedder", "oneironer"]
 ConfidenceBand = Literal["low", "medium", "high", "certain"]
 VerdictMode = Literal["shadow", "enforce"]
 class VerdictBinding(TypedDict):
@@ -11967,6 +12056,178 @@ class SkillPackOutcomeProjection(TypedDict):
     persisted: bool
 class SkillPackCreditRequest(TypedDict):
     receipt_id: str
+class ProposalReplacement(TypedDict):
+    before: str
+    after: str
+ProposalAmendmentCause = Literal["proposal_wrong", "external_change", "decider_preference"]
+AttributionLabel = Literal["skill_defect", "execution_lapse", "discovery", "environment", "preference_shift", "unclear"]
+class ProposalHunkVerdict(TypedDict):
+    verdict: AttributionLabel
+    confidence: NotRequired[float]
+    note: NotRequired[str | None]
+ProposalShareClaim = TypedDict("ProposalShareClaim", {"class": AttributionLabel, "share": float})
+class ProposalDeltaSettleRequest(TypedDict):
+    proposed_text: str
+    replacements: list[ProposalReplacement]
+    actor: EntityId
+    skill: NotRequired[EntityId | None]
+    attempt_receipt: NotRequired[str | None]
+    source_turn_ref: NotRequired[EntityId | None]
+    scope: str
+    cause: NotRequired[ProposalAmendmentCause | None]
+    followed_skill: NotRequired[bool | None]
+    skill_covered_step: NotRequired[bool | None]
+    at: int
+    hunk_verdicts: NotRequired[list[ProposalHunkVerdict] | None]
+    shares: NotRequired[list[ProposalShareClaim] | None]
+OpsSummaryView = TypedDict("OpsSummaryView", {"ins": int, "del": int, "kept": int, "moved": int, "approx": bool})
+class AmendmentDeltaView(TypedDict):
+    proposed_ref: str
+    final_ref: str
+    source: str
+    d_norm: float
+    ops_summary: OpsSummaryView
+    engine_ver: str
+class SettledHunkView(TypedDict):
+    before: str
+    after: str
+    edit_mass: float
+    actor: NotRequired[EntityId | None]
+    trust: NotRequired[str | None]
+AmendmentShareView = TypedDict("AmendmentShareView", {"class": AttributionLabel, "share": float, "subject": NotRequired[EntityId | None]})
+class AmendmentJudgmentView(TypedDict):
+    receipt_id: str
+    split: list[AmendmentShareView]
+    scope: str
+    evidence_receipts: list[str]
+    d_norm: float
+    at: int
+class ProposalDeltaSettlement(TypedDict):
+    receipt_id: str
+    artifact_ref: EntityId
+    proposed_text: str
+    final_text: str
+    delta: AmendmentDeltaView
+    hunks: list[SettledHunkView]
+    judgment: NotRequired[AmendmentJudgmentView | None]
+    edit_cost_claims: list[EntityId]
+    reliability_heads: list[EntityId]
+    lessons: list[EntityId]
+class ProposalDeltaReadRequest(TypedDict):
+    receipt_id: str
+    artifact_ref: NotRequired[EntityId | None]
+class ProposalOpSpanView(TypedDict):
+    actor: NotRequired[EntityId | None]
+    trust: str
+    before_text: str
+    after_text: str
+    lamport: int
+    timestamp: int
+class ProposalArtifactView(TypedDict):
+    artifact_ref: EntityId
+    proposed_text: str
+    final_text: str
+    source_turn_ref: NotRequired[EntityId | None]
+    spans: list[ProposalOpSpanView]
+class AmendmentEvidenceView(TypedDict):
+    receipt_id: str
+    actor: EntityId
+    skill: NotRequired[EntityId | None]
+    attempt_receipt: NotRequired[str | None]
+    scope: str
+    cause: NotRequired[ProposalAmendmentCause | None]
+    followed_skill: NotRequired[bool | None]
+    skill_covered_step: NotRequired[bool | None]
+    at: int
+class PreferenceProposalView(TypedDict):
+    receipt_id: str
+    scope: str
+    evidence_receipts: list[str]
+    share: float
+    at: int
+class UnclearNoteView(TypedDict):
+    reason: str
+    leaning: NotRequired[AttributionLabel | None]
+    confidence: float
+    share: float
+    note: NotRequired[str | None]
+class UnclearAttributionView(TypedDict):
+    lane: str
+    reference: str
+    evidence_receipts: list[str]
+    notes: list[UnclearNoteView]
+    at: int
+class ProposalDeltaRead(TypedDict):
+    receipt_id: str
+    delta: NotRequired[AmendmentDeltaView | None]
+    artifact: NotRequired[ProposalArtifactView | None]
+    evidence: NotRequired[AmendmentEvidenceView | None]
+    judgment: NotRequired[AmendmentJudgmentView | None]
+    preference_proposals: list[PreferenceProposalView]
+    unclear: list[UnclearAttributionView]
+class FollowedStateInputFollowed(TypedDict):
+    kind: Literal["followed"]
+class FollowedStateInputPartly(TypedDict):
+    kind: Literal["partly"]
+class FollowedStateInputIgnored(TypedDict):
+    kind: Literal["ignored"]
+class FollowedStateInputDeviatedWithReason(TypedDict):
+    kind: Literal["deviated_with_reason"]
+    reason: str
+    cause: NotRequired[str | None]
+FollowedStateInput = FollowedStateInputFollowed | FollowedStateInputPartly | FollowedStateInputIgnored | FollowedStateInputDeviatedWithReason
+class AttributionEvidenceRequest(TypedDict):
+    receipt_ref: str
+    actor: EntityId
+    skill: NotRequired[EntityId | None]
+    outcome: str
+    followed_skill: NotRequired[bool | None]
+    followed_state: NotRequired[FollowedStateInput | None]
+    skill_covered_step: NotRequired[bool | None]
+    at: int
+class AttributionEvidenceReceipt(TypedDict):
+    sequence: int
+class AttributionProjectRequest(TypedDict):
+    since_cursor: NotRequired[int | None]
+class AttemptJudgmentView(TypedDict):
+    sequence: int
+    verdict: AttributionLabel
+    subject: EntityId
+    evidence_receipts: list[str]
+    at: int
+class PositiveProposalView(TypedDict):
+    evidence_sequence: int
+    skill: EntityId
+    actor: EntityId
+    finding: str
+    reason: NotRequired[str | None]
+    evidence_receipts: list[str]
+    at: int
+class SkillEditProposalView(TypedDict):
+    judgment_sequence: int
+    skill: EntityId
+    evidence_receipts: list[str]
+    at: int
+class AttributionProjection(TypedDict):
+    cursor: int
+    judgments: list[AttemptJudgmentView]
+    positive_proposals: list[PositiveProposalView]
+    pending_edit_proposals: list[SkillEditProposalView]
+class AttributionListRequest(TypedDict):
+    ...
+class AttributionJudgmentsView(TypedDict):
+    cursor: int
+    attempt_judgments: list[AttemptJudgmentView]
+    amendment_judgments: list[AmendmentJudgmentView]
+    unclear: list[UnclearAttributionView]
+class AttributionProposalsView(TypedDict):
+    edit_proposals: list[SkillEditProposalView]
+    preference_proposals: list[PreferenceProposalView]
+    positive_proposals: list[PositiveProposalView]
+class PositiveRetireRequest(TypedDict):
+    evidence_sequence: int
+class PositiveRetireReceipt(TypedDict):
+    retired: bool
 class CallPurposeOtherBody(TypedDict):
     name: str
 class CallPurposeOther(TypedDict):
@@ -11994,7 +12255,6 @@ class ResponseFormatJson(TypedDict):
     format: Literal["json"]
     schema: Any
 ResponseFormat = ResponseFormatText | ResponseFormatJson
-ModelLocality = Literal["on_device", "own_server", "third_party"]
 CallEnvelope = TypedDict("CallEnvelope", {"scope": NotRequired[ScopeScope], "purpose": CallPurpose, "class": CallClass, "tier": TierPrecedence, "response_format": ResponseFormat, "locality": ModelLocality, "seat_effort": NotRequired[ReasoningEffort | None]})
 LlmMessageRole = Literal["system", "user", "assistant", "tool"]
 class ImageContentBase64(TypedDict):
@@ -13716,11 +13976,6 @@ class HybridPprQuery(TypedDict):
 class HybridTemporalQuery(TypedDict):
     start: int
     end: int
-class RetrievalBlendWeights(TypedDict):
-    recency: float
-    salience: float
-    confidence: float
-    gravity: float
 class HybridRankReplay(TypedDict):
     now: int
     blend_weights: RetrievalBlendWeights

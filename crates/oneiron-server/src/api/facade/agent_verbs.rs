@@ -131,6 +131,12 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.retrieval.trace", post(facade_route))
         .route("/vault.retrieval.export", post(facade_route))
         .route("/vault.retrieval.replay", post(facade_route))
+        .route("/vault.retrieval.policy.get", post(facade_route))
+        .route("/vault.retrieval.policy.pin", post(facade_route))
+        .route("/vault.retrieval.policy.train", post(facade_route))
+        .route("/vault.retrieval.policy.evaluate", post(facade_route))
+        .route("/vault.retrieval.policy.admit", post(facade_route))
+        .route("/vault.retrieval.policy.update", post(facade_route))
         .route("/vault.export", post(facade_route))
         .route("/self.credential.attenuate", post(facade_route))
         .route("/vault.scope.position", post(facade_route))
@@ -741,6 +747,19 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.skills.pack_receipt", post(facade_route))
         .route("/vault.skills.outcomes.project", post(facade_route))
         .route("/vault.skills.outcomes.get", post(facade_route))
+        .route("/vault.skills.attribution.settle", post(facade_route))
+        .route("/vault.skills.attribution.read", post(facade_route))
+        .route(
+            "/vault.skills.attribution.evidence.record",
+            post(facade_route),
+        )
+        .route("/vault.skills.attribution.project", post(facade_route))
+        .route("/vault.skills.attribution.judgments", post(facade_route))
+        .route("/vault.skills.attribution.proposals", post(facade_route))
+        .route(
+            "/vault.skills.attribution.positive.retire",
+            post(facade_route),
+        )
         .route("/ai.steps.submit", post(facade_route))
         .route("/ai.steps.receipt", post(facade_route))
         .route("/ai.reply", post(facade_route))

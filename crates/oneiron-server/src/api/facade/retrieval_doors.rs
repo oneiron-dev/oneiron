@@ -211,6 +211,156 @@ pub(crate) async fn vault_retrieval_replay(
     .await
 }
 
+pub(crate) async fn vault_retrieval_policy_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::EmptyRequest,
+) -> Listed<oneiron::task_verb::sdk::RetrievalPolicyView> {
+    let admitted = || -> MemoryResult<_> {
+        let owner = owner_proof(auth, server, "vault.retrieval.policy.get")?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        Ok((owner, caller))
+    };
+    let (owner, caller) = match admitted() {
+        Ok(admitted) => admitted,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.retrieval.policy.get",
+        move |_, _, memory| sdk::retrieval_policy_get_as_owner(&memory, &owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_retrieval_policy_pin(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::RetrievalPolicyPinRequest,
+) -> Listed<oneiron::task_verb::sdk::RetrievalPolicyView> {
+    let admitted = || -> MemoryResult<_> {
+        let owner = owner_proof(auth, server, "vault.retrieval.policy.pin")?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        Ok((owner, caller))
+    };
+    let (owner, caller) = match admitted() {
+        Ok(admitted) => admitted,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.retrieval.policy.pin",
+        move |_, _, memory| sdk::retrieval_policy_pin_as_owner(&memory, &owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_retrieval_policy_train(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::RetrievalPolicyTrainRequest,
+) -> Listed<oneiron::store::RetrievalPolicyCandidate> {
+    let admitted = || -> MemoryResult<_> {
+        let owner = owner_proof(auth, server, "vault.retrieval.policy.train")?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        Ok((owner, caller))
+    };
+    let (owner, caller) = match admitted() {
+        Ok(admitted) => admitted,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.retrieval.policy.train",
+        move |_, _, memory| sdk::retrieval_policy_train_as_owner(&memory, &owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_retrieval_policy_evaluate(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::RetrievalPolicyEvaluateRequest,
+) -> Listed<oneiron::store::RetrievalPolicyEvaluation> {
+    let admitted = || -> MemoryResult<_> {
+        let owner = owner_proof(auth, server, "vault.retrieval.policy.evaluate")?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        Ok((owner, caller))
+    };
+    let (owner, caller) = match admitted() {
+        Ok(admitted) => admitted,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.retrieval.policy.evaluate",
+        move |_, _, memory| sdk::retrieval_policy_evaluate_as_owner(&memory, &owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_retrieval_policy_admit(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::RetrievalPolicyAdmitRequest,
+) -> Listed<oneiron::task_verb::sdk::RetrievalPolicyAdmitReceipt> {
+    let admitted = || -> MemoryResult<_> {
+        let owner = owner_proof(auth, server, "vault.retrieval.policy.admit")?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        Ok((owner, caller))
+    };
+    let (owner, caller) = match admitted() {
+        Ok(admitted) => admitted,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.retrieval.policy.admit",
+        move |_, _, memory| sdk::retrieval_policy_admit_as_owner(&memory, &owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_retrieval_policy_update(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::RetrievalPolicyTrainRequest,
+) -> Listed<oneiron::task_verb::sdk::RetrievalPolicyUpdateReceipt> {
+    let admitted = || -> MemoryResult<_> {
+        let owner = owner_proof(auth, server, "vault.retrieval.policy.update")?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        Ok((owner, caller))
+    };
+    let (owner, caller) = match admitted() {
+        Ok(admitted) => admitted,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.retrieval.policy.update",
+        move |_, _, memory| sdk::retrieval_policy_update_as_owner(&memory, &owner, input),
+    )
+    .await
+}
+
 /// The diagnostic SDK takes the whole recall request; the host still embeds,
 /// budgets, narrows and finalizes through the one existing serving door. Its
 /// caller proved the owner, so an opened device asks its home as the owner
