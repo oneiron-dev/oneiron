@@ -996,6 +996,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         oneiron::config::failure_signals::DeploymentTier::Managed;
     // Set before the open: LMDB takes the page key with the environment.
     vault_config.page_seal = managed_page_seal(&managed, config.maximum_tier, &credentials.dek)?;
+    // The live seal opens the live vault and creates none: a rehearsal's
+    // scratch takes a fresh incarnation of it (`owner::backup`).
+    let mut rehearsal_config = vault_config.clone();
+    rehearsal_config.page_seal = None;
     let vault = Arc::new(open_managed_vault(
         &managed.data_dir,
         vault_config,
@@ -1028,6 +1032,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     if let Some(embedding) = &config.embedding {
         embedding.apply_to(&vault)?;
     }
+    // The owner's backups and restore rehearsals, on the tenant's own disk
+    // beside the data directory, as plain serve keeps them beside its vault.
+    let owner_host = super::owner_storage::owner_host(&config, rehearsal_config);
     // The one credential-broker context, built from the opened vault: the
     // `[models]` providers, the System One seat, the embedder and the GPU
     // pods read their `key_secret` keys at its custody door, call by call.
@@ -1050,6 +1057,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         .with_embedder(embedder)
         .with_tagger(tagger)
         .with_broker(broker)
+        .with_owner_host(owner_host)
         .with_browser_guest(
             config
                 .browser
@@ -1240,6 +1248,12 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ladder_workers.extend(sync_server.spawn_resident_pump_admitted(admitted()));
     // Held and answered connector calls settle (ONE-2510).
     ladder_workers.push(sync_server.spawn_connector_settler_admitted(admitted()));
+    // The owner's `[backup]` schedule: each tick is admitted like a served
+    // write and holds it through its backup and pruning.
+    ladder_workers.extend(
+        sync_server
+            .spawn_backup_schedule_admitted(crate::owner::schedule::SCHEDULE_TICK, admitted()),
+    );
     ladder_workers.extend(gpu_poller);
     // Sensitive imported topics ask the owner who sees their later imports (OF-492).
     ladder_workers.push(crate::import_audience::spawn(&sync_server, admitted()));
