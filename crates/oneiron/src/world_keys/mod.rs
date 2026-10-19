@@ -63,7 +63,7 @@ pub use self::owner_work::{
     BundleHomeWarning, CapsuleRead, ExecutorObservation, LatestRead, OwnerWorkDiagnostics,
     OwnerWorkDrain, OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned, PublicationDiagnostics,
     PublishAttemptView, PublishObserved, PublishReach, ReassertDiagnostics, ReassertKey,
-    ReassertKeyState, ReassertUnread,
+    ReassertKeyState, ReassertUnread, RelayObservation,
 };
 #[cfg(feature = "sync")]
 pub use self::pads::PromotedWorldPad;

@@ -263,6 +263,18 @@ pub struct PublishAttemptView {
     pub bundle_digest: String,
 }
 
+/// What this install's relay observed for a publication (FIX 4784).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "state")]
+pub enum RelayObservation {
+    /// No relay pass on this install observed it since this handle opened:
+    /// the relay may not run here, or has not run yet. Never read as
+    /// "unreachable".
+    Unknown,
+    /// What each pass last saw, by the home it reached.
+    Observed { passes: Vec<PublishObserved> },
+}
+
 /// A bundle publication on its executor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PublicationDiagnostics {
@@ -270,11 +282,9 @@ pub struct PublicationDiagnostics {
     /// As the receipt's: why the home may keep no sealed copy (FIX 4786).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub home_warning: Option<BundleHomeWarning>,
-    /// What each relay pass on this install last saw, by the home it
-    /// reached. Empty means unknown: no pass was observed since this handle
-    /// opened, so the relay may not run here, or has not run yet. Never read
-    /// as "unreachable".
-    pub relay: Vec<PublishObserved>,
+    /// What this install's relay observed of the home and the newest
+    /// generation, or that it is unknown.
+    pub relay: RelayObservation,
     /// The exact attempt this install persisted and has not resolved; `None`
     /// with none.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -309,7 +319,7 @@ impl ExecutorObservation {
                  as such"
             }
             Self::BundlePublication(_) => {
-                "what the executor's relay last saw here; an empty relay list is unknown"
+                "what the executor's relay last saw here; unknown until a pass observes it"
             }
             Self::NotReported => "no executor diagnostics are kept for this work",
         }
@@ -450,7 +460,7 @@ impl Vault {
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             bundle_home_warning(&fold, home)
         };
-        let relay = self
+        let passes: Vec<PublishObserved> = self
             .world_keys
             .publications
             .lock()
@@ -459,6 +469,11 @@ impl Vault {
             .filter(|((asked, _), _)| *asked == request)
             .map(|(_, observed)| *observed)
             .collect();
+        let relay = if passes.is_empty() {
+            RelayObservation::Unknown
+        } else {
+            RelayObservation::Observed { passes }
+        };
         #[cfg(feature = "sync")]
         let attempt = self
             .unresolved_bundle_attempt(request)?

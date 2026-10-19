@@ -63,7 +63,7 @@ use oneiron_authority::authority::CustodyRegisterCheck;
 pub use self::diagnostics::{
     BundleHomeWarning, CapsuleRead, ExecutorObservation, LatestRead, OwnerWorkDiagnostics,
     PublicationDiagnostics, PublishAttemptView, PublishObserved, PublishReach, ReassertDiagnostics,
-    ReassertKey, ReassertKeyState, ReassertUnread,
+    ReassertKey, ReassertKeyState, ReassertUnread, RelayObservation,
 };
 pub use self::pickup::OwnerWorkDrain;
 
