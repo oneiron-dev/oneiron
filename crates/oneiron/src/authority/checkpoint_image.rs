@@ -667,12 +667,26 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<AuthorityCheckpointV2> {
+        self.build_authority_checkpoint_v2_as_in_txn(txn, self.privacy_posture(), None)
+    }
+
+    /// [`Vault::build_authority_checkpoint_v2_in_txn`] folded under `posture`
+    /// and, with `only`, of the held rows it names alone: the image a root
+    /// rebuilds another host's from, to check it (FIX 4882).
+    pub(super) fn build_authority_checkpoint_v2_as_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        posture: HostingPrivacyPosture,
+        only: Option<&BTreeSet<AuthorityEntryHash>>,
+    ) -> Result<AuthorityCheckpointV2> {
         let store = &self.store;
-        let posture = self.privacy_posture();
         let mut held = BTreeMap::new();
         for (_, body) in super::readonly_fold::authority_log_rows_in_txn(store, txn)? {
             let entry = decode_authority_log_entry_body(&body)?;
-            held.insert(authority_entry_hash(&entry)?, (entry, body));
+            let hash = authority_entry_hash(&entry)?;
+            if only.is_none_or(|only| only.contains(&hash)) {
+                held.insert(hash, (entry, body));
+            }
         }
         let (covered, uncovered, missing) = covered_closure(&held);
         let entries = covered
@@ -762,6 +776,7 @@ impl Vault {
         )?
         .into_iter()
         .collect();
+        let view = self.authority_view_readonly_in_txn(txn)?;
         let unresolved = AuthorityCheckpointUnresolved {
             held: uncovered.into_iter().collect(),
             missing: missing.into_iter().collect(),
@@ -807,7 +822,7 @@ impl Vault {
             safety,
             unresolved,
             archive_manifests,
-            root_policy: self.checkpoint_root_policy_in_txn(txn)?,
+            root_policy: super::checkpoint_policy::checkpoint_root_policy_of(&view, posture)?,
             building_pin: pin,
             parent: None,
         };
