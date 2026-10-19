@@ -171,10 +171,17 @@ public struct ContextPackMedia: Encodable, Equatable {
     }
 }
 
+/// What kind of machine this install is, as the app declares it (FIX 3833): never read off the
+/// operating system. A phone holds no sealed copy of the vault; `computer` is the default.
+public enum DeviceClass: UInt8 {
+    case computer = 0
+    case phone = 1
+}
+
 public final class Vault {
     private let handle: OpaquePointer
 
-    /// The wrong-root fact of `open(path:dimensions:hostRootSecret:initializeRoot:)`
+    /// The wrong-root fact of `open(path:dimensions:deviceClass:hostRootSecret:initializeRoot:)`
     /// (FIX 4730): true when the secret it was given is not this vault's settled root, so it
     /// went unused, since this install already carried its profile; the vault stands under
     /// its settled root, as before. Reported, never refused, so the app can show it or re-key.
@@ -189,9 +196,12 @@ public final class Vault {
         _ = oneiron_vault_free(handle)
     }
 
+    /// Opens the vault at `path` as the `deviceClass` the app declares: a phone app passes
+    /// `.phone` before this install enrols.
     public static func open(
         path: String,
-        dimensions: Int = 0
+        dimensions: Int = 0,
+        deviceClass: DeviceClass = .computer
     ) throws -> Vault {
         var rawHandle: OpaquePointer?
         var mutablePath = path
@@ -205,6 +215,7 @@ public final class Vault {
                 dimensions,
                 nil,
                 0,
+                deviceClass.rawValue,
                 &rawHandle
             )
         }
@@ -215,17 +226,18 @@ public final class Vault {
         return Vault(handle: handle)
     }
 
-    /// `open(path:dimensions:)`, then this install's own machine profile from the vault's
-    /// host root secret (FIX 4730), so the owner's acts carry from it. `hostRootSecret` is the
-    /// exact bytes of the server's configured `auth_secret`; nil opens as `open(path:dimensions:)`
-    /// does. `initializeRoot` roots the vault under that secret when this open creates its
-    /// store and its authority log is empty, a new local-origin vault: never set it for a
-    /// replica awaiting its root. A secret that cannot profile the install throws
-    /// `engineError`, and the engine logs why; a secret that is not the vault's settled root,
-    /// over a profile that already stands, opens and sets `wrongHostRoot`.
+    /// `open(path:dimensions:deviceClass:)`, then this install's own machine profile from the
+    /// vault's host root secret (FIX 4730), so the owner's acts carry from it. `hostRootSecret` is
+    /// the exact bytes of the server's configured `auth_secret`; nil opens as
+    /// `open(path:dimensions:deviceClass:)` does. `initializeRoot` roots the vault under that
+    /// secret when this open creates its store and its authority log is empty, a new local-origin
+    /// vault: never set it for a replica awaiting its root. A secret that cannot profile the
+    /// install throws `engineError`, and the engine logs why; a secret that is not the vault's
+    /// settled root, over a profile that already stands, opens and sets `wrongHostRoot`.
     public static func open(
         path: String,
         dimensions: Int = 0,
+        deviceClass: DeviceClass = .computer,
         hostRootSecret: Data?,
         initializeRoot: Bool = false
     ) throws -> Vault {
@@ -246,6 +258,7 @@ public final class Vault {
                     dimensions,
                     nil,
                     0,
+                    deviceClass.rawValue,
                     secretPtr,
                     secretLen,
                     initializeRoot ? 1 : 0,

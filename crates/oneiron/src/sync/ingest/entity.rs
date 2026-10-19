@@ -11,7 +11,7 @@ use crate::registry::{
     ENTITY_TYPE_REDACTION_AUDIT,
 };
 use crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn;
-use crate::sync::ingest::promotion::{owe_landed_turn_in_txn, promoting};
+use crate::sync::ingest::promotion::{owe_landed_turn_in_txn, promoted_landing_in_txn};
 use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::origin_claims::{CarriedClaim, carried_claim_in_txn};
 use crate::sync::pack_sync;
@@ -193,9 +193,9 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
     value: Option<&[u8]>,
 ) -> Result<EntityStep> {
     let mut savepoint = ctx.vault.store.env.nested_write_txn(parent)?;
-    // A row a promotion on this thread lands where none is stored (OF-534).
+    // A row a promotion lands where none is stored, in its span or later (OF-534, FIX 3873).
     let landed = match EntityId::from_hex(key) {
-        Ok(id) if promoting(ctx.vault) => {
+        Ok(id) if promoted_landing_in_txn(ctx.vault, &savepoint, ctx.window_key)? => {
             !EntityStoreRead::port_entity_present(&ctx.vault.store, &savepoint, &id)?
         }
         _ => false,
