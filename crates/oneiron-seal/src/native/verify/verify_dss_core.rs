@@ -22,12 +22,40 @@ use super::verify_sig_pipeline::Checks;
 /// dictionary) is present-but-unreadable, not absent: it classifies
 /// Invalid so a `/DSS` hidden inside it cannot dodge the failed-evidence
 /// classification.
+///
+/// Each DSS stream decodes under `max_stream_bytes`, the per-stream codec
+/// bound; the material is read whole however much it decodes to in all
+/// (Rule 5). Returns the bytes this extraction decoded, for the `[limits]`
+/// DSS-decode row.
 pub(super) fn verify_dss(
     doc: &Document,
     anchors: &[EmbeddedCert],
     covered: &[EmbeddedCert],
     at_unix: u64,
     max_stream_bytes: usize,
+    checks: &mut Checks,
+) -> usize {
+    let mut decoded = 0;
+    check_dss(
+        doc,
+        anchors,
+        covered,
+        at_unix,
+        max_stream_bytes,
+        &mut decoded,
+        checks,
+    );
+    decoded
+}
+
+/// [`verify_dss`], adding what it decodes to `decoded`.
+fn check_dss(
+    doc: &Document,
+    anchors: &[EmbeddedCert],
+    covered: &[EmbeddedCert],
+    at_unix: u64,
+    max_stream_bytes: usize,
+    decoded: &mut usize,
     checks: &mut Checks,
 ) {
     let catalog = match doc.catalog() {
@@ -69,7 +97,15 @@ pub(super) fn verify_dss(
         );
         return;
     }
-    let ok = dss_material_valid(doc, dss, anchors, covered, at_unix, max_stream_bytes);
+    let ok = dss_material_valid(
+        doc,
+        dss,
+        anchors,
+        covered,
+        at_unix,
+        max_stream_bytes,
+        decoded,
+    );
     checks.record(
         VerifyCheckKind::ValidationMaterial,
         ok,
@@ -84,15 +120,14 @@ fn dss_material_valid(
     covered: &[EmbeddedCert],
     at_unix: u64,
     max_stream_bytes: usize,
+    decoded: &mut usize,
 ) -> bool {
-    // ONE shared decompression budget across every DSS entry in all three
-    // arrays: all decoded vectors are retained, so N streams each expanding
-    // to the per-stream cap would multiply memory by N. The cumulative
-    // over-cap fails the material without decoding beyond the shared limit.
-    let mut remaining = max_stream_bytes;
-    let certs = dss_array(doc, dss, b"Certs", &mut remaining);
-    let crls = dss_array(doc, dss, b"CRLs", &mut remaining);
-    let ocsps = dss_array(doc, dss, b"OCSPs", &mut remaining);
+    // Each entry decodes under the per-stream codec bound; the total across
+    // all three arrays is counted, never capped, so material past the old
+    // shared budget is read whole rather than called malformed.
+    let certs = dss_array(doc, dss, b"Certs", max_stream_bytes, decoded);
+    let crls = dss_array(doc, dss, b"CRLs", max_stream_bytes, decoded);
+    let ocsps = dss_array(doc, dss, b"OCSPs", max_stream_bytes, decoded);
     // A present DSS with all arrays absent is evidence-free: it must not
     // inflate a B-T document into B-LT.
     if matches!(certs, DssArray::Absent)
@@ -216,16 +251,16 @@ pub(super) enum DssArray {
 
 /// Extract the decoded stream contents of one DSS array. Filtered streams
 /// (e.g. a FlateDecode-wrapped CRL) are decoded through the bounded
-/// decompression path; a malformed filter, a failed decode, or an over-limit
-/// expansion is Malformed, never a silent skip. `remaining` is the SHARED
-/// decode budget across every DSS array: each entry decodes against what is
-/// left (never the full per-document cap) and spends its decoded length, so
-/// cumulative expansion past the cap fails instead of decoding further.
+/// decompression path; a malformed filter, a failed decode, or one stream
+/// expanding past `max_stream_bytes` (the per-stream codec bound) is
+/// Malformed, never a silent skip. Every decoded length is added to
+/// `decoded`, the extraction's total, which no bound stops.
 pub(super) fn dss_array(
     doc: &Document,
     dss: &lopdf::Dictionary,
     key: &[u8],
-    remaining: &mut usize,
+    max_stream_bytes: usize,
+    decoded: &mut usize,
 ) -> DssArray {
     let Ok(arr_obj) = dss.get(key) else {
         return DssArray::Absent;
@@ -246,11 +281,10 @@ pub(super) fn dss_array(
         else {
             return DssArray::Malformed;
         };
-        let Ok(data) = stream.decompressed_content_with_limit(*remaining) else {
+        let Ok(data) = stream.decompressed_content_with_limit(max_stream_bytes) else {
             return DssArray::Malformed;
         };
-        // The decode cap guarantees data.len() <= *remaining.
-        *remaining = remaining.saturating_sub(data.len());
+        *decoded = decoded.saturating_add(data.len());
         out.push(data);
     }
     DssArray::Entries(out)
