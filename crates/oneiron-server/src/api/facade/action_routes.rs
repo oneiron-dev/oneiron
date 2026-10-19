@@ -122,7 +122,8 @@ pub(crate) async fn invoke_action(
     verb: String,
     request: ActionRequest,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    let dispatch = invoke_action_dispatch(server, auth, headers, extensions, verb, request).await?;
+    let dispatch =
+        invoke_action_dispatch(server, auth, headers, extensions, None, verb, request).await?;
     Ok(serde_json::json!({
         "outcome": dispatch.outcome_value().map_err(engine)?,
         "readReceipt": dispatch.read_receipt,
@@ -130,12 +131,15 @@ pub(crate) async fn invoke_action(
 }
 
 /// The same action admission and execution, retaining the typed outcome for
-/// the generated public run doors.
+/// the generated public run doors. Given `credential`, its verb-table rows
+/// run as that caller rather than through a request's headers and
+/// connection ([`execute`]).
 pub(super) async fn invoke_action_dispatch(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     headers: HeaderMap,
     extensions: Extensions,
+    credential: Option<CoreAuth>,
     verb: String,
     request: ActionRequest,
 ) -> Result<ActionDispatch, FacadeApiError> {
@@ -182,7 +186,7 @@ pub(super) async fn invoke_action_dispatch(
         args: request.args,
         idempotency_key,
     };
-    execute(server, headers, extensions, bound, call).await
+    execute(server, headers, extensions, bound, credential, call).await
 }
 
 /// The scope and record admission an action of `verb` meets, wherever its
@@ -510,7 +514,7 @@ pub(crate) async fn execute_facade_row<T: serde::Serialize>(
         args: vec![ActionArgument::Json(input)],
         idempotency_key,
     };
-    let dispatch = execute(server, headers, extensions, bound, call).await?;
+    let dispatch = execute(server, headers, extensions, bound, None, call).await?;
     match dispatch.outcome {
         SelfDispatchOutcome::AgentVerb(answer) => Ok(answer.output),
         SelfDispatchOutcome::Denied(denied) => Err(match dispatch.refusal {
