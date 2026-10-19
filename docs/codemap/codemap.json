@@ -20591,7 +20591,7 @@
      "path": "src/dreamer_runner/home.rs",
      "purpose": "The single MACRO home-node election (ARCH-0026; DOOR-101 PR2a): which node of the vault runs its MACRO…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -21283,6 +21283,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConsolidationHomeCandidate",
       "ConsolidationHomeNode",
       "ConsolidationHomePickHead",
       "ConsolidationHomePickReceipt",
@@ -21298,7 +21299,7 @@
      "surface": {
       "crate-vis": 1,
       "fn": 4,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -84443,6 +84444,7 @@
       "ConsolidationEvidenceRequest",
       "ConsolidationEvidenceSource",
       "ConsolidationFrontierRequest",
+      "ConsolidationHomeCandidate",
       "ConsolidationHomeNode",
       "ConsolidationHomePickHead",
       "ConsolidationHomePickReceipt",
@@ -87162,7 +87164,7 @@
      "purpose": "—",
      "surface": {
       "enum": 830,
-      "struct": 2654
+      "struct": 2655
      }
     },
     {
