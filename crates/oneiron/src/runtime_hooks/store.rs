@@ -322,9 +322,11 @@ pub(super) fn receipt_id(key: &RunKey) -> String {
 }
 
 /// The rows the run a Hook receipt names (`run_key`, 64 hex) read: a fact
-/// run's memo's reads, else a verb run's saved record's. `None` when the key
-/// names no kept run. The receipt family screens a Hook receipt on them for
-/// a caller off this device (FIX 1119).
+/// run's memo's reads and the rows each of its verdicts' evidence resolved
+/// to (FIX 5459), else a verb run's saved record's reads. `None` when the
+/// key names no kept run, or a fact run kept a verdict without its evidence
+/// rows or did not keep every verdict. The receipt family screens a Hook
+/// receipt on them for a caller off this device (FIX 1119).
 pub(crate) fn hook_run_read_rows(vault: &Vault, run_key: &str) -> Result<Option<Vec<EntityId>>> {
     let rtxn = vault.store.env.read_txn()?;
     hook_run_read_rows_in(&vault.store, &rtxn, run_key)
@@ -341,10 +343,22 @@ fn hook_run_read_rows_in(
     let Some(key) = crate::deletion::parse_hex::<32>(run_key) else {
         return Ok(None);
     };
-    let reads = match MEMOS.get(dbs, rtxn, &key)? {
-        Some(memo) => memo.reads,
+    let (reads, evidence) = match MEMOS.get(dbs, rtxn, &key)? {
+        Some(memo) => {
+            if !memo.verdicts_complete {
+                return Ok(None);
+            }
+            let mut evidence = Vec::new();
+            for verdict in memo.verdicts {
+                let Some(rows) = verdict.evidence else {
+                    return Ok(None);
+                };
+                evidence.extend(rows);
+            }
+            (memo.reads, evidence)
+        }
         None => match super::verb::VERB_RUNS.get(dbs, rtxn, &key)? {
-            Some(run) => run.reads,
+            Some(run) => (run.reads, Vec::new()),
             None => return Ok(None),
         },
     };
@@ -352,6 +366,7 @@ fn hook_run_read_rows_in(
         reads
             .into_iter()
             .flat_map(|pin| pin.rows.into_iter().map(|row| row.id))
+            .chain(evidence)
             .collect(),
     ))
 }

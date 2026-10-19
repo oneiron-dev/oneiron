@@ -122,6 +122,10 @@ pub struct TrainingOfferDraft {
     pub previous: Option<EntityId>,
     pub what_changed: Option<String>,
     pub check_at: u64,
+    /// The rows the brief was gathered from (FIX 5482), ids only: every row
+    /// that fed it, the alternatives' included. `None` when they are not all
+    /// known; `Some([])` is a proven empty set.
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 /// One immutable offer snapshot.
@@ -148,7 +152,13 @@ pub struct TrainingOffer {
     pub what_changed: Option<String>,
     pub check_at: u64,
     pub offered_at: u64,
-    /// Digest of everything above: the question the owner answers.
+    /// The rows the draft was gathered from (FIX 5482), ids only, sorted:
+    /// `None` when they are not all known. An erased row leaves the list,
+    /// and the digest leaves the list out, so an erase never changes the
+    /// question the owner answers.
+    pub source_rows: Option<Vec<EntityId>>,
+    /// Digest of everything above but `source_rows`: the question the owner
+    /// answers.
     pub digest: String,
 }
 
@@ -203,6 +213,9 @@ pub struct OfferCheckInput {
     /// Whether the promise held, as the checking observer read it.
     pub held: Option<bool>,
     pub note: Option<String>,
+    /// The rows the check was read from (FIX 5482), ids only: `None` when
+    /// they are not all known.
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -216,6 +229,9 @@ pub struct OfferCheck {
     pub held: Option<bool>,
     pub note: Option<String>,
     pub at: u64,
+    /// The rows the check was read from (FIX 5482), ids only, sorted: `None`
+    /// when they are not all known. An erased row leaves the list.
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 pub(super) fn invalid(reason: &str) -> Error {
@@ -410,9 +426,26 @@ pub(super) fn measure_offer(vault: &Vault, offer: &TrainingOffer) {
 pub(super) fn digest(offer: &TrainingOffer) -> Result<String> {
     let mut row = offer.clone();
     row.digest = String::new();
+    // The source rows are not part of the question (FIX 5482): an erase
+    // drops ids from them without voiding a pending answer.
+    row.source_rows = None;
     let bytes = rmp_serde::to_vec_named(&row).map_err(|_| invalid("offer encoding failed"))?;
     let mut hash = Sha256::new();
     hash.update(b"skill_optimize:training_offer:v1\0");
     hash.update(bytes);
     Ok(bytes_to_hex_lower(&hash.finalize()))
+}
+
+/// The union of source sets (FIX 5482), sorted and deduplicated: `None` once
+/// any set is unknown; no set at all unions to a known empty one.
+pub fn union_source_rows<'a>(
+    sets: impl IntoIterator<Item = Option<&'a [EntityId]>>,
+) -> Option<Vec<EntityId>> {
+    let mut rows = Vec::new();
+    for set in sets {
+        rows.extend_from_slice(set?);
+    }
+    rows.sort_unstable();
+    rows.dedup();
+    Some(rows)
 }

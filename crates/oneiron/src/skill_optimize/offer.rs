@@ -26,17 +26,18 @@ use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::authority::{BaseAgent, base_agent_for_facet};
 use crate::learning::{Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation};
 use crate::limit_ask::EngineLimit;
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
 mod snapshot;
 
-use self::snapshot::{amount, digest, invalid, measure_offer, named, refs};
 pub use self::snapshot::{
     ComputeDestination, OfferAnswer, OfferAnswerRecord, OfferCandidate, OfferCheck,
     OfferCheckInput, OfferCost, OfferEvidence, OfferIntent, OfferModelPin, OfferOption,
-    SeatWorkload, TrainingOffer, TrainingOfferDraft,
+    SeatWorkload, TrainingOffer, TrainingOfferDraft, union_source_rows,
 };
+use self::snapshot::{amount, digest, invalid, measure_offer, named, refs};
 
 /// One offer snapshot, keyed by offer id. Written once.
 const OFFER: SideTable<EntityId, TrainingOffer, Named> =
@@ -104,10 +105,12 @@ pub fn record_training_offer(
         what_changed: draft.what_changed,
         check_at: draft.check_at,
         offered_at: at,
+        source_rows: draft.source_rows,
         digest: String::new(),
     };
     offer.digest = digest(&offer)?;
     vault.with_write_txn_grouped(|txn| {
+        offer.source_rows = live_source_rows_in(vault, txn, offer.source_rows.take())?;
         if let Some(previous) = &offer.previous {
             let earlier = OFFER
                 .get(&vault.store, txn, previous)?
@@ -121,6 +124,70 @@ pub fn record_training_offer(
         OFFER.put(&vault.store, txn, &offer.id, &offer)?;
         Ok(offer)
     })
+}
+
+/// `rows` sorted and deduplicated, less every row already hard-erased in
+/// `txn` (FIX 5482): a source an erase reached between the gather and this
+/// write does not come back. Unknown stays unknown.
+fn live_source_rows_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    rows: Option<Vec<EntityId>>,
+) -> Result<Option<Vec<EntityId>>> {
+    let Some(rows) = union_source_rows([rows.as_deref()]) else {
+        return Ok(None);
+    };
+    let mut live = Vec::with_capacity(rows.len());
+    for row in rows {
+        if !vault
+            .store
+            .port_deletion_marked(txn, DeletionMarker::HardDelete, &row)?
+        {
+            live.push(row);
+        }
+    }
+    Ok(Some(live))
+}
+
+/// Drops an erased row from every offer's and every check's source rows
+/// (FIX 5482), rewriting only the snapshots that named it; the rest of each
+/// snapshot, its digest and any answer to it stay as they are. Registered
+/// once, on the offer table's declaration. A source may be any row, so this
+/// reads every snapshot for each erased id.
+/// # Errors
+/// Storage errors.
+pub(crate) fn erase_offer_source_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let forget = |rows: &mut Option<Vec<EntityId>>| {
+        let Some(rows) = rows else {
+            return false;
+        };
+        let before = rows.len();
+        rows.retain(|row| row != id);
+        rows.len() != before
+    };
+    let mut offers = Vec::new();
+    for (key, mut offer) in OFFER.scan(&vault.store, wtxn)? {
+        if forget(&mut offer.source_rows) {
+            offers.push((key, offer));
+        }
+    }
+    for (key, offer) in offers {
+        OFFER.put(&vault.store, wtxn, &key, &offer)?;
+    }
+    let mut checks = Vec::new();
+    for (key, mut check) in CHECK.scan(&vault.store, wtxn)? {
+        if forget(&mut check.source_rows) {
+            checks.push((key, check));
+        }
+    }
+    for (key, check) in checks {
+        CHECK.put(&vault.store, wtxn, &key, &check)?;
+    }
+    Ok(())
 }
 
 /// One offer, if recorded.
@@ -315,6 +382,7 @@ pub fn record_offer_check(
             held: input.held,
             note: input.note,
             at,
+            source_rows: live_source_rows_in(vault, txn, input.source_rows)?,
         };
         let note = check.note.as_ref().map_or(0, String::len);
         let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, note as u64);

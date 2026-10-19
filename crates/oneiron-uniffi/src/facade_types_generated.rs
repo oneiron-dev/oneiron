@@ -22832,6 +22832,12 @@ pub struct TrainingOffer {
     pub check_at: u64,
     #[serde(rename = "offered_at")]
     pub offered_at: u64,
+    #[serde(
+        rename = "source_rows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_rows: Option<Vec<String>>,
     #[serde(rename = "digest")]
     pub digest: String,
 }
@@ -22924,6 +22930,12 @@ pub struct OfferCheck {
     pub note: Option<String>,
     #[serde(rename = "at")]
     pub at: u64,
+    #[serde(
+        rename = "source_rows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_rows: Option<Vec<String>>,
 }
 
 /// `oneiron::skill_optimize::offer_doors::OfferView`.

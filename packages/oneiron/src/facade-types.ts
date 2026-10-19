@@ -3039,7 +3039,7 @@ export type OfferEvidence = { cohort?: EntityId | null; exposures: EntityId[]; r
 /** `oneiron::skill_optimize::offer::snapshot::ComputeDestination` */
 export type ComputeDestination = "on_device" | { self_hosted: { host: string } } | { hosted: { provider: string; rows_leaving: number } }
 /** `oneiron::skill_optimize::offer::snapshot::TrainingOffer` */
-export type TrainingOffer = { id: EntityId; seat: EvalSeat; offer_skill?: [EntityId, string] | null; drafted_on?: string | null; attempt: AttemptId; incumbent: OfferModelPin; candidate: OfferCandidate; baseline: OfferOption; alternatives: OfferOption[]; workload: SeatWorkload; cost: OfferCost; evidence: OfferEvidence; destination: ComputeDestination; previous?: EntityId | null; what_changed?: string | null; check_at: number; offered_at: number; digest: string }
+export type TrainingOffer = { id: EntityId; seat: EvalSeat; offer_skill?: [EntityId, string] | null; drafted_on?: string | null; attempt: AttemptId; incumbent: OfferModelPin; candidate: OfferCandidate; baseline: OfferOption; alternatives: OfferOption[]; workload: SeatWorkload; cost: OfferCost; evidence: OfferEvidence; destination: ComputeDestination; previous?: EntityId | null; what_changed?: string | null; check_at: number; offered_at: number; source_rows?: EntityId[] | null; digest: string }
 /** `oneiron::skill_optimize::offer::snapshot::OfferAnswer` */
 export type OfferAnswer = "keep_baseline" | "approve_switch" | "approve_train" | "decline" | "postpone"
 /** `oneiron::skill_optimize::offer::snapshot::OfferIntent` */
@@ -3047,7 +3047,7 @@ export type OfferIntent = { switch: { seat: EvalSeat; from: OfferModelPin; to: O
 /** `oneiron::skill_optimize::offer::snapshot::OfferAnswerRecord` */
 export type OfferAnswerRecord = { offer: EntityId; answer: OfferAnswer; owner: EntityId; authentication: string; offer_digest: string; intent?: OfferIntent | null; at: number }
 /** `oneiron::skill_optimize::offer::snapshot::OfferCheck` */
-export type OfferCheck = { id: EntityId; offer: EntityId; receipt_refs: string[]; observed_monthly_cost?: number | null; observed_score?: number | null; held?: boolean | null; note?: string | null; at: number }
+export type OfferCheck = { id: EntityId; offer: EntityId; receipt_refs: string[]; observed_monthly_cost?: number | null; observed_score?: number | null; held?: boolean | null; note?: string | null; at: number; source_rows?: EntityId[] | null }
 /** `oneiron::skill_optimize::offer_doors::OfferView` */
 export type OfferView = { offer: TrainingOffer; answer?: OfferAnswerRecord | null; checks: OfferCheck[] }
 /** `oneiron::skill_optimize::offer_doors::OfferRef` */

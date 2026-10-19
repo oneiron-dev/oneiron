@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     EvalSeat, OfferAnswer, OfferAnswerRecord, OfferCheck, TrainingOffer, settle_training_offer,
     training_offer, training_offer_checks, training_offers, undo_training_offer_switch,
+    union_source_rows,
 };
 use crate::attempt_queue::{AttemptId, AttemptState};
 use crate::consent::AuthenticatedOwner;
@@ -77,6 +78,27 @@ pub struct OfferUndoReceipt {
     pub offer: EntityId,
     pub at: u64,
     pub restored_model: String,
+}
+
+/// The rows the offers and checks `views` serve were drafted and checked
+/// from (FIX 5482): the union of the sets their snapshots keep, `None` when
+/// any is unknown. No view serves no drafted content: a known empty set.
+pub fn listed_views(views: &[OfferView]) -> Option<Vec<EntityId>> {
+    union_source_rows(views.iter().flat_map(|view| {
+        std::iter::once(view.offer.source_rows.as_deref())
+            .chain(view.checks.iter().map(|check| check.source_rows.as_deref()))
+    }))
+}
+
+/// The rows a pass's offers were drafted from (FIX 5482), as
+/// [`listed_views`] reads them; a pass with no offer, or no such pass,
+/// serves no drafted content.
+pub fn listed_pass(pass: Option<&OfferPassResult>) -> Option<Vec<EntityId>> {
+    union_source_rows(
+        pass.into_iter()
+            .flat_map(|pass| &pass.offers)
+            .map(|offer| offer.source_rows.as_deref()),
+    )
 }
 
 pub fn trigger(
