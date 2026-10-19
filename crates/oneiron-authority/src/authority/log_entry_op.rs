@@ -146,6 +146,10 @@ pub enum AuthorityOp {
     /// any role (FIX 4489, OF-420). A main-log entry, so every machine the
     /// owner admits folds it.
     ConversationTrainingSet(ConversationTrainingSet),
+    /// One machine's declaration of itself as a MACRO home candidate,
+    /// signed by its own install key (FIX 4898). A main-log entry, so every
+    /// machine the owner admits folds it.
+    HomeCandidacy(HomeCandidacy),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -427,6 +431,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::CheckpointPolicySet(set) => set.validate(),
         AuthorityOp::HomeNodePick(pick) => pick.validate(),
         AuthorityOp::ConversationTrainingSet(set) => set.validate(),
+        AuthorityOp::HomeCandidacy(declaration) => declaration.validate(),
     }
 }
 

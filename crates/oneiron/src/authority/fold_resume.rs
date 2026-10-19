@@ -281,8 +281,9 @@ impl Once {
 /// confirm, a world settings edit (it judges only its own world's edits, FIX
 /// 4535), a grant travel choice (only its own grant's choices), a checkpoint
 /// policy choice or a home pick (each only the vault's choices of its kind),
-/// a person's conversation training choice (only that person's choices), an
-/// owner work request or result (each judges only its own work), a world key
+/// a person's conversation training choice (only that person's choices), a
+/// machine's home candidacy (only that machine's declarations), an owner
+/// work request or result (each judges only its own work), a world key
 /// record (it fills only its own key's slots, or is refused as a no-op, FIX
 /// 4881). A resumed fold and a fold past an adopted checkpoint take only
 /// these, and each still folds through its own transition.
@@ -318,6 +319,7 @@ pub(super) fn admits_past(
         | AuthorityOp::CheckpointPolicySet(_)
         | AuthorityOp::HomeNodePick(_)
         | AuthorityOp::ConversationTrainingSet(_)
+        | AuthorityOp::HomeCandidacy(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::WorldKeyWraps(_) => true,

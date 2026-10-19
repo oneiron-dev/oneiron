@@ -429,6 +429,7 @@ pub(super) fn fold_authority_log_once(
             home_pick: super::home_pick::FoldedHomePick::default(),
             conversation_training:
                 super::conversation_training::FoldedConversationTraining::default(),
+            home_candidacy: BTreeMap::new(),
             owner_work: super::owner_work::FoldedOwnerWork::default(),
             install: InstallBound::default(),
             counted_ancestor_pairs,

@@ -660,6 +660,22 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
+        AuthorityOp::HomeCandidacy(declaration) => (
+            Other,
+            "home_candidacy",
+            OpFields {
+                detail: Some(format!(
+                    "node {} always_on {} primary {} macro_ready {} cloud {}",
+                    declaration.node_id,
+                    declaration.always_on,
+                    declaration.primary,
+                    declaration.macro_ready,
+                    declaration.cloud
+                )),
+                subject_ref: Some(declaration.machine.to_hex()),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::OwnerWorkRequest(request) => (
             Other,
             "owner_work_request",

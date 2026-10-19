@@ -1,6 +1,6 @@
 # Sync a machine to its home
 
-Every machine in a vault except the elected home keeps its vault in sync with the home
+Every machine in a vault except its home keeps its vault in sync with the home
 (ARCH-0023b); the home dials no one. `oneiron serve`, and an app's embedded engine, dial the home
 this machine enrolled with, or the one the config file's `[device_sync]` section names by hand.
 With neither, a machine dials no one.
@@ -46,7 +46,6 @@ fresh vault has another authority root, and the home refuses it.
 
 - This install's machine enrolled: live in the vault, or enrolled at the home by `device enrol`.
 - The home a live machine of the vault, or one this machine enrolled with.
-- This machine not being the elected home.
 - A credential the home's `/ws` upgrade admits, in a file that only its owner can read.
 - A way to the home:
   - over the mesh, when the home's MACHINE row carries a paired mesh address here and the mesh
@@ -66,6 +65,9 @@ home_machine = "<the home's MACHINE id, 32 hex characters>"
 home_url = "wss://home.example/ws"
 credential_file = "/absolute/path/to/home.cred"
 home_node_id = 1234567890123456789   # the home's sync_node_id, from `oneiron whoami` there
+# Only to make this machine a MACRO home candidate:
+always_on = true
+primary = false
 ```
 
 - `worlds`: the worlds this machine follows, by id. Absent, it follows none until some are named.
@@ -81,11 +83,42 @@ home_node_id = 1234567890123456789   # the home's sync_node_id, from `oneiron wh
     refuses the scoped slips that `token agent` and `token read` mint.
 - `home_node_id`: the home's sync node id, which `oneiron whoami` prints on the home as
   `sync_node_id`. This is not its MACHINE id. Absent, the enrolled home's. Named (or enrolled),
-  this machine holds that node as its elected home before anything reads the election. A Dreamer
-  here that claimed this machine at start then yields, and the connection publishes the home,
-  with `home_url` as its endpoint, as its home-node topology. The home stands as an always-on
-  local node. A hand-named home without it keeps the home this machine holds. If its own Dreamer
-  has claimed it, device sync stays off ("this machine is the elected home").
+  the connection publishes that node, with `home_url` as its endpoint, as its home-node
+  topology, so residence reads go to `home_url` while that node is the elected MACRO home. It
+  makes the home no candidate: the home stands only through its own declaration (below). A
+  hand-named home without it publishes no endpoint. A node id that is this machine's own is
+  refused.
+- `always_on`, `primary`: what this machine declares itself as a MACRO home candidate (below).
+  Both are off by default, so a machine that syncs to a home is no candidate until its owner
+  says so.
+
+## The MACRO home candidacy
+
+One node of the vault runs its MACRO consolidation: the elected home node (ARCH-0026). Each
+machine declares itself to the election, signed by its own install key into the vault's
+authority log, so every linked machine sees the same declarations. It writes a declaration
+only when its facts change, never one per start.
+
+- A served host that dials no home declares itself always on, and ready for MACRO work while
+  its Dreamer runs. A managed host's hosted node also declares itself the cloud node.
+- A machine that dials a home, by this section or by its enrolment, declares what `always_on`
+  and `primary` say, ready for MACRO work while its own Dreamer runs.
+
+Every election, on every machine, reads each machine's newest declaration again. It counts one
+only while its machine stands here under the key that signed it, as one of the owner's
+machines: his own, work/school or rented, or a hosted node. An execution node, a machine whose
+owner has not answered, and a removed, held or key-conflicted machine are no candidates. Of
+those that can take MACRO work, the owner's pick wins (`vault.consolidation.home.pick`).
+Without an eligible pick, the order is the cloud node, then an always-on machine, then the
+primary device; the lowest node id breaks a tie. A pick of a node no declaration names stays
+recorded, and wins once that node declares itself. Two machines that declare one node id
+refuse the election, and the last elected home stands. `vault.consolidation.home.get` lists the
+candidates every election ranks.
+
+A served host also keeps itself as its own candidate. Alone, it elects itself, and with its
+Dreamer off it still claims a vault no other candidate stands for, so its standing questions
+run. Being elected moves no dial: an elected machine that syncs to a home keeps dialing it,
+and syncs every window it may read. A lost connection is no removal and moves no election.
 
 The section is file-only: no environment variable or flag sets it.
 
