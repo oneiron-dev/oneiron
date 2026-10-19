@@ -435,9 +435,7 @@ pub(crate) fn mark_turn_in_txn(
 /// The type of an entity whose document text a turn's tag pass, vector or
 /// sieve read reads: a MESSAGE or a TURN. `None` for any other entity. The
 /// sieve reads on every vault, so a TURN's or MESSAGE's document write
-/// compares its text whatever models are configured. Entity documents exist
-/// only on a sync build.
-#[cfg(feature = "sync")]
+/// compares its text whatever models are configured.
 pub(crate) fn text_entity_type_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

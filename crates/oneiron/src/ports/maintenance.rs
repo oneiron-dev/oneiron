@@ -27,7 +27,6 @@ pub(crate) trait EntityStoreMaintenance: Transactions {
     ) -> Result<bool>;
     /// Replaces a record's body with its entity-document pointer form. The header is kept
     /// byte-exact; the body must be a map carrying exactly one `entity_doc_ref` string.
-    #[cfg(feature = "sync")]
     fn port_entity_document_pointer_put(
         &self,
         txn: &mut Self::Write<'_>,

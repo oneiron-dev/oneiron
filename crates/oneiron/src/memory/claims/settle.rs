@@ -182,6 +182,9 @@ struct ReviewedProposal {
     frontier: [u8; 32],
     body: ClaimBody,
     pending: Option<crate::store::PendingGateConsentRecord>,
+    /// Whether it changes only through MACHINE signed history, whose
+    /// rejection needs its tray row.
+    machine: bool,
     /// The actors that opened it: its authenticated author and the actor its
     /// envelope names.
     openers: Vec<EntityId>,
@@ -202,6 +205,7 @@ impl ReviewedProposal {
         }
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         let pending = vault.store.pending_gate_consent_in_txn(txn, id)?;
+        let machine = crate::authority::machine_claim_needs_history(&vault.store, txn, &body)?;
         let frontier =
             crate::gate::resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?;
         let mut hasher = blake3::Hasher::new_derive_key(CLAIM_REVIEW_DOMAIN);
@@ -237,6 +241,7 @@ impl ReviewedProposal {
             frontier,
             body,
             pending,
+            machine,
             openers,
         })
     }
@@ -261,7 +266,9 @@ impl ReviewedProposal {
 
     /// Whether `person` may settle this proposal by `action` on the review
     /// `review_id` names: it is still open and still what that review read,
-    /// `person` did not open it, and a decline has its consent row to close.
+    /// `person` did not open it, and a MACHINE claim's decline has its
+    /// consent row to close. An ordinary proposal in no tray row declines as
+    /// the owner's reviewed rejection.
     fn settleable(
         &self,
         review_id: &str,
@@ -286,10 +293,10 @@ impl ReviewedProposal {
                 &["A person outside the lineage that opened the proposal settles it."],
             ));
         }
-        if action == GateConsentBundleAction::Decline && self.pending.is_none() {
+        if action == GateConsentBundleAction::Decline && self.pending.is_none() && self.machine {
             return Err(MemoryError::new(
                 MEMORY_CODE_INVALID_STATE,
-                "the proposed claim waits in no pending-consent row: it has no consent to decline",
+                "the proposed MACHINE claim waits in no pending-consent row: no consent to decline",
                 &["Withdraw it with vault.claims.retract, which keeps its record."],
             ));
         }
@@ -390,7 +397,8 @@ impl Memory<'_> {
     /// proposal, or when the gate refuses or holds the decision; `NOT_FOUND`
     /// when the claim does not resolve for this handle; `INVALID_STATE` when
     /// it is no active proposal, when it changed since its review, or when a
-    /// rejection names a claim with no pending-consent row.
+    /// rejection names a MACHINE claim with no pending-consent row. An
+    /// ordinary proposal with no row is rejected and retracted.
     pub fn claim_settle_as_owner(
         &self,
         owner: &AuthenticatedOwner,

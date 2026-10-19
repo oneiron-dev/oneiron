@@ -3,11 +3,10 @@
 use super::invalid;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::sync::loro_support::{
-    doc_from_snapshot, export_snapshot, map_get_bytes, map_insert_bytes,
-};
 use crate::write_envelope::WriteActor;
-use loro::{CommitOptions, ExportMode, Frontiers, LoroDoc, LoroText};
+use loro::{
+    CommitOptions, ExportMode, Frontiers, LoroDoc, LoroMap, LoroText, LoroValue, ValueOrContainer,
+};
 use serde::{Deserialize, Serialize};
 
 pub(super) const BODY: &str = "body";
@@ -218,6 +217,34 @@ impl EntityDoc {
 
 pub(super) fn decode_frontier(bytes: &[u8]) -> Result<Frontiers> {
     Frontiers::decode(bytes).map_err(|_| invalid("invalid document frontier"))
+}
+
+// The document plane's own Loro codec, with the document error: a build
+// without the sync layer keeps its documents and has no sync helpers to call.
+
+/// A document from a full or shallow snapshot.
+pub(super) fn doc_from_snapshot(bytes: &[u8]) -> Result<LoroDoc> {
+    LoroDoc::from_snapshot(bytes).map_err(|_| invalid("document snapshot"))
+}
+
+/// A full snapshot of `doc`.
+pub(super) fn export_snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
+    doc.export(ExportMode::Snapshot)
+        .map_err(|_| invalid("document snapshot export"))
+}
+
+/// The bytes under `key` in `map`; `None` when it holds none, or no bytes.
+pub(super) fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
+    match map.get(key)? {
+        ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
+        _ => None,
+    }
+}
+
+/// Puts `value` under `key` in `map`.
+pub(super) fn map_insert_bytes(map: &LoroMap, key: &str, value: &[u8]) -> Result<()> {
+    map.insert(key, value)
+        .map_err(|_| invalid("document metadata write"))
 }
 
 pub(super) fn stamp(doc: &LoroDoc, actor: WriteActor, at: u64, verb: &str) -> Result<()> {

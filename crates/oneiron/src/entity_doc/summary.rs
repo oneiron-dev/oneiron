@@ -1,10 +1,10 @@
 //! Scope-summary documents: retained derivations, purpose and editor `keep` memo.
 
+use super::document::{map_get_bytes, map_insert_bytes};
 use super::{DocAuthorization, EntityDoc, TextField, storage};
 use crate::error::{Error, Result};
 use crate::ports::{EntityStoreMaintenance, EntityStoreRead, TombstoneStoreRead};
 use crate::scope_summary::ScopeSummaryMetadata;
-use crate::sync::loro_support::{map_get_bytes, map_insert_bytes};
 use crate::{EntityId, Vault, WriteActor};
 
 fn summary_doc(

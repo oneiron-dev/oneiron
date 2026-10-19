@@ -6,6 +6,7 @@ use crate::error::{Error, Result};
 
 use super::super::gate::{
     GatedDeletion, refuse_claim, reverify_deletion_authority_when_unpublished,
+    revoke_guest_grants_in_txn,
 };
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::super::rendezvous::{
@@ -109,6 +110,9 @@ impl Vault {
         if !crdt_persisted && reason.active_store_hard_purge_v1() {
             self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
         }
+        // A Connect guest's PERSON leaves its pacts in the first local tear
+        // when nothing published (FIX 3875).
+        revoke_guest_grants_in_txn(self, gate, &mut wtxn, id)?;
         reserve_topology_delete_in_txn(
             &self.store,
             &mut wtxn,

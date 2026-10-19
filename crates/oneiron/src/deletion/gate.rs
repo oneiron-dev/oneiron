@@ -54,12 +54,24 @@ type DeletionCheck<'a> = &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>;
 pub(crate) type DeletionClaim<'a> =
     &'a dyn Fn(&mut heed::RwTxn<'_>, &[u8; 16], Option<&EntityId>) -> Result<()>;
 
+/// The owner's proof and the host's own signing key a delete withdraws a
+/// Connect guest's grants under (FIX 3875): deleting the guest's PERSON
+/// disconnects each live pact its grants govern first, signed by the host.
+/// A door that holds neither (an embedded or raw handle) binds none, and the
+/// delete runs as before: the grant waits for the owner's next signed revoke.
+#[derive(Clone, Copy)]
+pub(crate) struct GuestRevokeAuthority<'a> {
+    pub(crate) owner: &'a crate::consent::AuthenticatedOwner,
+    pub(crate) issuer: &'a crate::authority::HostSlipIssuer,
+}
+
 pub(crate) struct GatedDeletion<'a> {
     pub(super) context: DeletionGateContext,
     reverify: DeletionCheck<'a>,
     pre_scrub_check: Option<DeletionCheck<'a>>,
     soft_scrub_committed: Cell<bool>,
     claim: Option<DeletionClaim<'a>>,
+    guest_revoke: Option<GuestRevokeAuthority<'a>>,
 }
 
 impl<'a> GatedDeletion<'a> {
@@ -92,6 +104,7 @@ impl<'a> GatedDeletion<'a> {
             pre_scrub_check: None,
             soft_scrub_committed: Cell::new(false),
             claim: None,
+            guest_revoke: None,
         }
     }
 
@@ -108,12 +121,19 @@ impl<'a> GatedDeletion<'a> {
             pre_scrub_check: Some(check),
             soft_scrub_committed: Cell::new(false),
             claim: None,
+            guest_revoke: None,
         }
     }
 
     /// See [`DeletionClaim`] for the one reason that carries a claim.
     pub(crate) fn with_claim(mut self, claim: Option<DeletionClaim<'a>>) -> Self {
         self.claim = claim;
+        self
+    }
+
+    /// See [`GuestRevokeAuthority`].
+    pub(crate) fn with_guest_revoke(mut self, authority: Option<GuestRevokeAuthority<'a>>) -> Self {
+        self.guest_revoke = authority;
         self
     }
 
@@ -135,6 +155,52 @@ pub(super) fn claim_in_txn(
         Some(claim) => claim(txn, &tombstone.request_id, receipt),
         None => Ok(()),
     }
+}
+
+/// Withdraws, in `txn`, each live Connect guest grant whose member is `id`,
+/// under `gate`'s [`GuestRevokeAuthority`] (FIX 3875), in the write that
+/// first scrubs or publishes the delete: the guest's pacts disconnect first
+/// and the delete goes on with its own reason. Each withdrawal is its own
+/// savepoint: one the fold refuses rolls back alone, is logged, and leaves
+/// its grant for a later signed revoke, so no delete is refused for a pact.
+/// With no authority bound nothing is withdrawn, as before. A later writer
+/// of the same delete finds the grants already gone.
+pub(super) fn revoke_guest_grants_in_txn(
+    vault: &crate::Vault,
+    gate: Option<&GatedDeletion<'_>>,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(authority) = gate.and_then(|gate| gate.guest_revoke) else {
+        return Ok(());
+    };
+    let grants = match vault.live_connect_guest_grants_of_in_txn(txn, *id) {
+        Ok(grants) => grants,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a deleted PERSON's Connect guest grants were not read"
+            );
+            return Ok(());
+        }
+    };
+    for grant in grants {
+        let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+        match vault.revoke_guest_access_in_txn(
+            &mut savepoint,
+            authority.owner,
+            authority.issuer,
+            grant,
+        ) {
+            Ok(_) => savepoint.commit()?,
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                grant = %grant.to_hex(),
+                "a deleted Connect guest's grant was not withdrawn; a signed revoke still can"
+            ),
+        }
+    }
+    Ok(())
 }
 
 /// A delete that finds no header has no linearizing write for the claim.
