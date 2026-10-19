@@ -1,15 +1,13 @@
 //! One vault's credential-broker context (ARCH-0069 `#broker-design`): the
 //! custody door its vault-secret keys are read at, and the broker that sends
 //! with them. Serve builds it once from the opened vault, before the embedder
-//! and the model seats. The System One seat, the endpoint embedder, its remote
-//! rung and the GPU pods send through it, each request one broker call: the
-//! exact request is built and checked as the broker will check it, the
-//! broker is reached, and only then is the key read at the door (effector
-//! `broker:model`, zeroizing bytes) and handed over with that one request. No
-//! key is read once into a long-lived bearer or a default header.
-//!
-//! The `[models]` providers keep the site their own runtime makes
-//! ([`super::ModelRuntime`]).
+//! and the model seats. The `[models]` providers (chat and media), the System
+//! One seat, the endpoint embedder, its remote rung and the GPU pods send
+//! through it, each request one broker call: the exact request is built and
+//! checked as the broker will check it, the broker is reached, and only then
+//! is the key read at the door (effector `broker:model`, zeroizing bytes) and
+//! handed over with that one request. No key is read once into a long-lived
+//! bearer or a default header.
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,7 +20,7 @@ use zeroize::Zeroizing;
 
 use super::broker::{BrokerSite, KeyDoor, REPLY_MARGIN, VaultKeyDoor, answered, call_with_key};
 use crate::config::ServeConfig;
-use crate::config::models::BrokerConfig;
+use crate::config::models::{BrokerConfig, ModelsConfig};
 
 /// The longest one System One send runs in the broker. The seat names no
 /// timeout of its own: each call waits its decision's time left.
@@ -52,12 +50,12 @@ pub(crate) struct BrokerAnswer {
 
 impl BrokerContext {
     /// The context serve builds from the opened `vault`, when anything
-    /// `config` names takes its key from a vault secret (the System One
-    /// seat, the endpoint embedder, its remote rung or the GPU pods); `None`
-    /// when nothing does. Its broker is the one `[models.broker]` names, by
-    /// default the same-user child beside this binary, which gives each send
-    /// the longest of those consumers' timeouts. Built inside the serve
-    /// runtime.
+    /// `config` names takes its key from a vault secret (a `[models]`
+    /// provider, the System One seat, the endpoint embedder, its remote rung
+    /// or the GPU pods); `None` when nothing does. Its broker is the one
+    /// `[models.broker]` names, by default the same-user child beside this
+    /// binary, which gives each send the longest of those consumers'
+    /// timeouts. Built inside the serve runtime.
     pub(crate) fn for_serve(vault: &Arc<Vault>, config: &ServeConfig) -> Option<Self> {
         let timeout = vault_secret_sends(config).into_iter().max()?;
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
@@ -70,6 +68,16 @@ impl BrokerContext {
             .map_or_else(BrokerConfig::default, |models| models.broker.clone());
         let keys: Arc<dyn KeyDoor> = Arc::new(VaultKeyDoor::new(Arc::clone(vault)));
         Some(Self::new(keys, &broker, timeout, runtime))
+    }
+
+    /// The context over the door `keys` for the `[models]` providers alone,
+    /// when one of them names a `key_secret`, for a runtime built with no
+    /// serve context ([`super::ModelRuntime::build_with_keys`]); `None` when
+    /// none does, or outside a runtime.
+    pub(super) fn for_providers(keys: Arc<dyn KeyDoor>, models: &ModelsConfig) -> Option<Self> {
+        let timeout = provider_sends(models).max()?;
+        let runtime = tokio::runtime::Handle::try_current().ok()?;
+        Some(Self::new(keys, &models.broker, timeout, runtime))
     }
 
     /// The context over the door `keys` and the broker `broker` names, whose
@@ -92,6 +100,16 @@ impl BrokerContext {
                 runtime,
             }),
         }
+    }
+
+    /// The broker this context sends through, or why none could be made.
+    pub(super) fn site(&self) -> &Result<BrokerSite, String> {
+        &self.inner.site
+    }
+
+    /// The custody door this context reads its keys at.
+    pub(super) fn keys(&self) -> &Arc<dyn KeyDoor> {
+        &self.inner.keys
     }
 
     fn client(&self, wait: Duration) -> LlmResult<oneiron_broker::BrokerClient> {
@@ -180,12 +198,13 @@ impl BrokerContext {
 }
 
 /// How long each send may run, for every consumer `config` gives a
-/// vault-secret key: the System One seat's ceiling, the embedder endpoint's
-/// and its remote rung's request timeouts, and for the GPU pods their
-/// probes and the endpoint's document batches they take.
+/// vault-secret key: the `[models]` providers' timeouts, the System One
+/// seat's ceiling, the embedder endpoint's and its remote rung's request
+/// timeouts, and for the GPU pods their probes and the endpoint's document
+/// batches they take.
 fn vault_secret_sends(config: &ServeConfig) -> Vec<Duration> {
     let millis = |ms: u64| Duration::from_secs(ms.div_ceil(1000));
-    let mut sends = Vec::new();
+    let mut sends: Vec<Duration> = config.models.iter().flat_map(provider_sends).collect();
     if config
         .models
         .as_ref()
@@ -217,6 +236,15 @@ fn vault_secret_sends(config: &ServeConfig) -> Vec<Duration> {
         }
     }
     sends
+}
+
+/// The timeout of each `[models]` provider that names a `key_secret`.
+fn provider_sends(models: &ModelsConfig) -> impl Iterator<Item = Duration> + '_ {
+    models
+        .providers
+        .values()
+        .filter(|provider| provider.key_secret.is_some())
+        .map(|provider| Duration::from_secs(provider.timeout_secs))
 }
 
 /// The System One seat's requests, each one broker call under the

@@ -319,7 +319,9 @@ fn hex32(text: &str) -> Option<[u8; 32]> {
 fn home_candidate(candidate: DreamerHomeNodeCandidate) -> ConsolidationHomeCandidate {
     ConsolidationHomeCandidate {
         node_id: candidate.node_id.to_string(),
-        class: candidate.designation_class().map(|class| class.as_str().to_owned()),
+        class: candidate
+            .designation_class()
+            .map(|class| class.as_str().to_owned()),
         cloud: candidate.cloud,
         attached: candidate.attached,
         always_on_local: candidate.always_on_local,

@@ -372,6 +372,21 @@ impl SyncConnection {
                                     )));
                                 }
                             }
+                            // The checkpoint roots of the owner's policy, once the
+                            // history is in (FIX 4882): a root held here attests the
+                            // home's image, and the home's root this machine's.
+                            if crate::authority::ROOT_CHECKPOINT_PICKUP
+                                == crate::authority::RootCheckpointPickup::ExistingTickAndCatchup
+                            {
+                                match crate::sync::client::exchange_checkpoint_roots(manager.vault(), &config).await {
+                                    Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
+                                    Err(error) => {
+                                        let _ = events.send(SyncEvent::Error(format!(
+                                            "Checkpoint root exchange failed: {error}"
+                                        )));
+                                    }
+                                }
+                            }
                         }));
                     }
                 }

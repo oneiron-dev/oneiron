@@ -29,6 +29,7 @@
 //! A leased run's planned team writes its start on the run's own seat and
 //! line, and a planned team's leader runs with the exact pattern pack its
 //! launch froze (DOOR-111 S4c, `pattern_launch`).
+mod craft;
 pub(super) mod pattern_launch;
 
 use std::collections::{BTreeMap, HashSet};
@@ -36,7 +37,10 @@ use std::num::NonZeroU16;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use oneiron::agent_def::{AgentModel, ensure_listed, note_stale_listed_models};
+use oneiron::agent_def::{
+    AgentModel, UNBOUND_LIST_KEEPS_ROUTE, ensure_listed, note_stale_listed_models,
+    note_unbound_listed_run,
+};
 use oneiron::agent_dispatch::{
     AgentDispatchStatus, AgentDispatcher, AgentRun, HealerSlot, LeaderStarterSkills, PlannerSeat,
     PlannerSkills, ProjectConversationSkills, ResidentAgentSpec, SpendScopeId,
@@ -501,8 +505,9 @@ fn run_bound(
     let continues = continued.is_some();
     let mut config = continued.unwrap_or_else(|| template.clone());
     // FIX 4472: the run is born on a model its frozen definition lists. A
-    // listed model its provider retired tells the owner, once, and the run
-    // goes on with the rest of the list; a note that fails does not stop it.
+    // listed model its provider retired, or no registry row names (FIX
+    // 4545), tells the owner, once, and the run goes on with the rest of the
+    // list; a note that fails does not stop it.
     let definition = &status.input.definition;
     if let Err(error) = note_stale_listed_models(vault, actor.entity_ref(), definition) {
         tracing::warn!(%error, agent = %actor.entity_ref().to_hex(), "a retired listed model's owner note was not recorded");
@@ -562,6 +567,15 @@ fn run_bound(
         {
             tracing::warn!(%error, agent = %actor.entity_ref().to_hex(), "a wake's model change was not noted in the agent's diary");
         }
+    } else if UNBOUND_LIST_KEEPS_ROUTE && !definition.models.is_empty() {
+        // FIX 4544: with no seat its list binds nothing. Under the hook the
+        // run keeps its configured route, as before lists, and the owner is
+        // told once per model it ran on; a note that fails does not stop it.
+        if let Err(error) =
+            note_unbound_listed_run(vault, actor.entity_ref(), definition, &config.model)
+        {
+            tracing::warn!(%error, agent = %actor.entity_ref().to_hex(), "a listed agent's seatless run's owner note was not recorded");
+        }
     }
     // DOOR-111 S4c-5: a planned team's leader runs with the exact pattern
     // pack its launch froze, its SKILL.md before any other skill's body; a
@@ -569,6 +583,8 @@ fn run_bound(
     let leader =
         pattern_launch::leader_exposure(vault, &status.attempt, &mut config, continues, unix_now())
             .map_err(text)?;
+    craft::append_resident_craft(vault, &status.attempt, actor, &mut config, continues)
+        .map_err(text)?;
     // A project conversation run runs with its skill's SKILL.md (OF-501); a
     // run whose skill does not load is refused, never run unskilled. The
     // body is tagged where it went, so the run's first step is captured with
@@ -627,12 +643,15 @@ fn run_bound(
     // The run's caller, as this host leased it: its reader children and its
     // compaction read under that one binding.
     let caller = pump_caller(actor);
-    let seat = seats.seat(
+    let mut seat = seats.seat(
         run_id,
         metered.clone(),
         caller.locality(),
         provider.reader_window_tokens(),
     );
+    // FIX 4539: its reader and summary children are held to the list its
+    // frozen definition names, as its own seat is.
+    seat.listed = definition.models.clone();
     // One door for the whole run, so its browser lives as long as the run.
     let door = Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
     let reactor = tokio::runtime::Builder::new_current_thread()
@@ -675,6 +694,7 @@ fn run_bound(
             issuer,
             &server.live_runs,
             &exposures,
+            &server.ai,
         );
         // The first step's capsule takes the rung that answered it, on the
         // thread the entry ran its calls on.
@@ -797,6 +817,7 @@ fn enter_run(
     issuer: Option<&oneiron::authority::HostSlipIssuer>,
     live_runs: &super::LiveRuns,
     exposures: &[TaskExposure],
+    ai: &crate::ai_host::AiHandle,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let mut bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
         .map_err(text)?
@@ -816,8 +837,15 @@ fn enter_run(
     };
     let planner = decisions.host_planner_decisions(actor.entity_ref());
     if let Some(mut planner) = planner_binding(vault, provider, config, planner)? {
-        planner.pattern_runner =
-            pattern_launch::agent_runner(vault, provider, status, actor, model_seat, line.clone());
+        planner.pattern_runner = pattern_launch::agent_runner(
+            vault,
+            provider,
+            ai,
+            status,
+            actor,
+            model_seat,
+            line.clone(),
+        );
         bound = bound.with_planner(planner);
     }
     if let Some(issuer) = issuer {
@@ -901,8 +929,10 @@ pub(crate) fn seated_planner<'a>(
         decisions: Some(decisions),
         leader: LeaderStarterSkills::seeded().map_err(text)?,
         top: settings.top,
-        // A leased run's entry lends its own (`enter_run`); a host action
-        // binds none.
+        // Callers attach the run's own runner after this binding is built:
+        // a leased entry in `enter_run`, and a live-run action through
+        // `ResolvedLiveRun::pattern_runner`. It stays `None` when no runner
+        // is available, preserving the host-with-no-runner planned path.
         pattern_runner: None,
     }))
 }

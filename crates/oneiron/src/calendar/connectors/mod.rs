@@ -84,6 +84,7 @@ pub use self::remote::{
     calendar_remote_object_row, calendar_write_outbox_row, calendar_write_outbox_rows,
     classify_remote_change,
 };
+pub(crate) use self::seat::ref_parses as seat_ref_parses;
 pub use self::seat::{
     CALDAV_SYNC_ATTEMPT_KIND, CALENDAR_CONNECTOR_PULL_VERB, CALENDAR_CONNECTOR_WRITE_VERB,
     CalendarConnectorError, CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig,

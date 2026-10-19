@@ -366,7 +366,9 @@ const fn child_board_status(status: crate::agent_run_status::AgentRunStatus) -> 
         AgentRunStatus::Spawned => TaskBoardStatus::Queued,
         AgentRunStatus::Working | AgentRunStatus::NeedsInput => TaskBoardStatus::Running,
         AgentRunStatus::Delivered | AgentRunStatus::Archived => TaskBoardStatus::Done,
-        AgentRunStatus::Failed | AgentRunStatus::Abandoned => TaskBoardStatus::Failed,
+        AgentRunStatus::Failed | AgentRunStatus::Abandoned | AgentRunStatus::Cancelled => {
+            TaskBoardStatus::Failed
+        }
     }
 }
 

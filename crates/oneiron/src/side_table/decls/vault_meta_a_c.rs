@@ -378,6 +378,10 @@ side_tables! {
     /// settles it, so a failing attempt's ladder case carries its own reports (OF-418). Key: id16
     /// of the run, then id16 of the receipt.
     COACH_BLOCKED_RUN: VaultMeta b"coach:blocked_run:v1:" Raw;
+    /// Where the Coach's contribution checks resume: the credit key and skill of the last
+    /// candidate a pass put to its replay host, cleared once a pass reaches the end of the credit
+    /// table. Key: ().
+    COACH_CONTRIBUTION_CURSOR: VaultMeta b"coach:contribution_cursor:v1" Named;
     /// The proposed heal the Coach filed for a blocked report or a failure-ladder case, so a
     /// replay files none twice. Key: id16 of the receipt or the case.
     COACH_ISSUE_SETTLED: VaultMeta b"coach:issue_settled:v1:" Named;
@@ -679,6 +683,10 @@ side_tables! {
     /// connection id, pseudonymous recipient id, status and timestamps only (OF-273). Key:
     /// bytes16(nonce) + bytes32(recipient pseudonym).
     COOPERATIVE_DELETION_NOTICE: VaultMeta b"cooperative_deletion:notice:v1:" Named;
+    /// One signed ReRoot row of a pact's former peer, kept because it extends the walk from the
+    /// key the pact pinned to the root that peer's courtesy asks and answers now carry (FIX 3014).
+    /// Key: bytes32(pact) + hash32(authority entry).
+    COOPERATIVE_DELETION_SUCCESSION: VaultMeta b"cooperative_deletion:succession:v1:" Named;
     /// Deduplicated set of contact refs reachable for a (party, channel class) pair. Key:
     /// hash32(sha256).
     COUNTERPARTY_CONTACT_PARTY_CHANNEL_INDEX: VaultMeta b"counterparty.contact.party_channel.v1:" Raw;

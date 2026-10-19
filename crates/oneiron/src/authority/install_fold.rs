@@ -523,8 +523,8 @@ fn after_handoffs(
     after
 }
 
-/// The machine revisions, world edits and grant travel choices `state`
-/// holds back on this install.
+/// The machine revisions, world edits, grant travel choices and owner and
+/// person choices `state` holds back on this install.
 pub(super) fn held_back(
     state: &FoldState,
     pin: Option<&PinnedRoot>,
@@ -542,6 +542,13 @@ pub(super) fn held_back(
         &mut held_back,
     );
     super::owner_choice::held_owner_choices(state, &state.home_pick, pin, counted, &mut held_back);
+    super::owner_choice::held_owner_choices(
+        state,
+        &state.conversation_training,
+        pin,
+        counted,
+        &mut held_back,
+    );
     InstallBound {
         held_back,
         no_vouch_deadline: None,

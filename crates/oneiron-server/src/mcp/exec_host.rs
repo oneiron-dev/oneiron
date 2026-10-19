@@ -454,6 +454,15 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 return Err(changed());
             }
             let run_id = request.run_id;
+            // The slip the caller's credential proved at admission: it and
+            // its parent are the run's own lineage (FIX 4705). Never a tool
+            // argument.
+            let opener = request
+                .actor
+                .auth
+                .as_ref()
+                .and_then(|auth| auth.verified_slip())
+                .cloned();
             let mut seat = seats
                 .lock()
                 .map_err(|_| McpCodeExecutionError::RunBinding("run seats poisoned".into()))?
@@ -465,12 +474,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                     let host = bind_compaction_caller(
                         write_actor,
                         request.actor.locality(),
-                        request
-                            .actor
-                            .auth
-                            .as_ref()
-                            .and_then(|auth| auth.verified_slip())
-                            .cloned(),
+                        opener.clone(),
                     );
                     provider.compaction(host, &request.actor.stream_connection.0, None)
                 });
@@ -494,6 +498,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         &run_ref,
                         &config,
                         verbs,
+                        opener.as_ref(),
                         reader_seat,
                         seat.as_mut(),
                     );
@@ -527,7 +532,8 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
 /// the host boundary, hand the engine its own runtime, and let
 /// `EngineNativeExecutor` own every step, replay row, and terminal marker. The
 /// server evaluates nothing and opens no second vault-write path. A run with
-/// a seat may spawn reader children under it.
+/// a seat may spawn reader children under it. A run its caller's credential
+/// admitted binds that slip's lineage as its own (FIX 4705).
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -539,12 +545,16 @@ fn run_engine_native_code_mode(
     run_ref: &str,
     config: &EngineExecutorConfig,
     verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
+    opener: Option<&oneiron::authority::VerifiedSlip>,
     reader_seat: Option<SpawnHostSeat>,
     compaction: Option<&mut RunCompaction>,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
     let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
         .with_agent_verb_door(verbs);
+    if let Some(opener) = opener {
+        gated_write = gated_write.with_opener_credential(opener);
+    }
     if let Some(seat) = reader_seat {
         gated_write = gated_write.with_reader_spawn(seat);
     }

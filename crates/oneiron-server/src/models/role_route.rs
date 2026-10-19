@@ -154,8 +154,19 @@ impl ModelRuntime {
         &self,
         vault: &Vault,
         role: ModelRole,
-        mut request: LlmRequest,
+        request: LlmRequest,
     ) -> Result<RoleCall, RoleRefusal> {
+        self.admit_role_receipted(vault, role, request)
+            .map(|(call, _)| call)
+    }
+
+    /// The same admission, beside the catalog entry that exact snapshot read.
+    pub(crate) fn admit_role_receipted(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        mut request: LlmRequest,
+    ) -> Result<(RoleCall, Option<String>), RoleRefusal> {
         let seat = self.seat(role).ok_or(RoleRefusal::NoSeat)?;
         let route = self.route_role(vault, role, seat)?;
         let key = ModelTierRef(role_key(role));
@@ -181,12 +192,15 @@ impl ModelRuntime {
                     extraction_egress: None,
                 },
             )
-            .map_err(RoleRefusal::refused)?
-            .into_request();
-        Ok(RoleCall {
-            request,
-            ladder: route.ladder,
-        })
+            .map_err(RoleRefusal::refused)?;
+        let catalog_revision = request.binding().catalog_revision().map(str::to_owned);
+        Ok((
+            RoleCall {
+                request: request.into_request(),
+                ladder: route.ladder,
+            },
+            catalog_revision,
+        ))
     }
 
     /// Admits `request`, whose model a durable seat bound (its envelope's

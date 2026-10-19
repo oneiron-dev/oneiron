@@ -2,18 +2,23 @@
 //! each step's engine cases, and the run manifest the Office half reads.
 
 use super::checks;
+use super::journal::{self, CaseLine, Header, JOURNAL_SCHEMA, Journal, Line, write_atomic};
 use super::spec::CaseManifest;
 use crate::live::deck_export::{PROJECTOR_VERSION, StepOutcome};
 use crate::retained_opc::{Limits, XmlLimits};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
 use std::fmt::Write as _;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 pub(super) type Res<T> = Result<T, String>;
 
 /// The run manifest's schema; `deck_gate.py` refuses any other.
 pub(super) const RUN_SCHEMA: &str = "oneiron.deck-gate-run/1";
+/// The run manifest's name inside the run directory.
+pub(super) const MANIFEST: &str = "manifest.json";
 
 pub(super) const BASELINE: u8 = 1;
 pub(super) const EDIT: u8 = 2;
@@ -112,7 +117,7 @@ impl Lane {
 
 /// Whether PowerPoint may open a candidate in the owner's account. Corpus
 /// decks are untrusted: only an isolated account opens them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum Trust {
     Fixture,
@@ -121,7 +126,7 @@ pub(super) enum Trust {
 
 /// What the Office half checks in PowerPoint's save-back of a candidate
 /// (slides count from 1 in presentation order; ids are `p:cNvPr/@id`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "check", rename_all = "snake_case")]
 pub(super) enum OfficeCheck {
     /// PDFKit rasterized this many pages.
@@ -166,7 +171,7 @@ pub(super) enum OfficeCheck {
     },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(super) struct Candidate {
     pub(super) id: String,
     pub(super) file: String,
@@ -180,7 +185,7 @@ pub(super) struct Candidate {
 
 /// An adversarial fixture the Office half classifies against its expected
 /// oracle status (failed, repaired, timed out).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(super) struct Calibration {
     pub(super) id: String,
     pub(super) file: String,
@@ -196,6 +201,14 @@ pub(super) struct CaseRecord {
     pub(super) outcome: StepOutcome,
 }
 
+/// One engine result of a case, under the step it feeds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct StepCase {
+    pub(super) step: u8,
+    pub(super) id: String,
+    pub(super) outcome: StepOutcome,
+}
+
 #[derive(Debug, Serialize)]
 pub(super) struct StepRecord {
     pub(super) step: u8,
@@ -207,7 +220,7 @@ pub(super) struct StepRecord {
     pub(super) cases: Vec<CaseRecord>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(super) struct FileRef {
     pub(super) path: String,
     pub(super) sha256: String,
@@ -215,19 +228,19 @@ pub(super) struct FileRef {
 }
 
 /// A passed case's note: what it could not exercise on its deck.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(super) struct Note {
     pub(super) id: String,
     pub(super) note: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(super) struct Excluded {
     pub(super) id: String,
     pub(super) reason: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(super) struct OfficeRef {
     pub(super) scripts: Vec<FileRef>,
     pub(super) timeout_seconds: u64,
@@ -239,44 +252,44 @@ pub(super) struct OfficeRef {
 pub(super) struct RunManifest {
     schema: &'static str,
     profile: String,
-    projector: &'static str,
+    projector: String,
     source: String,
     case_manifest: FileRef,
     office: OfficeRef,
-    steps: Vec<StepRecord>,
-    candidates: Vec<Candidate>,
-    calibration: Vec<Calibration>,
+    pub(super) steps: Vec<StepRecord>,
+    pub(super) candidates: Vec<Candidate>,
+    pub(super) calibration: Vec<Calibration>,
     excluded: Vec<Excluded>,
     notes: Vec<Note>,
 }
 
 impl RunManifest {
-    pub(super) fn new(
-        cases: &CaseManifest,
-        source: String,
-        case_manifest: FileRef,
-        scripts: Vec<FileRef>,
-        steps: Vec<StepRecord>,
-        run: &mut Run,
-    ) -> Self {
-        Self {
+    /// The manifest of a run, folded from its journal: the header's pins
+    /// and every finished case's records, in the order they finished.
+    fn folded(header: Header, lines: Vec<CaseLine>) -> Self {
+        let mut results = Vec::new();
+        let mut manifest = Self {
             schema: RUN_SCHEMA,
-            profile: cases.profile.clone(),
-            projector: PROJECTOR_VERSION,
-            source,
-            case_manifest,
-            office: OfficeRef {
-                scripts,
-                timeout_seconds: cases.office.timeout_seconds,
-                observer: cases.office.observer.clone(),
-                owner_accounts: cases.office.owner_accounts.clone(),
-            },
-            steps,
-            candidates: std::mem::take(&mut run.candidates),
-            calibration: std::mem::take(&mut run.calibration),
-            excluded: std::mem::take(&mut run.excluded),
-            notes: std::mem::take(&mut run.notes),
+            profile: header.profile,
+            projector: header.projector,
+            source: header.source,
+            case_manifest: header.case_manifest,
+            office: header.office,
+            steps: Vec::new(),
+            candidates: Vec::new(),
+            calibration: Vec::new(),
+            excluded: Vec::new(),
+            notes: Vec::new(),
+        };
+        for line in lines {
+            results.extend(line.results);
+            manifest.candidates.extend(line.candidates);
+            manifest.calibration.extend(line.calibration);
+            manifest.excluded.extend(line.excluded);
+            manifest.notes.extend(line.notes);
         }
+        manifest.steps = steps(&results);
+        manifest
     }
 }
 
@@ -291,15 +304,51 @@ pub(super) struct Emit<'a> {
     pub(super) baseline: &'a [String],
 }
 
+/// A case in progress: what it recorded since it began, journaled whole
+/// when it finishes.
+struct Open {
+    id: String,
+    started: Instant,
+    results: Vec<StepCase>,
+    candidates: Vec<Candidate>,
+    calibration: Vec<Calibration>,
+    excluded: Vec<Excluded>,
+    notes: Vec<Note>,
+}
+
+impl Open {
+    fn new(id: &str) -> Self {
+        Self {
+            id: id.to_owned(),
+            started: Instant::now(),
+            results: Vec::new(),
+            candidates: Vec::new(),
+            calibration: Vec::new(),
+            excluded: Vec::new(),
+            notes: Vec::new(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.results.is_empty()
+            && self.candidates.is_empty()
+            && self.calibration.is_empty()
+            && self.excluded.is_empty()
+            && self.notes.is_empty()
+    }
+}
+
+/// What the case a record lands in is called when no case is open: a
+/// record outside every case is still journaled, when the run completes.
+const UNCASED: &str = "run";
+
 /// The run in progress.
 pub(super) struct Run {
     out: PathBuf,
     pub(super) limits: Limits,
-    cases: Vec<(u8, CaseRecord)>,
-    pub(super) candidates: Vec<Candidate>,
-    pub(super) calibration: Vec<Calibration>,
-    pub(super) excluded: Vec<Excluded>,
-    notes: Vec<Note>,
+    journal: Option<Journal>,
+    /// The cases open now, innermost last; a record lands in the innermost.
+    open: Vec<Open>,
 }
 
 impl Run {
@@ -322,18 +371,40 @@ impl Run {
         Ok(Self {
             out: out.to_path_buf(),
             limits: engine_limits(),
-            cases: Vec::new(),
-            candidates: Vec::new(),
-            calibration: Vec::new(),
-            excluded: Vec::new(),
-            notes: Vec::new(),
+            journal: None,
+            open: Vec::new(),
         })
     }
 
-    /// Write `bytes` at `relative` inside the run; its reference.
+    /// Start the journal with the run's pins, before any case.
+    pub(super) fn begin(
+        &mut self,
+        cases: &CaseManifest,
+        source: String,
+        case_manifest: FileRef,
+        scripts: Vec<FileRef>,
+    ) -> Res<()> {
+        let header = Header {
+            schema: JOURNAL_SCHEMA.to_owned(),
+            source,
+            projector: PROJECTOR_VERSION.to_owned(),
+            profile: cases.profile.clone(),
+            case_manifest,
+            office: OfficeRef {
+                scripts,
+                timeout_seconds: cases.office.timeout_seconds,
+                observer: cases.office.observer.clone(),
+                owner_accounts: cases.office.owner_accounts.clone(),
+            },
+        };
+        self.journal = Some(Journal::create(&self.out, header)?);
+        Ok(())
+    }
+
+    /// Write `bytes` at `relative` inside the run, whole and synced, before
+    /// anything names it; its reference.
     pub(super) fn write_file(&self, relative: &str, bytes: &[u8]) -> Res<FileRef> {
-        let path = self.out.join(relative);
-        std::fs::write(&path, bytes).map_err(|error| format!("{}: {error}", path.display()))?;
+        write_atomic(&self.out.join(relative), bytes)?;
         Ok(FileRef {
             path: relative.to_owned(),
             sha256: sha256_hex(bytes),
@@ -355,21 +426,95 @@ impl Run {
             .collect()
     }
 
+    /// Run one case: everything `body` records lands in it (or in a case it
+    /// opens), and it finishes as one journal line whatever `body` returns,
+    /// a refusal, an early return or an error that stops the run.
+    pub(super) fn case<T>(&mut self, id: &str, body: impl FnOnce(&mut Self) -> Res<T>) -> Res<T> {
+        self.open.push(Open::new(id));
+        let result = body(self);
+        let open = self.open.pop().ok_or("the case stack is empty")?;
+        let finished = self.finish(open, result.as_ref().err());
+        match (result, finished) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(why), Ok(())) => Err(why),
+            (Ok(_), Err(journal)) => Err(journal),
+            (Err(why), Err(journal)) => Err(format!("{why}; and {journal}")),
+        }
+    }
+
+    /// Journal a finished case and print its progress line. A case that
+    /// recorded nothing (one that only held others) writes no line.
+    fn finish(&mut self, open: Open, error: Option<&String>) -> Res<()> {
+        if open.is_empty() && error.is_none() {
+            return Ok(());
+        }
+        let elapsed_ms = u64::try_from(open.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let outcome = match error {
+            Some(why) => StepOutcome::Inconclusive(format!("the run stopped here: {why}")),
+            None => aggregate(
+                &open
+                    .results
+                    .iter()
+                    .map(|result| CaseRecord {
+                        id: result.id.clone(),
+                        outcome: result.outcome.clone(),
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        };
+        let progress = format!(
+            "deck-gate-cases: {} {} {elapsed_ms} ms",
+            open.id,
+            word(&outcome)
+        );
+        let line = CaseLine {
+            id: open.id,
+            outcome,
+            elapsed_ms,
+            error: error.cloned(),
+            results: open.results,
+            candidates: open.candidates,
+            calibration: open.calibration,
+            excluded: open.excluded,
+            notes: open.notes,
+        };
+        self.journal
+            .as_mut()
+            .ok_or("a case finished before the journal began")?
+            .append(&Line::Case(line))?;
+        let _ = writeln!(std::io::stderr(), "{progress}");
+        Ok(())
+    }
+
+    /// The case a record lands in: the innermost open one.
+    fn top(&mut self) -> &mut Open {
+        if self.open.is_empty() {
+            self.open.push(Open::new(UNCASED));
+        }
+        self.open.last_mut().expect("a case is open")
+    }
+
     pub(super) fn record(&mut self, step: u8, id: &str, outcome: StepOutcome) {
-        self.cases.push((
+        self.top().results.push(StepCase {
             step,
-            CaseRecord {
-                id: id.to_owned(),
-                outcome,
-            },
-        ));
+            id: id.to_owned(),
+            outcome,
+        });
     }
 
     pub(super) fn note(&mut self, id: &str, note: String) {
-        self.notes.push(Note {
+        self.top().notes.push(Note {
             id: id.to_owned(),
             note,
         });
+    }
+
+    pub(super) fn exclude(&mut self, excluded: Excluded) {
+        self.top().excluded.push(excluded);
+    }
+
+    pub(super) fn calibrate(&mut self, calibration: Calibration) {
+        self.top().calibration.push(calibration);
     }
 
     /// Write one candidate, run the corruption checks on it, and owe the
@@ -379,7 +524,7 @@ impl Run {
         let written = self.write_file(&file, emit.bytes)?;
         let outcome = checks::corruption(emit.bytes, self.limits, emit.baseline);
         self.record(emit.lane.step(CORRUPTION), emit.id, outcome);
-        self.candidates.push(Candidate {
+        self.top().candidates.push(Candidate {
             id: emit.id.to_owned(),
             file,
             sha256: written.sha256,
@@ -391,27 +536,67 @@ impl Run {
         Ok(())
     }
 
-    /// The eight steps, each with its cases and engine outcome.
-    pub(super) fn steps(&self) -> Vec<StepRecord> {
-        (1..=8u8)
-            .zip(STEP_NAMES)
-            .map(|(step, name)| {
-                let cases: Vec<CaseRecord> = self
-                    .cases
-                    .iter()
-                    .filter(|(at, _)| *at == step)
-                    .map(|(_, case)| case.clone())
-                    .collect();
-                StepRecord {
-                    step,
-                    name,
-                    engine: aggregate(&cases),
-                    office: OFFICE_STEPS.contains(&step),
-                    cases,
-                }
-            })
-            .collect()
+    /// Every finished case so far, read back from the journal.
+    pub(super) fn journaled(&self) -> Res<Vec<CaseLine>> {
+        journal::fold(&self.out).map(|(_, lines)| lines)
     }
+
+    /// End the run: journal any record left outside a case, fold the
+    /// journal into the manifest, write it whole, and journal the run's
+    /// completion. The manifest.
+    pub(super) fn complete(&mut self) -> Res<RunManifest> {
+        while let Some(open) = self.open.pop() {
+            self.finish(open, None)?;
+        }
+        let (header, lines) = journal::fold(&self.out)?;
+        let cases = lines.len();
+        let manifest = RunManifest::folded(header, lines);
+        let bytes = serde_json::to_vec_pretty(&manifest).map_err(text)?;
+        let written = self.write_file(MANIFEST, &bytes)?;
+        self.journal
+            .as_mut()
+            .ok_or("the run completed before the journal began")?
+            .append(&Line::Complete {
+                manifest: written,
+                cases,
+            })?;
+        Ok(manifest)
+    }
+}
+
+/// An outcome in one word, for a progress line.
+fn word(outcome: &StepOutcome) -> &'static str {
+    match outcome {
+        StepOutcome::Passed => "passed",
+        StepOutcome::Failed(_) => "FAILED",
+        StepOutcome::Inconclusive(_) => "inconclusive",
+        StepOutcome::NotRun => "not-run",
+    }
+}
+
+/// The eight steps over every result, each with its cases and engine
+/// outcome.
+fn steps(results: &[StepCase]) -> Vec<StepRecord> {
+    (1..=8u8)
+        .zip(STEP_NAMES)
+        .map(|(step, name)| {
+            let cases: Vec<CaseRecord> = results
+                .iter()
+                .filter(|result| result.step == step)
+                .map(|result| CaseRecord {
+                    id: result.id.clone(),
+                    outcome: result.outcome.clone(),
+                })
+                .collect();
+            StepRecord {
+                step,
+                name,
+                engine: aggregate(&cases),
+                office: OFFICE_STEPS.contains(&step),
+                cases,
+            }
+        })
+        .collect()
 }
 
 /// A step passes only when it ran cases and every one passed; a failure
