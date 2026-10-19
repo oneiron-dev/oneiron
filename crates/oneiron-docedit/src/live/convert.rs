@@ -22,6 +22,7 @@ use super::pptx::{
     ChartKind, ChartSeries, ChartSource, HeldMedia, NodePayload, SmartArtNode, WRITTEN_FRAME,
 };
 use super::reshape::{self, frame_of};
+use super::svg_fallback;
 use crate::design_plan::Cell;
 use crate::edit::Digest;
 use crate::edit::xml::{self, A, P, R, next_part};
@@ -298,8 +299,10 @@ pub(super) fn element_of(tree: &XmlTree, native: u32, local: &str) -> Option<usi
 
 /// Point the picture `native` on `slide` at the held media part `media`
 /// names, through the slide's image relationship to it (a new one when it
-/// has none). The media it showed keeps its relationship, unreferenced, as
-/// new media leaves it. Whether anything changed.
+/// has none); an SVG part a picture of the deck shows over a raster, as
+/// Office does ([`svg_fallback::show`]). The media it showed keeps its
+/// relationship, unreferenced, as new media leaves it. Whether anything
+/// changed.
 pub(super) fn show_held_media(
     package: &mut Package,
     slide: &str,
@@ -313,6 +316,9 @@ pub(super) fn show_held_media(
             .is_none_or(|bytes| Digest::of(&bytes) != media.hash)
     {
         return Err(refuse);
+    }
+    if let Some(changed) = svg_fallback::show(package, slide, native, &media.part)? {
+        return Ok(changed);
     }
     let (bytes, tree) = xml::read(package, slide)?;
     let picture = element_of(&tree, native, "pic").ok_or(LiveError::UnknownNode)?;
@@ -351,7 +357,8 @@ pub(super) fn show_held_media(
 /// Write a live-born picture showing the held media `media` names as the
 /// new `p:pic` `id` named `name` on `slide`, at `offset` and `extent`,
 /// through the slide's image relationship to that part (a new one when it
-/// has none).
+/// has none); an SVG part a picture of the deck shows over a raster, as
+/// Office does ([`svg_fallback::born_blip`]).
 pub(super) fn born_held_picture(
     package: &mut Package,
     slide: &str,
@@ -367,17 +374,9 @@ pub(super) fn born_held_picture(
     {
         return Err(LiveError::Invalid(HELD_MEDIA));
     }
-    let kind = format!("{R}/image");
-    let rel = match package
-        .relationships(slide)?
-        .into_iter()
-        .find(|rel| !rel.external && rel.kind == kind && rel.target == media.part)
-    {
-        Some(rel) => rel.id,
-        None => package.relate(slide, &kind, &media.part)?,
-    };
+    let blip = svg_fallback::born_blip(package, slide, &media.part)?;
     let picture = format!(
-        r#"<p:pic xmlns:p="{P}" xmlns:a="{A}" xmlns:r="{R}"><p:nvPicPr><p:cNvPr id="{id}" name="{}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="{rel}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>"#,
+        r#"<p:pic xmlns:p="{P}" xmlns:a="{A}" xmlns:r="{R}"><p:nvPicPr><p:cNvPr id="{id}" name="{}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill>{blip}<a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>"#,
         xml::escape_attribute(name)
     );
     insert_frame(package, slide, id, &picture)?;

@@ -4746,6 +4746,26 @@ export_facade! {
     let output = client.vault_sieve_lease_refill(&input)?;
     crate::codec::lift_record("vault.sieve.lease.refill", &output)
 };
+"vault.free_time.policy.get" => fn vault_free_time_policy_get(&self, input: FreeTimePolicyRequest) -> FreeTimePolicyView = |client| {
+    let input: oneiron::dreamer_runner::FreeTimePolicyRequest = crate::codec::lower_record("vault.free_time.policy.get", input)?;
+    let output = client.vault_free_time_policy_get(&input)?;
+    crate::codec::lift_record("vault.free_time.policy.get", &output)
+};
+"vault.free_time.policy.set" => fn vault_free_time_policy_set(&self, input: FreeTimePolicySetRequest) -> FreeTimePolicyView = |client| {
+    let input: oneiron::dreamer_runner::FreeTimePolicySetRequest = crate::codec::lower_record("vault.free_time.policy.set", input)?;
+    let output = client.vault_free_time_policy_set(&input)?;
+    crate::codec::lift_record("vault.free_time.policy.set", &output)
+};
+"vault.free_time.cycles" => fn vault_free_time_cycles(&self, input: FreeTimeCyclesRequest) -> FreeTimeCyclesPage = |client| {
+    let input: oneiron::dreamer_runner::FreeTimeCyclesRequest = crate::codec::lower_record("vault.free_time.cycles", input)?;
+    let output = client.vault_free_time_cycles(&input)?;
+    crate::codec::lift_record("vault.free_time.cycles", &output)
+};
+"vault.free_time.cycle" => fn vault_free_time_cycle(&self, input: FreeTimeCycleRequest) -> Option<FreeTimeCycleView> = |client| {
+    let input: oneiron::dreamer_runner::FreeTimeCycleRequest = crate::codec::lower_record("vault.free_time.cycle", input)?;
+    let output = client.vault_free_time_cycle(&input)?;
+    crate::codec::lift_record("vault.free_time.cycle", &output)
+};
 "vault.claims.vet" => fn vault_claims_vet(&self, input: ClaimSettleRequest) -> ClaimSettlement = |client| {
     let input: oneiron::memory::ClaimSettleRequest = crate::codec::lower_record("vault.claims.vet", input)?;
     let output = client.vault_claims_vet(&input)?;

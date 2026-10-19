@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/answer.rs` | src | s | 4 struct · 2 fn | BrowserAnswer, DesktopAnswer, TakeoverRecord, WindowSwitch | What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and… |
+| `src/answer.rs` | src | s | 4 struct · 1 enum · 2 fn | BrowserAnswer, DesktopAnswer, TakeoverRecord, WindowSwitch, WindowSwitchCause | What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and… |
 | `src/capture.rs` | src | s | 8 crate-vis | — | Repeat screenshots (AB-004) |
 | `src/cdp.rs` | src | m | 8 crate-vis | — | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
 | `src/desktop.rs` | src | XL | 3 struct · 2 enum · 16 fn | AbandonedTakeover, DesktopGuest, DesktopSession, PersonInput, Takeover | A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server… |

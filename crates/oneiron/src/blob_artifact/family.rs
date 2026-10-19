@@ -100,6 +100,30 @@ impl From<&BlobArtifactVersion> for ArtifactVersionView {
     }
 }
 
+/// A version that landed while the artifact's head was a version it was not
+/// made from (FIX 2700): it forked from the version it was made against,
+/// and the head it replaced stays as its own version beside it, readable
+/// and exportable as any other. Nothing of either is merged or lost.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VersionReconciliation {
+    /// The version it was made against: its fork parent.
+    pub base_version: u64,
+    /// The head it replaced, kept beside it.
+    pub kept_head: ArtifactVersionView,
+}
+
+impl VersionReconciliation {
+    /// The reconciliation of a version forked from `base` over `head`, the
+    /// head it replaced; none when it did not fork.
+    #[must_use]
+    pub fn of(base: Option<u64>, head: Option<&BlobArtifactVersion>) -> Option<Self> {
+        Some(Self {
+            base_version: base?,
+            kept_head: ArtifactVersionView::from(head?),
+        })
+    }
+}
+
 /// One blob artifact as the family contract shows it: its kind, its body's
 /// name and type, its head, and its whole version tree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

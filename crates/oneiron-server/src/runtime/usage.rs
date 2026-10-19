@@ -1,7 +1,10 @@
 //! Trusted-host attribution of served run settlements to one vault.
 //! No wallet, billing price, account balance or tax policy lives here. A
 //! room-paid call is billed to the account its run bound at admission
-//! (OF-531), never re-read at settlement.
+//! (OF-531), never re-read at settlement. Each call keeps the label it was
+//! admitted with, and a free-time item's call the agent, cycle, item and
+//! spend scope the engine stamped on its run before it began (FIX 4453);
+//! every other call stays unbound.
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -185,6 +188,8 @@ impl VaultUsage {
                         || usage.input.cache_write != 0
                 }) || service_quantity.is_some();
                 let payer = facts.payer_person.as_ref();
+                // The engine's stamp, never the run's name or a prompt.
+                let bound = facts.attribution.as_ref();
                 let event = UsageEvent {
                     owner,
                     vault_id: self.vault_id.clone(),
@@ -201,7 +206,7 @@ impl VaultUsage {
                     },
                     role: facts.seat.clone(),
                     occurred_at: Some(receipt.occurred_at),
-                    agent_id: None,
+                    agent_id: bound.map(|bound| bound.agent.to_hex()),
                     service: model.is_none().then(|| facts.subject.clone()),
                     model,
                     token_counts,
@@ -227,6 +232,10 @@ impl VaultUsage {
                             PayerAccount::VaultApproved { ask } => Some(ask),
                             PayerAccount::Person { .. } | PayerAccount::VaultOwner => None,
                         }),
+                        purpose: facts.call_purpose.clone(),
+                        cycle: bound.map(|bound| bound.cycle.to_hex()),
+                        item: bound.map(|bound| bound.item.to_hex()),
+                        spend_scope: bound.map(|bound| bound.spend_scope.clone()),
                         reserved_units: facts.reserved_units,
                         settled_units: *units,
                         unit: unit.as_str().to_owned(),

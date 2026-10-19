@@ -58,6 +58,7 @@ mod dreamer_maintenance_routes;
 mod dreamer_routes;
 mod embedding_space_routes;
 mod federation_connect_routes;
+mod free_time_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
 mod history_routes;
@@ -139,6 +140,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(disclosure_routes::routes())
         .merge(dreamer_maintenance_routes::routes())
         .merge(dreamer_routes::routes())
+        .merge(free_time_routes::routes())
         .merge(embedding_space_routes::routes())
         .merge(history_routes::routes())
         .merge(house_routes::routes())

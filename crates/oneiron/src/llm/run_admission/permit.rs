@@ -221,6 +221,10 @@ impl RunInner {
                     .and_then(|(_, hold)| hold.meter.reserved_for(&hold.lease)),
                 teacher_target: teacher.as_ref().map(|(target, _)| target.clone()),
                 purpose: teacher.map(|(_, purpose)| purpose),
+                call_purpose: Some(super::super::routing::purpose_key(
+                    &request.envelope.purpose,
+                )),
+                attribution: self.attribution.clone(),
                 seat: request
                     .envelope
                     .tier
@@ -301,6 +305,13 @@ impl RunInner {
                     .and_then(|(_, hold)| hold.meter.reserved_for(&hold.lease)),
                 teacher_target: None,
                 purpose: None,
+                // A paid connector call carries no envelope: it bills under
+                // its bound item's label, when its run has one.
+                call_purpose: self
+                    .attribution
+                    .as_ref()
+                    .map(|bound| super::super::routing::purpose_key(&bound.purpose)),
+                attribution: self.attribution.clone(),
                 seat: None,
                 rules_enforced,
             },

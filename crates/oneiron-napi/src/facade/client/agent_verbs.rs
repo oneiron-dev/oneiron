@@ -8506,6 +8506,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_free_time_policy_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.free_time.policy.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_free_time_policy_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.free_time.policy.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_free_time_cycles(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.free_time.cycles", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_free_time_cycle(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.free_time.cycle", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_claims_vet(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.claims.vet", js_json(input))

@@ -8,7 +8,7 @@ use serde::Serialize;
 use super::super::{
     BrokerIsolation, BudgetDenied, LlmInputUsage, LlmOutputUsage, ModelId, ModelLocality,
 };
-use super::admission::RunDenied;
+use super::admission::{RunAttribution, RunDenied};
 use super::declaration::{DeclarationEditor, LeaseUnit};
 use super::host::{AllocationRef, Payer, PayerPerson};
 use crate::EntityId;
@@ -131,6 +131,15 @@ pub struct PermitFacts {
     pub teacher_target: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,
+    /// The label the call itself carries (FIX 4453): a model call's envelope
+    /// purpose, a paid connector call's bound item's. `purpose` above stays
+    /// the declared teachers' purpose.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_purpose: Option<String>,
+    /// The free-time item a bound run's call serves, as the engine stamped it
+    /// before the run began (FIX 4453); `None` on every unbound run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attribution: Option<RunAttribution>,
     /// The seat the call was admitted on (its metered seat), so the meter
     /// can attribute the call to one seat. `None` for a paid connector.
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -2,7 +2,9 @@
 
 use super::keys::{OUTCOME_DISCARDED, OUTCOME_PROPOSED, OUTCOME_SELECTED};
 use crate::anchored_annotation::{Locator, ReanchorSummary};
-use crate::blob_artifact::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BlobArtifactVersion};
+use crate::blob_artifact::{
+    BLOB_ARTIFACT_CONTENT_HASH_LEN, BlobArtifactVersion, VersionReconciliation,
+};
 use crate::edit_roundtrip::{SheetAnswerBundle, SheetCellAnswer};
 use crate::entity_id::EntityId;
 use crate::receipt::ReceiptRecord;
@@ -186,6 +188,9 @@ pub struct SettleSelectOutcome {
     pub reanchor: ReanchorSummary,
     /// The select receipt (OF-367 family).
     pub receipt: ReceiptRecord,
+    /// A kept output that forked from the version it was made against, the
+    /// head it replaced kept beside it (FIX 2700); `None` when it did not.
+    pub reconciliation: Option<VersionReconciliation>,
 }
 
 /// The result of a settle-discard: the discard receipt.
