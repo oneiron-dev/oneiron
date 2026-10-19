@@ -381,9 +381,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/openapi/descriptions.rs` | src | m | 1 crate-vis | — | Schema description-gap filler |
 | `src/api/openapi/endpoints_merge.rs` | src | m | 14 crate-vis | — | OpenAPI endpoint wiring and component merges |
 | `src/api/openapi/facade_paths.rs` | src | s | 1 crate-vis | — | The facade rows the OpenAPI document publishes (DOOR-115): each row the verb table marks `openapi` is `POST… |
+| `src/api/openapi/left_slip_paths.rs` | src | s | 1 crate-vis | — | A removed device's own routes in the OpenAPI document (OF-150, OF-158, FIX 1300), moved whole out of… |
 | `src/api/openapi/mod.rs` | src | s | 2 crate-vis | — | OpenAPI document assembly for the HTTP API |
 | `src/api/openapi/openai_proxy_paths.rs` | src | s | 1 crate-vis | — | The OpenAI-compatible memory proxy publishes the verb table's exact DTOs |
-| `src/api/openapi/owner_paths.rs` | src | XL | 4 crate-vis | — | The owner surface in the OpenAPI document (FIX 1755): every `/v1/owner` route, with the SDK row whose input… |
+| `src/api/openapi/owner_paths.rs` | src | XL | 3 crate-vis | — | The owner surface in the OpenAPI document (FIX 1755): every `/v1/owner` route, with the SDK row whose input… |
 | `src/api/openapi/security.rs` | src | s | 2 crate-vis | — | Security-scheme wiring and schema property-description helper |
 | `src/api/openapi/signing_paths.rs` | src | m | 2 crate-vis | — | The public signing ceremony routes (`/sign/*`, DOOR-117): their payload and answer schemas are the verb… |
 | `src/api/openapi/voice_bank_paths.rs` | src | s | 1 crate-vis | — | The voice bank's `/v1/ai/voices` routes in the OpenAPI document (DOOR-143) |
@@ -598,10 +599,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/msgpack_json.rs` | src | s | 2 crate-vis | — | JSON renderings of MessagePack claim values for command output |
 | `src/commands/oneironer.rs` | src | s | 3 struct · 1 enum · 1 fn | DistillArgs, ExportArgs, OneironerCommand, PublishArgs | `oneiron-server oneironer`: the tagger's offline handoff with the model project (ARCH-0036 "one base, two… |
 | `src/commands/owner.rs` | src | XL | 19 fn · 2 re-export · 6 crate-vis | — | The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the… |
-| `src/commands/owner/recovery_kit.rs` | src | m | 1 fn · 2 crate-vis | — | `oneiron recovery-kit`: the world kit's ceremony on a stopped vault (OF-173), and the kit unlock `oneiron… |
+| `src/commands/owner/recovery_kit.rs` | src | m | 1 fn · 3 crate-vis | — | `oneiron recovery-kit`: the world kit's ceremony on a stopped vault (OF-173), and the kit unlock `oneiron… |
+| `src/commands/owner/recovery_kit/custody.rs` | src | s | 1 crate-vis | — | The kit's side of a custody head (KS-4A1, FIX 5685) |
 | `src/commands/owner/recovery_kit/issue.rs` | src | s | 2 crate-vis | — | `oneiron recovery-kit issue` and `issue-vault-key`: a kit's pieces, each stored piece's recovery code… |
 | `src/commands/owner/tests.rs` | test | s | — | — | — |
-| `src/commands/owner/vault_key.rs` | src | L | 1 fn · 13 crate-vis | — | The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists… |
+| `src/commands/owner/vault_key.rs` | src | L | 1 fn · 12 crate-vis | — | The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists… |
+| `src/commands/owner/vault_key/fresh_restore.rs` | src | s | 2 crate-vis | — | `oneiron restore` where no vault is yet: the restore on a clean host, its key unlocked the way the owner… |
 | `src/commands/reembed.rs` | src | s | 1 fn · 1 crate-vis | — | `reembed`: moves a stopped vault to the configured embedding space |
 | `src/commands/reembed/tests.rs` | test | m | — | — | Rows for the `reembed` door |
 | `src/commands/seat.rs` | src | s | 4 fn | — | `oneiron seat …`: the owner's official-seat sign-in surface (OF-375) |
@@ -885,7 +888,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneironer/tests/mod.rs` | test | m | — | — | The slot's laws: configuration, the endpoint's wire and identity probe, the typed refusals, `init`, and the… |
 | `src/oneironer/tests/support.rs` | test | m | 38 crate-vis | — | A stub tagger server inside the test process, and the vaults and servers the slot's tests share |
 | `src/oneironer/tests/worker.rs` | test | m | 6 crate-vis | — | The worker against the stub tagger: save mode saves each turn's tags, shadow writes nothing but the job… |
-| `src/owner/backup.rs` | src | L | 23 crate-vis | — | Local backups of one vault: take, list, prune, rehearse and restore |
+| `src/owner/backup.rs` | src | m | 13 crate-vis | — | Local backups of one vault: take, list, prune, rehearse and restore |
+| `src/owner/backup/custody.rs` | src | s | 6 crate-vis | — | Custody heads beside the backups (KS-4A1, FIX 5685) |
+| `src/owner/backup/rehearse.rs` | src | s | 13 crate-vis | — | Rehearsals of one vault's backups: restored into a scratch copy beside the live vault, opened, checked and… |
+| `src/owner/backup/restore.rs` | src | m | 11 crate-vis | — | Restores of one vault's backups: over the stopped vault, where no vault is yet, and the activation of the… |
 | `src/owner/backup/tests.rs` | test | m | — | — | — |
 | `src/owner/backup/write_budget.rs` | src | s | 16 crate-vis | — | The floor uploads keep, lent to this vault's backups and rehearsals (FIX 5479) |
 | `src/owner/cleanup.rs` | src | s | 13 crate-vis | — | Cleanup review (ARCH-0073): the archive proposals the cleanup job opened, the digests of what cleanup… |
