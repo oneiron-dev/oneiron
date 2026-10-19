@@ -31,6 +31,9 @@ pub enum AgentVerb {
     VaultCoachInspect,
     VaultPeopleList,
     VaultPeopleGet,
+    VaultPeopleCreate,
+    VaultEntitiesLookBeforeMint,
+    VaultIdentityMention,
     VaultShapeRead,
     VaultShapePlan,
     VaultShapeApply,
@@ -814,6 +817,9 @@ impl AgentVerb {
         Self::VaultCoachInspect,
         Self::VaultPeopleList,
         Self::VaultPeopleGet,
+        Self::VaultPeopleCreate,
+        Self::VaultEntitiesLookBeforeMint,
+        Self::VaultIdentityMention,
         Self::VaultShapeRead,
         Self::VaultShapePlan,
         Self::VaultShapeApply,
@@ -1600,6 +1606,9 @@ impl AgentVerb {
             Self::VaultCoachInspect => "vault.coach.inspect",
             Self::VaultPeopleList => "vault.people.list",
             Self::VaultPeopleGet => "vault.people.get",
+            Self::VaultPeopleCreate => "vault.people.create",
+            Self::VaultEntitiesLookBeforeMint => "vault.entities.look_before_mint",
+            Self::VaultIdentityMention => "vault.identity.mention",
             Self::VaultShapeRead => "vault.shape.read",
             Self::VaultShapePlan => "vault.shape.plan",
             Self::VaultShapeApply => "vault.shape.apply",
@@ -2404,6 +2413,9 @@ impl AgentVerb {
                 | Self::VaultCoachInspect
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
+                | Self::VaultPeopleCreate
+                | Self::VaultEntitiesLookBeforeMint
+                | Self::VaultIdentityMention
                 | Self::VaultShapeRead
                 | Self::VaultShapePlan
                 | Self::VaultShapeApply
@@ -3214,6 +3226,9 @@ impl AgentVerb {
                 | Self::VaultCoachInspect
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
+                | Self::VaultPeopleCreate
+                | Self::VaultEntitiesLookBeforeMint
+                | Self::VaultIdentityMention
                 | Self::VaultShapeRead
                 | Self::VaultShapePlan
                 | Self::VaultShapeApply
@@ -4103,6 +4118,9 @@ impl AgentVerb {
                 | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
+                | Self::VaultPeopleCreate
+                | Self::VaultEntitiesLookBeforeMint
+                | Self::VaultIdentityMention
                 | Self::VaultShapeRead
                 | Self::VaultShapePlan
                 | Self::VaultShapeApply
@@ -4834,6 +4852,7 @@ impl AgentVerb {
                 | Self::SelfInboxMark
                 | Self::SelfInboxConcernOutcome
                 | Self::SelfInboxConcernMove
+                | Self::VaultPeopleCreate
                 | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
@@ -5336,6 +5355,9 @@ impl AgentVerb {
             Self::VaultCoachInspect => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
+            Self::VaultPeopleCreate => &["spec"],
+            Self::VaultEntitiesLookBeforeMint => &["spec"],
+            Self::VaultIdentityMention => &["spec"],
             Self::VaultShapeRead => &["spec"],
             Self::VaultShapePlan => &["spec"],
             Self::VaultShapeApply => &["spec"],
@@ -6137,6 +6159,9 @@ impl AgentVerb {
             Self::VaultCoachInspect => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
+            Self::VaultPeopleCreate => &["spec"],
+            Self::VaultEntitiesLookBeforeMint => &["spec"],
+            Self::VaultIdentityMention => &["spec"],
             Self::VaultShapeRead => &["spec"],
             Self::VaultShapePlan => &["spec"],
             Self::VaultShapeApply => &["spec"],
@@ -6945,7 +6970,7 @@ impl AgentVerb {
                 "This agent proposes one persona field's new text for its standing block, as a Generated claim its gate settles; compiled text is never edited."
             }
             Self::SelfIdentityAnswer => {
-                "A vault owner's tap on an identity choice card: who a person named in their conversations is."
+                "The owner answers an identity choice with supporting evidence refs; the original mention and verified owner resolution provenance are retained atomically."
             }
             Self::SelfIdentitySettle => {
                 "Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask."
@@ -6970,6 +6995,15 @@ impl AgentVerb {
             }
             Self::VaultPeopleList => "One page of the people the caller reads, in handle order.",
             Self::VaultPeopleGet => "One person the vault knows, by their pr handle.",
+            Self::VaultPeopleCreate => {
+                "The owner creates a distinct PERSON with declared identity hints and existing identity-evidence refs, looking before minting an opaque id without selecting or merging a namesake."
+            }
+            Self::VaultEntitiesLookBeforeMint => {
+                "The owner queries the declared PERSON, ORG or PLACE identity hints for N candidates with evidence and provenance; only stored mention evidence is scored by the waterfall, and no entity is restored, linked or minted."
+            }
+            Self::VaultIdentityMention => {
+                "The owner reads one saved mention as unresolved, candidates or resolved, preserving the original tagger suggestion and the resolving owner evidence and provenance."
+            }
             Self::VaultShapeRead => {
                 "The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read."
             }

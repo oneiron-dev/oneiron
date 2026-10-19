@@ -25,7 +25,7 @@ pub use docs_import::{
 pub use summary_ladder::{DocsExpansion, DocsExpansionLevel, DocsSummaryHit};
 mod identity_key;
 pub use identity_key::identity_fields_for_kind;
-pub(crate) use identity_key::{identity_hint_digest, reindex_identity_hints};
+pub(crate) use identity_key::{identity_hint_body, identity_hint_digest, reindex_identity_hints};
 mod admission;
 mod bulk_review;
 pub mod image;
@@ -60,6 +60,7 @@ pub use self::registry::{
     JSONL_TRANSCRIPT_SOURCE_ID, KNOWN_INGEST_HARNESS_CONFIG, MEETING_TRANSCRIPT_SCHEMA_V1,
     MEETING_TRANSCRIPT_SOURCE_ID,
 };
+pub(crate) use self::resolution::score_entity_resolution_waterfall_in_txn;
 pub use self::resolution::{
     EntityMentionRequest, EntityResolutionCandidate, EntityResolutionRoute,
     EntityResolutionWaterfallDecision, ScoredEntityResolutionCandidate,

@@ -76,6 +76,7 @@ mod guest_doors;
 mod hook_regen_doors;
 pub(super) mod host_doors;
 mod hub_doors;
+mod identity_doors;
 mod learning_doors;
 mod legal_hold_doors;
 mod linear_doors;

@@ -118,6 +118,15 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.people.create" => remote_agent_verb_output::<
+                    oneiron::memory::identity_doors::PersonCreated,
+                >(client, verb, &input),
+                "vault.entities.look_before_mint" => remote_agent_verb_output::<
+                    oneiron::memory::identity_doors::IdentityLookup,
+                >(client, verb, &input),
+                "vault.identity.mention" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::maintenance::identity::IdentityMentionView,
+                >(client, verb, &input),
                 "vault.shape.read" => remote_agent_verb_output::<oneiron::vault_shape::ShapeRead>(
                     client, verb, &input,
                 ),
@@ -2577,7 +2586,7 @@ impl OneironClient {
     }
     pub fn self_identity_answer(
         &self,
-        input: &oneiron::dreamer_runner::maintenance::identity::IdentityAnswerRequest,
+        input: &oneiron::dreamer_runner::maintenance::identity::IdentityAnswerEvidenceRequest,
     ) -> Result<oneiron::dreamer_runner::maintenance::identity::IdentitySettled, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
@@ -2729,6 +2738,43 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.people.get", value)
+    }
+    pub fn vault_people_create(
+        &self,
+        input: &oneiron::memory::identity_doors::PersonCreateRequest,
+    ) -> Result<oneiron::memory::identity_doors::PersonCreated, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.people.create", value)
+    }
+    pub fn vault_entities_look_before_mint(
+        &self,
+        input: &oneiron::memory::identity_doors::IdentityLookupRequest,
+    ) -> Result<oneiron::memory::identity_doors::IdentityLookup, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.entities.look_before_mint", value)
+    }
+    pub fn vault_identity_mention(
+        &self,
+        input: &oneiron::dreamer_runner::maintenance::identity::MentionProvenance,
+    ) -> Result<oneiron::dreamer_runner::maintenance::identity::IdentityMentionView, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.identity.mention", value)
     }
     pub fn vault_shape_read(
         &self,

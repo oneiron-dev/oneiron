@@ -357,6 +357,12 @@ class Oneiron:
         def people(self) -> "Oneiron._VaultPeopleVerbs":
             return Oneiron._VaultPeopleVerbs(self._client)
         @property
+        def entities(self) -> "Oneiron._VaultEntitiesVerbs":
+            return Oneiron._VaultEntitiesVerbs(self._client)
+        @property
+        def identity(self) -> "Oneiron._VaultIdentityVerbs":
+            return Oneiron._VaultIdentityVerbs(self._client)
+        @property
         def shape(self) -> "Oneiron._VaultShapeVerbs":
             return Oneiron._VaultShapeVerbs(self._client)
         @property
@@ -496,9 +502,6 @@ class Oneiron:
         @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs":
             return Oneiron._VaultCleanupVerbs(self._client)
-        @property
-        def entities(self) -> "Oneiron._VaultEntitiesVerbs":
-            return Oneiron._VaultEntitiesVerbs(self._client)
         @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs":
             return Oneiron._VaultLegalHoldsVerbs(self._client)
@@ -763,6 +766,24 @@ class Oneiron:
         def get(self, spec):
             """One person the vault knows, by their pr handle."""
             return json.loads(_translate(lambda: self._client.vault_people_get(json.dumps(spec))))
+        def create(self, spec):
+            """The owner creates a distinct PERSON with declared identity hints and existing identity-evidence refs, looking before minting an opaque id without selecting or merging a namesake."""
+            return json.loads(_translate(lambda: self._client.vault_people_create(json.dumps(spec))))
+    class _VaultEntitiesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def look_before_mint(self, spec):
+            """The owner queries the declared PERSON, ORG or PLACE identity hints for N candidates with evidence and provenance; only stored mention evidence is scored by the waterfall, and no entity is restored, linked or minted."""
+            return json.loads(_translate(lambda: self._client.vault_entities_look_before_mint(json.dumps(spec))))
+        def mention(self, spec):
+            """The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate."""
+            return json.loads(_translate(lambda: self._client.vault_entities_mention(json.dumps(spec))))
+    class _VaultIdentityVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def mention(self, spec):
+            """The owner reads one saved mention as unresolved, candidates or resolved, preserving the original tagger suggestion and the resolving owner evidence and provenance."""
+            return json.loads(_translate(lambda: self._client.vault_identity_mention(json.dumps(spec))))
     class _VaultShapeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1908,12 +1929,6 @@ class Oneiron:
         def run(self, spec):
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
             return json.loads(_translate(lambda: self._client.vault_cleanup_run(json.dumps(spec))))
-    class _VaultEntitiesVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def mention(self, spec):
-            """The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate."""
-            return json.loads(_translate(lambda: self._client.vault_entities_mention(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3602,7 +3617,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def answer(self, spec):
-            """A vault owner's tap on an identity choice card: who a person named in their conversations is."""
+            """The owner answers an identity choice with supporting evidence refs; the original mention and verified owner resolution provenance are retained atomically."""
             return json.loads(_translate(lambda: self._client.self_identity_answer(json.dumps(spec))))
         def settle(self, spec):
             """Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask."""

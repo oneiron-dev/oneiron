@@ -489,6 +489,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_people_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.people.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.people.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_entities_look_before_mint(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.entities.look_before_mint")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.entities.look_before_mint", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_identity_mention(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.identity.mention")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.identity.mention", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_shape_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.shape.read")?;
         let output = py

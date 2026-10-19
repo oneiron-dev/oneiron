@@ -409,6 +409,10 @@ class Oneiron:
         @property
         def people(self) -> "Oneiron._VaultPeopleVerbs": ...
         @property
+        def entities(self) -> "Oneiron._VaultEntitiesVerbs": ...
+        @property
+        def identity(self) -> "Oneiron._VaultIdentityVerbs": ...
+        @property
         def shape(self) -> "Oneiron._VaultShapeVerbs": ...
         @property
         def companions(self) -> "Oneiron._VaultCompanionsVerbs": ...
@@ -486,8 +490,6 @@ class Oneiron:
         def evals(self) -> "Oneiron._VaultEvalsVerbs": ...
         @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs": ...
-        @property
-        def entities(self) -> "Oneiron._VaultEntitiesVerbs": ...
         @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs": ...
         @property
@@ -657,6 +659,16 @@ class Oneiron:
             """One page of the people the caller reads, in handle order."""
         def get(self, spec: Facade.PersonRequest) -> Facade.PersonRow:
             """One person the vault knows, by their pr handle."""
+        def create(self, spec: Facade.PersonCreateRequest) -> Facade.PersonCreated:
+            """The owner creates a distinct PERSON with declared identity hints and existing identity-evidence refs, looking before minting an opaque id without selecting or merging a namesake."""
+    class _VaultEntitiesVerbs:
+        def look_before_mint(self, spec: Facade.IdentityLookupRequest) -> Facade.IdentityLookup:
+            """The owner queries the declared PERSON, ORG or PLACE identity hints for N candidates with evidence and provenance; only stored mention evidence is scored by the waterfall, and no entity is restored, linked or minted."""
+        def mention(self, spec: Facade.EntityMentionRequest) -> Facade.EntityResolutionWaterfallDecision:
+            """The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate."""
+    class _VaultIdentityVerbs:
+        def mention(self, spec: Facade.MentionProvenance) -> Facade.IdentityMentionView:
+            """The owner reads one saved mention as unresolved, candidates or resolved, preserving the original tagger suggestion and the resolving owner evidence and provenance."""
     class _VaultShapeVerbs:
         def read(self, spec: Facade.EmptyRequest | None = None) -> Facade.ShapeRead:
             """The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read."""
@@ -1327,9 +1339,6 @@ class Oneiron:
     class _VaultCleanupVerbs:
         def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
-    class _VaultEntitiesVerbs:
-        def mention(self, spec: Facade.EntityMentionRequest) -> Facade.EntityResolutionWaterfallDecision:
-            """The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate."""
     class _VaultLegalHoldsVerbs:
         def place(self, spec: Facade.LegalHoldPlaceRequest) -> Facade.LegalHold:
             """The owner places a customer legal hold on the named records or gate partitions."""
@@ -2293,8 +2302,8 @@ class Oneiron:
         def edit(self, spec: Facade.StandingBlockEditRequest) -> Facade.StandingBlockEditReceipt:
             """This agent proposes one persona field's new text for its standing block, as a Generated claim its gate settles; compiled text is never edited."""
     class _SelfIdentityVerbs:
-        def answer(self, spec: Facade.IdentityAnswerRequest) -> Facade.IdentitySettled:
-            """A vault owner's tap on an identity choice card: who a person named in their conversations is."""
+        def answer(self, spec: Facade.IdentityAnswerEvidenceRequest) -> Facade.IdentitySettled:
+            """The owner answers an identity choice with supporting evidence refs; the original mention and verified owner resolution provenance are retained atomically."""
         def settle(self, spec: Facade.IdentityActNowRequest) -> Facade.IdentityActNow:
             """Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask."""
     class _SelfInboxVerbs:

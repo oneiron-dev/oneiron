@@ -119,6 +119,9 @@ side_tables! {
     /// A settled identity's context hint: a name, the words around it and the entity it named.
     /// Key: u8(kind) + hash32(name) + id16(entity).
     DREAMER_IDENTITY_HINT: VaultMeta b"dreamer:identity:v1:hint:" Named;
+    /// The original mention and its resolving evidence, written with the link.
+    /// Key: id16(turn) + hash32(message, span).
+    DREAMER_IDENTITY_RESOLUTION: VaultMeta b"dreamer:identity:v1:resolution:" Named;
     /// OF-023: one Dreamer maintenance write applied at once: its kind, attempt, the finding's
     /// revision, the before-state its effect changed, its receipt and, once the owner reverts
     /// it, the revert. Key: id16 (finding).

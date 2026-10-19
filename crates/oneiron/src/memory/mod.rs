@@ -65,6 +65,7 @@ mod expression_preference;
 pub mod extraction;
 pub mod hook_regen_doors;
 mod inspection;
+pub mod identity_doors;
 mod key_value;
 mod lifted_view;
 mod locality;

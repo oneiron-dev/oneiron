@@ -104,7 +104,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "self.identity.answer",
                 crate::code_run::vault_read::request_schema::<
-                    crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest,
+                    crate::dreamer_runner::maintenance::identity::IdentityAnswerEvidenceRequest,
                 >(),
             ),
             (
@@ -160,6 +160,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.people.get",
                 crate::code_run::vault_read::request_schema::<crate::memory::PersonRequest>(),
+            ),
+            (
+                "vault.people.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::identity_doors::PersonCreateRequest,
+                >(),
+            ),
+            (
+                "vault.entities.look_before_mint",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::identity_doors::IdentityLookupRequest,
+                >(),
+            ),
+            (
+                "vault.identity.mention",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::maintenance::identity::MentionProvenance,
+                >(),
             ),
             (
                 "vault.shape.read",
@@ -4279,9 +4297,14 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.standing.get",
     "self.standing.list",
     "self.standing.edit",
+    "self.identity.answer",
+    "self.identity.settle",
     "vault.diagnostics.list",
     "vault.diagnostics.get",
     "vault.coach.inspect",
+    "vault.people.create",
+    "vault.entities.look_before_mint",
+    "vault.identity.mention",
     "vault.companions.access_requests.answer",
     "vault.personas.preview",
     "vault.personas.export",
@@ -4708,6 +4731,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.standing.edit" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::StandingBlockEditReceipt,
         >(),
+        "self.identity.answer" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_runner::maintenance::identity::IdentitySettled,
+        >(),
+        "self.identity.settle" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_runner::maintenance::identity::IdentityActNow,
+        >(),
         "vault.diagnostics.list" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Vec<crate::memory::DiagnosticEventView>>,
         >(),
@@ -4716,6 +4745,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.coach.inspect" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<crate::memory::CoachInspectionView>,
+        >(),
+        "vault.people.create" => crate::code_run::vault_read::request_schema::<
+            crate::memory::identity_doors::PersonCreated,
+        >(),
+        "vault.entities.look_before_mint" => crate::code_run::vault_read::request_schema::<
+            crate::memory::identity_doors::IdentityLookup,
+        >(),
+        "vault.identity.mention" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_runner::maintenance::identity::IdentityMentionView,
         >(),
         "vault.companions.access_requests.answer" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::CompanionAccessRequestAnswered,
@@ -6158,6 +6196,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.people.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.people.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.entities.look_before_mint" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.identity.mention" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -11358,8 +11417,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::StandingBlockEditRequest = decode(value.clone())?;
         }
         "self.identity.answer" => {
-            let _input: crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest =
-                decode(value.clone())?;
+            let _input: crate::dreamer_runner::maintenance::identity::IdentityAnswerEvidenceRequest = decode(value.clone())?;
         }
         "self.identity.settle" => {
             let _input: crate::dreamer_runner::maintenance::identity::IdentityActNowRequest =
@@ -11398,6 +11456,17 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.people.get" => {
             let _input: crate::memory::PersonRequest = decode(value.clone())?;
+        }
+        "vault.people.create" => {
+            let _input: crate::memory::identity_doors::PersonCreateRequest = decode(value.clone())?;
+        }
+        "vault.entities.look_before_mint" => {
+            let _input: crate::memory::identity_doors::IdentityLookupRequest =
+                decode(value.clone())?;
+        }
+        "vault.identity.mention" => {
+            let _input: crate::dreamer_runner::maintenance::identity::MentionProvenance =
+                decode(value.clone())?;
         }
         "vault.shape.read" => {
             let _input: EmptyRequest = decode(value.clone())?;
@@ -14080,6 +14149,11 @@ pub fn invoke(
         "vault.coach.inspect" => encode(vault_coach_inspect(memory, decode(value)?)?),
         "vault.people.list" => encode(vault_people_list(memory, decode(value)?)?),
         "vault.people.get" => encode(vault_people_get(memory, decode(value)?)?),
+        "vault.people.create" => encode(vault_people_create(memory, decode(value)?)?),
+        "vault.entities.look_before_mint" => {
+            encode(vault_entities_look_before_mint(memory, decode(value)?)?)
+        }
+        "vault.identity.mention" => encode(vault_identity_mention(memory, decode(value)?)?),
         "vault.shape.read" => encode(vault_shape_read(memory, decode(value)?)?),
         "vault.shape.plan" => encode(vault_shape_plan(memory, decode(value)?)?),
         "vault.shape.apply" => encode(vault_shape_apply(memory, decode(value)?)?),
@@ -15729,9 +15803,12 @@ pub fn self_standing_edit(
 }
 pub fn self_identity_answer(
     memory: &Memory<'_>,
-    input: crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest,
+    input: crate::dreamer_runner::maintenance::identity::IdentityAnswerEvidenceRequest,
 ) -> MemoryResult<crate::dreamer_runner::maintenance::identity::IdentitySettled> {
-    memory.identity_answer(&input)
+    memory.identity_answer_with_evidence_as_owner(
+        &memory.embedded_owner("self.identity.answer")?,
+        &input,
+    )
 }
 pub fn self_identity_settle(
     memory: &Memory<'_>,
@@ -15802,6 +15879,27 @@ pub fn vault_people_get(
     input: crate::memory::PersonRequest,
 ) -> MemoryResult<crate::context_board::PersonRow> {
     memory.people_get(&input)
+}
+pub fn vault_people_create(
+    memory: &Memory<'_>,
+    input: crate::memory::identity_doors::PersonCreateRequest,
+) -> MemoryResult<crate::memory::identity_doors::PersonCreated> {
+    memory.people_create_as_owner(&memory.embedded_owner("vault.people.create")?, &input)
+}
+pub fn vault_entities_look_before_mint(
+    memory: &Memory<'_>,
+    input: crate::memory::identity_doors::IdentityLookupRequest,
+) -> MemoryResult<crate::memory::identity_doors::IdentityLookup> {
+    memory.entities_look_before_mint_as_owner(
+        &memory.embedded_owner("vault.entities.look_before_mint")?,
+        &input,
+    )
+}
+pub fn vault_identity_mention(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::maintenance::identity::MentionProvenance,
+) -> MemoryResult<crate::dreamer_runner::maintenance::identity::IdentityMentionView> {
+    memory.identity_mention_as_owner(&memory.embedded_owner("vault.identity.mention")?, &input)
 }
 pub fn vault_shape_read(
     memory: &Memory<'_>,

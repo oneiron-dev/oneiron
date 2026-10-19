@@ -348,19 +348,24 @@ async fn self_identity_answer(
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.identity.answer")?;
+    let caller = facade_actor(server, auth)?;
     let value = input?;
-    let (actor, class) = facade_actor(server, auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    oneiron::task_verb::sdk::validate_input("self.identity.answer", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.identity.answer", value).await?;
+    let (output, listed) = super::host_doors::self_identity_answer(
         server,
-        call,
-        actor,
-        class,
-        "self.identity.answer",
-        value,
-        &producers,
-    )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn self_identity_settle(
     server: &Arc<SyncServer>,
@@ -603,6 +608,87 @@ async fn vault_people_get(
         &producers,
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_people_create(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.people.create")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.people.create", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.people.create", value).await?;
+    let (output, listed) = super::host_doors::vault_people_create(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_entities_look_before_mint(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.entities.look_before_mint")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.entities.look_before_mint", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.entities.look_before_mint", value).await?;
+    let (output, listed) = super::host_doors::vault_entities_look_before_mint(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_identity_mention(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.identity.mention")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.identity.mention", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.identity.mention", value).await?;
+    let (output, listed) = super::host_doors::vault_identity_mention(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn vault_shape_read(
     server: &Arc<SyncServer>,
@@ -17853,6 +17939,11 @@ pub(crate) async fn call_verb(
         "vault.coach.inspect" => vault_coach_inspect(server, call, input).await,
         "vault.people.list" => vault_people_list(server, call, input).await,
         "vault.people.get" => vault_people_get(server, call, input).await,
+        "vault.people.create" => vault_people_create(server, call, input).await,
+        "vault.entities.look_before_mint" => {
+            vault_entities_look_before_mint(server, call, input).await
+        }
+        "vault.identity.mention" => vault_identity_mention(server, call, input).await,
         "vault.shape.read" => vault_shape_read(server, call, input).await,
         "vault.shape.plan" => vault_shape_plan(server, call, input).await,
         "vault.shape.apply" => vault_shape_apply(server, call, input).await,

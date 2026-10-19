@@ -206,6 +206,30 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_people_create(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.people.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_entities_look_before_mint(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.entities.look_before_mint", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_identity_mention(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.identity.mention", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_shape_read(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.shape.read", input)
