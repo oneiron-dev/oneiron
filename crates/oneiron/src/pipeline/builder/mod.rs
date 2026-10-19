@@ -60,7 +60,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) scoped_note_reader: Option<crate::claim::ScopedReadActorKey>,
     /// Where the run's rows go: off this device or not, and each machine a
     /// scoped reader's connection proved (mesh PR2b); see
-    /// [`Self::caller_off_device`].
+    /// [`Self::for_destination`].
     pub(super) destination: crate::settings::ReadDestination,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
