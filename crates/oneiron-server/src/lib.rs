@@ -40,6 +40,7 @@ pub mod connector_call_host;
 mod connector_call_settle;
 mod connector_elicitation;
 pub mod control_keys;
+mod conversation_training;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod credential_resume;
 mod decision_artifact;

@@ -377,6 +377,10 @@ pub struct ServeConfig {
     /// outbox hands authorized mail to the host's sender (OF-415). Unset, no
     /// outbox worker runs.
     pub esign_delivery_outbox_dir: Option<PathBuf>,
+    /// `--publisher-training-outbox-dir`, argv only: where the publisher
+    /// training outbox writes offers and withdrawals and reads the intake's
+    /// receipts (OF-420). Unset, no outbox worker runs.
+    pub publisher_training_outbox_dir: Option<PathBuf>,
 }
 
 impl Default for ServeConfig {
@@ -451,6 +455,7 @@ impl Default for ServeConfig {
             maximum_tier: false,
             device_class: vault.machine_device_class,
             esign_delivery_outbox_dir: None,
+            publisher_training_outbox_dir: None,
         }
     }
 }
@@ -531,6 +536,10 @@ impl fmt::Debug for ServeConfig {
             .field("maximum_tier", &self.maximum_tier)
             .field("device_class", &self.device_class)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
+            .field(
+                "publisher_training_outbox_dir",
+                &self.publisher_training_outbox_dir,
+            )
             .finish()
     }
 }

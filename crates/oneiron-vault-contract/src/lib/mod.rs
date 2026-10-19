@@ -12,6 +12,8 @@
 //! conformance before moving the pin.
 
 pub mod artifact_origin;
+/// The publisher training outbox: offers, controls and receipts (OF-420).
+pub mod conversation_training;
 mod ctl;
 /// The vault's data-key escrow capsules on their way to the registry.
 pub mod escrow;

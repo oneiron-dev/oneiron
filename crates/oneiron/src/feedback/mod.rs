@@ -21,8 +21,11 @@
 //!   text through ([`TextFilter`], [`apply_recognised_spans`],
 //!   [`FilteredFeedback`]).
 //! - The "Learn from my conversations" egress check ([`eligible`]) and the
-//!   only door that hands conversation text toward training the models
-//!   Oneiron ships ([`share_for_publisher_training`]).
+//!   two doors that hand conversation text toward training the models
+//!   Oneiron ships: [`share_for_publisher_training`], over a sink its caller
+//!   supplies, and the publisher training outbox
+//!   ([`Vault::offer_conversation_training`](crate::Vault::offer_conversation_training)),
+//!   which publishes only what a release lets through.
 //! - Per-bundle, per-destination consent over the existing
 //!   [`ConsentAskCard`](crate::genui::ConsentAskCard) surface ([`feedback_approval_card`],
 //!   [`validate_feedback_approval`]).
@@ -125,8 +128,12 @@ pub use self::consent::{
 };
 pub use self::conversation_training::{
     ConversationSource, ConversationText, ConversationTrainingChoice, Eligibility,
-    NO_PUBLISHER_TRAINING_INTAKE, NoChoicesYet, PublisherTrainingSink, ShareOutcome, ShareWithheld,
-    Withheld, eligible, share_for_publisher_training,
+    IntakeReceiptKey, IntakeRecipient, NO_PUBLISHER_TRAINING_INTAKE, NoChoicesYet,
+    PublisherTrainingLifecycle, PublisherTrainingSink, ReceiptCursor, ReceivedTrainingReceipt,
+    ReleaseDecision, SealedTrainingOffer, ShareOutcome, ShareWithheld, SignedTrainingControl,
+    TrainingControlId, TrainingOfferPass, TrainingQueued, TrainingReceiptPage,
+    TrainingSubmissionId, TrainingUnavailable, TrainingUpkeep, TrainingWithheld, Withheld,
+    eligible, share_for_publisher_training,
 };
 pub use self::dispatch::{
     FEEDBACK_RECEIPT_FIELD_APPROVAL_RECEIPT_REF, FEEDBACK_RECEIPT_FIELD_BUNDLE_DIGEST,
