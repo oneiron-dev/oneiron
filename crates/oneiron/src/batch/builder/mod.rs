@@ -45,6 +45,8 @@ pub struct BatchBuilder<'a> {
     text_births: std::collections::HashMap<EntityId, Vec<EntityId>>,
     /// The Rule A birth envelope of each row this batch births.
     births: Vec<(EntityId, crate::provenance::birth::RowBirth)>,
+    /// The body file each ASSET put queued as a manifest names (FIX 3677).
+    asset_files: std::collections::HashMap<EntityId, crate::store::AssetBodyFacts>,
     #[cfg(feature = "sync")]
     import_tier: crate::sync::client::ImportTier,
     /// Op indexes of the replicated puts a federated import tier queued; their
@@ -104,6 +106,7 @@ impl<'a> BatchBuilder<'a> {
             birth_mask: None,
             text_births: std::collections::HashMap::new(),
             births: Vec::new(),
+            asset_files: std::collections::HashMap::new(),
             #[cfg(feature = "sync")]
             import_tier: crate::sync::client::ImportTier::OwnDevice,
             #[cfg(feature = "sync")]

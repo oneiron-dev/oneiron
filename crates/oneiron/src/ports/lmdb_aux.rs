@@ -183,6 +183,52 @@ impl BlobStore for Vault {
         }
         Ok(Some(row.body))
     }
+    /// FIX 3677: the body streams into the body directory, and a long opaque
+    /// one is bound as its ASSET's body file; any other goes in its row, as
+    /// [`BlobStore::port_blob_put`] puts it.
+    fn port_blob_put_staged(
+        &self,
+        txn: &mut RwTxn<'_>,
+        reference: &EntityId,
+        body: &mut dyn std::io::Read,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<[u8; 32]> {
+        let staged = self.stage_asset_body(body, None)?;
+        let hash = staged.facts().blake3;
+        let id = blob_artifact_asset_entity_id(&hash)?;
+        if id == *reference {
+            return Err(Error::InvariantViolation("blob cannot reference itself"));
+        }
+        self.put_asset_body_in_txn(txn, &id, occurred, learned_at, &staged)?;
+        self.store
+            .vault_meta
+            .put(txn, &blob_artifact_asset_ref_key(&hash, reference), &[])?;
+        Ok(hash)
+    }
+    fn port_blob_reader(
+        &self,
+        txn: &RoTxn<'_>,
+        hash: &[u8; 32],
+        read: &mut dyn FnMut(&mut dyn std::io::Read) -> Result<()>,
+    ) -> Result<bool> {
+        let id = blob_artifact_asset_entity_id(hash)?;
+        let checked_read = |body: &mut dyn std::io::Read| -> Result<()> {
+            let mut checked = BlobDigestReader {
+                inner: body,
+                hasher: blake3::Hasher::new(),
+            };
+            read(&mut checked)?;
+            std::io::copy(&mut checked, &mut std::io::sink())?;
+            if checked.hasher.finalize().as_bytes() != hash {
+                return Err(Error::CorruptedIndex("blob content hash"));
+            }
+            Ok(())
+        };
+        Ok(self
+            .with_asset_body_reader_in_txn(txn, &id, checked_read)?
+            .is_some())
+    }
     fn port_blob_delete(
         &self,
         txn: &mut RwTxn<'_>,
@@ -239,6 +285,20 @@ impl BlobStore for Vault {
         self.port_entity_delete(txn, &blob_artifact_asset_entity_id(hash)?)
     }
 }
+/// A blob read as it streams, hashed so the whole read can be checked.
+struct BlobDigestReader<'a> {
+    inner: &'a mut dyn std::io::Read,
+    hasher: blake3::Hasher,
+}
+
+impl std::io::Read for BlobDigestReader<'_> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(out)?;
+        self.hasher.update(&out[..read]);
+        Ok(read)
+    }
+}
+
 impl JobQueue for Vault {
     fn port_job_enqueue_scoped(
         &self,
@@ -427,6 +487,11 @@ impl Vault {
         };
         if super::safe_read::body_is_stale(&body) {
             return Ok(None);
+        }
+        // A file-plane ASSET lends its body read from its file, never the
+        // manifest its row keeps (FIX 3677).
+        if let Some(manifest) = crate::store::asset_file_in_txn(&self.store, txn, &id, &body)? {
+            return Ok(Some(Cow::Owned(self.asset_file_body(&manifest)?)));
         }
         // A body migrated into an entity document resolves as
         // `port_entity_get` resolves it; only an unmigrated body is lent in place.

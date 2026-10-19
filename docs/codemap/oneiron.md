@@ -409,7 +409,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/builder/mod.rs` | src | s | 1 struct · 6 crate-vis | BatchBuilder | The atomic multi-database write-batch builder and its two terminals |
 | `src/batch/builder/ops.rs` | src | s | 3 crate-vis | — | Batch op vocabulary and shared op constructors |
 | `src/batch/builder/preflight.rs` | src | s | 1 crate-vis | — | Claim-gate preflight loop including CommitmentGapDecay arms |
-| `src/batch/builder/puts.rs` | src | m | 2 fn · 11 crate-vis | — | Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door |
+| `src/batch/builder/puts.rs` | src | m | 2 fn · 12 crate-vis | — | Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door |
 | `src/batch/child_of_overlay.rs` | src | m | 15 crate-vis | — | — |
 | `src/batch/claim_candidate_apply.rs` | src | s | 4 crate-vis | — | — |
 | `src/batch/claim_materialization.rs` | src | m | 20 crate-vis | — | Exact-operation envelope handoff |
@@ -454,7 +454,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/tests.rs` | test | L | — | — | — |
 | `src/batch/facet_identity.rs` | src | s | 2 crate-vis | — | FACET write checks: the local identity-body refusal, immutable substrate identity and retired privacy axes |
 | `src/batch/facet_validation.rs` | src | s | 6 crate-vis | — | — |
-| `src/batch/gate_mode.rs` | src | s | 14 crate-vis | — | — |
+| `src/batch/gate_mode.rs` | src | s | 15 crate-vis | — | — |
 | `src/batch/gate_staging.rs` | src | s | 1 crate-vis | — | — |
 | `src/batch/gate_staging/tests.rs` | test | s | — | — | — |
 | `src/batch/leader_chat_admission.rs` | src | s | 1 crate-vis | — | Final-state leader-chat TURN candidates, independent of batch op order |
@@ -476,7 +476,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/put_apply/owned_body.rs` | src | s | 1 crate-vis | — | Refuse generic body writes that bypass a storage-owned document or conversation ledger |
 | `src/batch/put_apply/put_entity_update.rs` | src | s | 3 crate-vis | — | SKILL body validators shared by the put and update arms |
 | `src/batch/put_apply/put_staging.rs` | src | m | 26 crate-vis | — | Body/index/edge row staging helpers shared by the put and update paths |
-| `src/batch/put_apply/request.rs` | src | s | 12 crate-vis | — | The one typed request `apply_put` takes: the row, the options that govern how it is admitted, and the… |
+| `src/batch/put_apply/request.rs` | src | s | 13 crate-vis | — | The one typed request `apply_put` takes: the row, the options that govern how it is admitted, and the… |
 | `src/batch/recovery_shell.rs` | src | s | 1 crate-vis | — | Header-only recovery of a retained soft-delete shell, never a body put |
 | `src/batch/secret_scan.rs` | src | L | 1 enum · 1 re-export · 37 crate-vis | SecretScanMode | — |
 | `src/batch/secret_scan/container.rs` | src | s | 12 crate-vis | — | Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office… |
@@ -502,7 +502,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/tests.rs` | test | m | — | — | — |
 | `src/batch/secret_scan/whole_read.rs` | src | m | 10 crate-vis | — | The release doors' whole read of a value: its text, and its encoding as the write door reads a body's bytes |
 | `src/batch/secret_scan/wordlist.rs` | src | s | 1 crate-vis | — | BIP39 English word list (bitcoin/bips bip-0039), sorted for shape checks |
-| `src/batch/short_id.rs` | src | s | 1 fn · 9 crate-vis | — | — |
+| `src/batch/short_id.rs` | src | s | 1 fn · 10 crate-vis | — | — |
 | `src/batch/tests/authority_log.rs` | test | L | — | — | Authority log, first-seen fold, eviction and identity topology |
 | `src/batch/tests/facet_taint_session.rs` | test | m | — | — | Facet-of validation, taint guard, session apply and live-overlay exclusion |
 | `src/batch/tests/habit_streak.rs` | test | m | — | — | Habit check-in rules and derived streak counters |
@@ -3211,7 +3211,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/provenance/actor_substrate.rs` | src | s | 1 fn · 1 const · 8 crate-vis | — | Actor-class validation, legacy evidence transition, and model substrate codec |
 | `src/provenance/archive.rs` | src | s | 2 crate-vis | — | Foreign archive provenance reconstructed through the owning lifecycle |
 | `src/provenance/birth.rs` | src | m | 3 struct · 1 enum · 9 fn · 1 const · 11 crate-vis | RowBirth, WithheldKey, WithheldRef, WithheldRole | Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the… |
-| `src/provenance/body.rs` | src | s | 3 struct · 2 enum · 3 fn · 9 crate-vis | BodyLocation, BodyRef, BodyState, OwnedBody, RetainedResultProvenance | Who owns a body and whether it is whole |
+| `src/provenance/body.rs` | src | s | 3 struct · 2 enum · 3 fn · 10 crate-vis | BodyLocation, BodyRef, BodyState, OwnedBody, RetainedResultProvenance | Who owns a body and whether it is whole |
 | `src/provenance/codec.rs` | src | m | 1 struct · 3 fn · 2 crate-vis | EdgeProvenanceClaimBody | Edge-provenance value record and its fail-closed MessagePack gate |
 | `src/provenance/derived_attachment.rs` | src | s | 3 crate-vis | — | Validate generated support evidence at the provenance write door |
 | `src/provenance/edge_ref.rs` | src | s | 1 struct · 1 enum · 4 fn · 4 const · 10 crate-vis | EdgeRef, SupersessionStatus | Pinned predicate, body-key vocabulary, EdgeRef addressing, and supersession status |
@@ -3466,18 +3466,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scope_summary/word_sources.rs` | src | s | 2 crate-vis | — | Where the words of one stored revision came from |
 | `src/secret_custody/carrier_marks.rs` | src | s | 3 crate-vis | — | Carriers the historical lift sweep marked (OF-067, Engine ruling D = a) |
 | `src/secret_custody/codec.rs` | src | m | 2 fn · 8 crate-vis | — | MessagePack body codec for custody records, bands, floors, and bindings |
-| `src/secret_custody/control.rs` | src | m | 4 struct · 2 enum · 4 fn · 2 re-export · 12 crate-vis | CustodyDelivery, CustodyKeptHere, CustodyPlan, SecretCustodyWork, SecretRevoked, SecretRotated | Custody control on the shared owner-work request (WILL L04 row 04): every change to a portable secret's… |
+| `src/secret_custody/control.rs` | src | m | 4 struct · 2 enum · 4 fn · 2 re-export · 13 crate-vis | CustodyDelivery, CustodyKeptHere, CustodyPlan, SecretCustodyWork, SecretRevoked, SecretRotated | Custody control on the shared owner-work request (WILL L04 row 04): every change to a portable secret's… |
 | `src/secret_custody/control/doors.rs` | src | m | 3 struct · 3 fn | CustodyCandidate, SealedCustodyChange, SecretCustodyView | The owner's custody doors beside register, rotate and revoke (WILL L04 row 04): a rewrap, a register or… |
 | `src/secret_custody/control/execute.rs` | src | m | 3 crate-vis | — | The holder's arm for an active custody change (WILL L04 row 04): the install a register, rotate or rewrap… |
-| `src/secret_custody/control/input.rs` | src | m | 21 crate-vis | — | The protected input of an active custody change (WILL L04 row 04): what a register, rotate or bind hands its… |
+| `src/secret_custody/control/input.rs` | src | m | 25 crate-vis | — | The protected input of an active custody change (WILL L04 row 04): what a register, rotate or bind hands its… |
 | `src/secret_custody/control/manifest.rs` | src | s | 1 enum · 2 fn · 3 crate-vis | CustodyManifestCheck | A sealed register whose surface stated no `manifest_ref` (CALLS CUSTODY_MANIFEST_UNSTATED) |
+| `src/secret_custody/control/pending_revoke.rs` | src | s | 6 crate-vis | — | A revoke this install could not carry for the owner when he made it (FIX 4851) |
 | `src/secret_custody/control/permits.rs` | src | s | 6 crate-vis | — | Who may hold an active custody change's bytes (WILL L04 row 04): the recipients the owner permits, each… |
-| `src/secret_custody/control/revoked.rs` | src | s | 6 crate-vis | — | The owner's revoke on a custody request (WILL L04 row 04): its carrier records it with no byte, and every… |
+| `src/secret_custody/control/revoked.rs` | src | s | 7 crate-vis | — | The owner's revoke on a custody request (WILL L04 row 04): its carrier records it with no byte, and every… |
 | `src/secret_custody/control/roster.rs` | src | s | 1 crate-vis | — | The holder's own rewrap when the roster gains one of the owner's machines (WILL L04 row 04, CALLS… |
 | `src/secret_custody/doors.rs` | src | m | 4 fn · 16 crate-vis | — | Name index, borrowing admission projection, sealed put, and Vault doors |
 | `src/secret_custody/floor.rs` | src | m | 2 fn · 8 crate-vis | — | Vault floor resolution plus the shared strict POLICY_MANIFEST walk |
 | `src/secret_custody/found_keys.rs` | src | m | 3 struct · 1 enum · 2 fn · 1 const · 1 re-export · 11 crate-vis | FoundKeyAction, FoundKeyCard, FoundKeyNotice, FoundKeySettled | The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record… |
-| `src/secret_custody/found_keys/actions.rs` | src | m | 3 fn · 1 const · 2 crate-vis | — | The owner's four answers to a found key: rotate (the rotate door settles it), delete, grant and not a secret |
+| `src/secret_custody/found_keys/actions.rs` | src | m | 3 fn · 1 const · 3 crate-vis | — | The owner's four answers to a found key: rotate (the rotate door settles it), delete, grant and not a secret |
 | `src/secret_custody/known_values.rs` | src | m | 1 const · 11 crate-vis | — | The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later… |
 | `src/secret_custody/masked_files.rs` | src | s | 1 enum · 3 fn · 13 crate-vis | SecretSight | Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2) |
 | `src/secret_custody/mod.rs` | src | s | 9 re-export · 21 crate-vis | — | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
@@ -3492,7 +3493,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody/tests.rs` | test | L | — | — | SECRET-01 (ONE-1919) unit tests: custody classes, record round-trip and redacted `Debug`, the name index… |
 | `src/secret_custody/transition.rs` | src | m | 1 fn · 17 crate-vis | — | OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as a custody… |
 | `src/secret_custody/transition/payload.rs` | src | m | 14 crate-vis | — | The bytes of a custody transition: its strict codec, the transcript its signature covers, and the value… |
-| `src/secret_custody/transition/rebind.rs` | src | s | 2 crate-vis | — | A rewrap's bindings on a machine that already holds its record (WILL L04 row 04, CALLS CUSTODY_BIND_TRAVEL)… |
+| `src/secret_custody/transition/rebind.rs` | src | m | 2 crate-vis | — | A rewrap's bindings on a machine that already holds its record (WILL L04 row 04, CALLS CUSTODY_BIND_TRAVEL)… |
 | `src/secret_custody/types.rs` | src | m | 5 struct · 1 enum · 9 fn · 5 const · 1 re-export | SecretBinding, SecretCustodyFloor, SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus, TierBand | Custody domain types: classes, tiers, bands, floors, bindings, records, and metadata |
 | `src/secret_custody/use_handle.rs` | src | m | 3 struct · 2 enum · 2 fn · 3 const · 1 static · 1 re-export · 9 crate-vis | SecretUseDecision, SecretUseOperation, SecretUseOutcome, SecretUseReceipt, SecretUseSend | `self.use(handle)` (OF-560; ARCH-0069 "One use(handle) call"): an agent hands a secret to one trusted… |
 | `src/secret_custody/use_handle/bind.rs` | src | s | 2 struct · 2 fn · 1 const | SecretBindRequest, SecretBound | The owner binds a secret to an effector (OF-560): the door a handle with no binding names, so the secret it… |
@@ -3513,7 +3514,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_manifest/tests.rs` | test | s | — | — | SECRET-01 (ONE-1919) manifest tests: parse, narrow-only validation, the widening-reject fixture |
 | `src/secret_rotation.rs` | src | m | 1 struct · 2 enum · 8 fn · 5 const · 11 crate-vis | ArtifactTaintState, RotationKind, RotationReceipt | SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build… |
 | `src/secret_rotation/owner_door.rs` | src | m | 3 fn · 4 crate-vis | — | The owner's rotation door and the one transaction body every rotation shares |
-| `src/secret_rotation/revoke.rs` | src | s | 4 crate-vis | — | Revocation: terminal value death everywhere the vault reaches |
+| `src/secret_rotation/revoke.rs` | src | s | 5 crate-vis | — | Revocation: terminal value death everywhere the vault reaches |
 | `src/secret_rotation/tests.rs` | test | L | — | — | SECRET-04 (ONE-1922) unit tests |
 | `src/secret_snapshot.rs` | src | s | 3 struct · 2 fn · 9 crate-vis | SecretLiftProposal, SnapshotCustodyReport, SnapshotExclusionSet | Snapshot-time secret custody filtering (ARCH-0069 S4/S5) |
 | `src/secret_snapshot/tests.rs` | test | s | — | — | — |
@@ -3563,7 +3564,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/serialize/json_format.rs` | src | s | 2 crate-vis | — | JSON row and section shaping |
 | `src/serialize/l2_prefix.rs` | src | s | 1 crate-vis | — | Stable L2 prefix framing shared by every context-pack format |
 | `src/serialize/markdown_plaintext_format.rs` | src | s | 3 crate-vis | — | Markdown table and compact plaintext writers, plus the shared value-to-text rendering they use |
-| `src/serialize/mod.rs` | src | s | 5 re-export · 9 crate-vis | — | Context-pack serialization |
+| `src/serialize/mod.rs` | src | s | 5 re-export · 10 crate-vis | — | Context-pack serialization |
 | `src/serialize/okf_bundle.rs` | src | m | 2 crate-vis | — | "Export to OKF" (OF-222): the vault as an Open Knowledge Format v0.1 bundle for importing into other tools |
 | `src/serialize/pack_archive.rs` | src | s | 1 struct · 3 crate-vis | ExportPackInstance | Typed runtime-pack archive bodies: identity is data, payloads always pass nulling |
 | `src/serialize/pack_entry.rs` | src | m | 1 struct · 4 fn · 4 const · 7 crate-vis | SerializeConfig | Entry points and per-format dispatch for context-pack serialization |
@@ -3817,7 +3818,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/speculative.rs` | src | m | 3 struct · 2 enum · 5 fn · 2 const · 2 crate-vis | SpeculativeFinal, SpeculativeFireDecision, SpeculativePartial, SpeculativeSession, SpeculativeSessionConfig | EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7) |
 | `src/speculative/scoped.rs` | src | s | 3 fn · 3 crate-vis | — | Credential-bound candidate admission, inside every speculative pass |
 | `src/store/archive_scratch.rs` | src | s | 3 crate-vis | — | FIX 3678 (rule 5): the scratch environment a whole-vault import keeps its row index in |
-| `src/store/body_store.rs` | src | m | 26 crate-vis | — | File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++) |
+| `src/store/asset_body/mod.rs` | src | m | 21 crate-vis | — | ASSET bodies on the file plane (FIX 3677; Engine rule (b), 10-18) |
+| `src/store/asset_body/read.rs` | src | s | 4 crate-vis | — | Reading ASSET bodies whatever plane holds them (FIX 3677): a logical reader that streams a body file… |
+| `src/store/asset_body/stage.rs` | src | m | 5 crate-vis | — | Staging an ASSET body from a reader before the transaction that puts it (FIX 3677): the body streams into… |
+| `src/store/body_store.rs` | src | m | 32 crate-vis | — | File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++) |
 | `src/store/channel_identity_receipts.rs` | src | s | 2 struct · 4 fn · 2 crate-vis | ChannelIdentityLifecycleReceiptId, ChannelIdentityLifecycleReceiptRecord | Append-only channel-identity lifecycle receipt ledger |
 | `src/store/commitment_due.rs` | src | m | 15 crate-vis | — | The commitment due index (CMT-2, ONE-1539) |
 | `src/store/diagnostics.rs` | src | s | 1 struct · 3 fn | Diagnostics | The content-free counters one open vault owns |
@@ -3844,7 +3848,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/local_queue_budget.rs` | src | s | 1 crate-vis | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
 | `src/store/local_replica.rs` | src | m | 6 crate-vis | — | Local-only removal of one canonical window's replica (OF-534 demotion) |
 | `src/store/local_replica/left_env.rs` | src | m | 3 crate-vis | — | Local purge of a left shared vault's dedicated environment (OF-158) |
-| `src/store/mod.rs` | src | s | 1 mod · 13 re-export · 14 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | s | 1 mod · 13 re-export · 15 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/open_gates/embedding_transform_gates.rs` | src | s | 5 crate-vis | — | The embedding-transform pin: how a vault's vectors were made, beside the model that made them |
 | `src/store/open_gates/hnsw_model_gates.rs` | src | m | 1 fn · 18 crate-vis | — | HNSW compatibility encode/decode/format, embedding-model preflight and persist gates, temporal migration… |
 | `src/store/open_gates/manifest_storage_gates.rs` | src | m | 31 crate-vis | — | Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage… |
