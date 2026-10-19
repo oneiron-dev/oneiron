@@ -29,6 +29,7 @@
 //! A leased run's planned team writes its start on the run's own seat and
 //! line, and a planned team's leader runs with the exact pattern pack its
 //! launch froze (DOOR-111 S4c, `pattern_launch`).
+mod craft;
 pub(super) mod pattern_launch;
 
 use std::collections::{BTreeMap, HashSet};
@@ -569,6 +570,8 @@ fn run_bound(
     let leader =
         pattern_launch::leader_exposure(vault, &status.attempt, &mut config, continues, unix_now())
             .map_err(text)?;
+    craft::append_resident_craft(vault, &status.attempt, actor, &mut config, continues)
+        .map_err(text)?;
     // A project conversation run runs with its skill's SKILL.md (OF-501); a
     // run whose skill does not load is refused, never run unskilled. The
     // body is tagged where it went, so the run's first step is captured with
