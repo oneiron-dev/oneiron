@@ -30,18 +30,18 @@
 //! The commitment names the sealed manifest by digest, and a reader verifies
 //! its signature against the signers its key trusts before the manifest opens
 //! (`commitment`).
-use std::fs::File;
-use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+mod sink;
 
-use getrandom::SysRng;
-use oneiron_crypto::{
-    Argon2Cost, Envelope, Kek, MAX_PLAINTEXT_LEN, OpenKey, OpenPolicy, Purpose, SealKey,
-    SealParams, SuiteId, WrapType, seal,
-};
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
+
+use oneiron_crypto::{Kek, MAX_PLAINTEXT_LEN, Purpose, SuiteId};
 use serde::{Deserialize, Serialize};
 
-use super::commitment::{self, ChainHead, CheckpointSigner, Link, Trust};
+use self::sink::Sealer;
+pub(super) use self::sink::{ArtifactBody, write_artifact};
+use super::commitment::{self, CheckpointSigner, Trust};
 use crate::world_keys::{
     CarriedVaultKey, OpenedDataKey, VaultKeyUnlock, VaultKeyWrapInfo, VaultPageSeal, refused,
 };
@@ -108,6 +108,9 @@ impl ArtifactKind {
 pub struct CheckpointKey {
     vault_id: [u8; 32],
     kek: Kek,
+    /// The vault's body-file wrap key, which opens the sealed body files'
+    /// key rows the artifact's image carries (FIX 5348).
+    body_wrap: zeroize::Zeroizing<[u8; 32]>,
     trust: Trust,
     /// The data key a carried wrap opened to, kept opaque for a sealed vault
     /// restored from the artifact ([`Self::restored_page_seal`]); `None` for
@@ -163,6 +166,7 @@ impl CheckpointKey {
         Ok(Self {
             vault_id: prelude.vault_id,
             kek: Kek::from_bytes(*key),
+            body_wrap: opened.subkey(crate::store::BODY_FILE_WRAP_CONTEXT),
             trust: Trust::Nobody,
             opened: Some(opened),
         })
@@ -208,6 +212,11 @@ impl CheckpointKey {
             .map(OpenedDataKey::restored_page_seal)
             .transpose()
     }
+
+    /// The seal the artifact's sealed body files' key rows open under.
+    pub(super) fn body_seal(&self) -> crate::store::BodySeal {
+        crate::store::BodySeal::new(self.vault_id, &self.body_wrap)
+    }
 }
 
 impl Vault {
@@ -219,6 +228,7 @@ impl Vault {
         Ok(CheckpointKey {
             vault_id: *self.vault_id().as_bytes(),
             kek: Kek::from_bytes(*self.vault_subkey(SEAL_CONTEXT)?),
+            body_wrap: self.vault_subkey(crate::store::BODY_FILE_WRAP_CONTEXT)?,
             trust: Trust::Device(self.device_keystore()?),
             opened: None,
         })
@@ -236,6 +246,7 @@ impl Vault {
             CheckpointKey {
                 vault_id: *self.vault_id().as_bytes(),
                 kek: Kek::from_bytes(*key),
+                body_wrap: self.vault_subkey(crate::store::BODY_FILE_WRAP_CONTEXT)?,
                 trust: Trust::Nobody,
                 opened: None,
             },
@@ -308,237 +319,6 @@ impl Prelude {
     fn carried(&self) -> Result<CarriedVaultKey> {
         rmp_serde::from_slice(&self.key_header).map_err(|_| codec())
     }
-}
-
-/// Seals and opens one artifact's envelopes.
-struct Sealer<'k> {
-    key: &'k CheckpointKey,
-    purpose: Purpose,
-    commitment: [u8; 32],
-    snapshot: [u8; 32],
-}
-
-impl Sealer<'_> {
-    /// Snapshot id ‖ u32be stream ‖ u32be index: each envelope's recipient.
-    fn recipient(&self, stream: u32, index: u32) -> [u8; 40] {
-        let mut out = [0u8; 40];
-        out[..32].copy_from_slice(&self.snapshot);
-        out[32..36].copy_from_slice(&stream.to_be_bytes());
-        out[36..].copy_from_slice(&index.to_be_bytes());
-        out
-    }
-
-    fn seal(&self, stream: u32, index: u32, plaintext: &[u8]) -> Result<Vec<u8>> {
-        let compressed = zstd::bulk::compress(plaintext, ZSTD_LEVEL)?;
-        let recipient = self.recipient(stream, index);
-        let params = SealParams {
-            suite: AEAD,
-            purpose: self.purpose,
-            epoch: EPOCH,
-            key_id: &self.commitment,
-            recipient: &recipient,
-            vault_id: &self.key.vault_id,
-        };
-        let envelope = seal(
-            &params,
-            SealKey::SymmetricKek(&self.key.kek),
-            &compressed,
-            &mut SysRng,
-        )
-        .map_err(|_| refused("sealing the checkpoint failed"))?;
-        Ok(envelope.to_bytes())
-    }
-
-    fn open(&self, stream: u32, index: u32, envelope: &[u8]) -> Result<Vec<u8>> {
-        let recipient = self.recipient(stream, index);
-        let policy = OpenPolicy {
-            purpose: self.purpose,
-            vault_id: &self.key.vault_id,
-            recipient: &recipient,
-            key_id: &self.commitment,
-            wraps: &[WrapType::SymmetricKek],
-            aead_suites: &[AEAD],
-            kem_suites: &[],
-            min_epoch: EPOCH,
-            argon2_max: Argon2Cost::RFC9106_SECOND,
-        };
-        let compressed = Envelope::parse(envelope)
-            .map_err(|_| codec())?
-            .open(OpenKey::SymmetricKek(&self.key.kek), &policy)
-            .map_err(|_| refused("the checkpoint does not open with this key"))?;
-        zstd::bulk::decompress(&compressed, CHUNK_LEN).map_err(|_| codec())
-    }
-}
-
-/// Writes the artifact at `path`, create-new and owner-only: the image, then
-/// each body `open_body` hands back, then the manifest, then the commitment
-/// `link` signs. Returns the image's BLAKE3 and the chain head the signed
-/// commitment makes. A write that fails removes the file, so no part of one is
-/// left.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn write_artifact(
-    path: &Path,
-    key: &CheckpointKey,
-    kind: ArtifactKind,
-    carried: &CarriedVaultKey,
-    link: &Link,
-    created_at: u64,
-    image: &[u8],
-    bodies: &[([u8; 32], u64)],
-    mut open_body: impl FnMut(&[u8; 32], u64) -> Result<File>,
-) -> Result<([u8; 32], ChainHead)> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let file = options.open(path)?;
-    let mut partial = Partial(Some(path.to_path_buf()));
-    let mut snapshot = [0u8; 32];
-    crate::world_keys::os_fill(&mut snapshot)?;
-    let key_header = rmp_serde::to_vec_named(carried).map_err(|_| codec())?;
-    let len = u32::try_from(key_header.len())
-        .ok()
-        .filter(|len| *len as usize <= MAX_KEY_HEADER)
-        .ok_or_else(codec)?;
-    let mut sink = Sink {
-        out: BufWriter::new(file),
-        offset: 0,
-        sealer: Sealer {
-            key,
-            purpose: kind.purpose(),
-            commitment: *carried.commitment(),
-            snapshot,
-        },
-    };
-    sink.put(MAGIC)?;
-    sink.put(&VERSION.to_be_bytes())?;
-    sink.put(&[kind.code()])?;
-    sink.put(&key.vault_id)?;
-    sink.put(&snapshot)?;
-    sink.put(&len.to_be_bytes())?;
-    sink.put(&key_header)?;
-    let image = sink.stream(IMAGE_STREAM, &mut &image[..])?;
-    let mut sealed_bodies = Vec::with_capacity(bodies.len());
-    for (index, (digest, len)) in bodies.iter().enumerate() {
-        let stream = u32::try_from(index + 1)
-            .ok()
-            .filter(|stream| *stream != MANIFEST_STREAM)
-            .ok_or_else(codec)?;
-        let entry = sink.stream(stream, &mut open_body(digest, *len)?)?;
-        // A body file is named by its digest; one that reads otherwise is
-        // refused here, not found out at a restore.
-        if entry.len != *len || entry.digest != *digest {
-            return Err(Error::CorruptedIndex("code-run result body file"));
-        }
-        sealed_bodies.push(entry);
-    }
-    let manifest = Manifest {
-        version: VERSION,
-        kind: kind.code(),
-        vault_id: key.vault_id,
-        snapshot,
-        epoch: EPOCH,
-        created_at,
-        key_header: *blake3::hash(&key_header).as_bytes(),
-        image,
-        bodies: sealed_bodies,
-    };
-    let manifest_at = sink.offset;
-    let bytes = rmp_serde::to_vec_named(&manifest).map_err(|_| codec())?;
-    let envelope = sink.sealer.seal(MANIFEST_STREAM, 0, &bytes)?;
-    sink.frame(&envelope)?;
-    let commitment = commitment::new_commitment(
-        link,
-        key.vault_id,
-        kind.code(),
-        snapshot,
-        *blake3::hash(&envelope).as_bytes(),
-        created_at,
-    )?;
-    let (commitment, signature, head) = link.sign(&commitment)?;
-    sink.frame(&commitment)?;
-    sink.frame(&signature)?;
-    sink.put(&manifest_at.to_be_bytes())?;
-    let file = sink.out.into_inner().map_err(|error| error.into_error())?;
-    file.sync_all()?;
-    partial.0 = None;
-    Ok((manifest.image.digest, head))
-}
-
-/// The file a write is making, removed unless the write finishes.
-struct Partial(Option<PathBuf>);
-
-impl Drop for Partial {
-    fn drop(&mut self) {
-        if let Some(path) = self.0.take() {
-            let _ = std::fs::remove_file(path);
-        }
-    }
-}
-
-struct Sink<'k> {
-    out: BufWriter<File>,
-    offset: u64,
-    sealer: Sealer<'k>,
-}
-
-impl Sink<'_> {
-    fn put(&mut self, bytes: &[u8]) -> Result<()> {
-        self.out.write_all(bytes)?;
-        self.offset += bytes.len() as u64;
-        Ok(())
-    }
-
-    fn frame(&mut self, envelope: &[u8]) -> Result<()> {
-        let len = u32::try_from(envelope.len()).map_err(|_| codec())?;
-        self.put(&len.to_be_bytes())?;
-        self.put(envelope)
-    }
-
-    /// Seals `source` as `stream`, chunk by chunk.
-    fn stream(&mut self, stream: u32, source: &mut impl Read) -> Result<StreamEntry> {
-        let mut hasher = blake3::Hasher::new();
-        let mut chunks = Vec::new();
-        let mut len = 0u64;
-        let mut buffer = vec![0u8; CHUNK_LEN];
-        loop {
-            let filled = read_full(source, &mut buffer)?;
-            if filled == 0 {
-                break;
-            }
-            hasher.update(&buffer[..filled]);
-            len += filled as u64;
-            let index = u32::try_from(chunks.len()).map_err(|_| codec())?;
-            let envelope = self.sealer.seal(stream, index, &buffer[..filled])?;
-            chunks.push(*blake3::hash(&envelope).as_bytes());
-            self.frame(&envelope)?;
-            if filled < CHUNK_LEN {
-                break;
-            }
-        }
-        Ok(StreamEntry {
-            len,
-            digest: *hasher.finalize().as_bytes(),
-            chunks,
-        })
-    }
-}
-
-/// Reads until `buffer` is full or `source` ends; returns how much it holds.
-fn read_full(source: &mut impl Read, buffer: &mut [u8]) -> Result<usize> {
-    let mut filled = 0;
-    while filled < buffer.len() {
-        match source.read(&mut buffer[filled..]) {
-            Ok(0) => break,
-            Ok(read) => filled += read,
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    Ok(filled)
 }
 
 /// An artifact whose manifest and image have opened.
@@ -705,7 +485,12 @@ fn read_at(file: &mut File, at: u64, len: u64) -> Result<Vec<u8>> {
 }
 
 impl<'k> SealedBodies<'k> {
-    /// Each body's BLAKE3 and length, in the manifest's order.
+    /// The key the artifact opened with.
+    pub(super) fn checkpoint_key(&self) -> &'k CheckpointKey {
+        self.sealer.key
+    }
+
+    /// Each body stream's BLAKE3 and length, in the manifest's order.
     pub(super) fn list(&self) -> Vec<([u8; 32], u64)> {
         self.streams
             .iter()

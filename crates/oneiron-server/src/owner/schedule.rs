@@ -12,7 +12,7 @@ use std::time::Duration;
 use super::backup::{self, BackupOutcome, BackupPlan, BackupRecord, Rehearsal};
 use super::stamp::now_unix_ms;
 use super::{OwnerError, OwnerResult};
-use crate::server::SyncServer;
+use crate::server::{HousekeepingAdmission, SyncServer, admit_every_pass};
 
 /// How often a running server checks whether a backup is due.
 pub(crate) const SCHEDULE_TICK: Duration = Duration::from_secs(60);
@@ -26,9 +26,10 @@ pub(crate) struct OwnerHost {
     pub(crate) every: Option<Duration>,
     /// One backup at a time, whether the schedule or the owner asked.
     pub(crate) backup_lock: Mutex<()>,
-    /// Where a test's rehearsals make their scratch copy in place of the
-    /// system temp directory, which its host may share with other accounts.
-    #[cfg(test)]
+    /// Where rehearsals make their scratch copy in place of the system temp
+    /// directory, which a host may share with other accounts or keep off the
+    /// vault's own disk: a managed vault's private directory beside its data,
+    /// or a test's own. `None` is the system temp directory.
     pub(crate) rehearse_temp: Option<PathBuf>,
 }
 
@@ -48,15 +49,20 @@ impl OwnerHost {
                 backup.dir_for(&config.vault_path),
                 backup.keep,
             ),
-            // A hosted or relay node backs up through its host, not beside
-            // each vault.
-            every: (backup.enabled
-                && config.privacy_posture == oneiron::HostingPrivacyPosture::SelfHostLocal)
+            // The owner's `[backup]` policy decides, on every posture.
+            every: backup
+                .enabled
                 .then(|| Duration::from_secs(backup.every_hours.saturating_mul(3_600))),
             backup_lock: Mutex::new(()),
-            #[cfg(test)]
             rehearse_temp: None,
         }
+    }
+
+    /// Makes rehearsals' scratch copies under `dir`, a private directory on
+    /// the vault's own storage, instead of the system temp directory.
+    pub(crate) fn with_rehearsal_dir(mut self, dir: PathBuf) -> Self {
+        self.rehearse_temp = Some(dir);
+        self
     }
 
     fn one_at_a_time(&self) -> std::sync::MutexGuard<'_, ()> {
@@ -106,11 +112,9 @@ impl OwnerHost {
 
     /// The directory a rehearsal's scratch copy is made in and removed from.
     fn rehearse_temp(&self) -> PathBuf {
-        #[cfg(test)]
-        if let Some(temp) = &self.rehearse_temp {
-            return temp.clone();
-        }
-        std::env::temp_dir()
+        self.rehearse_temp
+            .clone()
+            .unwrap_or_else(std::env::temp_dir)
     }
 
     fn with_chosen<T>(
@@ -154,6 +158,18 @@ impl SyncServer {
         self: &Arc<Self>,
         tick: Duration,
     ) -> Option<tokio::task::JoinHandle<()>> {
+        self.spawn_backup_schedule_admitted(tick, admit_every_pass())
+    }
+
+    /// Starts the backup schedule on a host with a write freeze: each tick is
+    /// admitted through `admit` and holds that admission on its blocking
+    /// thread through the due check, the backup and its pruning. A refused
+    /// tick takes nothing and waits for the next.
+    pub(crate) fn spawn_backup_schedule_admitted(
+        self: &Arc<Self>,
+        tick: Duration,
+        admit: HousekeepingAdmission,
+    ) -> Option<tokio::task::JoinHandle<()>> {
         let host = Arc::clone(self.owner_host.as_ref()?);
         // No interval, no schedule.
         host.every?;
@@ -163,9 +179,15 @@ impl SyncServer {
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 interval.tick().await;
+                let Some(admission) = admit() else {
+                    continue;
+                };
                 let (host, server) = (Arc::clone(&host), Arc::clone(&server));
-                let outcome =
-                    tokio::task::spawn_blocking(move || host.take_if_due(server.vault())).await;
+                let outcome = tokio::task::spawn_blocking(move || {
+                    let _admission = admission;
+                    host.take_if_due(server.vault())
+                })
+                .await;
                 match outcome {
                     Ok(Ok(Some(taken))) => tracing::info!(
                         backup = %taken.backup.path.display(),

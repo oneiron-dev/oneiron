@@ -22,9 +22,12 @@
 //!   `ONEIRON_CONFIG` are refused by presence alone. Only [`HYPNOS_LISTEN_FD`]
 //!   supplies an environment value; even dictionary search roots come from
 //!   argv or the settings file rather than the usual `HOME`/`XDG_*` probe.
-//! - **The engine schedules nothing.** There is no timer here. Alarms are
-//!   pushed by the supervisor over the ctl socket; the ledger tells it when to
-//!   push them.
+//! - **The engine's own timers write only under reap admission.** Its
+//!   interval workers (housekeeping, the connector and ladder workers,
+//!   embedding and tagging, and the owner's `[backup]` schedule) take the
+//!   admission a served write takes for each pass, so a vault frozen for reap
+//!   writes nothing from them. Wake alarms are not among them: the supervisor
+//!   pushes those over the ctl socket, and the ledger tells it when.
 //!
 //! Real tenant data needs a probed fscrypt policy and a dedicated per-vault
 //! UID owning the directory. Only an explicitly marked synthetic canary may
@@ -42,6 +45,7 @@ mod ledger;
 mod listener;
 pub mod org_routing;
 mod owner_stage;
+mod owner_storage;
 mod peer;
 /// Private live previews on a session-owned origin.
 pub mod preview;

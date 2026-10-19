@@ -86,9 +86,13 @@ keep = 7              # ONEIRON_BACKUP_KEEP — newest kept; older ones are dele
 The schedule is off by default because erasing a record does not yet reach backup files (see
 *Limits*). With it on, the server checks every minute whether the newest backup is older than
 `every_hours`. The newest file on disk is its only state, so a restart or a manual backup is
-counted. Only a self-hosted local vault backs up this way; hosted and relay deployments back up
-through their host. The server also takes a backup on demand: `POST /v1/owner/backups`. `GET
-/v1/owner/backups` lists the backups.
+counted. The schedule and on-demand backups run on every privacy posture, under the owner's
+`[backup]` policy. A vault our cloud hosts (managed serve) keeps its backups in
+`<data_dir>.backups` and makes each rehearsal's scratch copy in `<data_dir>.rehearsals`, both
+private and on the vault's own disk (`/vault/data.backups` and `/vault/data.rehearsals` in the
+vault VM); one it cannot create or write is logged at start (`owner_storage_unavailable`). The
+server also takes a backup on demand: `POST /v1/owner/backups`. `GET /v1/owner/backups` lists the
+backups.
 
 ## Rehearse a restore
 
@@ -879,6 +883,14 @@ Sharing real conversation text to train the models Oneiron ships ("Learn from my
 is off until the person whose words they are says yes, per world, and private worlds are never
 included. The engine has one door for it, and it sends nothing today: no machine-only intake is
 configured. Training a model of your own on your own data (the training pack) needs no sharing.
+
+A person reads their own training receipts at `GET /v1/owner/conversation-learning/receipts`,
+with the same proof as their choice: each withdrawal their choice recorded, and each submission of
+their words with its conversation, worlds, local custody (`held`, `published`, `withheld`,
+`withdrawn`), the intake's last receipt (`stored`, `excluded`, `removal_pending`, `removed`,
+`rejected`), the runs that used it, the withdrawal note and its times. It never lists another
+person's rows, even for a conversation several people wrote in. Pass a page's `next` back as
+`after` for the rest.
 
 A vault our cloud hosts (managed serve) sends to `collector` at `https://oneiron.dev/feedback`
 unless told otherwise; self-hosted serve sends nowhere until you set both keys. `GET

@@ -450,6 +450,9 @@ side_tables! {
     PROVENANCE_BODY: VaultMeta b"provenance:body:v1:" Named;
     /// Who holds a body digest. Key: bytes32 (BLAKE3) + id16 (occurrence).
     PROVENANCE_BODY_DIGEST: VaultMeta b"provenance:body_digest:v1:" Named;
+    /// A sealed vault's body-file key (FIX 5348): the file's instance, format and logical length
+    /// and its data key, wrapped. Key: bytes32 (BLAKE3).
+    PROVENANCE_BODY_KEY: VaultMeta b"provenance:body_key:v1:" Named;
     /// File digests no descriptor holds, for the body-file collector. Key: bytes32 (BLAKE3).
     PROVENANCE_BODY_RELEASED: VaultMeta b"provenance:body_released:v1:" Named;
     /// One row's immutable birth envelope (Rule A made_by). Key: id16.

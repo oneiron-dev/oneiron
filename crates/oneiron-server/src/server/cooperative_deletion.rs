@@ -5,10 +5,12 @@
 //! handed on, each try first POSTs the succession pages to the peer's
 //! succession route, in order, so a peer that pinned an earlier root still
 //! verifies the try (FIX 3014); a page the peer does not take settles the
-//! try as its answer would.
+//! try as its answer would. The claim takes this host's root key, so a try
+//! an earlier root signed goes signed again by the live one (FIX 5088).
 
 use std::time::Duration;
 
+use oneiron::authority::HostSlipIssuer;
 use oneiron::deletion::CooperativeDeletionTry;
 
 use super::SyncServer;
@@ -55,17 +57,27 @@ impl SyncServer {
     pub(super) fn deliver_cooperative_deletions(&self) {
         let vault = self.vault();
         let lease_owner = format!("courtesy-delete:{}", std::process::id());
+        // This host's root key, as the owner's courtesy door signs with it.
+        let derived = match self.managed_issuer {
+            Some(_) => None,
+            None => self
+                .config
+                .auth_secret
+                .as_deref()
+                .and_then(|secret| HostSlipIssuer::from_secret(secret.as_bytes()).ok()),
+        };
+        let issuer = self.managed_issuer.as_ref().or(derived.as_ref());
         let mut client = None;
         for _ in 0..TRIES_PER_PASS {
-            let delivery = match vault.claim_cooperative_deletion_delivery(&lease_owner, unix_now())
-            {
-                Ok(Some(delivery)) => delivery,
-                Ok(None) => return,
-                Err(error) => {
-                    tracing::warn!(kind = ?error.kind(), "courtesy delete claim failed");
-                    return;
-                }
-            };
+            let delivery =
+                match vault.claim_cooperative_deletion_delivery(&lease_owner, unix_now(), issuer) {
+                    Ok(Some(delivery)) => delivery,
+                    Ok(None) => return,
+                    Err(error) => {
+                        tracing::warn!(kind = ?error.kind(), "courtesy delete claim failed");
+                        return;
+                    }
+                };
             if client.is_none() {
                 client = reqwest::blocking::Client::builder()
                     .redirect(reqwest::redirect::Policy::none())

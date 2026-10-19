@@ -488,6 +488,7 @@ fn host_row(
                 &request,
                 // It bills the payer the run's line binds (FIX 3574).
                 line.and_then(RunAdmission::payer),
+                &mut Vec::new(),
             )?)
         }
         AgentVerb::VaultGraphAsk => {

@@ -168,9 +168,11 @@ impl<'s> ClaimIndex<'s> {
                 head.signer_class = SignerClass::Custodial;
             }
             // An answer whose carrier lost the removal race since stands on
-            // nothing here (FIX 2998, mesh contract §4).
+            // nothing here, and supersedes nothing (FIX 2998, mesh contract
+            // §4, FIX 4610).
             if head.act.is_some() && !self.approved_stands(&head) {
                 head.act = None;
+                head.say_so = None;
             }
             head.conflicted |= self.poisoned(id, &head.profile.machine_key, ClaimScope::Roster);
             head.admitter_unsettled = roster_unsettled;

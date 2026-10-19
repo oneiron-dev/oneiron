@@ -1353,7 +1353,7 @@ class Oneiron:
             """Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds."""
             return json.loads(_translate(lambda: self._client.vault_search_temporal(json.dumps(input, allow_nan=False))))
         def bm25(self, input: dict[str, Any]) -> Any:
-            """BM25 text search over the engine index; surfaceable claims only."""
+            """BM25 text search over the engine index; surfaceable claims only. On a device that syncs only what it opened, a server's door asks the home under the caller's own proof, and its references ride in residence."""
             return json.loads(_translate(lambda: self._client.vault_search_bm25(json.dumps(input, allow_nan=False))))
     class _VaultSearchVectorVerbs:
         def __init__(self, client: _NativeClient) -> None:

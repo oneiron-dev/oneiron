@@ -462,8 +462,9 @@ impl Pass<'_> {
                 // the pins rather than asking a model again.
                 let host = self.verdict;
                 let mut verdict = |request: &str| {
-                    let reply = ask_verdict(run.binding, run.grant, host, request, deadline);
-                    verdicts.push(request, &reply);
+                    let (reply, evidence) =
+                        ask_verdict(run.binding, run.grant, host, request, deadline);
+                    verdicts.push(request, &reply, evidence);
                     reply
                 };
                 self.runtime
@@ -607,26 +608,26 @@ impl Pass<'_> {
 
 /// One `ai.verdict` of a fact hook, answered as the live runner answers it:
 /// only a generative hook asks, of `host`, for its grant's reader, the
-/// identity whose reach the hook reads with.
+/// identity whose reach the hook reads with. Beside it, the rows its
+/// evidence resolved to ([`HookVerdict::verdict`]); a refusal here reads none.
 pub(super) fn ask_verdict(
     binding: &PackHookBinding,
     grant: &HookGrant,
     host: Option<&dyn HookVerdict>,
     request: &str,
     deadline: Instant,
-) -> std::result::Result<String, String> {
-    match (binding.selector.render_class, host) {
-        (HookRenderClass::Generative, Some(host)) => host.verdict(
-            grant.reader,
-            filter::edge_class(grant.reader_class),
-            request,
-            deadline,
-        ),
-        (HookRenderClass::Generative, None) => Err("no verdict host serves this run".to_owned()),
-        (HookRenderClass::DeterministicEager, _) => {
-            Err("a deterministic hook calls no model: declare render_class: generative".to_owned())
+) -> (std::result::Result<String, String>, Option<Vec<EntityId>>) {
+    let refused = match (binding.selector.render_class, host) {
+        (HookRenderClass::Generative, Some(host)) => {
+            let class = filter::edge_class(grant.reader_class);
+            return host.verdict(grant.reader, class, request, deadline);
         }
-    }
+        (HookRenderClass::Generative, None) => "no verdict host serves this run",
+        (HookRenderClass::DeterministicEager, _) => {
+            "a deterministic hook calls no model: declare render_class: generative"
+        }
+    };
+    (Err(refused.to_owned()), Some(Vec::new()))
 }
 
 /// The verdicts one run heard, pinned in order while their requests and
@@ -647,12 +648,20 @@ impl VerdictPins {
         }
     }
 
-    fn push(&mut self, request: &str, reply: &std::result::Result<String, String>) {
+    fn push(
+        &mut self,
+        request: &str,
+        reply: &std::result::Result<String, String>,
+        evidence: Option<Vec<EntityId>>,
+    ) {
         let (Ok(text) | Err(text)) = reply;
+        // Each evidence row pins as its 32-hex id.
+        let rows = evidence.as_ref().map_or(0, Vec::len).saturating_mul(32);
         let bytes = self
             .bytes
             .saturating_add(request.len())
-            .saturating_add(text.len());
+            .saturating_add(text.len())
+            .saturating_add(rows);
         if !self.complete || bytes > MAX_PINNED_VERDICT_BYTES {
             self.complete = false;
             return;
@@ -661,6 +670,7 @@ impl VerdictPins {
         self.pins.push(HookVerdictPin {
             request_json: request.to_owned(),
             reply: reply.clone(),
+            evidence,
         });
     }
 }

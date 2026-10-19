@@ -1,6 +1,8 @@
 //! Typed inputs for the public memory verbs in the SDK inventory.
+use crate::claim::{ScopedReadReceipt, ScopedReadResult};
 use crate::memory::{
-    ClaimInput, Memory, MemoryError, MemoryResult, NeighborOpts, SafeDeleteReason,
+    ClaimInput, LexicalHit, Memory, MemoryError, MemoryResult, NeighborOpts, RecallResidence,
+    SafeDeleteReason,
 };
 use serde::{Deserialize, Serialize};
 
@@ -55,6 +57,55 @@ pub struct EntityRequest {
 pub struct QueryBm25Request {
     pub query: String,
     pub limit: usize,
+}
+
+/// `vault.search.bm25`'s answer (FIX 3876): this device's own scoped hits
+/// with their read's receipt, and on a device that syncs only what it
+/// opened, what its home holds beside them. A server's door asks the home
+/// under the call's own caller; an embedded handle never asks it, so its
+/// answer there is local-only and incomplete. `None`: the device holds
+/// every window it may read, or runs no sync.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Bm25Search {
+    /// Hits, in engine score order.
+    pub value: Vec<LexicalHit>,
+    /// The read's receipt.
+    #[serde(rename = "narrowing")]
+    pub receipt: ScopedReadReceipt,
+    /// The home's references the page does not hold, apart from its hits;
+    /// a hit's window opens it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub residence: Option<RecallResidence>,
+}
+
+impl Bm25Search {
+    /// `page`, this device's own, as the device answers it alone: whole,
+    /// or local-only and incomplete on one that syncs only what it opened.
+    #[must_use]
+    pub fn local(vault: &crate::Vault, page: ScopedReadResult<Vec<LexicalHit>>) -> Self {
+        #[cfg(feature = "sync")]
+        let opened = matches!(
+            vault.device_residence(),
+            crate::sync::DeviceResidence::Opened { .. }
+        );
+        #[cfg(not(feature = "sync"))]
+        let opened = {
+            let _ = vault;
+            false
+        };
+        Self {
+            value: page.value,
+            receipt: page.receipt,
+            residence: opened.then(RecallResidence::local_only),
+        }
+    }
+}
+
+/// `vault.search.bm25` on a handle: its own BM25 page, as the device
+/// answers it alone ([`Bm25Search::local`]).
+pub fn search_bm25(memory: &Memory<'_>, input: QueryBm25Request) -> MemoryResult<Bm25Search> {
+    let page = memory.query_bm25(&input.query, input.limit)?;
+    Ok(Bm25Search::local(memory.vault(), page))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

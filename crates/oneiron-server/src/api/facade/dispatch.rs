@@ -19912,18 +19912,24 @@ async fn vault_search_bm25(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.search.bm25", &value)?;
     let (actor, class) = facade_actor(server, auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let hooks = facade_hooks_pre(server, call, "vault.search.bm25", value).await?;
+    let value = hooks.args.clone();
+    let (output, listed) = super::search_home_doors::vault_search_bm25(
         server,
         call,
         actor,
         class,
-        "vault.search.bm25",
-        value,
-        &producers,
-    )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+        facade_input(value)?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    let rows = Some(listed);
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows,
+    })
 }
 async fn vault_neighbors(
     server: &Arc<SyncServer>,

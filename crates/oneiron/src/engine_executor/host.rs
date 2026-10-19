@@ -89,6 +89,11 @@ pub(super) struct RecordingJsHost<'a, 's> {
     callable_depth: u32,
     /// The host projection already ran this outer call's verb hooks.
     admitted_skill_seq: Option<u64>,
+    /// Each stored skill this host's callable calls read and loaded, and the
+    /// rows of every result a read took from another run (`None` once one
+    /// kept no set): what a callable's answer stands on beside
+    /// [`Self::result_rows`].
+    pub(super) callable_rows: (Vec<EntityId>, Option<Vec<EntityId>>),
 }
 
 /// The name a reader child reads its parent's source by.
@@ -147,6 +152,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             skill_executor: None,
             callable_depth: 0,
             admitted_skill_seq: None,
+            callable_rows: (Vec::new(), Some(Vec::new())),
         }
     }
 
@@ -342,6 +348,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             crate::limit_ask::EngineLimit::CallableNestDepth,
             u64::from(self.callable_depth),
         );
+        let mut loaded = Vec::new();
         let ran = crate::skill::execute_callable_skill_cancellable(
             &lease.vault,
             &lease.leased,
@@ -355,7 +362,9 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             determinism,
             started_at_ms / 1000,
             parent,
+            &mut loaded,
         );
+        self.callable_rows.0.extend(loaded);
         self.callable_depth -= 1;
         if self.hard_failure.is_some() || self.left_a_gap {
             return Ok(failed("host_bridge_halted".to_owned()));
@@ -585,7 +594,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     /// The rows the run's results were served from: the conservative union
     /// of every row its recorded and this step's verb answers were served
     /// from, or none known when one answer kept no set.
-    fn result_rows(&self) -> Option<Vec<EntityId>> {
+    pub(super) fn result_rows(&self) -> Option<Vec<EntityId>> {
         self.recorded_rows
             .as_ref()
             .zip(agent_verb_rows_of(&self.bridge_calls))
@@ -901,6 +910,12 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             return Ok(Err(result_refusal("reader_task_settled")));
         }
         self.admit_result_read(storage)?;
+        if let Some(extra) = &found.rows {
+            let held = self.callable_rows.1.take();
+            self.callable_rows.1 = held
+                .zip(extra.clone())
+                .map(|(held, extra)| [held, extra].concat());
+        }
         let rows = match found.rows {
             None => self.result_rows(),
             Some(extra) => self

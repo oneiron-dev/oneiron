@@ -23,20 +23,24 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::get;
 use oneiron::authority::ConversationTrainingView;
 use oneiron::error::RecordError;
+use oneiron::feedback::{
+    PersonTrainingControl, PersonTrainingReceipts, PersonTrainingSubmission, TrainingReceiptsCursor,
+};
 use oneiron::world_keys::PolicyRevision;
+use oneiron_vault_contract::conversation_training::TrainingReceiptStatusV1;
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface, parse_revision, revision_hex};
 use super::world_privacy_routes::holder;
 use super::{OwnerReply, blocking};
-use crate::api::json_payload;
+use crate::api::{json_payload, query_params};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -49,7 +53,9 @@ const LEARNING_READS: CoreScope = CoreScope::Read;
 const LEARNING_ACTS: CoreScope = CoreScope::Write;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/conversation-learning", get(view).put(set))
+    Router::new()
+        .route("/conversation-learning", get(view).put(set))
+        .route("/conversation-learning/receipts", get(receipts))
 }
 
 #[derive(Debug, Deserialize)]
@@ -160,6 +166,156 @@ async fn set(
             .set_conversation_training(&person, surface, Some(worlds), seen)
             .map_err(refusal)?;
         Ok(reply(&view))
+    })
+    .await?;
+    Ok(Json(answer))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReceiptsQuery {
+    /// The `next` of the page before, as 34 hex; none starts at the first.
+    #[serde(default)]
+    after: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReceiptsReply {
+    /// The person whose receipts these are, as 32 hex: the proof's own.
+    person: String,
+    /// The withdrawals the person's own choice recorded: off, or fewer
+    /// worlds.
+    controls: Vec<ControlReceipt>,
+    /// The submissions of the person's words.
+    submissions: Vec<SubmissionReceipt>,
+    /// Present back as `after` for the rest; null on the last page.
+    next: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ControlReceipt {
+    /// The control, as 32 hex.
+    id: String,
+    /// The worlds the choice still counts, 32 hex each; null is off.
+    worlds: Option<Vec<String>>,
+    /// Whether its file was written to the outbox.
+    written: bool,
+    /// The intake's last receipt for it (`stored`, `excluded`,
+    /// `removal_pending`, `removed` or `rejected`); null while none came.
+    receipt: Option<TrainingReceiptStatusV1>,
+    /// What a withdrawal reaches: runs that start after the intake has it.
+    withdrawal_note: &'static str,
+    /// When it was recorded, unix seconds.
+    recorded_at: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct SubmissionReceipt {
+    /// The submission, as 32 hex.
+    id: String,
+    /// The conversation it was selected from, as 32 hex.
+    source: String,
+    /// The worlds its rows sit in, 32 hex each.
+    worlds: Vec<String>,
+    /// Where it stands here: `held`, `published`, `withheld` or `withdrawn`.
+    custody: &'static str,
+    /// The intake's last receipt for it; null while none came.
+    receipt: Option<TrainingReceiptStatusV1>,
+    /// The runs the intake says used it.
+    used_runs: Vec<UsedRun>,
+    /// What a withdrawal reaches, once it is withdrawn or its removal is
+    /// pending or done; null before.
+    withdrawal_note: Option<&'static str>,
+    /// When it was prepared, unix seconds.
+    prepared_at: u64,
+    /// When it was published, unix seconds; null while it never left.
+    published_at: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct UsedRun {
+    /// The intake's run id.
+    run_id: String,
+    /// The model or checkpoint the run made.
+    model: String,
+    /// When it used the submission, unix seconds.
+    used_at: u64,
+}
+
+fn receipts_reply(page: PersonTrainingReceipts) -> ReceiptsReply {
+    ReceiptsReply {
+        person: page.person.to_hex(),
+        controls: page.controls.into_iter().map(control_receipt).collect(),
+        submissions: page
+            .submissions
+            .into_iter()
+            .map(submission_receipt)
+            .collect(),
+        next: page.next.as_ref().map(TrainingReceiptsCursor::to_hex),
+    }
+}
+
+fn control_receipt(control: PersonTrainingControl) -> ControlReceipt {
+    ControlReceipt {
+        id: control.id.to_hex(),
+        worlds: control.worlds.as_ref().map(hex_ids),
+        written: control.written,
+        receipt: control.receipt,
+        withdrawal_note: control.withdrawal_note,
+        recorded_at: control.recorded_at,
+    }
+}
+
+fn submission_receipt(submission: PersonTrainingSubmission) -> SubmissionReceipt {
+    SubmissionReceipt {
+        id: submission.id.to_hex(),
+        source: submission.source.to_hex(),
+        worlds: hex_ids(&submission.worlds),
+        custody: submission.custody.as_str(),
+        receipt: submission.receipt,
+        used_runs: submission
+            .used_runs
+            .into_iter()
+            .map(|run| UsedRun {
+                run_id: run.run_id,
+                model: run.model,
+                used_at: run.used_at,
+            })
+            .collect(),
+        withdrawal_note: submission.withdrawal_note,
+        prepared_at: submission.prepared_at,
+        published_at: submission.published_at,
+    }
+}
+
+/// `GET /v1/owner/conversation-learning/receipts?after=<next>`: one page of
+/// the caller's own publisher training receipts, read for the person their
+/// proof names as the `GET` above is. Only rows that name them are listed;
+/// the page's `next`, passed back as `after`, reads the rest.
+async fn receipts(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<ReceiptsQuery>, QueryRejection>,
+) -> OwnerReply<ReceiptsReply> {
+    let person = holder(&auth, &server, LEARNING_READS)?;
+    let query = query_params(query)?;
+    let answer = blocking(move || -> OwnerResult<ReceiptsReply> {
+        let after = query
+            .after
+            .as_deref()
+            .map(|after| {
+                TrainingReceiptsCursor::from_hex(after).ok_or_else(|| {
+                    OwnerError::Invalid(
+                        "after must be a receipts page's next, as 34 hex".to_owned(),
+                    )
+                })
+            })
+            .transpose()?;
+        let page = server
+            .vault()
+            .conversation_training_receipts(&person, after)
+            .map_err(refusal)?;
+        Ok(receipts_reply(page))
     })
     .await?;
     Ok(Json(answer))
