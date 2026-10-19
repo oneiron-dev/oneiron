@@ -49,7 +49,7 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 pub(crate) const POLICY_SHARED_ACT_POLICIES_KEY: &str = "shared_act_policies";
 /// Optional top-level manifest key whose value is an ordered MessagePack
 /// array of row maps. Each row selects exactly one call set — one `purpose`
-/// string (a pinned `CallPurpose` snake-case name, or any other non-empty
+/// string (a pinned `CallPurpose` built-in name, or any other non-empty
 /// string for `CallPurpose::Other { name }`) or one `actor` ref (the
 /// canonical lowercase 32-hex form of `WriteActor::entity_ref().to_hex()`) —
 /// and carries a `floor`, a `cap`, or both, as unsigned 64-bit integers in

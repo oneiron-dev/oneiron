@@ -112,7 +112,13 @@ impl InferencePolicySnapshot {
         } else {
             BTreeMap::new()
         };
-        defaults.table().apply(&mut request.envelope);
+        // `PurposeDefaultTable::apply`, on the row the call is admitted as.
+        if let Some(row) = defaults
+            .table()
+            .purpose(admitted_as(&request.envelope.purpose))
+        {
+            request.envelope.tier.purpose_default = Some(row.tier.clone());
+        }
         if let (Some(role), Some(manifest)) = (role, &manifest) {
             manifest.bind_request(role, &routes, request)?;
         }
@@ -152,7 +158,7 @@ impl InferencePolicySnapshot {
             && self
                 .defaults
                 .table()
-                .purpose(&request.envelope.purpose)
+                .purpose(admitted_as(&request.envelope.purpose))
                 .is_some_and(|row| row.locality != request.envelope.locality)
         {
             return Err(invalid("no model binding for inference default locality"));
@@ -201,14 +207,25 @@ fn invalid(reason: &'static str) -> Error {
     Error::InvalidConfig(reason.into())
 }
 
-/// The same final-request predicate for role-bound calls and raw HTTP calls.
+/// The purpose whose defaults row and gates admit and route a call. An
+/// agent's free time sends its own records out as an extraction does, so
+/// both autonomy labels are admitted and routed as extraction (FIX 4453).
+pub(crate) fn admitted_as(purpose: &CallPurpose) -> &CallPurpose {
+    match purpose {
+        CallPurpose::AutonomyForHuman | CallPurpose::AutonomyOwnTime => &CallPurpose::Extraction,
+        purpose => purpose,
+    }
+}
+
+/// The same final-request predicate for role-bound calls and raw HTTP calls,
+/// for extraction and every purpose admitted as one.
 fn admit_extraction(
     snapshot: &InferencePolicySnapshot,
     request: &LlmRequest,
     binding: &BoundInference,
     host: &HostInferenceContext<'_>,
 ) -> Result<()> {
-    if request.envelope.purpose != CallPurpose::Extraction
+    if *admitted_as(&request.envelope.purpose) != CallPurpose::Extraction
         || binding.locality == ModelLocality::OnDevice
     {
         return Ok(());

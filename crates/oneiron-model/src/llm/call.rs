@@ -34,7 +34,17 @@ pub enum CallPurpose {
     ToolRouting,
     Voice,
     Eval,
-    Other { name: String },
+    /// An agent's free time for its human: it thinks how to help them, and
+    /// what it suggests lands as a proposal.
+    #[serde(rename = "autonomy.for_human")]
+    AutonomyForHuman,
+    /// An agent's own free time: its own reading, fun, rest and talk with
+    /// other agents. Nothing scores it.
+    #[serde(rename = "autonomy.own_time")]
+    AutonomyOwnTime,
+    Other {
+        name: String,
+    },
 }
 
 /// Opt-in per-call model pin (ONE-1344): an explicit allow-list of fully
@@ -70,7 +80,10 @@ impl PinnedModelConfig {
         if !self.background_tier_enabled
             && matches!(
                 &request.envelope.purpose,
-                CallPurpose::Consolidation | CallPurpose::Extraction
+                CallPurpose::Consolidation
+                    | CallPurpose::Extraction
+                    | CallPurpose::AutonomyForHuman
+                    | CallPurpose::AutonomyOwnTime
             )
         {
             return Err(PinnedConfigViolation::BackgroundTierDisabled {

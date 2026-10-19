@@ -731,9 +731,10 @@ pub async fn run_resident_dream(
         envelope: CallEnvelope {
             seat_effort: None,
             scope: crate::llm::Scope::default(),
-            // The resident's own records leave the vault as an extraction's
-            // do, so they pass the same egress gate.
-            purpose: CallPurpose::Extraction,
+            // Its dreaming is its own time (FIX 4453). Its own records leave
+            // the vault as an extraction's do, so the call is admitted, gated
+            // and routed as extraction: the tier below reads that row too.
+            purpose: CallPurpose::AutonomyOwnTime,
             class: CallClass::BestEffort,
             tier: TierPrecedence::for_purpose(
                 &CallPurpose::Extraction,

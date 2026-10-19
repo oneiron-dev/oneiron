@@ -371,7 +371,11 @@ impl ModelManifest {
         if self.disposition(role)? == ModelDisposition::Offline
             && !matches!(
                 request.envelope.purpose,
-                CallPurpose::Extraction | CallPurpose::Consolidation | CallPurpose::Eval
+                CallPurpose::Extraction
+                    | CallPurpose::Consolidation
+                    | CallPurpose::Eval
+                    | CallPurpose::AutonomyForHuman
+                    | CallPurpose::AutonomyOwnTime
             )
         {
             return Err(invalid(

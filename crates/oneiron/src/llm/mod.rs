@@ -14,6 +14,7 @@ mod budget;
 mod defaults;
 pub(crate) use defaults::read_effective_defaults;
 mod inference_admission;
+pub(crate) use inference_admission::admitted_as;
 mod role_defaults;
 pub use inference_admission::{
     AuthorizedInference, BoundInference, HostInferenceBinding, HostInferenceContext,

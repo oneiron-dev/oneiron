@@ -38,8 +38,15 @@ const fn rank(locality: ModelLocality) -> u8 {
     }
 }
 
-/// The Dreamer's purposes: transcript extraction and conflict merges.
-const DREAMER_PURPOSES: [CallPurpose; 2] = [CallPurpose::Extraction, CallPurpose::Consolidation];
+/// The Dreamer's purposes: transcript extraction, conflict merges and an
+/// agent's free time. The autonomy labels have no defaults row of their own
+/// (they are admitted on extraction's), so the grant finds none to route.
+const DREAMER_PURPOSES: [CallPurpose; 4] = [
+    CallPurpose::Extraction,
+    CallPurpose::Consolidation,
+    CallPurpose::AutonomyForHuman,
+    CallPurpose::AutonomyOwnTime,
+];
 
 /// The purpose a Dreamer role's calls go out under: the verdict is a
 /// consolidation call; extraction and narrative send transcript text, as an

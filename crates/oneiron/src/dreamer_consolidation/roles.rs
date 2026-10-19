@@ -18,7 +18,7 @@ use crate::llm::manifest::ModelRole;
 use crate::llm::seat::PurposeEffort;
 use crate::llm::{
     ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext, LlmBackend,
-    LlmCapability, LlmRequest, ModelId, REASONING_BUDGET_PARAM, ReasoningEffort,
+    LlmCapability, LlmRequest, ModelId, REASONING_BUDGET_PARAM, ReasoningEffort, admitted_as,
 };
 
 /// Transcript extraction.
@@ -100,10 +100,10 @@ const DEFAULT_EFFORT: ReasoningEffort = ReasoningEffort::Medium;
 const DEFAULT_BUDGET_TOKENS: u64 = 4_096;
 
 /// Pins `request`'s reasoning level, for the backend that will serve it: the
-/// vault's authored level for the call's purpose, else medium with its
-/// thinking budget, each within what the model's ladder takes. A backend
-/// that takes no reasoning controls for the model is pinned to `none`, the
-/// only level it can be sent.
+/// vault's authored level for the purpose the call is admitted as, else
+/// medium with its thinking budget, each within what the model's ladder
+/// takes. A backend that takes no reasoning controls for the model is pinned
+/// to `none`, the only level it can be sent.
 pub(super) fn bind_reasoning(
     vault: &Vault,
     backend: &dyn LlmBackend,
@@ -126,7 +126,7 @@ pub(super) fn bind_reasoning_for(
         return Ok(());
     }
     match vault.purpose_effort(
-        &request.envelope.purpose,
+        admitted_as(&request.envelope.purpose),
         &request.model,
         true,
         DEFAULT_EFFORT,
