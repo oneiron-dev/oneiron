@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3844 | 902 | 196 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3846 | 902 | 196 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 37 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
@@ -70,7 +70,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `anchored_annotation` | dir | 16 | m | yes | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
 | `artifact_hosting` | dir | 8 | L | yes | Local artifact hosting over pinned code snapshots and blob exports |
 | `attempt_queue` | dir | 44 | L | yes | Generic LMDB-backed background attempt queue |
-| `authority` | dir | 176 | L | yes | AUTHORITY_LOG record substrate |
+| `authority` | dir | 177 | L | yes | AUTHORITY_LOG record substrate |
 | `autoreason_campaign` | file+dir | 20 | L | — | Engine-side AR-3 campaign reports and read-only experiment selection |
 | `batch` | dir | 128 | L | yes | — |
 | `blob_artifact` | dir | 59 | L | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
@@ -149,7 +149,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `failure_ladder` | dir | 16 | m | yes | ONE-1887 failure ladder: classify → bounded retry → healer slot → surface |
 | `failure_signals` | file+dir | 8 | m | yes | Content-free, versioned tier-1 agent failure counts |
 | `fanout_auto` | file+dir | 2 | m | — | ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam |
-| `federation` | dir | 38 | L | yes | Federation grant record substrate |
+| `federation` | dir | 39 | L | yes | Federation grant record substrate |
 | `feedback` | dir | 22 | m | yes | Engine feedback channel: bundle wire contract, consent, dispatch, export |
 | `fusion` | file | 1 | s | — | Score fusion kernels, defined in `oneiron-retrieval` |
 | `gate` | dir | 141 | L | yes | DEC-0005 Gate policy manifest resolver |
