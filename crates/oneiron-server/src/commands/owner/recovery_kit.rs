@@ -573,9 +573,10 @@ fn read_sealed(path: &Path) -> anyhow::Result<Vec<u8>> {
     std::fs::read(path).map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))
 }
 
-/// `oneiron restore --unlock kit`: the pieces rebuild the kit's seed, and its
-/// root's recovery secret opens the backup's `world-kit` escrow wrap. A kit
-/// that does not open the wrap opens nothing.
+/// `oneiron restore --unlock kit`: a world kit's pieces rebuild the kit's
+/// seed, and its root's recovery secret opens the backup's `world-kit`
+/// escrow wrap. A kit that does not open the wrap opens nothing. A data-key
+/// kit's pieces rebuild the vault data key itself (FIX 5614).
 pub(super) fn kit_unlock(args: &RestoreArgs) -> anyhow::Result<HostUnlock> {
     kit_unlock_with(
         args.vault_id.as_deref(),
@@ -584,11 +585,13 @@ pub(super) fn kit_unlock(args: &RestoreArgs) -> anyhow::Result<HostUnlock> {
     )
 }
 
-/// The world kit's unlock from its pieces, the passphrase read from
-/// `secret_file` or stdin, for the vault `vault_id` names: the id the kit is
-/// bound to, which the caller is given and never reads from a mirror.
-/// `oneiron restore --unlock kit` and `oneiron vault-key add-device --unlock
-/// kit` both open the `world-kit` escrow wrap with it.
+/// A kit's unlock from its pieces, the passphrase read from `secret_file` or
+/// stdin, for the vault `vault_id` names: the id the kit is bound to, which
+/// the caller is given and never reads from a mirror. `oneiron restore
+/// --unlock kit` and `oneiron vault-key add-device --unlock kit` both open
+/// the `world-kit` escrow wrap with a world kit's. A data-key kit's pieces,
+/// by the kind they carry, go to the engine whole: they rebuild the vault
+/// data key there, checked against its commitment, with no wrap (FIX 5614).
 pub(super) fn kit_unlock_with(
     vault_id: Option<&str>,
     files: &[PathBuf],
@@ -603,6 +606,16 @@ pub(super) fn kit_unlock_with(
         "--unlock kit reads the kit's pieces: --piece"
     );
     let (pieces, passphrase) = read_kit(files, secret_file)?;
+    if pieces
+        .first()
+        .is_some_and(|piece| piece.kind() == KitSecretKind::VaultKey)
+    {
+        return Ok(HostUnlock::VaultKeyKit {
+            vault_id: *vault_id,
+            pieces,
+            passphrase,
+        });
+    }
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
     let secret = restore_kit(
         *vault_id,
