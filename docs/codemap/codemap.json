@@ -3604,7 +3604,7 @@
      "path": "src/authority/slip_state.rs",
      "purpose": "Log-derived capability mint ancestry and monotone subtree tombstones",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4,
       "struct": 2
      }
@@ -16243,9 +16243,19 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 29,
       "fn": 26,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/doors/lineage.rs",
+     "purpose": "The opener's lineage and its forks never settle their own proposal (DEC-0006 \"Proposals, settlements and the…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -61693,7 +61703,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62871,7 +62881,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3856,
+   "source_files": 3857,
    "test_files": 902
   },
   "oneiron-android": {

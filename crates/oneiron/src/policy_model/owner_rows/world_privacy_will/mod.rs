@@ -226,12 +226,15 @@ impl Vault {
                     }
                     let yes = needs.iter().copied().filter(|o| *o == actor).collect();
                     let holders = world_holders_in_txn(self, txn, world)?;
+                    // The opener's complete verified chains, read in this
+                    // writer: they and their forks never settle it (FIX 5064).
+                    let opener_lineage = owner.credential_lineage_in_txn(self, txn)?;
                     let request = self.open_world_privacy_request_in_txn(
                         txn,
                         NewRequest {
                             kind: Kind::WidenAsk,
                             agent: None,
-                            opener_lineage: owner.credential_lineage(),
+                            opener_lineage,
                             author: actor,
                             world,
                             settings,
