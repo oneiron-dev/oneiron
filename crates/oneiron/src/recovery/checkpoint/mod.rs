@@ -248,6 +248,10 @@ pub struct RestoreReport {
     /// not proven when no anchor was configured (CALLS
     /// CUSTODY_ANCHOR_UNSET_RESTORE).
     pub custody_note: Option<String>,
+    /// What the restore costs the vault's publisher training (FIX 5892): set
+    /// when the vault had a training link key and the restore brought none,
+    /// so a fresh one is made at its next training write.
+    pub training_note: Option<String>,
 }
 fn codec_error() -> Error {
     Error::CorruptedIndex("canonical checkpoint image")
@@ -813,6 +817,7 @@ impl Vault {
                 .map(|(id, _)| id.to_hex())
                 .collect(),
             custody_note: None,
+            training_note: vault.training_link_restore_notice(),
         };
         Ok((made, forked, vault, report))
     }
