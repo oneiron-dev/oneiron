@@ -75,6 +75,7 @@ mod history_coverage;
 mod history_fetch;
 mod history_repair;
 mod history_transfer;
+mod home_candidacy;
 mod home_pick;
 mod host_action;
 mod host_actor;
@@ -229,6 +230,9 @@ pub use history_fetch::{
 };
 pub use history_repair::AuthorityRepairOutcome;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
+pub(crate) use home_candidacy::{
+    JudgedHomeCandidacy, election_home_candidacies_in_txn, home_candidacies_in_txn,
+};
 pub(crate) use home_pick::{
     HomePickHead, HomePickState, election_home_pick_in_txn, home_pick_in_txn,
 };
@@ -268,7 +272,10 @@ pub use slip_pairing::{
     format_pairing_link, format_pinned_pairing_link, pairing_binding_transcript,
     pairing_binding_transcript_pinned, parse_pairing_link, parse_pinned_pairing_link,
 };
-pub use slip_renewal::OwnerDeviceRenewalProof;
+pub use slip_renewal::{
+    OwnerDeviceRenewalProof, RENEWAL_GRANT_AND_DEVICE, RENEWAL_K04, RENEWAL_LIFETIME,
+    RENEWAL_PROOF_NOT_FRESH,
+};
 pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};

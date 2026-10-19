@@ -496,6 +496,7 @@ fn grant_details(grant: &SupportGrantRow) -> Vec<String> {
         format!("class:{}", grant.holder_class),
         format!("deadline:{}", grant.delegation.wall_expires_at),
         format!("slip:{}", slip_hex(&grant.slip_id)),
+        format!("comm:{}", grant.comm.as_str()),
     ];
     if let Some(ticket) = &grant.delegation.ticket_ref {
         details.push(format!("ticket:{ticket}"));

@@ -1,6 +1,8 @@
 //! `[device_sync]`: the home this machine keeps its vault in sync with.
-//! Every machine but the elected home dials its home (ARCH-0023b); the home
-//! dials no one.
+//! Every machine but the home dials its home (ARCH-0023b); the home dials no
+//! one. Two flags say what this machine is as a MACRO home candidate (FIX
+//! 4898): `always_on` and `primary`, both off by default, so a device is no
+//! candidate until its owner says so.
 //!
 //! File-only, like `[native_mail]`. `oneiron device enrol` records the home
 //! this machine enrolled with (`crate::device_enrolment`), and `serve` dials
@@ -36,12 +38,24 @@ pub struct DeviceSyncConfig {
     #[serde(default)]
     pub worlds: Vec<String>,
     /// The home's sync node id, as `oneiron whoami` prints it there
-    /// (`sync_node_id`). Named, this machine holds that node as its elected
-    /// home and routes residence reads to `home_url`. Absent, the enrolled
-    /// home's; a home named by hand without it keeps the home this machine
-    /// holds, and a Dreamer here that claimed this machine keeps it.
+    /// (`sync_node_id`). Named, this machine keeps that node as its own
+    /// always-on candidate for the home, beside the vault's declarations, and
+    /// routes residence reads to `home_url` while it is the elected home; the
+    /// home's own declaration, once it names the node, rules. Absent, the
+    /// enrolled home's; a home named by hand without it publishes no
+    /// endpoint, and this machine elects over the declarations alone.
     #[serde(default)]
     pub home_node_id: Option<u64>,
+    /// The owner keeps this machine on: it declares itself an always-on
+    /// MACRO home candidate, which the default election order ranks after an
+    /// attached cloud node, while its Dreamer runs. Off by default.
+    #[serde(default)]
+    pub always_on: bool,
+    /// This machine is the owner's primary device: it declares itself a
+    /// MACRO home candidate the default order ranks after an always-on one,
+    /// while its Dreamer runs. Off by default.
+    #[serde(default)]
+    pub primary: bool,
 }
 
 /// A home named by hand: all three of its fields.

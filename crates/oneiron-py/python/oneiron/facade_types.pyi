@@ -8458,6 +8458,7 @@ class ConsentRegistryDelegation(TypedDict):
     approved_by: str
     wall_expires_at: int
     status: SupportGrantStatus
+    comm: CommReach
 ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None]})
 class ConsentRegistry(TypedDict):
     rows: list[ConsentRegistryRow]

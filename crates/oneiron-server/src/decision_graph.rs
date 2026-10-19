@@ -544,9 +544,13 @@ pub(crate) fn pump_due(server: &SyncServer, now: u64) -> Result<()> {
 /// Whether this server is the vault's home: the elected home names this
 /// server's stable client identity, the gate the shared timer puts on macro
 /// work and digests. A vault no node has claimed is claimed here, as serve's
-/// Dreamer claims it, so standing questions run with the Dreamer off. A
-/// device of another home (`[device_sync]`) claims nothing, as its Dreamer
-/// claims nothing: it defers to the home its sync section names.
+/// Dreamer claims it, so standing questions run with the Dreamer off. The
+/// claim is an election over the vault's authorized candidates with this
+/// server's own candidacy beside them (FIX 4898): a machine removed, held or
+/// key-conflicted here never claims itself, and one whose Dreamer is off
+/// claims only while no other eligible candidate stands. A device of another
+/// home (`[device_sync]` or an enrolment) claims nothing, as its Dreamer
+/// claims nothing: it defers to the elected home.
 pub(crate) fn at_home(server: &SyncServer, now: u64) -> Result<bool> {
     let store = DreamerRunnerStore::new(server.vault());
     let local = store.local_home_node_candidate(true, true, false)?;

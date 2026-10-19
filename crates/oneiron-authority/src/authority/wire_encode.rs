@@ -260,6 +260,9 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         AuthorityOp::ConversationTrainingVaultSet(set) => {
             super::conversation_training_vault::conversation_training_vault_value(set)
         }
+        AuthorityOp::HomeCandidacy(declaration) => {
+            super::home_candidacy::home_candidacy_value(declaration)
+        }
     }
 }
 

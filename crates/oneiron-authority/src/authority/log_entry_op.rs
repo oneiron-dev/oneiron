@@ -155,6 +155,10 @@ pub enum AuthorityOp {
     /// any role (FIX 5502 owner rulings). A main-log entry, so every machine
     /// the owner admits folds it.
     ConversationTrainingVaultSet(ConversationTrainingVaultSet),
+    /// One machine's declaration of itself as a MACRO home candidate,
+    /// signed by its own install key (FIX 4898). A main-log entry, so every
+    /// machine the owner admits folds it.
+    HomeCandidacy(HomeCandidacy),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -440,6 +444,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::HomeNodePick(pick) => pick.validate(),
         AuthorityOp::ConversationTrainingSet(set) => set.validate(),
         AuthorityOp::ConversationTrainingVaultSet(set) => set.validate(),
+        AuthorityOp::HomeCandidacy(declaration) => declaration.validate(),
     }
 }
 
