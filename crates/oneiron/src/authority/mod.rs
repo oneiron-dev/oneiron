@@ -22,7 +22,7 @@
 //! | `ancestor_index` / `ancestry_bypass` | fold ancestry and revocation bypass |
 //! | `log_budget` | pinned fold-work bounds, the slip issuer, and the store doors' per-signer bound |
 //! | `import_order` | the order an import or a sync pass hands the store doors several rows in |
-//! | `entry_transition` | per-entry transition and consent/quorum predicates |
+//! | `entry_transition` | per-entry transition and consent predicates |
 //! | `anchor_fold` | owner roots and an anchor's machine marks, before the roster |
 //! | `machine_profile` | per-admitter machine chains and the trusted projection |
 //! | `pinned_root` / `owner_roots` | this install's pin, and the stored roots it reads |

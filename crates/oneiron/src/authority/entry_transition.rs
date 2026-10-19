@@ -1,4 +1,9 @@
-//! Per-entry state transition and the consent / quorum predicates.
+//! Per-entry state transition and the consent predicates.
+//!
+//! An authority entry needs one live consenting roster signer from its parent
+//! state, never a second device: the multi-device quorum and the quorum
+//! revoke died with OF-452 D10 (identity canon), so one live owner root may
+//! revoke another lost one (FIX 4920). Checkpoint signing quorum is separate.
 //!
 //! Every accepted op lands the moment its ancestry folds. There is no pending
 //! state and no seen-time delay: the device-key widen ceremony, with its
@@ -380,15 +385,6 @@ pub(super) fn fold_entry_state(
     if !has_authority_consent(&state, &participants, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
-    if entry_requires_peer_cosign(entry)
-        && active_roster_count(&state) >= 2
-        && participants.len() < 2
-    {
-        return EntryFold::Invalid(AuthorityFoldIssue::MissingQuorum(hash));
-    }
-    if revoke_would_break_quorum(&state, entry, &participants) {
-        return EntryFold::Invalid(AuthorityFoldIssue::MissingQuorum(hash));
-    }
     if let Some(prior_seq) = state.seqs.get(&signer).copied()
         && entry.seq <= prior_seq
     {
@@ -635,76 +631,4 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::OwnerWorkCancel(_) => false,
     }
-}
-
-fn entry_requires_peer_cosign(entry: &AuthorityLogEntry) -> bool {
-    // A machine profile is the owner's answer landed through the host, as a
-    // slip is, and so is a residence directive. A critical confirm likewise
-    // keeps its dedicated owner-consent signer check above, but asks no
-    // second device to cosign the owner's answer. A Disconnect or a Dissolve only ends a pact, and
-    // the owner lands it through the host alone, as a slip revoke (FIX 1634;
-    // ARCH-0043: exit is unilateral): the multi-device quorum and a quorum
-    // revoke died with OF-452 D10.
-    !matches!(
-        entry.op,
-        AuthorityOp::Genesis { .. }
-            | AuthorityOp::SlipMint(_)
-            | AuthorityOp::SlipRevoke { .. }
-            | AuthorityOp::SlipConsume { .. }
-            | AuthorityOp::CriticalWriteConfirm(_)
-            | AuthorityOp::MachineProfile(_)
-            | AuthorityOp::OwnerRoot(_)
-            | AuthorityOp::ResidenceDirective(_)
-            | AuthorityOp::FederationLifecycle(FederationLifecycleAction {
-                kind: FederationLifecycleKind::Disconnect | FederationLifecycleKind::Dissolve,
-                ..
-            })
-    )
-}
-
-fn revoke_would_break_quorum(
-    state: &FoldState,
-    entry: &AuthorityLogEntry,
-    participants: &BTreeSet<AuthorityKey>,
-) -> bool {
-    let AuthorityOp::RevokeDevice { revoked_key } = &entry.op else {
-        return false;
-    };
-    // Revoking a MACHINE writer's key never weakens the owner quorum.
-    if state
-        .roster
-        .get(revoked_key)
-        .is_some_and(|device| !device.revoked && machine_writer_key(state, revoked_key, device))
-    {
-        return false;
-    }
-    let active_before = active_roster_count(state);
-    let revoked_was_active = state
-        .roster
-        .get(revoked_key)
-        .is_some_and(|device| !device.revoked && device.roles != 0);
-    let active_after = active_before.saturating_sub(usize::from(revoked_was_active));
-    participants.len() < 2 || active_after < 2
-}
-
-fn active_roster_count(state: &FoldState) -> usize {
-    state
-        .roster
-        .iter()
-        .filter(|(key, device)| {
-            !device.revoked && device.roles != 0 && !machine_writer_key(state, key, device)
-        })
-        .count()
-}
-
-/// A MACHINE writer's key: agent-only and bound to a system actor. It signs
-/// only its own claims, and ops land when the owner acts through the host
-/// (identity.md, host-rooted authority), so it is neither a quorum peer nor
-/// protected by quorum: the host alone enrolls and revokes each writer.
-fn machine_writer_key(state: &FoldState, key: &AuthorityKey, device: &FoldedDevice) -> bool {
-    device.roles == ROLE_AGENT
-        && state
-            .actor_bindings
-            .get(key)
-            .is_some_and(|binding| binding.actor_class == "system")
 }
