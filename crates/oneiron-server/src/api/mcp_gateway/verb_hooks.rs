@@ -139,7 +139,7 @@ fn mcp_rewrite_admit(server: &Arc<SyncServer>, tool: &str, actor: &McpCallContex
         _ => None,
     };
     let (server, actor) = (Arc::clone(server), actor.clone());
-    Arc::new(move |_: &str, rewritten: &Value| {
+    Arc::new(move |verb: &str, rewritten: &Value| {
         let refused = |error: McpGatewayError| format!("{}: {}", error.kind, error.message);
         let Some(tool) = generated else {
             return Err("no MCP tool carries this row to re-admit its args".to_owned());
@@ -149,7 +149,10 @@ fn mcp_rewrite_admit(server: &Arc<SyncServer>, tool: &str, actor: &McpCallContex
             .validate(tool.name, tool)
             .map_err(|error| refused(mcp_tool_validation_error(error)))?;
         mcp_admit_scoped_verb(&server, tool, &arguments, &actor).map_err(refused)?;
-        mcp_verb_gate(&server, tool, &arguments, &actor).map_err(refused)
+        mcp_verb_gate(&server, tool, &arguments, &actor).map_err(refused)?;
+        // A courtesy answer's rewritten reply_to meets its door's own check
+        // here, so a bad one gives way to the caller's (FIX 5140).
+        crate::owner::cooperative_deletion::check_rewritten_reply_to(verb, rewritten)
     })
 }
 
