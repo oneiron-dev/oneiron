@@ -6,10 +6,9 @@ use crate::claim::ScopedReadActorKey;
 use crate::code_run::consent;
 use crate::code_run::storage::{ExecutorStorage, require_facet_placement_in, unplaceable};
 use crate::code_run::types::{
-    AGENT_VERB_SESSION_BOUND, SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
-    SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
-    SelfMemorySearchResult, SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall,
-    SelfMemoryWriteResult,
+    SelfDispatchOutcome, SelfEffect, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
+    SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
+    SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
 };
 use crate::error::{Error, Result};
 use crate::{ClaimSubject, EdgeKind};
@@ -133,24 +132,28 @@ impl HostSelfDispatcher<'_> {
         }
     }
 
-    /// A search its door admitted with a key reads on that key's lane.
+    /// A search its door admitted with a key reads on that key's lane: in a
+    /// room, the room's view on that lane (WILL L11-01), while no verb hook
+    /// binds the search, which cannot run there yet. One with no key reads
+    /// as it always has, and a bound hook's skip is named in the log.
     pub(super) fn dispatch_memory_search(
         &self,
         call: SelfMemorySearchCall,
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         let limit = call.limit.min(SELF_MEMORY_SEARCH_MAX_RESULTS);
-        let results = match read_as {
-            // A room's hits include overlay rows a door's lane cannot name, so
-            // a session-bound run's narrowed search is refused as its verb
-            // forwards are.
-            Some(_) if matches!(self.storage, ExecutorStorage::Session(_)) => {
-                return Ok(SelfDispatchOutcome::Denied(SelfDeniedResult {
-                    effect: SelfEffect::MemorySearch,
-                    outcome: AGENT_VERB_SESSION_BOUND.to_owned(),
-                    reason_codes: Vec::new(),
-                }));
+        if let ExecutorStorage::Session(binding) = &self.storage {
+            if read_as.is_some() {
+                if let Some(refused) = super::session_verbs::hooked_search_refused(&binding.session)
+                {
+                    return Ok(refused);
+                }
+            } else {
+                let verb = SelfEffect::MemorySearch.as_str();
+                super::session_verbs::note_unrun_hooks(&binding.session, verb);
             }
+        }
+        let results = match read_as {
             Some(reader) => self.storage.search_text_as(&call.query, limit, reader)?,
             None => self.storage.search_text(&call.query, limit)?,
         };

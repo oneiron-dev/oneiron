@@ -116,6 +116,22 @@ impl SessionBinding<'_> {
         self.answered(|| self.session.search_text_routed(&self.route, query, limit))
     }
 
+    /// [`Self::search_text`] on `reader`'s lane over one view of the room
+    /// (WILL L11-01): the hits that key reads, its run registered through
+    /// the run's captured route.
+    fn search_text_as(
+        &self,
+        query: &str,
+        limit: usize,
+        reader: ScopedReadActorKey,
+    ) -> Result<Vec<ScoredEntity>> {
+        self.answered(|| {
+            self.session
+                .read_context(&self.route, reader)?
+                .search_text(query, limit)
+        })
+    }
+
     fn get_replay_record(&self, run_id: &EntityId) -> Result<Option<CodeRunReplayRecord>> {
         self.answered(|| self.session.side_table_get(&REPLAY_RECORDS, run_id))
     }
@@ -485,11 +501,9 @@ impl<'a> ExecutorStorage<'a> {
                 .with_claim_status(ClaimReadStatus::Surfaceable)
                 .filter_scored_entities(vault.search_text(query, limit)?)?
                 .value),
-            // A room's hits include overlay rows the vault's grants cannot
-            // name, and no host narrows a room run's reads.
-            Self::Session(_) => Err(crate::Error::InvalidConfig(
-                "a narrowed search reads the canonical vault".into(),
-            )),
+            // A room's narrowed search reads the room's view on the key's
+            // lane, each posting admitted in the scan (WILL L11-01).
+            Self::Session(binding) => binding.search_text_as(query, limit, reader),
         }
     }
 

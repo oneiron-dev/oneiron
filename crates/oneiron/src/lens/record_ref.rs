@@ -215,6 +215,22 @@ impl Memory<'_> {
         &self,
         input: &ResolveRecordRefRequest,
     ) -> MemoryResult<ScopedReadResult<RecordRefPreview>> {
+        self.record_ref_preview(
+            input,
+            |reference| self.get_entity(reference),
+            |view| self.live_revision_hex(view),
+        )
+    }
+
+    /// [`Self::resolve_record_ref`] over the target `read` reads a ref on and
+    /// the live revision `live` names for the view it admits. A room's read
+    /// reads both in its one admitted snapshot of the room (WILL L11-01).
+    pub(crate) fn record_ref_preview(
+        &self,
+        input: &ResolveRecordRefRequest,
+        read: impl FnOnce(&str) -> MemoryResult<ScopedReadResult<Option<EntityView>>>,
+        live: impl FnOnce(&EntityView) -> MemoryResult<Option<String>>,
+    ) -> MemoryResult<ScopedReadResult<RecordRefPreview>> {
         let reference = input.reference.trim();
         if reference.is_empty() || reference.len() > RECORD_REF_MAX_BYTES {
             return Err(MemoryError::bad_request_with(
@@ -224,7 +240,7 @@ impl Memory<'_> {
                 ],
             ));
         }
-        let read = match self.get_entity(reference) {
+        let read = match read(reference) {
             Ok(read) => read,
             Err(error)
                 if error.code == MEMORY_CODE_NOT_FOUND || error.code == MEMORY_CODE_BAD_REQUEST =>
@@ -239,7 +255,7 @@ impl Memory<'_> {
         };
         let revision = match reference.rsplit_once('@') {
             Some((_, pinned)) => Some(pinned.to_ascii_lowercase()),
-            None => self.live_revision_hex(&view)?,
+            None => live(&view)?,
         };
         Ok(ScopedReadResult {
             value: RecordRefPreview {

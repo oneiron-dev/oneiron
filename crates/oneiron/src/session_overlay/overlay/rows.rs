@@ -6,7 +6,7 @@ use crate::error::{Error, Result};
 
 use super::super::journal::JournalEntry;
 use super::super::keyspace::{
-    KeyspaceState, OverlayKeyspace, OverlayMutation, OverlayValue, project_mutation,
+    KeyspaceState, OverlayKeyspace, OverlayMutation, OverlayValue, project_mutation, unbudgeted_row,
 };
 use super::super::snapshot::OverlaySnapshot;
 use super::ACTIVE_SEGMENT;
@@ -22,7 +22,10 @@ impl SessionOverlay {
         key: &[u8],
         value: &[u8],
     ) -> Result<()> {
-        self.reject_unbudgetable_payload(key, value)?;
+        // The room's bookkeeping spends none of its budget (`unbudgeted_row`).
+        if !unbudgeted_row(keyspace, key) {
+            self.reject_unbudgetable_payload(key, value)?;
+        }
         let mutation = OverlayMutation::Put {
             keyspace,
             key: key.to_vec(),

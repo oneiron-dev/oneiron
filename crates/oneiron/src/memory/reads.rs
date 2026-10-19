@@ -523,10 +523,23 @@ impl Memory<'_> {
             ));
         }
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let hits = lane.filter_scored_entities(self.vault.search_text(query, limit)?)?;
+        self.lexical_hits(&lane, hits, |id| self.short_ref_of(id))
+    }
+
+    /// The admitted `hits` of one BM25 query on `lane`, read there and ranked
+    /// by claim source as the pack ranks them, each with its snippet and the
+    /// short ref `short_ref` names it by (a room's read names the room's).
+    pub(super) fn lexical_hits(
+        &self,
+        lane: &crate::claim::ScopedRead<'_>,
+        hits: ScopedReadResult<Vec<crate::pipeline::ScoredEntity>>,
+        short_ref: impl Fn(&EntityId) -> MemoryResult<Option<String>>,
+    ) -> MemoryResult<ScopedReadResult<Vec<LexicalHit>>> {
         let ScopedReadResult {
             value: hits,
             mut receipt,
-        } = lane.filter_scored_entities(self.vault.search_text(query, limit)?)?;
+        } = hits;
         let reads: Vec<_> = hits.iter().map(|hit| PointRead::id(hit.id)).collect();
         let rows = lane.read(&reads, None)?;
         receipt.restrict_with(&rows.receipt);
@@ -557,7 +570,7 @@ impl Memory<'_> {
                     .and_then(serde_json::Value::as_str)
                     .map(|content| truncate_text(content, SNIPPET_MAX_CHARS))
             });
-            let short = self.short_ref_of(&hit.id)?;
+            let short = short_ref(&hit.id)?;
             out.push(LexicalHit {
                 record: Some(crate::lens::RecordRef::from_body(
                     row.entity_type,

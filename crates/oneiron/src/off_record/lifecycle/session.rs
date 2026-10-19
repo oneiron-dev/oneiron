@@ -422,7 +422,60 @@ impl OffRecordSession<'_> {
                     .search_text_scored(&self.vault.store, query, limit, &profile, admit)?;
             (search, false)
         };
+        let started = (search.started_at, search.started);
+        self.register_search(route, search.scores, started, limit, holds_room_rows)
+    }
 
+    /// [`Self::search_text_routed`] on `lane`, a narrow key's lane over
+    /// `view`, this room's one view for the call (WILL L11-01): each posting
+    /// is admitted on the lane inside the scan
+    /// (`memory::scoped_session_text`), so a row the key cannot read neither
+    /// ranks nor counts, and the run registers through the route the run
+    /// captured, as every in-room search does. The caller admits the hits
+    /// again before it releases them.
+    pub(crate) fn search_text_scoped_routed(
+        &self,
+        route: &SessionWriteRoute,
+        view: &crate::store::SessionStoreView<'_>,
+        lane: &crate::claim::ScopedRead<'_>,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ScoredEntity>> {
+        route.revalidate()?;
+        let admit = |txn: &heed::RoTxn<'_>| self.participant_in_txn(txn);
+        let (scores, started) =
+            crate::memory::scoped_session_text(self.vault, view, lane, query, limit, admit)?;
+        self.register_search(route, scores, started, limit, view.read().holds_room_rows())
+    }
+
+    /// The reads a run bound to this room serves for its caller (WILL
+    /// L11-01): one view of the room, read under `key`, the narrow key the
+    /// run's host admitted, and through `route`, the run's captured route.
+    pub(crate) fn read_context<'s>(
+        &'s self,
+        route: &'s SessionWriteRoute,
+        key: crate::claim::ScopedReadActorKey,
+    ) -> Result<crate::memory::SessionReadContext<'s>> {
+        crate::memory::SessionReadContext::new(self.vault, self, route, key)
+    }
+
+    /// Whether a verb hook may run on `verb` in this room's vault. A hook
+    /// bound to a run's read here has no home in the room for its receipts
+    /// yet (S01-2), so the read names its skip (WILL L11-01).
+    pub(crate) fn verb_hooks_may_run(&self, verb: &str) -> bool {
+        self.vault.verb_hooks_may_run(verb)
+    }
+
+    /// Registers one in-room search's run through `route` and hands its
+    /// `scores` back; `started` is when the search began.
+    fn register_search(
+        &self,
+        route: &SessionWriteRoute,
+        scores: Vec<ScoredEntity>,
+        (started_at, started): (u64, std::time::Instant),
+        limit: usize,
+        holds_room_rows: bool,
+    ) -> Result<Vec<ScoredEntity>> {
         let telemetry = self.retrieval_telemetry(route)?;
         // A search that read the room may name its rows while it holds any,
         // and base holds no reference to a live overlay row (the taint guard
@@ -430,18 +483,18 @@ impl OffRecordSession<'_> {
         // though its saver must still hold.
         if !self.vault.store.retrieval_telemetry_capture_enabled() {
             telemetry.revalidate_without_capture()?;
-            return Ok(search.scores);
+            return Ok(scores);
         }
         if telemetry.writes_to_base() && holds_room_rows {
             telemetry.admit_withheld_write()?;
-            return Ok(search.scores);
+            return Ok(scores);
         }
         let record = Vault::vault_search_retrieval_run_record(
             crate::store::RetrievalRunId::from_bytes(self.vault.store.clock.ulid()?),
             crate::store::RetrievalSignal::Text,
-            search.started_at,
-            search.started,
-            &search.scores,
+            started_at,
+            started,
+            &scores,
             limit,
         );
         // Both targets go through the room's one registration door, so the
@@ -452,7 +505,7 @@ impl OffRecordSession<'_> {
         // through the routeless canonical door.
         telemetry.register_run(&record, false)?;
 
-        Ok(search.scores)
+        Ok(scores)
     }
 
     /// The retrieval-run REGISTRATION DOOR for retrievals issued inside this

@@ -197,10 +197,13 @@ impl KeyspaceState {
         }
     }
 
-    fn byte_size(&self) -> usize {
+    /// The bytes this keyspace's rows spend of the room's budget: every row
+    /// but the room's bookkeeping ([`unbudgeted_row`]).
+    fn byte_size(&self, keyspace: OverlayKeyspace) -> usize {
         match self {
             Self::Single { rows, .. } => rows
                 .iter()
+                .filter(|(key, _)| !unbudgeted_row(keyspace, key))
                 .map(|(key, value)| {
                     key.len()
                         + match value {
@@ -248,9 +251,28 @@ impl OverlayState {
         self.bytes_used = self
             .keyspaces
             .iter()
-            .map(|state| state.byte_size())
+            .enumerate()
+            .map(|(slot, state)| state.byte_size(OverlayKeyspace::from_slot(slot)))
             .chain(self.journal.iter().map(|entry| entry.byte_size()))
             .fold(0_usize, usize::saturating_add);
+    }
+}
+
+/// Whether the row at `key` of `keyspace` is a room's bookkeeping of a write
+/// rather than content it stages (WILL L11-01, Engine 10-19): a record
+/// position staged beside a row (`record_scope::stage_session_position`), or
+/// a `FacetOf` edge, which a room stages only as a NOTE's birth facet. Its
+/// bytes stay outside the room's budget, so a room at its limit takes exactly
+/// the writes it took before rows carried positions; it still stages in the
+/// same segment as its row.
+pub(super) fn unbudgeted_row(keyspace: OverlayKeyspace, key: &[u8]) -> bool {
+    match keyspace {
+        OverlayKeyspace::VaultMeta => key.starts_with(crate::side_table::SCOPE_RECORD.prefix),
+        // An edge key is `[src(16) | kind(1) | tgt(16)]`, in both directions.
+        OverlayKeyspace::EdgesOut | OverlayKeyspace::EdgesIn => {
+            key.get(16) == Some(&(crate::edge::EdgeKind::FacetOf as u8))
+        }
+        _ => false,
     }
 }
 

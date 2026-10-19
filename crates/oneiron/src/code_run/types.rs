@@ -588,7 +588,8 @@ pub const AGENT_VERB_DOOR_UNBOUND: &str = "agent_verb_door_unbound";
 
 /// The refusal a verb call gets from a run bound to an off-record session:
 /// the host's door runs on the canonical vault, where the session's route
-/// and saver are not checked.
+/// and saver are not checked. The reads the room serves itself
+/// (`dispatcher::session_verbs`) answer through the room's view instead.
 pub const AGENT_VERB_SESSION_BOUND: &str = "agent_verb_session_bound";
 
 /// The host's door onto the SDK verb table.
@@ -626,6 +627,21 @@ pub trait AgentVerbDoor: Send + Sync {
         &self,
         call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
+
+    /// Admits one read a run bound to an off-record session serves through
+    /// the room's view (WILL L11-01): `vault.get`, `vault.hydrate`,
+    /// `vault.refs.resolve` or `vault.search.bm25`. The answer is the key
+    /// the read reads under: this door's caller, as its credential and
+    /// ceiling bind them now, never a wider key. A door that admits no such
+    /// read refuses it as a session-bound run's verbs were refused before.
+    fn admit_session_read(
+        &self,
+        _verb: crate::task_verb::sdk::AgentVerb,
+    ) -> std::result::Result<crate::claim::ScopedReadActorKey, AgentVerbRefusal> {
+        Err(AgentVerbRefusal {
+            code: AGENT_VERB_SESSION_BOUND.to_owned(),
+        })
+    }
 
     /// Whether a result the run retained stays on this device for the door's
     /// caller now (DEC-0005), re-checked at each read of it: `rows` are the
