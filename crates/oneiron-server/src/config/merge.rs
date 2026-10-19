@@ -263,13 +263,13 @@ pub(crate) fn layer_serve_config(
         }
         values.apply_to(&mut resolved, source)?;
     }
-    // Only the final posture may discard inherited custody. An intermediate
-    // self-host layer can still be overridden by a later hosted layer, which
-    // needs the highest-precedence reference even when it came from the file.
-    if matches!(
-        resolved.privacy_posture,
-        HostingPrivacyPosture::SelfHostLocal | HostingPrivacyPosture::Relay
-    ) && let (Some(posture_source), Some(key_ref_source)) = (posture_source, key_ref_source)
+    // Only the final posture may discard inherited custody, and only a blind
+    // relay, which holds no key: a self-hosted vault keeps an inherited KMS
+    // reference as its own key's custody. An intermediate relay layer can
+    // still be overridden by a later hosted layer, which needs the
+    // highest-precedence reference even when it came from the file.
+    if resolved.privacy_posture == HostingPrivacyPosture::Relay
+        && let (Some(posture_source), Some(key_ref_source)) = (posture_source, key_ref_source)
         && key_ref_source < posture_source
     {
         resolved.hosted_kms_key_ref = None;
