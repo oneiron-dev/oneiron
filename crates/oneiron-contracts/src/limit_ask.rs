@@ -204,11 +204,32 @@ pub enum EngineLimit {
     /// writes and retrieval regressions. Past it the tripwire runs at that
     /// threshold.
     TripwireThreshold,
+    /// Documents one e-sign sweep is handed: a seal backstop, expiry or
+    /// reminder batch. Past it the row asks whether everything is okay and
+    /// every document in the batch is swept.
+    EsignSweepDocuments,
+    /// Signing principals one owner names for e-sign. Past it the row asks
+    /// and every principal is kept.
+    EsignSigningPrincipals,
+    /// Bytes of one uploaded signature image, as it arrived. Past it the
+    /// envelope's sender is asked whether everything is okay, and the image
+    /// is decoded, stored and bound.
+    EsignSignatureInputBytes,
+    /// Bytes of one signature image's canonical PNG re-encoding. Past it the
+    /// envelope's sender is asked, and the image is stored and bound.
+    EsignSignaturePngBytes,
+    /// Canonical signature image bytes one signing document holds in all.
+    /// Past it the envelope's sender is asked, and the image is stored and
+    /// bound.
+    EsignSignatureDocumentBytes,
+    /// Signature images one recipient of a signing document holds. Past it
+    /// the envelope's sender is asked, and the image is stored and bound.
+    EsignSignatureRecipientImages,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 53] = [
+    pub const ALL: [Self; 59] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -262,6 +283,12 @@ impl EngineLimit {
         Self::BlockedDetailBytes,
         Self::SealReferenceBytes,
         Self::TripwireThreshold,
+        Self::EsignSweepDocuments,
+        Self::EsignSigningPrincipals,
+        Self::EsignSignatureInputBytes,
+        Self::EsignSignaturePngBytes,
+        Self::EsignSignatureDocumentBytes,
+        Self::EsignSignatureRecipientImages,
     ];
 
     /// The config key that sets the row.
@@ -320,6 +347,12 @@ impl EngineLimit {
             Self::BlockedDetailBytes => "limits.blocked_detail_bytes",
             Self::SealReferenceBytes => "limits.seal_reference_bytes",
             Self::TripwireThreshold => "limits.tripwire_threshold",
+            Self::EsignSweepDocuments => "limits.esign_sweep_documents",
+            Self::EsignSigningPrincipals => "limits.esign_signing_principals",
+            Self::EsignSignatureInputBytes => "limits.esign_signature_input_bytes",
+            Self::EsignSignaturePngBytes => "limits.esign_signature_png_bytes",
+            Self::EsignSignatureDocumentBytes => "limits.esign_signature_document_bytes",
+            Self::EsignSignatureRecipientImages => "limits.esign_signature_recipient_images",
         }
     }
 
@@ -392,6 +425,15 @@ impl EngineLimit {
             Self::BlockedDetailBytes => 4096,
             Self::SealReferenceBytes => 256,
             Self::TripwireThreshold => 1024,
+            // The batch, principal, image byte and image count ceilings the
+            // e-sign sweeps, principals and signature upload refused past
+            // before Rule 5.
+            Self::EsignSweepDocuments => 100,
+            Self::EsignSigningPrincipals => 256,
+            Self::EsignSignatureInputBytes => 2 << 20,
+            Self::EsignSignaturePngBytes => 2 << 20,
+            Self::EsignSignatureDocumentBytes => 64 << 20,
+            Self::EsignSignatureRecipientImages => 16,
         }
     }
 }

@@ -1,4 +1,4 @@
-//! Owner-tier reseal admission and bounded repair sweep.
+//! Owner-tier reseal admission and the repair sweep.
 use super::{
     ceremony::enqueue_seal,
     ledger::{append, events_in, state_in},
@@ -6,6 +6,7 @@ use super::{
     principals::verify_owner,
 };
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
+use crate::limit_ask::EngineLimit;
 use crate::{EntityId, Result, Vault};
 impl Vault {
     pub fn request_esign_reseal(
@@ -58,11 +59,11 @@ impl Vault {
     }
     /// Backstop scan is caller-scheduled every fifteen minutes. Only seal-ready
     /// requests whose completion trigger is 15 minutes..6 hours old qualify.
-    /// Voids and expiries can never become seal jobs.
+    /// Voids and expiries can never become seal jobs. Every document handed
+    /// is swept: past the `[limits] esign_sweep_documents` row the row asks
+    /// whether everything is okay, and the sweep goes on.
     pub fn sweep_esign_seals(&self, documents: &[EntityId], now: u64) -> Result<usize> {
-        if documents.len() > 100 {
-            return Err(invalid("seal sweep batch exceeds 100"));
-        }
+        self.measure_limit(EngineLimit::EsignSweepDocuments, documents.len() as u64);
         self.with_write_txn_grouped(|txn| {
             let mut queued = 0;
             for &document in documents {

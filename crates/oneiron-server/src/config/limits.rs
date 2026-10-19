@@ -290,6 +290,12 @@ impl LimitsConfig {
             blocked_detail_bytes,
             seal_reference_bytes,
             tripwire_threshold,
+            esign_sweep_documents,
+            esign_signing_principals,
+            esign_signature_input_bytes,
+            esign_signature_png_bytes,
+            esign_signature_document_bytes,
+            esign_signature_recipient_images,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -393,6 +399,27 @@ impl LimitsConfig {
             (EngineLimit::BlockedDetailBytes, blocked_detail_bytes),
             (EngineLimit::SealReferenceBytes, seal_reference_bytes),
             (EngineLimit::TripwireThreshold, tripwire_threshold),
+            (EngineLimit::EsignSweepDocuments, esign_sweep_documents),
+            (
+                EngineLimit::EsignSigningPrincipals,
+                esign_signing_principals,
+            ),
+            (
+                EngineLimit::EsignSignatureInputBytes,
+                esign_signature_input_bytes,
+            ),
+            (
+                EngineLimit::EsignSignaturePngBytes,
+                esign_signature_png_bytes,
+            ),
+            (
+                EngineLimit::EsignSignatureDocumentBytes,
+                esign_signature_document_bytes,
+            ),
+            (
+                EngineLimit::EsignSignatureRecipientImages,
+                esign_signature_recipient_images,
+            ),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -554,4 +581,10 @@ pub(super) struct LimitsConfigOverride {
     pub(super) blocked_detail_bytes: Option<u64>,
     pub(super) seal_reference_bytes: Option<u64>,
     pub(super) tripwire_threshold: Option<u64>,
+    pub(super) esign_sweep_documents: Option<u64>,
+    pub(super) esign_signing_principals: Option<u64>,
+    pub(super) esign_signature_input_bytes: Option<u64>,
+    pub(super) esign_signature_png_bytes: Option<u64>,
+    pub(super) esign_signature_document_bytes: Option<u64>,
+    pub(super) esign_signature_recipient_images: Option<u64>,
 }

@@ -1,6 +1,7 @@
 //! Owner-editable principal set and the legal-reality-gated D6 action dial.
 use super::model::{invalid, reference};
 use crate::consent::AuthenticatedOwner;
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, HexId, LegacyJson, Raw, SideTable};
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -44,14 +45,14 @@ pub(super) fn verify_owner(
     Ok(actor)
 }
 impl Vault {
+    /// Replaces the signing principal set with `principals`, every one of
+    /// them, however many: past the `[limits] esign_signing_principals` row
+    /// the row asks whether everything is okay, and the whole set is kept.
     pub fn set_signing_principals(
         &self,
         owner: &AuthenticatedOwner,
         principals: &[SigningPrincipal],
     ) -> Result<()> {
-        if principals.len() > 256 {
-            return Err(invalid("too many signing principals"));
-        }
         self.with_write_txn_grouped(|txn| {
             verify_owner(self, txn, owner)?;
             let mut seen = BTreeSet::new();
@@ -79,7 +80,9 @@ impl Vault {
             }
             OWNER_STAMP.put(&self.store, txn, &(), &owner.decision_id().as_bytes())?;
             Ok(())
-        })
+        })?;
+        self.measure_limit(EngineLimit::EsignSigningPrincipals, principals.len() as u64);
+        Ok(())
     }
     pub fn signing_principals(&self) -> Result<Vec<SigningPrincipal>> {
         let txn = self.store.env.read_txn()?;
