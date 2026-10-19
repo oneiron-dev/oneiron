@@ -38,7 +38,7 @@ use oneiron::{
 use super::SKILL_SEPARATOR;
 use crate::mcp::McpCodeModeProvider;
 use crate::server::core::pattern_workflow::{
-    decode_launch_spec, launch_members, launch_request, launch_spec_schema, stop,
+    decode_launch_spec, fault, launch_members, launch_request, launch_spec_schema, stop,
 };
 
 const LEASE_LOST: &str = "the spawning agent's run no longer holds its lease, so its pattern run \
@@ -216,7 +216,7 @@ impl AgentPatternLaunchRunner {
                         .enable_all()
                         .build()
                         .map_err(|error| {
-                            stop(format!(
+                            fault(format!(
                                 "the spawning agent's pattern run's runtime did not start: \
                                  {error}; ask again"
                             ))
@@ -227,7 +227,7 @@ impl AgentPatternLaunchRunner {
                 })
                 .join()
         })
-        .unwrap_or_else(|_| Err(stop(STOPPED)))
+        .unwrap_or_else(|_| Err(fault(STOPPED)))
     }
 }
 

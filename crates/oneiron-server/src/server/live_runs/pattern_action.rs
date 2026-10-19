@@ -32,6 +32,8 @@ use crate::server::resident_pump::pattern_launch::agent_runner_for_attempt;
 
 const NO_BACKEND: &str = "this host has no pattern runner bound yet: its provider lends the \
      spawning agent's line no backend; ask again once the host binds one";
+const LINE_CLOSED: &str = "the spawning agent's line did not open for its pattern run; fund the \
+     scope its run spends under, then ask again";
 
 /// A live run's pattern runner for its actions: what the run registered,
 /// and the host's native provider whose line each start opens.
@@ -115,12 +117,17 @@ impl PatternLaunchRunner for ActionPatternRunner {
             let line = self.provider.host_meter().map(|guard| (guard, None));
             return self.agent_runner(line)?.run(skill, asked, prompt, plan);
         };
+        // The open's own error can name the payer the scope bills, who may
+        // not be the caller: the host log keeps it, the refusal names the
+        // bound.
         let ScopeMeter { guard, payer, .. } =
             ScopeMeter::open(&self.vault, scope).map_err(|error| {
-                stop(format!(
-                    "the spawning agent's line did not open for its pattern run: {error}; fund \
-                     the scope its run spends under, then ask again"
-                ))
+                tracing::warn!(
+                    agent = %self.actor.entity_ref().to_hex(),
+                    error = %error,
+                    "a live run's pattern run found its spend scope's line closed"
+                );
+                stop(LINE_CLOSED)
             })?;
         let started = self
             .agent_runner(Some((guard.clone(), payer)))

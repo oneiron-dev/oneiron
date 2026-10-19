@@ -1562,6 +1562,11 @@ fn dispatch_error_outcome(call: &SelfCall, err: &Error) -> Option<SelfDispatchOu
             effect: call.effect(),
             error: err.to_string(),
         })),
+        // A refusal names its bound: the guest reads what it can act on.
+        Error::Refused(_) => Some(SelfDispatchOutcome::Failed(SelfFailedResult {
+            effect: call.effect(),
+            error: err.to_string(),
+        })),
         _ if records_failed_effect(call.effect()) => {
             Some(SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect(),

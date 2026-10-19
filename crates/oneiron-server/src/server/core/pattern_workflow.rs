@@ -163,7 +163,7 @@ impl HostPatternLaunchRunner {
                         .enable_all()
                         .build()
                         .map_err(|error| {
-                            stop(format!(
+                            fault(format!(
                                 "the pattern run's runtime did not start: {error}; ask again"
                             ))
                         })?;
@@ -173,7 +173,7 @@ impl HostPatternLaunchRunner {
                 })
                 .join()
         })
-        .unwrap_or_else(|_| Err(stop(STOPPED)))
+        .unwrap_or_else(|_| Err(fault(STOPPED)))
     }
 }
 
@@ -183,7 +183,7 @@ pub(in crate::server) fn launch_members(skill: &LoadedSkillPack, plan: &TeamPlan
     let pattern = plan
         .pattern_skill
         .as_ref()
-        .ok_or_else(|| stop(NOT_A_TEAM))?;
+        .ok_or_else(|| fault(NOT_A_TEAM))?;
     if skill.entity != pattern.skill || skill.record.version != pattern.version {
         return Err(stop(SKILL_MOVED));
     }
@@ -193,7 +193,7 @@ pub(in crate::server) fn launch_members(skill: &LoadedSkillPack, plan: &TeamPlan
     plan.shape
         .width
         .checked_sub(1)
-        .ok_or_else(|| stop(NO_LEADER))
+        .ok_or_else(|| fault(NO_LEADER))
 }
 
 /// The pack's SKILL.md, exactly as it loaded.
@@ -281,7 +281,7 @@ pub(in crate::server) fn launch_request(
         },
     };
     let task = serde_json::to_string(&task).map_err(|error| {
-        stop(format!(
+        fault(format!(
             "the pattern run's task data did not encode: {error}"
         ))
     })?;
@@ -408,7 +408,16 @@ fn off_schema(detail: impl std::fmt::Display) -> Error {
     ))
 }
 
-/// Why a pattern run wrote no start, and what the owner can do next.
+/// Why a pattern run wrote no start, and what the owner can do next: a
+/// refusal that names its bound, which the planner answers as it is.
 pub(in crate::server) fn stop(reason: impl Into<String>) -> Error {
+    Error::Refused(reason.into())
+}
+
+/// A host fault that stopped a pattern run: a solo or zero-width plan, task
+/// data that did not encode, a runtime that did not start, a capture that
+/// panicked. The host log keeps it, and the planner answers its own fixed
+/// refusal.
+pub(in crate::server) fn fault(reason: impl Into<String>) -> Error {
     Error::InvalidConfig(reason.into())
 }

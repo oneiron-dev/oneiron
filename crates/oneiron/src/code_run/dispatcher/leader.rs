@@ -167,8 +167,9 @@ impl HostSelfDispatcher<'_> {
     /// The leader, or a solo's one agent, answers as the spawn's queued
     /// attempt, with the launch statement its dispatch froze.
     ///
-    /// A refusal the intent kept answers as the planned path's planner
-    /// refusals do, typed as invalid dispatch input.
+    /// A refusal the intent kept answers as an [`Error::Refused`] that
+    /// carries it, and so names its bound and the new intent key it takes;
+    /// a pattern runner's own refusal passes through the same way.
     pub(super) fn launch_planned_spawn(
         &self,
         intent_key: String,
@@ -220,7 +221,11 @@ impl HostSelfDispatcher<'_> {
                     refusal = view.refusal.as_deref().unwrap_or_default(),
                     "a leased agent's planned spawn was refused"
                 );
-                return Err(refused(SPAWN_REFUSED));
+                // Every refusal an intent keeps ends on the new intent key it
+                // takes, so it is the whole answer as it stands.
+                return Err(view
+                    .refusal
+                    .map_or_else(|| refused(SPAWN_REFUSED), Error::Refused));
             }
         };
         // The statement the leader's dispatch froze, when it reads.
