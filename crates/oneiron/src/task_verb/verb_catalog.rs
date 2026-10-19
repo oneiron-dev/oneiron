@@ -502,6 +502,11 @@ pub enum AgentVerb {
     VaultLensesResultSetAction,
     VaultLensesDefault,
     VaultDisclosureOffer,
+    VaultDisclosureCeilingGet,
+    VaultDisclosureCeilingSet,
+    VaultDisclosureCeilingClear,
+    VaultDisclosureReveals,
+    VaultDisclosureRevealsAnswer,
     Reveal,
     RevealWait,
     RevealDescribe,
@@ -1537,6 +1542,11 @@ impl AgentVerb {
         Self::VaultLensesResultSetAction,
         Self::VaultLensesDefault,
         Self::VaultDisclosureOffer,
+        Self::VaultDisclosureCeilingGet,
+        Self::VaultDisclosureCeilingSet,
+        Self::VaultDisclosureCeilingClear,
+        Self::VaultDisclosureReveals,
+        Self::VaultDisclosureRevealsAnswer,
         Self::Reveal,
         Self::RevealWait,
         Self::RevealDescribe,
@@ -2589,6 +2599,11 @@ impl AgentVerb {
             Self::VaultLensesResultSetAction => "vault.lenses.result_set.action",
             Self::VaultLensesDefault => "vault.lenses.default",
             Self::VaultDisclosureOffer => "vault.disclosure.offer",
+            Self::VaultDisclosureCeilingGet => "vault.disclosure.ceiling.get",
+            Self::VaultDisclosureCeilingSet => "vault.disclosure.ceiling.set",
+            Self::VaultDisclosureCeilingClear => "vault.disclosure.ceiling.clear",
+            Self::VaultDisclosureReveals => "vault.disclosure.reveals",
+            Self::VaultDisclosureRevealsAnswer => "vault.disclosure.reveals.answer",
             Self::Reveal => "reveal",
             Self::RevealWait => "reveal.wait",
             Self::RevealDescribe => "reveal.describe",
@@ -3638,6 +3653,11 @@ impl AgentVerb {
                 | Self::VaultLensesResultSetAction
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
+                | Self::VaultDisclosureCeilingGet
+                | Self::VaultDisclosureCeilingSet
+                | Self::VaultDisclosureCeilingClear
+                | Self::VaultDisclosureReveals
+                | Self::VaultDisclosureRevealsAnswer
                 | Self::Reveal
                 | Self::RevealWait
                 | Self::RevealDescribe
@@ -4700,6 +4720,11 @@ impl AgentVerb {
                 | Self::VaultLensesResultSetAction
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
+                | Self::VaultDisclosureCeilingGet
+                | Self::VaultDisclosureCeilingSet
+                | Self::VaultDisclosureCeilingClear
+                | Self::VaultDisclosureReveals
+                | Self::VaultDisclosureRevealsAnswer
                 | Self::Reveal
                 | Self::RevealWait
                 | Self::RevealDescribe
@@ -5281,6 +5306,7 @@ impl AgentVerb {
                 | Self::VaultConsentGraduationOffers
                 | Self::VaultConsentGraduationTrustTable
                 | Self::VaultSealPending
+                | Self::VaultDisclosureReveals
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultArtifactsThreadsList
@@ -5862,6 +5888,11 @@ impl AgentVerb {
                 | Self::VaultLensesResultSetAction
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
+                | Self::VaultDisclosureCeilingGet
+                | Self::VaultDisclosureCeilingSet
+                | Self::VaultDisclosureCeilingClear
+                | Self::VaultDisclosureReveals
+                | Self::VaultDisclosureRevealsAnswer
                 | Self::Reveal
                 | Self::RevealWait
                 | Self::RevealDescribe
@@ -6662,6 +6693,9 @@ impl AgentVerb {
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesResultSetAction
                 | Self::VaultDisclosureOffer
+                | Self::VaultDisclosureCeilingSet
+                | Self::VaultDisclosureCeilingClear
+                | Self::VaultDisclosureRevealsAnswer
                 | Self::Reveal
                 | Self::SelfUse
                 | Self::SelfSecretsMaterialize
@@ -7504,6 +7538,11 @@ impl AgentVerb {
             Self::VaultLensesResultSetAction => &["spec"],
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
+            Self::VaultDisclosureCeilingGet => &["spec"],
+            Self::VaultDisclosureCeilingSet => &["spec"],
+            Self::VaultDisclosureCeilingClear => &["spec"],
+            Self::VaultDisclosureReveals => &["spec"],
+            Self::VaultDisclosureRevealsAnswer => &["spec"],
             Self::Reveal => &["spec"],
             Self::RevealWait => &["spec"],
             Self::RevealDescribe => &["spec"],
@@ -8540,6 +8579,11 @@ impl AgentVerb {
             Self::VaultLensesResultSetAction => &["spec"],
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
+            Self::VaultDisclosureCeilingGet => &["spec"],
+            Self::VaultDisclosureCeilingSet => &["spec"],
+            Self::VaultDisclosureCeilingClear => &["spec"],
+            Self::VaultDisclosureReveals => &["spec"],
+            Self::VaultDisclosureRevealsAnswer => &["spec"],
             Self::Reveal => &["spec"],
             Self::RevealWait => &["spec"],
             Self::RevealDescribe => &["spec"],
@@ -10545,14 +10589,29 @@ impl AgentVerb {
             Self::VaultDisclosureOffer => {
                 "An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."
             }
+            Self::VaultDisclosureCeilingGet => {
+                "Reads the owner registry dial for one model connection, optionally one data class."
+            }
+            Self::VaultDisclosureCeilingSet => {
+                "The owner sets one connection or class disclosure ceiling; no read authority changes."
+            }
+            Self::VaultDisclosureCeilingClear => {
+                "The owner clears one dial, restoring connection or actor-class inference."
+            }
+            Self::VaultDisclosureReveals => {
+                "The owner reads model-disclosure asks and receipts, including PERSON handles, without values."
+            }
+            Self::VaultDisclosureRevealsAnswer => {
+                "The owner approves once, approves standing, or denies the exact frozen reveal ask."
+            }
             Self::Reveal => {
-                "Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."
+                "Asks for a custody or PERSON handle's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."
             }
             Self::RevealWait => {
                 "Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."
             }
             Self::RevealDescribe => {
-                "What a secret handle names, where it was found and what a reveal of it would do now; never the value."
+                "What a custody or PERSON handle names, where it was found and what a reveal of it would do now; never the value."
             }
             Self::SelfUse => {
                 "Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."

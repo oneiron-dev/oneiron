@@ -4318,6 +4318,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_disclosure_ceiling_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.ceiling.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_disclosure_ceiling_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.ceiling.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_disclosure_ceiling_clear(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.ceiling.clear", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_disclosure_reveals(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.reveals", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_disclosure_reveals_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.reveals.answer", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn reveal(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("reveal", js_json(input))
