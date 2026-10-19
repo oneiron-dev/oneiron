@@ -606,9 +606,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/limits.rs` | src | m | 1 struct · 6 crate-vis | LimitsConfig | The `[limits]` section: the bounds on work a remote caller can start at this server |
 | `src/config/limits_tests.rs` | test | s | — | — | Resolution rows for the `[limits]` section |
 | `src/config/line.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | LineConfig | `[line]`: the plan of the LINE Official Account the built-in LINE pack serves (OF-519) |
+| `src/config/linear.rs` | src | m | 1 struct · 1 enum · 8 crate-vis | LinearConfig, LinearMode | `[linear]`: the Linear mirror this server runs and the tracker mapping its signed webhook applies under… |
 | `src/config/lookup.rs` | src | s | 11 crate-vis | — | Leaf config helpers: env lookups, value parsing, and secret redaction |
 | `src/config/merge.rs` | src | L | 1 struct · 6 fn · 5 crate-vis | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
-| `src/config/mod.rs` | src | s | 14 mod · 24 re-export · 2 crate-vis | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
+| `src/config/mod.rs` | src | s | 14 mod · 25 re-export · 3 crate-vis | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `src/config/models/compaction.rs` | src | s | 1 struct · 2 crate-vis | CompactionSettings | `[models.code_mode.compaction]`: each code-mode run's window compacts by itself (agent-runtime-v1 §d7) |
 | `src/config/models/decision_read.rs` | src | m | 4 struct · 1 enum · 8 fn · 2 crate-vis | DecisionReadRecipe, DecisionReadSettings, ProbeQuestions, ReadPrompt, RenderRefusal | `[models.decision_read]`: the house model's decision read on the `local_reasoner` rung, and the recipe it… |
 | `src/config/models/decisions.rs` | src | m | 8 struct · 1 enum · 2 crate-vis | BigReply, BigSettings, BookingParseSettings, ConnectorSlateSettings, DecisionsSettings, ImagePickSettings, ImportAudienceSettings, SeatPickSettings +1 | `[models.decisions]`: the host's own typed questions and the System One seat on its decision ladder |
@@ -628,7 +629,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/remote_embedder.rs` | src | s | 2 struct · 2 crate-vis | EgressPolicy, RemoteEmbedderConfig | Host-configured remote rung and cached per-entity egress decisions |
 | `src/config/self_heal.rs` | src | s | 2 struct · 1 enum · 2 fn · 3 crate-vis | DetectorConfig, DetectorTier, SelfHealConfig | The `[self_heal]` section: the model-graded detectors this deployment runs over its retrieval telemetry… |
 | `src/config/serve_args.rs` | src | m | 1 struct · 1 crate-vis | ServeArgs | CLI surface: `ServeArgs`, its redacting `Debug`, and argv-derived overrides |
-| `src/config/server_config.rs` | src | m | 2 struct · 4 fn | ServeConfig, SyncServerConfig | Resolved server configuration: `SyncServerConfig` and `ServeConfig` |
+| `src/config/server_config.rs` | src | m | 2 struct · 1 enum · 4 fn | IngressAuth, ServeConfig, SyncServerConfig | Resolved server configuration: `SyncServerConfig` and `ServeConfig` |
 | `src/config/skills.rs` | src | s | 1 struct · 1 fn · 4 crate-vis | SkillsConfig | The `[skills]` section: how the skill-edit gate's live slice is funded at this server, and the skills a… |
 | `src/config/tests.rs` | test | s | — | — | — |
 | `src/config/trusted_proxy.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | TrustedProxy | `trusted_proxies`: the reverse proxies whose `X-Forwarded-For` entries the server believes when it keys a… |
@@ -722,7 +723,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens_frames.rs` | src | m | 14 crate-vis | — | OF-181: the lens frames this server holds for the cards it rendered |
 | `src/lib.rs` | src | s | 3 fn · 24 mod · 1 re-export | — | Oneiron CRDT sync server library |
 | `src/linear_host.rs` | src | m | 4 crate-vis | — | Opt-in scheduled Linear mirror over an authenticated host-owned bridge |
-| `src/linear_host/direct.rs` | src | s | 2 crate-vis | — | The server's direct Linear GraphQL mirror, using the production adapter |
+| `src/linear_host/direct.rs` | src | s | 1 crate-vis | — | The server's direct Linear GraphQL mirror, using the production adapter |
 | `src/linear_host/tests.rs` | test | s | — | — | — |
 | `src/linear_host/webhook.rs` | src | s | 6 crate-vis | — | `POST /v1/hooks/linear`: the signed Linear webhook door (OF-427 C1–C4, C11) |
 | `src/livequery.rs` | src | m | 32 crate-vis | — | App-tier framing and coarse live-query state, separate from WindowSync |
@@ -767,12 +768,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/mod.rs` | src | s | 3 mod · 8 re-export · 3 crate-vis | — | Managed serve mode: the vault engine as a supervised child process |
 | `src/managed/org_routing.rs` | src | s | 2 struct · 1 enum · 11 fn | OrgRoutingError, OrgVaultRoute, OrgVaultRouter | Read-only organization-to-vault routing over a host's registry projection |
 | `src/managed/owner_stage.rs` | src | s | 1 crate-vis | — | Managed ingress's byte-exact staging of an owner-attested request whose body streams (FIX 5255, part 2 of… |
-| `src/managed/owner_storage.rs` | src | s | 1 crate-vis | — | The owner host a managed vault serves with: its backups and restore rehearsals on the tenant's own disk, in… |
+| `src/managed/owner_storage.rs` | src | s | 3 crate-vis | — | The owner host a managed vault serves with: its backups and restore rehearsals on the tenant's own disk, in… |
 | `src/managed/peer.rs` | src | s | 3 crate-vis | — | Kernel-verified local transport peer, not a public caller IP |
 | `src/managed/preview.rs` | src | m | 2 struct · 2 trait · 9 fn · 2 type | LocalPreviewHost, PreviewIo, PreviewLease, PreviewProcess | Native forwarding for a manifest-declared private session port |
 | `src/managed/preview/http.rs` | src | m | 1 crate-vis | — | HTTP and WebSocket forwarding on a preview-only origin |
 | `src/managed/relay.rs` | src | m | 1 struct · 1 fn · 1 const | RelayConfig | A relay room has no engine, vault key, Loro document or inference worker |
-| `src/managed/settings.rs` | src | s | 1 crate-vis | — | The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in… |
+| `src/managed/settings.rs` | src | m | 1 crate-vis | — | The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in… |
 | `src/managed/shed.rs` | src | s | 1 crate-vis | — | Mapping the engine's shed transaction to the managed ctl contract |
 | `src/managed/state_serve.rs` | src | XL | 3 struct · 20 fn · 1 type · 1 const · 7 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
 | `src/managed/vault_gates.rs` | src | m | 3 fn · 3 const · 4 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
