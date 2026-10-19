@@ -17,12 +17,19 @@ use crate::{Result, Vault};
 
 pub mod agent_pack;
 mod agent_pack_export;
+mod pack_notice;
 
 pub use self::agent_pack::{
     AGENT_PACK_TRAVEL_SCHEMA, AgentPackKnowledge, AgentPackPolicy, AgentPackSkill,
     AgentPackTravelProjection,
 };
 pub use self::agent_pack_export::{AgentPackExport, AgentPackExportFile, AgentPackExportRequest};
+pub use self::pack_notice::{
+    AGENT_PACK_IMPORT_DOUBLE_CHECK, OWNER_PACK_EXPORT_RECIPIENT_NOTICE, PACK_NOTICE_AUDIENCE,
+    PACK_NOTICE_CHANNEL, PACK_NOTICE_VOICE, PACK_NOTICE_WORDING, PackNoticeWording,
+    WorldRecipientNotice,
+};
+pub(crate) use self::pack_notice::{screen_owner_notice_fields, world_label_in_txn};
 
 /// The share receipt field listing the born-with fields that travelled.
 pub const FIELD_TRAVELLED: &str = "travelled";
@@ -137,6 +144,11 @@ pub struct ExportTravel {
     /// The exporting actor as hex.
     pub by: String,
     pub travelled: Vec<BornWithField>,
+    /// Each world the owner's own export carried that his recipient choice
+    /// would keep from where it went, and why (FIX 5493). Empty for every
+    /// other export.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<WorldRecipientNotice>,
 }
 
 const EXPORT_TRAVEL: SideTable<u64, ExportTravel, Named> =
@@ -205,6 +217,7 @@ pub(crate) fn export_travel_receipts(
                         travelled_value(travel.travelled.iter().copied()),
                     ),
                 ])
+                .chain(pack_notice::receipt_fields(&travel.notices))
                 .collect(),
         };
         if query.matches(&receipt) {
@@ -423,11 +436,17 @@ impl Vault {
             content_hash,
             by,
             born_with,
+            Vec::new(),
         )
     }
 
     /// Record one travelling AgentPack's share receipt, with the knowledge
-    /// it kept home, on the same terms as [`Self::record_export_travel`].
+    /// it kept home and the owner's notices for his own export (FIX 5493),
+    /// on the same terms as [`Self::record_export_travel`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one receipt row's fields, each the export door's own"
+    )]
     pub(crate) fn record_agent_pack_travel(
         &self,
         agent: &EntityId,
@@ -436,6 +455,7 @@ impl Vault {
         by: &EntityId,
         born_with: &BornWith,
         omitted: Vec<OmittedKnowledge>,
+        notices: Vec<WorldRecipientNotice>,
     ) -> Result<()> {
         self.record_travel(
             ExportTarget::AgentPack {
@@ -446,6 +466,7 @@ impl Vault {
             content_hash,
             by,
             born_with,
+            notices,
         )
     }
 
@@ -455,6 +476,7 @@ impl Vault {
         content_hash: String,
         by: &EntityId,
         born_with: &BornWith,
+        notices: Vec<WorldRecipientNotice>,
     ) -> Result<()> {
         let travel = ExportTravel {
             at: self.store.clock.now_recorded_at(),
@@ -462,6 +484,7 @@ impl Vault {
             content_hash,
             by: by.to_hex(),
             travelled: born_with.keys().copied().collect(),
+            notices,
         };
         let written = self.with_write_txn_grouped(|txn| {
             let sequence = match EXPORT_TRAVEL.iter_rev_from(&self.store, txn, &[])?.next() {

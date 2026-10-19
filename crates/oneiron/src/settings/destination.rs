@@ -287,6 +287,51 @@ fn recipient_limit_in(
     })
 }
 
+/// Each of `worlds` the owner's recipient choice keeps from `destination`,
+/// with why, judged in `txn`'s snapshot by the same rule as
+/// [`Vault::world_recipient_limit`] (FIX 5493: what his own export carries
+/// that his choice would have kept from where it goes). Every world may be
+/// read on this device; under a conflicted vault root no world's choice can
+/// be judged, so none is named.
+pub(crate) fn recipient_limits_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    worlds: &BTreeSet<EntityId>,
+    destination: &ReadDestination,
+) -> Result<Vec<(EntityId, RecipientLimit)>> {
+    if worlds.is_empty() || !destination.is_off_device() {
+        return Ok(Vec::new());
+    }
+    let Some(view) = WorldPrivacyView::load_unless_conflicted_in(vault, txn)? else {
+        return Ok(Vec::new());
+    };
+    Ok(worlds
+        .iter()
+        .filter_map(|world| {
+            recipient_limit_in(&view, *world, destination).map(|limit| (*world, limit))
+        })
+        .collect())
+}
+
+/// Why `world`'s current settings keep it from `machine`, named directly
+/// rather than proved by a connection, in `txn`'s snapshot (FIX 5493: an
+/// import judged for the install it lands on), or `None` when it may be
+/// read there. A conflicted vault root judges no world, and says so.
+pub(crate) fn machine_recipient_hold_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    world: EntityId,
+    machine: Destination,
+) -> Result<Option<ReleaseHold>> {
+    let Some(view) = WorldPrivacyView::load_unless_conflicted_in(vault, txn)? else {
+        return Ok(Some(ReleaseHold::ConflictedRoot));
+    };
+    Ok(
+        RecipientLimit::of(&view.world_read(world), machine, |id| view.marked_mine(id))
+            .map(ReleaseHold::Recipient),
+    )
+}
+
 /// Why rows a read served may not leave for its destination now (mesh
 /// PR2-reasons). Only [`Self::Recipient`] is the owner's choice; the rest
 /// are integrity holds, which fail closed and say so.
