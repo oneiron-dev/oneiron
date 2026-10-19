@@ -43,8 +43,8 @@
 | `in_room_turn(room_ref: String)` | `client.inRoomTurn(roomRef:)` | a NEW handle whose every verb runs as a turn in that room |
 | `last_receipt_ref() -> Option<String>` | `client.lastReceiptRef()` | the `call:<32hex>` receipt the last remote reply stated; `nil` when embedded |
 | `retry(pending: WireJson, verb: String, input: WireJson) -> WireJson` | `client.retry(pending:verb:input:)` | resends a call a verb hook stopped on an ask under its invocation: `pending` is the `PENDING_ASK` failure's `pending` payload, `input` the same input; answers the verb's wire JSON |
-| `lens_frame_event(card_id: String, request: WireJson) -> WireJson` | `client.lensFrameEvent(cardId:request:)` | sends one `{event, idempotencyKey}` on a lens card the connected server rendered; answers `{"$state"}` or `{outcome, readReceipt}` |
-| `close_lens_frame(card_id: String) -> WireJson` | `client.closeLensFrame(cardId:)` | closes that card and frees its frame; answers `{closed}` |
+| `lens_frame_event(card_id: String, request: LensFrameEventRequest) -> LensFrameEventReply` | `client.lensFrameEvent(cardId:request:)` | sends one `{event, idempotencyKey}` record on a lens card the connected server rendered; answers the `Local` (`$state`), `Tool` (`outcome`, `readReceipt`) or `Callback` variant |
+| `close_lens_frame(card_id: String) -> CloseLensFrameReply` | `client.closeLensFrame(cardId:)` | closes that card and frees its frame; answers `{closed}` |
 
 The two lens-card methods are routes outside the facade (OF-181), not verbs. A
 card's frame lives only on the served host that rendered it
@@ -145,9 +145,20 @@ neither.
 | `local_client() -> Oneiron` | `engine.localClient()` | a NEW handle attached to the engine's own vault, bound to the embedded owner actor, never a second open; its verbs answer through the vault, not the server. Ask again for each handle. Every handle keeps the engine alive |
 | `request(EngineRequest) -> EngineReply` | `engine.request(request:)` | one buffered HTTP/1.1 exchange over a fresh in-process stream; headers pass through (bring your own auth); a 4xx/5xx is a reply. A reply body over 64 MiB, `/ws` and other upgrades are refused |
 | `open_connection() -> EngineConnection` | `engine.openConnection()` | a connection the app holds: one in-process stream the server serves as a socket's connection, HTTP/1.1 with upgrades. `send(bytes:)` writes the request (a `GET /ws` with its upgrade headers holds `/ws`; after the `101`, the upgraded protocol's frames), `receive()` returns the next bytes the server wrote (at most 64 KiB; empty once it ended), `close()` ends the app's side and returns a blocked `receive`. Refused while stopped; a stop drains it, so after `wake` open another. It keeps the engine alive |
+| `artifact_request(EngineRequest) -> EngineReply` | `engine.artifactRequest(request:)` | `request` on the artifact app's own origin (`/a/`), apart from the API's: what a web view loads artifacts through |
+| `open_artifact_connection() -> EngineConnection` | `engine.openArtifactConnection()` | `open_connection` on the artifact app's own origin |
 | `wake()` | `engine.wake()` | the app's timer fired: run what is due; a stopped engine serves again first, over the same vault |
 | `stop()` | `engine.stop()` | the app backgrounds: drain, stop every worker, keep the vault open |
 | `close()` | `engine.close()` | the ordered stop, then the runtime goes; later calls refuse |
+
+A served handle's `vault.export` streams its reply through the engine, so the
+64 MiB buffered cap never bounds it. Every engine failure raises
+`OneironError.Failure` with its cause's stable code: `ENGINE_STOPPED`,
+`ENGINE_CLOSED`, `ENGINE_RELAY_REFUSED`, `ENGINE_WRONG_THREAD`,
+`ENGINE_CONFIG`, `ENGINE_VAULT_OPEN`, `ENGINE_START_FAILED`,
+`ENGINE_CONNECTION_ENDED`, `ENGINE_REPLY_TOO_LARGE`, `ENGINE_BAD_REQUEST`, or
+`INTERNAL_SERVER_ERROR` when no cause is named. The C ABI, Swift, Kotlin,
+Python and Node bindings name the same causes.
 
 The app implements `AppHostCallbacks`: `keychain(name)` returns the secret's
 bytes or `nil` (the server then falls back as it does on a desktop),

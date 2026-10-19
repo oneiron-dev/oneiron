@@ -94,7 +94,12 @@ pub use proposal_doors::{
     NoteProposalForkRef, NoteProposalOpenRequest, NoteProposalRequest, NoteProposalView,
     NoteVersionTree,
 };
+mod carrier_erase;
 mod proposals;
+mod run_review;
+pub(crate) use run_review::{
+    RunNoteUndo, revert_run_note_in_txn, run_note_review_in_txn, settle_run_note_in_txn,
+};
 mod tombstone_review;
 mod verbs;
 mod write_gate;
@@ -118,6 +123,7 @@ pub use proposals::{
 pub(crate) use proposals::{
     erase_fork_actor_in_txn, erase_proposal_actor_in_txn, erase_receipt_actor_in_txn,
 };
+pub use sync_rows::{ACTOR_ERASE_NOTE_REQUEST_RECEIPT, NoteRequestReceiptErase};
 pub use tombstone_review::NoteTombstoneProposal;
 pub(crate) use tombstone_review::{
     decline_tombstone, open_tombstone_proposals_in_txn, review_note_tombstones, tombstone_accepted,

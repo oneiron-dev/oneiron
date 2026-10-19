@@ -75,6 +75,10 @@ pub enum ErrorKind {
     InvalidAuthorityLogBody,
     /// An authority door refused a well-formed request and named its rule.
     AuthorityRefused,
+    /// The checkpoint root policy cannot be fixed or chosen as asked.
+    CheckpointPolicyRefused,
+    /// The owner's checkpoint policy choice named a stale revision.
+    CheckpointPolicyRevisionStale,
     InvalidAccessGrantBody,
     InvalidOutboundGrantBody,
     InvalidConnectorKeyBody,

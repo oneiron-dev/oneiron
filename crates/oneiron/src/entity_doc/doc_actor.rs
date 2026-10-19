@@ -92,3 +92,46 @@ pub(super) fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId
     }
     Ok(false)
 }
+
+#[cfg(feature = "sync")]
+impl DocActor {
+    /// This actor as this vault knows it: no one once this vault erased it,
+    /// as the erase's own marker reads (FIX 4247).
+    pub(crate) fn erased_here(self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Self> {
+        if let Self::Actor(id) = self
+            && vault.local_hard_delete_marker_exists_in_txn(txn, &id)?
+        {
+            return Ok(Self::Erased);
+        }
+        Ok(self)
+    }
+}
+
+#[cfg(feature = "sync")]
+impl super::CitationPin {
+    /// This pin naming no one: the form a window keys it by, so a pin and
+    /// its erased twin ride under one key (FIX 4247).
+    pub(crate) fn actor_erased(&self) -> Self {
+        Self {
+            actor: DocActor::Erased,
+            ..self.clone()
+        }
+    }
+
+    /// ErasedWins (FIX 4247), the one rule wherever two copies of one pin
+    /// meet: the copy that stands, or `None` when they conflict. Equal
+    /// copies are one, and this one stands. Where one names an actor and the
+    /// other no one, the erased one wins, so no carried copy undoes an
+    /// erase. Two different live actors, or any other difference, conflict.
+    pub(crate) fn erased_wins<'a>(&'a self, other: &'a Self) -> Option<&'a Self> {
+        if self.actor_erased() != other.actor_erased() {
+            None
+        } else if self.actor == other.actor || self.actor == DocActor::Erased {
+            Some(self)
+        } else if other.actor == DocActor::Erased {
+            Some(other)
+        } else {
+            None
+        }
+    }
+}

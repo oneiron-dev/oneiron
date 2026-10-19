@@ -233,6 +233,20 @@ pub(crate) fn revert_dreamer_change_in_txn(
     now: u64,
 ) -> Result<RevertedDreamerChange> {
     let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?;
+    revert_authored_change_in_txn(vault, txn, change, dreamer, reverter, now)
+}
+
+/// The same inverse for an explicitly recorded author's change. The caller
+/// validates run membership, currency and owner authority in this transaction.
+/// The Dreamer door above supplies only the Dreamer's identity.
+pub(crate) fn revert_authored_change_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    change: EntityId,
+    dreamer: EntityId,
+    reverter: WriteActor,
+    now: u64,
+) -> Result<RevertedDreamerChange> {
     let record = vault
         .store
         .port_entity_record(txn, &change)?

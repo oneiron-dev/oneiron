@@ -1,6 +1,9 @@
 //! The executor's side of the compaction host: landing a finished pass,
 //! the token feed, and sealing a window from the durable replay.
 
+mod check_evidence;
+mod self_steps;
+
 use super::compaction::{FoldJob, RunFrames};
 use super::driver::EngineNativeExecutor;
 use super::record::completed_step_count;
@@ -29,10 +32,13 @@ impl EngineNativeExecutor<'_> {
         let Some(seat) = self.compaction.take() else {
             return Ok(());
         };
-        let Some(finished) = seat.take_finished() else {
+        let Some(mut finished) = seat.take_finished() else {
             self.compaction = Some(seat);
             return Ok(());
         };
+        // FIX 4465 B: every paid call of a self-written pass is filed before
+        // anything lands, so a landing that is refused keeps its steps too.
+        self.file_self_passes(&mut finished);
         if let Some((_, byline, _)) = seat.swap_seat() {
             self.land_folds(byline, finished.folds);
         }
@@ -146,15 +152,18 @@ impl EngineNativeExecutor<'_> {
                     return Ok(super::compaction::Flight::default());
                 }
                 let note = asked.clone().flatten();
+                // FIX 4465 C: the live request as its rung sends it sizes and rides the flight.
+                let (live, room) = super::compaction::live_fork::capture(driver, request);
                 let (epoch, hooks) = match watermark {
-                    Some(watermark) => self
-                        .seal_compaction_window(driver, config, record, watermark, note.clone())?
+                    Some(at) => self
+                        .seal_compaction_window(driver, config, record, at, note.clone(), room)?
                         .map_or((None, CompactHooks::default()), |(request, hooks)| {
                             (Some(request), hooks)
                         }),
                     None => (None, CompactHooks::default()),
                 };
-                let folds = self.seal_folds(driver, config, record, &marks, note.as_deref())?;
+                let folds =
+                    self.seal_folds(driver, config, record, &marks, note.as_deref(), room)?;
                 if asked.is_some() {
                     self.storage
                         .update_code_run_folds(run_id, |ledger| ledger.compact = None)?;
@@ -163,6 +172,7 @@ impl EngineNativeExecutor<'_> {
                     epoch,
                     folds,
                     hooks,
+                    live,
                 })
             },
         );
@@ -184,6 +194,7 @@ impl EngineNativeExecutor<'_> {
         record: &CodeRunReplayRecord,
         marks: &[FoldMark],
         asked: Option<&str>,
+        room: Option<u64>,
     ) -> EngineExecutorResult<Vec<FoldJob>> {
         let mut jobs = Vec::new();
         let mut failed = Vec::new();
@@ -192,7 +203,7 @@ impl EngineNativeExecutor<'_> {
                 (Some(mark), Some(asked)) => Some(format!("{mark}\n{asked}")),
                 (mark, asked) => mark.or(asked).map(str::to_owned),
             };
-            match self.seal_fold(driver, config, record, mark, note)? {
+            match self.seal_fold(driver, config, record, mark, note, room)? {
                 Ok(job) => jobs.push(job),
                 Err(why) => failed.push((mark.fold, why)),
             }
@@ -211,6 +222,7 @@ impl EngineNativeExecutor<'_> {
         record: &CodeRunReplayRecord,
         mark: &FoldMark,
         note: Option<String>,
+        room: Option<u64>,
     ) -> EngineExecutorResult<Result<FoldJob, String>> {
         let run_id = config.run_id;
         let run_ref = self.gated_write.run_ref();
@@ -267,7 +279,6 @@ impl EngineNativeExecutor<'_> {
                 "its failure lines do not fit one summary; fold a shorter span".to_owned(),
             ));
         }
-        let room = driver.backend().input_token_limit(budget);
         super::compaction::add_profile_pins(
             &mut pins,
             &window,
@@ -285,7 +296,7 @@ impl EngineNativeExecutor<'_> {
                     })
             },
         );
-        if let Some(room) = driver.backend().input_token_limit(budget)
+        if let Some(room) = room
             && crate::compaction::compaction_input_tokens(
                 mark.from,
                 &window,
@@ -348,7 +359,8 @@ impl EngineNativeExecutor<'_> {
     /// One landed fold batch: every accepted fold becomes visible at once,
     /// in one ledger write, and each failed mark keeps why. Each summary is
     /// stamped Generated under the host's `byline`, with the sources its
-    /// request was sealed with (Docs Q24). A batch that cannot be written
+    /// request was sealed with (Docs Q24), and a self-written one with each
+    /// home part it wore too (FIX 4465 B). A batch that cannot be written
     /// leaves its marks pending for the next pass.
     fn land_folds(
         &self,
@@ -370,7 +382,7 @@ impl EngineNativeExecutor<'_> {
                         summary: Some(gated.summary_text().to_owned()),
                         source: crate::claim::ClaimSource::Generated,
                         actor: byline.entity_ref(),
-                        sources: gated.request().sources.clone(),
+                        sources: fold_sources(&gated, execution.as_ref()),
                         ids: job.ids,
                         handles: job.handles,
                         execution,
@@ -392,8 +404,8 @@ impl EngineNativeExecutor<'_> {
     /// A self-written fold (FIX 4465) lands only on its packet: a turn digest
     /// of its gated window, admitted on the run's log for the fold's span and
     /// checked against its gated request. Its receipt rides the fold record.
-    /// Any other fold carries none. A run in a room keeps its mark: its
-    /// receipts have no room store yet.
+    /// Any other fold carries none. A room's run admits it against its replay
+    /// as its captured route reads it (FIX 4465 B).
     fn self_fold_receipt(
         &self,
         byline: crate::WriteActor,
@@ -403,16 +415,29 @@ impl EngineNativeExecutor<'_> {
         let Some(execution) = job.execution.clone() else {
             return Ok(None);
         };
-        let crate::code_run::ExecutorStorage::Canonical(vault) = &self.storage else {
-            return Err("a self-written fold lands no room receipt yet".to_owned());
-        };
         let log = crate::compaction::CompactionHostLog {
             run_ref: self.gated_write.run_ref(),
             run_id: job.run_id,
             first: job.from,
             last: job.through,
         };
-        crate::compaction::admit_self_landing(vault, log, gated, execution)
+        let admitted = match &self.storage {
+            crate::code_run::ExecutorStorage::Canonical(vault) => {
+                crate::compaction::admit_self_landing(vault, log, gated, execution)
+            }
+            crate::code_run::ExecutorStorage::Session(_) => self
+                .storage
+                .get_code_run_replay_record(&job.run_id)
+                .and_then(|record| {
+                    record.ok_or(crate::Error::CorruptedIndex(
+                        "missing executor replay record",
+                    ))
+                })
+                .and_then(|record| {
+                    crate::compaction::admit_self_landing_on(&record, log, gated, execution)
+                }),
+        };
+        admitted
             .and_then(|landing| {
                 crate::compaction::CompactionDriver::check_self_landing(
                     gated, job.run_id, byline, &landing,
@@ -453,6 +478,7 @@ impl EngineNativeExecutor<'_> {
         record: &CodeRunReplayRecord,
         watermark: u64,
         note: Option<String>,
+        room: Option<u64>,
     ) -> EngineExecutorResult<Option<(crate::compaction::CompactionRequest, CompactHooks)>> {
         let run_id = config.run_id;
         let run_ref = self.gated_write.run_ref();
@@ -470,8 +496,7 @@ impl EngineNativeExecutor<'_> {
         let budget = driver.summary_token_budget();
         // The backend reads the rendered input: each step's JSON frame,
         // escapes included, beside the pins. That, not the steps' raw text,
-        // sizes the window.
-        let room = driver.backend().input_token_limit(budget);
+        // sizes the window, within `room`.
         let oversized = || {
             crate::Error::InvalidConfig(
                 "the compaction backend cannot take the next step's output whole".into(),
@@ -743,7 +768,26 @@ impl EngineNativeExecutor<'_> {
             steps_run,
             replay_record,
             seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-            compaction: self.compaction.as_ref().map(|seat| seat.report().clone()),
+            compaction: self.compaction_report(),
         }
     }
+}
+
+/// What a fold's summary is derived from: every record its request was
+/// sealed with, and for a self-written one each home part its call wore
+/// whole (FIX 4465 B, Engine 10-19), so withdrawing one withdraws the words.
+fn fold_sources(
+    gated: &GatedCompaction,
+    execution: Option<&crate::compaction::CompactionExecution>,
+) -> Vec<crate::EntityId> {
+    let mut sources = gated.request().sources.clone();
+    for row in execution
+        .into_iter()
+        .flat_map(crate::compaction::CompactionExecution::home_dependencies)
+    {
+        if !sources.contains(&row) {
+            sources.push(row);
+        }
+    }
+    sources
 }

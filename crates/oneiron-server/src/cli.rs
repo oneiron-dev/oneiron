@@ -8,6 +8,8 @@ use crate::config::ServeArgs;
 mod deployment_args;
 pub use deployment_args::HostRelayArgs;
 mod hook_args;
+mod graph_fs_args;
+pub use graph_fs_args::GraphFsCommand;
 mod learning_setting_args;
 mod owner_args;
 mod recovery_kit_args;
@@ -524,7 +526,17 @@ pub struct TokenPairArgs {
     /// answers for a machine.
     #[arg(long, value_parser = ["yours", "work_school", "rented"])]
     pub machine: Option<String>,
+
+    /// Whom the slip's holder may message (FIX 3899): `parent`, `subtree`,
+    /// `project` or `vault`, signed into the slip. Outside a run, anything
+    /// narrower than `vault` reaches the vault's owners only. Omit it for
+    /// `vault`; a wider reach later is a new mint.
+    #[arg(long, value_parser = COMM_REACHES)]
+    pub comm: Option<String>,
 }
+
+/// The comm reaches `--comm` takes, as a slip spells them (FIX 3899).
+const COMM_REACHES: [&str; 4] = ["parent", "subtree", "project", "vault"];
 
 /// This machine and its home.
 #[derive(Subcommand)]
@@ -565,6 +577,13 @@ pub struct TokenReadArgs {
     #[arg(long = "lifetime-secs", default_value_t = 30 * 24 * 60 * 60)]
     pub lifetime_secs: u64,
 
+    /// Whom the slip's holder may message (FIX 3899): `parent`, `subtree`,
+    /// `project` or `vault`, signed into the slip. Outside a run, anything
+    /// narrower than `vault` reaches the vault's owners only. Omit it for
+    /// `vault`; a wider reach later is a new mint.
+    #[arg(long, value_parser = COMM_REACHES)]
+    pub comm: Option<String>,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }
@@ -587,6 +606,13 @@ pub struct TokenAgentArgs {
     /// The credential's lifetime in seconds, capped by the vault's policy.
     #[arg(long = "lifetime-secs", default_value_t = 30 * 24 * 60 * 60)]
     pub lifetime_secs: u64,
+
+    /// Whom the slip's holder may message (FIX 3899): `parent`, `subtree`,
+    /// `project` or `vault`, signed into the slip. Outside a run, anything
+    /// narrower than `vault` reaches the vault's owners only. Omit it for
+    /// `vault`; a wider reach later is a new mint.
+    #[arg(long, value_parser = COMM_REACHES)]
+    pub comm: Option<String>,
 
     /// Write the credential to this new file, readable by its owner only, and
     /// print only its slip id and principal. Without it the credential is
@@ -658,6 +684,9 @@ pub struct ApiArgs {
 /// catalog: anything not shaped below is still one `raw METHOD PATH` away.
 #[derive(Subcommand, Clone, Debug, PartialEq, Eq)]
 pub enum ApiCommand {
+    /// Typed actor-scoped mount and file-face reads over the facade.
+    #[command(subcommand)]
+    GraphFs(GraphFsCommand),
     /// GET the vault capability discovery document.
     Discover,
     /// GET the BM25 text-search route.

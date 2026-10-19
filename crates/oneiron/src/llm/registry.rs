@@ -26,7 +26,7 @@ const SCORE_DIFFS: SideTable<String, Vec<ModelScoreDiff>, LegacyJson> =
 fn score_diffs_key(model: &ModelId) -> String {
     format!("{}\0", model.as_str())
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModelWireFormat {
     OpenaiCompat,
@@ -35,7 +35,7 @@ pub enum ModelWireFormat {
     OwnServer,
     Local,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelRegistryRow {
     pub version: u8,
@@ -57,13 +57,13 @@ pub struct ModelRegistryRow {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stale_since: Option<u64>,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CatalogSeed {
     pub version: u8,
     pub rows: Vec<ModelRegistryRow>,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ModelScoreDiff {
     pub model: ModelId,
     pub source: String,
@@ -72,13 +72,13 @@ pub struct ModelScoreDiff {
     pub score: f64,
     pub fetched_at: u64,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScoreObservation {
     pub model: ModelId,
     pub benchmark: String,
     pub score: f64,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScoreSnapshot {
     pub source: String,
     pub fetched_at: u64,
@@ -312,8 +312,11 @@ impl Vault {
     }
     pub fn model_registry_rows(&self) -> Result<Vec<ModelRegistryRow>> {
         let txn = self.store.env.read_txn()?;
+        self.model_registry_rows_in_txn(&txn)
+    }
+    pub(super) fn model_registry_rows_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<ModelRegistryRow>> {
         let mut rows = Vec::new();
-        for (_, row) in REGISTRY_ROW.scan(&self.store, &txn)? {
+        for (_, row) in REGISTRY_ROW.scan(&self.store, txn)? {
             row.validate()?;
             rows.push(row);
         }
@@ -457,6 +460,15 @@ impl Vault {
         snapshots: &[ScoreSnapshot],
     ) -> Result<Vec<ModelScoreDiff>> {
         let mut txn = self.store.env.write_txn()?;
+        let diffs = self.apply_model_score_snapshots_in_txn(&mut txn, snapshots)?;
+        txn.commit()?;
+        Ok(diffs)
+    }
+    pub(super) fn apply_model_score_snapshots_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        snapshots: &[ScoreSnapshot],
+    ) -> Result<Vec<ModelScoreDiff>> {
         let mut diffs = Vec::new();
         for snapshot in snapshots {
             if snapshot.source.trim().is_empty() || snapshot.source.len() > 128 {
@@ -474,7 +486,7 @@ impl Vault {
                 }
                 let key = observation.model.as_str().to_owned();
                 let mut row = REGISTRY_ROW
-                    .get(&self.store, &txn, &key)?
+                    .get(&self.store, txn, &key)?
                     .ok_or_else(|| invalid("score model is not registered"))?;
                 row.validate()?;
                 let prior_watermark = *prior_watermarks
@@ -496,7 +508,7 @@ impl Vault {
                     // but must not append a spurious change record.
                     row.fetched_at
                         .insert(snapshot.source.clone(), snapshot.fetched_at);
-                    REGISTRY_ROW.put(&self.store, &mut txn, &key, &row)?;
+                    REGISTRY_ROW.put(&self.store, txn, &key, &row)?;
                     continue;
                 }
                 scores.insert(observation.benchmark.clone(), observation.score);
@@ -512,18 +524,17 @@ impl Vault {
                 };
                 let diffs_key = score_diffs_key(&observation.model);
                 let mut prior = SCORE_DIFFS
-                    .get(&self.store, &txn, &diffs_key)?
+                    .get(&self.store, txn, &diffs_key)?
                     .unwrap_or_default();
                 prior.push(diff.clone());
                 if prior.len() > 64 {
                     prior.remove(0);
                 }
-                SCORE_DIFFS.put(&self.store, &mut txn, &diffs_key, &prior)?;
-                REGISTRY_ROW.put(&self.store, &mut txn, &key, &row)?;
+                SCORE_DIFFS.put(&self.store, txn, &diffs_key, &prior)?;
+                REGISTRY_ROW.put(&self.store, txn, &key, &row)?;
                 diffs.push(diff);
             }
         }
-        txn.commit()?;
         Ok(diffs)
     }
     pub fn model_score_diffs(&self, model: &ModelId) -> Result<Vec<ModelScoreDiff>> {

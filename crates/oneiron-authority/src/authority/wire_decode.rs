@@ -218,6 +218,7 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_GRANT_TRAVEL => super::grant_travel::decode_grant_travel(entries),
         OP_KIND_OWNER_WORK_REQUEST => super::owner_work::decode_owner_work_request(entries),
         OP_KIND_OWNER_WORK_RESULT => super::owner_work::decode_owner_work_result(entries),
+        OP_KIND_CHECKPOINT_POLICY => super::checkpoint_policy::decode_checkpoint_policy(entries),
         _ => Err(invalid_authority()),
     }
 }
