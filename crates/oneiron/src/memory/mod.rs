@@ -74,6 +74,7 @@ pub mod codebase_doors;
 mod conversation_list;
 mod credential_key;
 mod dreamer;
+mod dreamer_wake_read;
 mod entity_delete;
 mod entity_erase;
 pub mod erase_sweep;
@@ -176,6 +177,12 @@ pub use diary_read::{DiaryReader, DiaryReaderList, SealedPadReader};
 pub use dreamer::{
     ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView, DreamerParkCauseView,
     DreamerParkedAttemptView,
+};
+pub use dreamer_wake_read::{
+    ConsolidationWakeStatusRequest, DreamerWakeCallEndView, DreamerWakeCallStateView,
+    DreamerWakeCallView, DreamerWakeCheckpointView, DreamerWakeEndView, DreamerWakeGenerationView,
+    DreamerWakeHeaderView, DreamerWakeLeaseView, DreamerWakeLiveCallView, DreamerWakeLiveView,
+    DreamerWakeResumeView, DreamerWakeView,
 };
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,

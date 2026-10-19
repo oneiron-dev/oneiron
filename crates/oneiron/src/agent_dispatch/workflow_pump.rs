@@ -72,6 +72,11 @@ impl AgentDispatcher<'_> {
             RECORD.put(&self.vault.store, &mut txn, &root, &record)?;
             txn.commit()?;
             self.vault.store.notify_attempt_observers();
+            // FIX 4391: a bound run's TASK settles after this commit, in a
+            // writer of its own; nothing it does changes this answer.
+            if record.intent.task.is_some() {
+                self.settle_bound_task_after_commit(root, now);
+            }
             return Ok(WorkflowProgress::Stopped(active.id));
         }
         let result = active
@@ -127,6 +132,9 @@ impl AgentDispatcher<'_> {
         RECORD.put(&self.vault.store, &mut txn, &root, &record)?;
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
+        if progress == WorkflowProgress::Completed && record.intent.task.is_some() {
+            self.settle_bound_task_after_commit(root, now);
+        }
         Ok(progress)
     }
 

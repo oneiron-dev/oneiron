@@ -1347,6 +1347,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/agent_dispatch/workflow/workflow_task.rs",
+     "purpose": "A saved workflow that realizes a TASK (FIX 4391), on the dispatch side: the bound admission, the wrapper…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/agent_dispatch/workflow_host.rs",
      "purpose": "Typed headless host door for running the one ready workflow leaf",
      "surface": {
@@ -1374,7 +1385,7 @@
      "path": "src/agent_dispatch/workflow_record.rs",
      "purpose": "Durable, inert workflow admission and result provenance",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -30325,7 +30336,7 @@
      "path": "src/lens/mediation/hosted_render.rs",
      "purpose": "Host custody of one generated-lens render (OF-181): the frame that minted a card's backing refs, beside the…",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -30364,7 +30375,7 @@
      "purpose": "Read phase of the render frame: backing refs and read handles",
      "surface": {
       "crate-vis": 3,
-      "fn": 10,
+      "fn": 11,
       "struct": 1
      }
     },
@@ -30400,7 +30411,7 @@
      "purpose": "Principal identity and validated-action outcome types",
      "surface": {
       "enum": 2,
-      "fn": 8,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -31550,7 +31561,18 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 2,
+      "re-export": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/artifact_refresh/manual.rs",
+     "purpose": "FIX 3085: `vault.questions.refresh` on a standing artifact question asks its artifacts by hand, now, beside…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -33996,6 +34018,32 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConsolidationWakeStatusRequest",
+      "DreamerWakeCallEndView",
+      "DreamerWakeCallStateView",
+      "DreamerWakeCallView",
+      "DreamerWakeCheckpointView",
+      "DreamerWakeEndView",
+      "DreamerWakeGenerationView",
+      "DreamerWakeHeaderView",
+      "DreamerWakeLeaseView",
+      "DreamerWakeLiveCallView",
+      "DreamerWakeLiveView",
+      "DreamerWakeResumeView",
+      "DreamerWakeView"
+     ],
+     "path": "src/memory/dreamer_wake_read.rs",
+     "purpose": "`vault.consolidation.wake.status` (DOOR-144 B): the typed wake read beside `vault.consolidation.status`",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 11
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -34412,7 +34460,7 @@
      "surface": {
       "crate-vis": 19,
       "mod": 25,
-      "re-export": 53
+      "re-export": 54
      }
     },
     {
@@ -53548,7 +53596,17 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_runner/workflow_try.rs",
+     "purpose": "A saved workflow's wrapper as the try that realizes a TASK (FIX 4391)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -53911,7 +53969,7 @@
      "path": "src/task_verb/runner_done.rs",
      "purpose": "A runner's \"Done means met?\", answered before it settles (OF-533)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 2
      }
@@ -54442,7 +54500,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1078
+      "fn": 1079
      }
     },
     {
@@ -54728,7 +54786,7 @@
      "path": "src/task_verb/sdk_memory.rs",
      "purpose": "Typed inputs for the public memory verbs in the SDK inventory",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "struct": 17
      }
@@ -60765,7 +60823,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61570,7 +61628,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 111,
+     "files": 112,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61591,7 +61649,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 220,
+     "files": 221,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62102,7 +62160,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 189,
+     "files": 190,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62272,7 +62330,7 @@
    },
    "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3806,
+   "source_files": 3810,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71000,7 +71058,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1049
+      "fn": 1050
      }
     },
     {
@@ -72121,7 +72179,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1050
+      "fn": 1051
      }
     },
     {
@@ -73814,7 +73872,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/lens_callbacks.rs",
-     "purpose": "OF-181 (FIX 2611): a lens card's model round trip goes back to the agent that emitted the card, as that…",
+     "purpose": "OF-181 (FIX 2611): a lens card's model round trip goes back to the agent that rendered the card, as that…",
      "surface": {
       "crate-vis": 2
      }
@@ -74522,7 +74580,7 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -75098,7 +75156,17 @@
      "path": "src/api/facade/action_routes/execution.rs",
      "purpose": "How one action runs (OF-181): the principal its call reads as, and the blocking thread it runs on with its…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/action_routes/row_door.rs",
+     "purpose": "The verb door of one action call (OF-181), split from its parent: each verb-table row runs as its own…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -75826,7 +75894,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/lens_selection_doors.rs",
-     "purpose": "Frame-bound selections and result-set actions on the caller's held card",
+     "purpose": "Frame-bound selections and result-set actions on a held card",
      "surface": {
       "crate-vis": 3
      }
@@ -84083,7 +84151,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 443,
+     "files": 444,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -84519,7 +84587,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 811,
+   "source_files": 812,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -85507,6 +85575,7 @@
       "ConsolidationRootInput",
       "ConsolidationStepRef",
       "ConsolidationTryView",
+      "ConsolidationWakeStatusRequest",
       "ConstraintContinuation",
       "ConstraintObject",
       "ConstraintTimeRangeWire",
@@ -85774,7 +85843,19 @@
       "DreamerAttemptView",
       "DreamerParkCauseView",
       "DreamerParkedAttemptView",
+      "DreamerWakeCallEndView",
+      "DreamerWakeCallStateView",
+      "DreamerWakeCallView",
+      "DreamerWakeCheckpointView",
+      "DreamerWakeEndView",
+      "DreamerWakeGenerationView",
+      "DreamerWakeHeaderView",
+      "DreamerWakeLeaseView",
+      "DreamerWakeLiveCallView",
+      "DreamerWakeLiveView",
       "DreamerWakePolicy",
+      "DreamerWakeResumeView",
+      "DreamerWakeView",
       "DreamingModeInput",
       "EditNoteRequest",
       "EffectReceipt",
@@ -88229,8 +88310,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 838,
-      "struct": 2671
+      "enum": 840,
+      "struct": 2682
      }
     },
     {

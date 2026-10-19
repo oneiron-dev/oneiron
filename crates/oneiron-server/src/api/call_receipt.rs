@@ -185,6 +185,20 @@ impl CallStamp {
         }
     }
 
+    /// What a reply's `x-oneiron-receipt-ref` header states, read back: the
+    /// stamp an in-process route answered with, which a caller carrying that
+    /// route's call states again on its own reply (FIX 2887).
+    pub(crate) fn of_headers(headers: &HeaderMap) -> Self {
+        match headers
+            .get(RECEIPT_REF_HEADER)
+            .and_then(|value| value.to_str().ok())
+        {
+            Some(NO_RECORD_HEADER_VALUE) => Self::NoRecord,
+            Some(receipt_ref) => Self::Recorded(receipt_ref.to_owned()),
+            None => Self::Unrecorded,
+        }
+    }
+
     /// Stamps `x-oneiron-receipt-ref` on a reply, and marks it answered by
     /// its door ([`DoorAnswered`]).
     pub(crate) fn stamp_header(&self, response: &mut Response) {

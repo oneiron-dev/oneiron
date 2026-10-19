@@ -23,6 +23,7 @@ use crate::run_tree::{RunTreeAdapter, RunTreeNode, RunTreeStatus};
 
 use super::consult_result::CancelTargetState;
 use super::follow_up::peer_handle_in;
+use super::highway_runner::workflow_try::{bound_wrapper_job, open_task_status};
 use super::presence_diagnostics::record_read_failure;
 pub(super) use super::presence_diagnostics::{TaskPresenceReadFailure, TaskPresenceReadStage};
 pub(super) use super::presence_pages::scan_task_entity_pages;
@@ -81,7 +82,10 @@ fn job_backlinks(vault: &Vault) -> Result<JobBacklinks> {
         };
         let job = job.with_cancel_pathology(pathology_by_attempt.get(&node.attempt_id).cloned());
         match task_refs_by_attempt.get(&node.attempt_id) {
-            Some(Some(task_ref)) => realizing.entry(task_ref.clone()).or_default().push(job),
+            Some(Some(task_ref)) => realizing
+                .entry(task_ref.clone())
+                .or_default()
+                .push(bound_wrapper_job(node, job, &superseded)),
             _ if node.worker_kind == BRIDGE_OUTBOUND_ATTEMPT_KIND => {}
             _ => bare.push(job),
         }
@@ -496,10 +500,7 @@ fn task_page_slot_in(
                 TaskBoardStatus::Failed,
                 Some(TaskTerminalDisposition::Expired),
             ),
-            _ => (
-                fold_up_status(&jobs).unwrap_or(TaskBoardStatus::Queued),
-                None,
-            ),
+            _ => (open_task_status(task.state.as_ref(), &jobs), None),
         };
         let kind = task.task_kind();
         let mut presence =
