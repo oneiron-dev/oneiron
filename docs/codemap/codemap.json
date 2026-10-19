@@ -10362,7 +10362,8 @@
       "GraduationOffer",
       "GraduationScopeKey",
       "MailboxReadCandidate",
-      "MailboxReadEnvelope"
+      "MailboxReadEnvelope",
+      "SendAutonomyContext"
      ],
      "path": "src/channel_identity_autonomy/types.rs",
      "purpose": "Schema version, vault-meta predicates, the autonomy rung, envelope/candidate/mode/request/state shapes and…",
@@ -10370,8 +10371,8 @@
       "const": 6,
       "crate-vis": 1,
       "enum": 2,
-      "fn": 3,
-      "struct": 11
+      "fn": 5,
+      "struct": 12
      }
     },
     {
@@ -37792,7 +37793,7 @@
      "path": "src/outbound/dispatch_pipeline/frozen_payload.rs",
      "purpose": "Frozen retry-contract payload: the intent bytes a connector reads and the ledger hashes",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -37922,7 +37923,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 4,
-      "fn": 29,
+      "fn": 30,
       "struct": 6,
       "trait": 1
      }
