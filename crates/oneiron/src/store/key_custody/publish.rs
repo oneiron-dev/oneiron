@@ -27,6 +27,7 @@ use super::folder::FolderTarget;
 use super::head::{CustodyRecipients, HeadEntry, seal_head};
 use super::identity::CustodySubject;
 use super::log::{CustodyPosition, Journal, POSITION_LEN};
+use super::outbox::OutboxTarget;
 use super::protocol::{
     AckRecord, AnchorAdvance, AnchorStore, CustodyBatch, CustodyTarget, Lineage, PendingCode,
     TargetId, TargetKind, TargetPending, TargetPublication, TargetSpec,
@@ -277,13 +278,16 @@ impl Store {
     /// One publication pass over this vault's custody lineage: its head to
     /// every target in `given` and every folder member registered before,
     /// then `anchor` (`None`: no anchor is set up, the step left pending by
-    /// name), then the completion watermark. What happens on the way is the
-    /// pass's state, recorded for the status read, never a refusal of
-    /// anything; only a fault in the local custody itself is an error.
+    /// name), then the completion watermark. Each Hypnos outbox in
+    /// `outboxes` (also in `given`) has its ack taken in first (FIX 5899).
+    /// What happens on the way is the pass's state, recorded for the status
+    /// read, never a refusal of anything; only a fault in the local custody
+    /// itself is an error.
     pub(crate) fn publish_custody(
         &self,
         recipients: &CustodyRecipients,
         given: &[&dyn CustodyTarget],
+        outboxes: &[&OutboxTarget],
         anchor: Option<&dyn AnchorStore>,
     ) -> Result<Publication> {
         let Some(custody) = self.core.key_custody.local() else {
@@ -295,7 +299,8 @@ impl Store {
             return Ok(Publication::nothing());
         }
         let journal = custody.journal()?;
-        let mut publication = self.publish_pass(custody, &journal, recipients, given, anchor)?;
+        let mut publication =
+            self.publish_pass(custody, &journal, recipients, given, outboxes, anchor)?;
         if publication.state != PublicationState::Nothing {
             publication.anchor_unset = anchor.is_none();
             replace_file(journal.dir(), STATUS, &encode_status(&publication))?;
@@ -309,6 +314,7 @@ impl Store {
         journal: &Journal,
         recipients: &CustodyRecipients,
         given: &[&dyn CustodyTarget],
+        outboxes: &[&OutboxTarget],
         anchor: Option<&dyn AnchorStore>,
     ) -> Result<Publication> {
         if custody_empty(self, custody, journal)? {
@@ -339,6 +345,9 @@ impl Store {
         let specs: Vec<TargetSpec> = targets.iter().map(|target| target.spec()).collect();
         let set = journal.register(&specs)?;
         journal.reconcile()?;
+        for outbox in outboxes {
+            outbox.take_in(journal);
+        }
         let acks = journal.acks()?;
         let previous = recorded(journal)?;
         let wrapped_before = previous

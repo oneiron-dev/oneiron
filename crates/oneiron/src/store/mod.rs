@@ -198,8 +198,8 @@ pub use key_custody::protocol as custody_protocol;
 pub(crate) use key_custody::{
     CUSTODY_COMPLETION_NEEDS_ANCHOR, CUSTODY_HEAD_WRAP_CONTEXT, CustodyBinding, CustodyKind,
     CustodyPlan, CustodyRecipients, CustodyRequirement, CustodyRoute, CustodySourceAt,
-    CustodySubject, FileAnchor, FolderTarget, MemberProgress, Publication, PublicationState,
-    ROLLBACK_NOT_PROVEN, RetirementProgress, retirement_in_txn, route_custody,
+    CustodySubject, FileAnchor, FolderTarget, MemberProgress, OutboxTarget, Publication,
+    PublicationState, ROLLBACK_NOT_PROVEN, RetirementProgress, retirement_in_txn, route_custody,
     standing_retirements_in_txn, unbind_in_txn as unbind_custody_in_txn,
 };
 pub(crate) use key_encoding::*;
