@@ -2070,6 +2070,8 @@ export class Oneiron {
       update: (input: Facade.WorkflowUpdateRequest): Facade.WorkflowView => this.#call(() => this.#client.vaultWorkflowsUpdate(input) as Facade.WorkflowView),
       /** The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run. */
       dispatch: (input: Facade.WorkflowDispatchRequest): Facade.WorkflowRunView => this.#call(() => this.#client.vaultWorkflowsDispatch(input) as Facade.WorkflowRunView),
+      /** A member binds one run of a saved workflow to an idle standard TASK they own, as themselves, under funding terms they accepted: its root spend scope names them as payer, and a retried intent key with the same terms returns the same run. */
+      dispatch_bound: (input: Facade.WorkflowPersonDispatchRequest): Facade.WorkflowRunView => this.#call(() => this.#client.vaultWorkflowsDispatchBound(input) as Facade.WorkflowRunView),
       /** The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result. */
       status: (input: Facade.WorkflowRunRequest): Facade.WorkflowRunView => this.#call(() => this.#client.vaultWorkflowsStatus(input) as Facade.WorkflowRunView),
     },

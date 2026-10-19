@@ -8,6 +8,7 @@ use crate::server::SyncServer;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::HeaderMap;
+use axum::http::request::Parts;
 use axum::routing::get;
 use axum::routing::post;
 use std::sync::Arc;
@@ -58,6 +59,34 @@ pub(super) fn authorize(
     access: LfsAccess,
 ) -> Result<CoreAuth, ApiError> {
     let auth = CoreAuth::from_headers(headers, &server.config, server.vault().as_ref())?;
+    admit(auth, access)
+}
+
+/// [`authorize`] for the request `parts` name. On a managed vault whose
+/// supervisor attested the owner on this request, the caller is that owner
+/// ([`CoreAuth::for_attested_request`]): the person himself while the vault
+/// records him as its live owner, his registered principal and every owner
+/// scope, judged by the same checks a bearer is. Every other request is
+/// judged by its headers, as before.
+pub(super) fn authorize_request(
+    parts: &Parts,
+    server: &SyncServer,
+    access: LfsAccess,
+) -> Result<CoreAuth, ApiError> {
+    match CoreAuth::for_attested_request(
+        &parts.headers,
+        &parts.extensions,
+        crate::auth::request_path(parts),
+        server,
+    ) {
+        Some(attested) => admit(attested?, access),
+        None => authorize(&parts.headers, server, access),
+    }
+}
+
+/// The gate past authentication: `Read`, an unrestricted record scope and,
+/// for `Write`, the write half.
+fn admit(auth: CoreAuth, access: LfsAccess) -> Result<CoreAuth, ApiError> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     if access == LfsAccess::Write {

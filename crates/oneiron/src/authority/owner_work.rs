@@ -63,8 +63,8 @@ pub(super) struct WorkRequest {
     narrow_only: bool,
 }
 
-/// A request's one result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// A request's one result. `Clone`, not `Copy`, as its outcome is.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct OwnerWorkAnswer {
     /// The result's signed entry.
     pub(crate) entry: AuthorityEntryHash,
@@ -224,42 +224,18 @@ impl AuthorityFold {
         }
     }
 
-    /// The parents a new request names: the main-log heads, the rows the
-    /// carrier's and the executor's standing rest on, and the live requests
-    /// of its (kind, target), so it replaces every one this install folds.
-    pub(crate) fn owner_work_request_parents(
-        &self,
-        carrier: EntityId,
-        executor: EntityId,
-        kind: OwnerWorkKind,
-        target: EntityId,
-    ) -> BTreeSet<AuthorityEntryHash> {
-        let mut parents = self.append_heads.clone();
-        parents.extend(standing_rows(self, carrier));
-        parents.extend(standing_rows(self, executor));
-        parents.extend(
-            self.owner_work
-                .heads
-                .get(&(kind, target))
-                .into_iter()
-                .flatten()
-                .copied(),
-        );
-        parents
-    }
-
-    /// The parents a result names: the request, the main-log heads and the
-    /// rows the executor's standing rests on. Never a world's key record,
-    /// which rides a side branch no main-log row may name.
-    pub(crate) fn owner_work_result_parents(
-        &self,
-        request: AuthorityEntryHash,
-        executor: EntityId,
-    ) -> BTreeSet<AuthorityEntryHash> {
-        let mut parents = self.append_heads.clone();
-        parents.extend(standing_rows(self, executor));
-        parents.insert(request);
-        parents
+    /// The parents a new request or a result names: the main-log heads
+    /// alone (FIX 4987). The rows the carrier's and the executor's standing
+    /// rest on, a request's (kind, target) live requests and a result's
+    /// request are main-log rows among those heads or their ancestors, so
+    /// the fold at the heads carries them: a request replaces every live one
+    /// this install folds, and a result finds its request in its causal past
+    /// (`apply_result`). Naming them again would put covered rows off a
+    /// checkpoint image's frontier among its parents, which only the whole
+    /// history folds. Never a world's key record, which rides a side branch
+    /// no main-log row may name.
+    pub(crate) fn owner_work_parents(&self) -> BTreeSet<AuthorityEntryHash> {
+        self.append_heads.clone()
     }
 }
 
@@ -381,8 +357,11 @@ fn apply_result(
     let admitted = standing.admits_owner_act_signer(result.executor, &key, roster);
     drop(standing);
     let work = &mut state.owner_work;
-    // The request is among the result's parents (its shape check), so its
-    // fate is in this state: admitted, without effect, or no request at all.
+    // The causal request-presence check (CALLS "FIX 4987 causal request
+    // presence"): this state merges the result's own parents alone, never
+    // the final fold, so the request's fate here is its fate in the result's
+    // causal past: admitted, without effect, or no request at all. A request
+    // outside that past, concurrent with the result or unseen, is invalid.
     match work.requests.get(&result.request) {
         Some(request) if request.request.executor != result.executor => {
             return Err(AuthorityFoldIssue::InvalidEntry(hash));
@@ -403,7 +382,7 @@ fn apply_result(
         OwnerWorkAnswer {
             entry: hash,
             executor: result.executor,
-            outcome: result.outcome,
+            outcome: result.outcome.clone(),
         },
     );
     Ok(())
@@ -430,19 +409,19 @@ pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkSta
     merged.refused.extend(right.refused.iter().copied());
     merged.revoked.extend(right.revoked.iter().copied());
     for (request, answer) in &right.results {
-        match merged.results.get(request).copied() {
+        match merged.results.get(request) {
             Some(held) if held.entry == answer.entry => {}
             Some(held) => {
                 let (stands, without) = if held.entry < answer.entry {
-                    (held, *answer)
+                    (held.clone(), answer.entry)
                 } else {
-                    (*answer, held)
+                    (answer.clone(), held.entry)
                 };
-                merged.refused.insert(without.entry);
+                merged.refused.insert(without);
                 merged.results.insert(*request, stands);
             }
             None => {
-                merged.results.insert(*request, *answer);
+                merged.results.insert(*request, answer.clone());
             }
         }
     }

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1050 facade rows, 3552 declarations.
-Inputs: 986 of 1050 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 940 of 1050 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1051 facade rows, 3553 declarations.
+Inputs: 987 of 1051 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 941 of 1051 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
 """
 
@@ -10702,6 +10702,15 @@ class WorkflowRunView(TypedDict):
     active_attempt_ref: EntityId
     steps: list[WorkflowStepCapture]
     results: list[WorkflowStepRun]
+class WorkflowPersonDispatchRequest(TypedDict):
+    workflow_ref: EntityId
+    intent_key: str
+    briefing: str
+    context_spec: NotRequired[ContextSpec | None]
+    task_ref: EntityId
+    cap_units: int
+    unit: str
+    shown_at_ms: int
 class WorkflowRunRequest(TypedDict):
     root_attempt_ref: EntityId
 class TaskTypeNodeSpec(TypedDict):

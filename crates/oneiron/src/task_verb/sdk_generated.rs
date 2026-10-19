@@ -3537,6 +3537,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.workflows.dispatch_bound",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WorkflowPersonDispatchRequest,
+                >(),
+            ),
+            (
                 "vault.workflows.status",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::WorkflowRunRequest,
@@ -6376,6 +6382,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.workflows.get",
     "vault.workflows.update",
     "vault.workflows.dispatch",
+    "vault.workflows.dispatch_bound",
     "vault.workflows.status",
     "vault.task_types.pin",
     "vault.task_types.get",
@@ -8022,6 +8029,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowView>()
         }
         "vault.workflows.dispatch" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowRunView>()
+        }
+        "vault.workflows.dispatch_bound" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowRunView>()
         }
         "vault.workflows.status" => {
@@ -13326,6 +13336,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.workflows.dispatch_bound" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.workflows.status" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -18367,6 +18384,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.workflows.dispatch" => {
             let _input: crate::task_verb::sdk::WorkflowDispatchRequest = decode(value.clone())?;
         }
+        "vault.workflows.dispatch_bound" => {
+            let _input: crate::task_verb::sdk::WorkflowPersonDispatchRequest =
+                decode(value.clone())?;
+        }
         "vault.workflows.status" => {
             let _input: crate::task_verb::sdk::WorkflowRunRequest = decode(value.clone())?;
         }
@@ -21125,6 +21146,9 @@ pub fn invoke(
         "vault.workflows.get" => encode(vault_workflows_get(memory, decode(value)?)?),
         "vault.workflows.update" => encode(vault_workflows_update(memory, decode(value)?)?),
         "vault.workflows.dispatch" => encode(vault_workflows_dispatch(memory, decode(value)?)?),
+        "vault.workflows.dispatch_bound" => {
+            encode(vault_workflows_dispatch_bound(memory, decode(value)?)?)
+        }
         "vault.workflows.status" => encode(vault_workflows_status(memory, decode(value)?)?),
         "vault.task_types.pin" => encode(vault_task_types_pin(memory, decode(value)?)?),
         "vault.task_types.get" => encode(vault_task_types_get(memory, decode(value)?)?),
@@ -27345,6 +27369,12 @@ pub fn vault_workflows_dispatch(
         &memory.embedded_owner("vault.workflows.dispatch")?,
         input,
     )
+}
+pub fn vault_workflows_dispatch_bound(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkflowPersonDispatchRequest,
+) -> MemoryResult<crate::task_verb::sdk::WorkflowRunView> {
+    crate::task_verb::sdk::dispatch_workflow_bound_as_member(memory, input)
 }
 pub fn vault_workflows_status(
     memory: &Memory<'_>,
