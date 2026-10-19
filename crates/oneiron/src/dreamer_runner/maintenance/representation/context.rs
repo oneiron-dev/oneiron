@@ -166,7 +166,9 @@ pub(super) fn validate_citations(
     }
     Ok(())
 }
-pub(super) fn validate_packet(vault: &Vault, packet: &Packet) -> Result<()> {
+/// Rechecks `packet` for `owner`, the live person its envelope names: the
+/// packet itself names no one (FIX 4512).
+pub(super) fn validate_packet(vault: &Vault, packet: &Packet, owner: EntityId) -> Result<()> {
     // A follow-up stands only while its reach-out does: one the owner
     // reverted or declined, or one rewritten since, refuses it everywhere.
     if let Some(pin) = &packet.reach_out
@@ -174,7 +176,7 @@ pub(super) fn validate_packet(vault: &Vault, packet: &Packet) -> Result<()> {
     {
         return Err(invalid());
     }
-    let context = vault.representation_context(&packet.request)?;
+    let context = vault.representation_context(&packet.request.with_owner(owner))?;
     let bytes = crate::compaction::output::restore_output(vault, packet.content)?;
     let text = std::str::from_utf8(&bytes).map_err(|_| invalid())?;
     if text.trim().is_empty() {

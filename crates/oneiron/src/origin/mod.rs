@@ -8,6 +8,7 @@
 pub(crate) mod actor_erase;
 mod document_ingress;
 pub use document_ingress::ReceivedFileOperation;
+pub(crate) use document_ingress::erase_code_operations_actor_in_txn;
 pub mod lfs;
 pub mod publication;
 pub mod smart_http;

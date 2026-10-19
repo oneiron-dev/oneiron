@@ -3,17 +3,18 @@
 //! places, plans, seats or restamps; a stamp that disagrees is reported
 //! beside the one it disagrees with.
 //!
-//! The queue, team start, team receipt and learning rows read in one
-//! snapshot. The kept type tree, the critique artifacts and the seat
-//! receipts read through their own stores' readers, each in its own.
+//! Every row the read joins reads in one snapshot: the queue, team start,
+//! team receipt, kept type tree, learning rows, seat receipts, critique
+//! artifacts and the stored reviews declared for a run.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::agent_dispatch::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatchTarget, SpawnPlanReceipt,
-    decode_agent_dispatch_input, load_team_type_tree_at, team_pattern,
+    decode_agent_dispatch_input, team_pattern,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestKind};
+use crate::critic::review::declared_critiques_in_txn;
 use crate::critic::{CritiqueArtifact, CritiqueArtifactStore, CritiqueVerdict};
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::error::{Error, Result};
@@ -21,7 +22,6 @@ use crate::learning::evidence::evidence_in_txn;
 use crate::learning::read::read_learning_in_txn;
 use crate::learning::{Anchor, LearningCell};
 use crate::memory::{MemoryError, MemoryResult};
-use crate::task_type::TypeTree;
 use crate::{EntityId, Vault};
 
 use super::doors::{
@@ -31,7 +31,7 @@ use super::doors::{
     TeamBindingView, TeamReceiptView, TypeStamp,
 };
 use super::pattern::{PAYOFF_AXIS, pattern_cell};
-use super::receipt::{PatternSkillRef, TeamReceipt, team_receipt_in_txn};
+use super::receipt::{PatternSkillRef, TeamReceipt, placed_ancestry_in_txn, team_receipt_in_txn};
 use super::run_binding::{TeamRunBinding, team_starts_in_txn};
 use super::spawn_intent::SpawnPhase;
 
@@ -130,9 +130,8 @@ pub(super) fn observe_spawn(
         Some(receipt) => learning_reads(vault, &txn, receipt, &mut issues)?,
         None => Vec::new(),
     };
-    drop(txn);
-    let routes = seat_routes(vault, &launched, &mut issues)?;
-    let critics = critiques(vault, &launched, &mut issues)?;
+    let routes = seat_routes(vault, &txn, &launched, &mut issues)?;
+    let critics = critiques(vault, &txn, &launched, &mut issues)?;
     Ok(PlannedSpawnObservation {
         spawn_ref,
         phase: SpawnPhase::Launched,
@@ -409,8 +408,9 @@ fn receipt_view(receipt: &TeamReceipt) -> TeamReceiptView {
 
 /// The reliability read of `receipt`'s pattern skill cell, the cell its
 /// settled outcome feeds; none when the receipt names no pattern skill. The
-/// read backs off through the tree the receipt was placed in; a tree no
-/// longer kept is an issue, never the tree in force.
+/// read backs off through the tree the receipt was placed in, the chain
+/// settlement takes its parents from; a tree no longer kept, or one that
+/// does not read, is an issue, never the tree in force.
 fn learning_reads(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -422,19 +422,13 @@ fn learning_reads(
     };
     let executor = receipt.executor_mix();
     let cell = pattern_cell(skill.skill, &executor, &receipt.type_ref);
-    let version = u64::from(receipt.type_ref.tree_version);
-    let parents = match load_team_type_tree_at(vault, receipt.project, version)? {
-        Some(tree) => TypeTree::from(tree).ancestors(&receipt.type_ref),
-        None => {
-            issues.push(unavailable(
-                "learning",
-                format!(
-                    "no kept task-type tree is at version {version}: the read borrowed from no parent type"
-                ),
-            ));
-            Vec::new()
-        }
-    };
+    let (parents, missing) = placed_ancestry_in_txn(vault, txn, receipt);
+    if let Some(reason) = missing {
+        issues.push(unavailable(
+            "learning",
+            format!("{reason}: the read borrowed from no parent type"),
+        ));
+    }
     let read = read_learning_in_txn(vault, txn, &cell, &parents)?;
     let estimate = &read.estimate;
     let evidence = evidence_in_txn(vault, txn, &cell.digest())?
@@ -493,13 +487,14 @@ const fn anchor_kind(anchor: Anchor) -> &'static str {
 /// yet is an issue, never a template's model.
 fn seat_routes(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     launched: &[LaunchedMember],
     issues: &mut Vec<ObservationIssue>,
 ) -> Result<Vec<RouteObservation>> {
     let mut routes = Vec::new();
     for member in launched {
         let hex = member.attempt_ref.to_hex();
-        let Some(seat) = vault.task_model_seat_receipt(member.attempt_ref)? else {
+        let Some(seat) = vault.task_model_seat_receipt_in_txn(txn, member.attempt_ref)? else {
             let reason = format!("run {hex} is not seated: not started, or no model manifest");
             issues.push(unavailable("route", reason));
             continue;
@@ -520,27 +515,30 @@ fn seat_routes(
 }
 
 /// The critiques found for each launched run: those keyed under its own
-/// attempt, and those of a review whose run reference is the run's canonical
-/// id (`vault.critic.review` keys a review's branch by its run reference's
-/// hash). A review under a run reference the caller chose is not found from
-/// an attempt, so the list is not exhaustive. A critique that does not read
-/// is an issue on the read, and every other one is still listed (FIX 4468).
+/// attempt, those of a review whose run reference is the run's canonical id
+/// (`vault.critic.review` keys a review's branch by its run reference's
+/// hash), and those of a review its caller declared for the run. A review
+/// under a run reference the caller chose, declared for no run, is not found
+/// from an attempt, so the list is not exhaustive. A critique or stored
+/// review that does not read is an issue on the read, and every other one is
+/// still listed (FIX 4468, 4470).
 fn critiques(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     launched: &[LaunchedMember],
     issues: &mut Vec<ObservationIssue>,
 ) -> Result<Vec<CriticObservation>> {
     let store = CritiqueArtifactStore::new(vault);
-    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    let mut declared = declared_critiques(vault, txn, launched, issues);
     let mut seen = BTreeSet::new();
     let mut critics = Vec::new();
     for member in launched {
         let run = member.attempt_ref.to_hex();
         let named_branch = blake3::hash(run.as_bytes());
         let (direct, direct_unread) = store
-            .observe_branch_in_txn(&txn, AttemptId::from_bytes(member.attempt_ref.as_bytes())?)?;
+            .observe_branch_in_txn(txn, AttemptId::from_bytes(member.attempt_ref.as_bytes())?)?;
         let (named, named_unread) = store
-            .observe_branch_in_txn(&txn, AttemptId::from_bytes(&named_branch.as_bytes()[..16])?)?;
+            .observe_branch_in_txn(txn, AttemptId::from_bytes(&named_branch.as_bytes()[..16])?)?;
         for reason in direct_unread.into_iter().chain(named_unread) {
             issues.push(unavailable("critic", format!("run {run}: {reason}")));
         }
@@ -552,6 +550,13 @@ fn critiques(
                     .into_iter()
                     .filter(|artifact| artifact.run_id == run)
                     .map(|artifact| (CriticAssociation::CanonicalRunRef, artifact)),
+            )
+            .chain(
+                declared
+                    .remove(&member.attempt_ref)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|artifact| (CriticAssociation::DeclaredSpawnAttempt, artifact)),
             );
         for (association, artifact) in found {
             if !seen.insert((
@@ -560,7 +565,7 @@ fn critiques(
             )) {
                 continue;
             }
-            if let Some(critic) = critic_view(&artifact, association, &member.type_ref, issues)? {
+            if let Some(critic) = critic_view(&artifact, association, member, issues)? {
                 critics.push(critic);
             }
         }
@@ -568,13 +573,40 @@ fn critiques(
     Ok(critics)
 }
 
-/// One critique as stored, its calibration stamp held against its run's
-/// dispatch stamp. The artifact store refuses a calibration missing its
-/// executor, stamp or axis, so one missing them is an issue, not a default.
+/// The critiques of every stored review declared for a launched run, by run,
+/// from one pass over the stored reviews. A review or critique that does not
+/// read is an issue, and so is a pass that fails: a declared association
+/// never fails the read.
+fn declared_critiques(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    launched: &[LaunchedMember],
+    issues: &mut Vec<ObservationIssue>,
+) -> BTreeMap<EntityId, Vec<CritiqueArtifact>> {
+    let runs: BTreeSet<EntityId> = launched.iter().map(|member| member.attempt_ref).collect();
+    match declared_critiques_in_txn(vault, txn, &runs) {
+        Ok((declared, unread)) => {
+            for reason in unread {
+                issues.push(unavailable("critic", reason));
+            }
+            declared
+        }
+        Err(error) => {
+            let reason = format!("the reviews declared for a launched run did not read: {error}");
+            issues.push(unavailable("critic", reason));
+            BTreeMap::new()
+        }
+    }
+}
+
+/// One critique as stored, its calibration stamp held against the dispatch
+/// stamp of `member`, the run it was found for. The artifact store refuses a
+/// calibration missing its executor, stamp or axis, so one missing them is an
+/// issue, not a default.
 fn critic_view(
     artifact: &CritiqueArtifact,
     association: CriticAssociation,
-    expected: &TypeStamp,
+    member: &LaunchedMember,
     issues: &mut Vec<ObservationIssue>,
 ) -> Result<Option<CriticObservation>> {
     let calibration = &artifact.calibration;
@@ -591,11 +623,14 @@ fn critic_view(
         return Ok(None);
     };
     let type_ref = TypeStamp::from(type_ref);
+    let expected = &member.type_ref;
     mismatch(issues, "critic", &artifact.artifact_id, expected, &type_ref);
     Ok(Some(CriticObservation {
         run_ref: artifact.run_id.clone(),
         branch_attempt_ref: entity(artifact.branch_attempt)?,
         association,
+        declared_attempt_ref: (association == CriticAssociation::DeclaredSpawnAttempt)
+            .then_some(member.attempt_ref),
         artifact_id: artifact.artifact_id.clone(),
         target_ref: artifact.candidate_ref.clone(),
         type_ref,

@@ -4483,9 +4483,9 @@ export type TeamReceiptView = { team_ref: string; type_ref: TypeStamp; pattern: 
 /** `oneiron::team::doors::RouteObservation` */
 export type RouteObservation = { run_ref: EntityId; type_ref: TypeStamp; model: string; effort: ReasoningEffort; why: string; reused: boolean }
 /** `oneiron::team::doors::CriticAssociation` */
-export type CriticAssociation = "branch_attempt" | "canonical_run_ref"
+export type CriticAssociation = "branch_attempt" | "canonical_run_ref" | "declared_spawn_attempt"
 /** `oneiron::team::doors::CriticObservation` */
-export type CriticObservation = { run_ref: string; branch_attempt_ref: EntityId; association: CriticAssociation; artifact_id: string; target_ref: string; type_ref: TypeStamp; lens_ref: EntityId; lens_id: string; executor: string; axis: string; verdict: string }
+export type CriticObservation = { run_ref: string; branch_attempt_ref: EntityId; association: CriticAssociation; declared_attempt_ref?: EntityId | null; artifact_id: string; target_ref: string; type_ref: TypeStamp; lens_ref: EntityId; lens_id: string; executor: string; axis: string; verdict: string }
 /** `oneiron::team::doors::LearningCellView` */
 export type DoorsLearningCellView = { predicate: string; subject: EntityId; executor: string; type_ref: TypeStamp; axis: string }
 /** `oneiron::team::doors::BorrowedCellView` */
@@ -4621,7 +4621,7 @@ export type ArtifactAdmitSubmit = { ask: ArtifactAskSubmit; decisions: TypedDeci
 /** `oneiron::critic::review::submit::CriticBinding` */
 export type CriticBinding = { lens_id: string; lens_ref: string; actor_ref: string; actor_class: number }
 /** `oneiron::critic::review::submit::CriticReviewSubmit` */
-export type CriticReviewSubmit = { target_ref: string; kind: string; session_ref: string; run_ref: string; type_node: string; type_tree_version: number; axis: string; auto_resolve_threshold: number; catalog: unknown; critics: CriticBinding[] }
+export type CriticReviewSubmit = { target_ref: string; kind: string; session_ref: string; run_ref: string; type_node: string; type_tree_version: number; axis: string; auto_resolve_threshold: number; catalog: unknown; critics: CriticBinding[]; spawn_attempt_ref?: string | null }
 /** `oneiron::critic::CritiqueTriageScores` */
 export type CritiqueTriageScores = { accept: number; revise: number; discard: number }
 /** `oneiron::critic::findings::MergedFinding` */
@@ -4635,7 +4635,7 @@ export type CriticPrediction = { what: string; by_when: number; how_checked: Out
 /** `oneiron::critic::CritiqueArtifact` */
 export type CritiqueArtifact = { schema_version: number; artifact_id: string; run_id: string; branch_job: AttemptId; candidate_ref: string; lens_id: string; domain: string; provenance: CritiqueProvenance; calibration: LearningCell; prediction?: CriticPrediction | null; verdict: CritiqueVerdict; severity: CritiqueSeverity; hard_check_passed?: boolean | null; evidence_refs: string[]; suggested_edit?: string | null; out_of_scope?: boolean; created_at: number }
 /** `oneiron::critic::review::submit::CriticReviewOutcome` */
-export type CriticReviewOutcome = { verdict_claim_ref: string; triage: CritiqueTriage; artifacts: CritiqueArtifact[]; receipts: DecisionReceipt[] }
+export type CriticReviewOutcome = { verdict_claim_ref: string; triage: CritiqueTriage; artifacts: CritiqueArtifact[]; receipts: DecisionReceipt[]; spawn_attempt_ref?: string | null }
 /** `oneiron::blob_artifact::deck_creation::outline::OutlineCommunication` */
 export type OutlineCommunication = { audience: string; outcome: string; main_message: string }
 /** `oneiron::blob_artifact::deck_creation::outline::OutlineDivision` */
