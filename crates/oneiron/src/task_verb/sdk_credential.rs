@@ -77,6 +77,7 @@ impl CredentialCaveat {
             records: self.records,
             channels: self.channels,
             pact: self.pact.map(|pact| (pact.grant_ref.0, pact.ceiling)),
+            comm: None,
         }
     }
 }

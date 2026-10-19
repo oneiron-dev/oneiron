@@ -17,6 +17,8 @@ pub(in crate::sync) use document_admission::{
 };
 #[cfg(feature = "sync")]
 mod edge;
+mod guest_document;
+pub use guest_document::{export_guest_document_for_guest, share_guest_document_as_owner};
 mod held_retire;
 mod machine_history;
 pub(in crate::sync) use machine_history::machine_history_controls;

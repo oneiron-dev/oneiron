@@ -80,7 +80,9 @@ pub struct WorldPrivacyRequest {
     /// The holders it went to, as hex.
     pub holders: Vec<String>,
     /// Under "widen needs every owner": every live Owner whose yes it needs,
-    /// as hex. Empty: any one holder's yes applies it.
+    /// as hex, as of its last answer: each answer reads the live Owners
+    /// again (`unanimity::ask_needs_in_txn`). Empty: any one holder's yes
+    /// applies it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub needs: Vec<String>,
     /// The yeses collected so far, as hex.
@@ -250,6 +252,21 @@ impl Vault {
         holders: &[EntityId],
         detail: &str,
     ) -> Result<()> {
+        self.notify_holders_in_txn(txn, kind, about, &[world], holders, detail)
+    }
+
+    /// The same notice path with its subjects named: `subjects` is empty for
+    /// a vault-wide setting such as a pending "widen needs every owner"
+    /// turn-off.
+    pub(super) fn notify_holders_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        kind: NotificationKind,
+        about: &str,
+        subjects: &[EntityId],
+        holders: &[EntityId],
+        detail: &str,
+    ) -> Result<()> {
         let at = self.instant_in_txn(txn)?.secs();
         for holder in holders {
             self.record_notification_in_txn(
@@ -263,7 +280,7 @@ impl Vault {
                         detail: Some(detail.to_owned()),
                         ..NotificationSource::default()
                     },
-                    subject_refs: vec![world],
+                    subject_refs: subjects.to_vec(),
                     recipient: Some(*holder),
                     created_at: at,
                     origin_conversation: None,

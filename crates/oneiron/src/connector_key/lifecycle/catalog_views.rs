@@ -92,9 +92,18 @@ impl Vault {
         actor: &EntityId,
     ) -> Result<Option<ActorConnectorRegistration>> {
         let rtxn = self.store.env.read_txn()?;
+        self.live_connector_registration_in_txn(&rtxn, connector, actor)
+    }
+
+    pub(crate) fn live_connector_registration_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        connector: &str,
+        actor: &EntityId,
+    ) -> Result<Option<ActorConnectorRegistration>> {
         let Some((key_ref, key)) = governing_connector_key(
             &self.store,
-            &rtxn,
+            rtxn,
             &normalize_connector_key(connector),
             Some(actor),
         )?
@@ -108,7 +117,7 @@ impl Vault {
         let Some(slate_ref) = key.slate_ref else {
             return Ok(None);
         };
-        let Some(slate) = read_connector_slate_in_txn(self, &rtxn, slate_ref)? else {
+        let Some(slate) = read_connector_slate_in_txn(self, rtxn, slate_ref)? else {
             return Ok(None);
         };
         if slate.owner_actor().is_none()

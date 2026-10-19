@@ -8,7 +8,7 @@ use crate::write_envelope::WriteActor;
 
 /// One tested file state. The operation fold includes each operation's
 /// durable stamp, which names no actor: the actor is on its receipts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeDocumentFrontier {
     pub document_id: [u8; 32],
@@ -21,7 +21,7 @@ pub struct CodeDocumentFrontier {
 }
 
 /// One edit against Unicode scalar offsets in the session's observed text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeFileEdit {
     pub path: String,

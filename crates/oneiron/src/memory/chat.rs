@@ -489,6 +489,8 @@ impl Memory<'_> {
                 rendered,
                 narrowing: Box::new(narrowing),
                 retrieval_run_id: None,
+                // The documents named, not a recall answer.
+                residence: None,
             },
             gaps,
         ))
@@ -625,6 +627,8 @@ fn document_item(view: &EntityView) -> MemoryItem {
         None => (view.id_hex.clone(), None),
     };
     MemoryItem {
+        asset_ref: (view.kind == "ASSET").then(|| view.id_hex.clone()),
+        embedding_matches: Vec::new(),
         short_id,
         source_revision_ref,
         kind: view.kind.clone(),

@@ -128,7 +128,8 @@ pub(crate) fn hnsw_search(
     )?;
 
     let rescore_active =
-        config.fast_dims.is_some() && query_vector.len() == config.dimensions && !skip_rescore;
+        crate::pipeline::VectorRefinement::for_query(config, query_vector.len(), skip_rescore)
+            .full_dimension_rescore;
     if rescore_active {
         let mut vector_buffer = Vec::with_capacity(query_vector.len());
         // One query, one norm: the rescore sweep re-reads the same query for
@@ -192,7 +193,8 @@ pub(crate) fn exact_score(
     skip_rescore: bool,
 ) -> Result<f32> {
     let rescore_active =
-        config.fast_dims.is_some() && query_vector.len() == config.dimensions && !skip_rescore;
+        crate::pipeline::VectorRefinement::for_query(config, query_vector.len(), skip_rescore)
+            .full_dimension_rescore;
     let dims = if rescore_active {
         query_vector.len()
     } else {

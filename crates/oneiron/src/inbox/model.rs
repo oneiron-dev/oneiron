@@ -98,7 +98,9 @@ impl RawValue for InboxReviewDial {
 }
 
 /// Why a row surfaces in the exception queue.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum InboxExceptionClass {
     /// The auto_checker held this write on a low-confidence/hedged verdict.
