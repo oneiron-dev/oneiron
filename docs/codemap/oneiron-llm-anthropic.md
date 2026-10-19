@@ -18,3 +18,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/tests.rs` | test | s | — | — | — |
 | `src/lib/transport.rs` | src | s | 2 struct · 2 enum · 1 trait · 2 type | AnthropicMessagesHttpRequest, AnthropicMessagesHttpResponse, AnthropicMessagesStreamFrame, AnthropicMessagesTransport, AnthropicMessagesTransportError | Host-owned execution seam: future/stream aliases, HTTP envelope types, stream frame, transport trait, error… |
 | `src/lib/wire.rs` | src | m | 3 fn · 2 crate-vis | — | Anthropic Messages protocol mapping: request build, response parse, message/part/tool codecs, usage, status… |
+| `src/lib/wire/cache.rs` | src | s | 1 crate-vis | — | Prompt-cache boundaries on the Messages wire (FIX 4465 C): the host's descriptor, rendered as… |
