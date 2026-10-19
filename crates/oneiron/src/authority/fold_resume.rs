@@ -281,11 +281,12 @@ impl Once {
 /// confirm, a world settings edit (it judges only its own world's edits, FIX
 /// 4535), a grant travel choice (only its own grant's choices), a checkpoint
 /// policy choice or a home pick (each only the vault's choices of its kind),
-/// a person's conversation training choice (only that person's choices), an
-/// owner work request or result (each judges only its own work), a world key
-/// record (it fills only its own key's slots, or is refused as a no-op, FIX
-/// 4881). A resumed fold and a fold past an adopted checkpoint take only
-/// these, and each still folds through its own transition.
+/// a person's conversation training choice (only that person's choices), a
+/// machine's home candidacy (only that machine's declarations), an owner
+/// work request, result or cancel (each judges only its own work), a world
+/// key record (it fills only its own key's slots, or is refused as a no-op,
+/// FIX 4881). A resumed fold and a fold past an adopted checkpoint take
+/// only these, and each still folds through its own transition.
 pub(super) fn admits_past(
     merged: &FoldState,
     entry: &AuthorityLogEntry,
@@ -319,8 +320,10 @@ pub(super) fn admits_past(
         | AuthorityOp::HomeNodePick(_)
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
+        | AuthorityOp::HomeCandidacy(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
+        | AuthorityOp::OwnerWorkCancel(_)
         | AuthorityOp::WorldKeyWraps(_) => true,
         AuthorityOp::FederationConfirm(action) => {
             confirms.0.insert(action.confirm_id) && confirms.1.insert(action.nonce)
@@ -560,9 +563,9 @@ impl<'a> RowMeta<'a> {
 /// Whether a fold past the base reads `op`'s row whole: the approvals and
 /// revocations stale-roster expiry and renewal weigh (`stale_roster`), the
 /// world-key records whose envelopes a folded key carries
-/// (`world_key_fold::folded_world_keys`), and the owner work requests and
-/// results an executor and a receipt read past the base. Every other row's
-/// summary is all a later fold reads of it.
+/// (`world_key_fold::folded_world_keys`), and the owner work requests,
+/// results and cancels an executor and a receipt read past the base. Every
+/// other row's summary is all a later fold reads of it.
 pub(super) fn is_projected(op: &AuthorityOp) -> bool {
     matches!(
         op,
@@ -577,6 +580,7 @@ pub(super) fn is_projected(op: &AuthorityOp) -> bool {
             | AuthorityOp::WorldKeyWraps(_)
             | AuthorityOp::OwnerWorkRequest(_)
             | AuthorityOp::OwnerWorkResult(_)
+            | AuthorityOp::OwnerWorkCancel(_)
     )
 }
 

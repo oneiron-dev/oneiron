@@ -1328,6 +1328,12 @@ install:
 - The target lists what waits for it at `GET /v1/owner/roots/requests`.
 - `GET /v1/owner/owner-work/{request}` reads where any owner work request stands.
 - A pin needs no kit: the target makes it on its own.
+- `POST /v1/owner/roots/requests/cancel` with `request` cancels one, from any install you are
+  signed in on. It carries ids only and takes effect on the target whenever it syncs, however long
+  it was offline. A newer request on the same target also replaces an older one. The target never
+  runs a request it holds cancelled or replaced, and the receipt says "cancelled by the owner" or
+  "superseded by a newer request on its target". If the target ran the request before it had your
+  cancel, that result stands and the cancel says "already enacted". Nothing is undone.
 
 Kit material travels only in the body of the named target's own call:
 `POST /v1/owner/roots/requests/run` and `POST /v1/owner/recovery-kit/pad-access`. That means the

@@ -461,7 +461,10 @@ impl Vault {
     /// logged with its reason, and the owner's acts then refuse "no carrier"
     /// here, as before. No issuer, or a vault no root roots yet, is a skip:
     /// the first rooted serving start profiles the install, and nothing here
-    /// mints a root. `start` names the start in the log.
+    /// mints a root. A start whose issuer is not the vault's settled root,
+    /// over a profile that already stands, is logged as a warning and starts
+    /// on under the settled root, never refused (FIX 5345, Engine 10-19
+    /// 15:3x). `start` names the start in the log.
     pub fn ensure_serving_install_profile_at_start(
         &self,
         issuer: Option<&HostSlipIssuer>,
@@ -475,7 +478,15 @@ impl Vault {
             );
             return;
         };
-        match self.ensure_serving_install_profile(issuer, SERVING_INSTALL_ROLE) {
+        match self.ensure_install_profile_reporting(issuer, SERVING_INSTALL_ROLE) {
+            // FIX 5345: the wrong-root fact the profile door reports is kept,
+            // not dropped; the standing profile carries on as before.
+            Ok((_, Some(false))) => tracing::warn!(
+                start,
+                reason = SERVING_ROOT_NOT_ISSUER,
+                "this start's host root is not the vault's settled root, so it went unused; \
+                 this install's standing profile carries on under the settled root"
+            ),
             Ok(_) => {}
             Err(crate::error::Error::Record(crate::error::RecordError::AuthorityRefused(
                 SERVING_ROOT_ABSENT,

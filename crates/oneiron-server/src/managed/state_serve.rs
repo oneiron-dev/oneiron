@@ -1206,15 +1206,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         sync_server = sync_server.with_artifact_socket();
     }
     // Model seats, the Dreamer and the decision ladder from `[models]`, as
-    // plain serve attaches them: a vault the owner's `[device_sync]` makes a
-    // device of another home never claims the MACRO home. A startup error
-    // below drops `ai`, which tells its workers to stop.
-    let (sync_server, ai) = crate::ai_host::AiHost::attach_device(
-        sync_server,
-        config.models.as_ref(),
-        config.device_sync.is_some(),
-    )
-    .await;
+    // plain serve attaches them: a vault that dials a home, by the owner's
+    // `[device_sync]` or its enrolment, is a device of that home and never
+    // claims the MACRO home. A startup error below drops `ai`, which tells
+    // its workers to stop.
+    let device = crate::device_sync::dials_home(&config, &vault);
+    let (sync_server, ai) =
+        crate::ai_host::AiHost::attach_device(sync_server, config.models.as_ref(), device).await;
     // The Dreamer's passes are admitted like a served write, and refused
     // until the managed state below exists.
     let reap_gate = Arc::new(std::sync::OnceLock::<Arc<ManagedState>>::new());

@@ -95,6 +95,12 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
         AuthorityOp::ConversationTrainingVaultSet(set) => {
             vec![Grant::InstallKey(set.machine, entry.signer_key().clone())]
         }
+        AuthorityOp::HomeCandidacy(declaration) => {
+            vec![Grant::InstallKey(
+                declaration.machine,
+                entry.signer_key().clone(),
+            )]
+        }
         AuthorityOp::OwnerWorkRequest(request) => {
             vec![Grant::InstallKey(
                 request.carrier,
@@ -104,6 +110,12 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
         AuthorityOp::OwnerWorkResult(result) => {
             vec![Grant::InstallKey(
                 result.executor,
+                entry.signer_key().clone(),
+            )]
+        }
+        AuthorityOp::OwnerWorkCancel(cancel) => {
+            vec![Grant::InstallKey(
+                cancel.carrier,
                 entry.signer_key().clone(),
             )]
         }

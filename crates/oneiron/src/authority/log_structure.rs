@@ -379,8 +379,10 @@ impl AuthorityStructure {
             AuthorityOp::HomeNodePick(pick) => install_key(pick.machine),
             AuthorityOp::ConversationTrainingSet(set) => install_key(set.machine),
             AuthorityOp::ConversationTrainingVaultSet(set) => install_key(set.machine),
+            AuthorityOp::HomeCandidacy(declaration) => install_key(declaration.machine),
             AuthorityOp::OwnerWorkRequest(request) => install_key(request.carrier),
             AuthorityOp::OwnerWorkResult(result) => install_key(result.executor),
+            AuthorityOp::OwnerWorkCancel(cancel) => install_key(cancel.carrier),
             AuthorityOp::OwnerRoot(_) => self_signed_root(entry).is_some(),
             // An owner answer: its carrier's install key, alone (mesh PR1b).
             AuthorityOp::MachineProfile(profile) if profile.carrier.is_some() => {
@@ -429,8 +431,10 @@ impl AuthorityStructure {
             AuthorityOp::HomeNodePick(pick) => machine_key(pick.machine),
             AuthorityOp::ConversationTrainingSet(set) => machine_key(set.machine),
             AuthorityOp::ConversationTrainingVaultSet(set) => machine_key(set.machine),
+            AuthorityOp::HomeCandidacy(declaration) => machine_key(declaration.machine),
             AuthorityOp::OwnerWorkRequest(request) => machine_key(request.carrier),
             AuthorityOp::OwnerWorkResult(result) => machine_key(result.executor),
+            AuthorityOp::OwnerWorkCancel(cancel) => machine_key(cancel.carrier),
             _ => false,
         }
     }

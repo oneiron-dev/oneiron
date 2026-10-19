@@ -249,6 +249,7 @@ pub fn op_value(op: &AuthorityOp) -> Value {
             super::owner_work::owner_work_request_value(request)
         }
         AuthorityOp::OwnerWorkResult(result) => super::owner_work::owner_work_result_value(result),
+        AuthorityOp::OwnerWorkCancel(cancel) => super::owner_work::owner_work_cancel_value(cancel),
         AuthorityOp::CheckpointPolicySet(set) => {
             super::checkpoint_policy::checkpoint_policy_value(set)
         }
@@ -258,6 +259,9 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         }
         AuthorityOp::ConversationTrainingVaultSet(set) => {
             super::conversation_training_vault::conversation_training_vault_value(set)
+        }
+        AuthorityOp::HomeCandidacy(declaration) => {
+            super::home_candidacy::home_candidacy_value(declaration)
         }
     }
 }
