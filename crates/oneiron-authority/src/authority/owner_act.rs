@@ -107,6 +107,14 @@ pub enum OwnerActKind {
     /// PERSON and `target` the vault; its `seen` is over the vault's live
     /// setting choices, under its own revision domain.
     ConversationTraining,
+    /// The owner's mint of an agent's Grant (`AgentGrantAct`; FIX 5628,
+    /// Engine 10-20 00:5x). Its `target` is the new Grant and its `seen`
+    /// zero ([`AGENT_GRANT_ACT_SEEN`]). No Grant line names it: an agent
+    /// never widens its own authority.
+    GrantMint,
+    /// The owner's revoke of an agent's Grant (FIX 5628). Its `target` is the
+    /// Grant and its `seen` zero: an owner's revoke always lands.
+    GrantRevoke,
 }
 
 impl OwnerActKind {
@@ -128,6 +136,8 @@ impl OwnerActKind {
             Self::Export => "export",
             Self::HomeNodePick => "home_node_pick",
             Self::ConversationTraining => "conversation_training",
+            Self::GrantMint => "grant_mint",
+            Self::GrantRevoke => "grant_revoke",
         }
     }
 
@@ -149,6 +159,8 @@ impl OwnerActKind {
             "export" => Self::Export,
             "home_node_pick" => Self::HomeNodePick,
             "conversation_training" => Self::ConversationTraining,
+            "grant_mint" => Self::GrantMint,
+            "grant_revoke" => Self::GrantRevoke,
             _ => return None,
         })
     }
