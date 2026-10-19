@@ -880,6 +880,14 @@ is off until the person whose words they are says yes, per world, and private wo
 included. The engine has one door for it, and it sends nothing today: no machine-only intake is
 configured. Training a model of your own on your own data (the training pack) needs no sharing.
 
+A person reads their own training receipts at `GET /v1/owner/conversation-learning/receipts`,
+with the same proof as their choice: each withdrawal their choice recorded, and each submission of
+their words with its conversation, worlds, local custody (`held`, `published`, `withheld`,
+`withdrawn`), the intake's last receipt (`stored`, `excluded`, `removal_pending`, `removed`,
+`rejected`), the runs that used it, the withdrawal note and its times. It never lists another
+person's rows, even for a conversation several people wrote in. Pass a page's `next` back as
+`after` for the rest.
+
 A vault our cloud hosts (managed serve) sends to `collector` at `https://oneiron.dev/feedback`
 unless told otherwise; self-hosted serve sends nowhere until you set both keys. `GET
 /v1/owner/status` shows the effective `feedback` setting. Every send still asks you first.

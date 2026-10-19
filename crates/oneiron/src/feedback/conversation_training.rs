@@ -33,6 +33,7 @@
 mod crypto;
 mod custody;
 mod lifecycle;
+mod receipts;
 mod reconcile;
 mod release;
 mod source;
@@ -42,6 +43,10 @@ pub use self::lifecycle::{
     PublisherTrainingLifecycle, ReceiptCursor, ReceivedTrainingReceipt, ReleaseDecision,
     SealedTrainingOffer, SignedTrainingControl, TrainingControlId, TrainingQueued,
     TrainingReceiptPage, TrainingSubmissionId, TrainingUnavailable, TrainingWithheld,
+};
+pub use self::receipts::{
+    PersonTrainingControl, PersonTrainingReceipts, PersonTrainingSubmission, TrainingCustody,
+    TrainingReceiptsCursor, TrainingUsedRun,
 };
 pub use self::reconcile::TrainingUpkeep;
 pub use self::release::TrainingOfferPass;
