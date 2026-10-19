@@ -125,7 +125,9 @@ pub(in crate::runtime_hooks::verb) fn retry(
 
 /// Opens the asking hook's ask as its author, on `turn`, as [`super::open`]
 /// does, and keeps the paused call under `key`, in the ask's own write: its
-/// args, the hook's place and the ask handle. The ask's intent key names the
+/// args, the hook's place and the ask handle. `write` puts the chain's own
+/// vault rows (its hooks' blocks and intents) in that write first, and again
+/// on its own when the ask stood from an earlier try. The ask's intent key names the
 /// invocation's hidden id (`SessionHookKeep::hidden_invocation`), so
 /// settlement finds no saved call and runs nothing, and the vault keeps no
 /// way to run the call again. A session that ended meanwhile opens no ask.
@@ -133,7 +135,7 @@ pub(in crate::runtime_hooks::verb) fn retry(
 /// session ended: nothing was kept.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the call, its key, the hook, its place, the args, the label and the call's turn"
+    reason = "the call, its key, the hook, its place, the args, the label, the call's turn and the chain's write"
 )]
 pub(in crate::runtime_hooks::verb) fn open(
     vault: &Vault,
@@ -144,6 +146,7 @@ pub(in crate::runtime_hooks::verb) fn open(
     args: &Value,
     label: &str,
     turn: Option<&Arc<TaskWorkTurn>>,
+    write: &dyn Fn(&mut heed::RwTxn<'_>) -> Result<()>,
 ) -> Result<std::result::Result<EntityId, String>> {
     let (binding_id, binding) = hook;
     let keep = &vault.verb_hook_state.session;
@@ -185,7 +188,8 @@ pub(in crate::runtime_hooks::verb) fn open(
         )
     };
     let opened = author_memory(vault, binding.author_id(), binding.author_class(), turn)
-        .tasks_ask_with_txn_effect(&spec, |_, ask| {
+        .tasks_ask_with_txn_effect(&spec, |txn, ask| {
+            write(txn).map_err(MemoryError::from)?;
             if save(ask) {
                 Ok(())
             } else {
@@ -200,6 +204,7 @@ pub(in crate::runtime_hooks::verb) fn open(
     if receipt.idempotent_replay {
         // The ask stood from an earlier try in this process whose pause was
         // not kept here. An unused pause of it under the key stands.
+        vault.with_write_txn_grouped(|txn| write(txn))?;
         let kept = keep
             .ask(key, call.invocation.0)
             .is_some_and(|row| row.ask == group && !row.used);

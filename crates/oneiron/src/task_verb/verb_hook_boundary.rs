@@ -96,8 +96,7 @@ impl HookSession {
 ///
 /// # Errors
 ///
-/// A session that is closing; a resume of a pause that is gone; storage
-/// errors.
+/// A resume of a pause that is gone; storage errors.
 pub fn hook_session(memory: Option<&Memory<'_>>, verb: &str) -> MemoryResult<Option<HookSession>> {
     let anonymous = memory.is_some_and(Memory::keeps_no_record);
     // A pause is resumed beside the invocation it paused; a call that names
@@ -113,9 +112,7 @@ pub fn hook_session(memory: Option<&Memory<'_>>, verb: &str) -> MemoryResult<Opt
         return Ok(None);
     }
     let key = match memory {
-        Some(memory) => memory
-            .vault()
-            .session_hook_key(memory.off_record_binding())?,
+        Some(memory) => memory.vault().session_hook_key(memory.off_record_binding()),
         None => SessionHookKey::Process,
     };
     Ok(Some(HookSession { key, resume }))

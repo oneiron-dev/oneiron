@@ -13,7 +13,10 @@
 //! process ([`SessionHookKeep`]). None of them reaches base. Such a call's
 //! hook may ask (L13 PR-D, FIX 4283): the call it paused waits in the same
 //! keep, under the same key, and only its caller's retry there resumes it,
-//! using the answer up once; it goes with its session.
+//! using the answer up once; it goes with its session. While
+//! `KEPT_CALL_HOOK_CONSEQUENCES_RUN` holds (FIX 5525), its hooks' blocks,
+//! proposals, queued tasks and effects land in the vault as on any call;
+//! only their receipts and saved runs stay in the keep.
 //!
 //! A session-only call's records are held from its pre chain, riding the
 //! [`VerbHookPre`], through its post chain, and kept together once its own

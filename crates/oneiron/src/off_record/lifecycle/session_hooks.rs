@@ -40,7 +40,7 @@
 use serde_json::Value;
 
 use crate::code_run::{SessionHookDisposition, SessionHookNotKept};
-use crate::error::{Error, OffRecordError, Result};
+use crate::error::Result;
 use crate::runtime_hooks::verb::{
     HookRecordsKept, SessionHookKey, SessionHooks, VerbArgsCheck, VerbHookStorage,
 };
@@ -188,19 +188,16 @@ impl Vault {
     /// name resolves to its instance). The process when the surface binds
     /// none, or names no live stretch: a `no_record` row called before its
     /// session starts, or a session header that names no off-record stretch,
-    /// keeps working as today. The close drops a session's key
-    /// ([`Self::close_off_record_entry`]).
-    ///
-    /// # Errors
-    ///
-    /// [`OffRecordError::OffRecordSessionClosing`] when the stretch it names
-    /// is closing: its records and pauses would outlive it.
+    /// keeps working as today. A stretch that is closing keeps its own key,
+    /// which the keep no longer takes anything under, so the call answers as
+    /// today and nothing of it outlives the stretch. The close drops a
+    /// session's key ([`Self::close_off_record_entry`]).
     pub(crate) fn session_hook_key(
         &self,
         binding: Option<(&str, Option<EntityId>)>,
-    ) -> Result<SessionHookKey> {
+    ) -> SessionHookKey {
         let Some((session, principal)) = binding else {
-            return Ok(SessionHookKey::Process);
+            return SessionHookKey::Process;
         };
         let session = session.trim();
         let registry = &self.store.off_record_sessions;
@@ -208,16 +205,11 @@ impl Vault {
             .and_then(|principal| registry.created_key(session, principal))
             .unwrap_or_else(|| session.to_owned());
         match registry.record(&key) {
-            Some(record) if record.closing => {
-                Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
-                    session_ref: key,
-                }))
-            }
-            Some(record) => Ok(SessionHookKey::Session {
+            Some(record) => SessionHookKey::Session {
                 key,
                 entered_at: record.entered_at,
-            }),
-            None => Ok(SessionHookKey::Process),
+            },
+            None => SessionHookKey::Process,
         }
     }
 }

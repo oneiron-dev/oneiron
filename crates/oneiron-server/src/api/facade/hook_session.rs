@@ -24,8 +24,8 @@ use crate::server::SyncServer;
 ///
 /// # Errors
 ///
-/// A malformed hook ask header; the boundary's refusal: a session that is
-/// closing, or a resume of a hook pause that is gone.
+/// A malformed hook ask header; the boundary's refusal of a resume of a
+/// hook pause that is gone.
 pub(super) fn facade_hook_session(
     server: &SyncServer,
     call: &FacadeCall<'_>,

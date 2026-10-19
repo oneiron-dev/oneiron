@@ -22,6 +22,16 @@ use super::{Chain, Hook, RunRecord, hook_name};
 /// The receipt word of a run whose outcome its room could not carry out.
 const UNAVAILABLE: &str = "unavailable";
 
+/// Whether a hook's AddBlock, Propose, Enqueue or Effect on a session-only
+/// call with no room overlay (a `no_record` row, an anonymous roomless
+/// call) runs in the vault as on any call, only its receipts and saved runs
+/// going to the in-memory keep (FIX 5525; the Engine asks whether such a
+/// call's consequences should instead be its hook's terminal
+/// `session_hook_unavailable:<work>`, as in a room). `true` holds today's
+/// behaviour; `false` applies 2c's room rule to it. A room keeps 2c's rule
+/// either way.
+pub(crate) const KEPT_CALL_HOOK_CONSEQUENCES_RUN: bool = true;
+
 /// The canonical work `outcome` needs, which a room does not do (CALLS-3
 /// `session_hook_consequence_support`): an ask, a block, or a post chain's
 /// proposal, queued task or effect. Each would land a TASK, a job, an
@@ -86,11 +96,14 @@ impl<'c> Chain<'c> {
 
     /// The canonical work a run's `outcome` needs that this chain's room
     /// does not do; `None` on the vault, which does it. A session-only call
-    /// with no room overlay keeps its hook's ask in the keep (L13 PR-D).
+    /// with no room overlay keeps its hook's ask in the keep (L13 PR-D), and
+    /// runs its other consequences in the vault while
+    /// [`KEPT_CALL_HOOK_CONSEQUENCES_RUN`] holds.
     pub(super) fn room_cannot(&self, outcome: Option<&HookOutcome>) -> Option<&'static str> {
         match self.storage {
             VerbHookStorage::Canonical => None,
             VerbHookStorage::Session(hooks) if hooks.kept_key().is_some() => outcome
+                .filter(|_| !KEPT_CALL_HOOK_CONSEQUENCES_RUN)
                 .and_then(canonical_work)
                 .filter(|work| *work != "ask"),
             VerbHookStorage::Session(_) => outcome.and_then(canonical_work),
@@ -109,9 +122,11 @@ impl<'c> Chain<'c> {
     /// Opens the asking hook's ask for a session-only call with no room
     /// overlay (L13 PR-D, FIX 4283): its resumed answer used up first, as on
     /// the vault, so one another try used meanwhile opens no ask; then the
-    /// ask, its paused call kept under `key`; then the chain's runs held for
-    /// the call to keep. A refused ask keeps nothing, and the chain goes on
-    /// as after any ask that did not open.
+    /// ask, its paused call kept under `key` and the chain's blocks and
+    /// intents written in the ask's own write ([`Self::consequences_in_txn`]);
+    /// then the chain's runs held for the call to keep. A refused ask keeps
+    /// and writes nothing, and the chain goes on as after any ask that did
+    /// not open.
     pub(super) fn ask_in_session(
         &self,
         hooks: &SessionHooks<'_>,
@@ -137,6 +152,7 @@ impl<'c> Chain<'c> {
             args,
             label,
             self.turn.as_ref(),
+            &|txn: &mut heed::RwTxn<'_>| self.consequences_in_txn(txn),
         )? {
             Ok(group) => group,
             Err(refusal) => return Ok(Err(refusal)),
