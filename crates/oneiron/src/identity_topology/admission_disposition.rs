@@ -1,9 +1,14 @@
 //! Signed append-only admission facts, independent of a decision's erasable author.
 
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
 use ed25519_dalek::{Signature, Signer, VerifyingKey};
 use rmpv::Value;
 
-use crate::authority::AuthorityFold;
+use crate::authority::{
+    AuthorityEntryHash, AuthorityFold, CausalPoints, ExternalAct, ExternalActStanding,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::side_table::{self, HexId, Raw, SideTable};
@@ -13,9 +18,15 @@ use crate::vault::Vault;
 use super::act_admission::{ResolvedSeal, SealAuthority, SealStanding};
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 
-/// The seal transcript's domain: v2 signs the carrier and the deciding
-/// authority beside the core digest, verdict and reason (mesh PR2-topology).
-const DOMAIN: &[u8] = b"oneiron.identity-topology.admission.v2\0";
+/// The seal transcript's domain: v3 signs a decision's causal point, the
+/// authority-log heads its carrier held (FIX 4649), beside the carrier, the
+/// deciding authority, the core digest, verdict and reason (mesh
+/// PR2-topology).
+const DOMAIN: &[u8] = b"oneiron.identity-topology.admission.v3\0";
+/// The domain of a decision seal's act token: what a carrier's removal lists
+/// as seen to keep the decision standing (FIX 4649, CALLS "FIX 4649 seal
+/// causal envelope").
+const SEAL_ACT_TOKEN_DOMAIN: &[u8] = b"oneiron.identity-topology.seal-act.v1\0";
 /// Integrity: the fact's act, verdict or shape is malformed (an owner act of
 /// another kind or target, a verdict with a reason it never carries, a
 /// missing or doubled authority).
@@ -81,20 +92,26 @@ pub struct AdmissionDisposition {
     /// Who decided, under the same signature: the owner's or an agent's
     /// [`oneiron_authority::authority::OwnerAct`], or the engine's cause.
     pub authority: SealAuthority,
+    /// A decision's causal point, under the same signature: the main-log
+    /// heads and the carrier's standing rows its carrier held as it decided
+    /// (FIX 4649), one to [`crate::authority::MAX_PARENTS`]. An engine seal
+    /// names none.
+    pub authority_heads: BTreeSet<AuthorityEntryHash>,
     pub signer_pk: [u8; 32],
     pub signature: [u8; 64],
 }
 
 impl AdmissionDisposition {
     /// The one signed transcript: the target, the core digest, the verdict,
-    /// the optional reason, the carrier and the deciding authority.
+    /// the optional reason, the carrier, the deciding authority and its
+    /// causal heads.
     fn transcript(
         target: &EntityId,
         digest: &[u8; 32],
         verdict: AdmissionVerdict,
         reason: Option<EntityId>,
         carrier: &EntityId,
-        authority: &SealAuthority,
+        (authority, heads): (&SealAuthority, &BTreeSet<AuthorityEntryHash>),
     ) -> Result<Vec<u8>> {
         let mut bytes = Vec::with_capacity(DOMAIN.len() + 16 + 32 + 32 + 17 + 16 + 256);
         bytes.extend_from_slice(DOMAIN);
@@ -111,6 +128,10 @@ impl AdmissionDisposition {
         }
         bytes.extend_from_slice(carrier.as_bytes());
         bytes.extend_from_slice(&authority.transcript_bytes()?);
+        bytes.extend_from_slice(&(heads.len() as u64).to_be_bytes());
+        for head in heads {
+            bytes.extend_from_slice(head);
+        }
         Ok(bytes)
     }
 
@@ -121,8 +142,20 @@ impl AdmissionDisposition {
             self.verdict,
             self.reason,
             &self.carrier,
-            &self.authority,
+            (&self.authority, &self.authority_heads),
         )
+    }
+
+    /// The token of this seal's act (FIX 4649): BLAKE3 over its own domain,
+    /// the signed transcript and the signer key. Derived from the seal's
+    /// signed bytes, never its time; a carrier's removal that lists it keeps
+    /// the decision standing.
+    pub(super) fn act_token(&self) -> Result<AuthorityEntryHash> {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(SEAL_ACT_TOKEN_DOMAIN);
+        hasher.update(&self.own_transcript()?);
+        hasher.update(&self.signer_pk);
+        Ok(*hasher.finalize().as_bytes())
     }
 
     /// The verified signed payload, a seal's immutable decision bytes: the
@@ -135,7 +168,8 @@ impl AdmissionDisposition {
     }
 
     /// A seal of `target`'s decision `core`, signed by `signer`'s carrier
-    /// with `authority`, in the one transcript.
+    /// with `authority`, in the one transcript. A decision signs the causal
+    /// point `signer` captured; an engine seal signs none.
     pub(super) fn signed(
         signer: &ResolvedSeal,
         target: EntityId,
@@ -146,8 +180,18 @@ impl AdmissionDisposition {
     ) -> Result<Self> {
         let core_digest = core_digest(core)?;
         let carrier = signer.carrier();
-        let transcript =
-            Self::transcript(&target, &core_digest, verdict, reason, &carrier, &authority)?;
+        let authority_heads = match authority {
+            SealAuthority::Decision(_) => signer.heads().clone(),
+            SealAuthority::Engine(_) => BTreeSet::new(),
+        };
+        let transcript = Self::transcript(
+            &target,
+            &core_digest,
+            verdict,
+            reason,
+            &carrier,
+            (&authority, &authority_heads),
+        )?;
         Ok(Self {
             target,
             core_digest,
@@ -155,6 +199,7 @@ impl AdmissionDisposition {
             reason,
             carrier,
             authority,
+            authority_heads,
             signer_pk: signer.key().verifying_key().to_bytes(),
             signature: signer.key().sign(&transcript).to_bytes(),
         })
@@ -220,10 +265,19 @@ impl AdmissionDisposition {
         {
             return Err(malformed());
         }
-        // A decision's act is a topology seal of exactly the sealed event.
-        if let SealAuthority::Decision(act) = &self.authority {
-            act.validate_carried(crate::authority::OwnerActKind::TopologySeal, self.target)
-                .map_err(|_| malformed())?;
+        // A decision's act is a topology seal of exactly the sealed event,
+        // and it signs its causal point; an engine seal signs none.
+        let heads_ok = match &self.authority {
+            SealAuthority::Decision(act) => {
+                act.validate_carried(crate::authority::OwnerActKind::TopologySeal, self.target)
+                    .map_err(|_| malformed())?;
+                !self.authority_heads.is_empty()
+                    && self.authority_heads.len() <= crate::authority::MAX_PARENTS
+            }
+            SealAuthority::Engine(_) => self.authority_heads.is_empty(),
+        };
+        if !heads_ok {
+            return Err(malformed());
         }
         let bad_signature =
             || Error::Sync(SyncError::InvalidIdentityTopologyEventBody(BAD_SIGNATURE));
@@ -257,6 +311,17 @@ impl AdmissionDisposition {
             Value::Binary(self.carrier.as_bytes().to_vec()),
         ));
         self.authority.encode_entry(entries);
+        if !self.authority_heads.is_empty() {
+            entries.push((
+                BODY_KEY_AUTHORITY_HEADS.into(),
+                Value::Array(
+                    self.authority_heads
+                        .iter()
+                        .map(|head| Value::Binary(head.to_vec()))
+                        .collect(),
+                ),
+            ));
+        }
         entries.push((
             BODY_KEY_SIGNER.into(),
             Value::Binary(self.signer_pk.to_vec()),
@@ -295,6 +360,19 @@ impl AdmissionDisposition {
             MALFORMED,
         )?;
         let authority = SealAuthority::decode_entry(map, target, MALFORMED)?;
+        // Canonical: re-encode equality refuses an unsorted or empty list.
+        let mut authority_heads = BTreeSet::new();
+        if let Some(value) = map_field(map, BODY_KEY_AUTHORITY_HEADS) {
+            for head in value.as_array().ok_or_else(malformed)? {
+                let head: AuthorityEntryHash = head
+                    .as_slice()
+                    .and_then(|bytes| bytes.try_into().ok())
+                    .ok_or_else(malformed)?;
+                if !authority_heads.insert(head) {
+                    return Err(malformed());
+                }
+            }
+        }
         let signer_pk: [u8; 32] = field(BODY_KEY_SIGNER)?
             .try_into()
             .map_err(|_| malformed())?;
@@ -308,6 +386,7 @@ impl AdmissionDisposition {
             reason,
             carrier,
             authority,
+            authority_heads,
             signer_pk,
             signature,
         };
@@ -338,12 +417,14 @@ pub(crate) fn core_digest(record: &StoredIdentityOpEvent) -> Result<[u8; 32]> {
 /// itself, and a live machine the owner marked mine; a fact anyone else
 /// sealed is stored but inert, verdict and refusal alike, until its signer is
 /// enrolled as mine. A decision seal (mesh PR2-topology): the same rule on
-/// every replica, this one included, `act_admission`'s carrier, owner and
-/// Grant standing. The roster is read once per pass, and only for a fact the
-/// marker does not settle.
+/// every replica, this one included, `act_admission`'s carrier and owner at
+/// its signed heads (FIX 4649) and Grant standing. The roster is read once
+/// per pass, and only for a fact the marker does not settle; every decision
+/// seal's causal standing is judged once per pass too.
 #[derive(Default)]
 pub(crate) struct SealTrust {
     roster: Option<AuthorityFold>,
+    causal: Option<Arc<CausalPoints>>,
 }
 
 impl SealTrust {
@@ -358,6 +439,29 @@ impl SealTrust {
         self.roster.as_ref().ok_or(Error::InvariantViolation(
             "identity topology seal trust fold",
         ))
+    }
+
+    /// How a decision seal's carrier and owner stand at its signed heads,
+    /// and whether every later removal of the carrier saw it: one fold
+    /// judges every decision seal this vault holds, and a seal outside that
+    /// set (not stored yet) joins it.
+    fn causal_standing(
+        &mut self,
+        store: &Store,
+        rtxn: &heed::RoTxn<'_>,
+        act: &ExternalAct,
+    ) -> Result<ExternalActStanding> {
+        if let Some(standing) = self.causal.as_ref().and_then(|points| points.standing(act)) {
+            return Ok(standing);
+        }
+        let mut acts = super::seal_standing::decision_seal_acts_in_txn(store, rtxn)?;
+        acts.insert(act.clone());
+        let points = crate::authority::causal_points_in_txn(store, rtxn, &acts)?;
+        let standing = points.standing(act).ok_or(Error::InvariantViolation(
+            "identity topology seal causal standing",
+        ))?;
+        self.causal = Some(points);
+        Ok(standing)
     }
 
     /// How fact row `id`, sealing `core`, stands here.
@@ -384,10 +488,9 @@ impl SealTrust {
             // `SEALED_HERE` is provenance only: the carrier, owner and Grant
             // rule every replica runs.
             SealAuthority::Decision(act) => {
-                let fold = self.fold(store, rtxn)?;
-                super::act_admission::decision_standing_in_txn(
-                    store, rtxn, fold, fact, act, core.at,
-                )
+                let act_at = super::seal_standing::external_act(fact, act)?;
+                let causal = self.causal_standing(store, rtxn, &act_at)?;
+                super::act_admission::decision_standing_in_txn(store, rtxn, causal, act, core.at)
             }
         }
     }
@@ -412,13 +515,14 @@ fn signer_is_mine(roster: &AuthorityFold, signer: &[u8; 32]) -> bool {
 }
 
 /// Whether the seal standing differs from the one the last authority write
-/// reconciled against, recording the new digest: the mine signers, and the
-/// decision seals' carriers, owners and named Grants
-/// (`act_admission::decision_standing_digest_in_txn`). A roster change, a
-/// carrier's removal or an owner's or Grant's revocation decides again which
-/// seals count, so the stored shell edges must follow it; an authority write
-/// that changes no standing (a header-only replay, a slip mint) does not pay
-/// for a reconcile.
+/// or Grant delete reconciled against, recording the new digest: the mine
+/// signers, and the decision seals' carriers, owners, causal evidence and
+/// named Grants (`act_admission::decision_standing_digest_in_txn`). A roster
+/// change, a carrier's removal or new revision, a seal's causal point
+/// arriving, or an owner's or Grant's revocation decides again which seals
+/// count, so the stored shell edges must follow it; an authority write that
+/// changes no standing (a header-only replay, a slip mint) does not pay for a
+/// reconcile.
 pub(super) fn mine_signers_changed_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
