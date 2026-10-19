@@ -16,7 +16,7 @@ const ADMISSION_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-admission:v1";
 /// contract, the executor revision that runs it and the arguments it is
 /// called with, all pinned when it is armed. Prose is never the program, and
 /// nothing here is regenerated: the stored code is the truth.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProgramRecipePin {
     /// The callable SKILL entity.
@@ -27,7 +27,10 @@ pub struct ProgramRecipePin {
     pub content_hash: String,
     /// The call contract's JS entry in the stored skill tree.
     pub entry: String,
-    /// BLAKE3 over the call contract: its entry, arguments and returns.
+    /// BLAKE3 over the call contract: its entry, arguments and returns, 64
+    /// lowercase hex on the wire.
+    #[schemars(with = "String")]
+    #[serde(with = "hex32")]
     pub contract_digest: [u8; 32],
     /// The executor revision (`id@revision`) that runs it.
     pub executor: String,
@@ -61,22 +64,41 @@ impl ProgramRecipePin {
 /// What an actor arms for its own future turns: a callable SKILL, the
 /// executor revision that runs it, the arguments it is called with, and the
 /// conversation whose turns wake it (any of the actor's own when `None`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ArmTurnProgram {
+    /// The callable SKILL entity to arm.
     pub skill: EntityId,
+    /// The executor revision (`id@revision`) that runs it.
     pub executor: String,
+    /// The arguments it is called with, as its call contract takes them.
     pub args: serde_json::Value,
+    /// The conversation whose turns wake it; any of the actor's own when
+    /// absent.
+    #[serde(default)]
     pub conversation: Option<EntityId>,
 }
 
+/// Which of the caller's own armed programs to disarm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DisarmTurnProgram {
+    /// The registration arming returned.
+    pub registration: EntityId,
+}
+
 /// One armed program as its actor reads it back.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TurnProgramRegistration {
     pub registration: EntityId,
     pub actor: EntityId,
     pub conversation: Option<EntityId>,
     pub definition: ProgramRecipePin,
-    /// [`ProgramRecipePin::revision`] of `definition`.
+    /// [`ProgramRecipePin::revision`] of `definition`, 64 lowercase hex on
+    /// the wire.
+    #[schemars(with = "String")]
+    #[serde(with = "hex32")]
     pub revision: [u8; 32],
     /// When it was armed (the vault's recording clock, seconds): only a turn
     /// that lands from then on wakes it.
@@ -270,4 +292,25 @@ pub(super) struct TurnProgramAttemptStamp {
 pub(super) fn run_id(admission: &[u8; 32]) -> String {
     let hex = bytes_to_hex_lower(admission);
     format!("turn-program:{hex}")
+}
+
+/// A 32-byte digest as 64 lowercase hex, the crate's byte-hash wire form.
+mod hex32 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        bytes: &[u8; 32],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(blake3::Hash::from_bytes(*bytes).to_hex().as_str())
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<[u8; 32], D::Error> {
+        let value = String::deserialize(deserializer)?;
+        blake3::Hash::from_hex(value)
+            .map(|hash| *hash.as_bytes())
+            .map_err(serde::de::Error::custom)
+    }
 }

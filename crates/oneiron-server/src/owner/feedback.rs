@@ -15,13 +15,18 @@
 //! and the preview shows it as filtered. When it cannot, a request with a
 //! note is refused, and one without leaves as built, as it did before the
 //! filter.
+//!
+//! The preview's bytes are kept until it expires, bound to the owner, the
+//! route and the bundle as built (FIX 5212). A send reads those bytes back
+//! and never runs the filter again: a filter that answers twice differently
+//! cannot make the sent bundle differ from the one the owner saw.
 
 use oneiron::Vault;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::feedback::{
     FEEDBACK_APPROVE_ONCE_ACTION, FeedbackApprovalScope, FeedbackBundle, FeedbackCategory,
-    FeedbackInboxNote, FeedbackPlatform, FeedbackPreview, FeedbackProposal, feedback_approval_card,
-    prepare_feedback_preview,
+    FeedbackInboxNote, FeedbackPlatform, FeedbackPreview, FeedbackProposal,
+    RetainedFeedbackPreview, UnredactedFeedback, feedback_approval_card, prepare_feedback_preview,
 };
 use oneiron::genui::{
     ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentSurface,
@@ -105,27 +110,53 @@ pub(crate) fn preview(
     request: &FeedbackRequest,
     redactor: &ServerFeedbackRedactor,
 ) -> OwnerResult<Preview> {
-    preview_view(vault, host, owner, &bundle_preview(request, redactor)?)
+    let built = built_bundle(request);
+    let source = source_digest(&built).map_err(feedback_error)?;
+    preview_view(
+        vault,
+        host,
+        owner,
+        &bundle_preview(built, redactor)?,
+        &source,
+    )
 }
 
 /// The preview of one built bundle, for every door that builds its own:
-/// the digest, destination and approval of exactly these bytes.
+/// the digest, destination and approval of exactly these bytes. The bytes
+/// are kept until the preview expires, bound to this owner, this route and
+/// `source` ([`source_digest`] of the bundle as built), so the send carries
+/// them and never filters again (FIX 5212).
 pub(crate) fn preview_view(
     vault: &Vault,
     host: &FeedbackHost,
     owner: &AuthenticatedOwner,
     preview: &FeedbackPreview,
+    source: &str,
 ) -> OwnerResult<Preview> {
+    let route = host.config.route();
+    let principal_ref = owner.principal_ref_for_read(vault)?;
+    let approval =
+        preview.approval_component_id(&FeedbackApprovalScope::Send(route.clone()), principal_ref);
+    let previewed_at = vault.now_recorded_at();
+    let bundle = serde_json::from_str(&preview.display_json().map_err(feedback_error)?)
+        .map_err(|error| OwnerError::Host(anyhow::anyhow!("feedback bundle JSON: {error}")))?;
+    vault.retain_feedback_preview(
+        &approval,
+        &RetainedFeedbackPreview {
+            preview: preview.clone(),
+            source_digest: source.to_owned(),
+            principal_ref: principal_ref.to_owned(),
+            route,
+            issued_at: previewed_at,
+            expires_at: previewed_at.saturating_add(PREVIEW_LIFETIME_SECS),
+        },
+    )?;
     Ok(Preview {
         digest: preview.digest().to_owned(),
         encoding: preview.encoding().as_str(),
-        approval: preview.approval_component_id(
-            &FeedbackApprovalScope::Send(host.config.route()),
-            owner.principal_ref_for_read(vault)?,
-        ),
-        previewed_at: vault.now_recorded_at(),
-        bundle: serde_json::from_str(&preview.display_json().map_err(feedback_error)?)
-            .map_err(|error| OwnerError::Host(anyhow::anyhow!("feedback bundle JSON: {error}")))?,
+        approval,
+        previewed_at,
+        bundle,
         destination: host.config.endpoint.clone(),
     })
 }
@@ -135,62 +166,71 @@ pub(crate) fn send(
     host: &FeedbackHost,
     owner: &AuthenticatedOwner,
     request: &SendRequest,
-    redactor: &ServerFeedbackRedactor,
 ) -> OwnerResult<Sent> {
-    let preview = bundle_preview(
-        &FeedbackRequest {
-            category: request.category,
-            note: request.note.clone(),
-            proposal: request.proposal.clone(),
-        },
-        redactor,
-    )?;
+    let built = built_bundle(&FeedbackRequest {
+        category: request.category,
+        note: request.note.clone(),
+        proposal: request.proposal.clone(),
+    });
+    let source = source_digest(&built).map_err(feedback_error)?;
     send_previewed(
         vault,
         host,
         owner,
-        &preview,
+        &source,
         &request.digest,
         &request.approval,
         request.previewed_at,
     )
 }
 
-/// Sends one built bundle its preview approved, for every door that
-/// builds its own: the digest, approval and preview age are rechecked
-/// here, and the send is admitted under the owner's proof in the
+/// Sends the bundle a preview kept, for every door that builds its own: the
+/// kept bytes are read back, never filtered again (FIX 5212), and must still
+/// be this owner's, for this route, built from the bundle `source` digests
+/// ([`source_digest`]) and unexpired; the approval and preview age are
+/// rechecked here, and the send is admitted under the owner's proof in the
 /// transaction that admits it.
 pub(crate) fn send_previewed(
     vault: &Vault,
     host: &FeedbackHost,
     owner: &AuthenticatedOwner,
-    preview: &FeedbackPreview,
+    source: &str,
     digest: &str,
     approval: &str,
     previewed_at: u64,
 ) -> OwnerResult<Sent> {
     let principal_ref = owner.revalidate_principal_ref(vault)?;
-    if preview.digest() != digest {
-        return Err(OwnerError::Changed(
-            "this bundle is not the one previewed; preview it again".to_owned(),
-        ));
-    }
-    let scope = FeedbackApprovalScope::Send(host.config.route());
-    // The approval names the owner who previewed it, so two owners' sends of
-    // one bundle are two sends, and neither can send on the other's preview.
-    if preview.approval_component_id(&scope, principal_ref) != approval {
-        return Err(OwnerError::Changed(
-            "this preview was for another destination or another owner; preview it again"
-                .to_owned(),
-        ));
-    }
+    let expired = || OwnerError::Changed("the preview has expired; preview it again".to_owned());
     let now = vault.now_recorded_at();
     if now.saturating_sub(previewed_at) > PREVIEW_LIFETIME_SECS
         || previewed_at > now.saturating_add(PREVIEW_CLOCK_SKEW_SECS)
     {
+        return Err(expired());
+    }
+    let retained = vault
+        .retained_feedback_preview(approval, previewed_at, now)?
+        .ok_or_else(expired)?;
+    let route = host.config.route();
+    let another = || {
+        OwnerError::Changed(
+            "this preview was for another destination or another owner; preview it again"
+                .to_owned(),
+        )
+    };
+    if retained.principal_ref != principal_ref || retained.route != route {
+        return Err(another());
+    }
+    let preview = &retained.preview;
+    if preview.digest() != digest || retained.source_digest != source {
         return Err(OwnerError::Changed(
-            "the preview has expired; preview it again".to_owned(),
+            "this bundle is not the one previewed; preview it again".to_owned(),
         ));
+    }
+    let scope = FeedbackApprovalScope::Send(route);
+    // The approval names the owner who previewed it, so two owners' sends of
+    // one bundle are two sends, and neither can send on the other's preview.
+    if preview.approval_component_id(&scope, principal_ref) != approval {
+        return Err(another());
     }
     // The owner's send is the answer; the card's prompt names where it goes.
     let card = feedback_approval_card(preview, principal_ref, &host.config.endpoint, &scope)
@@ -234,12 +274,8 @@ pub(crate) fn send_previewed(
     })
 }
 
-/// The bundle as it would leave: built from the request, every free text in
-/// it run through `redactor`, this server's in-vault filter, when it runs.
-fn bundle_preview(
-    request: &FeedbackRequest,
-    redactor: &ServerFeedbackRedactor,
-) -> OwnerResult<FeedbackPreview> {
+/// The bundle as the request builds it, before any filter.
+fn built_bundle(request: &FeedbackRequest) -> FeedbackBundle {
     let mut bundle = FeedbackBundle::new(
         request.category,
         env!("CARGO_PKG_VERSION"),
@@ -251,6 +287,24 @@ fn bundle_preview(
     if let Some(proposal) = &request.proposal {
         bundle = bundle.with_proposal(proposal.clone());
     }
+    bundle
+}
+
+/// The digest of a bundle as built, before any filter: what binds a send's
+/// request to the preview it names, with no filter run on the send.
+pub(crate) fn source_digest(
+    bundle: &FeedbackBundle,
+) -> Result<String, oneiron::feedback::FeedbackError> {
+    prepare_feedback_preview(bundle.clone(), &UnredactedFeedback)
+        .map(|built| built.digest().to_owned())
+}
+
+/// The bundle as it would leave: every free text in it run through
+/// `redactor`, this server's in-vault filter, when it runs.
+fn bundle_preview(
+    bundle: FeedbackBundle,
+    redactor: &ServerFeedbackRedactor,
+) -> OwnerResult<FeedbackPreview> {
     prepare_feedback_preview(bundle, &redactor.door(Unfiltered::RefuseNote)).map_err(|error| {
         match error {
             // The filter could not run, and a note leaves only filtered.

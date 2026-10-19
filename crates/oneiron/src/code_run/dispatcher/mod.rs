@@ -18,6 +18,7 @@ mod verb_hooks;
 mod wake_policy;
 mod workflow_dispatch;
 mod world_privacy_set;
+mod world_privacy_wait;
 
 use std::cell::{Cell, RefCell};
 

@@ -382,6 +382,15 @@ impl Vault {
             entry.publish_state(&state);
             (state.record.clone(), !state.overlay_closed)
         };
+        // The hook records and paused calls the in-memory keep holds for
+        // this stretch go with it, once `closing` is published, so a late
+        // writer never keeps them again (L13 PR-D, FIX 4283).
+        self.verb_hook_state.session.drop_session(
+            &crate::runtime_hooks::verb::SessionHookKey::Session {
+                key: session_ref.to_owned(),
+                entered_at: record.entered_at,
+            },
+        );
         // PRE-CLOSE CENSUS (K8). Session-local retrieval-run receipts and
         // witnessed transcript entities live in the overlay, so close does not
         // delete them — the overlay's evaporation does. They are unobservable

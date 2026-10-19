@@ -308,15 +308,17 @@ impl ExecutorStorage<'_> {
     /// settled, it delivers the settled reply in the same step and answers
     /// `true`: a settle before the park left its reply, and a settle after
     /// it finds the waiter. A canonical park also takes, in that step, the
-    /// result of a delegated TASK that already finished and the change of
-    /// an ask voided since the run last looked (OF-533), and answers `true`
-    /// whenever a reply is delivered to `key`.
+    /// result of a delegated TASK that already finished, the change of an
+    /// ask voided since the run last looked (OF-533) and a world-privacy
+    /// request's terminal state (FIX 4706), and answers `true` whenever a
+    /// reply is delivered to `key`.
     pub(crate) fn park_wait(&self, key: &WaitKey) -> Result<bool> {
         match self {
             Self::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
                 WAITERS.put(&vault.store, txn, &key.waiter(), &key.generation)?;
                 crate::task_verb::deliver_task_result_in_txn(vault, txn, key.wait_id)?;
                 crate::task_verb::deliver_ask_change_in_txn(vault, txn, key.wait_id)?;
+                crate::task_verb::deliver_world_privacy_wait_for_in_txn(vault, txn, key.wait_id)?;
                 if let Some(settled) =
                     SETTLED.get(&vault.store, txn, &(SETTLED_TAG, key.wait_id))?
                 {

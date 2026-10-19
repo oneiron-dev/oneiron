@@ -876,7 +876,9 @@ leaves. A bundle carries no vault text the engine attached; proposal text and a 
 yours, and they leave only on your send of exactly that preview. When the vault's on-device
 OneiroNER tagger is serving, it replaces every name it recognises in the note and proposal with its
 label (`[PERSON]`, `[ORG]`, ...) before the preview; nothing is called safe, and you read the
-filtered text in the preview. A written note needs that filter: when it can't run (no on-device
+filtered text in the preview. The server keeps the previewed bytes until the preview expires, and
+the send carries those bytes: it never runs the filter again, so the bundle that leaves is the one
+you read. A send whose preview it no longer keeps is refused as expired (409). A written note needs that filter: when it can't run (no on-device
 tagger), a note is refused (409), and a proposal without a note is sent as you wrote it (OF-420).
 
 Sharing real conversation text to train the models Oneiron ships ("Learn from my conversations")

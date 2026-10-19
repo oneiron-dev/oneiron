@@ -418,7 +418,7 @@ class Oneiron:
     @overload
     def ask(self, spec_or_who: str | list[str] | set[str] | tuple[str, ...] | dict[str, Any] | None, what: dict[str, Any], until: int | None = None, default: str = "ask_me") -> Facade.TaskAskReceipt: ...
     def wait(self, handle: Facade.TaskAskHandle, step_key: str = "sdk.wait") -> Facade.TaskAskWait:
-        """Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode."""
+        """Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode."""
     @property
     def connector(self) -> "Oneiron._ConnectorVerbs": ...
     @property
@@ -494,6 +494,8 @@ class Oneiron:
         def kv(self) -> "Oneiron._VaultKvVerbs": ...
         @property
         def campaign(self) -> "Oneiron._VaultCampaignVerbs": ...
+        @property
+        def turn_programs(self) -> "Oneiron._VaultTurnProgramsVerbs": ...
         @property
         def weave(self) -> "Oneiron._VaultWeaveVerbs": ...
         @property
@@ -1082,6 +1084,11 @@ class Oneiron:
             """Replaces a campaign program's name, steps and audience whole under a version check; work queued at a dropped step stops."""
         def archive(self, spec: Facade.ArchiveCampaignProgramRequest) -> Facade.CampaignProgramRecord:
             """Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops."""
+    class _VaultTurnProgramsVerbs:
+        def arm(self, spec: Facade.ArmTurnProgram) -> Facade.TurnProgramRegistration:
+            """Arms a pinned callable skill entry for the caller's own future turns, in one conversation or any of its own; arming the same definition again returns the standing registration."""
+        def disarm(self, spec: Facade.DisarmTurnProgram) -> bool:
+            """Disarms one of the caller's own armed turn programs; true when it was armed."""
     class _VaultWeaveVerbs:
         def report(self, spec: Facade.WeaveReportRequest) -> Facade.WeaveReportView:
             """The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."""

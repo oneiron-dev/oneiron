@@ -20,7 +20,7 @@ use super::super::doors::{
 };
 use super::super::transition::{custody_portable, transition_named_in_txn};
 use super::super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus};
-use super::input::{MAX_INPUT_BYTES, attach_manifest};
+use super::input::attach_manifest;
 use super::manifest::unstated_input;
 use super::permits::candidate_for;
 use super::{
@@ -336,15 +336,16 @@ impl Vault {
     /// checked or why it registered without a manifest check. When the vault
     /// publishes none, or they cannot be read, an explicit mark says so
     /// (CALLS CUSTODY_MANIFEST_UNSTATED_MULTI). An input past one row's bound
-    /// travels in numbered parts; none is left out. The same input sent
-    /// again is the request already recorded (CALLS CUSTODY_RETRY).
+    /// travels in numbered parts; none is left out, and none is refused for
+    /// its length (FIX 5445). The same input sent again is the request
+    /// already recorded (CALLS CUSTODY_RETRY).
     /// `surface` is audit only.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is no
     /// longer the live owner's; [`SecretError::SecretCustodyNotActive`] once
     /// an admitted revoke ended the secret; a change other than a register
-    /// or rotate; an empty or oversized input;
+    /// or rotate; an empty input;
     /// [`SecretError::SecretManifestNotFound`], naming it, for a stated
     /// `manifest_ref` this install does not resolve, and a rotate that states
     /// one; a revision that moved since
@@ -367,8 +368,8 @@ impl Vault {
                 "a sealed input carries a register or a rotate; a rewrap and a revoke need none",
             ));
         }
-        if sealed.input.is_empty() || sealed.input.len() > MAX_INPUT_BYTES {
-            return Err(refused("the sealed input is empty or larger than 4 MiB"));
+        if sealed.input.is_empty() {
+            return Err(refused("the sealed input is empty"));
         }
         // Read before the writer is taken: the manifest comes out of git.
         let (attached, manifest_check) = match (sealed.change, sealed.manifest_ref) {

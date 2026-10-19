@@ -214,7 +214,7 @@ pub(crate) fn admit_seeded_parts(
     // A value custody already holds keeps its own handle in a row whose
     // writer holds a custody door, shape or none (OF-560 C).
     let known = match dbs.side_custody() {
-        Some(custody) => KnownValues::load_in_txn(custody.store, &*wtxn)?.map(Arc::new),
+        Some(custody) => KnownValues::load_backfilled_in_txn(custody.store, wtxn)?.map(Arc::new),
         None => None,
     };
     if refusal.is_none() && known.is_none() {

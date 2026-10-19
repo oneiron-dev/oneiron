@@ -139,6 +139,17 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                         body,
                     )?;
                 }
+                // The known-value index and its key are this node's own: the
+                // image carries neither, so each value the restored custody
+                // records hold is indexed again under a new key (FIX 5270).
+                crate::registry::ENTITY_TYPE_SECRET_CUSTODY => {
+                    crate::secret_custody::reindex_restored_known_value_in_txn(
+                        &vault.store,
+                        txn,
+                        id,
+                        body,
+                    )?;
+                }
                 _ => {}
             }
             if has_embedding_source(raw)? {

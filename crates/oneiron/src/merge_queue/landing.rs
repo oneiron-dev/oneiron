@@ -2,7 +2,7 @@
 use super::types::{EffectIntent, QueueRecord};
 use super::{
     BatchState, LandingPermit, MergeBatch, MergeLanding, MergeQueue, MergeQueuePointers,
-    TestedBatch,
+    SpeculativePath, TestedBatch,
 };
 use crate::{
     contract_oracle::{ContractOracle, invalid},
@@ -74,12 +74,14 @@ impl MergeQueue<'_> {
         Ok(batch)
     }
 
+    /// The staged path this batch lands: its full path, or the landed prefix
+    /// of a reviewed stack an erase ended (FIX 5219).
+    pub(super) fn landed_path<'b>(&self, batch: &'b MergeBatch) -> Result<&'b SpeculativePath> {
+        self.vault.reviewed_landed_path(&self.repo, batch)
+    }
+
     fn finish_landing(&self, queue: &mut QueueRecord, batch: &mut MergeBatch) -> Result<()> {
-        let expected_tree = &batch
-            .paths
-            .last()
-            .ok_or(Error::CorruptedIndex("landing path missing"))?
-            .tree;
+        let expected_tree = &self.landed_path(batch)?.tree;
         if &self.tree()? != expected_tree {
             return Err(Error::ConcurrentWrite(
                 "landed tree differs from tested tree",
@@ -118,10 +120,7 @@ impl MergeQueue<'_> {
                 let verdict = oracle
                     .verdict(id)?
                     .ok_or(Error::CorruptedIndex("slow verdict missing"))?;
-                let path = batch
-                    .paths
-                    .last()
-                    .ok_or(Error::CorruptedIndex("slow path missing"))?;
+                let path = self.landed_path(batch)?;
                 let commit = batch
                     .landed_head
                     .as_deref()
@@ -216,6 +215,9 @@ impl MergeQueue<'_> {
                 after_seq,
             }) => {
                 let mut batch = self.batch(&id)?;
+                // Prepared rows are reconciled above, so an erase's end request
+                // freezes at the landed prefix here (FIX 5219).
+                self.vault.end_reviewed_merge_stack(&self.repo, &batch)?;
                 if self.vault.has_reviewed_merge_stack(&self.repo, &batch)? {
                     // Admission was atomic and all votes are immutable. Resume
                     // only the proven journaled prefix, rather than rolling Git
@@ -223,12 +225,7 @@ impl MergeQueue<'_> {
                     if !self.all_paths_green(&batch)? {
                         return Err(invalid("reviewed recovery lacks all-path agreement"));
                     }
-                    self.verify_worktree(
-                        batch
-                            .paths
-                            .last()
-                            .ok_or(Error::CorruptedIndex("landing path missing"))?,
-                    )?;
+                    self.verify_worktree(self.landed_path(&batch)?)?;
                     let permit = LandingPermit {
                         batch_id: batch.id.clone(),
                         repo_identity: self.repo.identity().as_hex(),
