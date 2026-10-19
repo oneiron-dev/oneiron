@@ -133,26 +133,16 @@ impl HostSelfDispatcher<'_> {
     }
 
     /// A search its door admitted with a key reads on that key's lane: in a
-    /// room, the room's view on that lane (WILL L11-01), while no verb hook
-    /// binds the search, which cannot run there yet. One with no key reads
-    /// as it always has, and a bound hook's skip is named in the log.
+    /// room, the room's view on that lane (WILL L11-01). One with no key
+    /// reads as it always has. In a room the verb hooks bound to it run
+    /// around it, keyed or not, and what each did joins its answer as they
+    /// leave (`verb_hooks::session`).
     pub(super) fn dispatch_memory_search(
         &self,
         call: SelfMemorySearchCall,
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<SelfDispatchOutcome> {
         let limit = call.limit.min(SELF_MEMORY_SEARCH_MAX_RESULTS);
-        if let ExecutorStorage::Session(binding) = &self.storage {
-            if read_as.is_some() {
-                if let Some(refused) = super::session_verbs::hooked_search_refused(&binding.session)
-                {
-                    return Ok(refused);
-                }
-            } else {
-                let verb = SelfEffect::MemorySearch.as_str();
-                super::session_verbs::note_unrun_hooks(&binding.session, verb);
-            }
-        }
         let results = match read_as {
             Some(reader) => self.storage.search_text_as(&call.query, limit, reader)?,
             None => self.storage.search_text(&call.query, limit)?,
@@ -160,6 +150,7 @@ impl HostSelfDispatcher<'_> {
         Ok(SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
             query: call.query,
             results,
+            hooks: Vec::new(),
         }))
     }
 

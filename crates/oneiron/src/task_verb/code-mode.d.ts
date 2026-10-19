@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1084 code-mode rows (1060 host rows, 24 run rows), 3591 declarations.
+// Census: 1084 code-mode rows (1060 host rows, 24 run rows), 3596 declarations.
 // Replies: 967 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
@@ -3549,7 +3549,12 @@ declare namespace Sdk {
   type WorldPrivacySetOutput = { kind: "applied"; receipt: string } | { kind: "proposed"; proposal: string } | { kind: "asked"; ask: string; ask_seq?: number | null };
   type MemorySearchInput = { query: string; limit?: number | null };
   type MemorySearchHit = { id: EntityId; score: number };
-  type MemorySearchOutput = { results: MemorySearchHit[] };
+  type SessionHookPhase = "pre" | "post";
+  type SessionHookState = { kind: "applied"; outcome: string } | { kind: "refused"; outcome: string; reason?: string | null; fail_safe?: string | null } | { kind: "unavailable"; reason: string; consequence: string };
+  type SessionHookNotKept = "budget_full" | "custody" | "no_retention" | "withheld_from_base";
+  type SessionHookReceipt = { kind: "kept"; id: string } | { kind: "not_kept"; why: SessionHookNotKept };
+  type SessionHookDisposition = { hook: string; phase: SessionHookPhase; state: SessionHookState; receipt: SessionHookReceipt };
+  type MemorySearchOutput = { results: MemorySearchHit[]; hooks?: SessionHookDisposition[] };
   type MemoryTimeRange = { start: number; end: number };
   type MemoryClaimInput = { id: string; predicate: string; subject: string; value: unknown; confidence?: number | null; occurred?: MemoryTimeRange | null; learnedAt?: number | null };
   type MemoryWriteOutput = { id: EntityId };

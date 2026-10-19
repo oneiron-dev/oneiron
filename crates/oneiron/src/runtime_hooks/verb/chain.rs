@@ -1,35 +1,34 @@
 //! The verb-hook chain (ARCH-0080 §3): matching, run order, each run's input
 //! and verdict, the failure policy by domain, and the one write that commits
 //! a chain's receipts, saved runs, blocks and intents once it resolves, even
-//! when a Skip or an Ask stops the verb.
+//! when a Skip or an Ask stops the verb. In an off-record room its hooks read
+//! the room's view and its records stage in the room's own store
+//! ([`session`], [`storage`]; WILL L11-01 S01-2c).
+
+mod session;
+mod storage;
 
 use std::cell::Cell;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::claim::ClaimReadStatus;
-use crate::receipt::{ReceiptKind, ReceiptRecord, hex_lower};
-use crate::runtime_hooks::block::{self, HookBlock};
-use crate::runtime_hooks::lineage::{self, LineageLink};
+use crate::receipt::hex_lower;
+use crate::runtime_hooks::block::HookBlock;
+use crate::runtime_hooks::lineage::LineageLink;
 use crate::runtime_hooks::outcome::{BlockRequest, HookOutcome};
-use crate::runtime_hooks::runner::{
-    MAX_OUTCOME_BYTES, MAX_PINNED_INPUT, Verdict, block_id, bounded, judge,
-};
-use crate::runtime_hooks::store::{
-    self, HookIntent, HookIntentState, HookReadPin, HookRunState, RunKey,
-};
-use crate::runtime_hooks::{HookBodyRuntime, HookPassReport, apply, filter, grant, read, scope};
+use crate::runtime_hooks::runner::{MAX_OUTCOME_BYTES, Verdict, block_id, bounded, judge};
+use crate::runtime_hooks::store::{HookIntent, HookIntentState, HookReadPin, HookRunState, RunKey};
+use crate::runtime_hooks::{HookBodyRuntime, apply, filter, grant, read, scope};
 use crate::skill_hub::pack_catalog::{HookPhase, HookSelector, PackHookBinding};
 use crate::task_verb::revoke_lands::Landing;
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Error, Result, Vault};
 
-use super::record::{self, HookVerbRunRecord};
 use super::state::{Carry, Entered, HookDepth, depth};
+use super::storage::VerbHookStorage;
 use super::{
     InvocationId, VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume, ask,
     redact, served,
@@ -87,6 +86,7 @@ pub(super) fn may_run(vault: &Vault, verb: &str) -> bool {
 /// on it as the hook's author ([`ask::retry`], [`ask::open`]).
 pub(super) fn pre(
     vault: &Vault,
+    storage: VerbHookStorage<'_>,
     call: VerbCall,
     args: Value,
     check: VerbArgsCheck<'_>,
@@ -105,9 +105,13 @@ pub(super) fn pre(
     // The owner's revoke always lands (FIX 5076): a restrictive call, judged
     // on its caller's own args, keeps them to fall back to.
     let mut landing = Landing::of(&call.verb, &args);
-    let saved = {
-        let _depth = HookDepth::enter();
-        ask::retry(vault, &call, resume, turn.as_ref())?
+    // A room keeps no ask, so no call there resumes one.
+    let saved = match storage {
+        VerbHookStorage::Session(_) => ask::Retry::Fresh,
+        VerbHookStorage::Canonical => {
+            let _depth = HookDepth::enter();
+            ask::retry(vault, &call, resume, turn.as_ref())?
+        }
     };
     let resumed = match saved {
         ask::Retry::Fresh => None,
@@ -162,6 +166,7 @@ pub(super) fn pre(
             args,
             carry: Some(carry),
             landing: None,
+            session: None,
         }));
     }
     // A resumed call with no sandbox runs no hook after the asking one, as a
@@ -171,7 +176,15 @@ pub(super) fn pre(
         None => (Err(NO_SANDBOX), Vec::new()),
     };
     let _depth = HookDepth::enter();
-    let mut chain = Chain::new(vault, &call, HookPhase::Pre, runtime, carry.now, turn);
+    let mut chain = Chain::new(
+        vault,
+        storage,
+        &call,
+        HookPhase::Pre,
+        runtime,
+        carry.now,
+        turn,
+    );
     chain.landing = landing.as_mut();
     let ended = chain.pre(&hooks, start, args, check, token, resume)?;
     Ok(ended.map(|args| VerbHookPre {
@@ -179,12 +192,18 @@ pub(super) fn pre(
         args,
         carry: Some(carry),
         landing,
+        session: None,
     }))
 }
 
 /// The post chain over the verb's `result`, for a call whose pre chain found
 /// hooks live.
-pub(super) fn post(vault: &Vault, pre: VerbHookPre, result: Value) -> Result<Stopped<Value>> {
+pub(super) fn post(
+    vault: &Vault,
+    storage: VerbHookStorage<'_>,
+    pre: VerbHookPre,
+    result: Value,
+) -> Result<Stopped<Value>> {
     let VerbHookPre {
         call, args, carry, ..
     } = pre;
@@ -204,8 +223,16 @@ pub(super) fn post(vault: &Vault, pre: VerbHookPre, result: Value) -> Result<Sto
         return Ok(Ok(result));
     };
     let _depth = HookDepth::enter();
-    let ended = Chain::new(vault, &call, HookPhase::Post, runtime, carry.now, None)
-        .post(&hooks, &args, result);
+    let ended = Chain::new(
+        vault,
+        storage,
+        &call,
+        HookPhase::Post,
+        runtime,
+        carry.now,
+        None,
+    )
+    .post(&hooks, &args, result);
     // A nested boundary of this invocation passes through until here.
     drop(carry.mark);
     ended
@@ -217,6 +244,7 @@ fn through(call: VerbCall, args: Value) -> Result<Stopped<VerbHookPre>> {
         args,
         carry: None,
         landing: None,
+        session: None,
     }))
 }
 
@@ -264,6 +292,8 @@ fn takes(
 /// One chain: its call and phase, and what its runs leave to commit.
 struct Chain<'c> {
     vault: &'c Vault,
+    /// Where its hooks read content and its records go.
+    storage: VerbHookStorage<'c>,
     call: &'c VerbCall,
     phase: HookPhase,
     runtime: std::result::Result<&'c dyn HookBodyRuntime, &'c str>,
@@ -298,6 +328,8 @@ struct RunRecord<'c> {
     /// What a blocking hook's failure did: `ask`, `skipped`, `hidden` or
     /// `recorded`.
     fail_safe: Option<&'static str>,
+    /// The canonical work its room could not do for its outcome.
+    unavailable: Option<&'static str>,
     duration_ms: u64,
     rows_read: usize,
     fuel_used: u64,
@@ -336,6 +368,7 @@ struct Input<'i> {
 impl<'c> Chain<'c> {
     fn new(
         vault: &'c Vault,
+        storage: VerbHookStorage<'c>,
         call: &'c VerbCall,
         phase: HookPhase,
         runtime: std::result::Result<&'c dyn HookBodyRuntime, &'c str>,
@@ -350,6 +383,7 @@ impl<'c> Chain<'c> {
             .unwrap_or_else(|| Value::Array(Vec::new()));
         Self {
             vault,
+            storage,
             call,
             phase,
             runtime,
@@ -552,26 +586,10 @@ impl<'c> Chain<'c> {
         // The caller's lane, narrowed to the hook's grant: its reader's lane
         // when that is someone else, and its predicates and worlds. A caller
         // whose door carried its key reads under it; a host's own call reads
-        // as its actor.
+        // as its actor. In a room both read the room's view.
         let grant = grant::effective_grant(self.vault, id, binding)?;
-        let caller = self
-            .vault
-            .memory(self.call.actor, filter::edge_class(self.call.class));
-        let lane = match &self.call.reader {
-            Some(key) => Some(
-                self.vault
-                    .scoped_read(key.clone())
-                    .with_claim_status(ClaimReadStatus::Recorded),
-            ),
-            None => caller.read_lane(ClaimReadStatus::Recorded).ok(),
-        };
-        let reader = (grant.reader != self.call.actor).then(|| {
-            self.vault
-                .memory(grant.reader, filter::edge_class(grant.reader_class))
-        });
-        let cap = reader
-            .as_ref()
-            .map(|reader| reader.read_lane(ClaimReadStatus::Recorded).ok());
+        let view = self.view()?;
+        let (lane, cap) = self.lanes(&grant, view.as_ref());
         let mut pins = Vec::new();
         let started = Instant::now();
         let ran = match self.runtime {
@@ -625,6 +643,7 @@ impl<'c> Chain<'c> {
             reason: verdict.reason.clone(),
             note: None,
             fail_safe: None,
+            unavailable: None,
             duration_ms,
             rows_read,
             fuel_used: verdict.fuel_used,
@@ -636,6 +655,13 @@ impl<'c> Chain<'c> {
                 .clone()
                 .filter(|json| json.len() <= MAX_OUTCOME_BYTES),
         };
+        // A room does no canonical work: an outcome that needs it is this
+        // hook's own, and the call goes on as after a Continue (CALLS-3).
+        if let Some(work) = self.room_cannot(verdict.outcome.as_ref()) {
+            run.unavailable(work);
+            self.runs.push(run);
+            return Ok(Some(HookOutcome::Continue));
+        }
         match &verdict.outcome {
             Some(HookOutcome::AddBlock { block }) => self.block(id, binding, &key, block)?,
             Some(HookOutcome::Annotate { note }) => run.note = Some(bounded(note)),
@@ -772,6 +798,9 @@ impl<'c> Chain<'c> {
         label: &str,
         resume: Option<&VerbResume>,
     ) -> Result<std::result::Result<VerbHookStop, String>> {
+        if let Some(refusal) = self.room_ask_refusal() {
+            return Ok(Err(refusal));
+        }
         let opened = ask::open(
             self.vault,
             self.call,
@@ -821,143 +850,6 @@ impl<'c> Chain<'c> {
     fn fail_safe(&mut self, what: &'static str) {
         if let Some(run) = self.runs.last_mut() {
             run.fail_safe = Some(what);
-        }
-    }
-
-    /// Commits the chain's rows. A resumed chain commits even with no run
-    /// after the asking hook: its write uses the answer up.
-    fn commit(&self) -> Result<()> {
-        if self.runs.is_empty() && self.token.is_none() {
-            return Ok(());
-        }
-        self.vault
-            .with_write_txn_grouped(|txn| self.write_in_txn(txn))
-    }
-
-    /// The chain's receipts, saved runs, blocks and intents. A retried call
-    /// writes each block and intent once, and each saved run over its last.
-    /// A resumed chain uses its answer up first; one another try used fails
-    /// the write, so none of it commits.
-    fn write_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
-        let vault = self.vault;
-        if let Some(token) = &self.token
-            && !ask::consume_in_txn(vault, txn, token)?
-        {
-            self.used.set(true);
-            return Err(ask::used_error());
-        }
-        let at = vault.store.clock.now_recorded_at().saturating_mul(1_000);
-        for run in &self.runs {
-            store::RECEIPTS.put(vault, txn, &run.key, &self.receipt(run))?;
-            record::put_in_txn(vault, txn, &run.key, &self.saved(run, at))?;
-        }
-        for (id, row, chain) in &self.blocks {
-            if block::put_new_block_in_txn(vault, txn, *id, row)? {
-                lineage::put_in_txn(vault, txn, id.as_bytes(), chain)?;
-            }
-        }
-        for (key, intent, proposal) in &self.intents {
-            if store::INTENTS.get(&vault.store, txn, key)?.is_some() {
-                continue;
-            }
-            if let Some(id) = proposal {
-                lineage::put_in_txn(vault, txn, id.as_bytes(), &intent.lineage)?;
-            }
-            store::INTENTS.put(vault, txn, key, intent)?;
-        }
-        Ok(())
-    }
-
-    /// Lands the post chain's queued outcomes, each once, as its hook's
-    /// author with source Generated. One that does not land now stays
-    /// pending for the runner's start-up drain: the verb's result stands.
-    fn apply(&self) {
-        if self.intents.is_empty() {
-            return;
-        }
-        let bindings = match self.vault.pack_hook_bindings() {
-            Ok(bindings) => bindings,
-            Err(error) => {
-                tracing::warn!(%error, "verb hook outcomes wait for the hook runner");
-                return;
-            }
-        };
-        let mut report = HookPassReport::default();
-        for (key, _, _) in &self.intents {
-            if let Err(error) = apply::drain_one(self.vault, &bindings, key, &mut report) {
-                tracing::warn!(%error, "a verb hook outcome waits for the hook runner");
-            }
-        }
-    }
-
-    /// The run's Hook receipt: the hook, its content hash, the call, the
-    /// duration, the outcome, `now` and the rows read.
-    fn receipt(&self, run: &RunRecord<'_>) -> ReceiptRecord {
-        let binding = run.binding;
-        let mut fields: BTreeMap<String, String> = [
-            ("binding", run.id.to_hex()),
-            ("code", binding.code.to_hex()),
-            ("body_hash", binding.body_hash.clone()),
-            ("hook", hook_name(binding)),
-            ("hook_version", binding.hook_version.clone()),
-            ("invocation", self.call.invocation.to_hex()),
-            ("verb", bounded(&self.call.verb)),
-            ("phase", phase_token(self.phase).to_owned()),
-            ("class", filter::class_token(self.call.class).to_owned()),
-            ("duration_ms", run.duration_ms.to_string()),
-            ("now", self.now.to_string()),
-            ("rows_read", run.rows_read.to_string()),
-            ("run_key", hex_lower(&run.key)),
-            ("fuel_used", run.fuel_used.to_string()),
-            ("host_calls", run.host_calls.to_string()),
-        ]
-        .into_iter()
-        .map(|(name, value)| (name.to_owned(), value))
-        .collect();
-        for (name, value) in [
-            ("reason", run.reason.as_deref()),
-            ("note", run.note.as_deref()),
-            ("fail_safe", run.fail_safe),
-            ("scope", self.call.scope.as_deref()),
-        ] {
-            if let Some(value) = value {
-                fields.insert(name.to_owned(), bounded(value));
-            }
-        }
-        ReceiptRecord {
-            receipt_id: store::receipt_id(&run.key),
-            receipt_kind: ReceiptKind::Hook,
-            occurred_at: self.now / 1_000,
-            actor: Some(binding.author_id().to_hex()),
-            on_behalf_of: Some(self.call.actor.to_hex()),
-            outcome: run.token.clone(),
-            job_ref: None,
-            trigger_ref: Some(self.call.invocation.to_hex()),
-            policy_trace: Vec::new(),
-            fields,
-        }
-    }
-
-    /// The run's saved copy, written at `at` (Unix ms): what replay runs the
-    /// body on again.
-    fn saved(&self, run: &RunRecord<'_>, at: u64) -> HookVerbRunRecord {
-        HookVerbRunRecord {
-            binding: run.id,
-            code: run.binding.code,
-            body_hash: run.binding.body_hash.clone(),
-            invocation: self.call.invocation,
-            phase: self.phase,
-            verb: self.call.verb.clone(),
-            input_json: (run.input.len() <= MAX_PINNED_INPUT).then(|| run.input.clone()),
-            input_hash: blake3::hash(run.input.as_bytes()).to_hex().to_string(),
-            reads: run.reads.clone(),
-            outcome_json: run.outcome_json.clone(),
-            outcome: run.token.clone(),
-            reason: run.reason.clone(),
-            receipt_id: store::receipt_id(&run.key),
-            duration_ms: run.duration_ms,
-            now: self.now,
-            committed_at: at,
         }
     }
 }
