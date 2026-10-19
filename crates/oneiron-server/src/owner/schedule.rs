@@ -165,23 +165,57 @@ impl OwnerHost {
     }
 
     /// The directory a rehearsal's scratch copy is made in and removed from:
-    /// the one this host was given, else the vault's own, as it opened, so
-    /// the copy lands on the disk the floor measures (FIX 5612). A vault
-    /// directory another user could move entries in, where no scratch is
-    /// made, keeps the system temp directory as before.
+    /// [`Self::rehearsal_parent`], else the system temp directory.
     fn rehearse_temp(&self, vault: &oneiron::Vault) -> PathBuf {
+        self.rehearsal_parent(vault)
+            .unwrap_or_else(std::env::temp_dir)
+    }
+
+    /// This host's own rehearsal directory, which rehearsals make their
+    /// scratch in and the start-up sweep clears: the one this host was given,
+    /// else the vault's own, as it opened, so the copy lands on the disk the
+    /// floor measures (FIX 5612). `None` for a vault directory another user
+    /// could move entries in, where no scratch is made: a rehearsal keeps the
+    /// system temp directory as before, which is never swept.
+    fn rehearsal_parent(&self, vault: &oneiron::Vault) -> Option<PathBuf> {
         if let Some(dir) = &self.rehearse_temp {
-            return dir.clone();
+            return Some(dir.clone());
         }
         let dir = vault.lfs_storage_dir();
         #[cfg(unix)]
         let shared = !matches!(oneiron::store::shared_path(dir), Ok(None));
         #[cfg(not(unix))]
         let shared = false;
-        if shared {
-            return std::env::temp_dir();
+        (!shared).then(|| dir.to_path_buf())
+    }
+
+    /// Removes the scratch copies a stopped process's rehearsals left in this
+    /// host's rehearsal directory (FIX 5677), called at start before any
+    /// rehearsal of this process can begin. Only a marked copy no rehearsal
+    /// holds goes ([`backup::sweep_rehearsals`]); a kept `--scratch` copy is
+    /// never marked, and nothing outside that directory is looked at. A sweep
+    /// that fails is logged, and start goes on.
+    pub(crate) fn sweep_rehearsals(&self, vault: &oneiron::Vault) {
+        #[cfg(unix)]
+        if let Some(parent) = self.rehearsal_parent(vault) {
+            match backup::sweep_rehearsals(&parent) {
+                Ok(0) => {}
+                Ok(removed) => tracing::info!(
+                    removed,
+                    dir = %parent.display(),
+                    "removed the scratch copies of rehearsals a stopped process left"
+                ),
+                Err(error) => tracing::warn!(
+                    reason = "rehearsal_sweep_failed",
+                    dir = %parent.display(),
+                    error = %format!("{error:#}"),
+                    "could not sweep the scratch copies of rehearsals a stopped process left; \
+                     start goes on"
+                ),
+            }
         }
-        dir.to_path_buf()
+        #[cfg(not(unix))]
+        let _ = vault;
     }
 
     fn with_chosen<T>(
