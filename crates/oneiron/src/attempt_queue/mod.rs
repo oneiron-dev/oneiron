@@ -58,9 +58,8 @@ pub use types::{
     AttemptInterventionKind, AttemptPlacement, AttemptQueueCleanupReport, AttemptQueueRetryReason,
     AttemptQueueRetryReasonCount, AttemptRecord, AttemptResultRef, AttemptState, ClaimAttempt,
     ClaimOutcome, CleanupAttemptLeases, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
-    EnqueueOutcome, FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome,
-    MAX_ATTEMPT_MANIFEST_ENTRIES, ManifestEntry, ManifestKind, RetryAttempt, RetryOutcome,
-    SetAttemptResult,
+    EnqueueOutcome, FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome, ManifestEntry,
+    ManifestKind, RetryAttempt, RetryOutcome, SetAttemptResult,
 };
 
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};

@@ -7,7 +7,6 @@ use super::{
     AttemptOutcome, AttributionDecisions, FollowedState, OutcomeEvidence, attribution_judgments,
     read_attribution_cursor, run_attribution_projector_with_decisions,
 };
-use crate::attempt_queue::MAX_ATTEMPT_MANIFEST_ENTRIES;
 use crate::receipt::{ReceiptRecord, attempt_pack_receipt_page};
 use crate::side_table::{self, SideTable};
 use crate::{EntityId, Error, Result, Vault};
@@ -193,11 +192,6 @@ fn capture_receipt(
     let Some(facts) = source.facts(receipt)? else {
         return Ok(None);
     };
-    if facts.len() > MAX_ATTEMPT_MANIFEST_ENTRIES {
-        return Err(Error::InvalidConfig(
-            "attribution facts exceed the attempt manifest structural maximum".to_owned(),
-        ));
-    }
     // A partial host answer must not mark this receipt captured forever. The
     // terminal manifest is the authority on which tier-2 skills were loaded.
     if let Some(manifest) = receipt.pack_manifest_skills() {

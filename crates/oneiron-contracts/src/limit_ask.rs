@@ -114,6 +114,10 @@ pub enum EngineLimit {
     /// Inbound events, verbs or connector events one foreign pack script run
     /// emits, whichever is most. Past it every row is served.
     PackScriptOutputRows,
+    /// Entries accumulated in one attempt's append-only pack manifest
+    /// (skill-index, skill and actor-claim loads). Past it, the row asks
+    /// whether everything is okay and every entry is kept.
+    AttemptManifestEntries,
     /// Bytes of the judge's rubric (the active shared `judge` skill's text)
     /// one judgment or label re-check reads. Past it the rubric is read whole.
     JudgeRubricBytes,
@@ -204,7 +208,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 52] = [
+    pub const ALL: [Self; 53] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -231,6 +235,7 @@ impl EngineLimit {
         Self::ImportXlsxLiveCells,
         Self::PackScriptOutputBytes,
         Self::PackScriptOutputRows,
+        Self::AttemptManifestEntries,
         Self::JudgeRubricBytes,
         Self::MaintenanceRowItems,
         Self::MaintenanceTextBytes,
@@ -288,6 +293,7 @@ impl EngineLimit {
             Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
             Self::PackScriptOutputBytes => "limits.pack_script_output_bytes",
             Self::PackScriptOutputRows => "limits.pack_script_output_rows",
+            Self::AttemptManifestEntries => "limits.attempt_manifest_entries",
             Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
             Self::MaintenanceRowItems => "limits.maintenance_row_items",
             Self::MaintenanceTextBytes => "limits.maintenance_text_bytes",
@@ -347,6 +353,9 @@ impl EngineLimit {
             Self::ImportXlsxLiveCells => 200_000,
             Self::PackScriptOutputBytes => 64 << 10,
             Self::PackScriptOutputRows => 16,
+            // Sixteen times the 4,096 entries the append door refused past
+            // before Rule 5.
+            Self::AttemptManifestEntries => 65_536,
             // The shipped rubric is about 1 KiB; the judgment's state holds
             // at most 64 KiB in all.
             Self::JudgeRubricBytes => 8_192,

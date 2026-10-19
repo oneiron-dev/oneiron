@@ -22,14 +22,6 @@ use crate::error::ArtifactError;
 pub(crate) const ATTEMPT_RECORD_VERSION: u8 = 2;
 const ERR_ATTEMPT_ID_LEN: &str = "attempt id must be 16 bytes";
 pub(super) const MAX_ATTEMPT_EVENTS_PER_RECORD: usize = 256;
-/// Defensive cap on [`AttemptRecord::manifest`] rows.
-///
-/// Deliberately NOT the `MAX_ATTEMPT_EVENTS_PER_RECORD` semantics: the
-/// events field DRAINS its oldest rows above the cap, which would silently
-/// violate the ARCH-0053 §3 append-only manifest invariant (an attribution
-/// projector cannot tell a dropped skill from one that was never loaded).
-/// The manifest door instead REFUSES at this cap — fail loud, never drain.
-pub const MAX_ATTEMPT_MANIFEST_ENTRIES: usize = 4096;
 pub(super) const ATTEMPT_QUEUE_RETRY_REASON_COUNT: usize = 2;
 
 /// Stable identifier for a queued attempt.
