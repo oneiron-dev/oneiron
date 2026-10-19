@@ -10,6 +10,7 @@ use super::collect_live_entity_page;
 use super::core_engine_error;
 use super::core_entity_timestamps;
 use super::core_list_limit;
+use super::core_private_threads_admit;
 use super::core_write_text;
 use super::encode_core_body;
 use super::facade::ROOM_TURN_HEADER;
@@ -402,8 +403,10 @@ pub(crate) async fn list_core_conversation_turns(
         "conversation",
     )?;
     let params = query_params(query)?;
+    let read = super::scoped_auth::private_thread_read_for_core_auth(&server.vault, &auth)?;
     core_list_conversation_turns(
         &server.vault,
+        &read,
         &conversation,
         params,
         server.config.limits.projection_body_bytes,
@@ -516,6 +519,13 @@ pub(crate) async fn get_core_turn(
     auth.require_unrestricted_record_scope()?;
     let id = parse_entity_id_param(&turn_id, "turn_id")?;
     require_entity_type(&server, &id, ENTITY_TYPE_TURN, "turn")?;
+    // A turn of a private thread the caller does not read, the opener
+    // included, answers as one that is not here, before any view of it
+    // (FIX 5652). Its reply strip holds the turn it answers so too.
+    let read = super::scoped_auth::private_thread_read_for_core_auth(&server.vault, &auth)?;
+    if !core_private_threads_admit(&server.vault, &read, &id)? {
+        return Err(ApiError::not_found("turn", Some(&id.to_hex())).into());
+    }
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Full);
     if params
@@ -531,20 +541,25 @@ pub(crate) async fn get_core_turn(
     if params.with.as_deref() == Some("reply_strip") {
         let strip = server
             .vault
-            .reply_strip(&id)
+            .reply_strip(&read, &id)
             .map_err(|e| core_engine_error("reply strip read failed", e))?;
         item["reply_strip"] = strip.map_or(Value::Null, |strip| {
             serde_json::json!({
                 "record": strip.record.to_hex(), "revision": strip.revision,
-                "text": strip.text, "stale": strip.stale,
+                "text": strip.text, "stale": strip.stale, "withheld": strip.withheld,
             })
         });
     }
     Ok(Json(item))
 }
 
+/// The conversation's turns `read`'s caller reads (FIX 5652): a turn of a
+/// private thread it does not read, the opener included, is no row here. It
+/// is not projected, takes no place on a page, is never a cursor and is not
+/// counted.
 pub(crate) fn core_list_conversation_turns(
     vault: &oneiron::Vault,
+    read: &oneiron::claim::ScopedRead<'_>,
     conversation: &oneiron::EntityId,
     params: CoreListQuery,
     body_bytes: usize,
@@ -556,34 +571,42 @@ pub(crate) fn core_list_conversation_turns(
         .as_deref()
         .map(|after| parse_entity_id_param(after, "after"))
         .transpose()?;
-    let (ids, next_cursor) = collect_live_entity_page(vault, after, limit, |after, limit| {
-        vault
-            .sources_page(
-                conversation,
-                EdgeKind::ChildOf,
-                Some(ENTITY_TYPE_TURN),
-                after,
-                limit,
-            )
-            .map_err(|error| {
-                tracing::error!(error = %error, conversation = %conversation.to_hex(), "core conversation turns failed");
-                core_engine_error("core conversation turns failed", error).into()
-            })
-    })?;
+    let (ids, next_cursor) = collect_live_entity_page(
+        vault,
+        after,
+        limit,
+        |after, limit| {
+            vault
+                .sources_page(
+                    conversation,
+                    EdgeKind::ChildOf,
+                    Some(ENTITY_TYPE_TURN),
+                    after,
+                    limit,
+                )
+                .map_err(|error| {
+                    tracing::error!(error = %error, conversation = %conversation.to_hex(), "core conversation turns failed");
+                    core_engine_error("core conversation turns failed", error).into()
+                })
+        },
+        |id| core_private_threads_admit(vault, read, id).map_err(Into::into),
+    )?;
     let items = project_entity_ids(vault, ids, view, body_bytes)?;
     let meta = match params.count_mode {
         CountMode::None => ResponseMeta::none(),
         CountMode::Estimate => ResponseMeta::estimate(items.len() as u64),
         CountMode::Exact => ResponseMeta::new(
-            count_live_conversation_turns(vault, conversation)?,
+            count_live_conversation_turns(vault, read, conversation)?,
             CountMode::Exact,
         ),
     };
     Ok(Json(PaginatedResponse::new(items, next_cursor, meta)))
 }
 
+/// The live turns of `conversation` `read`'s caller reads (FIX 5652).
 pub(crate) fn count_live_conversation_turns(
     vault: &oneiron::Vault,
+    read: &oneiron::claim::ScopedRead<'_>,
     conversation: &oneiron::EntityId,
 ) -> Result<u64, EnvelopedApiError> {
     let mut after = None;
@@ -602,7 +625,9 @@ pub(crate) fn count_live_conversation_turns(
                 core_engine_error("core conversation turns count failed", error)
             })?;
         for id in &page.ids {
-            if !is_deleted_shell_for_core_list(vault, id)? {
+            if !is_deleted_shell_for_core_list(vault, id)?
+                && core_private_threads_admit(vault, read, id)?
+            {
                 total = total.saturating_add(1);
             }
         }

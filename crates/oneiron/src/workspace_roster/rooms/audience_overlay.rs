@@ -14,8 +14,8 @@
 //! stretch has no room to read a thread under, so a witness opens none.
 
 use super::audience::{
-    ThreadBinding, names_actor_in, private_members_readable_in, thread_binding,
-    thread_root_readable_with_read_in, validate_private_audience_in,
+    ThreadBinding, names_actor_in, private_members_readable_in, record_thread_admits_with_read_in,
+    thread_binding, validate_private_audience_in,
 };
 use super::audience_events::fold_audience_in;
 use super::*;
@@ -27,8 +27,9 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 /// thread. `actor` is the witness's bound actor. Refuses what the room
 /// witness refuses on base: links that name no live turn of the stretch or
 /// its room, a stored turn's thread restated otherwise, an audience named
-/// anywhere but on a thread's root or one `actor` cannot name, and a
-/// private thread `actor`, or a member it mentions, is off.
+/// anywhere but on a thread's root or one `actor` cannot name, a private
+/// thread `actor`, or a member it mentions, is off, and a stored turn of one
+/// `actor` does not read.
 #[expect(
     clippy::too_many_arguments,
     reason = "the overlay landing's view, stretch, turn and actor in one call"
@@ -50,15 +51,15 @@ pub(crate) fn overlay_thread_binding_in(
         } => Some(thread_binding(&body)?),
         _ => None,
     };
+    // A stored thread turn, staged here or held on base, takes words only
+    // from the audience that reads that turn, the root included (FIX 5653);
+    // a turn this write mints takes them from the audience now, below.
+    if stored.is_some() && !record_thread_admits_with_read_in(vault, dbs, txn, id, actor)? {
+        return Err(invalid());
+    }
     let Some(room) = room else {
-        // No thread opens here. A stored thread turn still takes words from
-        // its audience alone.
+        // No thread opens here.
         if input.thread_audience.is_some() {
-            return Err(invalid());
-        }
-        if let Some(Some(held)) = &stored
-            && !thread_root_readable_with_read_in(vault, dbs, txn, held.root, &[actor])?
-        {
             return Err(invalid());
         }
         return Ok(None);

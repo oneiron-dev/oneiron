@@ -1,7 +1,7 @@
 //! Claim-before-speaking guard inside the existing witness transaction.
 use super::audience::{
     ThreadBinding, names_actor_in, record_thread_admits_in, thread_audience_allows_in,
-    thread_audience_now_in, thread_binding, thread_root_readable_in, validate_private_audience_in,
+    thread_audience_now_in, thread_binding, validate_private_audience_in,
 };
 use super::participation::{
     addressable_agent_in_txn, admit_speech_in, agent_standing_in_txn, participant_in_txn,
@@ -175,17 +175,19 @@ pub(crate) fn admit_witness(
         _ => None,
     };
     let stored = stored_body.as_deref().map(thread_binding).transpose()?;
+    // One adding to a stored TURN of a private thread, in any room, writes
+    // from the audience that reads that turn, the root included (FIX 5653):
+    // one added from a later turn on adds nothing to a turn before its add.
+    // A turn this write mints writes from the audience now, below.
+    if stored_body.is_some() && !record_thread_admits_in(vault, txn, turn_id, actor)? {
+        return Err(invalid());
+    }
     let quoting = input.messages.iter().any(|m| m.quote.is_some());
     if !super::super::project::ROOM_PROJECT.contains(&vault.store, txn, &room)? {
         // An ordinary room's thread opens on its DAG, so a witness opens
-        // none; one adding to a private thread's TURN writes from its
-        // audience. A room regeneration answers a project room's claim.
+        // none; one adding to a private thread's TURN met that turn's
+        // audience above. A room regeneration answers a project room's claim.
         if input.thread_audience.is_some() || regeneration.is_some() {
-            return Err(invalid());
-        }
-        if let Some(Some(binding)) = &stored
-            && !thread_root_readable_in(vault, txn, binding.root, &[actor])?
-        {
             return Err(invalid());
         }
         // FIX 2027: a quote rides a turn in any room (ARCH-0006a:229), one

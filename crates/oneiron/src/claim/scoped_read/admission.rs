@@ -244,6 +244,21 @@ impl<'a> ScopedRead<'a> {
         )
     }
 
+    /// [`Self::private_threads_readable_in`] over the row `id` holds in
+    /// `txn`, alone: the bound a door serving rows by record scope (the TURN
+    /// routes) holds a turn's words to (FIX 5652), asking no grant, facet or
+    /// floor of this read. A row with no record has no thread to withhold it.
+    pub(crate) fn private_threads_admit_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        match self.entity_record_in(txn, id)? {
+            Some(record) => self.private_threads_readable_in(txn, id, &record.encode()),
+            None => Ok(true),
+        }
+    }
+
     /// Whether this read serves a caller off this device.
     pub(crate) fn off_device(&self) -> bool {
         self.actor_key.off_device()
