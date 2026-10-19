@@ -311,6 +311,12 @@ pub struct ApiError {
     suggestions: Vec<String>,
 }
 
+/// The guidance a managed vault's attested holder gets at an owner door
+/// once the vault no longer records him as its live owner (FIX 5327): the
+/// one sentence every such refusal carries, and only such a refusal.
+pub(crate) const MANAGED_OWNER_SIGN_IN_AGAIN: &str =
+    "Sign in again as this vault's owner, then retry.";
+
 impl ApiError {
     pub fn new(
         message: impl Into<String>,
@@ -367,6 +373,20 @@ impl ApiError {
                 required_scope: Some(required_scope),
             },
             ["Request a token with the required Oneiron core scope and retry."],
+        )
+    }
+
+    /// [`Self::forbidden_scope`]`("owner")` for a managed vault's attested
+    /// holder the vault no longer records as its live owner (FIX 5327): the
+    /// same code, message and required scope, with
+    /// [`MANAGED_OWNER_SIGN_IN_AGAIN`] as its guidance.
+    pub(crate) fn managed_owner_not_live() -> Self {
+        Self::new(
+            "request does not have the required scope",
+            ApiErrorDetails::Forbidden {
+                required_scope: Some("owner".to_owned()),
+            },
+            [MANAGED_OWNER_SIGN_IN_AGAIN],
         )
     }
 
