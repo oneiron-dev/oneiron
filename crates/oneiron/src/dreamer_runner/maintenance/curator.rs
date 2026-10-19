@@ -4,7 +4,9 @@
 //! (OF-023, owner ruling 10-18: "autoapply + revert rather than holdout"),
 //! with the target's before-state as the inverse the owner reverts. A rung
 //! on a critical target waits for the owner in the run tray (ARCH-0026: a
-//! critical replacement waits), and applies once approved.
+//! critical replacement waits), and applies once approved: his approval of
+//! the finding is its one consent, and the rung applies as the Dreamer with
+//! its inverse and receipt (`approved`, FIX 3223).
 use super::super::{
     DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
@@ -29,6 +31,8 @@ use crate::{
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+
+mod approved;
 
 /// The curator's finding predicate.
 const PROPOSAL_PREDICATE: &str = "dreamer.curator.proposal";
@@ -204,10 +208,9 @@ pub(super) fn run(
                 && body.lifecycle == ClaimLifecycleStatus::Active
                 && body.approval == ClaimApprovalStatus::Approved
                 && crate::claim::session_claim_producer(&body) == Some(actor)
-                && let Some(value) = body.value.as_str()
-                && let Ok(value) = serde_json::from_str::<serde_json::Value>(value)
+                && !super::applied::recorded_in_txn(vault, &txn, id)?
             {
-                approved.push((id, value));
+                approved.push(id);
             }
             continue;
         }
@@ -249,10 +252,14 @@ pub(super) fn run(
     }
     drop(txn);
     // Settle before proposing: a target moved by an approval this pass waits
-    // for the next pass to be graded on its new rung.
+    // for the next pass to be graded on its new rung. Each approved rung
+    // applies in its own write, as the Dreamer.
     let mut moved = BTreeSet::new();
-    for (proposal, value) in approved {
-        match apply_approved(vault, &value, now) {
+    for proposal in approved {
+        let applied = vault.with_write_txn_grouped(|txn| {
+            vault.apply_approved_curator_in_txn(txn, proposal, Some(attempt.status.attempt.id), now)
+        });
+        match applied {
             Ok(Some(target)) => {
                 moved.insert(target);
             }
@@ -642,81 +649,4 @@ fn stand_copy_in_txn(
         )?;
     }
     Ok(copy)
-}
-
-/// Applies one owner-approved finding through the demotion ladder's own door.
-/// The finding names its target's body hash at grading. A target whose body
-/// moved since (this finding already applied, or any other write) is left
-/// alone, so a replayed pass applies nothing twice. Returns the moved target.
-fn apply_approved(vault: &Vault, value: &serde_json::Value, now: u64) -> Result<Option<EntityId>> {
-    let target = EntityId::from_hex(value["target"].as_str().ok_or_else(invalid)?)?;
-    let source_hash = value["source_hash"].as_str().ok_or_else(invalid)?;
-    let action = &value["action"];
-    let factor = |key: &str| -> Result<f32> {
-        let x = action[key].as_f64().ok_or_else(invalid)?;
-        #[allow(clippy::cast_possible_truncation, reason = "the rubric wrote an f32")]
-        Ok(x as f32)
-    };
-    let current_weight = {
-        let txn = vault.store.env.read_txn()?;
-        let Some(raw) = EntityStoreRead::port_entity_raw(&vault.store, &txn, &target)? else {
-            return Ok(None);
-        };
-        let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
-        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
-            || raw.len() == ENTITY_METADATA_HEADER_LEN
-            || blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..])
-                .to_hex()
-                .as_str()
-                != source_hash
-        {
-            return Ok(None);
-        }
-        let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        if body.lifecycle != ClaimLifecycleStatus::Active {
-            return Ok(None);
-        }
-        match body.subject {
-            ClaimSubject::Entity(subject) if action["kind"] == "claim_of_weight" => {
-                let mut weight = None;
-                for edge in vault.port_edges(
-                    &txn,
-                    &target,
-                    EdgeDirection::Out,
-                    Some(EdgeKind::ClaimOf),
-                    None,
-                )? {
-                    let edge = edge?;
-                    if edge.target == subject {
-                        weight = Some(edge.weight);
-                    }
-                }
-                weight
-            }
-            _ => None,
-        }
-    };
-    let demotion = match action["kind"].as_str().ok_or_else(invalid)? {
-        "claim_of_weight" => ClaimDemotionAction::Decay {
-            new_claim_of_weight: current_weight.ok_or_else(invalid)? * factor("factor")?,
-        },
-        "confidence" => ClaimDemotionAction::Weaken {
-            new_confidence: factor("new_confidence")?,
-        },
-        "stale" => ClaimDemotionAction::MarkStale,
-        "retract" => {
-            vault.retract_claim(&target, now)?;
-            return Ok(Some(target));
-        }
-        _ => return Err(invalid()),
-    };
-    match vault.apply_claim_demotion(&target, demotion, now) {
-        Ok(_) => Ok(Some(target)),
-        // A critical predicate parks the demotion behind the owner's Gate
-        // consent; the parked action is the applied state until it resolves.
-        Err(Error::Gate(crate::error::GateError::GateWriteRejected {
-            outcome: "pending", ..
-        })) => Ok(Some(target)),
-        Err(error) => Err(error),
-    }
 }
