@@ -193,8 +193,10 @@ impl Vault {
     /// and the principal must be in it (OF-063; a call, canon silent): on its
     /// room's roster now, by the room bind (`bind_for`, which checks the
     /// roster before the name), or, for a stretch entered alone, the actor
-    /// its entering door recorded (`entered_by`). Every other caller has its
-    /// call and refusal receipts written as anywhere else.
+    /// its entering door recorded (`entered_by`). A stretch a creator entered
+    /// is named by its handle, or by the name the principal gave it among
+    /// their own (FIX 4597). Every other caller has its call and refusal
+    /// receipts written as anywhere else.
     ///
     /// What cannot be proven binds nothing (Engine ruling 2137/2271, 10-18:
     /// map to the session's authenticated principal when there is one,
@@ -210,16 +212,21 @@ impl Vault {
         session_ref: &str,
         principal: Option<crate::EntityId>,
     ) -> bool {
+        let Some(principal) = principal else {
+            return false;
+        };
         let session_ref = session_ref.trim();
+        let created = self
+            .store
+            .off_record_sessions
+            .created_key(session_ref, principal);
+        let session_ref = created.as_deref().unwrap_or(session_ref);
         let Ok(Some(record)) = self.off_record_session(session_ref) else {
             return false;
         };
         if record.mode != OffRecordMode::Anonymous {
             return false;
         }
-        let Some(principal) = principal else {
-            return false;
-        };
         if record.room.is_some() {
             return self
                 .off_record_session_vault()
@@ -466,14 +473,18 @@ impl Vault {
     }
 }
 
-/// A stretch entered alone may not take a name a room's stretch is keyed by,
-/// so the two never collide.
+/// A stretch entered alone may not take a name a room's stretch, or a
+/// creator's instance handle (FIX 4597), is keyed by, so none collide.
 fn vet_roomless_session_ref(session_ref: &str) -> Result<()> {
-    if session_ref.starts_with(super::room::ROOM_KEY_PREFIX) {
-        return Err(Error::InvalidConfig(format!(
-            "off-record session refs starting with {:?} name a room's stretches",
-            super::room::ROOM_KEY_PREFIX
-        )));
+    for (prefix, what) in [
+        (super::room::ROOM_KEY_PREFIX, "a room's stretches"),
+        (super::registry::CREATED_KEY_PREFIX, "a creator's stretches by handle"),
+    ] {
+        if session_ref.starts_with(prefix) {
+            return Err(Error::InvalidConfig(format!(
+                "off-record session refs starting with {prefix:?} name {what}"
+            )));
+        }
     }
     Ok(())
 }

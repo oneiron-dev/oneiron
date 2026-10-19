@@ -521,7 +521,8 @@ side_tables! {
     /// delivers it (fixed layout). Key: id16(run) + id16(wait) + be64(generation).
     CODE_RUN_WAIT_TRAP: VaultMeta b"code_run:wait_trap:v1:" Raw;
     /// Per-code-artifact code-symbol manifest row. Key: id16.
-    CODE_SYMBOL_MANIFEST: VaultMeta b"code_symbol:manifest:v1:" Raw;
+    CODE_SYMBOL_MANIFEST: VaultMeta b"code_symbol:manifest:v1:" Raw
+        => crate::code_symbol::erase_manifest_actor_in_txn;
     /// Index of symbol revisions by repo/path/name/fingerprint, empty marker value. Key:
     /// string(repo_ref) "\x00" string(path) "\x00" string(name) "\x00" hash32(fingerprint) "\x00"
     /// id16.
