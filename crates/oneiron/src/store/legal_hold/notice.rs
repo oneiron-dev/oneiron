@@ -75,10 +75,12 @@ pub(super) fn non_use_orders_in_txn(
     txn: &RoTxn<'_>,
     record: &EntityId,
 ) -> Result<Vec<LegalHold>> {
-    Ok(holds_on_in_txn(dbs, txn, &LegalHoldTarget::Record(*record))?
-        .into_iter()
-        .filter(restricts_use)
-        .collect())
+    Ok(
+        holds_on_in_txn(dbs, txn, &LegalHoldTarget::Record(*record))?
+            .into_iter()
+            .filter(restricts_use)
+            .collect(),
+    )
 }
 
 impl Store {
