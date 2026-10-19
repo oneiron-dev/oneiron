@@ -2997,7 +2997,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/receipt_fields.rs` | src | m | 8 crate-vis | — | — |
 | `src/outbound/reply_content.rs` | src | s | 1 struct · 3 fn · 1 const | ConnectorReplyBody | The body of an agent's reply to a connector event (OF-519) |
 | `src/outbound/retry_audit.rs` | src | m | 7 crate-vis | — | Atomic send-receipt retry and terminal settlement |
-| `src/outbound/served_sink.rs` | src | m | 2 struct · 4 fn | OwnedServedChannelSink, ServedChannelSink | The sink a served connector-send worker hands the connector executor (OF-187): the transports this engine… |
+| `src/outbound/served_sink.rs` | src | m | 2 struct · 6 fn | OwnedServedChannelSink, ServedChannelSink | The sink a served connector-send worker hands the connector executor (OF-187): the transports this engine… |
 | `src/outbound/tests/connector_qualification.rs` | test | L | — | — | Per-rail outbound SOW contract and local qualification probes |
 | `src/outbound/tests/connector_schedule.rs` | test | XL | 1 crate-vis | — | Connector send-task scheduling, executor idempotency, idempotency keys and schedule gates |
 | `src/outbound/tests/dispatch_budget.rs` | test | s | — | — | Dispatch budget debit, exhaustion/suspend/resume, ladders, wrap window and charter drift |
