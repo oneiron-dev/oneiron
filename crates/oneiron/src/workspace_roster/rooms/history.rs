@@ -194,7 +194,8 @@ pub(in crate::workspace_roster) fn delete_thread_metadata(
 /// [`delete_room_metadata`] for a CONVERSATION whose record leaves, run by
 /// the shared erase doors (`deletion/derived_rows.rs`) before its body goes;
 /// [`delete_thread_metadata`] for a TURN that roots a thread, a project
-/// room's by its stored turn and an ordinary room's by its DAG topology;
+/// room's by its stored turn and an ordinary room's by its DAG topology,
+/// and the thread's audience edits whole;
 /// a TASK's inverse thread bindings for a TASK; a no-op for any other
 /// entity. A project's home room reaches it from
 /// `deindex_project_room` as well; the sweep is idempotent.
@@ -209,6 +210,8 @@ pub(crate) fn erase_room_side_rows(
     match crate::batch::EntityMetadataHeader::parse(&raw).map(|header| header.entity_type) {
         Some(crate::registry::ENTITY_TYPE_CONVERSATION) => delete_room_metadata(store, txn, *id)?,
         Some(crate::registry::ENTITY_TYPE_TURN) => {
+            // A root's audience edits go with it (FIX 5639).
+            super::audience_edit_guard::tear_root_edits_in_txn(store, txn, id)?;
             let room = match TURNS.get(store, txn, id)? {
                 Some(turn) => super::liveness::is_thread_root(&turn)
                     .then(|| EntityId::from_hex(&turn.room_id))
