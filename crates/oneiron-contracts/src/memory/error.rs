@@ -650,6 +650,14 @@ impl From<Error> for MemoryError {
                 message,
                 &["Restore the revision's package (re-import it), or edit the skill by hand."],
             ),
+            // The request was sound; the refusal names the bound that has to
+            // change first (a scope to fund, a seat to bind), and is the
+            // whole answer.
+            ErrorKind::Refused => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &["Do what the message names (fund, bind or configure it), then ask again."],
+            ),
             // The host skipped a setup step, so neither the request nor the
             // caller's standing is what has to change.
             ErrorKind::EngineIdentitiesNotProvisioned => Self::new(
