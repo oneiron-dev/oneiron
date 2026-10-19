@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 975 facade rows, 3304 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 927.
+// UniFFI census: 981 facade rows, 3323 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 933.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -8449,6 +8449,320 @@ pub struct RetrievalDiagnosticReplay {
     pub contract_version: String,
     #[serde(rename = "runs")]
     pub runs: Vec<RetrievalReplayRun>,
+}
+
+/// `oneiron_contracts::retrieval_telemetry::RetrievalBlendWeights`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalBlendWeights {
+    #[serde(rename = "recency")]
+    pub recency: f64,
+    #[serde(rename = "salience")]
+    pub salience: f64,
+    #[serde(rename = "confidence")]
+    pub confidence: f64,
+    #[serde(rename = "gravity")]
+    pub gravity: f64,
+}
+
+/// `oneiron::store::retrieval_telemetry::types::RetrievalBlendWeightDataWindow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalBlendWeightDataWindow {
+    #[serde(rename = "run_count")]
+    pub run_count: u32,
+    #[serde(rename = "outcome_count")]
+    pub outcome_count: u32,
+    #[serde(rename = "candidate_count")]
+    pub candidate_count: u32,
+    #[serde(
+        rename = "started_at_min",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub started_at_min: Option<u64>,
+    #[serde(
+        rename = "started_at_max",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub started_at_max: Option<u64>,
+    #[serde(
+        rename = "outcome_updated_at_min",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub outcome_updated_at_min: Option<u64>,
+    #[serde(
+        rename = "outcome_updated_at_max",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub outcome_updated_at_max: Option<u64>,
+}
+
+/// `oneiron::store::retrieval_telemetry::types::RetrievalBlendWeightTableEntry`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalBlendWeightTableEntry {
+    #[serde(rename = "version")]
+    pub version: u8,
+    #[serde(rename = "weights")]
+    pub weights: RetrievalBlendWeights,
+    #[serde(rename = "tuned_at")]
+    pub tuned_at: u64,
+    #[serde(rename = "provenance")]
+    pub provenance: std::collections::HashMap<String, String>,
+    #[serde(rename = "data_window")]
+    pub data_window: RetrievalBlendWeightDataWindow,
+}
+
+/// `oneiron_contracts::retrieval_telemetry::RetrievalBlendSignal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RetrievalBlendSignal {
+    #[serde(rename = "recency")]
+    Recency,
+    #[serde(rename = "salience")]
+    Salience,
+    #[serde(rename = "confidence")]
+    Confidence,
+    #[serde(rename = "gravity")]
+    Gravity,
+}
+
+/// `oneiron::store::retrieval_telemetry::types::RetrievalWeightOrigin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RetrievalWeightOrigin {
+    #[serde(rename = "bootstrap")]
+    Bootstrap,
+    #[serde(rename = "learned")]
+    Learned,
+    #[serde(rename = "owner_pin")]
+    OwnerPin,
+}
+
+/// `oneiron::store::retrieval_telemetry::types::RetrievalWeightRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalWeightRow {
+    #[serde(rename = "signal")]
+    pub signal: RetrievalBlendSignal,
+    #[serde(rename = "weight")]
+    pub weight: f64,
+    #[serde(rename = "origin")]
+    pub origin: RetrievalWeightOrigin,
+    #[serde(rename = "pinned")]
+    pub pinned: bool,
+}
+
+/// `oneiron::store::retrieval_telemetry::types::RetrievalPolicyPin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalPolicyPin {
+    #[serde(rename = "signal")]
+    pub signal: RetrievalBlendSignal,
+    #[serde(rename = "value")]
+    pub value: f64,
+}
+
+/// `oneiron::llm::manifest::ModelSlot`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ModelSlot {
+    #[serde(rename = "llm")]
+    Llm,
+    #[serde(rename = "embedder")]
+    Embedder,
+    #[serde(rename = "oneironer")]
+    Oneironer,
+}
+
+/// `oneiron_model::llm::call::ModelLocality`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ModelLocality {
+    #[serde(rename = "on_device")]
+    OnDevice,
+    #[serde(rename = "own_server")]
+    OwnServer,
+    #[serde(rename = "third_party")]
+    ThirdParty,
+}
+
+/// `oneiron::task_verb::sdk_retrieval::RetrievalRoutingPin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalRoutingPin {
+    #[serde(rename = "slot")]
+    pub slot: ModelSlot,
+    #[serde(rename = "locality")]
+    pub locality: ModelLocality,
+}
+
+/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalPolicyView {
+    #[serde(rename = "policy_version")]
+    pub policy_version: u8,
+    #[serde(rename = "active")]
+    pub active: RetrievalBlendWeightTableEntry,
+    #[serde(rename = "rows")]
+    pub rows: Vec<RetrievalWeightRow>,
+    #[serde(rename = "pins")]
+    pub pins: Vec<RetrievalPolicyPin>,
+    #[serde(rename = "posterior_tuned_at")]
+    pub posterior_tuned_at: u64,
+    #[serde(rename = "posterior_labeled_runs")]
+    pub posterior_labeled_runs: u64,
+    #[serde(rename = "posterior_observations")]
+    pub posterior_observations: u64,
+    #[serde(
+        rename = "routing_manifest_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub routing_manifest_digest: Option<String>,
+    #[serde(rename = "routing")]
+    pub routing: Vec<RetrievalRoutingPin>,
+}
+
+/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyPinRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RetrievalPolicyPinRequest {
+    #[serde(rename = "signal")]
+    pub signal: RetrievalBlendSignal,
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+}
+
+/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyTrainRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RetrievalPolicyTrainRequest {
+    #[serde(rename = "max_runs", default, skip_serializing_if = "Option::is_none")]
+    pub max_runs: Option<u64>,
+    #[serde(
+        rename = "learning_rate",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub learning_rate: Option<f64>,
+    #[serde(
+        rename = "min_reward_count",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub min_reward_count: Option<u64>,
+}
+
+/// `oneiron::store::retrieval_telemetry::types::RetrievalPolicyVerdict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RetrievalPolicyVerdict {
+    #[serde(rename = "not_worse")]
+    NotWorse,
+    #[serde(rename = "regression")]
+    Regression,
+    #[serde(rename = "insufficient")]
+    Insufficient,
+}
+
+/// `oneiron::store::retrieval_telemetry::types::RetrievalPolicyHeldOut`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalPolicyHeldOut {
+    #[serde(rename = "candidate_score")]
+    pub candidate_score: f64,
+    #[serde(rename = "active_score")]
+    pub active_score: f64,
+    #[serde(rename = "reward_count")]
+    pub reward_count: u32,
+    #[serde(rename = "verdict")]
+    pub verdict: RetrievalPolicyVerdict,
+}
+
+/// `oneiron::store::retrieval_telemetry::types::RetrievalPolicyCandidate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalPolicyCandidate {
+    #[serde(rename = "weights")]
+    pub weights: RetrievalBlendWeights,
+    #[serde(rename = "rows")]
+    pub rows: Vec<RetrievalWeightRow>,
+    #[serde(rename = "data_window")]
+    pub data_window: RetrievalBlendWeightDataWindow,
+    #[serde(rename = "manifest_digest")]
+    pub manifest_digest: String,
+    #[serde(rename = "held_out")]
+    pub held_out: RetrievalPolicyHeldOut,
+    #[serde(rename = "training_reward_count")]
+    pub training_reward_count: u32,
+    #[serde(rename = "ungated_outcomes_skipped")]
+    pub ungated_outcomes_skipped: u32,
+    #[serde(rename = "algorithm")]
+    pub algorithm: String,
+}
+
+/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyEvaluateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RetrievalPolicyEvaluateRequest {
+    #[serde(rename = "weights")]
+    pub weights: RetrievalBlendWeights,
+    #[serde(rename = "config", default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<RetrievalPolicyTrainRequest>,
+}
+
+/// `oneiron::store::retrieval_telemetry::types::RetrievalPolicyEvaluation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalPolicyEvaluation {
+    #[serde(rename = "candidate_weights")]
+    pub candidate_weights: RetrievalBlendWeights,
+    #[serde(rename = "active_weights")]
+    pub active_weights: RetrievalBlendWeights,
+    #[serde(rename = "rows")]
+    pub rows: Vec<RetrievalWeightRow>,
+    #[serde(rename = "manifest_digest")]
+    pub manifest_digest: String,
+    #[serde(rename = "held_out")]
+    pub held_out: RetrievalPolicyHeldOut,
+    #[serde(rename = "pins_respected")]
+    pub pins_respected: bool,
+    #[serde(rename = "ungated_outcomes_skipped")]
+    pub ungated_outcomes_skipped: u32,
+}
+
+/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyAdmitRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RetrievalPolicyAdmitRequest {
+    #[serde(rename = "weights")]
+    pub weights: RetrievalBlendWeights,
+    #[serde(rename = "manifest_digest")]
+    pub manifest_digest: String,
+    #[serde(rename = "config", default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<RetrievalPolicyTrainRequest>,
+}
+
+/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyAdmitReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalPolicyAdmitReceipt {
+    #[serde(rename = "evaluation")]
+    pub evaluation: RetrievalPolicyEvaluation,
+    #[serde(rename = "view")]
+    pub view: RetrievalPolicyView,
+}
+
+/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyDisposition`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RetrievalPolicyDisposition {
+    #[serde(rename = "applied")]
+    Applied,
+    #[serde(rename = "offered")]
+    Offered,
+}
+
+/// `oneiron::task_verb::sdk_retrieval::RetrievalPolicyUpdateReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalPolicyUpdateReceipt {
+    #[serde(rename = "disposition")]
+    pub disposition: RetrievalPolicyDisposition,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(rename = "candidate")]
+    pub candidate: RetrievalPolicyCandidate,
+    #[serde(rename = "view")]
+    pub view: RetrievalPolicyView,
 }
 
 /// `oneiron::memory::export::MemoryExport`.
@@ -24760,17 +25074,6 @@ pub struct PolicyManifestPropose {
     pub manifest: PolicyManifest,
 }
 
-/// `oneiron::llm::manifest::ModelSlot`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ModelSlot {
-    #[serde(rename = "llm")]
-    Llm,
-    #[serde(rename = "embedder")]
-    Embedder,
-    #[serde(rename = "oneironer")]
-    Oneironer,
-}
-
 /// `oneiron::llm::manifest::ConfidenceBand`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ConfidenceBand {
@@ -37073,17 +37376,6 @@ pub enum ResponseFormat {
     },
 }
 
-/// `oneiron_model::llm::call::ModelLocality`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ModelLocality {
-    #[serde(rename = "on_device")]
-    OnDevice,
-    #[serde(rename = "own_server")]
-    OwnServer,
-    #[serde(rename = "third_party")]
-    ThirdParty,
-}
-
 /// `oneiron_model::llm::call::CallEnvelope`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CallEnvelope {
@@ -42410,19 +42702,6 @@ pub struct HybridTemporalQuery {
     pub start: u64,
     #[serde(rename = "end")]
     pub end: u64,
-}
-
-/// `oneiron_contracts::retrieval_telemetry::RetrievalBlendWeights`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct RetrievalBlendWeights {
-    #[serde(rename = "recency")]
-    pub recency: f64,
-    #[serde(rename = "salience")]
-    pub salience: f64,
-    #[serde(rename = "confidence")]
-    pub confidence: f64,
-    #[serde(rename = "gravity")]
-    pub gravity: f64,
 }
 
 /// `oneiron::memory::search_hybrid::HybridRankReplay`.

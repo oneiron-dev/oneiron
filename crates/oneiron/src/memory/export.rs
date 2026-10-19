@@ -8,11 +8,11 @@ use serde::{Deserialize, Serialize};
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::Vault;
 use crate::authority::{ActSurface, HostActionAuthority, OwnerAct, OwnerActKind, VerifiedSlip};
-use crate::claim::CallerLocality;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::verify_actor_binding_in_txn;
+use crate::settings::ReadDestination;
 use crate::side_table::{self, Named, SideTable};
 use crate::write_envelope::WriteActor;
 
@@ -142,7 +142,7 @@ impl Memory<'_> {
             self.vault,
             opts,
             ExportBy::plain(&self.actor.to_hex()),
-            self.locality,
+            &self.destination,
             WriteActor::new(self.actor, EdgeActorClass::Human),
             |txn| self.export_admitted_in_txn(txn, None),
             sink,
@@ -165,7 +165,7 @@ impl Memory<'_> {
             self.vault,
             opts,
             ExportBy { name: &name, act },
-            self.locality,
+            &self.destination,
             WriteActor::new(self.actor, EdgeActorClass::Human),
             |txn| self.export_admitted_in_txn(txn, proof),
         )?;
@@ -243,8 +243,8 @@ impl Memory<'_> {
 impl Vault {
     /// Host-root export without inventing an actor or creating a root on read.
     /// The verifier-produced root is rechecked in the export snapshot. A
-    /// caller at `locality` off this device takes no device-local world with
-    /// it (DEC-0005).
+    /// caller toward `destination` off this device takes no world withheld
+    /// from the machine it goes to with it (DEC-0005, mesh PR2b).
     ///
     /// A whole-vault export is an owner act, not a backup (FIX 2222): a
     /// self-hosted root exports as the owner it acts as, and a host root on
@@ -255,9 +255,9 @@ impl Vault {
         opts: &ExportOptions,
         proof: &VerifiedSlip,
         surface: ActSurface,
-        locality: CallerLocality,
+        destination: impl Into<ReadDestination>,
     ) -> MemoryResult<MemoryExport> {
-        self.export_with_verified_host_owner_listing(opts, proof, surface, locality)
+        self.export_with_verified_host_owner_listing(opts, proof, surface, destination)
             .map(|(export, _)| export)
     }
 
@@ -270,7 +270,7 @@ impl Vault {
         opts: &ExportOptions,
         proof: &VerifiedSlip,
         surface: ActSurface,
-        locality: CallerLocality,
+        destination: impl Into<ReadDestination>,
     ) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
         // A host-root export reads diaries as the owner the root acts as
         // (OF-490, FIX 2222), resolved by the rule every host action takes.
@@ -282,7 +282,7 @@ impl Vault {
             name: "host",
             act: Some(export_act(owner, surface)?),
         };
-        render_export(self, opts, by, locality, reader, |txn| {
+        render_export(self, opts, by, destination, reader, |txn| {
             if host_owner_export_admitted(self, txn, proof)? == owner {
                 Ok(())
             } else {
@@ -308,7 +308,7 @@ impl Vault {
         opts: &ExportOptions,
         action: &HostActionAuthority,
         surface: ActSurface,
-        locality: CallerLocality,
+        destination: impl Into<ReadDestination>,
     ) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
         {
             let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
@@ -321,7 +321,7 @@ impl Vault {
             name: "host",
             act: Some(export_act(action.actor().entity_ref(), surface)?),
         };
-        render_export(self, opts, by, locality, action.actor(), |txn| {
+        render_export(self, opts, by, destination, action.actor(), |txn| {
             action
                 .guard()
                 .holds_in(self, txn)
@@ -335,7 +335,7 @@ impl Vault {
     /// export's own snapshot (its vault, a live person, a live Owner role,
     /// any credential or host action it bound), and the actor it names there
     /// must be the export's reader. The same archive and served listing as
-    /// the slip path, read at the caller's own `locality`: a caller off this
+    /// the slip path, read at the caller's own `destination`: a caller off this
     /// device takes no device-local world with it (DEC-0005). The proof is
     /// this request's alone, never a durable owner authorization. The
     /// export's receipt records the owner's act (Engine 10-19 02:4x), with
@@ -345,7 +345,7 @@ impl Vault {
         opts: &ExportOptions,
         owner: &AuthenticatedOwner,
         surface: ActSurface,
-        locality: CallerLocality,
+        destination: impl Into<ReadDestination>,
     ) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
         let actor = self.admit_authenticated_owner(owner)?;
         let reader = WriteActor::new(actor, EdgeActorClass::Human);
@@ -356,7 +356,7 @@ impl Vault {
             name: &name,
             act: Some(export_act(actor, surface)?),
         };
-        render_export(self, opts, by, locality, reader, |txn| {
+        render_export(self, opts, by, destination, reader, |txn| {
             if authenticated_owner_export_admitted(self, txn, owner)? == actor {
                 Ok(())
             } else {
@@ -497,13 +497,13 @@ fn render_export(
     vault: &Vault,
     opts: &ExportOptions,
     by: ExportBy<'_>,
-    locality: CallerLocality,
+    destination: impl Into<ReadDestination>,
     reader: WriteActor,
     admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
 ) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
     let mut spool = vault.archive_spool_file()?;
     let (receipt, sources) =
-        render_export_to(vault, opts, by, locality, reader, admit, &mut spool)?;
+        render_export_to(vault, opts, by, destination, reader, admit, &mut spool)?;
     spool.seek(SeekFrom::Start(0)).map_err(crate::Error::from)?;
     let mut archive = Vec::new();
     spool
@@ -526,7 +526,7 @@ fn render_export_to<W: Read + Write + Seek>(
     vault: &Vault,
     opts: &ExportOptions,
     by: ExportBy<'_>,
-    locality: CallerLocality,
+    destination: impl Into<ReadDestination>,
     reader: WriteActor,
     admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
     sink: W,
@@ -535,13 +535,13 @@ fn render_export_to<W: Read + Write + Seek>(
     let include_secrets = opts.include_secrets.unwrap_or(true);
     let (mut sink, export) = match name {
         EXPORT_TARGET_ARCHIVE => vault.export_whole_vault_with_admission(
-            locality,
+            destination,
             include_secrets,
             reader,
             admit,
             sink,
         )?,
-        EXPORT_TARGET_OKF => vault.export_okf_with_admission(locality, reader, admit, sink)?,
+        EXPORT_TARGET_OKF => vault.export_okf_with_admission(destination, reader, admit, sink)?,
         _ => {
             return Err(MemoryError::bad_request_with(
                 format!("unknown export format {name:?}"),
