@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1043 facade rows, 3512 declarations.
+Census: 1043 facade rows, 3513 declarations.
 Inputs: 980 of 1043 fully typed, 63 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 934 of 1043 fully typed, 109 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
@@ -15954,6 +15954,7 @@ class CheckpointView(TypedDict):
     resumed: list[CheckpointResumeView]
     next_step: NotRequired[int | None]
 ConsolidationHomeNode = TypedDict("ConsolidationHomeNode", {"node_id": str, "class": str, "elected_at": int})
+ConsolidationHomeCandidate = TypedDict("ConsolidationHomeCandidate", {"node_id": str, "class": NotRequired[str | None], "cloud": bool, "attached": bool, "always_on_local": bool, "primary_device": bool})
 class ConsolidationHomePickHead(TypedDict):
     act_ref: str
     machine: EntityId
@@ -15963,12 +15964,14 @@ class ConsolidationHomeView(TypedDict):
     home: NotRequired[ConsolidationHomeNode | None]
     this_node: NotRequired[str | None]
     candidates_available: bool
+    candidates: list[ConsolidationHomeCandidate]
     pick: NotRequired[str | None]
     revision: str
     heads: list[ConsolidationHomePickHead]
     conflict: list[ConsolidationHomePickHead]
 class ConsolidationHomePickRequest(TypedDict):
     node_id: NotRequired[str | None]
+    seen: NotRequired[str | None]
 class ConsolidationHomePickReceipt(TypedDict):
     pick: NotRequired[str | None]
     act_ref: str
