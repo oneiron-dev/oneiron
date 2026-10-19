@@ -79,13 +79,15 @@ export interface CloseLensFrameReply {
 
 /**
  * What {@link Oneiron.pair} returns: a handle connected with the credential,
- * the credential to store, and the checkpoint pin the link named (OF-469),
- * `null` when the vault has no attested checkpoint.
+ * the credential to store, the checkpoint pin the link named (OF-469),
+ * `null` when the vault has no attested checkpoint, and the comm reach the
+ * server says the credential carries: whom an agent paired by it may address.
  */
 export interface Paired {
   readonly memory: Oneiron
   readonly credential: string
   readonly pin: CheckpointPin | null
+  readonly comm: Facade.CommReach
 }
 
 /**
@@ -216,7 +218,7 @@ export class Oneiron {
    * starts.
    */
   static pair(link: string): Paired {
-    let paired: { url: string; credential: string; pin?: CheckpointPin }
+    let paired: { url: string; credential: string; pin?: CheckpointPin; comm: Facade.CommReach }
     try {
       paired = NativeClient.pair(link)
     } catch (error) {
@@ -226,6 +228,7 @@ export class Oneiron {
       memory: Oneiron.connect(paired.url, paired.credential),
       credential: paired.credential,
       pin: paired.pin ?? null,
+      comm: paired.comm,
     }
   }
 
