@@ -587,9 +587,10 @@ pub(super) fn main_log_heads(
 
 /// The live world edits, grant travel choices, owner and person choices and
 /// machine answers `machine` carried, and the owner work requests it carried
-/// that await a result: what a new profile revision lists as seen, capped at
-/// the codec's limit (an unlisted act only counts stricter once a removal
-/// races it; an unlisted request stops counting then).
+/// that await a result (a root request the owner cancelled or a newer one
+/// superseded awaits none, FIX 5583): what a new profile revision lists as
+/// seen, capped at the codec's limit (an unlisted act only counts stricter
+/// once a removal races it; an unlisted request stops counting then).
 pub(super) fn live_edits_by(
     fold: &AuthorityFold,
     machine: EntityId,
