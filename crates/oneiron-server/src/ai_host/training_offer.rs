@@ -16,7 +16,6 @@
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::coach::coach_offer_check_target;
 use oneiron::learning::learning_estimate;
-use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::manifest::{MODEL_ROLES, ModelRole};
 use oneiron::llm::registry::ModelRegistryRow;
 use oneiron::skill_optimize::offer_pilot::{
@@ -67,14 +66,9 @@ const COST_TOLERANCE: f64 = 0.10;
 const OFFER_CALL_PURPOSE: &str = "coach_training_offer";
 /// What one job's calls may spend.
 const BUDGET_UNITS: u64 = 1 << 20;
-/// The offer door's bound on one loss, risk, what-changed or check-note line
-/// (`skill_optimize::offer`): a longer line refuses the whole offer, so a
-/// line past it is clipped to it. Every loss the Coach names is kept.
-const LINE_BYTES: usize = 4096;
-/// The offer door's own limits on a pin, label or ref: past them it refuses
-/// the whole offer.
+/// How much of a model's display name or a cohort's rubric revision the
+/// Coach's brief shows; the offer keeps the revision whole.
 const REF_BYTES: usize = 256;
-const MAX_REFS: usize = 64;
 /// What the offer says of its prices, beside the Coach's risk.
 const PRICING_NOTE: &str = "Both sides are priced at list price on this seat's measured \
     token counts, cached prompt tokens at the input price; the candidate's counts are the \
@@ -203,10 +197,6 @@ pub(super) fn draft(
             continue;
         };
         pilot::ground(vault, &mut draft)?;
-        let _ = vault.measure_limit(
-            EngineLimit::MaintenanceRowItems,
-            draft.evidence.losses.len() as u64,
-        );
         match vault.run_coach_training_offer(admitted, draft, now) {
             Ok(offer) => {
                 tracing::debug!(offer = %offer.id.to_hex(), "the Coach raised a training offer")
@@ -286,7 +276,7 @@ impl Brief {
             input_tokens: Some(usage.input_tokens),
             output_tokens: Some(usage.output_tokens),
             complete: usage.metered_since.is_some_and(|since| since <= from),
-            receipt_refs: usage.refs.iter().take(MAX_REFS).cloned().collect(),
+            receipt_refs: usage.refs.clone(),
         };
         let baseline_monthly = monthly(current, &workload);
         let mut stock: Vec<Choice> = registry
@@ -306,11 +296,11 @@ impl Brief {
                 let label = format!("switch to {}", row.catalog.model.as_str());
                 Some(Choice {
                     id: String::new(),
-                    label: bounded_label(&if estimate {
+                    label: if estimate {
                         format!("{label} (estimated price)")
                     } else {
                         label
-                    }),
+                    },
                     candidate: OfferCandidate::Stock {
                         model: pin.clone(),
                         licence: licence.clone(),
@@ -391,7 +381,7 @@ impl Brief {
             let recipe_ref = format!("training_run:{}", run.id.to_hex());
             recipes.push(Choice {
                 id: String::new(),
-                label: bounded_label(&format!("train from {}", base.model)),
+                label: format!("train from {}", base.model),
                 candidate: OfferCandidate::TrainRecipe {
                     base: base.clone(),
                     recipe_ref: recipe_ref.clone(),
@@ -445,12 +435,11 @@ impl Brief {
             exposures: seat_runs
                 .iter()
                 .filter_map(|run| run.eval_exposure.as_ref().map(|exposure| exposure.id))
-                .take(MAX_REFS)
                 .collect(),
             rubric_revision: cohort
                 .as_ref()
                 .map(|cohort| cohort.rubric_revision.clone())
-                .filter(|revision| bounded(revision, REF_BYTES)),
+                .filter(|revision| !revision.trim().is_empty()),
             // No measured card for the seat: unknown, never not-worse.
             card: None,
             losses: Vec::new(),
@@ -540,7 +529,7 @@ impl Brief {
             .as_deref()
             .map(str::trim)
             .filter(|text| !text.is_empty())
-            .map(|text| clip(text, LINE_BYTES).to_owned());
+            .map(str::to_owned);
         if self.previous.is_some() && what_changed.is_none() {
             return None;
         }
@@ -558,7 +547,7 @@ impl Brief {
             payback_months: payback(self.baseline_monthly, monthly, one_off),
         };
         let baseline = OfferOption {
-            label: bounded_label(&format!("keep {}", self.incumbent.model)),
+            label: format!("keep {}", self.incumbent.model),
             model: self.incumbent.clone(),
             // Keeping the seat costs nothing once.
             cost: cost(self.baseline_monthly, Some(0.0)),
@@ -577,23 +566,19 @@ impl Brief {
             })
             .collect();
         // The risk line carries the price note after the Coach's words.
-        let room = LINE_BYTES.saturating_sub(note.len() + 1);
         let risk = answer
             .risk
             .as_deref()
             .map(str::trim)
             .filter(|text| !text.is_empty())
-            .map_or_else(
-                || note.to_owned(),
-                |risk| format!("{} {note}", clip(risk, room)),
-            );
+            .map_or_else(|| note.to_owned(), |risk| format!("{risk} {note}"));
         let mut evidence = self.evidence;
         evidence.losses = answer
             .losses
             .iter()
             .map(|loss| loss.trim())
             .filter(|loss| !loss.is_empty())
-            .map(|loss| clip(loss, LINE_BYTES).to_owned())
+            .map(str::to_owned)
             .collect();
         evidence.risk = Some(risk);
         Some(TrainingOfferDraft {
@@ -631,14 +616,6 @@ fn parse_answer(text: &str) -> Option<AnswerWire> {
     let start = text.find('{')?;
     let end = text.rfind('}')?;
     serde_json::from_str(text.get(start..=end)?).ok()
-}
-
-fn bounded(value: &str, max: usize) -> bool {
-    !value.trim().is_empty() && value.len() <= max
-}
-
-fn bounded_label(value: &str) -> String {
-    clip(value, REF_BYTES).to_owned()
 }
 
 /// The model an offer proposes.
@@ -753,7 +730,7 @@ pub(super) fn check(
             observed_monthly_cost: observed,
             observed_score: None,
             held,
-            note: Some(clip(&note, LINE_BYTES).to_owned()),
+            note: Some(note),
         },
         now,
     )?;
