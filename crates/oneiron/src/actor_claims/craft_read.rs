@@ -1,18 +1,75 @@
 //! A resident's own craft as its runs read it (OF-490): the lessons and
 //! failure modes the system learned about it, and the ones its owner
 //! approved, every one.
+//!
+//! Every surface it speaks on reads the same craft in the same order. A
+//! pumped run keeps it in its task; a call on a queue attempt (a workflow
+//! leaf, a wave plan, a turn action, a dreaming) loads each note through
+//! the resident's pack door on that attempt, so its manifest names what the
+//! call was shown; a chat answer, which has no attempt, reads one snapshot
+//! and its reply's receipt keeps the exact pack. A call's craft travels as
+//! one message that names each note's claim and revision beside its text,
+//! so a captured request keeps its exposure exactly.
 
 use std::cmp::Reverse;
+use std::collections::BTreeSet;
+
+use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind};
 use crate::batch::EntityMetadataHeader;
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject, claim_surfaceable};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject, claim_surfaceable, encode_claim_body,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 
 use super::candidate::is_approved_craft_verdict;
 use super::rows::{PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON};
+
+/// What heads a craft section; one line per note follows it.
+pub const CRAFT_HEADING: &str = "Your craft notes (lessons and failure modes you keep):";
+
+/// One craft note as a call is shown it: its claim, its body and the
+/// revision its pack door stamps, the BLAKE3 of its encoded body.
+#[derive(Debug, Clone)]
+pub struct CraftNote {
+    pub claim: EntityId,
+    pub body: ClaimBody,
+    pub revision: String,
+}
+
+impl CraftNote {
+    /// `body` as claim `claim`'s note, its revision as its pack door
+    /// computes it.
+    ///
+    /// # Errors
+    ///
+    /// A body that does not encode.
+    pub fn new(claim: EntityId, body: ClaimBody) -> Result<Self> {
+        let revision = blake3::hash(&encode_claim_body(&body)?)
+            .to_hex()
+            .to_string();
+        Ok(Self {
+            claim,
+            body,
+            revision,
+        })
+    }
+
+    /// The manifest row its exposure at `at` stamps.
+    #[must_use]
+    pub fn entry(&self, at: u64) -> ManifestEntry {
+        ManifestEntry::new(
+            ManifestKind::ActorClaim,
+            self.claim.to_hex(),
+            self.revision.as_str(),
+            at,
+        )
+    }
+}
 
 /// The ids of `resident`'s craft current at `at`, read on one snapshot,
 /// newest first: each lesson and failure mode about exactly it that is
@@ -33,27 +90,62 @@ pub fn resident_craft_claim_ids(
     at: u64,
 ) -> Result<Vec<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
+    Ok(resident_craft_in_txn(vault, &rtxn, resident, at)?
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect())
+}
+
+/// [`resident_craft_claim_ids`]' craft with each note's body and revision,
+/// on the same snapshot and in the same order: the pack a call with no
+/// attempt to stamp (a chat answer) is shown. A note whose value is no
+/// text is left out, as no section can show it.
+///
+/// # Errors
+///
+/// Storage errors, a claim with no entity header, and a body that does not
+/// encode.
+pub fn resident_craft_pack(vault: &Vault, resident: &EntityId, at: u64) -> Result<Vec<CraftNote>> {
+    let rtxn = vault.store.env.read_txn()?;
+    resident_craft_in_txn(vault, &rtxn, resident, at)?
+        .into_iter()
+        .filter(|(_, body)| craft_note_line(body).is_some())
+        .map(|(claim, body)| CraftNote::new(claim, body))
+        .collect()
+}
+
+/// `resident`'s current craft on `rtxn`, each id with its body, newest
+/// first.
+fn resident_craft_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    resident: &EntityId,
+    at: u64,
+) -> Result<Vec<(EntityId, ClaimBody)>> {
     let mut rows = Vec::new();
-    for id in vault.claims_for_subject_in_txn(&rtxn, resident)? {
-        let Some(body) = vault.get_claim_in_txn(&rtxn, &id)? else {
+    for id in vault.claims_for_subject_in_txn(rtxn, resident)? {
+        let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
             continue;
         };
         if !is_current_craft(&body, resident, at)
-            || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, &rtxn, &id)?
+            || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, &id)?
         {
             continue;
         }
         let raw = vault
             .store
-            .port_entity_record(&rtxn, &id)?
+            .port_entity_record(rtxn, &id)?
             .map(|row| row.encode())
             .ok_or(Error::CorruptedIndex("actor claim entity"))?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        rows.push(craft_order(&body, header.occurred_start, id));
+        rows.push((craft_order(&body, header.occurred_start, id), body));
     }
-    rows.sort_unstable();
-    Ok(rows.into_iter().map(|Reverse((_, id))| id).collect())
+    rows.sort_unstable_by_key(|(order, _)| *order);
+    Ok(rows
+        .into_iter()
+        .map(|(Reverse((_, id)), body)| (id, body))
+        .collect())
 }
 
 /// Whether `body` is `resident`'s craft at `at`: a surfaceable lesson or
@@ -75,4 +167,253 @@ fn is_current_craft(body: &ClaimBody, resident: &EntityId, at: u64) -> bool {
 /// the row's occurred start), then the larger claim id first.
 fn craft_order(body: &ClaimBody, occurred_start: u64, id: EntityId) -> Reverse<(u64, EntityId)> {
     Reverse((body.valid_from.unwrap_or(occurred_start), id))
+}
+
+/// One note's line in a craft section: its kind and its whole text. `None`
+/// for a claim that is no lesson or failure mode with a text value.
+#[must_use]
+pub fn craft_note_line(note: &ClaimBody) -> Option<String> {
+    let kind = match note.predicate.as_str() {
+        PREDICATE_ACTOR_LESSON => "lesson",
+        PREDICATE_ACTOR_FAILURE_MODE => "failure mode",
+        _ => return None,
+    };
+    let text = note.value.as_str()?;
+    Some(format!("- {kind}: {text}"))
+}
+
+/// The one message a call's craft travels in.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CraftMessage {
+    craft_notes: CraftSection,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CraftSection {
+    heading: String,
+    notes: Vec<CraftMessageNote>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CraftMessageNote {
+    claim: String,
+    revision: String,
+    line: String,
+}
+
+/// The text of the message a call is shown `notes` in, in their order: one
+/// JSON object, `{"craft_notes":{"heading":…,"notes":[{"claim","revision",
+/// "line"}]}}`, each note's claim and revision beside its whole line, so a
+/// captured request names its exact exposure ([`craft_message_entries`]).
+/// `None` for no notes. A note that is no lesson or failure mode with a
+/// text value is left out. Rule 5 caps none.
+#[must_use]
+pub fn craft_message_text(notes: &[CraftNote]) -> Option<String> {
+    let notes: Vec<CraftMessageNote> = notes
+        .iter()
+        .filter_map(|note| {
+            Some(CraftMessageNote {
+                claim: note.claim.to_hex(),
+                revision: note.revision.clone(),
+                line: craft_note_line(&note.body)?,
+            })
+        })
+        .collect();
+    if notes.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&CraftMessage {
+        craft_notes: CraftSection {
+            heading: CRAFT_HEADING.to_owned(),
+            notes,
+        },
+    })
+    .ok()
+}
+
+/// The craft a message's `text` showed, when it is a craft message
+/// ([`craft_message_text`]): one manifest row per note, in its order, at
+/// its own revision, stamped at `at`. `None` for any other text.
+#[must_use]
+pub fn craft_message_entries(text: &str, at: u64) -> Option<Vec<ManifestEntry>> {
+    let message: CraftMessage = serde_json::from_str(text).ok()?;
+    Some(
+        message
+            .craft_notes
+            .notes
+            .into_iter()
+            .map(|note| ManifestEntry::new(ManifestKind::ActorClaim, note.claim, note.revision, at))
+            .collect(),
+    )
+}
+
+/// The claim and revision of each actor claim `row`'s manifest names.
+fn stamped_craft(row: &AttemptRecord) -> BTreeSet<(String, String)> {
+    row.manifest()
+        .iter()
+        .filter(|entry| entry.kind == ManifestKind::ActorClaim)
+        .map(|entry| (entry.reference.clone(), entry.version.clone()))
+        .collect()
+}
+
+impl Vault {
+    /// `resident`'s craft current at `at`, newest first, each note loaded
+    /// through the resident's pack door on `attempt`, which stamps the
+    /// attempt's manifest: what a call on that queue attempt is shown
+    /// (OF-490). A note the manifest already names at the revision it reads
+    /// at now is shown again with no second row, so a re-entry of the same
+    /// attempt stamps nothing twice. A note the door no longer admits, or
+    /// whose value is no text, is left out and stamps nothing.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, a claim with no entity header, and a body that does
+    /// not encode.
+    pub fn load_resident_craft(
+        &self,
+        attempt: AttemptId,
+        resident: &EntityId,
+        at: u64,
+    ) -> Result<Vec<CraftNote>> {
+        let (listed, stamped) = {
+            let rtxn = self.store.env.read_txn()?;
+            let listed = resident_craft_in_txn(self, &rtxn, resident, at)?;
+            let stamped = AttemptQueue::new(self)
+                .get_in_txn(&rtxn, attempt)?
+                .map(|row| stamped_craft(&row))
+                .unwrap_or_default();
+            (listed, stamped)
+        };
+        let mut notes = Vec::new();
+        for (claim, body) in listed {
+            if craft_note_line(&body).is_none() {
+                continue;
+            }
+            let note = CraftNote::new(claim, body)?;
+            if stamped.contains(&(note.claim.to_hex(), note.revision.clone())) {
+                notes.push(note);
+                continue;
+            }
+            match self.load_resident_actor_claim(attempt, resident, &claim, at) {
+                Ok(body) => notes.push(CraftNote::new(claim, body)?),
+                // Moved since the list, or an attempt bound to another
+                // actor: this note is not shown.
+                Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(notes)
+    }
+
+    /// A continuation's craft (OF-490): the actor claims the attempt
+    /// `source`, the run its checkpoint names, was shown, copied onto the
+    /// leased successor `successor`'s own manifest in their order, each at
+    /// its source revision and at the successor's exposure time `at`. The
+    /// successor's task, its source's fork, already holds that section, so
+    /// nothing is read or loaded again. A source not bound to `resident`, or
+    /// that was shown none, copies nothing. Returns how many rows it copied.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::record_resident_craft_exposure`]'s refusals, and storage
+    /// errors.
+    pub fn inherit_resident_craft(
+        &self,
+        successor: &AttemptRecord,
+        source: AttemptId,
+        resident: &EntityId,
+        at: u64,
+    ) -> Result<usize> {
+        let inherited: Vec<ManifestEntry> = {
+            let rtxn = self.store.env.read_txn()?;
+            let Some(row) = AttemptQueue::new(self).get_in_txn(&rtxn, source)? else {
+                return Ok(0);
+            };
+            let bound = crate::skill::resident::receipt_resident_in_txn(
+                &self.store,
+                &rtxn,
+                &crate::receipt::attempt_pack_receipt_id(&source),
+            )?;
+            if bound != Some(*resident) {
+                return Ok(0);
+            }
+            row.manifest()
+                .iter()
+                .filter(|entry| entry.kind == ManifestKind::ActorClaim)
+                .map(|entry| {
+                    ManifestEntry::new(
+                        ManifestKind::ActorClaim,
+                        entry.reference.clone(),
+                        entry.version.clone(),
+                        at,
+                    )
+                })
+                .collect()
+        };
+        self.record_resident_craft_exposure(successor, resident, &inherited)
+    }
+
+    /// Stamps `entries`, craft of `resident` its call on the leased
+    /// `leased` was shown without a load (a continuation's inherited craft,
+    /// a reused captured request's), on the attempt's manifest: in the
+    /// caller's lease generation, the attempt's pack receipt bound to
+    /// `resident`, each row once, since a row of the same claim and revision
+    /// already on the attempt stands for it. Rows that are no actor claim are
+    /// left out. Returns how many rows it stamped.
+    ///
+    /// # Errors
+    ///
+    /// An attempt not leased in the caller's generation, a receipt bound to
+    /// another actor, a `resident` that runs nothing, and storage errors.
+    pub fn record_resident_craft_exposure(
+        &self,
+        leased: &AttemptRecord,
+        resident: &EntityId,
+        entries: &[ManifestEntry],
+    ) -> Result<usize> {
+        if !entries
+            .iter()
+            .any(|entry| entry.kind == ManifestKind::ActorClaim)
+        {
+            return Ok(0);
+        }
+        let lease_owner = leased
+            .lease_owner
+            .as_deref()
+            .ok_or(Error::InvalidClaimBody(
+                "a craft exposure requires the caller's live attempt lease",
+            ))?;
+        self.with_write_txn_grouped(|txn| {
+            let queue = AttemptQueue::new(self);
+            queue.require_skill_load_lease_in_txn(
+                txn,
+                leased.id,
+                lease_owner,
+                leased.attempt_count,
+            )?;
+            crate::skill::resident::bind_receipt_in_txn(
+                self,
+                txn,
+                &crate::receipt::attempt_pack_receipt_id(&leased.id),
+                resident,
+            )?;
+            let mut held = queue
+                .get_in_txn(txn, leased.id)?
+                .map(|row| stamped_craft(&row))
+                .ok_or(Error::EntityNotFound)?;
+            let mut stamped = 0;
+            for entry in entries {
+                if entry.kind == ManifestKind::ActorClaim
+                    && held.insert((entry.reference.clone(), entry.version.clone()))
+                {
+                    queue.append_manifest_entry_in_txn(txn, leased.id, entry.clone())?;
+                    stamped += 1;
+                }
+            }
+            Ok(stamped)
+        })
+    }
 }

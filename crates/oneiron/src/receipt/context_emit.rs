@@ -1,13 +1,22 @@
 //! Frozen context on text emits, retained on the existing outbound receipt spine.
+//! A chat reply, which runs on no queue attempt, keeps the craft its request
+//! showed on the same spine (OF-490).
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::{ContextReceiptFields, ReceiptKind, ReceiptRecord, append_context_receipt_fields};
+use super::{
+    ContextReceiptFields, ReceiptKind, ReceiptRecord, append_context_receipt_fields,
+    append_pack_manifest_fields,
+};
 use crate::EntityId;
+use crate::attempt_queue::ManifestEntry;
 use crate::memory::{
     Memory, MemoryError, MemoryResult, actor_is_vault_owner_in_txn, verify_actor_binding_in_txn,
 };
+
+/// The outcome a reply's craft receipt carries: never a context emit's.
+const CRAFT_EXPOSED: &str = "craft_exposed";
 
 /// A read of the context actually sent for an emit. No field is recompiled at read time.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -98,6 +107,89 @@ impl Memory<'_> {
                     MemoryError::from(crate::Error::CorruptedIndex("context emit receipt stamp"))
                 })?,
             }));
+        }
+        Ok(None)
+    }
+
+    /// Records the craft a completed chat reply was shown (OF-490), as this
+    /// actor, the answering agent: its MESSAGE `message` in `conversation`,
+    /// the exact request its rung sent and the reply it saved, and the pack,
+    /// in the order the request showed it, as the receipt's manifest fields.
+    /// A reply runs on no queue attempt, so this outbound receipt keeps its
+    /// pack; a reply shown no craft records nothing here.
+    ///
+    /// # Errors
+    ///
+    /// An actor this credential does not bind, a manifest that does not
+    /// encode, and storage errors.
+    pub fn record_craft_reply(
+        &self,
+        conversation: EntityId,
+        message: EntityId,
+        manifest: &[ManifestEntry],
+        request_digest: String,
+        result_digest: String,
+    ) -> MemoryResult<String> {
+        let _reader = self.read_key()?;
+        let mut receipt = ReceiptRecord {
+            receipt_id: format!("emit:{}", EntityId::now().to_hex()),
+            receipt_kind: ReceiptKind::Outbound,
+            occurred_at: self.vault().store.clock.now_recorded_at(),
+            actor: Some(self.actor().to_hex()),
+            on_behalf_of: None,
+            outcome: CRAFT_EXPOSED.to_owned(),
+            job_ref: None,
+            trigger_ref: Some(conversation.to_hex()),
+            policy_trace: Vec::new(),
+            fields: BTreeMap::from([
+                ("conversation_id".to_owned(), conversation.to_hex()),
+                ("message_id".to_owned(), message.to_hex()),
+                ("request_digest".to_owned(), request_digest),
+                ("result_digest".to_owned(), result_digest),
+                (
+                    "actor_class".to_owned(),
+                    self.actor_class().gate_actor_class().to_owned(),
+                ),
+            ]),
+        };
+        append_pack_manifest_fields(&mut receipt, manifest)?;
+        super::direct_dispatch::record_with_ref(self.vault(), receipt).map_err(MemoryError::from)
+    }
+
+    /// The craft a reply's receipt names (OF-490), in the order its request
+    /// showed it: the caller's own reply's, or any reply's for the vault's
+    /// live owner. A missing ref, another actor's, and a receipt that is no
+    /// reply's craft all read as none.
+    ///
+    /// # Errors
+    ///
+    /// An actor this credential does not bind, a receipt whose manifest does
+    /// not decode, and storage errors.
+    pub fn craft_reply_manifest(
+        &self,
+        receipt_ref: &str,
+    ) -> MemoryResult<Option<Vec<ManifestEntry>>> {
+        if !receipt_ref.starts_with("emit:") {
+            return Ok(None);
+        }
+        let vault = self.vault();
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        verify_actor_binding_in_txn(vault, &txn, self.actor(), self.actor_class())?;
+        let owner = actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?;
+        drop(txn);
+        for record in super::direct_dispatch::receipts(vault)? {
+            if record.receipt_id != receipt_ref || record.outcome != CRAFT_EXPOSED {
+                continue;
+            }
+            let own = record.actor.as_deref() == Some(self.actor().to_hex().as_str())
+                && record.fields.get("actor_class").map(String::as_str)
+                    == Some(self.actor_class().gate_actor_class());
+            if !own && !owner {
+                return Ok(None);
+            }
+            return record.pack_manifest_entries().map(Some).ok_or_else(|| {
+                MemoryError::from(crate::Error::CorruptedIndex("craft reply receipt manifest"))
+            });
         }
         Ok(None)
     }
