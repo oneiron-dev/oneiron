@@ -45,8 +45,9 @@ use super::*;
 use crate::error::{Error, RecordError, Result};
 use crate::{EntityId, HostingPrivacyPosture, Vault};
 
-/// The fold-state schema an image encodes. A decoder refuses any other.
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 4;
+/// The fold-state schema an image encodes. A decoder refuses any other. 5:
+/// each row summary marks whether its body is required (FIX 2988).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 5;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.
@@ -59,8 +60,7 @@ pub const AUTHORITY_ARCHIVE_ID_CONTEXT: &str = "oneiron/authority/archive/id/v1"
 mod row;
 
 pub use row::AuthorityCheckpointRow;
-pub(super) use row::carries_body;
-use row::row_body_matches;
+use row::shape_row;
 
 /// The fold the image commits: the settled once fold before any install's
 /// stale-roster window, with no receiver-local field.
@@ -367,7 +367,9 @@ impl AuthorityCheckpointV2 {
     }
 
     /// Covered, frontier and rows: sorted, unique, ancestor-closed from the
-    /// genesis, and each carried body the row it summarizes.
+    /// genesis, each body present exactly where its summary requires one
+    /// (the genesis always does), and each carried body the row it
+    /// summarizes.
     fn shape_rows(&self) -> Result<()> {
         if !ascending(&self.covered)
             || !ascending(&self.frontier)
@@ -379,7 +381,7 @@ impl AuthorityCheckpointV2 {
         if self
             .rows
             .get(&self.genesis)
-            .is_none_or(|genesis| !genesis.parents.is_empty())
+            .is_none_or(|genesis| !genesis.parents.is_empty() || !genesis.body_required)
         {
             return Err(refused("checkpoint image genesis"));
         }
@@ -391,9 +393,7 @@ impl AuthorityCheckpointV2 {
                 }
                 named.insert(*parent);
             }
-            if let Some(body) = &row.body {
-                row_body_matches(hash, row, body)?;
-            }
+            shape_row(hash, row)?;
         }
         self.shape_graph()?;
         if !self
@@ -731,15 +731,7 @@ impl Vault {
             .iter()
             .map(|hash| {
                 let (entry, body) = held.get(hash).ok_or_else(invalid_authority)?;
-                let row = AuthorityCheckpointRow {
-                    signer: entry.signer_key().clone(),
-                    seq: entry.seq,
-                    parents: entry.parent_hashes.clone(),
-                    world: super::world_privacy::side_world(&entry.op),
-                    slip_op: super::log_budget::is_slip_op(&entry.op),
-                    body: carries_body(&entry.op).then(|| body.clone()),
-                };
-                Ok((*hash, row))
+                Ok((*hash, AuthorityCheckpointRow::of(entry, body)))
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
         let image = AuthorityCheckpointV2 {

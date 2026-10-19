@@ -1,6 +1,14 @@
 //! One covered row's summary in a checkpoint v2 image: the row's scaffold
 //! and, for a row a fold or a store door past the image reads whole, its
 //! canonical signed body.
+//!
+//! Each summary marks whether its body is required (FIX 2988): an image that
+//! drops a body its row's kind requires fails at decode, before any adopter
+//! or door reads it, rather than undercounting a door's view. The marker is
+//! committed by the image id and so by every attestation of it; it is no
+//! proof against the raw rows. An adopter still trusts the attested fold:
+//! without raw history it cannot tell a dishonest signer who changed both a
+//! row's marker and its body.
 
 use serde::{Deserialize, Serialize};
 
@@ -20,11 +28,17 @@ pub struct AuthorityCheckpointRow {
     /// consumption): a store door counts a slip issuer's slip ops toward no
     /// bound.
     pub slip_op: bool,
+    /// Whether the image must carry the row's body: true exactly for a row
+    /// whose kind a fold or a store door past the image reads whole
+    /// ([`carries_body`]), whether or not the row folded valid. The genesis
+    /// always requires it.
+    pub body_required: bool,
     /// The canonical signed body of a row a fold or a store door past the
     /// image reads whole (an approval, a binding, a confirm, a revocation, a
     /// handoff, an enrollment, the genesis, a root record, a machine profile,
     /// a world edit, a grant travel choice, a world-key record or an owner
-    /// work request or result); None for every other row.
+    /// work request or result); None for every other row. Present exactly
+    /// when `body_required`.
     #[serde(with = "body_bytes")]
     pub body: Option<Vec<u8>>,
 }
@@ -39,7 +53,7 @@ pub struct AuthorityCheckpointRow {
 /// root records that name owner anchors, the actor revocations a signer's
 /// revocations count, and the world edits and grant travel choices that may
 /// be a stranger's.
-pub(in crate::authority) fn carries_body(op: &AuthorityOp) -> bool {
+fn carries_body(op: &AuthorityOp) -> bool {
     crate::authority::fold_resume::is_projected(op)
         || matches!(
             op,
@@ -55,9 +69,40 @@ pub(in crate::authority) fn carries_body(op: &AuthorityOp) -> bool {
         )
 }
 
-/// A carried body is the canonical signed row its summary names, and a row
-/// the image carries whole.
-pub(super) fn row_body_matches(
+impl AuthorityCheckpointRow {
+    /// The summary of covered row `entry`, whose stored canonical signed body
+    /// is `body`: the one place a builder marks a row's body required and
+    /// carries it.
+    pub(in crate::authority) fn of(entry: &AuthorityLogEntry, body: &[u8]) -> Self {
+        let body_required = carries_body(&entry.op);
+        Self {
+            signer: entry.signer_key().clone(),
+            seq: entry.seq,
+            parents: entry.parent_hashes.clone(),
+            world: crate::authority::world_privacy::side_world(&entry.op),
+            slip_op: crate::authority::log_budget::is_slip_op(&entry.op),
+            body_required,
+            body: body_required.then(|| body.to_vec()),
+        }
+    }
+}
+
+/// One covered row's summary, checked alone: its body is present exactly
+/// where it is marked required (FIX 2988), and a carried body is the row it
+/// summarizes.
+pub(super) fn shape_row(hash: &AuthorityEntryHash, row: &AuthorityCheckpointRow) -> Result<()> {
+    if row.body_required != row.body.is_some() {
+        return Err(refused("checkpoint image row body presence"));
+    }
+    match &row.body {
+        Some(body) => row_body_matches(hash, row, body),
+        None => Ok(()),
+    }
+}
+
+/// A carried body is the canonical signed row its summary names, of a kind
+/// the image carries whole, as its summary marks it.
+fn row_body_matches(
     hash: &AuthorityEntryHash,
     row: &AuthorityCheckpointRow,
     body: &[u8],
@@ -69,7 +114,7 @@ pub(super) fn row_body_matches(
         || entry.parent_hashes != row.parents
         || crate::authority::world_privacy::side_world(&entry.op) != row.world
         || crate::authority::log_budget::is_slip_op(&entry.op) != row.slip_op
-        || !carries_body(&entry.op)
+        || carries_body(&entry.op) != row.body_required
     {
         return Err(refused("checkpoint image row body"));
     }
