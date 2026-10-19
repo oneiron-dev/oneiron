@@ -21,7 +21,7 @@ use oneiron::recovery::{
 use oneiron::sync::WindowManager;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::client::fetch_sealed_bundle_with_kit;
-use oneiron::sync::residence::sealed_generation_from_hex;
+use oneiron::sync::residence::{RecoveryCheckpointTrust, sealed_generation_from_hex};
 use oneiron::world_keys::{
     IssuedWorldKit, KitConfirmation, RecoveryRootId, RecoveryRootSeed, SealedKeyPads,
     SealedVaultBundle, VaultKeyStatus, WORLD_KIT_ESCROW, Withheld, WorldKeyId, WorldKitRestore,
@@ -49,6 +49,20 @@ const RESTORE_USER_ID: &str = "server";
 
 /// What to do instead while a server holds the vault.
 const INSTEAD: &str = "or read the kits at `/v1/owner/recovery-kit`";
+
+/// What a sealed restore does with the checkpoint image a bundle carries
+/// when the owner fixed no pin for it.
+enum UnfixedCheckpoint {
+    /// Adopt nothing and restore as before: the tail imports alone, whole
+    /// from a hydrated publisher, and one that stands on the image refuses
+    /// with the rerun that adopts it.
+    RestoreWithoutAdopting,
+}
+
+/// A carried pin is never taken on the bundle's word (FIX 5541, CALLS:
+/// UNFIXED_CHECKPOINT; a refusal would stop a hydrated publisher's restore
+/// that works without the image).
+const UNFIXED_CHECKPOINT: UnfixedCheckpoint = UnfixedCheckpoint::RestoreWithoutAdopting;
 
 pub fn recovery_kit(command: RecoveryKitCommand) -> anyhow::Result<()> {
     match command {
@@ -501,8 +515,37 @@ fn restore_from_bundle(
         Arc::new(Materializer::with_lease_vault_id(config.lease_vault_id)),
         RESTORE_USER_ID,
     ));
-    let restored = manager
-        .restore_sealed_bundle_with_kit(&owner, &vault_id, &bundle, &pads, &seed, confirm)?;
+    // A checkpoint image the base carries is adopted only under a pin the
+    // owner fixed (FIX 5541).
+    let carried = manager
+        .sealed_bundle_checkpoint_pin(&vault_id, &bundle, &seed)?
+        .map(|pin| pin.digest())
+        .transpose()?;
+    let trust = match carried {
+        Some(digest) => checkpoint_trust(args, digest)?,
+        None => {
+            if args.checkpoint_pin.is_some() || args.confirm_checkpoint.is_some() {
+                eprintln!("the sealed bundle carries no checkpoint image: none is adopted");
+            }
+            None
+        }
+    };
+    let restored = match (carried, trust) {
+        (_, Some(trust)) => manager.restore_sealed_bundle_with_kit_checkpoint(
+            &owner, &vault_id, &bundle, &pads, &seed, confirm, trust,
+        )?,
+        // A tail that stands on the image refuses without it.
+        (Some(digest), None) => manager
+            .restore_sealed_bundle_with_kit(&owner, &vault_id, &bundle, &pads, &seed, confirm)
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "{error}; to adopt the bundle's checkpoint image, rerun with {}",
+                    adopt_flags(&digest)
+                )
+            })?,
+        (None, None) => manager
+            .restore_sealed_bundle_with_kit(&owner, &vault_id, &bundle, &pads, &seed, confirm)?,
+    };
     let take = restored.take;
     emit(&BundleRestored {
         keys: Restored::from(WorldKitRestore {
@@ -520,6 +563,55 @@ fn restore_from_bundle(
         unchanged: take.unchanged,
         skipped: take.skipped,
     })
+}
+
+/// How the owner fixed the pin of the checkpoint image a sealed bundle
+/// carries, `digest` being the pin the bundle names: printed first, and never
+/// trusted on the bundle's word. `--checkpoint-pin`, carried from one of the
+/// owner's machines, or `--confirm-checkpoint`, the printed digest given back,
+/// must be it. `None` when the owner gave neither ([`UNFIXED_CHECKPOINT`]).
+/// The kit's root confirmation never stands in for either.
+fn checkpoint_trust(
+    args: &RecoveryKitRestoreArgs,
+    digest: [u8; 32],
+) -> anyhow::Result<Option<RecoveryCheckpointTrust>> {
+    let bundle = hex(&digest);
+    eprintln!(
+        "the sealed bundle carries a checkpoint image under pin {bundle}: UNTRUSTED, the \
+         bundle's own word"
+    );
+    if let Some(expected) = args.checkpoint_pin {
+        anyhow::ensure!(
+            expected == digest,
+            "the bundle's checkpoint pin is not --checkpoint-pin: expected={} bundle={bundle}",
+            hex(&expected)
+        );
+        return Ok(Some(RecoveryCheckpointTrust::IndependentPin(expected)));
+    }
+    if let Some(confirmed) = args.confirm_checkpoint {
+        anyhow::ensure!(
+            confirmed == digest,
+            "the bundle's checkpoint pin is not --confirm-checkpoint: confirmed={} \
+             bundle={bundle}",
+            hex(&confirmed)
+        );
+        return Ok(Some(RecoveryCheckpointTrust::OwnerConfirmation(digest)));
+    }
+    match UNFIXED_CHECKPOINT {
+        UnfixedCheckpoint::RestoreWithoutAdopting => {
+            eprintln!("the restore adopts it only with {}", adopt_flags(&digest));
+            Ok(None)
+        }
+    }
+}
+
+/// The flags that adopt a carried checkpoint image under pin `digest`.
+fn adopt_flags(digest: &[u8; 32]) -> String {
+    format!(
+        "--checkpoint-pin <HEX>, read on one of your machines that adopted it, or \
+         --confirm-checkpoint {}",
+        hex(digest)
+    )
 }
 
 /// `--sealed-home`: the sealed bundle and its pad object, fetched from the home

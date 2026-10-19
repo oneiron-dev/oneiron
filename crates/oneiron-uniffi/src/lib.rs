@@ -123,7 +123,10 @@ impl Oneiron {
         let path = path.map(std::path::PathBuf::from);
         let inner = oneiron_remote::OneironClient::open(
             path.as_deref(),
-            &oneiron_remote::OpenOptions { dimensions },
+            &oneiron_remote::OpenOptions {
+                dimensions,
+                device_class: None,
+            },
         )?;
         Ok(Arc::new(Self {
             inner,

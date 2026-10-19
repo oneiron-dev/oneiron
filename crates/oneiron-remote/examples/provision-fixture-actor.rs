@@ -47,6 +47,7 @@ fn main() -> std::process::ExitCode {
     // Embedded and server defaults differ; neither default defines this fixture.
     let options = oneiron_remote::OpenOptions {
         dimensions: Some(1024),
+        device_class: None,
     };
     let client =
         match oneiron_remote::OneironClient::open(Some(std::path::Path::new(&path)), &options) {

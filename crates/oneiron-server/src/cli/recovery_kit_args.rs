@@ -128,6 +128,43 @@ pub struct RecoveryKitRestoreArgs {
     #[arg(long, value_name = "HEX", requires = "sealed_source")]
     pub vault_id: Option<String>,
 
+    /// With `--sealed-bundle` or `--sealed-home`: the pin digest of the
+    /// checkpoint image the bundle carries, 64 hex digits, read on one of your
+    /// machines that adopted it. A bundle naming another pin is refused.
+    #[arg(
+        long,
+        value_name = "HEX",
+        value_parser = pin_digest,
+        requires = "sealed_source",
+        conflicts_with = "confirm_checkpoint"
+    )]
+    pub checkpoint_pin: Option<[u8; 32]>,
+
+    /// With `--sealed-bundle` or `--sealed-home`: the pin digest the restore
+    /// printed for the bundle's checkpoint image, given back to adopt the
+    /// image under it. A bundle naming another pin is refused.
+    #[arg(
+        long,
+        value_name = "HEX",
+        value_parser = pin_digest,
+        requires = "sealed_source"
+    )]
+    pub confirm_checkpoint: Option<[u8; 32]>,
+
     #[command(flatten)]
     pub serve: ServeArgs,
+}
+
+/// A checkpoint pin's digest: exactly 64 hex digits, either case.
+fn pin_digest(text: &str) -> Result<[u8; 32], String> {
+    let refused = || "a pin digest is 64 hex digits".to_owned();
+    if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(refused());
+    }
+    let mut digest = [0u8; 32];
+    for (at, byte) in digest.iter_mut().enumerate() {
+        let pair = text.get(2 * at..2 * at + 2).ok_or_else(refused)?;
+        *byte = u8::from_str_radix(pair, 16).map_err(|_| refused())?;
+    }
+    Ok(digest)
 }

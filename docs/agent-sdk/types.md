@@ -21,6 +21,12 @@
 export type OpenOptions = {
   /** Embedding vector dimensions; omitted takes the engine default. */
   dimensions?: number
+  /**
+   * The class of machine the host declares this install to be, set before the
+   * vault opens (FIX 5560): `"computer"`, the default when omitted, or
+   * `"phone"`. Never read off the operating system.
+   */
+  deviceClass?: "computer" | "phone"
 }
 
 /**
