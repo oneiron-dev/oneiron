@@ -7,8 +7,15 @@
 //! output ([`NativeOutput`]: a created deck, an image export, any organ's
 //! export file) keeps its file and report; its Keep appends the file as a
 //! version forked from the head it was made against, with its made_by
-//! envelope. Both settle through the one consume-once ledger.
+//! envelope. A deck export waits pinned to the version the deck projected
+//! over, and its Keep also rebinds the deck to the version it lands
+//! ([`DeckExportHold`], FIX 2700). Both settle through the one consume-once
+//! ledger.
 
+use std::collections::BTreeMap;
+
+use oneiron_docedit::edit::transaction::IdMarks;
+use oneiron_docedit::live::{ExportKey, NodeBinding, NodeId};
 use serde::{Deserialize, Serialize};
 
 use super::codec::{RECORD, settlement_key_parts};
@@ -19,8 +26,8 @@ use super::records::{
 use crate::Vault;
 use crate::anchored_annotation::ReanchorSummary;
 use crate::blob_artifact::{
-    BLOB_ARTIFACT_RUN_REF_MAX_BYTES, BlobVersionProvenance, CalcEngineStamp, hash_hex,
-    read_blob_artifact_head_in_txn,
+    BLOB_ARTIFACT_RUN_REF_MAX_BYTES, BlobVersionProvenance, CalcEngineStamp, VersionReconciliation,
+    hash_hex, read_blob_artifact_head_in_txn,
 };
 use crate::edit_roundtrip::{
     EditManifest, EditProposal, OfficeFormat, RecalcStatus, SheetAnswerBundle, StructureSummary,
@@ -51,6 +58,31 @@ pub(super) struct PendingRow {
     base_content_hash: Option<[u8; 32]>,
     new_bytes: Vec<u8>,
     body: PendingBody,
+    /// A deck export's projection, which its Keep rebinds the deck to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    deck: Option<DeckExportHold>,
+}
+
+/// A deck export waiting for Keep (FIX 2700): what its Keep needs to bind
+/// the deck to the version it lands. Only the deck export door writes one,
+/// with the row's base the version the deck projected over, never the head
+/// it found, so a version that landed outside the deck stays beside it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DeckExportHold {
+    /// The deck body's frontier the export projects.
+    pub(crate) frontier: Vec<u8>,
+    /// The projection's key: its state hash pins the deck state it binds.
+    pub(crate) key: ExportKey,
+    pub(crate) document_version: u64,
+    /// Every live node's binding in the exported bytes.
+    pub(crate) bindings: BTreeMap<NodeId, NodeBinding>,
+    /// BLAKE3 of every non-slide part in the exported bytes.
+    pub(crate) opaque_parts: BTreeMap<String, [u8; 32]>,
+    pub(crate) id_marks: IdMarks,
+    /// The export record's count of changed parts and effect receipts.
+    pub(crate) changes: u64,
+    pub(crate) effects: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -282,6 +314,7 @@ impl Vault {
             base_version: proposal.base_version,
             base_content_hash: Some(proposal.base_content_hash),
             new_bytes: proposal.new_bytes.clone(),
+            deck: None,
             body: PendingBody::Edit {
                 format: proposal.format,
                 manifest: proposal.manifest.to_msgpack()?,
@@ -305,6 +338,31 @@ impl Vault {
         output: &NativeOutput,
         actor: WriteActor,
         retained_at: u64,
+    ) -> Result<PendingProposalView> {
+        self.propose_output(artifact_id, output, actor, retained_at, None)
+    }
+
+    /// Offers a deck export as a waiting proposal pinned to `base`, the
+    /// version and hash the deck projected over, holding what its Keep needs
+    /// to bind the deck to the version it lands (FIX 2700).
+    pub(crate) fn propose_deck_export(
+        &self,
+        artifact_id: &EntityId,
+        output: &NativeOutput,
+        (actor, retained_at): (WriteActor, u64),
+        base: (u64, [u8; 32]),
+        hold: DeckExportHold,
+    ) -> Result<PendingProposalView> {
+        self.propose_output(artifact_id, output, actor, retained_at, Some((base, hold)))
+    }
+
+    fn propose_output(
+        &self,
+        artifact_id: &EntityId,
+        output: &NativeOutput,
+        actor: WriteActor,
+        retained_at: u64,
+        deck: Option<((u64, [u8; 32]), DeckExportHold)>,
     ) -> Result<PendingProposalView> {
         let body = self
             .get_blob_artifact(artifact_id)?
@@ -335,14 +393,19 @@ impl Vault {
             crate::edit_roundtrip::read_office_package(&output.bytes)?;
         }
         let head = self.blob_artifact_head(artifact_id)?;
+        let base = match &deck {
+            Some((base, _)) => Some(*base),
+            None => head.as_ref().map(|head| (head.version, head.content_hash)),
+        };
         let row = PendingRow {
             proposal_ref: output.run_ref.clone(),
             retained_by: actor.entity_ref(),
             retained_at,
             made_by: output.made_by.clone(),
-            base_version: head.as_ref().map(|head| head.version),
-            base_content_hash: head.as_ref().map(|head| head.content_hash),
+            base_version: base.map(|(version, _)| version),
+            base_content_hash: base.map(|(_, hash)| hash),
             new_bytes: output.bytes.clone(),
+            deck: deck.map(|(_, hold)| hold),
             body: PendingBody::Output {
                 name: output.name.clone(),
                 media_type: output.media_type.clone(),
@@ -391,7 +454,8 @@ impl Vault {
 
     /// Keeps one waiting proposal: a held edit settles through
     /// [`Vault::settle_select_edit_proposal_made_by`]; a native output lands
-    /// as a version forked from the head it was made against.
+    /// as a version forked from the head it was made against, the head it
+    /// replaced kept beside it, and a deck export binds the deck to it.
     pub fn keep_pending_proposal(
         &self,
         artifact_id: &EntityId,
@@ -469,10 +533,9 @@ impl Vault {
             let record = output_record(
                 &row,
                 SettleOutcomeKind::Discarded,
-                consent,
-                actor,
+                (consent, actor),
                 learned_at,
-                None,
+                (None, None),
             );
             let key = settlement_key_parts(artifact_id, proposal_ref);
             self.with_write_txn_grouped(|wtxn| {
@@ -509,7 +572,7 @@ impl Vault {
         let provenance = BlobVersionProvenance::AgentRun {
             run_ref: row.proposal_ref.clone(),
         };
-        let (version, record) = self.with_write_txn_grouped(|wtxn| {
+        let (version, record, reconciliation) = self.with_write_txn_grouped(|wtxn| {
             self.authorize_settle_in_txn(wtxn, consent, actor)?;
             if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
                 return Err(already_settled(&existing));
@@ -518,6 +581,8 @@ impl Vault {
             // The output forks from the version it was made against; a later
             // head keeps both, as a person may keep a machine version beside
             // their own. Made against nothing, it lands on whatever head is.
+            // A deck export was made against the version its deck projected
+            // over, whatever head it found then (FIX 2700).
             let fork_parent = row
                 .base_version
                 .filter(|base| head.as_ref().is_some_and(|head| head.version != *base));
@@ -546,22 +611,35 @@ impl Vault {
                     None,
                 )?,
             };
+            if let Some(hold) = &row.deck {
+                self.keep_deck_export_in_txn(
+                    wtxn,
+                    artifact_id,
+                    hold,
+                    (row.base_version, row.base_content_hash),
+                    &version,
+                    (actor, row.made_by.as_ref(), learned_at),
+                )?;
+            }
+            // The head it replaced is the version an Undo restores.
+            let replaced = row.base_version.and(head.as_ref().map(|head| head.version));
             let record = output_record(
                 row,
                 SettleOutcomeKind::Selected,
-                consent,
-                actor,
+                (consent, actor),
                 learned_at,
-                Some(&version),
+                (Some(&version), replaced),
             );
             RECORD.put(&self.store, wtxn, &key, &record)?;
-            Ok((version, record))
+            let reconciliation = VersionReconciliation::of(fork_parent, head.as_ref());
+            Ok((version, record, reconciliation))
         })?;
         Ok(SettleSelectOutcome {
             stranded_proposal: None,
             version,
             reanchor: ReanchorSummary::default(),
             receipt: settlement_receipt_record(*artifact_id, &record)?,
+            reconciliation,
         })
     }
 
@@ -608,13 +686,17 @@ impl Vault {
     }
 }
 
+/// The ledger record of a native output's settle: `version` the version it
+/// became, `replaced` the head that version replaced.
 fn output_record(
     row: &PendingRow,
     outcome: SettleOutcomeKind,
-    consent: &SettleConsent,
-    actor: WriteActor,
+    (consent, actor): (&SettleConsent, WriteActor),
     settled_at: u64,
-    version: Option<&crate::blob_artifact::BlobArtifactVersion>,
+    (version, replaced): (
+        Option<&crate::blob_artifact::BlobArtifactVersion>,
+        Option<u64>,
+    ),
 ) -> SettlementRecord {
     let report = match &row.body {
         PendingBody::Output { report, .. } => report.as_bytes(),
@@ -626,7 +708,7 @@ fn output_record(
         settled_at,
         actor_ref: Some(actor.entity_ref().to_hex()),
         brief_ref: consent.brief_ref().map(str::to_owned),
-        before_version: version.and(row.base_version),
+        before_version: version.and(replaced),
         version: version.map(|version| version.version),
         content_hash: version.map(|version| version.content_hash),
         manifest_ref: version.map(|_| *blake3::hash(report).as_bytes()),

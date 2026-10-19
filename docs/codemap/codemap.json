@@ -6936,15 +6936,16 @@
       "ArtifactExport",
       "ArtifactKind",
       "ArtifactVersionView",
-      "ArtifactView"
+      "ArtifactView",
+      "VersionReconciliation"
      ],
      "path": "src/blob_artifact/family.rs",
      "purpose": "The artifact family contract (ARCH-0078): every deliverable is an artifact, and every kind gives the same…",
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 6,
-      "struct": 3
+      "fn": 7,
+      "struct": 4
      }
     },
     {
@@ -24434,7 +24435,7 @@
      "path": "src/edit_settle/mod.rs",
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 7
      }
     },
@@ -24465,7 +24466,7 @@
      "purpose": "The proposal landing (ARCH-0078): machine work waits beside the live artifact, never on it, until a person…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 8,
       "struct": 2
@@ -37835,7 +37836,7 @@
      "purpose": "The PPTX body: the OF-510 live deck (`oneiron_docedit::live`) as a Loro document on the typed-body door…",
      "surface": {
       "crate-vis": 7,
-      "fn": 10,
+      "fn": 7,
       "re-export": 2,
       "struct": 3
      }
@@ -37848,6 +37849,17 @@
      "purpose": "The PPTX body inside its Loro document, schema 1 (ARCH-0077, \"One deck, one document\")",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/pptx/export.rs",
+     "purpose": "The deck's export: its projection over the package it is bound to, landed as the artifact's next blob…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
      }
     },
     {
@@ -63012,7 +63024,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63658,7 +63670,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3918,
+   "source_files": 3919,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69184,7 +69196,7 @@
      "path": "src/live/points.rs",
      "purpose": "A shape's points (OF-510, Edit Points): the paths of its custom geometry (`a:custGeom`), read and written as…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 3,
       "struct": 2
      }
@@ -69244,6 +69256,16 @@
      "purpose": "Shape changes to a written table or chart at export (OF-510)",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/svg_fallback.rs",
+     "purpose": "A held SVG picture written as Office writes one (OF-510, FIX 5672): PowerPoint shows an SVG through a raster…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -69694,7 +69716,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69759,7 +69781,7 @@
    },
    "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 97,
+   "source_files": 98,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -90194,6 +90216,7 @@
       "VectorSearchResult",
       "VerdictBinding",
       "VerdictMode",
+      "VersionReconciliation",
       "ViewInput",
       "VisibleFilePolicy",
       "VoiceBankClipInput",
@@ -90354,7 +90377,7 @@
      "purpose": "—",
      "surface": {
       "enum": 858,
-      "struct": 2726
+      "struct": 2727
      }
     },
     {
