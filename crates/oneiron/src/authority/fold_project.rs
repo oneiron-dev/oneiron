@@ -226,6 +226,13 @@ pub(super) fn project_once(
         home_pick: merged.as_ref().map_or_else(Default::default, |state| {
             super::home_pick::folded_home_pick(state, context.pin, context.machine_standing)
         }),
+        conversation_training: merged.as_ref().map_or_else(Default::default, |state| {
+            super::conversation_training::folded_conversation_training(
+                state,
+                context.pin,
+                context.machine_standing,
+            )
+        }),
         owner_work: merged.as_ref().map_or_else(Default::default, |state| {
             super::owner_work::folded_owner_work(state, context.pin, context.machine_standing)
         }),

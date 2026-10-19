@@ -27,7 +27,7 @@
 //! routes a spent seat's work under it: park, next seat, or back to the
 //! Dreamer's own model roles. A vendor login never crosses this seam; it stays
 //! with the official CLI on a runtime its vendor's terms allow
-//! ([`login_placement`]).
+//! ([`hosted_seat_bound`]).
 //!
 //! Credentials cross this seam as [`SandboxCredentialHandle`](crate::code_sandbox::SandboxCredentialHandle) references and
 //! never as bytes. That is the whole redaction story: there is no secret in
@@ -37,9 +37,11 @@
 //! A foreign agent owes this runtime no completion protocol. What it owes is
 //! EXHAUST — transcript, stdout, stderr, diff bundle, checkpoint frontier —
 //! and [`ByoaDispatcher::capture_terminal_exhaust`] folds that into exactly
-//! one BLOB_ARTIFACT version whose `artifact@version` string becomes the
-//! attempt row's result reference. An executor that stops without completing
-//! is [`crate::attempt_queue::AttemptState::Abandoned`], not failed, and still
+//! one BLOB_ARTIFACT: each stream held whole ([`ByoaStream`]), those past the
+//! inline budget as chunk versions, then the envelope as the head version
+//! whose `artifact@version` string becomes the attempt row's result
+//! reference. An executor that stops without completing is
+//! [`crate::attempt_queue::AttemptState::Abandoned`], not failed, and still
 //! points at the last exhaust it produced.
 
 mod dreamer_provider;
@@ -53,14 +55,16 @@ pub use provider::{
 };
 mod seat;
 pub use seat::{
-    LoginPlacement, MAX_RUNNER_SEATS, OnSeatSpent, RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeat,
-    RunnerSeatPolicy, RunnerWork, SeatAuth, SeatRoute, SeatSpent, login_placement, spent_seat_in,
+    HostedSeatBound, MAX_RUNNER_SEATS, OnSeatSpent, RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeat,
+    RunnerSeatPolicy, RunnerWork, SeatAuth, SeatIdentity, SeatRoute, SeatSpent, SkippedRunnerSeat,
+    hosted_seat_bound, skipped_seats_note, spent_seat_in,
 };
 mod connector;
 mod dispatcher;
 mod error;
 mod exhaust;
 pub mod official_seats;
+mod stream;
 mod validate;
 
 pub use self::official_seats::{
@@ -75,11 +79,11 @@ pub use self::official_seats::{
 };
 
 pub use self::connector::{
-    BYOA_ATTEMPT_KIND, BYOA_CONNECTOR_SCHEMA_VERSION, BYOA_EXHAUST_MEDIA_TYPE,
-    BYOA_MAX_EXHAUST_STREAM_BYTES, BYOA_MAX_EXHAUST_TOTAL_BYTES, BYOA_RESULT_REF_PREFIX,
-    ByoEndpointProtocol, ByoEndpointSpec, ByoaAttemptPayload, ByoaConnectorKind, ByoaConnectorSpec,
-    ByoaDispatchOutcome, ByoaDispatchStatus, CliSandboxSpec, DispatchByoa, ProtocolAttachKind,
-    ProtocolAttachSpec, decode_byoa_attempt_payload, encode_byoa_attempt_payload,
+    BYOA_ATTEMPT_KIND, BYOA_CONNECTOR_SCHEMA_VERSION, BYOA_EXHAUST_INLINE_BYTES,
+    BYOA_EXHAUST_MEDIA_TYPE, BYOA_RESULT_REF_PREFIX, ByoEndpointProtocol, ByoEndpointSpec,
+    ByoaAttemptPayload, ByoaConnectorKind, ByoaConnectorSpec, ByoaDispatchOutcome,
+    ByoaDispatchStatus, CliSandboxSpec, DispatchByoa, ProtocolAttachKind, ProtocolAttachSpec,
+    decode_byoa_attempt_payload, encode_byoa_attempt_payload,
 };
 pub use self::dispatcher::{
     ByoEndpointBackendFactory, ByoaCliExecutor, ByoaDispatcher, ByoaExecutionFence, ByoaMcpExecutor,
@@ -91,6 +95,7 @@ pub use self::exhaust::{
     byoa_exhaust_artifact_id, byoa_result_ref, decode_byoa_exhaust, parse_byoa_result_ref,
     read_checkpoint_frontier,
 };
+pub use self::stream::{ByoaStream, ByoaStreamWriter};
 pub use self::validate::validate_connector;
 
 #[cfg(test)]
