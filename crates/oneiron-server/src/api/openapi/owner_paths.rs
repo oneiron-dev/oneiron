@@ -102,6 +102,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/checkpoint-policy/roots",
+        summary: "Which roots this host's checkpoint head awaits under the root policy in force: each root accepted, signed_not_counted or pending, the quorum, the hardware rule, the awaited roots and the shortfall; head is null when no head is kept.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/cleanup",
         summary: "Cleanup review.",
         row: None,
@@ -332,6 +338,18 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/connectors/subscriptions/revoke",
         summary: "The subscription wakes nothing more; its key stays.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/conversation-learning",
+        summary: "The caller's own \"Learn from my conversations\" choice, as the person their proof names (the owner, or another live person on their own human slip): on, the worlds that count now, the worlds chosen, the revision to present back as seen, any conflict and the act in force.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "put",
+        path: "/conversation-learning",
+        summary: "The caller says yes to training on the conversations of the listed worlds (worlds: 32-hex ids), or turns it off (worlds missing, null or empty), as their own act. Every world must be live and read everywhere or nothing is written (400 naming it); a stale seen (64 hex) is a conflict.",
         row: None,
     },
     OwnerRoute {
