@@ -7,6 +7,11 @@
 //! Every entity door runs on the importing thread (`birth_watch`), so a
 //! promotion rides a thread-local for its import's span: the promotion
 //! snapshot's import and the sealed mirror it materializes.
+//!
+//! The cold open of a window for its first promotion rides one too: its
+//! reverse pass mirrors no key pad (FIX 3789). A pad another window's
+//! promotion brought here would be local history in the fresh window, which
+//! the promotion refuses, and the home's snapshot carries the window's pads.
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -19,6 +24,8 @@ use crate::registry::ENTITY_TYPE_TURN;
 
 thread_local! {
     static PROMOTING: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    /// The store a window of which this thread opens for its first promotion.
+    static FIRST_OPEN: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
 /// Puts back the promotion an outer import marked, on every exit.
@@ -42,6 +49,29 @@ pub(in crate::sync) fn with_promotion<T>(vault: &Vault, import: impl FnOnce() ->
 /// Whether an import on this thread lands a promotion's rows in `vault`.
 pub(in crate::sync) fn promoting(vault: &Vault) -> bool {
     PROMOTING.with(|slot| slot.borrow().as_deref() == Some(vault.store.env.path()))
+}
+
+/// Puts back the first-promotion open an outer one marked, on every exit.
+struct RestoreOpen(Option<PathBuf>);
+
+impl Drop for RestoreOpen {
+    fn drop(&mut self) {
+        let outer = self.0.take();
+        FIRST_OPEN.with(|slot| *slot.borrow_mut() = outer);
+    }
+}
+
+/// Runs `open`, the open of a window of `vault` for its first promotion
+/// here, while the reverse pass on this thread mirrors no key pad.
+pub(in crate::sync) fn with_first_promotion_open<T>(vault: &Vault, open: impl FnOnce() -> T) -> T {
+    let path = vault.store.env.path().to_path_buf();
+    let _restore = RestoreOpen(FIRST_OPEN.with(|slot| slot.borrow_mut().replace(path)));
+    open()
+}
+
+/// Whether this thread opens a window of `vault` for its first promotion.
+pub(in crate::sync) fn first_promotion_open(vault: &Vault) -> bool {
+    FIRST_OPEN.with(|slot| slot.borrow().as_deref() == Some(vault.store.env.path()))
 }
 
 /// Owes the row `blob` an entity door wrote at `id` in `wtxn`, where no row

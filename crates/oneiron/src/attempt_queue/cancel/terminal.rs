@@ -16,6 +16,7 @@ use crate::attempt_queue::validate::{
     validate_lease_owner, validate_optional_failure_reason, validate_transition_lease,
 };
 use crate::error::{Error, Result};
+use crate::limit_ask::LimitWatch;
 
 use super::ops::SoftRequestAuthorship;
 use super::types::{
@@ -100,6 +101,7 @@ impl AttemptQueue<'_> {
         let landed_resume_point = record.cancel_state.resume_point.clone();
         let landed_reserve_spent = record.cancel_state.reserve.spent_units;
         append_cancel_receipt(
+            &self.store.limit_watch,
             &mut record,
             AttemptCancelReceiptKind::Landed,
             lease_owner,
@@ -234,6 +236,7 @@ impl AttemptQueue<'_> {
             self.delete_ready_entry_for_record(wtxn, &record)?;
         }
         force_cancel_record(
+            &self.store.limit_watch,
             &mut record,
             input.authority.grounds(),
             input.authority.actor().to_owned(),
@@ -490,8 +493,10 @@ pub(in crate::attempt_queue) fn validate_force_authority(
 ///
 /// `actor` comes from the [`ForceCancelAuthority`], never from request text,
 /// and the reason rides the cancellation receipt rather than `last_error` — a
-/// cancelled row is not a failed one.
+/// cancelled row is not a failed one. `watch` is the store's, which the
+/// receipt append measures against its `[limits]` row.
 pub(in crate::attempt_queue) fn force_cancel_record(
+    watch: &LimitWatch,
     record: &mut AttemptRecord,
     grounds: ForceCancelGrounds,
     actor: String,
@@ -519,6 +524,7 @@ pub(in crate::attempt_queue) fn force_cancel_record(
     let resume_point = record.cancel_state.resume_point.clone();
     let reserve_spent_units = record.cancel_state.reserve.spent_units;
     append_cancel_receipt(
+        watch,
         record,
         AttemptCancelReceiptKind::ForceCancelled,
         actor,
