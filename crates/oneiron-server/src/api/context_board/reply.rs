@@ -194,15 +194,17 @@ async fn reply(
         frozen = frozen.disclosure_stamp(&disclosure.emit_stamp);
     }
     // The prompt goes to the model and its answer to the caller: a row a
-    // world withholds from either keeps it here (FIX 4937).
+    // world withholds from either keeps it here, and the refusal says why,
+    // content-free (FIX 4937, 4939).
     let prompt_for =
         crate::device_local::prompt_destination(auth.destination(), request.envelope.locality);
-    if crate::device_local::withholds_retained(&server.vault, prompt_for, rows, system.as_bytes())
-        .map_err(MemoryError::from)?
+    if let Some(hold) =
+        crate::device_local::retained_hold(&server.vault, &prompt_for, rows, system.as_bytes())
+            .map_err(MemoryError::from)?
     {
         return Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
-            "reply context is kept on this device",
+            format!("reply context is kept on this device: {}", hold.reason()),
             &[],
         ));
     }

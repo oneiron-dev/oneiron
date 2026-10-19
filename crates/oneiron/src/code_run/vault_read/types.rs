@@ -141,6 +141,9 @@ pub enum CoreShortIdHydrateOutcome {
     MalformedShortId,
     /// The accepted route answered absence.
     NotFound,
+    /// A legal order keeps the named record, which this reader otherwise
+    /// reads, from use (FIX 5226): its own slot, never the batch's abort.
+    UseRestricted,
 }
 
 /// One batch hydrate item.

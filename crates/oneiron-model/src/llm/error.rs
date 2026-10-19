@@ -76,13 +76,17 @@ pub enum RetryableLlmError {
     /// would have taken its work off the device while its world stays here
     /// (world privacy, "Models": no silent fallback to a cloud model).
     /// `resets_at` holds when the first resting offer the call may use is
-    /// back, when one rests.
-    #[error("kept on device")]
+    /// back, when one rests. `reason` says why the world stays, content-free
+    /// (FIX 4939): the owner's recipient choice for it, or an integrity hold;
+    /// never a world's name or id.
+    #[error("kept on device{}", kept_reason(.reason.as_deref()))]
     KeptOnDevice {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         retry_after: Option<u64>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         resets_at: Vec<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     #[error("server error")]
     ServerError,
@@ -90,6 +94,11 @@ pub enum RetryableLlmError {
     Timeout,
     #[error("stream cut")]
     StreamCut,
+}
+
+/// A kept call's reason as its message carries it, after the hold itself.
+fn kept_reason(reason: Option<&str>) -> String {
+    reason.map_or_else(String::new, |reason| format!(": {reason}"))
 }
 
 /// What a spent limit is: a usage window that resets, or prepaid credit

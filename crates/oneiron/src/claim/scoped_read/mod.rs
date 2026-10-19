@@ -56,6 +56,7 @@ mod weave_report;
 mod weave_serve;
 mod weave_trigger;
 pub(crate) use claim_admission::ClaimReadStatus;
+pub use named_reads::NamedSlot;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
 pub use weave_correction::{WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection};

@@ -33,8 +33,8 @@ pub(super) enum Passed {
     /// It rests from an earlier refusal, as kept.
     Resting { rest: Rest },
     /// A fallback to it would take the work off the device, and the call's
-    /// world stays on it.
-    KeptOnDevice,
+    /// world stays on it, for this content-free reason (FIX 4939).
+    KeptOnDevice { reason: &'static str },
     /// It does not hold the call's voice (FIX 1746): its target held no live
     /// binding of the banked voice when the call was admitted, or holds it
     /// no more, or the call's stock or raw voice is another rung's.
@@ -138,7 +138,7 @@ impl Walk {
                         row["passed"] = json!("cooling_down");
                         row["cooldown_until"] = json!(rest.until);
                     }
-                    Passed::KeptOnDevice => row["passed"] = json!("kept_on_device"),
+                    Passed::KeptOnDevice { .. } => row["passed"] = json!("kept_on_device"),
                     Passed::VoiceNotHeld => row["passed"] = json!("voice_not_held"),
                     Passed::ProbeInFlight { .. } => row["passed"] = json!("probation_busy"),
                 }
@@ -151,15 +151,22 @@ impl Walk {
     pub(super) fn held_from(&self, index: usize) -> bool {
         self.passed
             .iter()
-            .any(|(at, passed)| *at == index && matches!(passed, Passed::KeptOnDevice))
+            .any(|(at, passed)| *at == index && matches!(passed, Passed::KeptOnDevice { .. }))
     }
 
     /// Whether the call was last kept from some rung: a fallback to it would
     /// have taken the work off the device.
     pub(super) fn kept(&self) -> bool {
-        self.latest()
-            .values()
-            .any(|passed| matches!(passed, Passed::KeptOnDevice))
+        self.kept_reason().is_some()
+    }
+
+    /// Why the call was last kept from some rung ([`Self::kept`]): the first
+    /// such rung's content-free reason (FIX 4939).
+    pub(super) fn kept_reason(&self) -> Option<&'static str> {
+        self.latest().values().find_map(|passed| match passed {
+            Passed::KeptOnDevice { reason } => Some(*reason),
+            _ => None,
+        })
     }
 
     /// Each rung of `rungs` with the rest it was last found in, when every
@@ -180,7 +187,7 @@ impl Walk {
                     rest: Some(rest), ..
                 }
                 | Passed::Resting { rest } => parked.push((index, *rest)),
-                Passed::KeptOnDevice | Passed::VoiceNotHeld => {}
+                Passed::KeptOnDevice { .. } | Passed::VoiceNotHeld => {}
                 Passed::Refused { rest: None, .. }
                 | Passed::Down { rest: None, .. }
                 | Passed::Failed { .. }
@@ -262,7 +269,7 @@ impl Passed {
     /// was sent is always news.
     fn same_state(&self, found: &Self) -> bool {
         match found {
-            Self::KeptOnDevice => matches!(self, Self::KeptOnDevice),
+            Self::KeptOnDevice { .. } => matches!(self, Self::KeptOnDevice { .. }),
             Self::VoiceNotHeld => matches!(self, Self::VoiceNotHeld),
             Self::ProbeInFlight { .. } => matches!(self, Self::ProbeInFlight { .. }),
             Self::Resting { rest } => self.back() == Some(rest.until),

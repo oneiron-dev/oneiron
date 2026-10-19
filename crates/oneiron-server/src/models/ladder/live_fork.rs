@@ -29,7 +29,7 @@ impl OfferLadder {
     /// Whether the walk would send `request` to the rung at `index` now.
     fn takes_now(&self, index: usize, request: &LlmRequest) -> bool {
         let rung = &self.rungs[index];
-        !self.kept_on_device(index, request)
+        self.kept_on_device(index, request).is_none()
             && self
                 .rests
                 .resting(&rung.offer.binding, &rung.wire_model)

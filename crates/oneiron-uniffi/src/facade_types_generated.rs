@@ -40915,6 +40915,8 @@ pub enum RetryableLlmError {
         retry_after: Option<u64>,
         #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
         resets_at: Option<Vec<u64>>,
+        #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     #[serde(rename = "ServerError")]
     ServerError,

@@ -185,11 +185,51 @@ pub fn lfs_object_withheld(vault: &Vault, oid: LfsOid) -> Result<bool> {
 /// keep off that machine, its proof revalidated in this read; an unproved
 /// peer is an unknown destination.
 pub fn lfs_object_withheld_for(vault: &Vault, oid: LfsOid, peer: PeerMachine) -> Result<bool> {
+    Ok(lfs_object_hold_for(vault, oid, peer)?.is_some())
+}
+
+/// Why an LFS object's bytes stay on this device (FIX 4939), content-free:
+/// never a world's, a row's or the object's name or id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LfsHold {
+    /// The lift sweep marked a secret-scan hit in it (OF-067).
+    Secret,
+    /// Every row it is attached to is held from the destination: why the
+    /// first of them is.
+    Release(crate::settings::ReleaseHold),
+}
+
+impl LfsHold {
+    /// The hold as a refusal states it.
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Secret => LFS_SECRET_HOLD,
+            Self::Release(hold) => hold.reason(),
+        }
+    }
+}
+
+/// What a refusal says of an object a secret-scan hit keeps here (CALLS
+/// `FIX 4939 refusal reasons`).
+const LFS_SECRET_HOLD: &str = "a secret scan hit keeps this object on this device";
+
+/// Why [`lfs_object_withheld_for`] keeps an object's bytes on this device,
+/// or `None` while they may go to `peer`: the same verdict, read in the same
+/// snapshot, with its reason (FIX 4939). A secret hold comes first; an
+/// object a portable row also owns, or one attached to nothing, stays
+/// portable; only once every owner is withheld is the first of them named,
+/// as the owner's recipient choice or an integrity hold.
+pub fn lfs_object_hold_for(
+    vault: &Vault,
+    oid: LfsOid,
+    peer: PeerMachine,
+) -> Result<Option<LfsHold>> {
     use crate::ports::{EdgeDirection, EdgeStoreRead};
     // An object the lift sweep marked holds a hit a new upload is refused
     // for (OF-067): it stays on this device.
     if vault.lfs_object_secret_withheld(oid)? {
-        return Ok(true);
+        return Ok(Some(LfsHold::Secret));
     }
     let _accepting = vault.device_only_acceptance();
     let object = vault.lfs_object(oid)?.ok_or_else(invalid)?;
@@ -197,7 +237,7 @@ pub fn lfs_object_withheld_for(vault: &Vault, oid: LfsOid, peer: PeerMachine) ->
     let destination = crate::settings::ReadDestination::toward(peer);
     let flagged = crate::settings::device_local_worlds_for(vault, &txn, &destination)?;
     if flagged.is_empty() {
-        return Ok(false);
+        return Ok(None);
     }
     let mut owners = std::collections::BTreeSet::new();
     for edge in vault.store.port_edges(
@@ -212,10 +252,18 @@ pub fn lfs_object_withheld_for(vault: &Vault, oid: LfsOid, peer: PeerMachine) ->
     owners.remove(&object.asset_id);
     for owner in &owners {
         if !crate::settings::device_only_withholds(&vault.store, &txn, &flagged, owner)? {
-            return Ok(false);
+            return Ok(None);
         }
     }
-    Ok(!owners.is_empty())
+    Ok(owners.first().map(|owner| {
+        LfsHold::Release(crate::settings::withheld_row_hold_in(
+            vault,
+            &txn,
+            &flagged,
+            owner,
+            &destination,
+        ))
+    }))
 }
 
 /// The object a chunk request names, so a transport can check its reply

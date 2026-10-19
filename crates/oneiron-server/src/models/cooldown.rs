@@ -32,6 +32,8 @@ use serde::{Deserialize, Serialize};
 use super::ladder::OfferLadder;
 use super::status::{HealthState, LimitHold, RungHealth};
 
+mod world_hold;
+
 /// The engine's `MODEL_OFFER_COOLDOWN` side table: never replicated, and
 /// runtime to a checkpoint, which keeps none.
 const PREFIX: &str = "models:offer-cooldown:v1:";
@@ -837,32 +839,15 @@ impl OfferCooldowns {
         })
     }
 
-    /// Whether a fallback may take `request` off the device (world privacy,
-    /// "Models": no silent fallback to a cloud model). A call that names its
-    /// world goes where the world settings' one judge lets that world go,
-    /// and only for a world this vault holds. One that names none may carry
-    /// any world's text, so it goes only while no world stays on the device.
-    /// A call nobody can judge here stays; with no vault, no world's text
-    /// is here to keep.
-    pub(super) fn world_may_leave(&self, request: &LlmRequest) -> bool {
-        let world = request.envelope.scope.world;
-        match &self.vault {
-            Some(vault) => {
-                let endpoint = fallback_endpoint();
-                matches!(vault.model_call_may_leave_for(world, &endpoint), Ok(true))
-            }
-            None => world.is_none(),
-        }
+    /// Whether a fallback may take `request` to `endpoint`, where the
+    /// offer it falls back to sends it ([`Self::world_hold`]).
+    pub(super) fn world_may_leave(
+        &self,
+        request: &LlmRequest,
+        endpoint: &oneiron::settings::ReadDestination,
+    ) -> bool {
+        self.world_hold(request, endpoint).is_none()
     }
-}
-
-/// Where a fallback's call goes (mesh PR2b): a provider's own cloud
-/// ([`leaves_device`]), which no linked machine's proof names, so a
-/// destination nobody proved. Never the requester's proof: the model is a
-/// recipient of its own. An offer names no linked machine's endpoint yet;
-/// one that did would be judged as that machine.
-fn fallback_endpoint() -> oneiron::settings::ReadDestination {
-    oneiron::settings::ReadDestination::toward(oneiron::authority::PeerMachine::Unknown)
 }
 
 /// Whether an offer takes the work off the device: a provider's own cloud.

@@ -13,6 +13,10 @@ pub(super) const NOT_FOUND_ENGINE_CODE: &str = "NOT_FOUND";
 /// error vocabulary.
 pub(super) const INTERNAL_ENGINE_CODE: &str = "INTERNAL_SERVER_ERROR";
 
+/// Stable engine code for a named row a legal order keeps from use (FIX
+/// 5226), as the HTTP door answers it: its 409 `INVALID_STATE`.
+pub(super) const USE_RESTRICTED_ENGINE_CODE: &str = "INVALID_STATE";
+
 /// The adapters' own accessors on the shared error type, which `oneiron-contracts`
 /// defines: a crate-local trait, because a foreign type takes no inherent impl here.
 pub(super) trait VaultReadErrorExt {
@@ -60,6 +64,25 @@ pub(super) fn engine_absent(method: VaultReadMethod, field: &str) -> VaultReadEr
         method,
         engine_code: NOT_FOUND_ENGINE_CODE.to_owned(),
         message: format!("{field} was not found"),
+    }
+}
+
+/// The one row a named read found (FIX 5226): the row, or its absence, as
+/// before; a row a legal order keeps from use answers that order's refusal,
+/// as the HTTP door does, never as absence or an engine failure.
+pub(super) fn named_row(
+    method: VaultReadMethod,
+    slots: Vec<crate::claim::NamedSlot>,
+) -> VaultReadResult<Option<crate::claim::ReadRow>> {
+    match slots.into_iter().next() {
+        Some(Err(refusal)) => Err(VaultReadError::Engine {
+            narrowing: None,
+            method,
+            engine_code: USE_RESTRICTED_ENGINE_CODE.to_owned(),
+            message: refusal.to_string(),
+        }),
+        Some(Ok(row)) => Ok(row),
+        None => Ok(None),
     }
 }
 
