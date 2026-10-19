@@ -99,7 +99,10 @@ mod rows;
 mod validate;
 mod write;
 
-pub use self::craft_read::resident_craft_claim_ids;
+pub use self::craft_read::{
+    CRAFT_HEADING, CraftNote, craft_message_entries, craft_message_text, craft_note_line,
+    resident_craft_claim_ids, resident_craft_pack,
+};
 pub use self::distill::{
     SessionActorDistiller, SessionDistillBrief, SessionDistillTurn, SessionDistillUtterance,
     actor_distill_call_purpose, pending_session_actor_distills, run_session_end_actor_distill,

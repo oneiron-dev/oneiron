@@ -93,6 +93,22 @@ pub(crate) struct ForkedCustodyDir {
 }
 
 impl ForkedCustodyDir {
+    /// The custody directory a restore just made at `path` and holds open
+    /// as `directory`: a disaster recovery's landing (KS-4), removed as a
+    /// fork's is when the restore fails.
+    pub(super) fn made(path: PathBuf, directory: File) -> crate::error::Result<Self> {
+        Ok(Self {
+            identity: directory_identity(&directory.metadata()?).ok_or_else(custody_corrupt)?,
+            path,
+            directory,
+        })
+    }
+
+    /// Syncs the directory the fork or landing made.
+    pub(super) fn sync(&self) -> crate::error::Result<()> {
+        Ok(self.directory.sync_all()?)
+    }
+
     /// Removes the fork's entries and markers, for a restore that failed or
     /// was refused after it; best effort, and only while the path still
     /// names the directory the fork created.

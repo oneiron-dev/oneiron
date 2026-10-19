@@ -111,6 +111,9 @@ pub struct CheckpointKey {
     /// The vault's body-file wrap key, which opens the sealed body files'
     /// key rows the artifact's image carries (FIX 5348).
     body_wrap: zeroize::Zeroizing<[u8; 32]>,
+    /// The data key's custody-head subkey, which opens a custody head's
+    /// host-readable compartments on a host without the vault (KS-4).
+    custody_wrap: zeroize::Zeroizing<[u8; 32]>,
     trust: Trust,
     /// The data key a carried wrap opened to, kept opaque for a sealed vault
     /// restored from the artifact ([`Self::restored_page_seal`]); `None` for
@@ -167,6 +170,7 @@ impl CheckpointKey {
             vault_id: prelude.vault_id,
             kek: Kek::from_bytes(*key),
             body_wrap: opened.subkey(crate::store::BODY_FILE_WRAP_CONTEXT),
+            custody_wrap: opened.subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT),
             trust: Trust::Nobody,
             opened: Some(opened),
         })
@@ -213,6 +217,11 @@ impl CheckpointKey {
             .transpose()
     }
 
+    /// The custody-head subkey of the data key this key came from (KS-4).
+    pub(super) fn custody_wrap(&self) -> zeroize::Zeroizing<[u8; 32]> {
+        self.custody_wrap.clone()
+    }
+
     /// The seal the artifact's sealed body files' key rows open under.
     pub(super) fn body_seal(&self) -> crate::store::BodySeal {
         crate::store::BodySeal::new(self.vault_id, &self.body_wrap)
@@ -229,6 +238,7 @@ impl Vault {
             vault_id: *self.vault_id().as_bytes(),
             kek: Kek::from_bytes(*self.vault_subkey(SEAL_CONTEXT)?),
             body_wrap: self.vault_subkey(crate::store::BODY_FILE_WRAP_CONTEXT)?,
+            custody_wrap: self.vault_subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT)?,
             trust: Trust::Device(self.device_keystore()?),
             opened: None,
         })
@@ -247,6 +257,7 @@ impl Vault {
                 vault_id: *self.vault_id().as_bytes(),
                 kek: Kek::from_bytes(*key),
                 body_wrap: self.vault_subkey(crate::store::BODY_FILE_WRAP_CONTEXT)?,
+                custody_wrap: self.vault_subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT)?,
                 trust: Trust::Nobody,
                 opened: None,
             },
@@ -278,6 +289,11 @@ struct Manifest {
     key_header: [u8; 32],
     image: StreamEntry,
     bodies: Vec<StreamEntry>,
+    /// What the image needs of its exterior key custody (KS-4): the
+    /// position it had reached and every live id, never a key or a head.
+    /// `None` where the vault never published one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    custody: Option<crate::store::CustodyRequirement>,
 }
 
 /// The clear head of an artifact file.
@@ -328,6 +344,8 @@ pub(super) struct OpenedArtifact<'k> {
     pub(super) image_id: [u8; 32],
     pub(super) created_at: u64,
     pub(super) bodies: SealedBodies<'k>,
+    /// The manifest's custody requirement (KS-4).
+    pub(super) custody: Option<crate::store::CustodyRequirement>,
 }
 
 /// The result bodies an opened artifact carries, each read back through its
@@ -454,6 +472,7 @@ pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<O
             sealer,
             streams,
         },
+        custody: manifest.custody,
     })
 }
 
