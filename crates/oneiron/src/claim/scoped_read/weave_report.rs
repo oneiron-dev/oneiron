@@ -110,7 +110,10 @@ impl WeaveReport {
                 WeaveItem::Claim { id, .. } => rows.push(*id),
                 WeaveItem::Project { id, goal } => {
                     rows.push(*id);
-                    rows.extend(goal.as_deref().and_then(|goal| EntityId::from_hex(goal).ok()));
+                    rows.extend(
+                        goal.as_deref()
+                            .and_then(|goal| EntityId::from_hex(goal).ok()),
+                    );
                 }
                 WeaveItem::Budget {
                     project,
@@ -130,7 +133,12 @@ impl WeaveReport {
 /// ask on it (the diagnostic it was asked on and the attempt that answers).
 fn card_rows(card: &AgentHealthCard) -> Vec<EntityId> {
     let mut rows = vec![card.subject];
-    rows.extend(card.task.into_iter().chain(card.attempt).chain(card.confession));
+    rows.extend(
+        card.task
+            .into_iter()
+            .chain(card.attempt)
+            .chain(card.confession),
+    );
     rows.extend(card.diagnostics.iter().chain(&card.evidence).copied());
     if let Some(ask) = &card.coach {
         rows.extend(ask.diagnostic);

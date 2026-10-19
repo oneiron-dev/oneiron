@@ -453,7 +453,10 @@ fn settle_tail(
     if judged.iter().any(|(hash, entry)| {
         super::world_refold::refolds(&entry.op)
             && !states.contains_key(hash)
-            && entry.parent_hashes.iter().any(|parent| !states.contains_key(parent))
+            && entry
+                .parent_hashes
+                .iter()
+                .any(|parent| !states.contains_key(parent))
     }) {
         return Ok(None);
     }

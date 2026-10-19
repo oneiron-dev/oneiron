@@ -76,7 +76,14 @@ impl HookVerdict for ServerHookVerdict {
         // listed; a refusal before it reads lists none.
         let mut evidence = Vec::new();
         let producers = ProducerRows::default();
-        let reply = self.ask(reader, class, request_json, deadline, &producers, &mut evidence);
+        let reply = self.ask(
+            reader,
+            class,
+            request_json,
+            deadline,
+            &producers,
+            &mut evidence,
+        );
         evidence.extend(producers.take());
         (reply, Some(evidence))
     }

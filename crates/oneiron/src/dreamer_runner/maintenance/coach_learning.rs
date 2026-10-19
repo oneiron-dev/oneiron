@@ -132,11 +132,10 @@ fn improver_cell(vault: &Vault, proposal: &EntityId) -> Result<Option<LearningCe
     let Some(executor) = row.executor_model.as_deref() else {
         return Ok(None);
     };
-    let Some(entry) = row
-        .manifest
-        .iter()
-        .rev()
-        .find(|entry| entry.kind == ManifestKind::Skill && entry.reference == COACH_IMPROVER_SKILL)
+    let Some(entry) =
+        row.manifest.iter().rev().find(|entry| {
+            entry.kind == ManifestKind::Skill && entry.reference == COACH_IMPROVER_SKILL
+        })
     else {
         return Ok(None);
     };
@@ -154,9 +153,8 @@ fn improver_cell(vault: &Vault, proposal: &EntityId) -> Result<Option<LearningCe
 /// that version, else the one SKILL record of that name and version. `None`
 /// when none, or more than one, is.
 fn improver_revision(vault: &Vault, version: &str) -> Result<Option<EntityId>> {
-    let pinned = |record: &SkillRecord| {
-        record.skill_id == COACH_IMPROVER_SKILL && record.version == version
-    };
+    let pinned =
+        |record: &SkillRecord| record.skill_id == COACH_IMPROVER_SKILL && record.version == version;
     let shipped = coach_improver_skill_id()?;
     if vault
         .get_skill_record(&shipped)?

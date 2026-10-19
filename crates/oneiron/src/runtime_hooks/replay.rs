@@ -650,7 +650,10 @@ impl<'p> PinnedVerdicts<'p> {
                 self.missing.get_or_insert_with(|| {
                     format!("a verdict's history is gone: {}", bounded(request))
                 });
-                (Err("this verdict's history is gone".to_owned()), Some(&[][..]))
+                (
+                    Err("this verdict's history is gone".to_owned()),
+                    Some(&[][..]),
+                )
             }
         }
     }
