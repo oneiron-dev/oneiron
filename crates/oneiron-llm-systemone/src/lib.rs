@@ -1,36 +1,116 @@
 //! The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision`.
+//!
+//! The seat builds each request and reads each reply here; a
+//! [`SystemOneTransport`] carries the exact bytes between: this crate's own
+//! HTTPS client with a bearer key, or a host's (the credential broker, which
+//! adds the key from the vault for one call at a time).
 
 use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionImage, DecisionRung, ImageBox, ProviderPin,
     RemoteDecisionSeat, SeatAnswer, SeatFuture, SeatRequest,
 };
-use oneiron::{BudgetLease, FatalLlmError, LlmUsage, RetryableLlmError};
+use oneiron::{BudgetLease, FatalLlmError, LlmResult, LlmUsage, RetryableLlmError};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::time::Duration;
 
-const MAX_RESPONSE_BYTES: usize = 65_536;
+/// The largest reply body the seat reads.
+pub const MAX_RESPONSE_BYTES: usize = 65_536;
 /// The wire's largest image side; a longer image is sent downscaled.
 pub const MAX_IMAGE_EDGE: u32 = 1_568;
 /// The wire's opt-in for images and Box questions, sent with every request that has one.
 const IMAGES_HEADER: &str = "TypeSafe-Danger-Zone-Images";
 
-/// Authenticated, exact-revision HTTP adapter. The host chooses the endpoint,
+/// One request as the seat built it, for a transport to send as it is: the
+/// transport adds only the credential.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemOneHttpRequest {
+    /// The seat's endpoint, ending `/v1/systemone`.
+    pub endpoint: String,
+    /// The headers beside the credential, names lowercase: the content type,
+    /// and the images opt-in on a request that has one.
+    pub headers: Vec<(String, String)>,
+    /// The exact body, one JSON object.
+    pub body: Vec<u8>,
+    /// The model the body names (`<model>-<version>`), which the reply names too.
+    pub model: String,
+    /// How long the answer may take: the decision's work time left.
+    pub time_left: Duration,
+}
+
+/// A reply as it came: its status, and its body for a success, at most
+/// [`MAX_RESPONSE_BYTES`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemOneHttpResponse {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
+pub type SystemOneTransportFuture<'a> =
+    Pin<Box<dyn Future<Output = LlmResult<SystemOneHttpResponse>> + Send + 'a>>;
+
+/// What carries one request to the seat and its reply back.
+pub trait SystemOneTransport: Send + Sync {
+    /// Sends `request` once, under the measurement's `lease`.
+    fn send<'a>(
+        &'a self,
+        request: SystemOneHttpRequest,
+        lease: &'a BudgetLease,
+    ) -> SystemOneTransportFuture<'a>;
+
+    /// Every check the transport makes before it sends, with no I/O (a
+    /// broker it cannot reach, a key its custody door would refuse); `Ok`,
+    /// the default, for a transport that checks nothing first.
+    fn preflight(&self) -> LlmResult<()> {
+        Ok(())
+    }
+}
+
+/// Authenticated, exact-revision adapter. The host chooses the endpoint,
 /// credentials, and version; no model or question text is compiled into policy.
 pub struct SystemOneSeat {
-    client: reqwest::Client,
+    transport: Box<dyn SystemOneTransport>,
     endpoint: String,
-    bearer: String,
     pin: ProviderPin,
 }
 
 impl SystemOneSeat {
+    /// The seat at `endpoint`, sent to over this crate's HTTPS client with
+    /// `bearer`.
     pub fn new(
         endpoint: String,
         bearer: String,
         model: String,
         version: String,
+    ) -> oneiron::LlmResult<Self> {
+        if bearer.trim().is_empty() || !bearer.is_ascii() {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        // The request's own wait is the decision's time left, set per call.
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(3))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| FatalLlmError::InvalidRequest)?;
+        Self::with_transport(
+            endpoint,
+            model,
+            version,
+            Box::new(BearerTransport { client, bearer }),
+        )
+    }
+
+    /// The seat at `endpoint`, its requests carried by `transport`, which
+    /// adds the credential.
+    pub fn with_transport(
+        endpoint: String,
+        model: String,
+        version: String,
+        transport: Box<dyn SystemOneTransport>,
     ) -> oneiron::LlmResult<Self> {
         let url = reqwest::Url::parse(&endpoint).map_err(|_| FatalLlmError::InvalidRequest)?;
         if (url.scheme() != "https"
@@ -47,28 +127,83 @@ impl SystemOneSeat {
             || url.query().is_some()
             || url.fragment().is_some()
             || !url.path().ends_with("/v1/systemone")
-            || bearer.trim().is_empty()
             || model.trim().is_empty()
             || version.trim().is_empty()
-            || !bearer.is_ascii()
         {
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        // The request's own wait is the decision's time left, set per call.
-        let client = reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(3))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|_| FatalLlmError::InvalidRequest)?;
         Ok(Self {
-            client,
+            transport,
             endpoint,
-            bearer,
             pin: ProviderPin {
                 rung: DecisionRung::SystemOne,
                 model,
                 version,
             },
+        })
+    }
+
+    /// The transport's own checks before a measurement starts, with no I/O.
+    pub fn preflight(&self) -> LlmResult<()> {
+        self.transport.preflight()
+    }
+
+    /// The exact request `request` is sent as.
+    fn build(&self, request: &SeatRequest, time_left: Duration) -> LlmResult<SystemOneHttpRequest> {
+        let model = format!("{}-{}", self.pin.model, self.pin.version);
+        let (kind, criteria) = match &request.question.contract {
+            // The question's criteria triple, as what a yes and a no mean.
+            AnswerContract::Noul => (
+                "noul",
+                QuestionCriteria::from_state(&request.state).map(
+                    |criteria| json!({"true": criteria.yes_means(), "false": criteria.no_means()}),
+                ),
+            ),
+            AnswerContract::Choice { options } => {
+                let map: BTreeMap<&str, Value> =
+                    options.iter().map(|s| (s.as_str(), Value::Null)).collect();
+                ("choice", Some(json!(map)))
+            }
+            AnswerContract::Score { .. } => ("score", Some(json!(request.score_levels))),
+            // The wire has no point: a Point asks for a box, read as its centre.
+            AnswerContract::Box | AnswerContract::Point => ("box", None),
+        };
+        let mut question = json!({"type":kind,"instructions":request.question.text});
+        if let Some(criteria) = criteria {
+            question["criteria"] = criteria;
+        }
+        // Each image is an asset; its state field holds the asset's reference, which
+        // the question names in backticks.
+        let mut state = request.state.clone();
+        let mut assets = serde_json::Map::new();
+        for (index, image) in request.images.iter().enumerate() {
+            let fitted = image.fitted(MAX_IMAGE_EDGE)?;
+            let reference = format!("oneiron-image-{index}-{}", image.name);
+            state[image.name.as_str()] = json!(reference);
+            assets.insert(
+                reference,
+                json!({
+                    "type": "image",
+                    "format": image.format(),
+                    "data_base64": DecisionImage::base64(&fitted),
+                }),
+            );
+        }
+        let images = !assets.is_empty() || kind == "box";
+        let mut body = json!({"model":model,"state":state,"questions":{"decision":question}});
+        if !assets.is_empty() {
+            body["assets"] = Value::Object(assets);
+        }
+        let mut headers = vec![("content-type".to_owned(), "application/json".to_owned())];
+        if images {
+            headers.push((IMAGES_HEADER.to_ascii_lowercase(), "true".to_owned()));
+        }
+        Ok(SystemOneHttpRequest {
+            endpoint: self.endpoint.clone(),
+            headers,
+            body: serde_json::to_vec(&body).map_err(|_| FatalLlmError::InvalidRequest)?,
+            model,
+            time_left,
         })
     }
 }
@@ -85,88 +220,26 @@ impl RemoteDecisionSeat for SystemOneSeat {
     fn ask<'a>(
         &'a self,
         request: SeatRequest,
-        _lease: &'a BudgetLease,
+        lease: &'a BudgetLease,
         time_left: std::time::Duration,
     ) -> SeatFuture<'a> {
         Box::pin(async move {
             request.validate_remote()?;
-            let model = format!("{}-{}", self.pin.model, self.pin.version);
-            let (kind, criteria) = match &request.question.contract {
-                // The question's criteria triple, as what a yes and a no mean.
-                AnswerContract::Noul => (
-                    "noul",
-                    QuestionCriteria::from_state(&request.state).map(|criteria| {
-                        json!({"true": criteria.yes_means(), "false": criteria.no_means()})
-                    }),
-                ),
-                AnswerContract::Choice { options } => {
-                    let map: BTreeMap<&str, Value> =
-                        options.iter().map(|s| (s.as_str(), Value::Null)).collect();
-                    ("choice", Some(json!(map)))
-                }
-                AnswerContract::Score { .. } => ("score", Some(json!(request.score_levels))),
-                // The wire has no point: a Point asks for a box, read as its centre.
-                AnswerContract::Box | AnswerContract::Point => ("box", None),
-            };
-            let mut question = json!({"type":kind,"instructions":request.question.text});
-            if let Some(criteria) = criteria {
-                question["criteria"] = criteria;
-            }
-            // Each image is an asset; its state field holds the asset's reference, which
-            // the question names in backticks.
-            let mut state = request.state.clone();
-            let mut assets = serde_json::Map::new();
-            for (index, image) in request.images.iter().enumerate() {
-                let fitted = image.fitted(MAX_IMAGE_EDGE)?;
-                let reference = format!("oneiron-image-{index}-{}", image.name);
-                state[image.name.as_str()] = json!(reference);
-                assets.insert(
-                    reference,
-                    json!({
-                        "type": "image",
-                        "format": image.format(),
-                        "data_base64": DecisionImage::base64(&fitted),
-                    }),
-                );
-            }
-            let images = !assets.is_empty() || kind == "box";
-            let mut body = json!({"model":model,"state":state,"questions":{"decision":question}});
-            if !assets.is_empty() {
-                body["assets"] = Value::Object(assets);
-            }
-            let mut post = self
-                .client
-                .post(&self.endpoint)
-                .timeout(time_left)
-                .bearer_auth(&self.bearer);
-            if images {
-                post = post.header(IMAGES_HEADER, "true");
-            }
-            let response = post.json(&body).send().await.map_err(transport_error)?;
-            let status = response.status();
-            if !status.is_success() {
-                return Err(if status.is_server_error() || status.as_u16() == 429 {
+            let sent = self.build(&request, time_left)?;
+            let model = sent.model.clone();
+            let response = self.transport.send(sent, lease).await?;
+            if !(200..300).contains(&response.status) {
+                return Err(if response.status >= 500 || response.status == 429 {
                     RetryableLlmError::ServerError.into()
                 } else {
                     FatalLlmError::InvalidRequest.into()
                 });
             }
-            if response
-                .content_length()
-                .is_some_and(|n| n > MAX_RESPONSE_BYTES as u64)
-            {
+            if response.body.len() > MAX_RESPONSE_BYTES {
                 return Err(FatalLlmError::InvalidRequest.into());
             }
-            let mut response = response;
-            let mut bytes = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(transport_error)? {
-                if chunk.len() > MAX_RESPONSE_BYTES - bytes.len() {
-                    return Err(FatalLlmError::InvalidRequest.into());
-                }
-                bytes.extend_from_slice(&chunk);
-            }
-            let wire: Response =
-                serde_json::from_slice(&bytes).map_err(|_| FatalLlmError::InvalidRequest)?;
+            let wire: Response = serde_json::from_slice(&response.body)
+                .map_err(|_| FatalLlmError::InvalidRequest)?;
             if wire.model != model || wire.answers.len() != 1 {
                 return Err(FatalLlmError::InvalidRequest.into());
             }
@@ -182,6 +255,61 @@ impl RemoteDecisionSeat for SystemOneSeat {
                 "output_tokens": wire.usage.output_tokens,
             });
             Ok(parsed)
+        })
+    }
+}
+
+/// This crate's own transport: one HTTPS request with the bearer key, no
+/// redirect, its reply read up to [`MAX_RESPONSE_BYTES`].
+struct BearerTransport {
+    client: reqwest::Client,
+    bearer: String,
+}
+
+impl SystemOneTransport for BearerTransport {
+    fn send<'a>(
+        &'a self,
+        request: SystemOneHttpRequest,
+        _lease: &'a BudgetLease,
+    ) -> SystemOneTransportFuture<'a> {
+        Box::pin(async move {
+            let mut post = self
+                .client
+                .post(&request.endpoint)
+                .timeout(request.time_left)
+                .bearer_auth(&self.bearer);
+            for (name, value) in &request.headers {
+                post = post.header(name.as_str(), value.as_str());
+            }
+            let mut response = post
+                .body(request.body)
+                .send()
+                .await
+                .map_err(transport_error)?;
+            let status = response.status().as_u16();
+            if !response.status().is_success() {
+                return Ok(SystemOneHttpResponse {
+                    status,
+                    body: Vec::new(),
+                });
+            }
+            if response
+                .content_length()
+                .is_some_and(|n| n > MAX_RESPONSE_BYTES as u64)
+            {
+                return Err(FatalLlmError::InvalidRequest.into());
+            }
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await.map_err(transport_error)? {
+                if chunk.len() > MAX_RESPONSE_BYTES - bytes.len() {
+                    return Err(FatalLlmError::InvalidRequest.into());
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(SystemOneHttpResponse {
+                status,
+                body: bytes,
+            })
         })
     }
 }

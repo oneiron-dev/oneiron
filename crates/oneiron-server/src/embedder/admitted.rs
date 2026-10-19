@@ -36,6 +36,7 @@ pub(crate) struct EndpointFields<'a> {
     endpoint: &'a str,
     model_key: &'a str,
     api_key_env: Option<&'a str>,
+    key_secret: Option<&'a str>,
 }
 
 /// A section that configures an endpoint: the primary's or a remote rung's.
@@ -57,6 +58,7 @@ impl EndpointSection for EndpointEmbedderConfig {
                 .as_deref()
                 .ok_or_else(|| missing("model_key"))?,
             api_key_env: self.api_key_env.as_deref(),
+            key_secret: self.key_secret.as_deref(),
         })
     }
 }
@@ -67,6 +69,7 @@ impl EndpointSection for RemoteEmbedderConfig {
             endpoint: &self.endpoint,
             model_key: &self.model_key,
             api_key_env: self.api_key_env.as_deref(),
+            key_secret: self.key_secret.as_deref(),
         })
     }
 }
@@ -125,8 +128,9 @@ pub(super) fn pay_primary(
 
 /// The paid connector an endpoint's requests are admitted as: the model it
 /// serves, at the endpoint's origin. An endpoint with a key pays with the
-/// owner's own key, held in this process (T1). One without is the owner's
-/// own device or server.
+/// owner's own key: a vault secret's in the vault's custody (T0), sent by
+/// the credential broker, or an environment variable's, held in this
+/// process (T1). One without is the owner's own device or server.
 fn connector(
     config: EndpointFields<'_>,
     locality: EmbedderLocality,
@@ -137,7 +141,11 @@ fn connector(
         .origin()
         .ascii_serialization();
     let route = OfferRoute::new("embedder", origin).map_err(|_| invalid("endpoint origin"))?;
-    let keyed = config.api_key_env.is_some();
+    let (custody, credential_binding) = match (config.key_secret, config.api_key_env) {
+        (Some(secret), _) => (KeyCustody::T0, Some(format!("secret:{secret}"))),
+        (None, Some(env)) => (KeyCustody::T1, Some(format!("env:{env}"))),
+        (None, None) => (KeyCustody::Keyless, None),
+    };
     Ok(PaidConnector {
         connector: format!("embedder:{}", config.model_key),
         route,
@@ -146,18 +154,14 @@ fn connector(
             EmbedderLocality::OwnerServer => ModelLocality::OwnServer,
             EmbedderLocality::ThirdParty => ModelLocality::ThirdParty,
         },
-        payer: if keyed {
-            Payer::CustomerKey
-        } else {
+        payer: if custody == KeyCustody::Keyless {
             Payer::Local
-        },
-        credential_binding: config.api_key_env.map(|env| format!("env:{env}")),
-        catalog_revision: None,
-        custody: if keyed {
-            KeyCustody::T1
         } else {
-            KeyCustody::Keyless
+            Payer::CustomerKey
         },
+        credential_binding,
+        catalog_revision: None,
+        custody,
         unit_cost: 1,
         cost_unit: LeaseUnit::tokens(),
         rates: Vec::new(),

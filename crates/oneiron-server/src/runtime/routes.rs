@@ -111,7 +111,7 @@ pub enum RuntimeRouteReason {
     /// Route is ready.
     Ready,
     /// BYO mode is selected but the configured provider-key environment
-    /// variable is not present.
+    /// variable is not present, and no vault secret is named.
     MissingByoKey,
     /// Route provider kind does not match the selected runtime mode.
     ProviderModeMismatch,

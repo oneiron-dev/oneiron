@@ -10879,7 +10879,7 @@ class SpawnIntentReply(TypedDict):
 class CancelForceRequest(TypedDict):
     task_ref: EntityId
     reason: NotRequired[str | None]
-AgentRunStatus = Literal["spawned", "working", "needs_input", "delivered", "archived", "failed", "abandoned"]
+AgentRunStatus = Literal["spawned", "working", "needs_input", "delivered", "archived", "failed", "abandoned", "cancelled"]
 class RunAskQuestion(TypedDict):
     who: str
     prompt: str

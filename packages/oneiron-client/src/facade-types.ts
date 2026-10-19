@@ -4501,7 +4501,7 @@ export type SpawnIntentReply = { intent_key: string; phase: SpawnPhase; placed?:
 /** `oneiron::task_verb::run_doors::CancelForceRequest` */
 export type CancelForceRequest = { task_ref: EntityId; reason?: string | null }
 /** `oneiron::agent_run_status::AgentRunStatus` */
-export type AgentRunStatus = "spawned" | "working" | "needs_input" | "delivered" | "archived" | "failed" | "abandoned"
+export type AgentRunStatus = "spawned" | "working" | "needs_input" | "delivered" | "archived" | "failed" | "abandoned" | "cancelled"
 /** `oneiron::run_tree::signal::RunAskQuestion` */
 export type RunAskQuestion = { who: string; prompt: string; options: string[]; deadline?: number | null }
 /** `oneiron::run_tree::signal::RunAskAnswerKind` */
