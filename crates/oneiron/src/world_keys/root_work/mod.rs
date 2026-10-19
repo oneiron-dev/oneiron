@@ -40,6 +40,15 @@
 //! ("already enacted"). Nothing is ordered by clock or hash, nothing is
 //! undone, and nothing expires.
 //!
+//! A pin request whose pickup committed a wait for a root the target did
+//! not store yet owns that wait (FIX 5582): once the target folds the
+//! request cancelled or superseded, its store gate stops taking that root's
+//! row and its anchor's marks as its own, and the next pickup clears the
+//! wait byte-free ([`Vault::settle_root_request_waits`]). The pin stays, a
+//! wait the owner made at the pin door stays, and an activation's kit
+//! issued under a request that ended stays listed, its request's state
+//! beside it, for the target's own kit door to confirm.
+//!
 //! No location, origin, substrate or hosted-mode rule reads anything here.
 //! What stays is real: only the target holds the seed it is given, and the
 //! seed gate, the stored pin and the kit inventory decide what it opens.
@@ -55,7 +64,8 @@ use super::{
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, MachineEnrolmentRequest, OwnerWorkBody,
     OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest, RecoveryRootId,
-    RequestCode, RootChange, invalid_authority,
+    RequestCode, RootChange, end_request_wait_in_txn, ended_request_wait, invalid_authority,
+    read_pin_row_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -364,17 +374,19 @@ impl Vault {
             .collect())
     }
 
-    /// The pickup's arm for a root request naming this install, in the
-    /// caller's transaction: rechecked first, then a pin is made here as the
-    /// act's owner, and its result closes the request with it once the pin
-    /// stands (CALLS ROOT_WORK_COMPLETION). A pin awaiting its root stays
-    /// pending, its wait committed. Every other change stays pending
-    /// (`None`): it needs a seed or kit that only this install's caller
-    /// supplies ([`Self::run_root_request`]).
+    /// The pickup's arm for the root request signed as entry `hash`, naming
+    /// this install, in the caller's transaction: rechecked first, then a
+    /// pin is made here as the act's owner, and its result closes the
+    /// request with it once the pin stands (CALLS ROOT_WORK_COMPLETION). A
+    /// pin awaiting its root stays pending, its wait committed as the
+    /// request's own (FIX 5582). Every other change stays pending (`None`):
+    /// it needs a seed or kit that only this install's caller supplies
+    /// ([`Self::run_root_request`]).
     pub(crate) fn root_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
+        hash: AuthorityEntryHash,
         request: &OwnerWorkRequest,
         change: RootChange,
         secret: &MachineSecret,
@@ -384,13 +396,49 @@ impl Vault {
         }
         match change {
             RootChange::Pin { root } => {
-                let report = self.pin_owner_root_in_txn(txn, request.act.owner, secret, root)?;
+                let owner = request.act.owner;
+                let report = self.pin_owner_root_in_txn(txn, owner, secret, root, Some(hash))?;
                 Ok(change_closes(report.awaiting).then_some(OwnerWorkOutcome::enacted()))
             }
             RootChange::Activate | RootChange::Restore { .. } | RootChange::Anchor { .. } => {
                 Ok(None)
             }
         }
+    }
+
+    /// Clears the wait a root request's pickup committed once this install's
+    /// fold holds that request cancelled by the owner or superseded by a
+    /// newer request on this install (FIX 5582; CALLS ROOT_WORK_CANCEL,
+    /// ROOT_WORK_SUPERSESSION). Byte-free: no secret is read, no result is
+    /// signed, and nothing the request did is undone. The store gate already
+    /// read no wait for it in the snapshot that folded the cancel or the
+    /// newer request; this clears what the pin singleton keeps. The pin, the
+    /// earlier admitter, the owner's own wait and a wait another request owns
+    /// all stay. The pickup runs it first, before it lists any work.
+    pub(crate) fn settle_root_request_waits(&self) -> Result<()> {
+        {
+            let txn = self.store.env.read_txn()?;
+            if self.ended_root_request_wait(&txn)?.is_none() {
+                return Ok(());
+            }
+        }
+        self.with_write_txn(|txn| {
+            if let Some(request) = self.ended_root_request_wait(txn)? {
+                end_request_wait_in_txn(&self.store, txn, request)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// The root request whose committed wait has ended in `txn`'s snapshot,
+    /// if the pin singleton keeps one.
+    fn ended_root_request_wait(&self, txn: &heed::RoTxn<'_>) -> Result<Option<AuthorityEntryHash>> {
+        let row = read_pin_row_in_txn(&self.store, txn)?;
+        if row.awaited_for.is_none() {
+            return Ok(None);
+        }
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        Ok(ended_request_wait(&row, &fold))
     }
 
     /// The first recheck a root request fails in this transaction: its owner
