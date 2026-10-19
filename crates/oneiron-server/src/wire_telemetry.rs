@@ -1,15 +1,15 @@
 //! RC42 observation-only wire counters. Thresholds ask questions; they never deny service.
 use oneiron::limit_ask::{EngineLimit, LimitAsk};
+pub use oneiron::task_verb::sdk::WireThresholds;
+use oneiron::task_verb::sdk::{
+    WIRE_THRESHOLDS_MANIFEST as MANIFEST, WireThresholdsReceipt,
+    set_wire_thresholds_as_owner_in_txn,
+};
 use oneiron::{Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex, MutexGuard, PoisonError},
-};
-pub use oneiron::task_verb::sdk::WireThresholds;
-use oneiron::task_verb::sdk::{
-    WIRE_THRESHOLDS_MANIFEST as MANIFEST, WireThresholdsReceipt,
-    set_wire_thresholds_as_owner_in_txn,
 };
 
 const RECEIPT: &str = "wire:window:v2:";
