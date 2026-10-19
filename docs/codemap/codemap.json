@@ -78556,7 +78556,7 @@
      "path": "src/auth/managed_request.rs",
      "purpose": "The caller of one request a managed vault serves (WILL-PLAN L14 row 01, Engine ruling 10-19)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -83600,7 +83600,7 @@
      "path": "src/voice_host/brain.rs",
      "purpose": "The voice call's brain (OF-410): the chat role, as `/ai/chat` runs it",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 2
      }
@@ -83631,6 +83631,16 @@
      "notable": [],
      "path": "src/voice_host/extraction.rs",
      "purpose": "—",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_host/hello_refusal.rs",
+     "purpose": "A voice hello refused before its call is admitted (`boot`) is answered with one line…",
      "surface": {
       "crate-vis": 3
      }
@@ -83678,7 +83688,7 @@
      "path": "src/voice_host/public.rs",
      "purpose": "Credential-bound public sessions",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -83689,6 +83699,16 @@
      "purpose": "Public event correlation and dequeue fencing, independent of transport",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_host/public_hold.rs",
+     "purpose": "A public live voice session's hold on its host's write gate: one admission, taken when the session starts…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -84585,7 +84605,7 @@
      "purpose": "Provider-list metering and host-pushed vault budget limits"
     },
     "voice_host": {
-     "files": 18,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84622,7 +84642,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 814,
+   "source_files": 816,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -88648,9 +88668,10 @@
      "path": "src/lib/managed_holder.rs",
      "purpose": "Host-attested account actions: one managed widen request, and one request the vault owner makes in person…",
      "surface": {
-      "const": 5,
-      "fn": 6,
-      "struct": 3
+      "const": 6,
+      "fn": 8,
+      "struct": 3,
+      "type": 1
      }
     },
     {
