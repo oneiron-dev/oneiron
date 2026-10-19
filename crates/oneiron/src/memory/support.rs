@@ -1224,10 +1224,12 @@ impl Memory<'_> {
     /// the credential instrument and door name nothing without a credential.
     /// `None` when this surface holds what only its host could rebuild: a
     /// credential, read proof, slip or task grant, a thread's turn, owner
-    /// authorship or surface, a host origin, a machine signer, a producer
-    /// list, a birth position, a TASK host, a decision path, an off-record
-    /// session or a door's rewrite admission. Where the caller sits decides
-    /// nothing here.
+    /// authorship, a host origin, a machine signer, a producer list, a birth
+    /// position, a TASK host, a decision path, an off-record session or a
+    /// door's rewrite admission. Where the caller sits decides nothing here.
+    /// An owner surface ([`Self::with_owner_surface`]) does not stop a plain
+    /// resume: the rebuilt handle records the default `ThisInstall`, as every
+    /// act did before FIX 4650, since the surface is audit only.
     /// `None` resumes only on the caller's retry.
     pub(crate) fn plain_resume(&self) -> Option<crate::runtime_hooks::verb::PlainRowResume> {
         let rebuilt = !self.credential
@@ -1239,7 +1241,6 @@ impl Memory<'_> {
                 .as_ref()
                 .is_none_or(|turn| turn.branch.is_none())
             && self.owner_authorship.is_none()
-            && self.owner_surface == crate::authority::ActSurface::ThisInstall
             && self.host_origin.is_none()
             && self.machine_signer.is_none()
             && self.producers.is_none()
