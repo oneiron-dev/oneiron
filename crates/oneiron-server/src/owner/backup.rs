@@ -42,7 +42,7 @@ mod rehearse;
 mod restore;
 pub(crate) mod write_budget;
 
-pub(crate) use self::custody::{custody_status, take_publishing};
+pub(crate) use self::custody::{custody_recovery, custody_status, take_publishing};
 #[cfg(test)]
 use self::rehearse::Owned;
 #[cfg(test)]
@@ -66,9 +66,9 @@ pub(crate) struct BackupPlan {
     /// File-name prefix scoping listing and pruning to this vault.
     pub(crate) label: String,
     pub(crate) keep: usize,
-    /// The owner-selected custody anchor root (CALLS CUSTODY_ANCHOR_ROOT):
-    /// unset by default, the anchor step pending by name (`custody`).
-    pub(crate) custody_anchor: Option<PathBuf>,
+    /// Where the vault's custody anchors and which hosted members it names
+    /// (`custody`): unset by default, the anchor step pending by name.
+    pub(crate) custody: custody::CustodyPlan,
     /// The free-space floor a serving host keeps under its uploads, lent so
     /// this vault's backups and rehearsals claim their writes on it
     /// ([`write_budget`], FIX 5479); `None` on a stopped vault.
@@ -81,7 +81,7 @@ impl BackupPlan {
             dir,
             label: vault_label(vault_path),
             keep,
-            custody_anchor: None,
+            custody: custody::CustodyPlan::default(),
             floor: None,
         }
     }
@@ -188,6 +188,7 @@ pub(crate) fn take_as(
     let path = plan.dir.join(&file);
     std::fs::rename(&partial, &path)?;
     sync_dir(&plan.dir)?;
+    custody::publish_after_take(vault, plan);
     let bytes = std::fs::metadata(&path)?.len();
     let pruned = if vault.legal_hold_keeps_backups()? {
         Vec::new()

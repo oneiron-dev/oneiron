@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use oneiron::recovery::checkpoint::{CheckpointKey, CheckpointSigner, CustodyRecovery};
+use oneiron::recovery::checkpoint::{CheckpointKey, CheckpointSigner};
 use oneiron::world_keys::VaultKeyUnlock;
 use oneiron_keystore::DeviceKeystore;
 use serde::Serialize;
@@ -55,10 +55,9 @@ pub(crate) fn restore_fresh(
     })?;
     let path = &config.vault_path;
     // The custody head beside the backup, checked against the configured
-    // anchor when there is one, and opened with the kit when the restore
-    // was unlocked with it (KS-4A1).
-    let mut custody =
-        CustodyRecovery::beside(backup).anchored_at(config.backup.custody_anchor_root.clone());
+    // anchor (a root or another install's door) when there is one, and
+    // opened with the kit when the restore was unlocked with it (KS-4A1).
+    let mut custody = backup::custody_recovery(backup, &config.backup);
     if let Some(root) = super::super::recovery_kit::kit_custody_root(unlock) {
         custody = custody.with_kit(root);
     }

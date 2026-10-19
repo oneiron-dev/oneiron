@@ -28080,14 +28080,18 @@ pub fn vault_artifacts_release_wait(
 pub fn vault_artifacts_review_slides(
     memory: &Memory<'_>,
     input: crate::blob_artifact::SlideReviewSubmit,
-) -> MemoryResult<crate::blob_artifact::SlideReviewOutcome> {
-    memory.artifacts_review_slides(&input)
+) -> MemoryResult<crate::task_verb::sdk::ActAnswer<crate::blob_artifact::SlideReviewOutcome>> {
+    Ok(crate::task_verb::sdk::ActAnswer::Done(
+        memory.artifacts_review_slides(&input)?,
+    ))
 }
 pub fn vault_artifacts_ask(
     memory: &Memory<'_>,
     input: crate::blob_artifact::ArtifactAskSubmit,
-) -> MemoryResult<crate::blob_artifact::ArtifactAskOutcome> {
-    memory.artifacts_ask(&input)
+) -> MemoryResult<crate::task_verb::sdk::ActAnswer<crate::blob_artifact::ArtifactAskOutcome>> {
+    Ok(crate::task_verb::sdk::ActAnswer::Done(
+        memory.artifacts_ask(&input)?,
+    ))
 }
 pub fn vault_artifacts_admit(
     memory: &Memory<'_>,
@@ -29259,8 +29263,10 @@ pub fn connector_status(
 pub fn connector_call(
     memory: &Memory<'_>,
     input: crate::outbound_consent::ConnectorCallRequest,
-) -> MemoryResult<crate::task_verb::sdk::ConnectorCallReply> {
-    crate::task_verb::sdk::connector_call_host_only(memory, &input)
+) -> MemoryResult<crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::ConnectorCallReply>> {
+    Ok(crate::task_verb::sdk::ActAnswer::Done(
+        crate::task_verb::sdk::connector_call_host_only(memory, &input)?,
+    ))
 }
 pub fn connector_schema(
     memory: &Memory<'_>,

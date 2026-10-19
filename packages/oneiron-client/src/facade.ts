@@ -1750,8 +1750,8 @@ export interface FacadeResults {
   "vault.artifacts.proposals": Facade.PendingProposalView[];
   "vault.artifacts.waits": Facade.OrganWaitView[];
   "vault.artifacts.release_wait": Facade.ReleasedWait;
-  "vault.artifacts.review_slides": Facade.SlideReviewOutcome;
-  "vault.artifacts.ask": Facade.ArtifactAskOutcome;
+  "vault.artifacts.review_slides": Facade.ActAnswer<Facade.SlideReviewOutcome>;
+  "vault.artifacts.ask": Facade.ActAnswer<Facade.ArtifactAskOutcome>;
   "vault.artifacts.admit": Facade.ArtifactAskOutcome;
   "vault.critic.review": Facade.CriticReviewOutcome;
   "vault.artifacts.propose_outline": Facade.DeckOutlineView;
@@ -1901,7 +1901,7 @@ export interface FacadeResults {
   "self.decisions.asks": Facade.DecisionAsk[];
   "connector.list": Facade.ConnectorEntry[];
   "connector.status": Facade.ConnectorView | null;
-  "connector.call": Facade.ConnectorCallReply;
+  "connector.call": Facade.ActAnswer<Facade.ConnectorCallReply>;
   "connector.schema": Facade.ConnectorSchemaReply;
   "connector.call_status": Facade.ConnectorCallStatus;
   "vault.commit": Facade.CommitOutcome[];
@@ -3295,10 +3295,13 @@ export type FacadeReturn = keyof FacadeReturns<FacadeVerb>;
 /**
  * The one injected invocation: a verb, its typed input, the transport's own
  * options and the call's invocation id, fresh for each call the tree makes and
- * the stopped call's own on a retry. The transport sends the id with the call
- * (HTTP: `x-oneiron-invocation`).
+ * the stopped call's own on a retry, with the ask handle that call stopped on.
+ * The transport sends the id with the call (HTTP: `x-oneiron-invocation`), and
+ * the ask beside it when there is one (HTTP: `x-oneiron-hook-ask`), so the
+ * server resumes that hook pause rather than opening a second one; a pause it
+ * no longer holds refuses rather than running as a new call.
  */
-export type FacadeTransport<K extends FacadeReturn, O = RequestInit> = <V extends FacadeVerb>(verb: V, input: FacadeInput<V>, options: O | undefined, invocation: string) => FacadeReturns<V>[K];
+export type FacadeTransport<K extends FacadeReturn, O = RequestInit> = <V extends FacadeVerb>(verb: V, input: FacadeInput<V>, options: O | undefined, invocation: string, ask?: string) => FacadeReturns<V>[K];
 
 /**
  * The facade as its path tree (`vault.claims.upsert`, `self.memory.diary`),
@@ -6042,7 +6045,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
 }
 export type FacadeTree<K extends FacadeReturn, O = RequestInit> = ReturnType<typeof facadeTree<K, O>>;
 
-/** Retries the call `pending` names through `invoke`: its verb and input, under its own invocation id. */
+/** Retries the call `pending` names through `invoke`: its verb and input, under its own invocation id, naming the ask it stopped on. */
 export function facadeRetry<K extends FacadeReturn, O, V extends FacadeVerb>(invoke: FacadeTransport<K, O>, pending: FacadePending<V>, options?: O): FacadeReturns<V>[K] {
-  return invoke(pending.verb, pending.input, options, pending.invocation);
+  return invoke(pending.verb, pending.input, options, pending.invocation, pending.ask);
 }

@@ -27,6 +27,7 @@ use crate::error::{Error, Result};
 use super::files::read_whole;
 use super::identity::{CustodyNamespace, CustodyVaultId};
 use super::log::{Control, CustodyPosition, POSITION_LEN};
+use super::protocol::{AnchorAdvance, AnchorStore};
 
 const ANCHOR_MAGIC: &[u8; 4] = b"OCAN";
 const ANCHOR_VERSION: u8 = 1;
@@ -68,33 +69,10 @@ pub(super) fn verified_position(record: &[u8], anchor_key: &[u8; 32]) -> Result<
     Ok(position)
 }
 
-/// What a compare-and-swap advance did.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AnchorAdvance {
-    /// The record is the store's current one.
-    Advanced,
-    /// The current record is not the one the caller expected: another writer
-    /// moved it. Nothing changed.
-    Moved,
-}
-
-/// An external anchor: authenticated read and compare-and-swap advance of
-/// each lineage's current record. A hosted adapter (KS-4B) keeps the same
-/// contract.
-pub(crate) trait AnchorStore {
-    /// The lineage's current record, if it has one.
-    fn read(&self, vault: CustodyVaultId, namespace: CustodyNamespace) -> Result<Option<Vec<u8>>>;
-
-    /// Makes `record` the current one of its lineage when the current one is
-    /// still the one whose BLAKE3 is `expected` (`None`: none yet). A record
-    /// that does not extend the current one (an older writer epoch, or an
-    /// older sequence in the same epoch) is refused.
-    fn advance(&self, expected: Option<[u8; 32]>, record: &[u8]) -> Result<AnchorAdvance>;
-}
-
 /// Whether `next` may replace `current`: the same lineage, a writer epoch no
-/// older, and in the same epoch a sequence no older.
-fn extends(current: &CustodyPosition, next: &CustodyPosition) -> bool {
+/// older, and in the same epoch a sequence no older. A folder or residence
+/// head switch keeps the same rule.
+pub(super) fn extends(current: &CustodyPosition, next: &CustodyPosition) -> bool {
     current.same_lineage(next)
         && next.epoch >= current.epoch
         && next.seq >= current.seq
@@ -157,17 +135,6 @@ impl FileAnchor {
         Err(Error::InvalidConfig(
             "the custody anchor needs a supported Unix filesystem".into(),
         ))
-    }
-}
-
-impl FileAnchor {
-    /// The current record of the lineage `namespace` of vault `vault`, for
-    /// the anchor door.
-    pub(crate) fn read_raw(&self, vault: [u8; 32], namespace: [u8; 16]) -> Result<Option<Vec<u8>>> {
-        self.read(
-            CustodyVaultId::from_bytes(vault),
-            CustodyNamespace::from_bytes(namespace),
-        )
     }
 }
 

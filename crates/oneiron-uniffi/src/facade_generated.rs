@@ -3346,12 +3346,12 @@ export_facade! {
     let output = client.vault_artifacts_release_wait(&input)?;
     crate::codec::lift_record("vault.artifacts.release_wait", &output)
 };
-"vault.artifacts.review_slides" => fn vault_artifacts_review_slides(&self, input: SlideReviewSubmit) -> SlideReviewOutcome = |client| {
+"vault.artifacts.review_slides" => fn vault_artifacts_review_slides(&self, input: SlideReviewSubmit) -> ActAnswerSlideReviewOutcome = |client| {
     let input: oneiron::blob_artifact::SlideReviewSubmit = crate::codec::lower_record("vault.artifacts.review_slides", input)?;
     let output = client.vault_artifacts_review_slides(&input)?;
     crate::codec::lift_record("vault.artifacts.review_slides", &output)
 };
-"vault.artifacts.ask" => fn vault_artifacts_ask(&self, input: ArtifactAskSubmit) -> ArtifactAskOutcome = |client| {
+"vault.artifacts.ask" => fn vault_artifacts_ask(&self, input: ArtifactAskSubmit) -> ActAnswerArtifactAskOutcome = |client| {
     let input: oneiron::blob_artifact::ArtifactAskSubmit = crate::codec::lower_record("vault.artifacts.ask", input)?;
     let output = client.vault_artifacts_ask(&input)?;
     crate::codec::lift_record("vault.artifacts.ask", &output)
@@ -4101,7 +4101,7 @@ export_facade! {
     let output = client.connector_status(&input)?;
     crate::codec::lift_record("connector.status", &output)
 };
-"connector.call" => fn connector_call(&self, input: ConnectorCallRequest) -> ConnectorCallReply = |client| {
+"connector.call" => fn connector_call(&self, input: ConnectorCallRequest) -> ActAnswerConnectorCallReply = |client| {
     let input: oneiron::outbound_consent::ConnectorCallRequest = crate::codec::lower_record("connector.call", input)?;
     let output = client.connector_call(&input)?;
     crate::codec::lift_record("connector.call", &output)

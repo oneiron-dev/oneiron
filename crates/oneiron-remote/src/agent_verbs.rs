@@ -2089,10 +2089,10 @@ impl OneironClient {
                     oneiron::blob_artifact::ReleasedWait,
                 >(client, verb, &input),
                 "vault.artifacts.review_slides" => remote_agent_verb_output::<
-                    oneiron::blob_artifact::SlideReviewOutcome,
+                    oneiron::task_verb::sdk::ActAnswer<oneiron::blob_artifact::SlideReviewOutcome>,
                 >(client, verb, &input),
                 "vault.artifacts.ask" => remote_agent_verb_output::<
-                    oneiron::blob_artifact::ArtifactAskOutcome,
+                    oneiron::task_verb::sdk::ActAnswer<oneiron::blob_artifact::ArtifactAskOutcome>,
                 >(client, verb, &input),
                 "vault.artifacts.admit" => remote_agent_verb_output::<
                     oneiron::blob_artifact::ArtifactAskOutcome,
@@ -2550,7 +2550,7 @@ impl OneironClient {
                     Option<oneiron::task_verb::sdk::ConnectorView>,
                 >(client, verb, &input),
                 "connector.call" => remote_agent_verb_output::<
-                    oneiron::task_verb::sdk::ConnectorCallReply,
+                    oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::ConnectorCallReply>,
                 >(client, verb, &input),
                 "connector.schema" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectorSchemaReply,
@@ -11554,7 +11554,10 @@ impl OneironClient {
     pub fn vault_artifacts_review_slides(
         &self,
         input: &oneiron::blob_artifact::SlideReviewSubmit,
-    ) -> Result<oneiron::blob_artifact::SlideReviewOutcome, MemoryError> {
+    ) -> Result<
+        oneiron::task_verb::sdk::ActAnswer<oneiron::blob_artifact::SlideReviewOutcome>,
+        MemoryError,
+    > {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -11566,7 +11569,10 @@ impl OneironClient {
     pub fn vault_artifacts_ask(
         &self,
         input: &oneiron::blob_artifact::ArtifactAskSubmit,
-    ) -> Result<oneiron::blob_artifact::ArtifactAskOutcome, MemoryError> {
+    ) -> Result<
+        oneiron::task_verb::sdk::ActAnswer<oneiron::blob_artifact::ArtifactAskOutcome>,
+        MemoryError,
+    > {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -13379,7 +13385,10 @@ impl OneironClient {
     pub fn connector_call(
         &self,
         input: &oneiron::outbound_consent::ConnectorCallRequest,
-    ) -> Result<oneiron::task_verb::sdk::ConnectorCallReply, MemoryError> {
+    ) -> Result<
+        oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::ConnectorCallReply>,
+        MemoryError,
+    > {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
