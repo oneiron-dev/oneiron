@@ -686,7 +686,7 @@ impl Memory<'_> {
     /// its exact author only. `None` when the read withholds it or the NOTE
     /// is not a pad.
     fn pad_markdown(&self, pad: EntityId) -> MemoryResult<Option<String>> {
-        let Some(view) = self.get_entity(&pad.to_hex())?.value else {
+        let Some(view) = self.get_entity_tolerant(&pad.to_hex())?.value else {
             return Ok(None);
         };
         Ok(view

@@ -1314,6 +1314,12 @@ that stays locked refuses the confirm before anything changes. A replaced kit's 
 their own old root; replacing a kit does not revoke it. `this-machine` is refused until a keystore
 slot can hold a piece.
 
+`issue-vault-key` takes the same `--home`, `--out` and `--secret-file` flags and writes a kit of
+the vault data key: a 2-of-3 copy of the key for you to keep, at today's passphrase cost. It runs on any vault, hosted ones too. Its key is unlocked with this machine's
+wrap if it is locked; no key is minted or rotated, and the world kit and its `world-kit` wrap stay
+as they are. It prints the kit's id, homes, cost and coverage, the vault id it is bound to, and
+the piece files, never a piece.
+
 `status` lists every kit, pending ones too, with its homes, coverage and confirmation, and each
 private world's state. `covered` means only that the world's current key has a wrap to the pinned
 root. A running server shows the same at `GET /v1/owner/recovery-kit`. The commands above run on
@@ -1358,9 +1364,12 @@ enrolment request and code.
   another.
 
 `restore` opens the world keys wrapped to the kit's root on this machine. It never changes a
-world's settings. A kit opened with one piece and the passphrase is not verified on its own:
-pass `--fingerprint <root>`, read on one of your machines that pins it, or `--confirm-unverified`.
-A kit this vault still lists as pending is refused: `confirm` it instead.
+world's settings. A kit opened with one piece and the passphrase is not verified on its own: the
+refusal shows the root its pieces rebuild. Pass `--fingerprint <root>`, read on one of your
+machines that pins it, or go ahead with `--confirm-root <root>`, the root the refusal showed. The
+go-ahead holds for that root alone: pieces that rebuild another root are refused with the root
+they do rebuild, so you confirm again in one step. A kit this vault still lists as pending is
+refused: `confirm` it instead.
 
 On a new host, the kit also opens a backup through the `world-kit` wrap, and a sealed vault's
 pages through the same wrap in its mirror. `--vault-id` is the id `status` prints, the id the kit

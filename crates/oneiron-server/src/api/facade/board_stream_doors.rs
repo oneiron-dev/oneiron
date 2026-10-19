@@ -174,7 +174,7 @@ pub(crate) async fn self_focus_wakes(
             let Ok(task) = EntityId::from_hex(&wake.task_ref) else {
                 continue;
             };
-            if memory.get_entity(&task.to_hex())?.value.is_none() {
+            if memory.get_entity_tolerant(&task.to_hex())?.value.is_none() {
                 continue;
             }
             kept.push(wake);

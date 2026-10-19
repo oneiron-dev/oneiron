@@ -243,6 +243,11 @@ pub enum EngineLimit {
     /// Signature images one recipient of a signing document holds. Past it
     /// the envelope's sender is asked, and the image is stored and bound.
     EsignSignatureRecipientImages,
+    /// Bytes of one request body a public signing door spools once its
+    /// capability is admitted: an act, a PDF or preview read, a signature
+    /// image or its read-back. Past it the envelope's sender is asked whether
+    /// everything is okay, and the body is read whole.
+    EsignBodyBytes,
     /// Bytes of one sealed PDF the seal host accepted. Past it the row asks
     /// whether everything is okay, and the sealed PDF is kept whole.
     SealOutputBytes,
@@ -285,7 +290,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 73] = [
+    pub const ALL: [Self; 74] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -349,6 +354,7 @@ impl EngineLimit {
         Self::EsignSignaturePngBytes,
         Self::EsignSignatureDocumentBytes,
         Self::EsignSignatureRecipientImages,
+        Self::EsignBodyBytes,
         Self::SealOutputBytes,
         Self::SealGrowthBytes,
         Self::SealPdfObjects,
@@ -427,6 +433,7 @@ impl EngineLimit {
             Self::EsignSignaturePngBytes => "limits.esign_signature_png_bytes",
             Self::EsignSignatureDocumentBytes => "limits.esign_signature_document_bytes",
             Self::EsignSignatureRecipientImages => "limits.esign_signature_recipient_images",
+            Self::EsignBodyBytes => "limits.esign_body_bytes",
             Self::SealOutputBytes => "limits.seal_output_bytes",
             Self::SealGrowthBytes => "limits.seal_growth_bytes",
             Self::SealPdfObjects => "limits.seal_pdf_objects",
@@ -529,6 +536,9 @@ impl EngineLimit {
             Self::EsignSignaturePngBytes => 2 << 20,
             Self::EsignSignatureDocumentBytes => 64 << 20,
             Self::EsignSignatureRecipientImages => 16,
+            // The 3 MiB the public signing doors refused a body past before
+            // token-first ingress (FIX 3808).
+            Self::EsignBodyBytes => 3 << 20,
             // The output, growth, object, definition, frame, work, revision,
             // prefix and DSS-decode ceilings the seal refused past before
             // Rule 5. The reply frame's was 97 MiB on macOS, where outputs

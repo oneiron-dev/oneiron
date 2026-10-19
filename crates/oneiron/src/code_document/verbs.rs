@@ -141,7 +141,7 @@ impl Memory<'_> {
                 };
                 // The revision is read through the caller's credential, so a
                 // withheld revision answers as an absent one (FIX 4344).
-                if self.get_entity(&id.to_hex())?.value.is_none() {
+                if self.get_entity_tolerant(&id.to_hex())?.value.is_none() {
                     return Ok(None);
                 }
                 self.produced_from([id]);
@@ -245,7 +245,7 @@ impl<'a, 'v> OpRefs<'a, 'v> {
         let readable = match self.readable.get(&id).copied() {
             Some(readable) => readable,
             None => {
-                let readable = self.memory.get_entity(&id.to_hex())?.value.is_some();
+                let readable = self.memory.get_entity_tolerant(&id.to_hex())?.value.is_some();
                 if readable {
                     self.memory.produced_from([id]);
                 }
