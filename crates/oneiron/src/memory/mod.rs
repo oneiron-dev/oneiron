@@ -27,14 +27,21 @@ pub mod affect;
 mod answer_boundary;
 mod archive_purge;
 mod artifact_hosting_doors;
-mod asset_resolve;
 mod asset_doors;
+mod asset_resolve;
 mod authorship;
+mod critical_confirm;
+pub use critical_confirm::{
+    CriticalWriteConfirmAnswer, CriticalWriteConfirmPending, CriticalWriteConfirmPendingRequest,
+    CriticalWriteConfirmReceipt, CriticalWriteConfirmReceiptRequest, CriticalWriteConfirmRequest,
+    CriticalWriteConfirmSettlement,
+};
 mod birth_position;
 mod booking;
 mod claim_admission;
 mod claim_conflict;
 mod claim_stale;
+pub mod clustering;
 pub mod commitment_doors;
 mod conflict_settle;
 pub mod consolidation;
@@ -48,6 +55,7 @@ mod skill_authoring;
 pub mod wellness_doors;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
+pub(crate) use outbound::parse_job_ref;
 pub(crate) mod booking_publication;
 mod campaign;
 mod campaign_actions;
@@ -58,6 +66,7 @@ pub mod checkout_doors;
 mod claims;
 pub mod code_doors;
 pub mod code_run_doors;
+pub mod code_view_doors;
 pub mod code_wait_doors;
 pub mod codebase_doors;
 mod conversation_list;
@@ -71,6 +80,7 @@ mod expression_preference;
 pub mod extraction;
 pub mod foreign_code;
 pub mod hook_regen_doors;
+pub mod graph_fs_doors;
 mod inspection;
 mod key_value;
 mod lifted_view;
@@ -94,8 +104,8 @@ pub mod result_doors;
 mod room_turn;
 mod scoped_export;
 mod search_hybrid;
-mod search_vector;
 mod search_temporal;
+mod search_vector;
 mod session_writes;
 mod shape_doors;
 mod signal_extraction;
@@ -113,8 +123,7 @@ mod tests_regressions;
 
 pub use answer_boundary::AnswerAdmission;
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
-pub use search_vector::{VectorSearchRequest, VectorSearchHit};
-pub use asset_doors::{AssetIngestRequest, AssetIngestReceipt, AssetResolveRequest, AssetResolved};
+pub use asset_doors::{AssetIngestReceipt, AssetIngestRequest, AssetResolveRequest, AssetResolved};
 pub use asset_resolve::{
     AssetConsumer, HydratedAsset, IMAGE_FULL, ImageHandle, ImagePick, ImageViewRequest,
     LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
@@ -239,6 +248,10 @@ pub use search_hybrid::{
 pub use search_temporal::{
     TemporalSearchHit, TemporalSearchRange, TemporalSearchRequest, TemporalSearchResult,
 };
+pub use search_vector::{
+    VectorPutReceipt, VectorPutRequest, VectorSearchConfig, VectorSearchHit,
+    VectorSearchLane, VectorSearchRequest, VectorSearchResult,
+};
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};
 pub(crate) use structural::append_agent_diary_in_txn;
@@ -252,6 +265,12 @@ pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
 pub use support::{HostWriteOrigin, Memory, RewriteAdmit, parse_actor_key, resolve_entity_ref};
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
+};
+pub use witness::{
+    AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
+    MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
+    MessageCustomCancel, MessageCustomCancelKind, MessageDocumentState, MessageDurability,
+    MessageDurabilityRequest, MessageStreamMode, MessageStreamOptions, MessageStreamRequest,
 };
 pub use witness::{
     DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MessageCompletion,

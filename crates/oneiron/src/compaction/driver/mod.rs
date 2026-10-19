@@ -12,6 +12,7 @@ use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
 mod integration;
+mod live_fork;
 mod log;
 
 use super::gate::{CompactionCheck, CompactionRefusal};
@@ -25,7 +26,11 @@ use super::epoch::{
 ///
 /// The ladder has exactly two rungs because the owner ruling has exactly two:
 /// compaction is cheap, never frontier. This is a REGISTRATION declaration,
-/// not an inference from a tier string.
+/// not an inference from a tier string. One binding is not registered and
+/// may be frontier (FIX 4465 C): an agent whose profile names `self`, under
+/// a row that selects the live fork, forks its own live request on the rung
+/// that admitted it. Only the driver's live admission admits it, per flight,
+/// for a capture its host made of the run's own request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CompactionTierClass {
     /// The only admissible class — the cheap-model tier a compaction backend
@@ -40,7 +45,9 @@ pub enum CompactionTierClass {
 ///
 /// Cheap by design: [`CompactionBackendRegistry::register`] refuses a
 /// frontier-tier implementation before insertion, so the ban is structural
-/// rather than a post-hoc audit.
+/// rather than a post-hoc audit. A registered cheap backend that writes as
+/// its agent may still send one flight on its run's live rung, only through
+/// [`Self::prepare_live_flight`] with the fork its driver admitted.
 pub trait CompactionBackend: Send + Sync {
     /// The registry key a profile names in `memory_profile.compaction_backend`.
     fn backend_key(&self) -> &str;
@@ -90,10 +97,43 @@ pub trait CompactionBackend: Send + Sync {
     > {
         self.compact(request, retry).map(|product| (product, None))
     }
+    /// At a breakpoint that seals a flight, the run's `live` request as the
+    /// host's admitted rung sends it, when this backend writes as its agent
+    /// from the live context (FIX 4465 C), or why it cannot be bound. `None`
+    /// from every other backend. Called on the step loop before the feed
+    /// can park; `summary_token_budget` sizes the room the capture leaves.
+    fn capture_live_fork(
+        &self,
+        _live: &crate::LlmRequest,
+        _summary_token_budget: u64,
+    ) -> Option<
+        std::result::Result<
+            crate::code_run::LiveCompactionFork,
+            crate::compaction::SelfCompactionUnavailable,
+        >,
+    > {
+        None
+    }
+    /// [`Self::prepare_flight`] for a flight that carries the live fork its
+    /// driver admitted (FIX 4465 C). The backend holds the fork, unchanged,
+    /// for the flight's calls until [`Self::end_flight`]. A backend that
+    /// never captures one has none to send.
+    fn prepare_live_flight(
+        &self,
+        _session_bound: bool,
+        _fork: crate::code_run::AdmittedLiveFork,
+    ) -> std::result::Result<(), crate::compaction::SelfCompactionUnavailable> {
+        Err(crate::compaction::SelfCompactionUnavailable::LiveForkNotCaptured)
+    }
+    /// Called once a flight's passes have ended: the backend lets go of what
+    /// the flight froze, its live request included.
+    fn end_flight(&self) {}
 }
 
 /// One message-log row the host hands the backend.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct CompactionWindowMessage {
     /// The MESSAGE whose words `content` renders: a `DerivedFrom` target
     /// when the vault stores it.
@@ -212,7 +252,10 @@ impl CompactionRequest {
         let (turn_start, last) = validate_window_span(&window)?;
         let sources = conversation_sources(vault, &window)?;
         let rtxn = vault.store.env.read_txn()?;
-        validate_epoch_boundary(prior_epoch_in_txn(&vault.store, &rtxn, &session_ref)?, turn_start)?;
+        validate_epoch_boundary(
+            prior_epoch_in_txn(&vault.store, &rtxn, &session_ref)?,
+            turn_start,
+        )?;
         Ok(Self {
             request_id: vault.store.clock.entity_id()?,
             session_ref,
@@ -241,7 +284,10 @@ impl CompactionRequest {
     }
 }
 
-fn conversation_sources(vault: &Vault, window: &[CompactionWindowMessage]) -> Result<Vec<EntityId>> {
+fn conversation_sources(
+    vault: &Vault,
+    window: &[CompactionWindowMessage],
+) -> Result<Vec<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut seen = BTreeSet::new();
     let mut sources = Vec::new();
@@ -332,7 +378,9 @@ impl CompactionBackendRegistry {
     ///
     /// This is the ONLY authority on "is this backend a frontier tier": a
     /// frontier answer is unreachable through a registered key, which is the
-    /// ban made observable.
+    /// ban made observable. The live fork's binding is never registered: a
+    /// self writer's key stays cheap, and its run's live rung is admitted
+    /// per flight by its driver, not by this registry (FIX 4465 C).
     #[must_use]
     pub fn tier_class_of(&self, backend_key: &str) -> Option<CompactionTierClass> {
         self.backends

@@ -13,15 +13,11 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use oneiron::blob_artifact::esign::{EsignCapability, SigningAction, SigningCaller};
-use serde::Deserialize;
+use oneiron::blob_artifact::esign::{
+    EsignCapability, EsignSigningImageRequest, EsignSigningImageView, EsignSigningPdfRequest,
+    EsignSigningRequest, SigningCaller,
+};
 use std::sync::Arc;
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SigningRequest {
-    token: String,
-    action: SigningAction,
-}
 pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/sign/layout", post(presentation::layout))
@@ -62,7 +58,7 @@ async fn action(
     headers: HeaderMap,
     peer: NetworkPeer,
     local_peer: LocalPeer,
-    Json(request): Json<SigningRequest>,
+    Json(request): Json<EsignSigningRequest>,
 ) -> Response {
     let token = match EsignCapability::parse(&request.token) {
         Ok(token) => token,
@@ -151,18 +147,12 @@ fn refused() -> Response {
         .into_response()
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PdfRequest {
-    token: String,
-    item: usize,
-}
 async fn pdf(
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
     peer: NetworkPeer,
     local_peer: LocalPeer,
-    Json(request): Json<PdfRequest>,
+    Json(request): Json<EsignSigningPdfRequest>,
 ) -> Response {
     let token = match EsignCapability::parse(&request.token) {
         Ok(t) => t,
@@ -211,15 +201,9 @@ async fn pdf(
         Err(_) => refused(),
     }
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ImageRequest {
-    token: String,
-    png_or_jpeg_base64: String,
-}
 async fn image(
     State(server): State<Arc<SyncServer>>,
-    Json(request): Json<ImageRequest>,
+    Json(request): Json<EsignSigningImageRequest>,
 ) -> Response {
     use base64::Engine;
     let token = match EsignCapability::parse(&request.token) {
@@ -237,7 +221,7 @@ async fn image(
                 (header::CACHE_CONTROL, "no-store"),
                 (header::REFERRER_POLICY, "no-referrer"),
             ],
-            Json(serde_json::json!({"image_ref":image_ref})),
+            Json(EsignSigningImageView { image_ref }),
         )
             .into_response(),
         Err(_) => refused(),

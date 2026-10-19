@@ -16,7 +16,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::llm::media::{AiOperation, MediaPart, MediaRequest, Modality};
+use oneiron::llm::media::{AiOperation, MediaRequest, Modality};
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
@@ -29,10 +29,7 @@ use oneiron::task_verb::sdk::{
     AiVideoCancelled, AiVideoJob, AiVideoJobRequest, AiVideoTicket, AiVoice, HookReplayRow,
     HooksReplayRequest, PackPutReceipt, PackPutRequest,
 };
-use oneiron::{
-    CallClass, CallEnvelope, CallPurpose, EdgeActorClass, EntityId, FatalLlmError, LlmError,
-    ModelId, ModelTierRef, ResponseFormat, RetryableLlmError, TierPrecedence,
-};
+use oneiron::{EdgeActorClass, EntityId, FatalLlmError, LlmError, ModelId, RetryableLlmError};
 
 use oneiron::lens::{LensActivateRequest, LensDeactivateRequest};
 use oneiron::receipt::LensActivationReceipt;
@@ -42,15 +39,20 @@ use oneiron::task_verb::sdk::{
     PackSetupReceipt, PackSetupRequest, PackSetupVerifyRequest,
 };
 
-use crate::api::ai::{VoiceRefusal, bind_voice, caller_options};
+use crate::api::ai::{
+    MediaCallParts, MediaCallRefusal, VoiceRefusal, caller_options, prepare_media_call,
+};
 use crate::auth::CoreAuth;
 use crate::builtin_host::HostConnectionChecks;
 use crate::models::RungVoices;
-use crate::server::SyncServer;
+use crate::server::{MediaRefusal, SyncServer};
 
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::artifact_hosting_doors::*;
+pub(crate) use super::deck_creation_doors::*;
 pub(crate) use super::authority_history_doors::*;
+// The run-bound board STREAM doors (DOOR-121), likewise.
+pub(crate) use super::board_stream_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::browser_doors::*;
 pub(crate) use super::calendar_doors::*;
@@ -62,6 +64,7 @@ pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::agent_definition_doors::*;
 pub(crate) use super::shared_act_doors::*;
+pub(crate) use super::shared_admin_doors::*;
 // The shared-vault invitation doors (OF-531) too.
 pub(crate) use super::shared_member_doors::*;
 // The shared-act policy doors (DOOR-129) too.
@@ -73,17 +76,19 @@ pub(crate) use super::voice_bank_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::asr_doors::*;
 pub(crate) use super::cleanup_doors::*;
+pub(crate) use super::clustering_doors::*;
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
+pub(crate) use super::model_catalog_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 pub(crate) use super::run_review_doors::*;
-pub(crate) use super::skill_execution_doors::*;
 pub(crate) use super::sieve_observation_doors::*;
+pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
@@ -104,6 +109,7 @@ pub(crate) use super::fold_doors::*;
 pub(crate) use super::foreign_code_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::off_record_doors::*;
+pub(crate) use super::off_record_room_doors::*;
 pub(crate) use super::persona_doors::*;
 pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
@@ -135,6 +141,7 @@ pub(crate) use super::secret_lift_doors::*;
 pub(crate) use super::wave_doors::*;
 // The owner's context-widen proposal doors (OF-568), likewise.
 pub(crate) use super::widen_proposal_doors::*;
+pub(crate) use super::wire_health_doors::*;
 // The owner's craft-candidate review doors (OF-490), likewise.
 pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
@@ -148,6 +155,7 @@ pub(crate) use super::policy_doors::*;
 pub(crate) use super::checkout_doors::*;
 pub(crate) use super::origin_doors::*;
 // The owner's code snapshot doors (DOOR-118), likewise.
+pub(crate) use super::code_view_doors::*;
 pub(crate) use super::codebase_doors::*;
 // The owner's task-type tree doors (DOOR-111) and run doors (DOOR-100),
 // likewise.
@@ -155,6 +163,8 @@ pub(crate) use super::coordination_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
+pub(crate) use super::proxy_doors::*;
+pub(crate) use crate::api::openai_proxy::ai_chat_completions;
 // The secret use door, whose connector.call sends (OF-560), likewise.
 pub(crate) use super::secret_use_doors::*;
 // An agent run's secret grant doors (DOOR-124), likewise.
@@ -173,13 +183,15 @@ pub(crate) use super::aging_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::coach_offer_doors::*;
 pub(crate) use super::eval_doors::*;
+pub(crate) use super::hyde_doors::*;
 pub(crate) use super::research_doors::*;
 pub(crate) use super::retrieval_doors::*;
-pub(crate) use super::hyde_doors::*;
+pub(crate) use super::vector_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
+pub(crate) use super::critical_confirm_doors::*;
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;
 // The owner's sieve interest-queue, policy and lease doors (DOOR-130), likewise.
@@ -1011,16 +1023,12 @@ async fn vault_hooks_replay_answer(
     input: HooksReplayRequest,
 ) -> MemoryResult<(Vec<HookReplayRow>, Option<Vec<EntityId>>)> {
     let owner = owner_proof(auth, server, "vault.hooks.replay")?;
-    let Some(runtime) = server.hook_runtime.get().cloned() else {
-        return Err(MemoryError::new(
-            MEMORY_CODE_MODEL_UNAVAILABLE,
-            "no hook sandbox runs on this server",
-            &["Serve with fact hooks on (no --no-hooks), on a build with the code sandbox."],
-        ));
-    };
     let verdict = replay_verdict(server);
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
+        // The sandbox serve's runner runs on, taken here when no runner took
+        // it: `--no-hooks` stops the runner, not an explicit replay.
+        let runtime = crate::commands::hook_sandbox(&server).map_err(no_hook_sandbox)?;
         oneiron::task_verb::sdk::replay_hooks_as_owner_listing(
             server.vault(),
             &owner,
@@ -1031,6 +1039,16 @@ async fn vault_hooks_replay_answer(
     })
     .await
     .map_err(|_| internal("vault.hooks.replay"))?
+}
+
+/// An explicit replay's refusal when no hook sandbox loads: this build has
+/// none, or it did not build (`reason`).
+pub(super) fn no_hook_sandbox(reason: String) -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_MODEL_UNAVAILABLE,
+        format!("no hook sandbox runs on this server: {reason}"),
+        &["Serve on a build with the code sandbox (code-sandbox-wasmtime)."],
+    )
 }
 
 /// The verdict host a replay's preview asks: the one the fact-hook runner
@@ -1107,6 +1125,19 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
             .map_err(|error| super::FacadeApiError::from(error).into_memory_error()),
         "ai.steps.submit"
         | "ai.steps.receipt"
+        | "vault.models.catalog.refresh"
+        | "vault.models.catalog.get"
+        | "vault.models.catalog.diff"
+        | "vault.models.trials.nominate"
+        | "vault.models.trials.get"
+        | "vault.models.trials.approve"
+        | "vault.models.trials.run"
+        | "vault.models.trials.complete"
+        | "vault.models.bindings.propose"
+        | "vault.models.bindings.get"
+        | "vault.models.bindings.read"
+        | "vault.models.bindings.accept"
+        | "vault.models.bindings.deny"
         | "vault.runs.step"
         | "vault.runs.checkpoint"
         | "vault.runs.review"
@@ -1126,6 +1157,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "calendar.imip.get"
         | "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
+        | "vault.calendar.outcome_policy.get"
+        | "vault.calendar.outcome_policy.set"
+        | "vault.calendar.check_in.due"
+        | "vault.calendar.check_in.answer"
         | "vault.campaign.compliance.install"
         | "vault.campaign.compliance.approve"
         | "vault.campaign.compliance.reject"
@@ -1205,6 +1240,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.packs.hooks.grant.set"
         | "vault.packs.hooks.grant.get"
         | "vault.packs.hooks.qualify"
+        | "vault.connectors.proxy.admit"
+        | "vault.connectors.proxy.revoke_write"
         | "vault.connectors.subscriptions.put"
         | "vault.connectors.subscriptions.list"
         | "vault.connectors.subscriptions.revoke"
@@ -1254,6 +1291,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.hyde.configure"
         | "vault.retrieval.hyde.get"
         | "vault.affect.claims.consolidate"
+        | "vault.wire_health.thresholds.get"
+        | "vault.wire_health.thresholds.set"
         | "vault.affect.coping.record"
         | "vault.affect.coping.update"
         | "vault.affect.coping.aggregate"
@@ -1267,6 +1306,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.slim.drop_heavy"
         | "vault.slim.resume"
         | "vault.retrieval.recall"
+        | "vault.vectors.put"
         | "vault.retrieval.runs"
         | "vault.retrieval.run"
         | "vault.retrieval.turn"
@@ -1298,6 +1338,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.reports.disclosure"
         | "vault.reports.route"
         | "vault.reports.outbound"
+        | "vault.writes.critical_confirm.pending"
+        | "vault.writes.critical_confirm.clear"
+        | "vault.writes.critical_confirm.decline"
+        | "vault.writes.critical_confirm.receipt"
         | "vault.claims.review"
         | "vault.claims.settle"
         | "vault.claims.vet"
@@ -1340,6 +1384,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.tasks.cancel_force"
         | "vault.runs.branches.get"
         | "vault.consults.get"
+        | "vault.consolidation.home.get"
+        | "vault.consolidation.lineage"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"
@@ -1358,6 +1404,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.consent.create_standing_grant"
         | "vault.consent.registry"
         | "vault.consent.revoke"
+        | "vault.consent.bypass_grant_warning"
+        | "vault.consent.create_bypass_grant"
+        | "vault.consent.active_bypass_grants"
+        | "vault.consent.bypassed_effect_receipts"
         | "vault.consent.graduation.policy"
         | "vault.consent.graduation.policy.set"
         | "vault.consent.graduation.policy.clear"
@@ -1425,7 +1475,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.budgets.hold"
         | "vault.budgets.hold.resume"
         | "vault.budgets.local"
+        | "vault.budgets.reservations"
         | "vault.budgets.settlements"
+        | "vault.budgets.rsi.configure"
+        | "vault.budgets.rsi"
+        | "vault.budgets.rsi.top_up"
+        | "vault.budgets.rsi.hold"
+        | "vault.budgets.rsi.hold.resume"
         | "vault.research.evaluate_split"
         | "vault.research.create_child"
         | "vault.evals.inventory"
@@ -1476,6 +1532,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
         | "vault.code.checkout.bind"
+        | "vault.artifacts.keep_outline"
+        | "vault.artifacts.decline_outline"
         | "vault.artifacts.publish_approval"
         | "vault.artifacts.publish"
         | "vault.artifacts.repoint"
@@ -1488,6 +1546,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.artifacts.live_preview.revoke_invite"
         | "vault.artifacts.live_preview.share"
         | "vault.artifacts.live_preview.revoke_share"
+        | "vault.code.views.materialize"
+        | "vault.code.views.get"
+        | "vault.code.views.read"
+        | "vault.code.views.action"
+        | "vault.code.views.build"
+        | "vault.code.cache.get"
+        | "vault.code.cache.reuse"
         | "vault.code.snapshots.ingest"
         | "vault.code.snapshots.get"
         | "vault.code.snapshots.read"
@@ -1505,6 +1570,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.trusted_contacts.concern.asks"
         | "vault.trusted_contacts.concern.authorize"
         | "vault.trusted_contacts.concern.propose"
+        | "vault.org_admin.configure"
         | "vault.shared.policy.get"
         | "vault.shared.policy.change"
         | "vault.notes.history_purge"
@@ -1533,6 +1599,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.execute"
         | "vault.shared.receipt"
         | "vault.shared.outcomes"
+        | "vault.members.delegate"
         | "vault.members.add"
         | "vault.members.change"
         | "vault.members.remove"
@@ -1572,6 +1639,17 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.off_record.claims.upsert"
         | "self.off_record.execute" => {
             super::off_record_doors::off_record_admits(server, auth, verb)
+        }
+        "vault.off_record.rooms.start"
+        | "vault.off_record.rooms.status"
+        | "vault.off_record.rooms.witness"
+        | "vault.off_record.rooms.save"
+        | "vault.off_record.rooms.save_from_here"
+        | "vault.off_record.rooms.suggest_save"
+        | "vault.off_record.rooms.confirm_save"
+        | "vault.off_record.rooms.decline_save"
+        | "vault.off_record.rooms.export" => {
+            super::off_record_room_doors::off_record_room_admits(auth, verb)
         }
         "vault.guests.export_envelope" => {
             super::guest_document_doors::guest_document_reader(server, auth).map(drop)
@@ -1786,106 +1864,71 @@ fn admit(
     prepare(server, operation, input)
 }
 
-/// A call of `operation`, admitted against the vault's inference policy for
-/// the model it names, ready for its seat's ladder, with the banked voice it
-/// renders in, if any (bound as `/v1/ai/speech` binds it). Its caller's door
-/// admitted the caller.
+/// A call of `operation`, prepared and admitted as `/v1/ai/<operation>`
+/// prepares it ([`prepare_media_call`]), each refusal under the facade's
+/// codes. Its caller's door admitted the caller: the owner's
+/// ([`admit`]) or a run's ([`ai_speech_for_run`]).
 fn prepare(
     server: &SyncServer,
     operation: AiOperation,
     input: AiCallRequest,
 ) -> MemoryResult<(MediaRequest, Option<RungVoices>)> {
-    let media = server.ai.model_runtime().media();
-    let Some((seat, _)) = media.seat(operation) else {
-        return Err(MemoryError::new(
-            MEMORY_CODE_MODEL_UNAVAILABLE,
-            format!("no [models.media.{}] seat serves", operation.as_str()),
-            &["Configure the operation's media seat on this server."],
-        ));
+    let model = match input.model {
+        Some(model) => Some(
+            ModelId::new(model).map_err(|_| MemoryError::bad_request("model is not a model id"))?,
+        ),
+        None => None,
     };
-    let mut model = match input.model {
-        Some(model) => {
-            ModelId::new(model).map_err(|_| MemoryError::bad_request("model is not a model id"))?
-        }
-        None => seat,
-    };
-    let unserved = |model: &ModelId| {
-        MemoryError::bad_request(format!(
-            "{model} serves no {} call here",
-            operation.as_str()
-        ))
-    };
-    if media.locality(operation, &model).is_none() {
-        return Err(unserved(&model));
-    }
-    let (voice, voices) =
-        bind_voice(server, operation, &mut model, input.voice).map_err(voice_refused)?;
-    let Some(locality) = media.locality(operation, &model) else {
-        return Err(unserved(&model));
-    };
-    let mut parts = Vec::new();
-    if let Some(prompt) = input.prompt {
-        parts.push(MediaPart::Text { text: prompt });
-    }
     let decoded = |parts: Vec<oneiron::task_verb::sdk::AiPart>| {
         parts
             .into_iter()
             .map(oneiron::task_verb::sdk::AiPart::into_media)
             .collect::<Option<Vec<_>>>()
     };
-    let (Some(sent), Some(references)) = (decoded(input.input), decoded(input.references)) else {
-        return Err(MemoryError::bad_request(
-            "each part is text, or an image or audio with base64 data",
-        ));
-    };
-    parts.extend(sent);
-    let purpose = CallPurpose::Other {
-        name: format!("ai.{}", operation.as_str()),
-    };
-    let mut request = MediaRequest {
-        model: model.clone(),
-        envelope: CallEnvelope {
-            scope: Default::default(),
-            tier: TierPrecedence::for_purpose(
-                &purpose,
-                ModelTierRef(format!("media-{}", operation.as_str())),
-            ),
-            purpose,
-            class: CallClass::BestEffort,
-            response_format: ResponseFormat::Text,
-            locality,
-            seat_effort: None,
-        },
-        operation,
-        parts,
-        references,
+    let call = MediaCallParts {
+        model,
+        prompt: input.prompt,
+        input: decoded(input.input),
+        references: decoded(input.references),
         params: input.params,
-        voice,
+        voice: input.voice,
     };
-    if let Some(key) = request.admission_request().route_selector_override() {
-        return Err(MemoryError::bad_request(format!(
-            "{key} would pick the model or the route; name the model instead"
-        )));
+    prepare_media_call(server, operation, call).map_err(|refused| media_refused(operation, refused))
+}
+
+/// A refused media call, under the facade's codes: no seat is
+/// `MODEL_UNAVAILABLE`, the vault's inference policy `FORBIDDEN`, a voice
+/// as [`voice_refused`] says, and the call's own shape `BAD_REQUEST`.
+fn media_refused(operation: AiOperation, refused: MediaCallRefusal) -> MemoryError {
+    let unserved = |model: &str| {
+        MemoryError::bad_request(format!(
+            "{model} serves no {} call here",
+            operation.as_str()
+        ))
+    };
+    match refused {
+        MediaCallRefusal::NoSeat => MemoryError::new(
+            MEMORY_CODE_MODEL_UNAVAILABLE,
+            format!("no [models.media.{}] seat serves", operation.as_str()),
+            &["Configure the operation's media seat on this server."],
+        ),
+        MediaCallRefusal::UnservedModel(model) => unserved(&model.to_string()),
+        MediaCallRefusal::Admission(MediaRefusal::UnknownModel) => unserved("the model"),
+        MediaCallRefusal::Voice(refused) => voice_refused(refused),
+        MediaCallRefusal::InvalidPart => {
+            MemoryError::bad_request("each part is text, or an image or audio with base64 data")
+        }
+        MediaCallRefusal::Admission(MediaRefusal::SelectorOverride(key)) => {
+            MemoryError::bad_request(format!(
+                "{key} would pick the model or the route; name the model instead"
+            ))
+        }
+        MediaCallRefusal::Admission(MediaRefusal::Denied(_)) => MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "the vault's inference policy refuses this call",
+            &["Name a model the vault's inference policy admits."],
+        ),
     }
-    let context = oneiron::llm::HostInferenceContext {
-        binding: oneiron::llm::HostInferenceBinding::Advertised { model, locality },
-        extraction_egress: server.extraction_egress.as_deref(),
-    };
-    let authorized = server
-        .vault
-        .authorize_raw_inference(request.admission_request(), &context)
-        .map_err(|_| {
-            MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                "the vault's inference policy refuses this call",
-                &["Name a model the vault's inference policy admits."],
-            )
-        })?;
-    request.envelope = authorized.into_request().envelope;
-    // The world a caller names does not vouch for what it sends: a
-    // fallback judges the call as naming none, as a raw text call is.
-    request.envelope.scope.world = None;
-    Ok((request, voices))
 }
 
 /// A refused voice, under the facade's codes: a banked voice no rung holds

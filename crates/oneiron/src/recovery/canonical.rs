@@ -690,6 +690,9 @@ pub(crate) fn capture_canonical_window_within(
     }
     mark_deleted_carriers_first(vault, window, &snapshot)?;
     let txn = vault.store.env.read_txn()?;
+    // FIX 4227: the room side rows name no one this vault erased.
+    #[cfg(feature = "sync")]
+    crate::sync::room_facts::erase_carried_actors(vault, &txn, &mut snapshot.room_facts)?;
     // Pending delete intent is Layer 1 even when a crash preceded CRDT publication.
     for row in vault
         .store

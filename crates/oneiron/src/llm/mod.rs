@@ -37,6 +37,7 @@ pub(crate) use oneiron_model::llm::{
 };
 pub mod manifest;
 pub mod model_trials;
+pub mod catalog_doors;
 pub mod registry;
 pub mod routing;
 pub mod run_admission;
@@ -87,7 +88,7 @@ pub use self::autocheck::{
     AutoCheckSignals, BoundedAutoChecker,
 };
 pub use self::role_defaults::RoleModelDefaults;
-pub(crate) use self::step::{ExecutedModelWitness, terminal_step_identity};
+pub(crate) use self::step::{ExecutedModelWitness, committed_steps_in_txn, terminal_step_identity};
 pub(crate) use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::limit;
 pub use oneiron_model::llm::{
@@ -123,9 +124,10 @@ use std::collections::BTreeMap;
 
 /// Typed question and outcome contracts.
 pub mod decision;
+pub use budget::rsi_doors;
 pub use budget::{
     RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead,
-    RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose,
+    RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose, RsiTopUp,
 };
 pub(crate) use step::{OpenTrapWait, open_trap_waits};
 pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};

@@ -138,7 +138,8 @@ fn added_pins(
             .map(|line| line.as_str().map(str::to_owned))
             .collect()
     };
-    let (Some(kept), Some(after)) = (lines(host.get("keep_list")), lines(hooked.get("keep_list"))) else {
+    let (Some(kept), Some(after)) = (lines(host.get("keep_list")), lines(hooked.get("keep_list")))
+    else {
         return Err("a keep list holds lines".to_owned());
     };
     if after.len() < kept.len() || after[..kept.len()] != kept[..] {
@@ -161,13 +162,22 @@ fn added_pins(
 /// The public trigger and the executor's attach point share the add-only,
 /// word-for-word pin law. The window and ceiling remain the host's.
 pub fn check_host_compact_rewrite(args: &Value, rewritten: &Value) -> Result<(), String> {
-    let window = args.get("window").and_then(Value::as_array)
+    let window = args
+        .get("window")
+        .and_then(Value::as_array)
         .ok_or("a compaction window holds messages")?;
-    let ceiling = args.get("token_ceiling").and_then(Value::as_u64)
+    let ceiling = args
+        .get("token_ceiling")
+        .and_then(Value::as_u64)
         .ok_or("a compaction token ceiling is an integer")?;
-    let contains = |pin: &str| window.iter().any(|message| {
-        message.get("content").and_then(Value::as_str).is_some_and(|content| content.contains(pin))
-    });
+    let contains = |pin: &str| {
+        window.iter().any(|message| {
+            message
+                .get("content")
+                .and_then(Value::as_str)
+                .is_some_and(|content| content.contains(pin))
+        })
+    };
     let fits = |pins: &[String]| {
         crate::tokenizer::count_context_pack_tokens(&pins.join("\n")) as u64 <= ceiling
     };
@@ -190,15 +200,25 @@ pub(crate) fn host_compact_as_owner(
         return Err(MemoryError::bad_request("token_ceiling must be positive"));
     }
     if backend.tier_class() != super::CompactionTierClass::Cheap {
-        return Err(MemoryError::bad_request("compaction requires a cheap backend"));
+        return Err(MemoryError::bad_request(
+            "compaction requires a cheap backend",
+        ));
     }
     let fits = |pins: &[String]| {
         crate::tokenizer::count_context_pack_tokens(&pins.join("\n")) as u64 <= input.token_ceiling
     };
-    if !fits(&input.keep_list) || input.keep_list.iter().any(|pin| {
-        pin.trim().is_empty() || !input.window.iter().any(|message| message.content.contains(pin))
-    }) {
-        return Err(MemoryError::bad_request("keep_list must fit and occur word for word in the window"));
+    if !fits(&input.keep_list)
+        || input.keep_list.iter().any(|pin| {
+            pin.trim().is_empty()
+                || !input
+                    .window
+                    .iter()
+                    .any(|message| message.content.contains(pin))
+        })
+    {
+        return Err(MemoryError::bad_request(
+            "keep_list must fit and occur word for word in the window",
+        ));
     }
     let turns: Vec<EntityId> = input.window.iter().map(|message| message.turn_id).collect();
     {
@@ -207,39 +227,69 @@ pub(crate) fn host_compact_as_owner(
         super::validate_session(&vault.store, &txn, input.session_ref)?;
         super::validate_turn_membership(&vault.store, &txn, &turns, input.session_ref)?;
     }
-    backend.prepare_flight(true).map_err(|why| MemoryError::new(
-        MEMORY_CODE_INVALID_STATE, format!("compaction unavailable: {why:?}"), &[],
-    ))?;
+    backend.prepare_flight(true).map_err(|why| {
+        MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            format!("compaction unavailable: {why:?}"),
+            &[],
+        )
+    })?;
     let request = super::driver::CompactionRequest::for_host(
-        vault, input.session_ref, input.window, input.keep_list, input.token_ceiling,
+        vault,
+        input.session_ref,
+        input.window,
+        input.keep_list,
+        input.token_ceiling,
     )?;
     let mut retry = None;
     for _ in 0..policy.tries {
-        let product = backend.compact(&request, retry).map_err(|why| MemoryError::new(
-            MEMORY_CODE_INVALID_STATE, format!("compaction refused: {why:?}"), &[],
-        ))?;
+        let product = backend.compact(&request, retry).map_err(|why| {
+            MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
+                format!("compaction refused: {why:?}"),
+                &[],
+            )
+        })?;
         match super::gate_compaction(&request, &product, policy) {
             Ok(gated) => {
                 let text = gated.summary_text().to_owned();
-                let last_turn = request.window.last().expect("sealed window is nonempty").turn;
+                let last_turn = request
+                    .window
+                    .last()
+                    .expect("sealed window is nonempty")
+                    .turn;
                 let (epoch, summary) = super::epoch::mint_epoch_summary_guarded(
-                    vault, &input.session_ref,
+                    vault,
+                    &input.session_ref,
                     crate::WriteActor::new(memory.actor(), memory.actor_class()),
-                    gated.request(), &super::CompactionProduct {
-                        summary_text: text.clone(), ..product
-                    }, None,
+                    gated.request(),
+                    &super::CompactionProduct {
+                        summary_text: text.clone(),
+                        ..product
+                    },
+                    None,
                     |txn| {
                         owner.revalidate_in_txn(vault, txn)?;
-                        memory.verify_actor_write_in_txn(txn)
+                        memory
+                            .verify_actor_write_in_txn(txn)
                             .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
                         super::validate_session(&vault.store, txn, input.session_ref)?;
-                        super::validate_turn_membership(&vault.store, txn, &turns, input.session_ref)
+                        super::validate_turn_membership(
+                            &vault.store,
+                            txn,
+                            &turns,
+                            input.session_ref,
+                        )
                     },
                     |_, _| Ok(()),
                 )?;
                 return Ok(crate::runtime_hooks::host_doors::HostCompactResult {
-                    epoch, summary, text, keep_list: request.pins.clone(),
-                    first_turn: request.turn_start, last_turn,
+                    epoch,
+                    summary,
+                    text,
+                    keep_list: request.pins.clone(),
+                    first_turn: request.turn_start,
+                    last_turn,
                 });
             }
             Err(failure) => retry = Some(failure.check),

@@ -103,13 +103,12 @@ pub(super) fn fold_as_install(
                 );
             }
         }
-        // Counting reaches only world edits, grant travel choices and key
-        // records, and a key record counts only for a world an edit made
-        // private (an unedited world reads everywhere): with no edited world
-        // and no chosen grant, nothing rests on it.
-        if (fold.worlds.is_empty() && fold.grant_travel.is_empty())
-            || (now_stale.is_subset(&stale) && now_held.is_subset(&held))
-        {
+        // Counting reaches only world edits, grant travel choices,
+        // checkpoint policy choices and key records, and a key record counts
+        // only for a world an edit made private (an unedited world reads
+        // everywhere): with no edited world, no chosen grant and no policy
+        // choice, nothing rests on it.
+        if !fold.rests_on_counting() || (now_stale.is_subset(&stale) && now_held.is_subset(&held)) {
             break fold;
         }
         stale = now_stale;
@@ -535,6 +534,7 @@ pub(super) fn held_back(
     super::machine_standing::held_revisions(state, &mut held_back);
     super::world_privacy::held_edits(state, pin, counted, &mut held_back);
     super::grant_travel::held_grant_choices(state, pin, counted, &mut held_back);
+    super::checkpoint_choice::held_checkpoint_choices(state, pin, counted, &mut held_back);
     InstallBound {
         held_back,
         no_vouch_deadline: None,

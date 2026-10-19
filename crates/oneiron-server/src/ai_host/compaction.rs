@@ -7,7 +7,9 @@
 //! seat or no compaction block, compaction is off and says why; an off seat
 //! never calls a model. An agent whose profile names `self` writes its own
 //! summaries (FIX 4465): the same cheap route, wearing its home, on its own
-//! compaction model when its definition names one.
+//! compaction model when its definition names one; or, when the vault's row
+//! reads the live context, a fork of its live request on the rung that
+//! admitted it (FIX 4465 C).
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,7 +24,9 @@ use oneiron::embed::Embedder;
 use oneiron::engine_executor::{CompactionSpawn, RunCompaction};
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::{ModelId, ModelLocality, ModelTierRef};
-use oneiron::{BudgetGuard, CompactionOwnership, EdgeActorClass, MemoryProfile, Vault, WriteActor};
+use oneiron::{
+    BudgetGuard, CompactionOwnership, EdgeActorClass, LlmRequest, MemoryProfile, Vault, WriteActor,
+};
 
 use super::CHAT_ROLE;
 use super::status::{CompactionState, CompactionStatus, StatusCell};
@@ -30,11 +34,19 @@ use crate::admission::Admission;
 use crate::config::models::{ModelsConfig, Rung, role_key};
 use crate::embedder::EmbedderSlot;
 use crate::mcp::McpQuickJsProvider;
-use crate::models::ModelRuntime;
+use crate::models::{ModelRuntime, RoleCall, RoleRefusal};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
+mod live_fork;
 mod self_writer;
 mod serve;
+
+/// How a run's own compaction writer reads the rung its live request is
+/// admitted on (FIX 4465 C): the step's call admitted exactly as its host
+/// admits it, at the breakpoint, before it is sent.
+pub(super) trait LiveAdmission: Send + Sync {
+    fn admit_live(&self, request: LlmRequest) -> Result<RoleCall, RoleRefusal>;
+}
 
 /// The registry key a run's memory profile names.
 const BACKEND_KEY: &str = "code-mode-compaction";
@@ -84,11 +96,16 @@ pub(super) struct LiveCompaction {
 impl CodeModeCompaction {
     /// The registered cheap route already used by code mode, for an
     /// owner's explicit host compaction. An off route has no replacement.
-    pub(super) fn host_backend(&self) -> Option<(Arc<dyn CompactionBackend>, CompactionGatePolicy)> {
+    pub(super) fn host_backend(
+        &self,
+    ) -> Option<(Arc<dyn CompactionBackend>, CompactionGatePolicy)> {
         match self {
             Self::Off(_) => None,
             Self::Live(live) => live.served.first().map(|backend| {
-                (Arc::clone(backend) as Arc<dyn CompactionBackend>, live.policy)
+                (
+                    Arc::clone(backend) as Arc<dyn CompactionBackend>,
+                    live.policy,
+                )
             }),
         }
     }
@@ -230,18 +247,20 @@ impl CodeModeCompaction {
 
     /// Hands `provider` a fresh seat per run and reports the state. A run in
     /// an off-record room embeds its summaries on `embedder`, the server's
-    /// own, while it serves on this device (FIX 522).
+    /// own, while it serves on this device (FIX 522). An agent's own writer
+    /// reads its run's live rung through `live` (FIX 4465 C).
     pub(super) fn attach(
         self,
         provider: McpQuickJsProvider,
         status: &StatusCell,
         embedder: Option<Arc<EmbedderSlot>>,
+        live: Arc<dyn LiveAdmission>,
     ) -> McpQuickJsProvider {
         status.update(|status| status.compaction = self.status());
         let vectors = embedder.map(|slot| slot as Arc<dyn EpochEmbedder>);
         provider.with_compaction(Arc::new(
             move |host: CompactionHostBinding, credential: &str, spend: Option<&SpendScopeId>| {
-                let seat = self.for_run(host, credential, spend);
+                let seat = self.for_run(host, credential, spend, &live);
                 match &vectors {
                     Some(vectors) => seat.with_room_vectors(Arc::clone(vectors)),
                     None => seat,
@@ -255,12 +274,14 @@ impl CodeModeCompaction {
     /// profile of the agent that actor names. A run that spends under
     /// `spend` compacts on that scope's meter (OF-533); any other on code
     /// mode's. An agent whose profile names `self` compacts as itself
-    /// (FIX 4465), wherever its run is served.
+    /// (FIX 4465), wherever its run is served, reading its live rung through
+    /// `admission` when the row selects the live fork.
     pub(super) fn for_run(
         &self,
         host: CompactionHostBinding,
         credential: &str,
         spend: Option<&SpendScopeId>,
+        admission: &Arc<dyn LiveAdmission>,
     ) -> RunCompaction {
         let live = match self {
             Self::Off(why) => return RunCompaction::off(*why),
@@ -272,16 +293,18 @@ impl CodeModeCompaction {
         let hot_steps = profile.hot_steps.unwrap_or(live.hot_steps);
         let scoped;
         let registry = match (definition, spend) {
-            (Some(definition), _) => match live.self_registry(&profile, definition, host, spend) {
-                Ok(registry) => {
-                    scoped = registry;
-                    &scoped
+            (Some(definition), _) => {
+                match live.self_registry(&profile, definition, host, spend, admission) {
+                    Ok(registry) => {
+                        scoped = registry;
+                        &scoped
+                    }
+                    Err(error) => {
+                        tracing::error!(kind = ?error.kind(), "a run's own compaction writer did not register");
+                        return RunCompaction::off(CompactionOff::BackendFailed);
+                    }
                 }
-                Err(error) => {
-                    tracing::error!(kind = ?error.kind(), "a run's own compaction writer did not register");
-                    return RunCompaction::off(CompactionOff::BackendFailed);
-                }
-            },
+            }
             (None, None) => &live.registry,
             (None, Some(scope)) => match live.scoped_registry(scope) {
                 Ok(registry) => {
@@ -333,13 +356,15 @@ impl LiveCompaction {
     /// (FIX 4465): one writer, bound to the run's authenticated actor, on
     /// the house compaction seat's route, metered as the run's other passes
     /// are. It wears the agent's home and, when its definition names one,
-    /// its own compaction model.
+    /// its own compaction model. It reads its run's live rung through
+    /// `admission` for a flight whose row selects the live fork (C).
     fn self_registry(
         &self,
         profile: &MemoryProfile,
         definition: oneiron::agent_def::AgentDefinition,
         host: CompactionHostBinding,
         spend: Option<&SpendScopeId>,
+        admission: &Arc<dyn LiveAdmission>,
     ) -> oneiron::Result<CompactionBackendRegistry> {
         let house = self
             .served
@@ -360,6 +385,7 @@ impl LiveCompaction {
             route,
             definition,
             host,
+            Arc::clone(admission),
         )))?;
         Ok(registry)
     }

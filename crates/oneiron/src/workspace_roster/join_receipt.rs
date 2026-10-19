@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 use super::join_consent::{
     ConsentPart, ConsentSet, JoinDecision, JoinRefusal, JoinRequest, JoinSubject, RequiredParty,
 };
+use super::join_history::{
+    ACTOR_ERASE_JOIN_BINDING, JOIN_ROWS, JoinHistory, JoinRow, RosterBindingErase,
+};
 use crate::agent_dispatch::SpendScopeId;
 use crate::conversation::HistoryChoice;
 use crate::error::{Error, Result};
@@ -137,16 +140,20 @@ pub(super) fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId
 }
 
 /// Erasing `actor` from the joins (FIX 3520). A join no one settled whose
-/// remaining act waits on it goes, when [`ACTOR_ERASE_PENDING_JOIN`] says
-/// so, with the open offer card that filed it. Every other join keeps its
-/// row, its request and its times, and names no one where it named the
-/// actor: its filer, its principal, each answer's party and answering
-/// actor, and each consent's granting or refusing party. A recorded no
-/// stays a no, so no older yes stands in for it, and an erased party's yes
-/// no longer proves its consent when the join is decided again. A Ready
-/// join whose subject is the actor proves nothing again, so its Ready row
-/// goes. One-way, in the erase's own transaction. An id whose entity is no
-/// actor scans nothing.
+/// remaining act waits on it, or that names it by id (FIX 4228), goes, when
+/// [`ACTOR_ERASE_PENDING_JOIN`] says so, with the open offer card that filed
+/// it. A settled join that names it by id, as its subject or a party its
+/// consents name, turns history (FIX 4228), as [`ACTOR_ERASE_JOIN_BINDING`]
+/// says: its ref, its digest and its times stay, it names no one where it
+/// named the actor, and nothing proves or replays it again, so a Ready row
+/// that points at it goes. Every other join keeps its row, its request and
+/// its times, and names no one where it named the actor: its filer, its
+/// principal, each answer's party and answering actor, and each consent's
+/// granting or refusing party. A recorded no stays a no, so no older yes
+/// stands in for it, and an erased party's yes no longer proves its consent
+/// when the join is decided again. A history row takes the actor out too.
+/// One-way, in the erase's own transaction. An id whose entity is no actor
+/// scans nothing.
 ///
 /// # Errors
 ///
@@ -162,22 +169,50 @@ pub(crate) fn erase_join_actor_in_txn(
     let store = &vault.store;
     let mut doomed = Vec::new();
     let mut erased = Vec::new();
+    let mut histories = Vec::new();
+    let mut gone = Vec::new();
     let mut ready = Vec::new();
-    for (join_ref, mut receipt) in JOINS.scan(store, wtxn)? {
+    for (join_ref, row) in JOIN_ROWS.scan(store, wtxn)? {
+        let mut receipt = match row {
+            JoinRow::Live(receipt) => receipt,
+            JoinRow::History { mut erased_history } => {
+                if erased_history.forget(*actor) {
+                    histories.push((join_ref, erased_history));
+                }
+                continue;
+            }
+        };
+        let links = super::join_history::links(&receipt, *actor);
         if !receipt.is_settled()
             && ACTOR_ERASE_PENDING_JOIN == RosterErase::Delete
-            && receipt.waits_on(*actor)
+            && (links || receipt.waits_on(*actor))
         {
             // A Ready row points only at a Ready receipt, so none points here.
             doomed.push((join_ref, receipt));
             continue;
         }
-        let request = &receipt.request;
-        if request.subject.id() == *actor && receipt.decision == JoinDecision::Ready {
-            ready.push(ready_key(request.room, &request.subject, request.branch));
+        if !links {
+            if receipt.forget(*actor) {
+                erased.push((join_ref, receipt));
+            }
+            continue;
         }
-        if receipt.forget(*actor) {
-            erased.push((join_ref, receipt));
+        let request = &receipt.request;
+        if receipt.decision == JoinDecision::Ready {
+            // The erased subject's Ready row goes; another subject's goes
+            // when it points at this join.
+            let only = (request.subject.id() != *actor).then(|| join_ref.clone());
+            ready.push((
+                ready_key(request.room, &request.subject, request.branch),
+                only,
+            ));
+        }
+        match ACTOR_ERASE_JOIN_BINDING {
+            RosterBindingErase::PreserveDigestInertHistory => {
+                let erased_history = JoinHistory::of(&receipt, &[*actor])?;
+                histories.push((join_ref, erased_history));
+            }
+            RosterBindingErase::Delete => gone.push(join_ref),
         }
     }
     for (join_ref, receipt) in &doomed {
@@ -188,8 +223,16 @@ pub(crate) fn erase_join_actor_in_txn(
     for (join_ref, receipt) in &erased {
         JOINS.put(store, wtxn, join_ref, receipt)?;
     }
-    for key in &ready {
-        READY.delete(store, wtxn, key)?;
+    for (join_ref, erased_history) in histories {
+        JOIN_ROWS.put(store, wtxn, &join_ref, &JoinRow::History { erased_history })?;
+    }
+    for join_ref in &gone {
+        JOINS.delete(store, wtxn, join_ref)?;
+    }
+    for (key, only) in &ready {
+        if only.is_none() || READY.get(store, wtxn, key)?.as_ref() == only.as_ref() {
+            READY.delete(store, wtxn, key)?;
+        }
     }
     Ok(())
 }
@@ -276,7 +319,7 @@ pub(super) fn delete_room_joins(
     txn: &mut heed::RwTxn<'_>,
     room: EntityId,
 ) -> Result<()> {
-    delete_joins_where(store, txn, |request| request.room == room)?;
+    delete_joins_where(store, txn, |at, _| at == room)?;
     READY.delete_from(store, txn, format!("{}/", room.to_hex()).as_bytes())?;
     Ok(())
 }
@@ -292,8 +335,8 @@ pub(super) fn delete_thread_joins(
     room: EntityId,
     thread: EntityId,
 ) -> Result<()> {
-    delete_joins_where(store, txn, |request| {
-        request.room == room && request.branch == Some(thread)
+    delete_joins_where(store, txn, |at, branch| {
+        at == room && branch == Some(thread)
     })?;
     let suffix = format!("/{}", thread.to_hex());
     let ready: Vec<String> = READY
@@ -309,23 +352,25 @@ pub(super) fn delete_thread_joins(
     Ok(())
 }
 
-/// Deletes every join receipt whose request `doomed` names. JOINS is keyed by
-/// join ref, not by room, so the sweep reads the whole table in keyset pages.
+/// Deletes every join receipt, live or history, filed for a room and thread
+/// `doomed` names. JOINS is keyed by join ref, not by room, so the sweep
+/// reads the whole table in keyset pages.
 fn delete_joins_where(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
-    doomed: impl Fn(&JoinRequest) -> bool,
+    doomed: impl Fn(EntityId, Option<EntityId>) -> bool,
 ) -> Result<()> {
     let page_limit = super::rooms::PAGE_LIMIT;
     let mut after: Option<String> = None;
     loop {
         let start = after.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
-        let page: Vec<(String, JoinReceipt)> = JOINS
+        let page: Vec<(String, JoinRow)> = JOIN_ROWS
             .iter_range(store, txn, start, Bound::Unbounded)?
             .take(page_limit)
             .collect::<Result<_>>()?;
-        for (join_ref, receipt) in &page {
-            if doomed(&receipt.request) {
+        for (join_ref, row) in &page {
+            let (room, branch) = row.place();
+            if doomed(room, branch) {
                 JOINS.delete(store, txn, join_ref)?;
             }
         }
@@ -438,7 +483,7 @@ impl JoinReceipt {
     /// subject, the principal, a party that answered or the actor that
     /// answered for one, or a party the hold waits on. Its filer alone is no
     /// one's consent.
-    fn waits_on(&self, actor: EntityId) -> bool {
+    pub(super) fn waits_on(&self, actor: EntityId) -> bool {
         let awaited = match &self.decision {
             JoinDecision::Hold { needs } => needs.iter().any(|need| match need.party {
                 RequiredParty::Subject(subject) => subject.id() == actor,
@@ -460,7 +505,7 @@ impl JoinReceipt {
     /// principal, each answer's party and answering actor, and each
     /// consent's granting or refusing party name no one. Its request, its
     /// digests and its times stay. Whether it named the actor there.
-    fn forget(&mut self, actor: EntityId) -> bool {
+    pub(super) fn forget(&mut self, actor: EntityId) -> bool {
         let mut named = self.filed_by.forget(actor);
         if let Some(principal) = &mut self.principal {
             named |= principal.forget(actor);

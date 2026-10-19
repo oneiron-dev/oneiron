@@ -36,7 +36,12 @@ const ASSET_BODY_MEDIA_TYPE: &str = "mime_type";
 const TEXT_MEDIA_TYPE: &str = "text/plain; charset=utf-8";
 /// The records the text index embeds ([`super::embeddable_payload_in_txn`]), and so the text
 /// documents a text-bound space holds.
-const TEXT_DOCUMENT_TYPES: [u8; 4] = [ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN, ENTITY_TYPE_ASSET];
+const TEXT_DOCUMENT_TYPES: [u8; 4] = [
+    ENTITY_TYPE_CLAIM,
+    ENTITY_TYPE_SUMMARY,
+    ENTITY_TYPE_TURN,
+    ENTITY_TYPE_ASSET,
+];
 
 /// One stored media item handed to a media embedder.
 #[derive(Debug, Clone, Copy)]
@@ -425,7 +430,11 @@ fn asset_media(body: &[u8]) -> Option<(String, Vec<u8>)> {
 /// The UTF-8 content of a text ASSET, shared by both embedding workers.
 pub(super) fn asset_text(body: &[u8]) -> Option<String> {
     let (mime, bytes) = asset_media(body)?;
-    if !mime.starts_with("text/") { return None; }
+    if !mime.starts_with("text/") {
+        return None;
+    }
     let text = String::from_utf8(bytes).ok()?;
-    text.chars().any(|c| !c.is_whitespace() && !c.is_control()).then_some(text)
+    text.chars()
+        .any(|c| !c.is_whitespace() && !c.is_control())
+        .then_some(text)
 }

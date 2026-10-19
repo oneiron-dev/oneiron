@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use crate::authority::AuthorityFold;
 use crate::claim::ClaimBody;
 use crate::entity_id::{EntityId, ForeignWorldId, derived_domains};
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 
 /// How many counter values [`foreign_world_for`] tries before it refuses
 /// (Engine ruling, CALLS "FIX 3497 foreign world id"). A derived id falls in
@@ -79,17 +79,30 @@ pub(crate) fn guest_claim_world(
     )
 }
 
-/// Whether a guest CLAIM is withheld from its delivery rather than remapped:
-/// the one policy hook for a CLAIM whose bytes a MACHINE proof binds (CALLS
-/// "FIX 3497 signed guest claim"). That is a `machine_signature` in its
-/// evidence, or a MACHINE history row. The proof covers the claim's world,
-/// this vault cannot sign as the sender's machine, and dropping the proof
-/// would pass the sender's signed write off as an unsigned one, so admission
-/// keeps the row out, with typed quarantine evidence, and lands the rest.
+/// Why a guest CLAIM is withheld (Engine ruling, CALLS "FIX 4383
+/// foreign-world machine history"): the text its refusal carries.
 #[cfg_attr(not(feature = "sync"), allow(dead_code))]
-pub(crate) fn guest_claim_withheld(body: &ClaimBody) -> bool {
-    crate::authority::evidence_without_machine_signature(body) != body.evidence
-        || crate::claim::history_store::machine_history_kind(&body.predicate).is_some()
+const GUEST_CLAIM_WITHHELD_REASON: &str = "a guest's MACHINE-signed claim or machine history \
+     is withheld: this vault is not a reader of the sender's world, and wraps are reader-only";
+
+/// The refusal a guest CLAIM is withheld from its delivery with, rather than
+/// remapped; `None` for one that is remapped. It is the one policy hook for
+/// a CLAIM whose bytes a MACHINE proof binds (CALLS "FIX 3497 signed guest
+/// claim"). That is a `machine_signature` in its evidence, or a MACHINE
+/// history row. The proof covers the claim's world, this vault cannot sign
+/// as the sender's machine, and dropping the proof would pass the sender's
+/// signed write off as an unsigned one, so admission keeps the row out, with
+/// typed quarantine evidence, and lands the rest. The refusal names why
+/// (FIX 4383): a machine that is not a reader of a world does not get its
+/// content, since wraps are reader-only, so no companion carries that
+/// history here.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+pub(crate) fn guest_claim_withheld(body: &ClaimBody) -> Option<Error> {
+    (crate::authority::evidence_without_machine_signature(body) != body.evidence
+        || crate::claim::history_store::machine_history_kind(&body.predicate).is_some())
+    .then_some(Error::Claim(ClaimError::ActorLacksClaimAuthority {
+        reason: GUEST_CLAIM_WITHHELD_REASON,
+    }))
 }
 
 /// The foreign WORLD the peer of pact `pact_id` lands its world
