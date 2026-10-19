@@ -704,9 +704,7 @@ impl Memory<'_> {
             world_ref: body.world.map(|world| world.to_hex()),
             scope: body.scope.as_ref().map(served),
             claim_scope: ClaimScope::of_body(body),
-            made_by: self
-                .collection_view(id)?
-                .and_then(|view| view.made_by),
+            made_by: self.collection_view(id)?.and_then(|view| view.made_by),
             valid_from: body.valid_from,
             valid_to: body.valid_to,
             salience: body.salience,

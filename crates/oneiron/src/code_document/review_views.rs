@@ -149,7 +149,11 @@ impl Memory<'_> {
         };
         // The proposal claim is read through the caller's credential, so a
         // withheld proposal answers as an absent one (FIX 4344).
-        if self.get_entity_tolerant(&proposal.id.to_hex())?.value.is_none() {
+        if self
+            .get_entity_tolerant(&proposal.id.to_hex())?
+            .value
+            .is_none()
+        {
             return Ok(None);
         }
         self.produced_from([proposal.id]);

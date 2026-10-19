@@ -323,12 +323,9 @@ impl<'v> ScopedRead<'v> {
             (Some(view), true) => {
                 crate::ports::raw_readable_apart_from_use_in_txn(view, rtxn, id, raw)?
             }
-            (None, true) => crate::ports::raw_readable_apart_from_use_in_txn(
-                &self.vault.store,
-                rtxn,
-                id,
-                raw,
-            )?,
+            (None, true) => {
+                crate::ports::raw_readable_apart_from_use_in_txn(&self.vault.store, rtxn, id, raw)?
+            }
         };
         if !readable
             || self.vault.archive_tombstone_in_txn(rtxn, id)?.is_some()
