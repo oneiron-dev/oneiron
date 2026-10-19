@@ -170,7 +170,7 @@ pub(super) fn on_parse_seat<T>(
 /// substrate. It is the one hook a payer chosen at publication would
 /// replace. An authenticated caller, a managed vault's attested owner
 /// included, pays as itself (`transport.rs`).
-fn anonymous_payer(vault: &oneiron::Vault) -> oneiron::Result<WriteActor> {
+fn anonymous_payer(vault: &oneiron::Vault) -> Result<WriteActor, oneiron::MemoryError> {
     let owner = vault.ensure_embedded_owner_actor()?;
     Ok(WriteActor::new(owner, EdgeActorClass::Human))
 }
