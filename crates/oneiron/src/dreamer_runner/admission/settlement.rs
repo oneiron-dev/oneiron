@@ -35,6 +35,14 @@ impl DreamerRunnerStore<'_> {
             settle_budget_for_child(&mut budget, reservation, input.actual_units, input.now)?;
         put_budget_record_in_txn(self.vault, wtxn, &settlement.budget)?;
         BUDGET_RESERVATION.delete(&self.vault.store, wtxn, &reservation_key)?;
+        // A free-time item's real spend lands on its cycle's spend scope in
+        // the commit that settles this reservation, once (FIX 4453).
+        crate::dreamer_runner::charge_free_time_item_in_txn(
+            self.vault,
+            wtxn,
+            input.child_attempt,
+            input.actual_units,
+        )?;
 
         Ok(DreamerBudgetSettlementOutcome::Settled(settlement))
     }

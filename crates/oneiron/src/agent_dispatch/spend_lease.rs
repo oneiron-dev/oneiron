@@ -346,9 +346,47 @@ impl AgentDispatcher<'_> {
         guard_used_units: u64,
     ) -> Result<SpendRead> {
         let mut txn = self.vault.store.env.write_txn()?;
-        let read = self.spend_in_txn(&mut txn, scope, guard_used_units, true)?;
+        let read = self.record_guard_spend_in_txn(&mut txn, scope, guard_used_units)?;
         txn.commit()?;
         Ok(read)
+    }
+
+    /// [`Self::record_guard_spend`] in the caller's transaction (FIX 4453):
+    /// the caller's own keyed row, settled in the same commit, makes the
+    /// record once-only, so a replay that finds its key gone records nothing.
+    pub(crate) fn record_guard_spend_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        scope: &SpendScopeId,
+        guard_used_units: u64,
+    ) -> Result<SpendRead> {
+        let read = self.spend_in_txn(txn, scope, guard_used_units, true)?;
+        Ok(read)
+    }
+
+    /// Closes a root scope at its tree's end (FIX 4453: a free-time cycle's
+    /// next boundary, or its owner clearing it). Nothing is released, since a
+    /// root holds no parent's units; spend already made, and its open
+    /// children's late spend, still land on it whole. Idempotent; a child
+    /// scope is refused.
+    pub(crate) fn close_root_spend_scope_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        root: &SpendScopeId,
+        now: u64,
+    ) -> Result<()> {
+        let mut scope = SCOPE
+            .get(&self.vault.store, txn, &root.0)?
+            .ok_or_else(|| invalid("spend scope is missing"))?;
+        if scope.parent.is_some() {
+            return Err(invalid("only a root scope closes at its tree's end"));
+        }
+        if scope.state == SpendState::Closed {
+            return Ok(());
+        }
+        scope.state = SpendState::Closed;
+        scope.closed_at = Some(now);
+        SCOPE.put(&self.vault.store, txn, &root.0, &scope)
     }
 
     /// What `scope` may still spend, walking soft scopes up to the nearest

@@ -39,6 +39,14 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DREAMER_CONSOLIDATION_STRENGTH_POLICY, LIVE),
     (&t::CRITIC_ARTIFACT, CONTENT),
     (&t::DREAMER_CURSOR, CONTENT),
+    // FIX 4453: the owner's free-time policy and the boundary its last cycle
+    // opened at stand as the live vault holds them, so no image restores a
+    // spent allowance; cycles, bindings and receipts are history.
+    (&t::DREAMER_FREE_TIME_CLOCK, LIVE),
+    (&t::DREAMER_FREE_TIME_CYCLE, CONTENT),
+    (&t::DREAMER_FREE_TIME_ITEM, CONTENT),
+    (&t::DREAMER_FREE_TIME_POLICY, LIVE),
+    (&t::DREAMER_FREE_TIME_RECEIPT, CONTENT),
     (&t::DREAMER_GAP_BRANCH, CONTENT),
     (&t::DREAMER_GAP, CONTENT),
     (&t::DREAMER_HARNESS_EVAL_BASELINE, CONTENT),

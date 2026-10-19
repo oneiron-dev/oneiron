@@ -174,19 +174,50 @@ impl DreamerRunnerStore<'_> {
     /// Storage errors; the queue's own admission errors.
     /// `route` names the runner line a candidate debits instead of the
     /// pass's, from the host (a resident dreaming on its own model, FIX
-    /// 1152). A routed line is accounting only and never refuses.
+    /// 1152). A routed line is accounting only and never refuses. A
+    /// dreaming its free-time cycle queued as its own time debits its
+    /// resident's free-time line instead (FIX 4453).
     pub fn admit_next_resident_dream(
         &self,
         input: AdmitDreamerAttempt,
         route: &mut dyn FnMut(&AttemptRecord) -> Option<String>,
     ) -> Result<DreamerAdmissionOutcome> {
         validate_admission_input(&input)?;
+        let mut routed =
+            |record: &AttemptRecord| super::free_time_line(record).or_else(|| route(record));
         let result = self.vault.with_write_txn_grouped(|wtxn| {
             self.admit_next_kind_in_txn(
                 wtxn,
                 DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
                 input,
-                Some(route),
+                Some(&mut routed),
+            )
+        })?;
+        self.vault.store.notify_attempt_observers();
+        Ok(result.outcome)
+    }
+
+    /// Atomically admits the next queued free-time item for a resident's
+    /// human (FIX 4453). No home gate here: its cycle opened on the elected
+    /// home, which queued it. It reserves and settles on its resident's
+    /// free-time line, accounting only; its cycle's spend scope is the
+    /// money meter.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; the queue's own admission errors.
+    pub fn admit_next_free_time_item(
+        &self,
+        input: AdmitDreamerAttempt,
+    ) -> Result<DreamerAdmissionOutcome> {
+        validate_admission_input(&input)?;
+        let mut routed = super::free_time_line;
+        let result = self.vault.with_write_txn_grouped(|wtxn| {
+            self.admit_next_kind_in_txn(
+                wtxn,
+                super::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND,
+                input,
+                Some(&mut routed),
             )
         })?;
         self.vault.store.notify_attempt_observers();

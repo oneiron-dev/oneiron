@@ -10,7 +10,8 @@
 //! The host lends the model and the instruction; the engine ships no
 //! dreaming prompt, only the reply's shape ([`CRAFT_ASK`]). The Nightly
 //! recipe queues one child per resident whose definition is on and whose
-//! dreaming is not off.
+//! dreaming is not off, unless the owner set it a free-time policy: then its
+//! dreaming is its cycle's own-time item instead (FIX 4453).
 
 use super::step_charge::StepChargeTally;
 use crate::actor_claims::ResidentCraftCandidate;
@@ -145,6 +146,9 @@ pub fn resident_of_dream_input(input: &rmpv::Value) -> Result<EntityId> {
                     .map_err(|_| invalid("resident is not an entity id"))?,
                 );
             }
+            // A free-time cycle's item names its cycle too (FIX 4453); the
+            // binding its cycle stamped is what it runs under.
+            (Some("cycle"), rmpv::Value::Binary(_)) => {}
             _ => return Err(invalid("resident dream input has an unknown field")),
         }
     }
@@ -704,6 +708,17 @@ pub async fn run_resident_dream(
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
     }
+    // A free-time cycle's own-time item (FIX 4453) dreams only while its
+    // cycle is open and its agent did not choose rest; its receipt lands with
+    // its entry. One that lands no entry gets no success receipt.
+    let free_time =
+        match crate::dreamer_runner::free_time_item_to_run(ctx.vault, attempt_id, resident_id)? {
+            crate::dreamer_runner::FreeTimeItemRun::Done => {
+                return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            }
+            crate::dreamer_runner::FreeTimeItemRun::Unbound => None,
+            crate::dreamer_runner::FreeTimeItemRun::Run(binding) => Some(binding),
+        };
     let Some(definition) = ctx.vault.get_agent_definition(&resident_id)? else {
         return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
     };
@@ -849,6 +864,9 @@ pub async fn run_resident_dream(
             .map_err(|error| invalid(&format!("diary entry: {error}")))?;
         propose_craft_notes_in_txn(ctx.vault, txn, resident_id, attempt_id, &craft, at)?;
         LANDED.put(&ctx.vault.store, txn, &attempt_id, &entry_id)?;
+        if let Some(binding) = &free_time {
+            crate::dreamer_runner::record_own_time_landed_in_txn(ctx.vault, txn, binding, at)?;
+        }
         for pad in &cut.pads {
             PADS.put(&ctx.vault.store, txn, &(resident_id, *pad), &[1])?;
         }

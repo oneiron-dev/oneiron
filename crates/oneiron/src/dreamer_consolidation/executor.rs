@@ -596,9 +596,12 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         ctx: &mut WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution> {
         // A resident dreams under its own stamp on the model its host lends
-        // it (OF-490); this Dreamer-bound executor never runs it.
+        // it (OF-490), and spends its free time for its human so too (FIX
+        // 4453); this Dreamer-bound executor never runs either.
         if attempt.status.payload.attempt_type
             == crate::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
+            || attempt.status.payload.attempt_type
+                == crate::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND
         {
             return Ok(DreamerAttemptExecution::Park {
                 reason: "resident dreaming needs its host's model".to_owned(),

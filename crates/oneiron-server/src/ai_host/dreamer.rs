@@ -41,6 +41,7 @@ use oneiron_driver::{
 use super::policy::extraction_egress;
 
 mod compaction_check;
+mod free_time;
 use super::skill_author::CoachSkillAuthor;
 use super::status::{StatusCell, WorkState, WorkStatus};
 use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
@@ -248,6 +249,7 @@ async fn supervise(
             }),
             windows,
             weaver: None,
+            weaver_ladder: None,
             task_route: None,
             inner: None,
             status: Arc::clone(&status),
@@ -378,6 +380,10 @@ struct ObservedFactory {
     /// The weaver's narrative route: the model and window a resident that
     /// inherits dreams on, never its diary.
     weaver: Option<RoleBackend>,
+    /// The ladder the weaver's route sends on: a resident's free-time item
+    /// on the weaver's model sends there on a run of its own, never on the
+    /// pass's line (FIX 4453).
+    weaver_ladder: Option<Arc<OfferLadder>>,
     /// The route a TASK realizes on: narrative, else extraction, with the
     /// ladder and run its backend sends on.
     task_route: Option<(ModelRole, RoleBackend, RoleSends)>,
@@ -462,6 +468,9 @@ impl ObservedFactory {
             );
         }
         self.weaver = roles.get(DREAMER_NARRATIVE_ROLE).cloned();
+        self.weaver_ladder = runs
+            .get(&DREAMER_NARRATIVE_ROLE)
+            .map(|(ladder, _)| Arc::clone(ladder));
         self.task_route = [DREAMER_NARRATIVE_ROLE, DREAMER_EXTRACTION_ROLE]
             .into_iter()
             .find_map(|role| Some((role, roles.get(role).cloned()?, runs.remove(&role)?)));
@@ -534,6 +543,7 @@ impl PassExecutorFactory for ObservedFactory {
                 vault: &self.vault,
                 runtime: &self.runtime,
                 weaver,
+                weaver_ladder: self.weaver_ladder.as_ref(),
                 guard,
                 egress: self.egress,
                 instruction,
@@ -588,6 +598,7 @@ impl PassExecutorFactory for ObservedFactory {
                 vault: &self.vault,
                 runtime: &self.runtime,
                 weaver,
+                weaver_ladder: self.weaver_ladder.as_ref(),
                 guard,
                 egress: self.egress,
                 instruction,
@@ -950,6 +961,8 @@ struct ResidentLend<'p> {
     vault: &'p Vault,
     runtime: &'p ModelRuntime,
     weaver: &'p RoleBackend,
+    /// The ladder `weaver` sends on, for a free-time item's own run.
+    weaver_ladder: Option<&'p Arc<OfferLadder>>,
     guard: &'p oneiron::BudgetGuard,
     egress: bool,
     instruction: &'p str,
@@ -962,6 +975,14 @@ impl ResidentLend<'_> {
         attempt: &DreamerAdmittedAttempt,
         ctx: &WakeAttemptContext<'_>,
     ) -> oneiron::Result<DreamerAttemptExecution> {
+        // A free-time cycle's item (FIX 4453) runs on a run bound to it,
+        // metered on its cycle's spend scope, never on the pass's line.
+        if let Some(binding) = self
+            .vault
+            .free_time_item_binding(attempt.status.attempt.id)?
+        {
+            return self.free_time_item(attempt, ctx, binding).await;
+        }
         let resident = resident_of_dream_input(&attempt.status.payload.input)?;
         let slot = own_dreaming_slot(self.vault, resident)?;
         let own = match &slot {
@@ -1133,6 +1154,16 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
             match self.resident {
                 Some(lend) => lend.dream(attempt, ctx).await,
                 // Without the host's instruction no resident dreams tonight.
+                None => Ok(DreamerAttemptExecution::Completed { completed_units: 0 }),
+            }
+        } else if attempt.status.payload.attempt_type
+            == oneiron::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND
+        {
+            // A resident's free time for its human (FIX 4453) borrows what
+            // its dreaming does; without the host's instruction it has no
+            // voice, and its item ends without its work.
+            match self.resident {
+                Some(lend) => lend.dream(attempt, ctx).await,
                 None => Ok(DreamerAttemptExecution::Completed { completed_units: 0 }),
             }
         } else if attempt.status.payload.attempt_type

@@ -137,6 +137,12 @@ fn nightly(
         store.enqueue_dreamer_nightly_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
         store.enqueue_note_review_in_txn(txn, Some(parent), Some(&key), run_id.clone(), now)?;
         for resident in &residents {
+            // A resident the owner set a free-time policy dreams as its
+            // cycle's own-time item instead (FIX 4453); every other resident
+            // keeps its nightly dreaming exactly as before.
+            if crate::dreamer_runner::free_time_owns_reflection_in_txn(vault, txn, *resident)? {
+                continue;
+            }
             store.enqueue_resident_dream_in_txn(
                 txn,
                 *resident,

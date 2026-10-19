@@ -423,6 +423,37 @@ impl<'a> DreamerRunnerStore<'a> {
         )
     }
 
+    /// Enqueues one item a free-time cycle opens (FIX 4453), in the cycle's
+    /// own commit: the for-human item, or the resident's dreaming as the
+    /// cycle's own-time item (`queue_kind` names which). One per item per
+    /// cycle; the resident's stamp binds at enqueue, the cycle's binding in
+    /// the same commit.
+    pub(crate) fn enqueue_free_time_item_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        queue_kind: &str,
+        resident: crate::EntityId,
+        cycle: crate::EntityId,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        let cycle_hex = cycle.to_hex();
+        self.enqueue_kind_in_txn(
+            wtxn,
+            queue_kind,
+            DreamerAttemptPayload {
+                attempt_type: queue_kind.to_owned(),
+                input: super::free_time::free_time_item_input(resident, cycle),
+                parent_attempt: None,
+            },
+            Some(format!(
+                "{queue_kind}:{}:free_time:{cycle_hex}",
+                resident.to_hex()
+            )),
+            Some(format!("free_time:{cycle_hex}")),
+            now,
+        )
+    }
+
     /// Enqueues the weave lens's generate step for one published digest
     /// period (OF-499), in the publication's own commit: one per period
     /// render.
@@ -635,6 +666,16 @@ impl<'a> DreamerRunnerStore<'a> {
                     input.now,
                 )?;
             }
+            // A free-time item settles its spend scope in the same commit;
+            // one that ends without its receipt is Cancelled, never a
+            // success (FIX 4453).
+            super::free_time::end_free_time_item_in_txn(
+                self.vault,
+                wtxn,
+                record,
+                super::FreeTimeItemOutcome::Cancelled,
+                input.now,
+            )?;
             Ok(outcome)
         })?;
         match outcome {
@@ -748,6 +789,15 @@ impl<'a> DreamerRunnerStore<'a> {
                         reason: input.reason,
                         now: input.now,
                     },
+                )?;
+                // A free-time item that fails settles its spend scope and
+                // ends Failed unless it already has its receipt (FIX 4453).
+                super::free_time::end_free_time_item_in_txn(
+                    self.vault,
+                    wtxn,
+                    &record,
+                    super::FreeTimeItemOutcome::Failed,
+                    input.now,
                 )?;
                 self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
                 Ok(outcome)
@@ -991,6 +1041,7 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
         || kind == DREAMER_NOTE_REVIEW_ATTEMPT_KIND
         || kind == DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
+        || kind == super::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND
         || kind == DREAMER_WEAVE_LENS_ATTEMPT_KIND
         || kind == super::DREAMER_TURN_PROGRAM_ATTEMPT_KIND
         || kind == super::COACH_HEAL_ATTEMPT_KIND
