@@ -3,6 +3,7 @@
 //! only in POST bodies. A call that also presents a vault credential is classed
 //! by it: an agent's Complete is an automated sign act, whoever's link it holds.
 use crate::server::SyncServer;
+pub(crate) mod delivery_outbox;
 mod editor_budget;
 pub(crate) mod hold_worker;
 mod presentation;
