@@ -26011,7 +26011,7 @@
       "const": 1,
       "enum": 4,
       "fn": 2,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 3,
       "trait": 2
      }
@@ -26065,6 +26065,25 @@
       "fn": 4,
       "struct": 8,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PersonTrainingControl",
+      "PersonTrainingReceipts",
+      "PersonTrainingSubmission",
+      "TrainingCustody",
+      "TrainingReceiptsCursor",
+      "TrainingUsedRun"
+     ],
+     "path": "src/feedback/conversation_training/receipts.rs",
+     "purpose": "A person's own publisher training receipts (OF-420, FIX 5372): what the outbox holds and what the intake…",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 5
      }
     },
     {
@@ -61856,7 +61875,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -62754,7 +62773,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3846,
+   "source_files": 3847,
    "test_files": 902
   },
   "oneiron-android": {
@@ -77753,7 +77772,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/conversation_learning_routes.rs",
