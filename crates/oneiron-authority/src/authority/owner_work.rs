@@ -7,10 +7,10 @@
 //! records an [`OwnerWorkRequest`] signed with its install key, the carrier,
 //! naming the one install that is to do the work, the executor. The
 //! executor, and only it, signs the [`OwnerWorkResult`] with its own install
-//! key, naming the request's entry among its parents: the work was enacted,
-//! or refused for a closed, value-free reason. Both are main-log metadata, so
-//! every linked machine folds them; neither names a person or a world's text,
-//! nor carries a secret byte.
+//! key, naming the request's entry, which its parents' fold carries: the work
+//! was enacted, or refused for a closed, value-free reason. Both are main-log
+//! metadata, so every linked machine folds them; neither names a person or a
+//! world's text, nor carries a secret byte.
 //!
 //! Key, custody and root acts are the owner's own: every work kind refuses
 //! an agent's act until a Grant line names it (Engine 10-19 02:2x). The one
@@ -292,7 +292,8 @@ impl OwnerWorkBody {
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
 pub struct WorldPrivacyWorkBasis {
-    /// The settings edit's signed entry, one of the request's parents.
+    /// The settings edit's signed entry, in the request's causal past (the
+    /// fold of its parents).
     pub edit: AuthorityEntryHash,
     /// The world's `PolicyRevision` right after the edit: the revision the
     /// key work is for.
@@ -418,7 +419,7 @@ pub enum OwnerWorkRefusal {
     /// The target's revision moved past the act's `seen`: a newer act
     /// carries its own work, or did it in its own commit.
     StaleRevision,
-    /// The act's owner is no longer a live owner of the vault.
+    /// The applicable work/key owner is no longer a live owner of the vault.
     OwnerNotLive,
     /// The world is not a live WORLD row on the executor.
     WorldNotLive,
@@ -518,7 +519,8 @@ impl OwnerWorkOutcome {
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
 pub struct OwnerWorkResult {
-    /// The request's signed entry, one of this entry's parents.
+    /// The request's signed entry, in this entry's causal past (the fold of
+    /// its parents).
     pub request: AuthorityEntryHash,
     /// The install that signed it: the one the request names.
     pub executor: EntityId,
@@ -533,14 +535,13 @@ impl OwnerWorkResult {
         Ok(())
     }
 
-    /// Signed alone by an Ed25519 install key, naming the request's entry
-    /// among its parents: a result never precedes what it answers.
+    /// Signed alone by an Ed25519 install key. Its shape names no parent:
+    /// the request must be in the result's causal past, which only the fold
+    /// of its parents knows, so the fold judges it there and refuses a result
+    /// whose request is not (CALLS "FIX 4987 causal request presence"). A
+    /// result never precedes what it answers.
     pub(super) fn validate_entry(&self, entry: &AuthorityLogEntry) -> Result<()> {
-        signed_alone_by_install_key(entry)?;
-        if !entry.parent_hashes.contains(&self.request) {
-            return Err(invalid_authority());
-        }
-        Ok(())
+        signed_alone_by_install_key(entry)
     }
 }
 

@@ -16,8 +16,8 @@
 //! is judged on the fold it is read against
 //! ([`Vault::conversation_training_worlds`]): a world deleted, archived, or
 //! made private after the yes drops out, and a yes with no world left reads
-//! as off. The person's own door ([`Vault::set_conversation_training`])
-//! signs a choice.
+//! as off, as does the yes of a PERSON no longer live (FIX 5116). The
+//! person's own door ([`Vault::set_conversation_training`]) signs a choice.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -148,9 +148,10 @@ impl Vault {
     /// The worlds whose conversations `person` said yes to training on, as
     /// they count now: their choice in force, less every world no longer
     /// eligible on this snapshot's fold (the eligibility hook,
-    /// [`Self::conversation_training_world_admits`]). `None` when the choice
-    /// is off, no choice of theirs counts, their live choices conflict, or
-    /// no chosen world is still eligible.
+    /// [`Self::conversation_training_world_admits`]). `None` when `person`
+    /// is no longer a live PERSON of this vault (deleted, merged or split;
+    /// FIX 5116), the choice is off, no choice of theirs counts, their live
+    /// choices conflict, or no chosen world is still eligible.
     ///
     /// # Errors
     /// Storage faults, and history this vault lacks, as the fold reads them:
@@ -171,6 +172,9 @@ impl Vault {
         fold: &AuthorityFold,
         person: EntityId,
     ) -> Result<Option<BTreeSet<EntityId>>> {
+        if !crate::consent::person_is_live_in_txn(self, txn, &person)? {
+            return Ok(None);
+        }
         let Some(chosen) = fold.conversation_training.chosen(person) else {
             return Ok(None);
         };

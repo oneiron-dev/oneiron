@@ -129,7 +129,7 @@ pub enum AuthorityOp {
     /// main-log entry, value-free.
     OwnerWorkRequest(OwnerWorkRequest),
     /// The named executor's result for one owner work request, signed by its
-    /// install key, with the request among its parents. A main-log entry,
+    /// install key, with the request in its causal past. A main-log entry,
     /// value-free.
     OwnerWorkResult(OwnerWorkResult),
     /// One owner choice of the vault's checkpoint root policy, signed by

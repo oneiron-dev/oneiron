@@ -173,25 +173,17 @@ impl Vault {
                     .to_owned(),
             ));
         }
-        // A main-log edit (contract §6): it names the main-log heads, its
-        // carrier's standing rows, a one-machine target's and the world's live
-        // edits, so it supersedes every edit this install folds. It never
+        // A main-log edit (contract §6): it names the main-log heads alone.
+        // Its carrier's and a one-machine target's standing rows and the
+        // world's live edits are main-log rows, so among those heads or their
+        // ancestors: the fold at the heads carries them, and the edit
+        // supersedes every edit this install folds. Naming them again would
+        // put covered rows off a checkpoint image's frontier among its
+        // parents, which only the whole history folds (FIX 4987). It never
         // names a key record, which rides the world's recipient-filtered side
         // branch. A fenced main-log row beneath it is crossed on refold
         // (`refold_world_edits`), as for a grant travel choice.
-        let mut parents = fold.append_heads.clone();
-        parents.extend(standing_rows(&fold, machine));
-        parents.extend(
-            target
-                .into_iter()
-                .flat_map(|target| standing_rows(&fold, target)),
-        );
-        parents.extend(
-            fold.worlds
-                .get(&world)
-                .into_iter()
-                .flat_map(|folded| folded.live.keys().copied()),
-        );
+        let parents = fold.append_heads.clone();
         if parents.len() > MAX_PARENTS {
             return Err(parent_bound(parents.len()));
         }

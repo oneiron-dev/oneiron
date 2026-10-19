@@ -44,7 +44,8 @@ const CUSTODY_CONCURRENT_ACTIVE: CustodyConcurrentActive =
 impl AuthorityFold {
     /// The revision a custody request on `secret` states as its `seen`
     /// (CALLS CUSTODY_REVISION): [`act_revision`] over the secret's live
-    /// custody request heads, which the request names among its parents.
+    /// custody request heads, which the fold of the request's parents
+    /// carries.
     pub(crate) fn custody_work_revision(&self, secret: EntityId) -> [u8; 32] {
         match CUSTODY_REVISION {
             CustodyRevisionHeads::PriorCountedRequestHeads => act_revision(

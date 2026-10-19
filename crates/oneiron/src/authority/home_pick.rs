@@ -49,7 +49,8 @@ const NO_CARRIER: &str = "this install has no live machine profile in the vault'
 /// The pick would name more rows than one authority entry may: the log's
 /// encoding bound, never a possession test.
 const TOO_MANY_HEADS: &str =
-    "the home node pick has more concurrent picks than one pick may name; nothing was written";
+    "the authority log has more concurrent heads than one home node pick may name; nothing was \
+     written";
 /// The supplied `seen` is not the vault's current pick revision.
 const STALE: &str = "the home node pick changed since it was read";
 
@@ -180,9 +181,9 @@ impl Vault {
     ///
     /// A pick of a node this install does not know, or one not eligible now,
     /// is recorded all the same; only the election passes over it. The pick
-    /// names the main-log heads, this install's standing rows and every live
-    /// pick, so it supersedes all of them, and lands atomically or not at
-    /// all. Its landing re-elects this install's home in the same
+    /// names the main-log heads alone, whose fold carries this install's
+    /// standing rows and every live pick (FIX 4987), so it supersedes all of
+    /// them, and lands atomically or not at all. Its landing re-elects this install's home in the same
     /// transaction; the commit then wakes the watchers.
     ///
     /// # Errors
@@ -220,9 +221,7 @@ impl Vault {
         }
         let signer = AuthorityKey::Ed25519(public_key);
         let seq = next_sequence(&fold, &signer)?;
-        let mut parents = fold.append_heads.clone();
-        parents.extend(standing_rows(&fold, machine));
-        parents.extend(fold.home_pick.live.keys().copied());
+        let parents = fold.append_heads.clone();
         if parents.len() > MAX_PARENTS {
             return Err(Error::InvalidConfig(TOO_MANY_HEADS.to_owned()));
         }

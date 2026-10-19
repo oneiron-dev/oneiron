@@ -224,42 +224,18 @@ impl AuthorityFold {
         }
     }
 
-    /// The parents a new request names: the main-log heads, the rows the
-    /// carrier's and the executor's standing rest on, and the live requests
-    /// of its (kind, target), so it replaces every one this install folds.
-    pub(crate) fn owner_work_request_parents(
-        &self,
-        carrier: EntityId,
-        executor: EntityId,
-        kind: OwnerWorkKind,
-        target: EntityId,
-    ) -> BTreeSet<AuthorityEntryHash> {
-        let mut parents = self.append_heads.clone();
-        parents.extend(standing_rows(self, carrier));
-        parents.extend(standing_rows(self, executor));
-        parents.extend(
-            self.owner_work
-                .heads
-                .get(&(kind, target))
-                .into_iter()
-                .flatten()
-                .copied(),
-        );
-        parents
-    }
-
-    /// The parents a result names: the request, the main-log heads and the
-    /// rows the executor's standing rests on. Never a world's key record,
-    /// which rides a side branch no main-log row may name.
-    pub(crate) fn owner_work_result_parents(
-        &self,
-        request: AuthorityEntryHash,
-        executor: EntityId,
-    ) -> BTreeSet<AuthorityEntryHash> {
-        let mut parents = self.append_heads.clone();
-        parents.extend(standing_rows(self, executor));
-        parents.insert(request);
-        parents
+    /// The parents a new request or a result names: the main-log heads
+    /// alone (FIX 4987). The rows the carrier's and the executor's standing
+    /// rest on, a request's (kind, target) live requests and a result's
+    /// request are main-log rows among those heads or their ancestors, so
+    /// the fold at the heads carries them: a request replaces every live one
+    /// this install folds, and a result finds its request in its causal past
+    /// (`apply_result`). Naming them again would put covered rows off a
+    /// checkpoint image's frontier among its parents, which only the whole
+    /// history folds. Never a world's key record, which rides a side branch
+    /// no main-log row may name.
+    pub(crate) fn owner_work_parents(&self) -> BTreeSet<AuthorityEntryHash> {
+        self.append_heads.clone()
     }
 }
 
@@ -381,8 +357,11 @@ fn apply_result(
     let admitted = standing.admits_owner_act_signer(result.executor, &key, roster);
     drop(standing);
     let work = &mut state.owner_work;
-    // The request is among the result's parents (its shape check), so its
-    // fate is in this state: admitted, without effect, or no request at all.
+    // The causal request-presence check (CALLS "FIX 4987 causal request
+    // presence"): this state merges the result's own parents alone, never
+    // the final fold, so the request's fate here is its fate in the result's
+    // causal past: admitted, without effect, or no request at all. A request
+    // outside that past, concurrent with the result or unseen, is invalid.
     match work.requests.get(&result.request) {
         Some(request) if request.request.executor != result.executor => {
             return Err(AuthorityFoldIssue::InvalidEntry(hash));

@@ -598,10 +598,11 @@ pub(crate) fn topology_seal_revision_for_store_in_txn(
 /// beside the trusted keys (mesh PR2-topology): each machine's carrier keys
 /// under the one carrier rule, its removal and its chains' head rows (a new
 /// revision, and the acts it saw), the owners' human binding statuses, each
-/// decision seal's token and whether every head it signed is held (FIX
-/// 4649), and the row state of every Grant a decision seal names. A change in
-/// any of them, a Grant delete included (FIX 4652), runs the standing pass
-/// again.
+/// decision seal's token, whether every head it signed is held (FIX 4649)
+/// and how it stands by the full removal race here (FIX 5248,
+/// `seal_standing::decision_seal_standings_in_txn`), and the row state of
+/// every Grant a decision seal names. A change in any of them, a Grant delete
+/// included (FIX 4652), runs the standing pass again.
 pub(super) fn decision_standing_digest_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -646,8 +647,8 @@ pub(super) fn decision_standing_digest_in_txn(
         hasher.update(&[u8::from(*live)]);
     }
     let mut grants = BTreeSet::new();
-    let mut seals = BTreeSet::new();
-    for fact in super::seal_standing::decision_seals_in_txn(store, txn)? {
+    let facts = super::seal_standing::decision_seals_in_txn(store, txn)?;
+    for fact in &facts {
         if let SealAuthority::Decision(OwnerAct {
             by: ActBy::Agent { grant, .. },
             ..
@@ -655,16 +656,12 @@ pub(super) fn decision_standing_digest_in_txn(
         {
             grants.insert(grant);
         }
-        let held = fact
-            .authority_heads
-            .iter()
-            .all(|head| fold.valid_entries.contains(head));
-        seals.insert((fact.act_token()?, held));
     }
+    let seals = super::seal_standing::decision_seal_standings_in_txn(store, txn, fold, &facts)?;
     hasher.update(&(seals.len() as u64).to_be_bytes());
-    for (token, held) in &seals {
+    for (token, held, standing) in &seals {
         hasher.update(token);
-        hasher.update(&[u8::from(*held)]);
+        hasher.update(&[u8::from(*held), *standing]);
     }
     hasher.update(&(grants.len() as u64).to_be_bytes());
     for grant in &grants {

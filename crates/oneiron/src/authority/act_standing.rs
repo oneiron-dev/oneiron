@@ -190,9 +190,8 @@ pub(crate) fn causal_points_in_txn(
 }
 
 /// The causal point an act outside the log signs where it is carried: the
-/// main-log heads and its carrier's standing rows, as a main-log owner act
-/// names its parents (CALLS "FIX 4649 seal causal envelope"). The caller
-/// bounds it by [`MAX_PARENTS`].
+/// main-log heads and its carrier's standing rows (CALLS "FIX 4649 seal
+/// causal envelope"). The caller bounds it by [`MAX_PARENTS`].
 pub(crate) fn act_heads(fold: &AuthorityFold, machine: EntityId) -> BTreeSet<AuthorityEntryHash> {
     let mut heads = fold.append_heads.clone();
     heads.extend(standing_rows(fold, machine));
