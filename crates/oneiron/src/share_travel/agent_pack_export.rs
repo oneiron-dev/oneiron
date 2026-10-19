@@ -99,12 +99,21 @@ impl Memory<'_> {
         };
         let on_device = crate::settings::ReadDestination::on_device();
         // Each lane opens its own snapshots before the read's one snapshot
-        // (LMDB allows one per thread).
-        let parts = match self.owner_export_lane(ClaimReadStatus::Recorded)? {
+        // (LMDB allows one per thread). The owner's share as it read before
+        // the ruling: his lane for this surface's destination, his born-with
+        // text judged here.
+        let before = || -> MemoryResult<PackParts> {
+            let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+            pack_in(vault, &lane, &agent, &choice, &on_device, None)
+        };
+        let (export, notices) = match self.owner_export_lane(ClaimReadStatus::Recorded)? {
             // The owner reads as his own read and keeps no born-with text
             // back; each world his choice would keep from `onward` is named.
-            // A row of his that cannot be placed overrides nothing: his share
-            // then reads as it did before the ruling.
+            // A row of his that cannot be placed overrides nothing, and nor
+            // does a result every release off this device would hold whole
+            // for naming, by id, a row kept from this destination (a result,
+            // a code run's answer, a keyed replay): his share then reads as
+            // it did before, so no request that answered before is refused.
             Some(lane) => {
                 let parts = pack_in(
                     vault,
@@ -114,61 +123,84 @@ impl Memory<'_> {
                     &on_device,
                     Some((self.destination(), &onward)),
                 )?;
-                if parts.notices.is_some() {
-                    parts
+                if parts.notices.is_none() {
+                    respond(&agent, before()?)?
                 } else {
-                    let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-                    pack_in(vault, &lane, &agent, &choice, &on_device, None)?
+                    let (export, notices) = respond(&agent, parts)?;
+                    let bytes = serde_json::to_vec(&export).map_err(|_| {
+                        Error::InvariantViolation("an agent pack export is not JSON")
+                    })?;
+                    if super::pack_notice::names_kept_row(vault, self.destination(), &bytes)? {
+                        respond(&agent, before()?)?
+                    } else {
+                        (export, notices)
+                    }
                 }
             }
             None => {
                 let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-                pack_in(vault, &lane, &agent, &choice, &onward, None)?
+                respond(
+                    &agent,
+                    pack_in(vault, &lane, &agent, &choice, &onward, None)?,
+                )?
             }
         };
-        let PackParts {
-            version,
-            files,
-            born_with,
-            omitted,
-            notices,
-        } = parts;
-        let notices = notices.unwrap_or_default();
-        let content_hash = crate::skill::canonical_skill_tree_hash(
-            files
-                .iter()
-                .map(|file| (file.path.as_str(), file.content.as_slice())),
-        )?
-        .to_hex();
-        let omitted: Vec<OmittedKnowledge> = omitted
-            .iter()
-            .map(|row| OmittedKnowledge::new(row.claim, row.reason))
-            .collect();
         vault.record_agent_pack_travel(
             &agent,
-            version.clone(),
-            content_hash.clone(),
+            export.version.clone(),
+            export.content_hash.clone(),
             &self.actor(),
-            &born_with,
-            omitted.clone(),
-            notices.clone(),
-        )?;
-        Ok(AgentPackExport {
-            agent_ref: agent.to_hex(),
-            version,
-            content_hash,
-            born_with,
-            omitted,
-            files: files
-                .into_iter()
-                .map(|file| AgentPackExportFile {
-                    content_base64: base64::engine::general_purpose::STANDARD.encode(&file.content),
-                    path: file.path,
-                })
-                .collect(),
+            &export.born_with,
+            export.omitted.clone(),
             notices,
-        })
+        )?;
+        Ok(export)
     }
+}
+
+/// The export `parts` answers for `agent`, and the notices its share receipt
+/// keeps: the result names each world by name alone, the receipt by id too.
+fn respond(
+    agent: &EntityId,
+    parts: PackParts,
+) -> MemoryResult<(AgentPackExport, Vec<WorldRecipientNotice>)> {
+    let PackParts {
+        version,
+        files,
+        born_with,
+        omitted,
+        notices,
+    } = parts;
+    let notices = notices.unwrap_or_default();
+    let content_hash = crate::skill::canonical_skill_tree_hash(
+        files
+            .iter()
+            .map(|file| (file.path.as_str(), file.content.as_slice())),
+    )?
+    .to_hex();
+    let export = AgentPackExport {
+        agent_ref: agent.to_hex(),
+        version,
+        content_hash,
+        born_with,
+        omitted: omitted
+            .iter()
+            .map(|row| OmittedKnowledge::new(row.claim, row.reason))
+            .collect(),
+        files: files
+            .into_iter()
+            .map(|file| AgentPackExportFile {
+                content_base64: base64::engine::general_purpose::STANDARD.encode(&file.content),
+                path: file.path,
+            })
+            .collect(),
+        notices: notices
+            .iter()
+            .cloned()
+            .map(WorldRecipientNotice::in_result)
+            .collect(),
+    };
+    Ok((export, notices))
 }
 
 /// The pack `lane` reads of `agent` in one snapshot: the definition, its
@@ -242,7 +274,7 @@ fn pack_in(
         },
         None => None,
     };
-    let (files, born_with, omitted) = crate::agent_def::agent_pack_files_travelling(
+    let (files, born_with, mut omitted) = crate::agent_def::agent_pack_files_travelling(
         agent,
         &def,
         &refs,
@@ -271,7 +303,14 @@ fn pack_in(
             rows.extend(super::pack_notice::born_with_rows_in(
                 vault, &txn, lane, agent, &born_with,
             )?);
-            super::pack_notice::owner_export_notices_in(vault, &txn, &rows, actual, onward)?
+            super::pack_notice::owner_export_notices_in(
+                vault,
+                &txn,
+                &rows,
+                &mut omitted,
+                actual,
+                onward,
+            )?
         }
     };
     drop(txn);

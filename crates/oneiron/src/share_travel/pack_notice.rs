@@ -10,7 +10,10 @@
 //! ([`PACK_NOTICE_WORDING`], CALLS `FIX 5493 notice wording`); a host renders
 //! its own from the typed fields. A world's name is the owner's alone: it
 //! rides only on his own response and his own receipt
-//! ([`screen_owner_notice_fields`]).
+//! ([`screen_owner_notice_fields`]). A world's id rides only on the share
+//! receipt, whose off-device screen reads it: a notice in a result names its
+//! world by name, so no result names a kept row by id, and every release
+//! check off this device passes it as it passed the result before.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -50,6 +53,8 @@ pub struct PackNoticeWording {
     /// What an import's check reads, said after it: the sender's world
     /// settings never travel with a pack (CALLS `FIX 5493 import scope`).
     pub import_scope: &'static str,
+    /// `{world_name}` for a world whose body names none a read may show.
+    pub unnamed: &'static str,
 }
 
 /// The wording every pack travel notice is rendered in.
@@ -59,6 +64,7 @@ pub const PACK_NOTICE_WORDING: PackNoticeWording = PackNoticeWording {
     import: "Please double-check {world_name} before import: {reason}. The import will continue.",
     import_scope: "The sender's world settings do not travel with a pack; this is this world's \
                    current setting for this machine.",
+    unnamed: "an unnamed world",
 };
 
 /// One world a pack's travel names to the owner, and why.
@@ -74,8 +80,10 @@ pub struct WorldRecipientNotice {
     pub voice: String,
     /// [`PACK_NOTICE_AUDIENCE`].
     pub audience: String,
-    /// The world, hex.
-    pub world_ref: String,
+    /// The world, hex: on the share receipt only, whose off-device screen
+    /// reads it. A notice in a result names its world by name alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world_ref: Option<String>,
     /// The world's name as the owner reads it; absent when its body names
     /// none a read may show.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -95,8 +103,7 @@ impl WorldRecipientNotice {
         reason: &str,
         template: &str,
     ) -> Self {
-        let world_ref = world.to_hex();
-        let shown = world_name.as_deref().unwrap_or(&world_ref);
+        let shown = world_name.as_deref().unwrap_or(PACK_NOTICE_WORDING.unnamed);
         let body = template
             .replace("{world_name}", shown)
             .replace("{reason}", reason);
@@ -105,7 +112,7 @@ impl WorldRecipientNotice {
             channel: PACK_NOTICE_CHANNEL.to_owned(),
             voice: PACK_NOTICE_VOICE.to_owned(),
             audience: PACK_NOTICE_AUDIENCE.to_owned(),
-            world_ref,
+            world_ref: Some(world.to_hex()),
             world_name,
             reason: reason.to_owned(),
             body,
@@ -128,7 +135,18 @@ impl WorldRecipientNotice {
         )
     }
 
-    /// An import lands in `world`, which `hold` keeps from this install.
+    /// This notice as a result carries it: by its world's name, never its
+    /// id.
+    pub(crate) fn in_result(self) -> Self {
+        Self {
+            world_ref: None,
+            ..self
+        }
+    }
+
+    /// An import lands in `world`, which `hold` keeps from this install. It
+    /// rides on results alone (the install receipt and the preview), so it
+    /// names the world by name.
     pub(crate) fn import(world: EntityId, world_name: Option<String>, hold: ReleaseHold) -> Self {
         let template = format!(
             "{} {}",
@@ -141,6 +159,7 @@ impl WorldRecipientNotice {
             hold.reason(),
             &template,
         )
+        .in_result()
     }
 }
 
@@ -160,14 +179,16 @@ pub(super) fn receipt_fields(notices: &[WorldRecipientNotice]) -> Vec<(String, S
     }
     let worlds = notices
         .iter()
-        .map(|notice| notice.world_ref.as_str())
+        .filter_map(|notice| notice.world_ref.as_deref())
         .collect::<Vec<_>>()
         .join(",");
     let mut fields = vec![("world_refs".to_owned(), worlds)];
     for (index, notice) in notices.iter().enumerate() {
         let key = |field: &str| format!("{NOTICE_FIELD_PREFIX}{index}.{field}");
         fields.push((key("type"), notice.notice_type.clone()));
-        fields.push((key("world_ref"), notice.world_ref.clone()));
+        if let Some(world) = &notice.world_ref {
+            fields.push((key("world_ref"), world.clone()));
+        }
         fields.push((key("reason"), notice.reason.clone()));
         if let Some(name) = &notice.world_name {
             fields.push((key("world_name"), name.clone()));
@@ -262,11 +283,14 @@ pub(super) fn born_with_rows_in(
 /// machine this surface's connection proved: his exception overrides his
 /// recipient choice alone, never an unplaced row, so his share then reads as
 /// it did before. A conflicted vault root refuses as the read it replaces
-/// did.
+/// did. The knowledge it kept home that `actual` may not read is struck from
+/// `omitted`, as the read before the ruling never listed it: a list of ids
+/// names no row kept from where it goes.
 pub(super) fn owner_export_notices_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     rows: &[EntityId],
+    omitted: &mut Vec<crate::agent_def::OmittedClaim>,
     actual: &ReadDestination,
     onward: &ReadDestination,
 ) -> Result<Option<Vec<WorldRecipientNotice>>> {
@@ -275,6 +299,16 @@ pub(super) fn owner_export_notices_in(
     } else {
         BTreeSet::new()
     };
+    if !flagged.is_empty() {
+        let mut kept = Vec::with_capacity(omitted.len());
+        for row in omitted.drain(..) {
+            if !crate::settings::device_local_keeps_among(&vault.store, txn, &flagged, &row.claim)?
+            {
+                kept.push(row);
+            }
+        }
+        *omitted = kept;
+    }
     let mut worlds = BTreeSet::new();
     for row in rows {
         let carried = match crate::settings::carried_worlds_in(&vault.store, txn, row) {
@@ -294,4 +328,36 @@ pub(super) fn owner_export_notices_in(
         notices.push(WorldRecipientNotice::export(world, name, limit));
     }
     Ok(Some(notices))
+}
+
+/// Whether `bytes` spell, as a whole 32-digit hex token, a row a world
+/// withheld from `actual` keeps now: the payload scan every release off this
+/// device runs (a result, a code run's answer, a keyed replay). The owner's
+/// own export whose result would trip it reads as it did before the ruling
+/// instead, so no request that answered before is refused (FIX 5493).
+pub(super) fn names_kept_row(
+    vault: &Vault,
+    actual: &ReadDestination,
+    bytes: &[u8],
+) -> Result<bool> {
+    if !actual.is_off_device() {
+        return Ok(false);
+    }
+    let mut ids = BTreeSet::new();
+    for run in bytes.split(|byte| !byte.is_ascii_hexdigit()) {
+        if run.len() == 32
+            && let Ok(hex) = std::str::from_utf8(run)
+            && let Ok(id) = EntityId::from_hex(&hex.to_ascii_lowercase())
+        {
+            ids.insert(id);
+        }
+    }
+    if ids.is_empty() {
+        return Ok(false);
+    }
+    let named = ids.len();
+    Ok(vault
+        .off_device_readable_for(ids.into_iter().collect(), actual)?
+        .len()
+        != named)
 }

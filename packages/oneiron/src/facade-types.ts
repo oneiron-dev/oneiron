@@ -1815,7 +1815,7 @@ export type BudgetPolicyRef = string
 /** `oneiron::skill_hub::pack_catalog::source::PackSection` */
 export type PackSection = { section_id: string; state_family: StateFamilyRef; verbs: SectionVerbRef[]; authority_lane: AuthorityLaneRef; budget_policy: BudgetPolicyRef }
 /** `oneiron::share_travel::pack_notice::WorldRecipientNotice` */
-export type WorldRecipientNotice = { notice_type: string; channel: string; voice: string; audience: string; world_ref: string; world_name?: string | null; reason: string; body: string }
+export type WorldRecipientNotice = { notice_type: string; channel: string; voice: string; audience: string; world_ref?: string | null; world_name?: string | null; reason: string; body: string }
 /** `oneiron::skill_hub::pack_catalog::admission_types::PackInstallReceipt` */
 export type PackInstallReceipt = { source_id: string; pack_name: string; content_hash: string; kind: PackKind; adapter?: PackAdapter | null; engine_version?: string | null; status: PackInstallStatus; candidate_reason?: PackCandidateReason | null; hub_id: string; hub_ref: string; pin_type: string; pin_value: string; publisher: string; permissions: PackPermissions; qualification_report_hash?: string | null; connector_qualification?: PackConnectorReceipt | null; runtime?: PackRuntimeRecipe | null; sections: PackSection[]; predicates: string[]; kinds: string[]; skills: string[]; agent?: string | null; installed_at: number; notices?: WorldRecipientNotice[] }
 /** `oneiron::task_verb::sdk_host::PackPutReceipt` */
@@ -2001,7 +2001,7 @@ export type PackPutRequest = { files: PackFileInput[] }
 /** `oneiron::task_verb::sdk_pack_preview::PackPreviewRequest` */
 export type PackPreviewRequest = { files: PackFileInput[]; world?: EntityId | null }
 /** `oneiron::skill_hub::pack_catalog::import_notice::PackImportPreview` */
-export type PackImportPreview = { pack_name: string; agent: boolean; world_ref?: string | null; needs_world: boolean; notices: WorldRecipientNotice[] }
+export type PackImportPreview = { pack_name: string; agent: boolean; world_name?: string | null; needs_world: boolean; notices: WorldRecipientNotice[] }
 /** `oneiron::connector_key::slate::SlatePackSource` */
 export type SlatePackSource = { source_ref: string; content_hash: string }
 /** `oneiron::connector_key::slate::SlateDataClass` */

@@ -13582,8 +13582,8 @@ pub struct WorldRecipientNotice {
     pub voice: String,
     #[serde(rename = "audience")]
     pub audience: String,
-    #[serde(rename = "world_ref")]
-    pub world_ref: String,
+    #[serde(rename = "world_ref", default, skip_serializing_if = "Option::is_none")]
+    pub world_ref: Option<String>,
     #[serde(
         rename = "world_name",
         default,
@@ -14936,8 +14936,12 @@ pub struct PackImportPreview {
     pub pack_name: String,
     #[serde(rename = "agent")]
     pub agent: bool,
-    #[serde(rename = "world_ref", default, skip_serializing_if = "Option::is_none")]
-    pub world_ref: Option<String>,
+    #[serde(
+        rename = "world_name",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub world_name: Option<String>,
     #[serde(rename = "needs_world")]
     pub needs_world: bool,
     #[serde(rename = "notices")]

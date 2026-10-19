@@ -4483,7 +4483,7 @@ class WorldRecipientNotice(TypedDict):
     channel: str
     voice: str
     audience: str
-    world_ref: str
+    world_ref: NotRequired[str | None]
     world_name: NotRequired[str | None]
     reason: str
     body: str
@@ -4921,7 +4921,7 @@ class PackPreviewRequest(TypedDict):
 class PackImportPreview(TypedDict):
     pack_name: str
     agent: bool
-    world_ref: NotRequired[str | None]
+    world_name: NotRequired[str | None]
     needs_world: bool
     notices: list[WorldRecipientNotice]
 class SlatePackSource(TypedDict):

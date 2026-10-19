@@ -35,11 +35,13 @@ pub struct PackImportPreview {
     pub pack_name: String,
     /// Whether the folder carries a travelling agent.
     pub agent: bool,
-    /// The local world the agent and its knowledge would land in, hex;
-    /// absent for a base or all scope, or while its scope names no single
-    /// local world.
+    /// The name of the local world the agent and its knowledge would land
+    /// in; absent for a base or all scope, while its scope names no single
+    /// local world, or for a world whose body names none a read may show.
+    /// A preview names no row by id, so every release off this device
+    /// passes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub world_ref: Option<String>,
+    pub world_name: Option<String>,
     /// Whether the install would wait for the owner to pick its world.
     pub needs_world: bool,
     /// Each world whose current setting does not cover this machine: a
@@ -77,13 +79,14 @@ impl Vault {
         }
         let travel = self.travel_agent_in_txn(&txn, source, world)?;
         let notices = import_notices_in_txn(self, &txn, travel.as_ref())?;
+        let world_name = match travel.as_ref().and_then(TravelAgent::world) {
+            Some(world) => crate::share_travel::world_label_in_txn(self, &txn, &world)?,
+            None => None,
+        };
         Ok(PackImportPreview {
             pack_name: source.manifest.name.clone(),
             agent: travel.is_some(),
-            world_ref: travel
-                .as_ref()
-                .and_then(TravelAgent::world)
-                .map(|world| world.to_hex()),
+            world_name,
             needs_world: travel.as_ref().is_some_and(TravelAgent::needs_world),
             notices,
         })
