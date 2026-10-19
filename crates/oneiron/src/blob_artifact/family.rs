@@ -158,7 +158,23 @@ impl Vault {
 
     /// Exports one version as a file: `version` or the head when `None`. The
     /// record is bound to its ledger claim and the bytes to its content hash.
+    /// A DOCX copy shows its default author (FIX 4513); `content_hash` still
+    /// names the stored version.
     pub fn export_blob_artifact(
+        &self,
+        id: &EntityId,
+        version: Option<u64>,
+    ) -> Result<Option<ArtifactExport>> {
+        let Some(mut file) = self.export_blob_artifact_raw(id, version)? else {
+            return Ok(None);
+        };
+        file.bytes = self.resolve_docx_authors(std::mem::take(&mut file.bytes))?;
+        Ok(Some(file))
+    }
+
+    /// [`Vault::export_blob_artifact`] with the stored bytes as they are, for
+    /// a door that reads them before it serves a copy.
+    pub(crate) fn export_blob_artifact_raw(
         &self,
         id: &EntityId,
         version: Option<u64>,

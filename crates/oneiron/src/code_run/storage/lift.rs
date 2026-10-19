@@ -11,7 +11,7 @@ use super::super::replay::{CodeRunRawOutput, ResultOccurrence};
 use super::super::support::CODE_RUN_OUTPUT_HANDLE_PREFIX;
 use super::records::{RAW_OUTPUT_SECRETS, RAW_OUTPUTS, StoredBody, open_body_file};
 use crate::compaction::output::OutputRef;
-use crate::store::{BodyMeter, read_body_range};
+use crate::store::{BodyMeter, body_key_row_in_txn};
 use crate::{Error, Result, Vault};
 
 /// Bytes the backfill reads of a body file at a time.
@@ -102,12 +102,13 @@ impl Vault {
                     hash: digest,
                     byte_len: len,
                 });
-                let file = open_body_file(&output, vec![self.store.body_dir()?])?;
+                let key = body_key_row_in_txn(&self.store, txn, &digest)?;
+                let file = open_body_file(&output, key.as_ref(), vec![self.store.body_dir()?])?;
                 let mut offset = 0_u64;
                 while offset < len {
                     let take = usize::try_from((len - offset).min(LIFT_READ_FRAME as u64))
                         .map_err(|_| Error::ArithmeticOverflow("code-run result body length"))?;
-                    meter.feed(&read_body_range(&file, offset, take)?);
+                    meter.feed(&file.read_range(offset, take)?);
                     offset += take as u64;
                 }
                 len

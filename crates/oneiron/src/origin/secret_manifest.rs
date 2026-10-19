@@ -131,23 +131,21 @@ impl Vault {
         Ok(None)
     }
 
-    /// The vault's one current approved secret manifest: the manifest file
-    /// that parses at the commit this vault publishes now for a branch of a
-    /// repository it serves, when exactly one such commit holds one (CALLS
-    /// CUSTODY_MANIFEST_UNSTATED). The publication journal is the approval:
-    /// a ref counts only while the vault advertises it, as for
-    /// [`Vault::origin_secret_manifest`]. `None` when no served branch
-    /// holds one, when several do, or when they cannot be read: then no
-    /// manifest applies.
-    pub(crate) fn current_origin_secret_manifest(&self) -> Option<OriginSecretManifest> {
-        match self.current_origin_secret_manifests(2) {
-            Ok(mut found) if found.len() == 1 => found.pop(),
-            Ok(_) => None,
-            Err(error) => {
-                tracing::debug!(kind = ?error.kind(), "current secret manifests not read");
-                None
-            }
-        }
+    /// Every secret manifest the vault publishes now: the manifest file that
+    /// parses at the commit this vault publishes for each branch of each
+    /// repository it serves, ordered by `manifest_ref` (CALLS
+    /// CUSTODY_MANIFEST_UNSTATED_MULTI). The publication journal is the
+    /// approval: a ref counts only while the vault advertises it, as for
+    /// [`Vault::origin_secret_manifest`]. No count is capped. An empty list
+    /// says none is published.
+    ///
+    /// # Errors
+    /// The manifests could not be read, which never says that none is
+    /// published: the origin's, git's and the store's own errors.
+    pub(crate) fn published_origin_secret_manifests(&self) -> Result<Vec<OriginSecretManifest>> {
+        let mut found = self.current_origin_secret_manifests(usize::MAX)?;
+        found.sort_by(|left, right| left.manifest_ref.cmp(&right.manifest_ref));
+        Ok(found)
     }
 
     /// Up to `limit` manifests that parse at the commits this vault

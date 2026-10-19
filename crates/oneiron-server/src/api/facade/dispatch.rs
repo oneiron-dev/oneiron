@@ -9257,17 +9257,17 @@ async fn vault_coach_training_offers(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.coach.training_offers", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.coach.training_offers", value).await?;
-    let output = facade_output(
-        super::host_doors::vault_coach_training_offers(
-            server,
-            auth,
-            facade_door_input(&mut hooks)?,
-        )
-        .await?,
-    )?;
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let (output, listed) = super::host_doors::vault_coach_training_offers(
+        server,
+        auth,
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn vault_coach_training_offers_get(
     server: &Arc<SyncServer>,
@@ -9282,17 +9282,17 @@ async fn vault_coach_training_offers_get(
     oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.get", &value)?;
     let mut hooks =
         facade_hooks_pre(server, call, "vault.coach.training_offers.get", value).await?;
-    let output = facade_output(
-        super::host_doors::vault_coach_training_offers_get(
-            server,
-            auth,
-            facade_door_input(&mut hooks)?,
-        )
-        .await?,
-    )?;
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let (output, listed) = super::host_doors::vault_coach_training_offers_get(
+        server,
+        auth,
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn vault_coach_training_offers_trigger(
     server: &Arc<SyncServer>,
@@ -9332,17 +9332,17 @@ async fn vault_coach_training_offers_result(
     oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.result", &value)?;
     let mut hooks =
         facade_hooks_pre(server, call, "vault.coach.training_offers.result", value).await?;
-    let output = facade_output(
-        super::host_doors::vault_coach_training_offers_result(
-            server,
-            auth,
-            facade_door_input(&mut hooks)?,
-        )
-        .await?,
-    )?;
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let (output, listed) = super::host_doors::vault_coach_training_offers_result(
+        server,
+        auth,
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn vault_coach_training_offers_answer(
     server: &Arc<SyncServer>,
@@ -9475,17 +9475,17 @@ async fn vault_coach_training_offers_pilots_prepare(
         value,
     )
     .await?;
-    let output = facade_output(
-        super::host_doors::vault_coach_training_offers_pilots_prepare(
-            server,
-            auth,
-            facade_door_input(&mut hooks)?,
-        )
-        .await?,
-    )?;
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let (output, listed) = super::host_doors::vault_coach_training_offers_pilots_prepare(
+        server,
+        auth,
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn vault_coach_training_offers_pilots_complete(
     server: &Arc<SyncServer>,
@@ -14947,6 +14947,33 @@ async fn vault_workflows_dispatch(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_workflows_dispatch_bound(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    facade_scoped_credential(auth)?;
+    facade_outside_room_turn(call, "vault.workflows.dispatch_bound")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.workflows.dispatch_bound", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.workflows.dispatch_bound", value).await?;
+    let (output, listed) = super::host_doors::vault_workflows_dispatch_bound(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_workflows_status(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -18728,13 +18755,14 @@ async fn vault_booking_availability(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.booking.availability", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.booking.availability", value).await?;
-    let output = facade_output(
+    let (output, listed) =
         super::host_doors::vault_booking_availability(server, auth, facade_door_input(&mut hooks)?)
-            .await?,
-    )?;
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn vault_booking_book(
     server: &Arc<SyncServer>,
@@ -18748,12 +18776,13 @@ async fn vault_booking_book(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.booking.book", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.booking.book", value).await?;
-    let output = facade_output(
-        super::host_doors::vault_booking_book(server, auth, facade_door_input(&mut hooks)?).await?,
-    )?;
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let (output, listed) =
+        super::host_doors::vault_booking_book(server, auth, facade_door_input(&mut hooks)?).await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn vault_booking_reschedule(
     server: &Arc<SyncServer>,
@@ -18767,13 +18796,14 @@ async fn vault_booking_reschedule(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.booking.reschedule", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.booking.reschedule", value).await?;
-    let output = facade_output(
+    let (output, listed) =
         super::host_doors::vault_booking_reschedule(server, auth, facade_door_input(&mut hooks)?)
-            .await?,
-    )?;
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn vault_booking_cancel(
     server: &Arc<SyncServer>,
@@ -18787,13 +18817,13 @@ async fn vault_booking_cancel(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.booking.cancel", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.booking.cancel", value).await?;
-    let output = facade_output(
-        super::host_doors::vault_booking_cancel(server, auth, facade_door_input(&mut hooks)?)
-            .await?,
-    )?;
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let (output, listed) =
+        super::host_doors::vault_booking_cancel(server, auth, facade_door_input(&mut hooks)?).await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn vault_booking_constraint_turn(
     server: &Arc<SyncServer>,
@@ -19882,18 +19912,24 @@ async fn vault_search_bm25(
     auth.require(CoreScope::Read)?;
     auth.require_lane_record_scope()?;
     let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.search.bm25", &value)?;
     let (actor, class) = facade_actor(server, auth)?;
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let hooks = facade_hooks_pre(server, call, "vault.search.bm25", value).await?;
+    let value = hooks.args.clone();
+    let (output, listed) = super::search_home_doors::vault_search_bm25(
         server,
         call,
         actor,
         class,
-        "vault.search.bm25",
-        value,
-        &producers,
-    )?;
-    Ok(FacadeCallOutput::listed(output, &producers))
+        facade_input(value)?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    let rows = Some(listed);
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows,
+    })
 }
 async fn vault_neighbors(
     server: &Arc<SyncServer>,
@@ -25474,6 +25510,9 @@ pub(crate) async fn call_verb(
         "vault.workflows.get" => vault_workflows_get(server, call, input).await,
         "vault.workflows.update" => vault_workflows_update(server, call, input).await,
         "vault.workflows.dispatch" => vault_workflows_dispatch(server, call, input).await,
+        "vault.workflows.dispatch_bound" => {
+            vault_workflows_dispatch_bound(server, call, input).await
+        }
         "vault.workflows.status" => vault_workflows_status(server, call, input).await,
         "vault.task_types.pin" => vault_task_types_pin(server, call, input).await,
         "vault.task_types.get" => vault_task_types_get(server, call, input).await,

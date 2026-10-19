@@ -14,7 +14,8 @@
 //!
 //! The tail it folds is the resumed fold's: ops that leave every earlier
 //! row's fate as it was ([`super::fold_resume::admits_past`]), each on a
-//! frontier or tail parent. Anything else needs history, never a fold of the
+//! frontier or tail parent, a world key record on stated parents alone (FIX
+//! 4881). Anything else needs history, never a fold of the
 //! rows held: a tail row on a covered row off the frontier (a late fork,
 //! whose parent state the image never kept), an op outside that set, a
 //! context the image was not built under (another install pin, posture or
@@ -129,7 +130,11 @@ pub(super) fn fold_adopted_checkpoint_tail(
     let window_secs = log.observations.policy.stale_roster_window_secs;
     let read_whole: Vec<&AuthorityLogEntry> = projected
         .values()
-        .chain(tail.values().copied())
+        .chain(
+            tail.iter()
+                .filter(|(hash, _)| !projected.contains_key(*hash))
+                .map(|(_, entry)| *entry),
+        )
         .filter(|entry| super::fold_resume::is_projected(&entry.op))
         .collect();
     let mut view = super::install_fold::install_view(
@@ -288,12 +293,22 @@ pub(super) fn capture_adopted_checkpoint_tail(
             .copied(),
     );
     let mut bound_keys = image.safety.bound_keys.clone();
-    for state in states.values() {
-        super::fold_resume::add_bound_keys(&mut bound_keys, state);
+    for (hash, state) in &states {
+        if judged.get(hash).is_some_and(is_main) {
+            super::fold_resume::add_bound_keys(&mut bound_keys, state);
+        }
     }
     // The approvals a covered revocation could expire on a reader's own
     // clock: the stale-roster window reads only rows carried whole.
-    let read_whole: Vec<&AuthorityLogEntry> = projected.values().chain(judged.values()).collect();
+    let read_whole: Vec<&AuthorityLogEntry> = projected
+        .values()
+        .chain(
+            judged
+                .iter()
+                .filter(|(hash, _)| !projected.contains_key(*hash))
+                .map(|(_, entry)| entry),
+        )
+        .collect();
     let stale_approvals = super::stale_roster::stale_roster_subject_approvals(&read_whole, &fold);
     let safety = super::checkpoint_image::CheckpointSafety {
         issuers: image.safety.issuers.clone(),
@@ -430,6 +445,21 @@ fn settle_tail(
         .collect();
     let mut states =
         super::fold_schedule::fold_entry_states_seeded(&judged, &seed, context, &mut issues);
+    // A world key record, or a restrictive main-log choice (a world edit,
+    // grant travel, checkpoint policy, home pick or training choice), on a
+    // row with no state here (a frontier row the image holds rejected, a
+    // rejected tail row) is folded again with that row crossed
+    // (`world_refold`), which only the whole history does (FIX 4881, 5463).
+    if judged.iter().any(|(hash, entry)| {
+        super::world_refold::refolds(&entry.op)
+            && !states.contains_key(hash)
+            && entry
+                .parent_hashes
+                .iter()
+                .any(|parent| !states.contains_key(parent))
+    }) {
+        return Ok(None);
+    }
     states.retain(|hash, _| judged.contains_key(hash));
     if states
         .values()
@@ -446,7 +476,8 @@ fn settle_tail(
     let mut valid_entries = image.fold().valid_entries.clone();
     valid_entries.extend(states.keys().copied());
     // The rows a fold past the image reads whole: carried bodies of the
-    // projected kinds alone, whatever else an image carries.
+    // projected kinds alone, whatever else an image carries, and the judged
+    // tail's rows of those kinds (a world key record's envelopes, FIX 4881).
     let mut projected = BTreeMap::new();
     for (hash, row) in &image.rows {
         if let Some(body) = &row.body {
@@ -456,17 +487,26 @@ fn settle_tail(
             }
         }
     }
+    for (hash, entry) in &judged {
+        if super::fold_resume::is_projected(&entry.op) {
+            projected.insert(*hash, entry.clone());
+        }
+    }
     let rows = Resumed {
         marks: &image.safety.marks,
         fold: image.fold(),
         revocations: &image.safety.revocations,
         bound_keys: &image.safety.bound_keys,
-        chain: states.iter().map(|(hash, state)| (*hash, state)).collect(),
+        chain: states
+            .iter()
+            .filter(|(hash, _)| judged.get(*hash).is_some_and(is_main))
+            .map(|(hash, state)| (*hash, state))
+            .collect(),
         writers: &writers,
         missed: Cell::new(false),
     };
-    // The projection reads rows only for world-key envelopes, and no tail
-    // row is a world-key record.
+    // The projection reads rows only for world-key envelopes, the image's
+    // and the tail's alike.
     let (fold, final_merged) = super::fold_project::project_once(
         Settled {
             merged: Some(merged.clone()),
@@ -519,10 +559,11 @@ fn image_stands_here(image: &AuthorityCheckpointV2, log: AdoptedTail<'_>) -> boo
         && image.aggregate.peers == *log.peer_consent_roots
 }
 
-/// Whether every tail row folds past the image as a resumed fold's chain row
+/// Whether every tail row folds past the image as a resumed fold's tail row
 /// would: each parent on the frontier or in the tail (a covered parent off
-/// the frontier is a late fork), a main-log op that leaves every earlier
-/// row's fate as it was, no row a sequence floor refuses, none signed by a
+/// the frontier is a late fork), an op that leaves every earlier row's fate
+/// as it was (a world key record among them, FIX 4881), no row a sequence
+/// floor refuses, none signed by a
 /// retired key, none a covered row names, and no withdrawal on a frontier
 /// row the image holds rejected (only older states could judge it). Some
 /// with the log's confirms once the tail's joined them; None otherwise.
@@ -552,7 +593,6 @@ fn tail_folds_past(
         parents_stand
             && !retired
             && !image.safety.missing_parents.contains(hash)
-            && super::world_privacy::side_world(&entry.op).is_none()
             && log
                 .observations
                 .sequence_floors
@@ -561,6 +601,11 @@ fn tail_folds_past(
             && super::fold_resume::admits_past(&image.aggregate.merged, entry, &mut confirms)
     });
     folds_past.then_some(confirms)
+}
+
+/// Whether `entry` is a main-log row, no world's side row.
+fn is_main(entry: &AuthorityLogEntry) -> bool {
+    super::world_privacy::side_world(&entry.op).is_none()
 }
 
 /// The tail rows a fold judges, as `fold_engine::judged_entries` judges them:

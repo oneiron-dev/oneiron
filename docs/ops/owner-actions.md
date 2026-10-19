@@ -86,9 +86,13 @@ keep = 7              # ONEIRON_BACKUP_KEEP — newest kept; older ones are dele
 The schedule is off by default because erasing a record does not yet reach backup files (see
 *Limits*). With it on, the server checks every minute whether the newest backup is older than
 `every_hours`. The newest file on disk is its only state, so a restart or a manual backup is
-counted. Only a self-hosted local vault backs up this way; hosted and relay deployments back up
-through their host. The server also takes a backup on demand: `POST /v1/owner/backups`. `GET
-/v1/owner/backups` lists the backups.
+counted. The schedule and on-demand backups run on every privacy posture, under the owner's
+`[backup]` policy. A vault our cloud hosts (managed serve) keeps its backups in
+`<data_dir>.backups` and makes each rehearsal's scratch copy in `<data_dir>.rehearsals`, both
+private and on the vault's own disk (`/vault/data.backups` and `/vault/data.rehearsals` in the
+vault VM); one it cannot create or write is logged at start (`owner_storage_unavailable`). The
+server also takes a backup on demand: `POST /v1/owner/backups`. `GET /v1/owner/backups` lists the
+backups.
 
 ## Rehearse a restore
 
@@ -634,9 +638,14 @@ Dreamer; its harness audit files a retune finding, which deploys nothing; its ac
 files an advisory mode, which grants nothing; a Dreamer-born digest cadence and presentation
 request sets both rows; a keep-in-touch rule that fell due files a reach-out; and a follow-up the
 host drafted for it is saved as a plan for your send review. Each lands as an `auto` finding, and
-the inbox's finding notice tells you. The Coach's and the healer's findings still wait in the run
-tray. So does any Dreamer finding the Gate holds, and every curator rung on a critical claim: that
-waits for your approval in the run tray and applies on the next curator pass.
+the inbox's finding notice tells you. Your next regular digest also lists each applied write once,
+by its receipt, in its `applied` line (group `dreamer.applied`, pointing here), apart from the
+proposals that wait for you; a write you reverted first is left out. The Coach's and the healer's
+findings still wait in the run tray. So does any Dreamer finding the Gate holds, and every curator
+rung on a critical claim: that waits for your approval in the run tray, and your approval is its
+only consent. The next curator pass applies it once, as the Dreamer, with its receipt, and it lists
+here as a `curator` write you revert like any other. A rung whose claim changed since you approved
+it applies nothing.
 
 A saved plan never sends on its own. `GET /v1/owner/representation?proposal=<id>` shows it,
 `POST /v1/owner/representation/approve` records your send review (a receipt naming its exact
@@ -646,28 +655,38 @@ cannot tell who a name is, it no longer asks you: it keeps the names separate fo
 merges, nothing is confirmed), leaves the ask open in `/v1/owner/identity/asks` with
 `kept_separate_at` set, and decides it again only once its candidates change. You can still answer
 it there. An agent about to send, pay, invite or share on that name is still stopped and shown the
-choice card first.
+choice card first. When a saved hint, or the host's decision on an ask, settles a name on its own,
+the settle applies at once (an agent waiting on the name acts on it at once) and lists here as
+`identity_settle` under the mention's `ask` key.
 
 - `GET /v1/owner/dreamer/maintenance/applied` (optionally `?limit=<n>`): every applied write,
-  reverted ones too, newest first, with its finding (or, for a name kept separate, its `ask`; for
-  a project's team-shape fork, its `project` and `fork`), kind (`finding`, `curator`,
-  `proactivity_policy`, `reach_out`, `representation_plan`, `identity_provisional` or
-  `project_tree_fork`), facet, attempt, receipt and your revert once made.
+  reverted ones too, newest first, with its finding (or, for a name kept separate or settled, its
+  `ask`; for a project's team-shape fork, its `project` and `fork`), kind (`finding`, `curator`,
+  `proactivity_policy`, `reach_out`, `representation_plan`, `identity_provisional`,
+  `identity_settle` or `project_tree_fork`), facet, attempt, receipt and your revert once made. A
+  revert made by another write's revert names that write as its `parent`.
 - `POST /v1/owner/dreamer/maintenance/revert` with `{"finding": "<32 hex>"}` (or
-  `{"ask": "<64 hex>"}` for a name kept separate, or `{"project": "<32 hex>", "fork": "<32 hex>"}`
-  for a project's team-shape fork) undoes its effect, retracts its finding as yours and leaves one
-  receipt. A fork's revert takes it off its project, which goes back to the vault tree, and the
-  Coach does not fork that project again until the vault's team-shape head moves. A curator
-  rung's claim comes back at its prior confidence and rung: in
+  `{"ask": "<64 hex>"}` for a name kept separate or settled, or
+  `{"project": "<32 hex>", "fork": "<32 hex>"}` for a project's team-shape fork) undoes its
+  effect, retracts its finding as yours and leaves one receipt. A fork's revert takes it off its
+  project, which goes back to the vault tree, and the Coach does not fork that project again until
+  the vault's team-shape head moves. A curator rung's claim comes back at its prior confidence and
+  rung: in
   place when a weakening closed a claim with no signed history, else as the Dreamer's fresh copy
   born of it, since a signed claim's history never reopens (the copy carries the default `ClaimOf`
   weight). A digest request puts back the rows it replaced, or the defaults. A reach-out's revert
-  withdraws every plan drafted from it, and a draft still queued lands nothing; a plan's revert
-  stops a send not yet made. A message already sent cannot be unsent. A name kept separate comes
-  back to you as an identity ask, with its inbox notice and choice card. Anything a later write
-  changed is left as it is. The reply lists what stood again, what was copied, what was closed,
-  the settings put back, the asks put to you and what was left alone. A second revert returns the
-  first one's reply, and the Dreamer never applies that finding again.
+  withdraws every plan drafted from it, and a draft still queued lands nothing; each withdrawn
+  plan's own row is reverted with it, naming the reach-out as its `parent`, so reverting the plan
+  later returns that. A plan's revert stops a send not yet made. A message already sent cannot be
+  unsent. A name kept separate comes back to you as an identity ask, with its inbox notice and
+  choice card. A settled name's revert puts back each span the settle changed (and a name it folded
+  into a person, held again), the context hint it saved (`identity_hint`) and its resolution, and
+  retracts the distinct assertions a someone-new answer made; once the mention links as it did, it
+  comes back to you as an identity ask. A person someone new confirmed stays a person and is listed
+  as left alone. Anything a later write changed is left as it is. The reply lists what stood again,
+  what was copied, what was closed, the settings put back, the asks put to you and what was left
+  alone. A second revert returns the first one's reply, and the Dreamer never applies that finding
+  again.
 
 ## Review cleanup
 
@@ -864,6 +883,14 @@ Sharing real conversation text to train the models Oneiron ships ("Learn from my
 is off until the person whose words they are says yes, per world, and private worlds are never
 included. The engine has one door for it, and it sends nothing today: no machine-only intake is
 configured. Training a model of your own on your own data (the training pack) needs no sharing.
+
+A person reads their own training receipts at `GET /v1/owner/conversation-learning/receipts`,
+with the same proof as their choice: each withdrawal their choice recorded, and each submission of
+their words with its conversation, worlds, local custody (`held`, `published`, `withheld`,
+`withdrawn`), the intake's last receipt (`stored`, `excluded`, `removal_pending`, `removed`,
+`rejected`), the runs that used it, the withdrawal note and its times. It never lists another
+person's rows, even for a conversation several people wrote in. Pass a page's `next` back as
+`after` for the rest.
 
 A vault our cloud hosts (managed serve) sends to `collector` at `https://oneiron.dev/feedback`
 unless told otherwise; self-hosted serve sends nowhere until you set both keys. `GET

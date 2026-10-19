@@ -44,6 +44,7 @@ pub(crate) use self::exec_board_verbs::{
     execute_run_board_verb,
 };
 use self::exec_board_verbs::{execute_mcp_board_verb, mcp_verb_family_error};
+pub(crate) use self::owner_call::resolve_mcp_caller;
 pub(crate) use self::stream_reads::{mcp_stream_reads_task, mcp_stream_task_row};
 // Test-only surface: `api/tests.rs` names these bare through the `api` glob,
 // but no production path does, so a plain `pub(crate)` re-export would warn as

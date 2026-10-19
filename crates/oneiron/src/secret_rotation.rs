@@ -517,8 +517,13 @@ pub(crate) fn exhaust_taint_refs_in_txn(
         .unwrap_or_default();
     if let Some(row) = store.port_entity_record(txn, id)? {
         if row.entity_type == ENTITY_TYPE_ASSET {
-            let hash = blake3::hash(&row.body);
-            for artifact in crate::blob_artifact::artifacts_claiming(store, txn, hash.as_bytes())? {
+            // A file-plane ASSET's row holds its manifest: the claims name the
+            // body's BLAKE3, which the manifest carries (FIX 5395).
+            let hash = match crate::store::asset_file_in_txn(store, txn, id, &row.body)? {
+                Some(manifest) => manifest.facts.blake3,
+                None => *blake3::hash(&row.body).as_bytes(),
+            };
+            for artifact in crate::blob_artifact::artifacts_claiming(store, txn, &hash)? {
                 if let Some(artifact) = store.port_entity_record(txn, &artifact)? {
                     union_refs(&mut refs, blob_artifact_taint_refs(&artifact)?);
                 }
@@ -709,7 +714,7 @@ impl Vault {
 mod owner_door;
 mod revoke;
 
-pub(crate) use self::revoke::{RevokeCause, revoke_custody_in_txn};
+pub(crate) use self::revoke::{RevokeCause, holds_erasable_value_in_txn, revoke_custody_in_txn};
 
 #[cfg(test)]
 mod tests;

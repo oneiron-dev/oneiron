@@ -76,6 +76,8 @@ pub(super) fn materialize_entities_with_changes(
     // Rows a federated import watches that this batch wrote where none was
     // stored: their births, noted only once the batch commits.
     let mut born = Vec::new();
+    // Whether this batch wrote a POLICY_MANIFEST (FIX 5338).
+    let mut floor_written = false;
     let result = vault.with_write_txn_grouped(|wtxn| {
         // One delta has no row order. AUTHORITY_LOG rows go first, parents
         // before children, so a signer's enrollment lands before the rows it
@@ -150,6 +152,7 @@ pub(super) fn materialize_entities_with_changes(
                     born.push((id, blob.to_vec()));
                 }
                 note_delivered_in_txn(vault, wtxn, id, blob)?;
+                floor_written |= crate::secret_custody::moves_custody_floor(blob);
                 applied_ops.push((id, blob.to_vec()));
                 // The savepoint has no postcommit owner. Carry its
                 // claim change to the outer transaction's watch,
@@ -198,6 +201,9 @@ pub(super) fn materialize_entities_with_changes(
     if result.is_ok() {
         for (id, blob) in &born {
             note_born(vault, *id, blob);
+        }
+        if floor_written {
+            vault.apply_pending_rebinds_after_commit();
         }
     }
     // An earlier ChildOf or SpawnedBy can have arrived before this body's
@@ -294,10 +300,22 @@ pub(super) fn committed_entity_state_matches(vault: &Vault, id: &EntityId, blob:
     let Ok(rtxn) = vault.store.env.read_txn() else {
         return false;
     };
-    matches!(
-        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, id),
-        Ok(Some(existing)) if *existing == *blob || pack_sync::pack_echo_equal(&existing, blob)
-    )
+    match crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, id) {
+        Ok(Some(existing)) => {
+            *existing == *blob
+                || pack_sync::pack_echo_equal(&existing, blob)
+                // A file-plane ASSET holding the same body (FIX 5393).
+                || crate::sync::asset_body::file_echo_equal(
+                    &vault.store,
+                    &rtxn,
+                    id,
+                    &existing,
+                    blob,
+                )
+                .unwrap_or(false)
+        }
+        _ => false,
+    }
 }
 
 /// Writes one `rm:w:{window}:{entity_hex}` marker in its OWN txn (the

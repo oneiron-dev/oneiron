@@ -21,8 +21,11 @@
 //!   text through ([`TextFilter`], [`apply_recognised_spans`],
 //!   [`FilteredFeedback`]).
 //! - The "Learn from my conversations" egress check ([`eligible`]) and the
-//!   only door that hands conversation text toward training the models
-//!   Oneiron ships ([`share_for_publisher_training`]).
+//!   two doors that hand conversation text toward training the models
+//!   Oneiron ships: [`share_for_publisher_training`], over a sink its caller
+//!   supplies, and the publisher training outbox
+//!   ([`Vault::offer_conversation_training`](crate::Vault::offer_conversation_training)),
+//!   which publishes only what a release lets through.
 //! - Per-bundle, per-destination consent over the existing
 //!   [`ConsentAskCard`](crate::genui::ConsentAskCard) surface ([`feedback_approval_card`],
 //!   [`validate_feedback_approval`]).
@@ -109,12 +112,12 @@ mod report;
 pub use self::bundle::{
     FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING, FEEDBACK_BUNDLE_ENCODING_V2,
     FEEDBACK_BUNDLE_KEYS, FEEDBACK_DAG_MAX_HOPS, FEEDBACK_EMBEDDING_MODEL_MAX_BYTES,
-    FEEDBACK_ENGINE_VERSION_MAX_BYTES, FEEDBACK_MAX_SUBJECT_REFS, FEEDBACK_PROPOSAL_MAX_BYTES,
-    FEEDBACK_REF_MAX_BYTES, FEEDBACK_SEND_VERB, FEEDBACK_USER_NOTE_MAX_BYTES, FEEDBACK_VERBS,
-    FeedbackBundle, FeedbackCategory, FeedbackConfigSnapshot, FeedbackDagHop, FeedbackEncoding,
-    FeedbackHealerDiagnosis, FeedbackHnswSnapshot, FeedbackPlatform, FeedbackProposal,
-    FeedbackVerb, decode_feedback_bundle, decode_feedback_bundle_as, encode_feedback_bundle,
-    feedback_bundle_digest, feedback_bundle_digest_as,
+    FEEDBACK_ENGINE_VERSION_MAX_BYTES, FEEDBACK_MAX_SUBJECT_REFS, FEEDBACK_REF_MAX_BYTES,
+    FEEDBACK_SEND_VERB, FEEDBACK_VERBS, FeedbackBundle, FeedbackCategory, FeedbackConfigSnapshot,
+    FeedbackDagHop, FeedbackEncoding, FeedbackHealerDiagnosis, FeedbackHnswSnapshot,
+    FeedbackPlatform, FeedbackProposal, FeedbackVerb, decode_feedback_bundle,
+    decode_feedback_bundle_as, encode_feedback_bundle, feedback_bundle_digest,
+    feedback_bundle_digest_as,
 };
 pub use self::consent::{
     FEEDBACK_APPROVAL_COMPONENT_PREFIX, FEEDBACK_CONTENT_REF_PREFIX, FEEDBACK_LOGICAL_SEND_PREFIX,
@@ -125,8 +128,13 @@ pub use self::consent::{
 };
 pub use self::conversation_training::{
     ConversationSource, ConversationText, ConversationTrainingChoice, Eligibility,
-    NO_PUBLISHER_TRAINING_INTAKE, NoChoicesYet, PublisherTrainingSink, ShareOutcome, ShareWithheld,
-    Withheld, eligible, share_for_publisher_training,
+    IntakeReceiptKey, IntakeRecipient, NO_PUBLISHER_TRAINING_INTAKE, NoChoicesYet,
+    PersonTrainingControl, PersonTrainingReceipts, PersonTrainingSubmission,
+    PublisherTrainingLifecycle, PublisherTrainingSink, ReceiptCursor, ReceivedTrainingReceipt,
+    ReleaseDecision, SealedTrainingOffer, ShareOutcome, ShareWithheld, SignedTrainingControl,
+    TrainingControlId, TrainingCustody, TrainingOfferPass, TrainingQueued, TrainingReceiptPage,
+    TrainingReceiptsCursor, TrainingSubmissionId, TrainingUnavailable, TrainingUpkeep,
+    TrainingUsedRun, TrainingWithheld, Withheld, eligible, share_for_publisher_training,
 };
 pub use self::dispatch::{
     FEEDBACK_RECEIPT_FIELD_APPROVAL_RECEIPT_REF, FEEDBACK_RECEIPT_FIELD_BUNDLE_DIGEST,

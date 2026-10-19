@@ -486,6 +486,7 @@ fn cli_connector(
         checkout_id,
         egress_profile_ref: input.egress_profile_ref,
         credential_handles: input.credential_handles,
+        staged_input: None,
     });
     super::validate::validate_connector(&connector)?;
     Ok(connector)

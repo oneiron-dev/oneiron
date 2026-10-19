@@ -160,8 +160,9 @@ impl Vault {
     /// [`Self::hooks_replay`], beside the rows its entries stand on: the
     /// binding, its body's source, each entry's fact entity (a live entry's
     /// actor too) and every row a replayed read served, as the run pinned it
-    /// and as it reads now. `None` once an entry's body asks a verdict: the
-    /// verdict's evidence is not listed.
+    /// and as it reads now, and the rows each verdict an entry heard
+    /// resolved its evidence to. `None` once an entry heard a verdict whose
+    /// evidence rows are not known.
     ///
     /// # Errors
     ///
@@ -263,8 +264,8 @@ impl Vault {
     }
 
     /// Runs `walk` with `row`'s replay, on its grant's reader's Recorded
-    /// lane, beside the rows its entries stood on (`None` once one asked a
-    /// verdict).
+    /// lane, beside the rows its entries stood on (`None` once one heard a
+    /// verdict whose evidence rows are not known).
     fn replaying<T>(
         &self,
         runtime: &dyn HookBodyRuntime,
@@ -288,10 +289,10 @@ impl Vault {
             grant: &grant,
             body,
             rows: RefCell::new(vec![binding_id, row.source]),
-            asked_verdict: Cell::new(false),
+            unlisted_verdict: Cell::new(false),
         };
         let walked = walk(&replay, &lane)?;
-        let rows = (!replay.asked_verdict.get()).then(|| {
+        let rows = (!replay.unlisted_verdict.get()).then(|| {
             let mut rows = replay.rows.into_inner();
             rows.sort_unstable();
             rows.dedup();
@@ -321,12 +322,21 @@ struct Replay<'r> {
     body: std::result::Result<String, String>,
     /// The rows its entries name and their bodies' reads served, so far.
     rows: RefCell<Vec<EntityId>>,
-    /// Set once an entry's body asks a verdict, whose evidence it does not
-    /// list.
-    asked_verdict: Cell<bool>,
+    /// Set once an entry's body heard a verdict whose evidence rows are not
+    /// known.
+    unlisted_verdict: Cell<bool>,
 }
 
 impl Replay<'_> {
+    /// Lists the rows one verdict's evidence resolved to; one that kept no
+    /// list leaves the rows unknown.
+    fn heard(&self, evidence: Option<&[EntityId]>) {
+        match evidence {
+            Some(rows) => self.rows.borrow_mut().extend(rows.iter().copied()),
+            None => self.unlisted_verdict.set(true),
+        }
+    }
+
     /// Lists every row `pins` served.
     fn served(&self, pins: &[HookReadPin]) {
         self.rows.borrow_mut().extend(
@@ -446,8 +456,9 @@ impl Replay<'_> {
                 self.binding.selector.budget_ms,
                 &mut |request: &str| reads.answer(lane, self.grant, request),
                 &mut |request: &str| {
-                    self.asked_verdict.set(true);
-                    verdicts.answer(request)
+                    let (reply, evidence) = verdicts.answer(request);
+                    self.heard(evidence);
+                    reply
                 },
             ),
             Err(reason) => Err(Error::InvalidConfig(reason.clone())),
@@ -543,8 +554,10 @@ impl Replay<'_> {
             Ok(body) => {
                 let mut answer = |request: &str| read::answer(lane, self.grant, request, &mut pins);
                 let mut verdict = |request: &str| {
-                    self.asked_verdict.set(true);
-                    ask_verdict(self.binding, self.grant, self.verdict, request, deadline)
+                    let (reply, evidence) =
+                        ask_verdict(self.binding, self.grant, self.verdict, request, deadline);
+                    self.heard(evidence.as_deref());
+                    reply
                 };
                 self.runtime
                     .run_fact_hook(body, &input, budget_ms, &mut answer, &mut verdict)
@@ -621,16 +634,26 @@ impl<'p> PinnedVerdicts<'p> {
         }
     }
 
-    fn answer(&mut self, request: &str) -> std::result::Result<String, String> {
+    /// The pinned reply, beside the rows its evidence resolved to; a gone
+    /// history reads none.
+    fn answer(
+        &mut self,
+        request: &str,
+    ) -> (std::result::Result<String, String>, Option<&'p [EntityId]>) {
         let pinned = self.pins.get(self.asked);
         self.asked += 1;
         match pinned {
-            Some(pin) if pin.request_json == request => pin.reply.clone(),
+            Some(pin) if pin.request_json == request => {
+                (pin.reply.clone(), pin.evidence.as_deref())
+            }
             _ => {
                 self.missing.get_or_insert_with(|| {
                     format!("a verdict's history is gone: {}", bounded(request))
                 });
-                Err("this verdict's history is gone".to_owned())
+                (
+                    Err("this verdict's history is gone".to_owned()),
+                    Some(&[][..]),
+                )
             }
         }
     }

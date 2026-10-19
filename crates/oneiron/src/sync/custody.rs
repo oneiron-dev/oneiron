@@ -9,19 +9,22 @@
 //! protected input an active change hands its holder rides beside the
 //! transitions as a row of its own, keyed `input:` and its ciphertext
 //! digest, in the window of the month it was sealed in: never inside a
-//! transition.
+//! transition. An input longer than one row carries rides as its numbered
+//! parts, each a row keyed by its own part key, carrying the part list the
+//! digest is over (Rule 5: split, never skip).
 //!
 //! - Admission refuses every insert into the map that is not a whole
-//!   transition signed for this vault, or a whole input filed under its own
-//!   digest, in the latest state, at a snapshot's root and in every retained
-//!   operation.
+//!   transition signed for this vault, or a whole input, or one part of a
+//!   split one that matches the part list its digest is over, filed under
+//!   its own key with its signed request as witness (FIX 4996), in the
+//!   latest state, at a snapshot's root and in every retained operation.
 //! - Reverse rematerialization mirrors the latest transition this vault holds
 //!   of each record, and drops from an older window the carrier it
 //!   supersedes, and every carrier that still seals a value an admitted
 //!   revoke ended (CALLS CUSTODY_REVOKE_ERASE); it relays each input this
 //!   vault keeps while its request awaits the holder, and drops an input row
-//!   once its request is folded here and answered, uncounted, revoked or
-//!   naming another input (CALLS CUSTODY_INPUT_PRUNE).
+//!   once its witnessed request is folded here terminal or invalid (CALLS
+//!   CUSTODY_INPUT_PRUNE).
 //! - Forward rematerialization and Observer B judge each transition against
 //!   this vault's fold as it is now: the request it enacts counts, its named
 //!   executor signed it, and it carries exactly the request's generation,
@@ -29,8 +32,9 @@
 //!   this vault's custody through the local door, judged again in the
 //!   committing transaction, with the value this machine opens. A machine
 //!   the value was not sealed to keeps the transition unread. The holder a
-//!   pending request names keeps the input it names, rechecked in the
-//!   transaction that keeps it.
+//!   pending request names keeps the input it names, each part as it
+//!   arrives, rechecked in the transaction that keeps it; its pickup joins
+//!   the parts and waits while one is missing.
 //! - A machine the roster gains that is the owner's (mine under the holder's
 //!   pin) gets each portable value from a rewrap its holder records on its
 //!   own after the admission and on this upkeep (CALLS
@@ -52,30 +56,36 @@ use crate::secret_custody::{
     holds_custody_carrier_in_txn, keep_input_in_txn, remember_custody_transition_in_txn,
 };
 
-/// Which input rows a window pass prunes (CALLS CUSTODY_INPUT_PRUNE).
+/// Which input rows a window admits and prunes (CALLS CUSTODY_INPUT_PRUNE,
+/// Engine ruling 10-19 for FIX 4996).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CustodyInputPrune {
-    /// A row leaves the window once this vault folds the request it names
-    /// and that request is answered, valid without effect or not counted
-    /// here, is on a secret an admitted revoke ended, or names another input
-    /// digest or no input. A row whose request this vault has not folded
-    /// stays, so an input that arrives before its request still reaches its
-    /// holder; a row naming a request no machine ever sees stays until its
-    /// window retires, since nothing proves that request will never come.
-    KnownAnsweredOrMismatched,
+    /// Admission requires the signed request witness: a row carries its
+    /// request's signed entry, which hashes to the request the row names and
+    /// names the row's input digest. A row leaves the window only once this
+    /// vault folds that request terminal (answered, valid without effect, or
+    /// on a secret an admitted revoke ended) or invalid (a chain of its
+    /// carrier names the key that signed it, and the fold judged the entry
+    /// invalid). A row whose request this vault has not folded, or whose
+    /// signer it does not know yet, stays, so an input that arrives before
+    /// its request still reaches its holder: no time, count or frontier
+    /// drops one.
+    WitnessedTerminalOrInvalid,
 }
 
-const CUSTODY_INPUT_PRUNE: CustodyInputPrune = CustodyInputPrune::KnownAnsweredOrMismatched;
+const CUSTODY_INPUT_PRUNE: CustodyInputPrune = CustodyInputPrune::WitnessedTerminalOrInvalid;
 
 /// The base window root map that carries custody transitions and inputs.
 pub(crate) const CUSTODY_MAP: &str = "custody";
 
 /// The key prefix of a protected input's row in the custody map, before its
-/// ciphertext digest in hex. A checkpoint image keeps transitions only.
+/// row key in hex: the ciphertext digest its request names, or for a part of
+/// a split input, that part's own key. A checkpoint image keeps transitions
+/// only.
 pub(crate) const INPUT_ROW_PREFIX: &str = "input:";
 
-fn input_row(digest: &[u8; 32]) -> String {
-    format!("{INPUT_ROW_PREFIX}{}", bytes_to_hex_lower(digest))
+fn input_row(key: &[u8; 32]) -> String {
+    format!("{INPUT_ROW_PREFIX}{}", bytes_to_hex_lower(key))
 }
 
 /// Whether the request a relayed input is for still awaits its holder.
@@ -85,22 +95,20 @@ fn input_open(fold: &AuthorityFold, input: &RelayedInput) -> bool {
 }
 
 /// Whether a window's input row is due to leave it (CALLS
-/// CUSTODY_INPUT_PRUNE): its request is folded here and answered, without
-/// effect, uncounted, on a revoked secret, or names another input.
+/// CUSTODY_INPUT_PRUNE): its witnessed request is folded here answered,
+/// without effect or on a revoked secret, or folded invalid.
 fn input_row_done(fold: &AuthorityFold, input: &RelayedInput) -> bool {
     match CUSTODY_INPUT_PRUNE {
-        CustodyInputPrune::KnownAnsweredOrMismatched => {
-            if fold.refused_owner_work().contains(&input.request) {
-                return true;
-            }
-            let Some(request) = fold.owner_work_request(&input.request) else {
+        CustodyInputPrune::WitnessedTerminalOrInvalid => {
+            let Some(witnessed) = input.witnessed() else {
                 return false;
             };
-            let digest = input.digest();
             fold.owner_work_result(&input.request).is_some()
-                || fold.counted_owner_work_request(&input.request).is_none()
-                || fold.custody_revoked(&request.act.target)
-                || !names_input(&request.work, &digest)
+                || fold.refused_owner_work().contains(&input.request)
+                || fold
+                    .owner_work_request(&input.request)
+                    .is_some_and(|request| fold.custody_revoked(&request.act.target))
+                || witnessed.folded_invalid(fold, &input.request)
         }
     }
 }
@@ -146,10 +154,12 @@ fn refused(reason: &'static str) -> Error {
 
 /// Admits one insert into window `key`'s custody map: a whole transition
 /// signed for this vault, filed under its record's id, in its signing month's
-/// base window, or a whole input filed under its digest in its sealing
-/// month's. Whether a transition's request stands is judged where it is
-/// written ([`apply_carriers`]), so a window keeps relaying one whose request
-/// this vault has not folded yet. Without a vault, nothing is admitted.
+/// base window, or a whole input, or one checked part of a split one, filed
+/// under its row key in its sealing month's, with the signed request it names
+/// as witness (CALLS CUSTODY_INPUT_PRUNE). Whether a transition's request
+/// stands is judged where it is written ([`apply_carriers`]), so a window
+/// keeps relaying one whose request this vault has not folded yet. Without a
+/// vault, nothing is admitted.
 pub(crate) fn admit_custody_carrier(
     vault: Option<&Vault>,
     key: Option<&WindowKey>,
@@ -162,10 +172,13 @@ pub(crate) fn admit_custody_carrier(
     let LoroValue::Binary(bytes) = value else {
         return Err(refused("not bytes"));
     };
-    if let Some(digest) = map_key.strip_prefix(INPUT_ROW_PREFIX) {
+    if let Some(row_key) = map_key.strip_prefix(INPUT_ROW_PREFIX) {
         let input = RelayedInput::decode(bytes).ok_or_else(|| refused("malformed input"))?;
-        if bytes_to_hex_lower(&input.digest()) != digest {
+        if bytes_to_hex_lower(&input.row_key()) != row_key {
             return Err(refused("input filed under another digest"));
+        }
+        if input.witnessed().is_none() {
+            return Err(refused("input without its signed request"));
         }
         if key.is_some_and(|key| *key != WindowKey::from_timestamp(input.sealed_at)) {
             return Err(refused("input outside its sealing month's base window"));
@@ -482,11 +495,12 @@ fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>, ski
     }
 }
 
-/// Keeps each relayed input that a counted, unanswered request naming this
-/// install as its holder names, by the request's hash and the input's
-/// digest, so its pickup can open it; the writer that keeps it checks that
-/// again against its own fold. Any other input row stays in the window,
-/// unread. A row that fails is logged and left.
+/// Keeps each relayed input row, whole or one part, that a counted,
+/// unanswered request naming this install as its holder names, by the
+/// request's hash and the input's digest, so its pickup can join and open
+/// it; the writer that keeps it checks that again against its own fold. Any
+/// other input row stays in the window, unread. A row that fails is logged
+/// and left.
 fn keep_relayed_inputs(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
     if rows.is_empty() {
         return;
@@ -503,10 +517,10 @@ fn keep_relayed_inputs(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>
                 let Some(input) = RelayedInput::decode(bytes) else {
                     continue;
                 };
-                let digest = input.digest();
-                if *map_key == input_row(&digest)
+                let key = input.row_key();
+                if *map_key == input_row(&key)
                     && input_awaits(&fold, machine, &input)
-                    && held_input_in_txn(&vault.store, &rtxn, &digest)?.is_none()
+                    && held_input_in_txn(&vault.store, &rtxn, &key)?.is_none()
                 {
                     due.push(input);
                 }
@@ -521,7 +535,7 @@ fn keep_relayed_inputs(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>
             let mut kept = 0;
             for input in &due {
                 if input_awaits(&fold, machine, input)
-                    && held_input_in_txn(&vault.store, wtxn, &input.digest())?.is_none()
+                    && held_input_in_txn(&vault.store, wtxn, &input.row_key())?.is_none()
                 {
                     keep_input_in_txn(vault, wtxn, input)?;
                     kept += 1;

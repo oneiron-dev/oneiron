@@ -1036,6 +1036,7 @@ pub(crate) async fn ai_verdict(
                 &input,
                 // A facade caller's verdict bills the vault owner.
                 None,
+                &mut Vec::new(),
             )
         })
         .await;
@@ -1049,7 +1050,7 @@ pub(crate) async fn ai_verdict(
 /// no run pinned previews a generative hook's verdicts on serve's own ladder.
 /// Beside it, the binding, its body's source, each entry's fact and every
 /// row a replayed read served ([`oneiron::Vault::hooks_replay_listing`]);
-/// `None` once an entry asked a verdict, whose evidence it does not list.
+/// `None` once an entry heard a verdict whose evidence rows are not known.
 pub(crate) async fn vault_hooks_replay(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -1739,6 +1740,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.policy.answer" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
+        // A member's own TASK-bound workflow run (FIX 5316): a live person on
+        // their own slip, bound to it, as the door acts under.
+        "vault.workflows.dispatch_bound" => {
+            super::agent_definition_doors::member_proof(server, auth, verb).map(drop)
+        }
         // The off-record session rows admit their session's manager: the
         // owner, or a person or agent who starts and keeps their own
         // (WILL-PLAN L13 row 03). Each door binds the stretch for them again.
@@ -1856,8 +1862,8 @@ fn lens_rows(receipt: &LensActivationReceipt) -> Vec<EntityId> {
 /// A pack setup door's act off the runtime as the owner, listing what its
 /// view is read from (`host_door_lists`): the pack's source row, each
 /// connection's connector key, each standing grant and each stored secret's
-/// custody record. The session and its checks live in side tables. `None`
-/// when a stored secret's record cannot be read again.
+/// custody record, as the view's own read found it. The session and its
+/// checks live in side tables.
 async fn setup_listing(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -1877,7 +1883,7 @@ async fn setup_listing(
     tokio::task::spawn_blocking(move || {
         let answer = act(&server, &owner);
         let rows = match &answer {
-            Ok(receipt) => setup_rows(server.vault(), &receipt.setup),
+            Ok(receipt) => Some(setup_rows(&receipt.setup)),
             Err(_) => Some(Vec::new()),
         };
         (answer, rows)
@@ -1887,10 +1893,7 @@ async fn setup_listing(
 }
 
 /// The rows a pack setup view is read from, as [`setup_listing`] lists them.
-fn setup_rows(
-    vault: &oneiron::Vault,
-    setup: &oneiron::skill_hub::pack_catalog::PackSetupView,
-) -> Option<Vec<EntityId>> {
+fn setup_rows(setup: &oneiron::skill_hub::pack_catalog::PackSetupView) -> Vec<EntityId> {
     let mut rows = hex_rows([&setup.source_id]);
     for connection in &setup.connections {
         rows.extend(hex_rows(connection.connector_key.iter()));
@@ -1900,11 +1903,14 @@ fn setup_rows(
                 .iter()
                 .filter_map(|permission| permission.grant_ref.as_ref()),
         ));
-        for secret in connection.secrets.iter().filter(|secret| secret.stored) {
-            rows.extend(vault.resolve_secret_ref(&secret.name).ok()?);
-        }
+        rows.extend(
+            connection
+                .secrets
+                .iter()
+                .filter_map(|secret| secret.custody_id),
+        );
     }
-    Some(rows)
+    rows
 }
 
 /// `answer` beside the rows `named` reads off it, for a door whose answer

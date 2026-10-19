@@ -11,7 +11,13 @@
 //! its OF-023 revert row, in one transaction. A tie or a loss leaves the
 //! fork open, and a later night reuses it rather than minting another.
 //!
-//! After the forks, a project on a fork of its own offers each leaf its tree
+//! Then each project on a fork of its own keeps reshaping it from its own fit
+//! runs, as the vault tree is reshaped, and a revision that wins on the
+//! project's held-out runs goes in force for the project behind the tree it
+//! revised ([`project_upkeep`]); this runs whether or not the vault has a
+//! head to fork.
+//!
+//! After that, a project on a fork of its own offers each leaf its tree
 //! learned that holds up on runs outside the project to the vault tree,
 //! through the shared-skill merge's "useful upstream?" question and held-out
 //! replay ([`leaf_promote`]).
@@ -30,7 +36,7 @@ use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::error::ArtifactError;
 use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::skill_hub::{HubFile, HubPackage, SharedSkillMergeDisposition, UsefulUpstreamDecisions};
-use crate::skill_optimize::{HeldOutReplayCase, HeldOutReplayNotes};
+use crate::skill_optimize::{HeldOutReplayCase, HeldOutReplayNotes, held_out_receipts};
 use crate::task_type::{TaskTypeTree, TreeScope};
 use crate::team::run_binding::team_run_tasks;
 use crate::team::{TeamReceipt, team_receipts};
@@ -38,6 +44,7 @@ use crate::temporal::TimeRange;
 use crate::{EntityId, Error, Result, Vault, WriteActor};
 
 mod leaf_promote;
+mod project_upkeep;
 
 /// A project tree fork that wins on its project's held-out runs goes in
 /// force at once (admission, the project's attachment and its revert row in
@@ -124,6 +131,22 @@ pub struct ForkPromoteReport {
     /// Held-up leaves with nothing to rule them: no judge, no seat or agent
     /// to ask for, or no held-out run on the head yet.
     pub promote_unscored: u32,
+    /// Revisions of a project's own tree, reshaped on its fit runs, scored
+    /// against that tree on the project's held-out runs.
+    pub upkeep_scored: u32,
+    /// Of those, the ones put in force for their project.
+    pub upkeep_admitted: u32,
+    /// Revisions with nothing to rule them yet: no judge, no held-out run on
+    /// the project's tree in force, or a judge that abstained. Each waits
+    /// for a later night.
+    pub upkeep_unscored: u32,
+    /// Projects on a fork of their own whose tree a reshape on its fit runs
+    /// leaves as it is, or reads the held-out decisions worse.
+    pub upkeep_unchanged: u32,
+    /// Revisions a door refused, or whose scored bindings moved before the
+    /// write (each waits for a later night), and revisions retired because
+    /// the tree they revise is no longer the project's.
+    pub upkeep_refused: u32,
 }
 
 /// What one pass reads once.
@@ -155,12 +178,17 @@ impl Vault {
     /// put a strict winner in force for the project when
     /// [`PROJECT_TREE_FORK_ADMITS`]. With no `scorer` nothing is forked.
     ///
-    /// Then, when [`PROJECT_LEAF_PROMOTES`], each project on a fork of its
-    /// own offers each leaf that holds up on runs elsewhere to the vault tree
-    /// through the shared-skill merge: `upstream` asks the Coach's
-    /// useful-upstream question and `scorer` replays the head's held-out
-    /// runs. With either missing, a leaf that holds up is counted and nothing
-    /// is offered.
+    /// Then every project on a fork of its own, each project entity read to
+    /// the end, has its tree reshaped on its own fit runs, and a changed
+    /// shape is scored against that tree on the project's held-out runs
+    /// through `scorer` ([`project_upkeep`]), with or without a vault head.
+    ///
+    /// Then, when [`PROJECT_LEAF_PROMOTES`] and a head is in force, each
+    /// project on a fork of its own offers each leaf that holds up on runs
+    /// elsewhere to the vault tree through the shared-skill merge: `upstream`
+    /// asks the Coach's useful-upstream question and `scorer` replays the
+    /// head's held-out runs. With either missing, a leaf that holds up is
+    /// counted and nothing is offered.
     ///
     /// # Errors
     ///
@@ -177,9 +205,7 @@ impl Vault {
     ) -> Result<ForkPromoteReport> {
         self.require_coach_attempt(attempt, COACH_FORK_PROMOTE_FACET)?;
         let mut report = ForkPromoteReport::default();
-        let Some(pass) = self.fork_pass(attempt, now)? else {
-            return Ok(report);
-        };
+        let pass = self.fork_pass(attempt, now)?;
         let settled: Vec<TeamReceipt> = team_receipts(self, None)?
             .into_iter()
             .filter(|receipt| receipt.outcome.is_some())
@@ -191,9 +217,9 @@ impl Vault {
             }
         }
         report.projects = u32::try_from(by_project.len()).unwrap_or(u32::MAX);
-        if let Some(scorer) = scorer {
+        if let (Some(pass), Some(scorer)) = (&pass, scorer) {
             for (project, teams) in &by_project {
-                match fork_project(self, &pass, scorer, *project, teams, &mut report) {
+                match fork_project(self, pass, scorer, *project, teams, &mut report) {
                     Ok(()) => {}
                     Err(Error::Artifact(ArtifactError::InvalidSkillBody(_))) => {
                         report.refused += 1;
@@ -202,12 +228,13 @@ impl Vault {
                 }
             }
         }
-        if PROJECT_LEAF_PROMOTES {
+        let projects = project_upkeep::run(self, attempt, scorer, &by_project, now, &mut report)?;
+        if PROJECT_LEAF_PROMOTES && let Some(pass) = &pass {
             leaf_promote::run(
                 self,
-                &pass,
+                pass,
                 scorer.zip(upstream),
-                by_project.into_keys(),
+                projects,
                 &settled,
                 &mut report,
             )?;
@@ -300,11 +327,18 @@ fn fork_project(
         report.unscored += 1;
         return Ok(());
     }
-    // The fork's counts are the project's fit runs alone: its held-out teams
-    // leave before any decision is read, and no held-out count is carried.
+    // The fork's counts are the project's fit runs alone: every team of a
+    // leader whose pack receipt the head's reserve holds leaves before any
+    // decision is read, whether or not this pass recorded it, and no
+    // held-out count is carried.
+    let reserved: BTreeSet<String> = held_out_receipts(vault, &pass.head)?.into_iter().collect();
     let fit: Vec<TeamReceipt> = teams
         .iter()
-        .filter(|team| !reserve.held_out_teams.contains(&team.team_ref))
+        .filter(|team| {
+            !team_leader(&team.team_ref).is_some_and(|leader| {
+                reserved.contains(&crate::receipt::attempt_pack_receipt_id(&leader))
+            })
+        })
         .cloned()
         .collect();
     let fit = type_evidence(fit, &pass.tasks);

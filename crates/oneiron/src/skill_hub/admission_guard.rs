@@ -84,7 +84,9 @@ impl HubAdmissionProof {
     }
     /// A project tree fork's activation, minted only by
     /// [`crate::Vault::admit_project_tree_fork_in_txn`] once the fork passed
-    /// its four checks.
+    /// its four checks, or by
+    /// [`crate::Vault::admit_project_tree_revision_in_txn`] once a later
+    /// revision of the project's own tree passed its checks.
     pub(in crate::skill_hub) fn project_tree_fork(id: EntityId, data: &[u8]) -> Self {
         Self::new(id, data, HubAdmissionKind::ProjectTreeFork)
     }
@@ -282,6 +284,115 @@ impl crate::Vault {
         let proof = HubAdmissionProof::project_tree_fork(*fork, &data);
         self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)
     }
+
+    /// Puts `revision`, a later revision of a project's own team-shape tree,
+    /// in force for `project` (ARCH-0079 #task-type, OF-420), in the caller's
+    /// write. It admits only when all hold: (a) `incumbent` is the team-shape
+    /// skill in force for `project`, a fork of the project's own whose tree
+    /// is scoped to it, never the vault head the project falls back to; (b)
+    /// `revision` is an open Candidate forked from `incumbent`; (c) its
+    /// package is the incumbent's with only `task-type-tree.json` and
+    /// SKILL.md's `name:` and `version:` lines changed; (d) its tree is
+    /// scoped to `project`; (e) `held_out`, the incumbent's and the
+    /// revision's scores on the project's held-out runs, is a strict win,
+    /// both finite in [0, 1]. The scoring runs before the write, outside it.
+    /// The admitted revision must load: an approval the owner has not given
+    /// keeps it a Candidate. The caller attaches it to the project; the
+    /// incumbent stays as it is, for a revert to fall back to. A project's
+    /// first fork, of the vault head, goes through
+    /// [`Self::admit_project_tree_fork_in_txn`] instead.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::error::ArtifactError::InvalidSkillBody`] when a check fails;
+    /// the materialization door's refusals; storage errors.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one revision, its project, the incumbent it revises and its scores"
+    )]
+    pub(crate) fn admit_project_tree_revision_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        revision: &EntityId,
+        project: EntityId,
+        incumbent: &EntityId,
+        held_out: (f32, f32),
+        occurred: crate::TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let (before, after) = held_out;
+        if !(0.0..=1.0).contains(&before) || !(0.0..=1.0).contains(&after) || after <= before {
+            return Err(invalid(
+                "a project tree revision goes in force only on a strict held-out win",
+            ));
+        }
+        let project_ref = project.to_hex();
+        let in_force =
+            crate::agent_dispatch::team_shape_skill_in_force_in_txn(self, txn, Some(project))?;
+        if in_force != Some(*incumbent) || team_shape_head_in_txn(self, txn)? == Some(*incumbent) {
+            return Err(invalid(
+                "a project tree revision revises the project's own tree in force",
+            ));
+        }
+        let incumbent_record = self.read_skill_record_in_txn(txn, incumbent)?;
+        let staged = self.read_skill_record_in_txn(txn, revision)?;
+        if staged.forked_from != Some(*incumbent)
+            || staged.lifecycle_status != SkillLifecycle::Candidate
+        {
+            return Err(invalid(
+                "a project tree revision is an open fork of the project's tree in force",
+            ));
+        }
+        let (Some(base), Some(package)) = (
+            self.runtime_skill_package_in_txn(txn, incumbent, &incumbent_record)?,
+            self.runtime_skill_package_in_txn(txn, revision, &staged)?,
+        ) else {
+            return Err(invalid(
+                "a project tree revision and the tree it revises both carry a package",
+            ));
+        };
+        if !tree_scoped_to(&base, &project_ref) {
+            return Err(invalid(
+                "a project tree revision revises a tree scoped to its project",
+            ));
+        }
+        if !tree_only_edit(&base, &package)? {
+            return Err(invalid(
+                "a project tree revision changes only its tree and its SKILL.md name and version",
+            ));
+        }
+        if !tree_scoped_to(&package, &project_ref) {
+            return Err(invalid(
+                "a project tree revision's tree is scoped to its project",
+            ));
+        }
+        let mut admitted = staged;
+        admitted.lifecycle_status = SkillLifecycle::Active;
+        if !crate::skill::skill_loadable(&admitted) {
+            return Err(invalid(
+                "a project tree revision the owner has not approved stays a Candidate",
+            ));
+        }
+        let data = crate::skill::encode_skill_record(&admitted)?;
+        let proof = HubAdmissionProof::project_tree_fork(*revision, &data);
+        self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)
+    }
+}
+
+/// Whether `package` carries a task-type tree scoped to the project
+/// `project_ref` names.
+fn tree_scoped_to(package: &HubPackage, project_ref: &str) -> bool {
+    package
+        .files
+        .iter()
+        .find(|file| file.path == TASK_TYPE_TREE_FILE)
+        .and_then(|file| serde_json::from_slice::<TaskTypeTree>(&file.content).ok())
+        .is_some_and(|tree| {
+            matches!(
+                &tree.scope,
+                TreeScope::Project { project_ref: Some(scope), .. } if scope == project_ref
+            )
+        })
 }
 
 /// The vault team-shape skill's newest admitted revision in `txn`, read as

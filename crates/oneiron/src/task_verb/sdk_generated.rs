@@ -3537,6 +3537,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.workflows.dispatch_bound",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WorkflowPersonDispatchRequest,
+                >(),
+            ),
+            (
                 "vault.workflows.status",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::WorkflowRunRequest,
@@ -5900,8 +5906,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "tasks.wait",
-                crate::code_run::vault_read::request_schema::<crate::code_run::TaskWaitSetRequest>(
-                ),
+                crate::code_run::vault_read::request_schema::<crate::code_run::TaskWaitInput>(),
             ),
             (
                 "summarize",
@@ -6376,6 +6381,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.workflows.get",
     "vault.workflows.update",
     "vault.workflows.dispatch",
+    "vault.workflows.dispatch_bound",
     "vault.workflows.status",
     "vault.task_types.pin",
     "vault.task_types.get",
@@ -8022,6 +8028,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowView>()
         }
         "vault.workflows.dispatch" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowRunView>()
+        }
+        "vault.workflows.dispatch_bound" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowRunView>()
         }
         "vault.workflows.status" => {
@@ -13326,6 +13335,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.workflows.dispatch_bound" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.workflows.status" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -18367,6 +18383,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.workflows.dispatch" => {
             let _input: crate::task_verb::sdk::WorkflowDispatchRequest = decode(value.clone())?;
         }
+        "vault.workflows.dispatch_bound" => {
+            let _input: crate::task_verb::sdk::WorkflowPersonDispatchRequest =
+                decode(value.clone())?;
+        }
         "vault.workflows.status" => {
             let _input: crate::task_verb::sdk::WorkflowRunRequest = decode(value.clone())?;
         }
@@ -21125,6 +21145,9 @@ pub fn invoke(
         "vault.workflows.get" => encode(vault_workflows_get(memory, decode(value)?)?),
         "vault.workflows.update" => encode(vault_workflows_update(memory, decode(value)?)?),
         "vault.workflows.dispatch" => encode(vault_workflows_dispatch(memory, decode(value)?)?),
+        "vault.workflows.dispatch_bound" => {
+            encode(vault_workflows_dispatch_bound(memory, decode(value)?)?)
+        }
         "vault.workflows.status" => encode(vault_workflows_status(memory, decode(value)?)?),
         "vault.task_types.pin" => encode(vault_task_types_pin(memory, decode(value)?)?),
         "vault.task_types.get" => encode(vault_task_types_get(memory, decode(value)?)?),
@@ -22693,20 +22716,26 @@ pub fn vault_budgets_rsi_hold_resume(
 pub fn vault_fanout_resume(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::FanoutResumeRequest,
-) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
-    crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)
+) -> MemoryResult<crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::FanoutLaunchView>> {
+    Ok(crate::task_verb::sdk::ActAnswer::Done(
+        crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)?,
+    ))
 }
 pub fn vault_fanout_resume_as(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::FanoutResumeRequest,
-) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
-    crate::task_verb::sdk::resume_fanout_launch_holder(memory, input)
+) -> MemoryResult<crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::FanoutLaunchView>> {
+    Ok(crate::task_verb::sdk::ActAnswer::Done(
+        crate::task_verb::sdk::resume_fanout_launch_holder(memory, input)?,
+    ))
 }
 pub fn vault_fanout_ack(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::FanoutAckRequest,
-) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
-    crate::task_verb::sdk::ack_fanout_check_embedded(memory, input)
+) -> MemoryResult<crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::FanoutLaunchView>> {
+    Ok(crate::task_verb::sdk::ActAnswer::Done(
+        crate::task_verb::sdk::ack_fanout_check_embedded(memory, input)?,
+    ))
 }
 pub fn tasks_update(
     memory: &Memory<'_>,
@@ -24362,13 +24391,15 @@ pub fn vault_shared_propose_remove_owner(
 pub fn vault_shared_execute(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::SharedActRequest,
-) -> MemoryResult<crate::task_verb::sdk::SharedActExecuted> {
-    crate::task_verb::sdk::execute_shared_act(
-        memory.vault(),
-        &memory.embedded_owner("vault.shared.execute")?,
-        None,
-        input,
-    )
+) -> MemoryResult<crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::SharedActExecuted>> {
+    Ok(crate::task_verb::sdk::ActAnswer::Done(
+        crate::task_verb::sdk::execute_shared_act(
+            memory.vault(),
+            &memory.embedded_owner("vault.shared.execute")?,
+            None,
+            input,
+        )?,
+    ))
 }
 pub fn vault_shared_receipt(
     memory: &Memory<'_>,
@@ -25140,8 +25171,10 @@ pub fn vault_records_erase_preview(
 pub fn vault_records_erase_confirm(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::RecordEraseConfirmRequest,
-) -> MemoryResult<crate::task_verb::sdk::RecordEraseOutcome> {
-    crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)
+) -> MemoryResult<crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::RecordEraseOutcome>> {
+    Ok(crate::task_verb::sdk::ActAnswer::Done(
+        crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)?,
+    ))
 }
 pub fn vault_records_erase_sweep(
     memory: &Memory<'_>,
@@ -27346,6 +27379,12 @@ pub fn vault_workflows_dispatch(
         input,
     )
 }
+pub fn vault_workflows_dispatch_bound(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkflowPersonDispatchRequest,
+) -> MemoryResult<crate::task_verb::sdk::WorkflowRunView> {
+    crate::task_verb::sdk::dispatch_workflow_bound_as_member(memory, input)
+}
 pub fn vault_workflows_status(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::WorkflowRunRequest,
@@ -29208,10 +29247,10 @@ pub fn vault_search_temporal(
 pub fn vault_search_bm25(
     memory: &Memory<'_>,
     input: QueryBm25Request,
-) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::LexicalHit>>> {
+) -> MemoryResult<crate::task_verb::sdk::Bm25Search> {
     crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(input.limit)?;
-    memory.query_bm25(&input.query, input.limit)
+    crate::task_verb::sdk::search_bm25(memory, input)
 }
 pub fn vault_neighbors(
     memory: &Memory<'_>,

@@ -36,6 +36,34 @@ fn revision_hex(revision: &[u8; 32]) -> String {
     revision.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// What the owner runs when decision seal standing cannot be verified (FIX
+/// 5248, CALLS "FIX 5248 digest fault error"): put back what failed, then
+/// reopen the vault, whose open pass computes the standing digest again and
+/// reconciles the shell edges it decides.
+pub const SEAL_STANDING_RECONCILE_TEXT: &str = "Restore what failed (adopt a verified checkpoint bundle again, or import the authority history this vault requests), then reopen the vault: opening reconciles seal standing.";
+
+/// The words of [`RecordError::SealStandingUnverifiable`]: which seal or
+/// image failed, and [`SEAL_STANDING_RECONCILE_TEXT`].
+fn seal_standing_text(seal: Option<&[u8; 32]>, image: Option<&[u8; 32]>) -> String {
+    let mut failed = Vec::new();
+    if let Some(seal) = seal {
+        failed.push(format!("decision seal {}", revision_hex(seal)));
+    }
+    if let Some(image) = image {
+        failed.push(format!(
+            "adopted authority checkpoint image {}",
+            revision_hex(image)
+        ));
+    }
+    if failed.is_empty() {
+        failed.push("the stored authority log".to_owned());
+    }
+    format!(
+        "seal standing unverifiable: {} failed to read or re-verify, so no seal standing was decided. {SEAL_STANDING_RECONCILE_TEXT}",
+        failed.join(", ")
+    )
+}
+
 /// Record-domain error.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -337,6 +365,24 @@ pub enum RecordError {
         /// The authority entry hashes the fold needs, ascending.
         missing: Vec<[u8; 32]>,
     },
+    /// The decision seals' standing digest could not be computed (FIX
+    /// 5248): the causal fold it rests on, or one seal's judgment in it,
+    /// failed to read or re-verify, so the vault cannot prove how its seals
+    /// stand. Nothing was decided; the fault propagates rather than a digest
+    /// over a guessed standing. Names the seal (its act token) or the
+    /// adopted image (its id) that failed, and
+    /// [`SEAL_STANDING_RECONCILE_TEXT`].
+    #[error("{}", seal_standing_text(seal.as_ref(), image.as_ref()))]
+    SealStandingUnverifiable {
+        /// The decision seal's act token whose standing failed, when one did.
+        seal: Option<[u8; 32]>,
+        /// The adopted checkpoint image the causal fold reads, when the
+        /// vault adopted one.
+        image: Option<[u8; 32]>,
+        /// The fault itself.
+        #[source]
+        source: Box<super::Error>,
+    },
     #[error("MESSAGE stream already active: {}", message.to_hex())]
     StreamAlreadyActive { message: EntityId },
     #[error("MESSAGE stream handle is not active: {}", message.to_hex())]
@@ -424,6 +470,7 @@ impl RecordError {
             Self::AuthorityLogSignerPending { .. } => ErrorKind::AuthorityLogSignerPending,
             Self::AuthorityLogFull { .. } => ErrorKind::AuthorityLogFull,
             Self::AuthorityHistoryRequired { .. } => ErrorKind::AuthorityHistoryRequired,
+            Self::SealStandingUnverifiable { .. } => ErrorKind::SealStandingUnverifiable,
         }
     }
 }

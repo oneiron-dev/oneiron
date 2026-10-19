@@ -1204,8 +1204,8 @@
       "name": "vault.fanout.resume",
       "description": "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible.",
       "input": "crate::task_verb::sdk::FanoutResumeRequest",
-      "output": "crate::task_verb::sdk::FanoutLaunchView",
-      "call": "crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)?",
+      "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::FanoutLaunchView>",
+      "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)?)",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -1218,8 +1218,8 @@
       "name": "vault.fanout.resume_as",
       "description": "A live lead or board holder of a held fan-out launch's project rules on it by the digest they saw: approve once, or deny, which keeps the hold visible; only the owner may remember.",
       "input": "crate::task_verb::sdk::FanoutResumeRequest",
-      "output": "crate::task_verb::sdk::FanoutLaunchView",
-      "call": "crate::task_verb::sdk::resume_fanout_launch_holder(memory, input)?",
+      "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::FanoutLaunchView>",
+      "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::resume_fanout_launch_holder(memory, input)?)",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -1232,8 +1232,8 @@
       "name": "vault.fanout.ack",
       "description": "The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied.",
       "input": "crate::task_verb::sdk::FanoutAckRequest",
-      "output": "crate::task_verb::sdk::FanoutLaunchView",
-      "call": "crate::task_verb::sdk::ack_fanout_check_embedded(memory, input)?",
+      "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::FanoutLaunchView>",
+      "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::ack_fanout_check_embedded(memory, input)?)",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -4493,8 +4493,8 @@
       "name": "vault.shared.execute",
       "description": "A live Owner runs a matured shared-vault act and gets its receipt.",
       "input": "crate::task_verb::sdk::SharedActRequest",
-      "output": "crate::task_verb::sdk::SharedActExecuted",
-      "call": "crate::task_verb::sdk::execute_shared_act(memory.vault(), &memory.embedded_owner(\"vault.shared.execute\")?, None, input)?",
+      "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::SharedActExecuted>",
+      "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::execute_shared_act(memory.vault(), &memory.embedded_owner(\"vault.shared.execute\")?, None, input)?)",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -5875,8 +5875,8 @@
       "name": "vault.records.erase_confirm",
       "description": "Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead.",
       "input": "crate::task_verb::sdk::RecordEraseConfirmRequest",
-      "output": "crate::task_verb::sdk::RecordEraseOutcome",
-      "call": "crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)?",
+      "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::RecordEraseOutcome>",
+      "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)?)",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -6223,6 +6223,7 @@
       "output": "Vec<crate::skill_optimize::offer_doors::OfferView>",
       "call": "crate::skill_optimize::offer_doors::list(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -6237,6 +6238,7 @@
       "output": "Option<crate::skill_optimize::offer_doors::OfferView>",
       "call": "crate::skill_optimize::offer_doors::get(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.get\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -6266,6 +6268,7 @@
       "output": "Option<crate::skill_optimize::offer_doors::OfferPassResult>",
       "call": "crate::skill_optimize::offer_doors::result(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.result\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -6340,6 +6343,7 @@
       "output": "crate::skill_optimize::offer_pilot::OfferPilotPrepared",
       "call": "crate::skill_optimize::offer_pilot::prepare_pilot(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.pilots.prepare\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -9871,6 +9875,23 @@
       "openapi": true
     },
     {
+      "name": "vault.workflows.dispatch_bound",
+      "description": "A member binds one run of a saved workflow to an idle standard TASK they own, as themselves, under funding terms they accepted: its root spend scope names them as payer, and a retried intent key with the same terms returns the same run.",
+      "input": "crate::task_verb::sdk::WorkflowPersonDispatchRequest",
+      "output": "crate::task_verb::sdk::WorkflowRunView",
+      "call": "crate::task_verb::sdk::dispatch_workflow_bound_as_member(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "credential_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.workflows.status",
       "description": "The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result.",
       "input": "crate::task_verb::sdk::WorkflowRunRequest",
@@ -10557,7 +10578,7 @@
     },
     {
       "name": "wait",
-      "description": "Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode.",
+      "description": "Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode.",
       "input": "crate::task_verb::sdk::TaskWaitRequest",
       "output": "crate::task_verb::TaskAskWait",
       "mcp_served": "[input.handle.group_ref]",
@@ -13310,6 +13331,7 @@
       "output": "crate::booking::agent_api::BookingOperationResponse",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.availability\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -13324,6 +13346,7 @@
       "output": "crate::booking::agent_api::BookingOperationResponse",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.book\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -13338,6 +13361,7 @@
       "output": "crate::booking::agent_api::BookingOperationResponse",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.reschedule\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -13352,6 +13376,7 @@
       "output": "crate::booking::agent_api::BookingOperationResponse",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.cancel\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -14142,7 +14167,7 @@
     },
     {
       "name": "vault.search.bm25",
-      "description": "BM25 text search over the engine index; surfaceable claims only.",
+      "description": "BM25 text search over the engine index; surfaceable claims only. On a device that syncs only what it opened, a server's door asks the home under the caller's own proof, and its references ride in residence.",
       "uniffi": {
         "args": {
           "query": "String",
@@ -14151,8 +14176,8 @@
         "output": "LexicalHits"
       },
       "input": "QueryBm25Request",
-      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::LexicalHit>>",
-      "call": "memory.query_bm25(&input.query, input.limit)?",
+      "output": "crate::task_verb::sdk::Bm25Search",
+      "call": "crate::task_verb::sdk::search_bm25(memory, input)?",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true,
@@ -17193,8 +17218,8 @@
     },
     {
       "name": "tasks.wait",
-      "input": "crate::code_run::TaskWaitSetRequest",
-      "output": "crate::code_run::TaskWaitSetResult",
+      "input": "crate::code_run::TaskWaitInput",
+      "output": "crate::code_run::TaskWaitOutput",
       "scope": "Read",
       "context": "run",
       "effect": "TasksWaitSet"

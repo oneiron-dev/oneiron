@@ -338,6 +338,7 @@ pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'
         "device_sync" => struct_fields::<super::DeviceSyncConfig>(),
         "embedding" => struct_fields::<super::EmbeddingConfig>(),
         "line" => struct_fields::<super::LineConfig>(),
+        "linear" => struct_fields::<super::LinearConfig>(),
         _ => return None,
     };
     (!keys.is_empty()).then_some(keys)
@@ -435,6 +436,12 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
         connector.validate(name)?;
     }
     config.line.validate()?;
+    if let Some(linear) = &config.linear {
+        linear.validate()?;
+    }
+    crate::conversation_training::validate_outbox_dir(
+        config.publisher_training_outbox_dir.as_deref(),
+    )?;
     if let Some(embedding) = &config.embedding {
         embedding.validate()?;
     }
@@ -651,6 +658,7 @@ struct FileServeConfig {
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
     embedding: Option<super::EmbeddingConfig>,
     line: Option<super::LineConfig>,
+    linear: Option<super::LinearConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -718,6 +726,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             connectors: value.connectors,
             embedding: value.embedding,
             line: value.line,
+            linear: value.linear,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -725,6 +734,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             maximum_tier: value.maximum_tier,
             device_class: value.device_class,
             esign_delivery_outbox_dir: None,
+            publisher_training_outbox_dir: None,
         }
     }
 }
@@ -796,6 +806,9 @@ struct PartialServeConfig {
     embedding: Option<super::EmbeddingConfig>,
     /// `[line]` is file-only, as `[browser]` is.
     line: Option<super::LineConfig>,
+    /// `[linear]` is file-only, as `[native_mail]` is; a plain serve's
+    /// `ONEIRON_LINEAR_*` environment is read beside it at serve start.
+    linear: Option<super::LinearConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -806,6 +819,8 @@ struct PartialServeConfig {
     device_class: Option<oneiron::authority::MachineDeviceClass>,
     /// `--esign-delivery-outbox-dir` is argv-only: no file key, no env.
     esign_delivery_outbox_dir: Option<PathBuf>,
+    /// `--publisher-training-outbox-dir` is argv-only: no file key, no env.
+    publisher_training_outbox_dir: Option<PathBuf>,
 }
 
 impl fmt::Debug for PartialServeConfig {
@@ -879,6 +894,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
+            .field("linear", &self.linear)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -887,6 +903,10 @@ impl fmt::Debug for PartialServeConfig {
             .field("maximum_tier", &self.maximum_tier)
             .field("device_class", &self.device_class)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
+            .field(
+                "publisher_training_outbox_dir",
+                &self.publisher_training_outbox_dir,
+            )
             .finish()
     }
 }
@@ -1062,6 +1082,9 @@ impl PartialServeConfig {
         if let Some(value) = self.line {
             resolved.line = value;
         }
+        if let Some(value) = self.linear {
+            resolved.linear = Some(value);
+        }
         if let Some(value) = self.gpu {
             resolved.gpu = Some(value);
         }
@@ -1095,6 +1118,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.esign_delivery_outbox_dir {
             resolved.esign_delivery_outbox_dir = Some(value);
+        }
+        if let Some(value) = self.publisher_training_outbox_dir {
+            resolved.publisher_training_outbox_dir = Some(value);
         }
         Ok(())
     }
@@ -1171,6 +1197,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             connectors: None,
             embedding: None,
             line: None,
+            linear: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -1178,6 +1205,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             maximum_tier: None,
             device_class: None,
             esign_delivery_outbox_dir: value.esign_delivery_outbox_dir.clone(),
+            publisher_training_outbox_dir: value.publisher_training_outbox_dir.clone(),
         }
     }
 }

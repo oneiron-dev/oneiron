@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1085 code-mode rows (1060 host rows, 25 run rows), 3592 declarations.
-// Replies: 968 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1086 code-mode rows (1061 host rows, 25 run rows), 3613 declarations.
+// Replies: 969 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -116,7 +116,8 @@ declare namespace Sdk {
   type AgentHealthOutcome = "open" | "confirmed" | "dismissed" | "unresolved";
   type AgentHealthPadRead = { state: "read"; read?: EntityId | null; pads: number } | { state: "pending_review"; request: EntityId } | { state: "declined"; request: EntityId } | { state: "not_covered" } | { state: "refused"; code: string };
   type AgentHealthCoachRoute = "skill_edit" | "prompt_inject" | "neither";
-  type AgentHealthCoachDraft = { route: AgentHealthCoachRoute; diagnosis: string; proposal: string };
+  type AgentHealthSkillTarget = { skill: string; version: string };
+  type AgentHealthCoachDraft = { route: AgentHealthCoachRoute; diagnosis: string; proposal: string; target?: AgentHealthSkillTarget | null };
   type AgentHealthCoachAnswer = { at: number; pads: AgentHealthPadRead; draft?: AgentHealthCoachDraft | null };
   type AgentHealthApplicationState = "pending" | "admitted" | "rejected";
   type AgentHealthCoachApplication = { by: EntityId; at: number; skill: EntityId; version: string; instructions: string; candidate: EntityId; state: AgentHealthApplicationState; verdict?: EntityId | null; disposition?: string | null; updated_at: number };
@@ -131,8 +132,9 @@ declare namespace Sdk {
   type RunTreeRepair = { kind: "missing_parent"; job_id: string; missing_parent_id: string } | { kind: "parent_cycle"; job_id: string; parent_id: string };
   type RunTree = { roots: RunTreeNode[]; repairs: RunTreeRepair[] };
   type AgentHealthRunTree = { run_id: string; tree: RunTree; marked: string };
+  type AgentHealthLoadedSkill = { skill: string; name: string; version: string; active: boolean; instructions: string };
   type AgentHealthPromptInject = { approval: string; successor: string; ask: string; by: EntityId; at: number; edited: boolean };
-  type AgentHealthCardView = { card: string; body: AgentHealthCard; run_tree?: AgentHealthRunTree | null; prompt_inject?: AgentHealthPromptInject | null };
+  type AgentHealthCardView = { card: string; body: AgentHealthCard; run_tree?: AgentHealthRunTree | null; skills?: AgentHealthLoadedSkill[]; prompt_inject?: AgentHealthPromptInject | null };
   type ConcernOutcome = "confirmed" | "dismissed" | "unresolved";
   type ConcernOutcomeRequest = { card: string; outcome: ConcernOutcome };
   type ConcernCardSummary = { card: string; agent: string; signal: string; tone: string; outcome: string; evidence: number };
@@ -306,7 +308,14 @@ declare namespace Sdk {
   type TaskAskSpec = { intent_key: string; task_ref?: EntityId | null; class?: TaskAskClass | null; who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault; need?: TaskAskNeed; decide?: TaskAskDecide | null; provisional?: TaskAskProvisional; on_disagree?: TaskAskDisagree; remind?: number[] | null };
   type TaskAskSettlement = { group_ref: EntityId; reference: EntityId; revision: number; at: number; cutoff_order: number; reason: TaskAskSettlementReason; requested: TaskAskSpec; effective: TaskAskSpec; base_policy_version: number; electorate: EntityId[]; question_digest: number[]; unmet_sources: ConsultPayloadRef[]; outcome_answer_ref?: EntityId | null; policy_surface: TaskAskSurface; link_result_proof?: number[] | null };
   type TaskAskResult = { effect_authorization: TaskAskEffectAuthorization; coverage: TaskAskCoverage; decision: TaskAskDecision; fallback?: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement };
-  type TaskAskStatus = { Pending: { hold?: TaskAskHoldReason | null } } | { Changed: { voided: EntityId[]; generation: number } } | { Settled: TaskAskResult };
+  type WorldPrivacyRequestKind = "proposal" | "widen_ask";
+  type ReadLocation = { OneMachine: EntityId } | "MyMachines" | "Everywhere";
+  type SealedCopies = "off" | "my_machines" | "cloud_and_my_machines";
+  type ModelOrder = "Inherit" | { Ordered: string[] };
+  type WorldPrivacy = { read: ReadLocation; sealed: SealedCopies; models: ModelOrder };
+  type WorldPrivacyRequestStatus = { state: "pending" } | { state: "applied"; receipt_id: string; holder: string } | { state: "declined"; holder: string };
+  type WorldPrivacyRequest = { request_id: string; kind: WorldPrivacyRequestKind; agent?: string | null; opener_lineage?: string[]; author: string; world: string; settings: WorldPrivacy; seen: string; holders: string[]; needs?: string[]; yes?: string[]; ask?: number | null; status: WorldPrivacyRequestStatus; at: number };
+  type TaskAskStatus = { Pending: { hold?: TaskAskHoldReason | null } } | { Changed: { voided: EntityId[]; generation: number } } | { Settled: TaskAskResult } | { WorldPrivacy: WorldPrivacyRequest };
   type TaskStatusView = { handle: TaskHandle; task_ref?: EntityId | null; phase: TaskPhase; brief_current?: BriefStamp | null; brief_running?: BriefStamp | null; attempt?: AttemptView | null; pending: boolean; asks: [TaskAskHandle, TaskAskStatus][]; last_receipt?: string | null; observed: string };
   type TaskOutcome = { kind: "proposed"; decision_ref?: string | null; reason_codes: string[] } | { kind: "created"; route?: TaskRouteOutcome | null } | { kind: "accepted"; attempt?: AttemptHandle | null } | { kind: "held_by_other"; since: number } | { kind: "asked_up"; ask: TaskAskHandle } | { kind: "reported"; phase: TaskPhase } | (TaskStatusView & { kind: "snapshot" }) | { kind: "unchanged" } | { kind: "stale_fence" } | { kind: "wrong_node" } | { kind: "rejected"; decision_ref?: string | null };
   type TaskActor = string;
@@ -410,6 +419,8 @@ declare namespace Sdk {
   type RsiTopUp = { line: "tokens"; units: number } | { line: "exploration"; units: number } | { line: "share"; share: string; units: number };
   type FanoutLaunchRuling = "approve_once" | "approve_and_remember" | "deny";
   type FanoutResumeRequest = { launch_ref: EntityId; plan_digest: string; ruling: FanoutLaunchRuling; remembered_cap?: number | null };
+  type DetailsOnDevice = { details_on_device: boolean };
+  type ActAnswer<T> = DetailsOnDevice | T;
   type FanoutCheckChoice = "ack" | "ack_and_remember";
   type FanoutAckRequest = { launch_ref: EntityId; plan_digest: string; answer: FanoutCheckChoice; remembered_cap?: number | null };
   type TaskReportBody = "ack" | { progress: { evidence_refs?: EntityId[]; renew_lease?: boolean } } | { blocked: { on?: TaskHandle[]; note?: string | null; ask?: TaskAskSpec | null } } | { done: { result_ref: EntityId; confession?: string | null } } | { failed: { error: string; retryable: boolean; result_ref?: EntityId | null } } | { release: { reason: string } } | { brief: QueueTaskBrief } | { edit: { expected_revision: number; title: string } };
@@ -2238,6 +2249,7 @@ declare namespace Sdk {
   type WorkflowStepCapture = { requested_agent_ref: EntityId; agent_def_ref: EntityId; definition: AgentDefinitionSpec };
   type WorkflowStepRun = { ordinal: number; requested_agent_ref: EntityId; dispatched_agent_ref: EntityId; attempt_ref: EntityId; result_ref: string };
   type WorkflowRunView = { workflow_ref: EntityId; workflow_revision: number; root_attempt_ref: EntityId; active_attempt_ref: EntityId; steps: WorkflowStepCapture[]; results: WorkflowStepRun[] };
+  type WorkflowPersonDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref: EntityId; cap_units: number; unit: string; shown_at_ms: number };
   type WorkflowRunRequest = { root_attempt_ref: EntityId };
   type TaskTypeNodeSpec = { node_id: string; parent?: string | null; name: string };
   type TaskTypeTreePin = { fork_ref: EntityId; tree_version: number; nodes: TaskTypeNodeSpec[]; project_ref?: EntityId | null };
@@ -2446,7 +2458,7 @@ declare namespace Sdk {
   type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "ConsultResult" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team" | "WorkflowDispatch";
   type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult";
   type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
-  type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait };
+  type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait } | { WorldPrivacyReady: WorldPrivacyRequest };
   type TaskAnswerRequest = { handle: TaskAskHandle; word: TaskAskWord };
   type OutcomeLabel = { answer: string; fact: string; fact_value_hash: number[]; label: boolean; noise_weight: number; occurred_at: number };
   type CalibrationPair = { prediction: DecisionAnswer; probability: number; outcome: OutcomeLabel };
@@ -3024,6 +3036,7 @@ declare namespace Sdk {
   type TemporalSearchResult = { hits: TemporalSearchHit[]; widening?: TemporalSearchReport | null };
   type QueryBm25Request = { query: string; limit: number };
   type LexicalHit = { short_id: string; kind: string; score: number; snippet?: string | null; record?: RecordRef | null };
+  type Bm25Search = { value: LexicalHit[]; narrowing: ScopedReadReceipt; residence?: RecallResidence | null };
   type NeighborOpts = { edge_kind?: string | null; min_weight?: number | null; limit: number };
   type NeighborsRequest = { entity_ref: string; opts: NeighborOpts };
   type NeighborHit = { short_id: string; kind: string; edge_kind: string; weight: number; direction: string; record?: RecordRef | null };
@@ -3186,7 +3199,7 @@ declare namespace Sdk {
   type OfficeBodyReviewedFork = { fork_ref: string; reviewed_fork: number[] };
   type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed_head: number[]; reviewed: OfficeBodyReviewedFork[]; reason?: string | null };
   type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null; utc_offset_minutes?: number | null; iana_timezone?: string | null };
-  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: BodyActor; author: string; at: number; changes: number; recalc?: string | null; effects: string[] };
+  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: BodyActor; author: string; token?: string | null; at: number; changes: number; recalc?: string | null; effects: string[] };
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
   type OfficeBodyPreviewRequest = { artifact_ref: string; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
@@ -3546,10 +3559,15 @@ declare namespace Sdk {
   type WorldReadInput = { kind: "one_machine"; machine: string } | { kind: "my_machines" } | { kind: "everywhere" };
   type WorldSealedInput = "off" | "my_machines" | "cloud_and_my_machines";
   type WorldPrivacySetInput = { world: string; read: WorldReadInput; sealed: WorldSealedInput; models?: string[] | null; seen?: string | null };
-  type WorldPrivacySetOutput = { kind: "applied"; receipt: string } | { kind: "proposed"; proposal: string } | { kind: "asked"; ask: string; ask_seq?: number | null };
+  type WorldPrivacySetOutput = { kind: "applied"; receipt: string } | { kind: "proposed"; proposal: string; wait: TaskAskHandle } | { kind: "asked"; ask: string; ask_seq?: number | null; wait: TaskAskHandle };
   type MemorySearchInput = { query: string; limit?: number | null };
   type MemorySearchHit = { id: EntityId; score: number };
-  type MemorySearchOutput = { results: MemorySearchHit[] };
+  type SessionHookPhase = "pre" | "post";
+  type SessionHookState = { kind: "applied"; outcome: string } | { kind: "refused"; outcome: string; reason?: string | null; fail_safe?: string | null } | { kind: "unavailable"; reason: string; consequence: string } | { kind: "unread"; reason: string };
+  type SessionHookNotKept = "budget_full" | "custody" | "no_retention" | "withheld_from_base";
+  type SessionHookReceipt = { kind: "kept"; id: string } | { kind: "not_kept"; why: SessionHookNotKept } | { kind: "no_run" };
+  type SessionHookDisposition = { hook?: string | null; phase: SessionHookPhase; state: SessionHookState; receipt: SessionHookReceipt };
+  type MemorySearchOutput = { results: MemorySearchHit[]; hooks?: SessionHookDisposition[] };
   type MemoryTimeRange = { start: number; end: number };
   type MemoryClaimInput = { id: string; predicate: string; subject: string; value: unknown; confidence?: number | null; occurred?: MemoryTimeRange | null; learnedAt?: number | null };
   type MemoryWriteOutput = { id: EntityId };
@@ -3604,9 +3622,12 @@ declare namespace Sdk {
   type ReaderSpawnInput = { source: unknown; ask: string; intent_key: string };
   type ReaderSpawnReceipt = { task: EntityId; attempt: string; run: EntityId; cutoff_unix_ms: number; state: string; replay: boolean };
   type TaskWaitSetRequest = { tasks: string[]; all?: boolean | null; n_of?: number | null; until?: number | null; step_key: string };
+  type TaskWaitWorldRequest = { request: string; step_key: string };
+  type TaskWaitInput = TaskWaitSetRequest | TaskWaitWorldRequest;
   type TaskWaitFinding = { task: EntityId; ref: string; bytes: number; reason?: string | null };
   type TaskWaitFailure = { task: string; reason: string };
   type TaskWaitSetResult = { ready: TaskWaitFinding[]; partial: TaskWaitFinding[]; failed: TaskWaitFailure[]; pending: EntityId[]; done: boolean; reason?: string | null; until: number };
+  type TaskWaitOutput = TaskWaitSetResult | TaskAskWait;
   type SummarizeInputEffort = "low" | "medium" | "high";
   type SummarizeInput = { ref: string; effort?: SummarizeInputEffort | null; group?: string[] | null; defer?: boolean | null };
 }
@@ -4060,7 +4081,7 @@ declare const tasks: {
   /** Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. */
   update(input: Sdk.TaskUpdateRequest & { resultRef: NonNullable<Sdk.TaskUpdateRequest["resultRef"]> }): Promise<Sdk.ReaderReportReceipt | StoredResult>;
   update(input: Sdk.TaskUpdateRequest): Promise<Sdk.TaskUpdateReceipt | StoredResult>;
-  wait(input: Sdk.TaskWaitSetRequest): Promise<Sdk.TaskWaitSetResult | StoredResult>;
+  wait(input: Sdk.TaskWaitInput): Promise<Sdk.TaskWaitOutput | StoredResult>;
   /** Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave. */
   wave(input: Sdk.TaskWaveRequest): Promise<Sdk.TaskWaveReceipt | StoredResult>;
 };
@@ -4988,13 +5009,13 @@ declare const vault: Sdk.VaultHost & {
   };
   fanout: {
     /** The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied. */
-    ack(input: Sdk.FanoutAckRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
+    ack(input: Sdk.FanoutAckRequest): Promise<Sdk.ActAnswer<Sdk.FanoutLaunchView> | StoredResult>;
     /** One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none. */
     launch(input: Sdk.FanoutLaunchRequest): Promise<Sdk.FanoutLaunchView | null | StoredResult>;
     /** The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible. */
-    resume(input: Sdk.FanoutResumeRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
+    resume(input: Sdk.FanoutResumeRequest): Promise<Sdk.ActAnswer<Sdk.FanoutLaunchView> | StoredResult>;
     /** A live lead or board holder of a held fan-out launch's project rules on it by the digest they saw: approve once, or deny, which keeps the hold visible; only the owner may remember. */
-    resume_as(input: Sdk.FanoutResumeRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
+    resume_as(input: Sdk.FanoutResumeRequest): Promise<Sdk.ActAnswer<Sdk.FanoutLaunchView> | StoredResult>;
     /** Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree. */
     slots(input: Sdk.FanoutLaunchRequest): Promise<Sdk.FanoutBatchView | null | StoredResult>;
     /** Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree. */
@@ -5600,7 +5621,7 @@ declare const vault: Sdk.VaultHost & {
   };
   records: {
     /** Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead. */
-    erase_confirm(input: Sdk.RecordEraseConfirmRequest): Promise<Sdk.RecordEraseOutcome | StoredResult>;
+    erase_confirm(input: Sdk.RecordEraseConfirmRequest): Promise<Sdk.ActAnswer<Sdk.RecordEraseOutcome> | StoredResult>;
     /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
     erase_preview(input: Sdk.RecordEraseRequest): Promise<Sdk.RecordErasePreview | StoredResult>;
     /** Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep. */
@@ -5846,8 +5867,8 @@ declare const vault: Sdk.VaultHost & {
     run(input: Sdk.SealRunRequest): Promise<Sdk.SealRunReceipt | StoredResult>;
   };
   search: ((input: Sdk.MemorySearchInput) => Promise<Sdk.MemorySearchOutput | StoredResult>) & {
-    /** BM25 text search over the engine index; surfaceable claims only. */
-    bm25(input: Sdk.QueryBm25Request): Promise<Sdk.ScopedReadResult<Sdk.LexicalHit[]> | StoredResult>;
+    /** BM25 text search over the engine index; surfaceable claims only. On a device that syncs only what it opened, a server's door asks the home under the caller's own proof, and its references ride in residence. */
+    bm25(input: Sdk.QueryBm25Request): Promise<Sdk.Bm25Search | StoredResult>;
     /** Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence. */
     hybrid(input: Sdk.HybridSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.HybridSearchHit[]> | StoredResult>;
     /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */
@@ -5898,7 +5919,7 @@ declare const vault: Sdk.VaultHost & {
     /** The erase asks the caller may see: every ask for an Owner, their own for anyone else. */
     erase_asks(input: Sdk.SharedVaultRequest): Promise<Sdk.SharedEraseAsk[] | StoredResult>;
     /** A live Owner runs a matured shared-vault act and gets its receipt. */
-    execute(input: Sdk.SharedActRequest): Promise<Sdk.SharedActExecuted | StoredResult>;
+    execute(input: Sdk.SharedActRequest): Promise<Sdk.ActAnswer<Sdk.SharedActExecuted> | StoredResult>;
     /** The caller's own notices of shared acts whose veto window has passed. */
     matured(input: Sdk.SharedVaultRequest): Promise<Sdk.PendingActMatured[] | StoredResult>;
     /** A holder of a pending shared act's objector role objects inside its veto window. */
@@ -6294,6 +6315,8 @@ declare const vault: Sdk.VaultHost & {
   workflows: {
     /** The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run. */
     dispatch(input: Sdk.WorkflowDispatchRequest): Promise<Sdk.WorkflowRunView | StoredResult>;
+    /** A member binds one run of a saved workflow to an idle standard TASK they own, as themselves, under funding terms they accepted: its root spend scope names them as payer, and a retried intent key with the same terms returns the same run. */
+    dispatch_bound(input: Sdk.WorkflowPersonDispatchRequest): Promise<Sdk.WorkflowRunView | StoredResult>;
     /** The owner reads one saved workflow, its steps, revision and fork lineage. */
     get(input: Sdk.WorkflowRequest): Promise<Sdk.WorkflowView | StoredResult>;
     /** The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched. */
@@ -6339,5 +6362,5 @@ declare const vault: Sdk.VaultHost & {
     pending(input: Sdk.ReceiptsRequest): Promise<Sdk.PendingWrite[] | StoredResult>;
   };
 };
-/** Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode. */
+/** Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode. */
 declare function wait(input: Sdk.TaskWaitRequest): Promise<Sdk.TaskAskWait | StoredResult>;

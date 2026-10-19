@@ -360,7 +360,7 @@ impl Vault {
     /// ([`Self::hooks_replay_binding_listing`]) lists, the binding it would
     /// get, its body's source, each entry's fact row and every row a
     /// replayed read served. `None` once a replay's list is: an entry whose
-    /// body asked a verdict, whose evidence the replay does not list. The
+    /// body heard a verdict whose evidence rows are not known. The
     /// Candidate, its author and its install are side rows.
     ///
     /// # Errors

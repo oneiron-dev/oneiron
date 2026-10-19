@@ -99,7 +99,7 @@ pub(crate) use self::control::input::{
 };
 pub(crate) use self::control::{
     ActiveChange, Material, custody_work_executor, drop_revoked_copies_in_txn,
-    refuse_revoked_use_in_txn,
+    erase_pending_revoke_actor_in_txn, refuse_revoked_use_in_txn,
 };
 pub use self::control::{
     CustodyCandidate, CustodyDelivery, CustodyKeptHere, CustodyManifestCheck, CustodyPlan,
@@ -118,10 +118,11 @@ pub use self::found_keys::{
 };
 pub(crate) use self::found_keys::{
     FoundNote, KeptValues, erase_found_key_actor_in_txn, found_key_actions_in_txn,
-    note_found_keys_in_txn, raise_found_key_notices_in_txn, settle_found_key_in_txn,
+    note_found_keys_in_txn, raise_found_key_notices_in_txn, ruled_no_secret_in_txn,
+    settle_found_key_in_txn,
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
-pub(crate) use self::known_values::{KnownSweep, KnownValues};
+pub(crate) use self::known_values::{KnownSweep, KnownValues, reindex_restored_known_value_in_txn};
 pub use self::masked_files::SecretSight;
 pub(crate) use self::masked_files::{
     KeyPlaces, KeySpan, MASKED_FILE_BAND, MaskedFile, MemberKeys, MemberStep, filled,
@@ -143,6 +144,8 @@ pub(crate) use self::reveal::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::transition::holds_custody_carrier_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use self::transition::moves_custody_floor;
 pub(crate) use self::transition::{
     CustodyApplied, CustodyTransition, apply_custody_transition_in_txn, custody_portable,
     custody_transitions, remember_custody_transition_in_txn,
@@ -158,6 +161,9 @@ pub use self::use_handle::{
     SecretUseOutcome, SecretUseReceipt, SecretUseSend,
 };
 pub(crate) use self::use_handle::{SecretUseConsumed, SecretUser, handle_record_in_txn};
+// The holder's manifest judgment an enacted register's result signs (FIX
+// 5334), which `CustodyManifestCheck::Judged` and the owner work receipt carry.
+pub use oneiron_authority::authority::{CustodyRegisterCheck, CustodyUncheckedReason};
 
 #[cfg(test)]
 mod tests;

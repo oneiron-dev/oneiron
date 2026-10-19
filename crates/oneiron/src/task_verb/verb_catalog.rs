@@ -645,6 +645,7 @@ pub enum AgentVerb {
     VaultWorkflowsGet,
     VaultWorkflowsUpdate,
     VaultWorkflowsDispatch,
+    VaultWorkflowsDispatchBound,
     VaultWorkflowsStatus,
     VaultTaskTypesPin,
     VaultTaskTypesGet,
@@ -1718,6 +1719,7 @@ impl AgentVerb {
         Self::VaultWorkflowsGet,
         Self::VaultWorkflowsUpdate,
         Self::VaultWorkflowsDispatch,
+        Self::VaultWorkflowsDispatchBound,
         Self::VaultWorkflowsStatus,
         Self::VaultTaskTypesPin,
         Self::VaultTaskTypesGet,
@@ -2812,6 +2814,7 @@ impl AgentVerb {
             Self::VaultWorkflowsGet => "vault.workflows.get",
             Self::VaultWorkflowsUpdate => "vault.workflows.update",
             Self::VaultWorkflowsDispatch => "vault.workflows.dispatch",
+            Self::VaultWorkflowsDispatchBound => "vault.workflows.dispatch_bound",
             Self::VaultWorkflowsStatus => "vault.workflows.status",
             Self::VaultTaskTypesPin => "vault.task_types.pin",
             Self::VaultTaskTypesGet => "vault.task_types.get",
@@ -3895,6 +3898,7 @@ impl AgentVerb {
                 | Self::VaultWorkflowsGet
                 | Self::VaultWorkflowsUpdate
                 | Self::VaultWorkflowsDispatch
+                | Self::VaultWorkflowsDispatchBound
                 | Self::VaultWorkflowsStatus
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
@@ -4995,6 +4999,7 @@ impl AgentVerb {
                 | Self::VaultWorkflowsGet
                 | Self::VaultWorkflowsUpdate
                 | Self::VaultWorkflowsDispatch
+                | Self::VaultWorkflowsDispatchBound
                 | Self::VaultWorkflowsStatus
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
@@ -5542,6 +5547,7 @@ impl AgentVerb {
                 | Self::GraphFsHead
                 | Self::GraphFsWc
                 | Self::ExecuteCode
+                | Self::VaultWorkflowsDispatchBound
                 | Self::VaultCommit
                 | Self::VaultCalendarPassportsRead
                 | Self::VaultCalendarPassportsHistory
@@ -6971,6 +6977,7 @@ impl AgentVerb {
                 | Self::VaultWorkflowsSave
                 | Self::VaultWorkflowsUpdate
                 | Self::VaultWorkflowsDispatch
+                | Self::VaultWorkflowsDispatchBound
                 | Self::VaultTaskTypesPin
                 | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
@@ -7900,6 +7907,7 @@ impl AgentVerb {
             Self::VaultWorkflowsGet => &["spec"],
             Self::VaultWorkflowsUpdate => &["spec"],
             Self::VaultWorkflowsDispatch => &["spec"],
+            Self::VaultWorkflowsDispatchBound => &["spec"],
             Self::VaultWorkflowsStatus => &["spec"],
             Self::VaultTaskTypesPin => &["spec"],
             Self::VaultTaskTypesGet => &["spec"],
@@ -8974,6 +8982,7 @@ impl AgentVerb {
             Self::VaultWorkflowsGet => &["spec"],
             Self::VaultWorkflowsUpdate => &["spec"],
             Self::VaultWorkflowsDispatch => &["spec"],
+            Self::VaultWorkflowsDispatchBound => &["spec"],
             Self::VaultWorkflowsStatus => &["spec"],
             Self::VaultTaskTypesPin => &["spec"],
             Self::VaultTaskTypesGet => &["spec"],
@@ -11299,6 +11308,9 @@ impl AgentVerb {
             Self::VaultWorkflowsDispatch => {
                 "The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run."
             }
+            Self::VaultWorkflowsDispatchBound => {
+                "A member binds one run of a saved workflow to an idle standard TASK they own, as themselves, under funding terms they accepted: its root spend scope names them as payer, and a retried intent key with the same terms returns the same run."
+            }
             Self::VaultWorkflowsStatus => {
                 "The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."
             }
@@ -11397,7 +11409,7 @@ impl AgentVerb {
                 "Asks people or an authority a typed question and returns at admission with the ask's handle."
             }
             Self::Wait => {
-                "Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode."
+                "Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode."
             }
             Self::TasksAnswer => {
                 "Admits one person's word on an ask; the word is evidence, never approval."
@@ -11978,7 +11990,7 @@ impl AgentVerb {
                 "Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds."
             }
             Self::VaultSearchBm25 => {
-                "BM25 text search over the engine index; surfaceable claims only."
+                "BM25 text search over the engine index; surfaceable claims only. On a device that syncs only what it opened, a server's door asks the home under the caller's own proof, and its references ride in residence."
             }
             Self::VaultNeighbors => {
                 "The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight."

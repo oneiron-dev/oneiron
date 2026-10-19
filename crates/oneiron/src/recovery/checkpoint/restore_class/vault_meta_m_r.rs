@@ -160,9 +160,15 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PROVENANCE_BIRTH_BY_TRIGGER, CONTENT),
     (&t::PROVENANCE_BODY, CONTENT),
     (&t::PROVENANCE_BODY_DIGEST, CONTENT),
+    (&t::PROVENANCE_BODY_KEY, CONTENT),
     (&t::PROVENANCE_BODY_RELEASED, LIVE),
     (&t::PROVENANCE_ROW_BIRTH, CONTENT),
     (&t::PROVENANCE_WITHHELD_SECRET, LIVE),
+    // Acts that already left the vault: a restore never revives a withdrawn scope or replays an
+    // event number (OF-420).
+    (&t::PUBLISHER_TRAINING_CUSTODY, LIVE),
+    (&t::PUBLISHER_TRAINING_PERSON, LIVE),
+    (&t::PUBLISHER_TRAINING_STATE, LIVE),
     (&t::RAMP_DEMOTION, LIVE),
     (&t::RAMP_FLOOR, LIVE),
     (&t::RAMP_OUTCOME, LIVE),

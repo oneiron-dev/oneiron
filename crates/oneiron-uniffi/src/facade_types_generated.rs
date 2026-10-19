@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1050 facade rows, 3522 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1002.
+// UniFFI census: 1051 facade rows, 3536 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1003.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -1462,6 +1462,16 @@ pub enum AgentHealthCoachRoute {
     Neither,
 }
 
+/// `oneiron::dreamer_runner::maintenance::agent_health::loaded::AgentHealthSkillTarget`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentHealthSkillTarget {
+    #[serde(rename = "skill")]
+    pub skill: String,
+    #[serde(rename = "version")]
+    pub version: String,
+}
+
 /// `oneiron::dreamer_runner::maintenance::agent_health::ask::AgentHealthCoachDraft`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -1472,6 +1482,8 @@ pub struct AgentHealthCoachDraft {
     pub diagnosis: String,
     #[serde(rename = "proposal")]
     pub proposal: String,
+    #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<AgentHealthSkillTarget>,
 }
 
 /// `oneiron::dreamer_runner::maintenance::agent_health::ask::AgentHealthCoachAnswer`.
@@ -1773,6 +1785,21 @@ pub struct AgentHealthRunTree {
     pub marked: String,
 }
 
+/// `oneiron::dreamer_runner::maintenance::agent_health::loaded::AgentHealthLoadedSkill`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgentHealthLoadedSkill {
+    #[serde(rename = "skill")]
+    pub skill: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "active")]
+    pub active: bool,
+    #[serde(rename = "instructions")]
+    pub instructions: String,
+}
+
 /// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthPromptInject`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AgentHealthPromptInject {
@@ -1799,6 +1826,8 @@ pub struct AgentHealthCardView {
     pub body: AgentHealthCard,
     #[serde(rename = "run_tree", default, skip_serializing_if = "Option::is_none")]
     pub run_tree: Option<AgentHealthRunTree>,
+    #[serde(rename = "skills", default, skip_serializing_if = "Option::is_none")]
+    pub skills: Option<Vec<AgentHealthLoadedSkill>>,
     #[serde(
         rename = "prompt_inject",
         default,
@@ -5928,6 +5957,22 @@ pub struct FanoutResumeRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub remembered_cap: Option<u64>,
+}
+
+/// `oneiron::task_verb::sdk_act_answer::DetailsOnDevice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DetailsOnDevice {
+    #[serde(rename = "details_on_device")]
+    pub details_on_device: bool,
+}
+
+/// `oneiron::task_verb::sdk_act_answer::ActAnswer` with `T` = `FanoutLaunchView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum ActAnswerFanoutLaunchView {
+    DetailsOnDevice(DetailsOnDevice),
+    Done(FanoutLaunchView),
 }
 
 /// `oneiron::task_verb::fanout_launch::FanoutCheckChoice`.
@@ -17339,6 +17384,14 @@ pub struct SharedActExecuted {
     pub delivery: Option<RemovalExportDelivery>,
 }
 
+/// `oneiron::task_verb::sdk_act_answer::ActAnswer` with `T` = `SharedActExecuted`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum ActAnswerSharedActExecuted {
+    DetailsOnDevice(DetailsOnDevice),
+    Done(SharedActExecuted),
+}
+
 /// `oneiron::task_verb::sdk_shared::SharedReceiptRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -20351,6 +20404,14 @@ pub struct RecordEraseOutcome {
     pub first_act: Option<String>,
     #[serde(rename = "same_bytes")]
     pub same_bytes: Vec<EraseSameBytesRow>,
+}
+
+/// `oneiron::task_verb::sdk_act_answer::ActAnswer` with `T` = `RecordEraseOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum ActAnswerRecordEraseOutcome {
+    DetailsOnDevice(DetailsOnDevice),
+    Done(RecordEraseOutcome),
 }
 
 /// `oneiron::memory::erase_sweep::RecordEraseSweepRequest`.
@@ -33252,6 +33313,32 @@ pub struct WorkflowRunView {
     pub results: Vec<WorkflowStepRun>,
 }
 
+/// `oneiron::task_verb::sdk_workflows::WorkflowPersonDispatchRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowPersonDispatchRequest {
+    #[serde(rename = "workflow_ref")]
+    pub workflow_ref: String,
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
+    #[serde(rename = "briefing")]
+    pub briefing: String,
+    #[serde(
+        rename = "context_spec",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub context_spec: Option<ContextSpec>,
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "cap_units")]
+    pub cap_units: u64,
+    #[serde(rename = "unit")]
+    pub unit: String,
+    #[serde(rename = "shown_at_ms")]
+    pub shown_at_ms: u64,
+}
+
 /// `oneiron::task_verb::sdk_workflows::WorkflowRunRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -37281,6 +37368,115 @@ pub struct SelfDurableWait {
     pub prompt: Option<String>,
 }
 
+/// `oneiron::policy_model::owner_rows::world_privacy_will::record::WorldPrivacyRequestKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WorldPrivacyRequestKind {
+    #[serde(rename = "proposal")]
+    Proposal,
+    #[serde(rename = "widen_ask")]
+    WidenAsk,
+}
+
+/// `oneiron_authority::authority::world_privacy::ReadLocation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ReadLocation {
+    #[serde(rename = "OneMachine")]
+    OneMachine(String),
+    #[serde(rename = "MyMachines")]
+    MyMachines,
+    #[serde(rename = "Everywhere")]
+    Everywhere,
+}
+
+/// `oneiron_authority::authority::world_privacy::SealedCopies`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SealedCopies {
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "my_machines")]
+    MyMachines,
+    #[serde(rename = "cloud_and_my_machines")]
+    CloudAndMyMachines,
+}
+
+/// `oneiron_authority::authority::world_privacy::ModelOrder`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ModelOrder {
+    #[serde(rename = "Inherit")]
+    Inherit,
+    #[serde(rename = "Ordered")]
+    Ordered(Vec<String>),
+}
+
+/// `oneiron_authority::authority::world_privacy::WorldPrivacy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WorldPrivacy {
+    #[serde(rename = "read")]
+    pub read: ReadLocation,
+    #[serde(rename = "sealed")]
+    pub sealed: SealedCopies,
+    #[serde(rename = "models")]
+    pub models: ModelOrder,
+}
+
+/// `oneiron::policy_model::owner_rows::world_privacy_will::record::WorldPrivacyRequestStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum WorldPrivacyRequestStatus {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "applied")]
+    Applied {
+        #[serde(rename = "receipt_id")]
+        receipt_id: String,
+        #[serde(rename = "holder")]
+        holder: String,
+    },
+    #[serde(rename = "declined")]
+    Declined {
+        #[serde(rename = "holder")]
+        holder: String,
+    },
+}
+
+/// `oneiron::policy_model::owner_rows::world_privacy_will::record::WorldPrivacyRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorldPrivacyRequest {
+    #[serde(rename = "request_id")]
+    pub request_id: String,
+    #[serde(rename = "kind")]
+    pub kind: WorldPrivacyRequestKind,
+    #[serde(rename = "agent", default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(
+        rename = "opener_lineage",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub opener_lineage: Option<Vec<String>>,
+    #[serde(rename = "author")]
+    pub author: String,
+    #[serde(rename = "world")]
+    pub world: String,
+    #[serde(rename = "settings")]
+    pub settings: WorldPrivacy,
+    #[serde(rename = "seen")]
+    pub seen: String,
+    #[serde(rename = "holders")]
+    pub holders: Vec<String>,
+    #[serde(rename = "needs", default, skip_serializing_if = "Option::is_none")]
+    pub needs: Option<Vec<String>>,
+    #[serde(rename = "yes", default, skip_serializing_if = "Option::is_none")]
+    pub yes: Option<Vec<String>>,
+    #[serde(rename = "ask", default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<u64>,
+    #[serde(rename = "status")]
+    pub status: WorldPrivacyRequestStatus,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
 /// `oneiron::task_verb::ask_types::TaskAskWait`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum TaskAskWait {
@@ -37300,6 +37496,8 @@ pub enum TaskAskWait {
     Ready(TaskAskResult),
     #[serde(rename = "Park")]
     Park(SelfDurableWait),
+    #[serde(rename = "WorldPrivacyReady")]
+    WorldPrivacyReady(WorldPrivacyRequest),
 }
 
 /// `oneiron::task_verb::sdk::TaskAnswerRequest`.
@@ -48384,6 +48582,8 @@ pub struct OfficeBodyExportRecord {
     pub actor: String,
     #[serde(rename = "author")]
     pub author: String,
+    #[serde(rename = "token", default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
     #[serde(rename = "at")]
     pub at: u64,
     #[serde(rename = "changes")]

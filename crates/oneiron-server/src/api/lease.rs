@@ -1,8 +1,8 @@
-use super::check_api_auth;
+use super::scoped_auth::check_request_auth;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::request::Parts;
 use axum::response::Json;
 use serde::Deserialize;
 use serde::Serialize;
@@ -74,11 +74,11 @@ pub(crate) struct LeaseRevokeResponse {
     )
 )]
 pub(crate) async fn lease_revoke(
-    headers: HeaderMap,
+    parts: Parts,
     State(server): State<Arc<SyncServer>>,
     Json(req): Json<LeaseRevokeRequest>,
 ) -> Result<Json<LeaseRevokeResponse>, ApiError> {
-    check_api_auth(&headers, &server)?;
+    check_request_auth(&parts, &server)?;
 
     let client_id = parse_client_id(&req.client_id, "client_id")?;
 

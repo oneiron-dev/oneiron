@@ -263,13 +263,13 @@ impl OneironClient {
                     oneiron::llm::rsi_doors::RsiLineView,
                 >(client, verb, &input),
                 "vault.fanout.resume" => remote_agent_verb_output::<
-                    oneiron::task_verb::sdk::FanoutLaunchView,
+                    oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::FanoutLaunchView>,
                 >(client, verb, &input),
                 "vault.fanout.resume_as" => remote_agent_verb_output::<
-                    oneiron::task_verb::sdk::FanoutLaunchView,
+                    oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::FanoutLaunchView>,
                 >(client, verb, &input),
                 "vault.fanout.ack" => remote_agent_verb_output::<
-                    oneiron::task_verb::sdk::FanoutLaunchView,
+                    oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::FanoutLaunchView>,
                 >(client, verb, &input),
                 "tasks.update" => {
                     remote_agent_verb_output::<oneiron::task_verb::TaskUpdateReceipt>(
@@ -900,7 +900,7 @@ impl OneironClient {
                     oneiron::federation::PendingAuthorityAct,
                 >(client, verb, &input),
                 "vault.shared.execute" => remote_agent_verb_output::<
-                    oneiron::task_verb::sdk::SharedActExecuted,
+                    oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::SharedActExecuted>,
                 >(client, verb, &input),
                 "vault.shared.receipt" => remote_agent_verb_output::<
                     oneiron::federation::SharedActExecutionReceipt,
@@ -1183,7 +1183,7 @@ impl OneironClient {
                     oneiron::task_verb::sdk::RecordErasePreview,
                 >(client, verb, &input),
                 "vault.records.erase_confirm" => remote_agent_verb_output::<
-                    oneiron::task_verb::sdk::RecordEraseOutcome,
+                    oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::RecordEraseOutcome>,
                 >(client, verb, &input),
                 "vault.records.erase_sweep" => remote_agent_verb_output::<
                     Option<oneiron::memory::erase_sweep::RecordEraseSweep>,
@@ -2004,6 +2004,9 @@ impl OneironClient {
                 "vault.workflows.dispatch" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WorkflowRunView,
                 >(client, verb, &input),
+                "vault.workflows.dispatch_bound" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::WorkflowRunView,
+                >(client, verb, &input),
                 "vault.workflows.status" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WorkflowRunView,
                 >(client, verb, &input),
@@ -2699,7 +2702,7 @@ impl OneironClient {
                     oneiron::claim::ScopedReadResult<oneiron::memory::TemporalSearchResult>,
                 >(client, verb, &input),
                 "vault.search.bm25" => remote_agent_verb_output::<
-                    oneiron::claim::ScopedReadResult<Vec<oneiron::memory::LexicalHit>>,
+                    oneiron::task_verb::sdk::Bm25Search,
                 >(client, verb, &input),
                 "vault.neighbors" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Vec<oneiron::memory::NeighborHit>>,
@@ -4199,7 +4202,10 @@ impl OneironClient {
     pub fn vault_fanout_resume(
         &self,
         input: &oneiron::task_verb::sdk::FanoutResumeRequest,
-    ) -> Result<oneiron::task_verb::sdk::FanoutLaunchView, MemoryError> {
+    ) -> Result<
+        oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::FanoutLaunchView>,
+        MemoryError,
+    > {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -4211,7 +4217,10 @@ impl OneironClient {
     pub fn vault_fanout_resume_as(
         &self,
         input: &oneiron::task_verb::sdk::FanoutResumeRequest,
-    ) -> Result<oneiron::task_verb::sdk::FanoutLaunchView, MemoryError> {
+    ) -> Result<
+        oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::FanoutLaunchView>,
+        MemoryError,
+    > {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -4223,7 +4232,10 @@ impl OneironClient {
     pub fn vault_fanout_ack(
         &self,
         input: &oneiron::task_verb::sdk::FanoutAckRequest,
-    ) -> Result<oneiron::task_verb::sdk::FanoutLaunchView, MemoryError> {
+    ) -> Result<
+        oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::FanoutLaunchView>,
+        MemoryError,
+    > {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -6780,7 +6792,10 @@ impl OneironClient {
     pub fn vault_shared_execute(
         &self,
         input: &oneiron::task_verb::sdk::SharedActRequest,
-    ) -> Result<oneiron::task_verb::sdk::SharedActExecuted, MemoryError> {
+    ) -> Result<
+        oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::SharedActExecuted>,
+        MemoryError,
+    > {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -7899,7 +7914,10 @@ impl OneironClient {
     pub fn vault_records_erase_confirm(
         &self,
         input: &oneiron::task_verb::sdk::RecordEraseConfirmRequest,
-    ) -> Result<oneiron::task_verb::sdk::RecordEraseOutcome, MemoryError> {
+    ) -> Result<
+        oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::RecordEraseOutcome>,
+        MemoryError,
+    > {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -11131,6 +11149,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.workflows.dispatch", value)
     }
+    pub fn vault_workflows_dispatch_bound(
+        &self,
+        input: &oneiron::task_verb::sdk::WorkflowPersonDispatchRequest,
+    ) -> Result<oneiron::task_verb::sdk::WorkflowRunView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.workflows.dispatch_bound", value)
+    }
     pub fn vault_workflows_status(
         &self,
         input: &oneiron::task_verb::sdk::WorkflowRunRequest,
@@ -13898,8 +13928,7 @@ impl OneironClient {
     pub fn vault_search_bm25(
         &self,
         input: &oneiron::task_verb::sdk::QueryBm25Request,
-    ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::LexicalHit>>, MemoryError>
-    {
+    ) -> Result<oneiron::task_verb::sdk::Bm25Search, MemoryError> {
         oneiron::memory::caps::check_query(&input.query)?;
         oneiron::memory::caps::check_limit_nonzero(input.limit)?;
         let value = serde_json::to_value(input).map_err(|_| {

@@ -49,6 +49,7 @@ mod checkpoint_image;
 mod checkpoint_policy;
 mod checkpoint_policy_choice;
 mod checkpoint_root_attest;
+mod checkpoint_root_countersign;
 mod checkpoint_root_delivery;
 mod checkpoint_root_intake;
 mod checkpoint_root_stage;
@@ -285,7 +286,9 @@ pub(crate) use act_standing::{
 };
 pub(crate) use adopted_evidence::adopted_evidence_in_txn;
 pub(crate) use checkpoint::note_new_authority_row_in_txn;
-pub(crate) use checkpoint_adopt::adopted_authority_checkpoint_in_txn;
+pub(crate) use checkpoint_adopt::{
+    adopted_authority_checkpoint_in_txn, adopted_checkpoint_id_in_txn,
+};
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };

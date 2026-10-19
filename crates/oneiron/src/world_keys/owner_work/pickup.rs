@@ -65,12 +65,13 @@ impl Vault {
     /// OWNER_WORK_PICKUP: after an authority catch-up and on the served
     /// lifecycle tick, never on a timer of its own). First every admitted
     /// custody revoke is settled here, byte-free (`settle_revoked_custody`
-    /// in `crate::secret_custody`), and each kept custody input whose
-    /// request is answered is forgotten. The machine secret is read outside
-    /// every transaction, and only when a request's kind reads it: with no
-    /// keystore, slot or secret here each such request stays pending, and
-    /// nothing is taken over. A custody revoke, or a rewrap with no input,
-    /// reads none.
+    /// in `crate::secret_custody`), each kept custody input whose request is
+    /// answered is forgotten, and each revoke this install owes the owner's
+    /// other machines is carried once it can sign (FIX 4851). The machine
+    /// secret is read outside every transaction, and only when a request's
+    /// kind reads it: with no keystore, slot or secret here each such
+    /// request stays pending, and nothing is taken over. A custody revoke,
+    /// or a rewrap with no input, reads none.
     ///
     /// Each request is read again and rechecked in its transaction: its
     /// world is live, its owner still a live vault owner, its target's
@@ -100,6 +101,9 @@ impl Vault {
         // stands now that the request is in.
         #[cfg(feature = "sync")]
         self.reapply_custody_in_live_windows();
+        // A revoke this install could not carry when the owner made it is
+        // carried once it can sign (CALLS CUSTODY_REVOKE_PENDING_CARRY).
+        self.carry_owed_revokes();
         let (machine, pending): (EntityId, Vec<(AuthorityEntryHash, bool)>) = {
             let txn = self.store.env.read_txn()?;
             let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
@@ -137,7 +141,7 @@ impl Vault {
             let ran = self
                 .with_write_txn(|txn| self.run_owner_work_in_txn(txn, *request, machine, secret));
             match ran {
-                Ok(Ran::Answered(OwnerWorkOutcome::Enacted)) => drain.enacted += 1,
+                Ok(Ran::Answered(OwnerWorkOutcome::Enacted { .. })) => drain.enacted += 1,
                 Ok(Ran::Answered(OwnerWorkOutcome::Refused { .. })) => drain.refused += 1,
                 Ok(Ran::Pending) => drain.pending += 1,
                 Ok(Ran::Gone) => {}
@@ -199,7 +203,7 @@ impl Vault {
         let Some(outcome) = outcome else {
             return Ok(Ran::Pending);
         };
-        self.append_owner_work_result_in_txn(txn, hash, machine, outcome)?;
+        self.append_owner_work_result_in_txn(txn, hash, machine, outcome.clone())?;
         Ok(Ran::Answered(outcome))
     }
 
@@ -252,7 +256,7 @@ impl Vault {
         let after = self.authority_view_readonly_in_txn(txn)?;
         Ok(self
             .world_key_work_complete(txn, &after, world)?
-            .then_some(OwnerWorkOutcome::Enacted))
+            .then_some(OwnerWorkOutcome::enacted()))
     }
 
     /// The first recheck a world key request fails in this transaction.

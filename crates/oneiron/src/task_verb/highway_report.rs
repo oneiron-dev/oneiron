@@ -471,6 +471,20 @@ impl Memory<'_> {
         report: TaskReport,
         judged: Option<RunnerDoneAnswer>,
     ) -> MemoryResult<TaskCallReceipt> {
+        self.report_in_runner_txn_noting(wtxn, via, report, judged, None)
+    }
+
+    /// [`Self::report_in_runner_txn`] with one more field, `note`, on its
+    /// lifecycle receipt: a workflow run's settlement names there how its
+    /// binder's right stood (FIX 5349).
+    pub(super) fn report_in_runner_txn_noting(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        via: &TaskVia,
+        report: TaskReport,
+        judged: Option<RunnerDoneAnswer>,
+        note: Option<(&str, &str)>,
+    ) -> MemoryResult<TaskCallReceipt> {
         let key = qualified_key(via, &report.report_key, "report key")?;
         let task_ref = report.task_ref;
         let now = self.vault().now_recorded_at();
@@ -483,7 +497,7 @@ impl Memory<'_> {
             ));
         }
         let journal = report_journal::identity(self.actor(), via, &report, &key)?;
-        let lifecycle = self.work_lifecycle(
+        let mut lifecycle = self.work_lifecycle(
             via,
             task_ref,
             &key,
@@ -491,6 +505,9 @@ impl Memory<'_> {
             &report.body,
             now,
         );
+        if let Some((field, value)) = note {
+            lifecycle.fields.insert(field.to_owned(), value.to_owned());
+        }
         let receipt_id = self.report_receipt_id(task_ref, &key, now)?;
         self.report_work(
             &mut ReportTxn::runner(wtxn, judged)
@@ -1689,6 +1706,8 @@ impl Memory<'_> {
                 TaskAskStatus::Pending { .. } | TaskAskStatus::Changed { .. } => {
                     DoneVerdict::AskedUp(TaskAskHandle { group_ref: wait })
                 }
+                // An ask's status is never a world-privacy request's (FIX 4706).
+                TaskAskStatus::WorldPrivacy(_) => DoneVerdict::Held,
             });
         }
         let Some(brief) = current.brief.as_ref() else {

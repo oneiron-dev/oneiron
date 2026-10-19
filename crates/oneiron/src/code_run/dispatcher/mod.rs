@@ -18,6 +18,7 @@ mod verb_hooks;
 mod wake_policy;
 mod workflow_dispatch;
 mod world_privacy_set;
+mod world_privacy_wait;
 
 use std::cell::{Cell, RefCell};
 
@@ -71,11 +72,12 @@ pub struct HostSelfDispatcher<'a> {
     /// owner setting records (WILL-PLAN L13 row 01). Audit only.
     pub(super) owner_surface: Option<crate::authority::ActSurface>,
     /// The credential lineage the host admitted this run under (FIX 4705):
-    /// its verified slip and that slip's parent, the pair an owner proof's
-    /// lineage names. A request the run opens carries it, so no answer from
-    /// it settles that request. Only [`Self::with_opener_credential`] sets
-    /// it, from a slip the verifier produced; no guest call reaches it. A
-    /// run no credential admitted (a pumped agent run) has none.
+    /// its verified slip and that slip's parent. A request the run opens
+    /// carries it, and the answering door walks it to its delegation root, so
+    /// no answer from it or a fork of it settles that request (FIX 5064).
+    /// Only [`Self::with_opener_credential`] sets it, from a slip the
+    /// verifier produced; no guest call reaches it. A run no credential
+    /// admitted (a pumped agent run) has none.
     opener_lineage: Vec<[u8; 32]>,
     /// ONE-1314. Whether this run's effect history is already known to carry
     /// an EXTERNAL effect, so the memory writes it seals afterwards must be
@@ -356,8 +358,8 @@ impl<'a> HostSelfDispatcher<'a> {
 
     /// Binds the credential the host admitted the run's caller under (FIX
     /// 4705): its slip and that slip's parent become the run's own lineage,
-    /// which never settles a request the run opens. The ids come from the
-    /// verified slip itself, never from a guest or wire value.
+    /// which with its forks never settles a request the run opens. The ids
+    /// come from the verified slip itself, never from a guest or wire value.
     #[must_use]
     pub fn with_opener_credential(mut self, credential: &crate::authority::VerifiedSlip) -> Self {
         let claims = credential.claims();

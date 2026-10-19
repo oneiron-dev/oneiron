@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::receipt::{
     MAX_RECEIPT_QUERY_SCAN, ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt,
 };
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::skill_hub::pack_catalog::PackHookBinding;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -205,6 +205,10 @@ pub(super) struct HookReadRow {
 pub(super) struct HookVerdictPin {
     pub(super) request_json: String,
     pub(super) reply: std::result::Result<String, String>,
+    /// The rows the verdict's evidence resolved to, as the ask heard it;
+    /// `None` when they are not known.
+    #[serde(default)]
+    pub(super) evidence: Option<Vec<EntityId>>,
 }
 
 /// The memo row: a run's saved result. A repeat run finds it and computes
@@ -261,11 +265,12 @@ impl HookRunRef {
     }
 }
 
-/// Indexes `run` under `binding` at `at`, its commit time in Unix ms. A
-/// rewrite of the same run drops the row its earlier write left at
-/// `previous`, so each run stands once.
+/// Indexes `run` under `binding` at `at`, its commit time in Unix ms, in
+/// `dbs`: the vault's, or a room's along its run's route. A rewrite of the
+/// same run drops the row its earlier write left at `previous`, so each run
+/// stands once.
 pub(super) fn index_run_in_txn(
-    vault: &Vault,
+    dbs: &impl SideTableDbs,
     txn: &mut heed::RwTxn<'_>,
     binding: EntityId,
     previous: Option<u64>,
@@ -274,9 +279,9 @@ pub(super) fn index_run_in_txn(
 ) -> Result<()> {
     let key = run.key();
     if let Some(previous) = previous {
-        RUN_INDEX.delete(&vault.store, txn, &(binding, previous, key))?;
+        RUN_INDEX.delete(dbs, txn, &(binding, previous, key))?;
     }
-    RUN_INDEX.put(&vault.store, txn, &(binding, at, key), &run)
+    RUN_INDEX.put(dbs, txn, &(binding, at, key), &run)
 }
 
 /// Where a saved intent stands.
@@ -321,13 +326,24 @@ pub(super) fn receipt_id(key: &RunKey) -> String {
 /// names no kept run. The receipt family screens a Hook receipt on them for
 /// a caller off this device (FIX 1119).
 pub(crate) fn hook_run_read_rows(vault: &Vault, run_key: &str) -> Result<Option<Vec<EntityId>>> {
+    let rtxn = vault.store.env.read_txn()?;
+    hook_run_read_rows_in(&vault.store, &rtxn, run_key)
+}
+
+/// [`hook_run_read_rows`] read in `dbs` within `rtxn`, an explicit read
+/// target: the vault's store here, and a room's composed view for a reader of
+/// the Hook receipts a room keeps (WILL L11-01 S01-2c).
+fn hook_run_read_rows_in(
+    dbs: &impl SideTableDbs,
+    rtxn: &heed::RoTxn<'_>,
+    run_key: &str,
+) -> Result<Option<Vec<EntityId>>> {
     let Some(key) = crate::deletion::parse_hex::<32>(run_key) else {
         return Ok(None);
     };
-    let rtxn = vault.store.env.read_txn()?;
-    let reads = match MEMOS.get(&vault.store, &rtxn, &key)? {
+    let reads = match MEMOS.get(dbs, rtxn, &key)? {
         Some(memo) => memo.reads,
-        None => match super::verb::VERB_RUNS.get(&vault.store, &rtxn, &key)? {
+        None => match super::verb::VERB_RUNS.get(dbs, rtxn, &key)? {
             Some(run) => run.reads,
             None => return Ok(None),
         },

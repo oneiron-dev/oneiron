@@ -5,6 +5,7 @@
 //! vault recorded, and says `None` rather than guess a part it lacks.
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::limit_ask::EngineLimit;
 use crate::receipt::{ReceiptRecord, attempt_pack_receipt_id};
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::{EntityId, Result, Vault};
@@ -42,22 +43,18 @@ pub struct ReceiptTrace {
     pub steps: Vec<String>,
     /// The run's outputs, each `path: preview`.
     pub outputs: Vec<String>,
-    /// Whether the byte budget cut the run: the earliest calls go first, so
-    /// the step an attempt ended on stays.
-    pub cut: bool,
 }
 
-/// The trace one stamped attempt receipt grounds. Each text is cut to
-/// `item_bytes`, and the run's text to `trace_bytes` in all. `None` when a
-/// part is missing or ambiguous: no actor binding, no recorded manifest, no
-/// attempt row, or a loaded revision that does not resolve to exactly one
-/// SKILL record. A run with no record of its own leaves the trace its
-/// attempt row.
+/// The trace one stamped attempt receipt grounds, every text whole: its
+/// longest text and its count of steps and outputs are measured against
+/// `limits.maintenance_text_bytes` and `limits.maintenance_row_items`, never
+/// cut. `None` when a part is missing or ambiguous: no actor binding, no
+/// recorded manifest, no attempt row, or a loaded revision that does not
+/// resolve to exactly one SKILL record. A run with no record of its own
+/// leaves the trace its attempt row.
 pub fn receipt_attribution_trace(
     vault: &Vault,
     receipt: &ReceiptRecord,
-    trace_bytes: usize,
-    item_bytes: usize,
 ) -> Result<Option<ReceiptTrace>> {
     let Some(actor) = crate::skill::resident::receipt_resident(vault, &receipt.receipt_id)? else {
         return Ok(None);
@@ -80,47 +77,49 @@ pub fn receipt_attribution_trace(
     let Some(record) = AttemptQueue::new(vault).get(attempt)? else {
         return Ok(None);
     };
-    let mut trace = ReceiptTrace {
+    // A run's id is its attempt's.
+    let run = EntityId::from_bytes(*attempt.as_bytes())?;
+    let mut steps = Vec::new();
+    let mut outputs = Vec::new();
+    if let Some(replay) = vault.get_code_run_replay_record(&run)? {
+        for call in &replay.bridge_calls {
+            let step = format!(
+                "{} {} -> {}",
+                call.effect.as_str(),
+                call.request,
+                call.outcome
+            );
+            steps.push(step);
+        }
+        for output in &replay.outputs {
+            outputs.push(format!("{}: {}", output.path, output.preview.text));
+        }
+    }
+    let trace = ReceiptTrace {
         actor,
         skills,
         kind: record.kind,
         task: std::str::from_utf8(&record.payload)
             .ok()
             .filter(|text| !text.trim().is_empty())
-            .map(|text| clip(text, item_bytes).to_owned()),
-        last_error: record
-            .last_error
-            .map(|error| clip(&error, item_bytes).to_owned()),
-        steps: Vec::new(),
-        outputs: Vec::new(),
-        cut: false,
+            .map(str::to_owned),
+        last_error: record.last_error,
+        steps,
+        outputs,
     };
-    // A run's id is its attempt's.
-    let run = EntityId::from_bytes(*attempt.as_bytes())?;
-    let Some(replay) = vault.get_code_run_replay_record(&run)? else {
-        return Ok(Some(trace));
-    };
-    let mut left = trace_bytes;
-    for call in replay.bridge_calls.iter().rev() {
-        let text = format!(
-            "{} {} -> {}",
-            call.effect.as_str(),
-            call.request,
-            call.outcome
-        );
-        if !take(&mut trace.steps, &text, item_bytes, &mut left) {
-            trace.cut = true;
-            break;
-        }
-    }
-    trace.steps.reverse();
-    for output in &replay.outputs {
-        let text = format!("{}: {}", output.path, output.preview.text);
-        if !take(&mut trace.outputs, &text, item_bytes, &mut left) {
-            trace.cut = true;
-            break;
-        }
-    }
+    // The classifier reads the run whole: its sizes are measured, never cut.
+    let longest = trace
+        .steps
+        .iter()
+        .chain(&trace.outputs)
+        .chain(&trace.task)
+        .chain(&trace.last_error)
+        .map(String::len)
+        .max()
+        .unwrap_or(0);
+    let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
+    let items = trace.steps.len() + trace.outputs.len();
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
     Ok(Some(trace))
 }
 
@@ -193,24 +192,4 @@ fn receipt_attempt(receipt: &str) -> Option<AttemptId> {
     let (_, hex) = receipt.rsplit_once(':')?;
     let attempt = AttemptId::from_bytes(EntityId::from_hex(hex).ok()?.as_bytes()).ok()?;
     (attempt_pack_receipt_id(&attempt) == receipt).then_some(attempt)
-}
-
-/// Keeps `text`, cut to `item_bytes`, while `left` has room for it.
-fn take(into: &mut Vec<String>, text: &str, item_bytes: usize, left: &mut usize) -> bool {
-    let text = clip(text, item_bytes.min(*left));
-    if text.is_empty() {
-        return false;
-    }
-    *left -= text.len();
-    into.push(text.to_owned());
-    true
-}
-
-/// At most `max` bytes of `text`, cut on a character boundary.
-fn clip(text: &str, max: usize) -> &str {
-    let mut end = text.len().min(max);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
 }

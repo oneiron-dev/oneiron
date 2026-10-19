@@ -694,17 +694,14 @@ impl Memory<'_> {
             .map(|value| self.body_made_by(Some(value), "office_body.export"))
             .transpose()?;
         let actor = self.body_actor();
-        let author = match &input.author {
-            Some(author) => author.clone(),
-            None => actor.entity_ref().to_hex(),
-        };
         let zone =
             OfficeRecalcZone::from_caller(input.utc_offset_minutes, input.iana_timezone.clone())?;
         let export = self.vault().export_office_body(
             &artifact,
             &OfficeBodyExportRequest {
                 actor,
-                author: &author,
+                // None: the exporting actor, as a token in DOCX bytes (FIX 4513).
+                author: input.author.as_deref(),
                 run_ref: &input.run_ref,
                 made_by: made_by.as_ref(),
                 zone: &zone,

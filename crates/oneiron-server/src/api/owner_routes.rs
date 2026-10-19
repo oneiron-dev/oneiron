@@ -282,11 +282,11 @@ pub(crate) fn hooked_owner(
 fn host(server: &SyncServer) -> Result<Arc<OwnerHost>, ApiError> {
     server.owner_host.clone().ok_or_else(|| {
         ApiError::new(
-            "this server was started without a vault path, so it keeps no backups",
+            "this server was started without its vault's backup storage, so it serves no owner status or backups",
             ApiErrorDetails::InvalidState {
                 state: Some("owner_host_unset".to_owned()),
             },
-            ["Run `oneiron serve`, or use the `oneiron backup` command on a stopped vault."],
+            ["`oneiron serve` and a managed vault start with it; on a stopped vault, use the `oneiron backup` command."],
         )
     })
 }
@@ -388,14 +388,15 @@ struct OwnerStatus {
 
 /// The admission of a ROOT ADMIN command here (FIX 2222): status, backups,
 /// a restore rehearsal and plain upkeep. The host's own live root runs it on
-/// any vault, self-hosted or hosted, as no person: `None`, no owner proof is
-/// made up for it. Any other caller runs it as the owner, through
-/// [`owner`].
+/// any vault no supervisor manages, self-hosted or hosted, as no person:
+/// `None`, no owner proof is made up for it. Any other caller runs it as the
+/// owner, through [`owner`], and so does every caller on a managed vault,
+/// whose host's root acts as nobody (FIX 2222, FIX 5255).
 fn root_admin(
     auth: &CoreAuth,
     server: &SyncServer,
 ) -> Result<Option<AuthenticatedOwner>, ApiError> {
-    if auth.host_root().is_some() {
+    if server.managed_issuer.is_none() && auth.host_root().is_some() {
         if !auth.credential_is_live(server.vault()) {
             return Err(ApiError::forbidden_scope("owner"));
         }

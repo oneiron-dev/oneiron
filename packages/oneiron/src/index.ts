@@ -497,11 +497,11 @@ export class Oneiron {
       /** One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none. */
       launch: (input: Facade.FanoutLaunchRequest): Facade.FanoutLaunchView | null => this.#call(() => this.#client.vaultFanoutLaunch(input) as Facade.FanoutLaunchView | null),
       /** The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible. */
-      resume: (input: Facade.FanoutResumeRequest): Facade.FanoutLaunchView => this.#call(() => this.#client.vaultFanoutResume(input) as Facade.FanoutLaunchView),
+      resume: (input: Facade.FanoutResumeRequest): Facade.ActAnswer<Facade.FanoutLaunchView> => this.#call(() => this.#client.vaultFanoutResume(input) as Facade.ActAnswer<Facade.FanoutLaunchView>),
       /** A live lead or board holder of a held fan-out launch's project rules on it by the digest they saw: approve once, or deny, which keeps the hold visible; only the owner may remember. */
-      resume_as: (input: Facade.FanoutResumeRequest): Facade.FanoutLaunchView => this.#call(() => this.#client.vaultFanoutResumeAs(input) as Facade.FanoutLaunchView),
+      resume_as: (input: Facade.FanoutResumeRequest): Facade.ActAnswer<Facade.FanoutLaunchView> => this.#call(() => this.#client.vaultFanoutResumeAs(input) as Facade.ActAnswer<Facade.FanoutLaunchView>),
       /** The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied. */
-      ack: (input: Facade.FanoutAckRequest): Facade.FanoutLaunchView => this.#call(() => this.#client.vaultFanoutAck(input) as Facade.FanoutLaunchView),
+      ack: (input: Facade.FanoutAckRequest): Facade.ActAnswer<Facade.FanoutLaunchView> => this.#call(() => this.#client.vaultFanoutAck(input) as Facade.ActAnswer<Facade.FanoutLaunchView>),
     },
     budgets: {
       /** The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it. */
@@ -758,8 +758,8 @@ export class Oneiron {
       hybrid: (input: Facade.HybridSearchRequest): Facade.ScopedReadResult<Facade.HybridSearchHit[]> => this.#call(() => this.#client.vaultSearchHybrid(input) as Facade.ScopedReadResult<Facade.HybridSearchHit[]>),
       /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */
       temporal: (input: Facade.TemporalSearchRequest): Facade.ScopedReadResult<Facade.TemporalSearchResult> => this.#call(() => this.#client.vaultSearchTemporal(input) as Facade.ScopedReadResult<Facade.TemporalSearchResult>),
-      /** BM25 text search over the engine index; surfaceable claims only. */
-      bm25: (input: Facade.QueryBm25Request): Facade.ScopedReadResult<Facade.LexicalHit[]> => this.#call(() => this.#client.vaultSearchBm25(input) as Facade.ScopedReadResult<Facade.LexicalHit[]>),
+      /** BM25 text search over the engine index; surfaceable claims only. On a device that syncs only what it opened, a server's door asks the home under the caller's own proof, and its references ride in residence. */
+      bm25: (input: Facade.QueryBm25Request): Facade.Bm25Search => this.#call(() => this.#client.vaultSearchBm25(input) as Facade.Bm25Search),
     },
     images: {
       /** The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull. */
@@ -1173,7 +1173,7 @@ export class Oneiron {
       /** Starts a shared vault's remove_owner act, with its export-first answer. */
       propose_remove_owner: (input: Facade.SharedRemoveOwnerRequest): Facade.PendingAuthorityAct => this.#call(() => this.#client.vaultSharedProposeRemoveOwner(input) as Facade.PendingAuthorityAct),
       /** A live Owner runs a matured shared-vault act and gets its receipt. */
-      execute: (input: Facade.SharedActRequest): Facade.SharedActExecuted => this.#call(() => this.#client.vaultSharedExecute(input) as Facade.SharedActExecuted),
+      execute: (input: Facade.SharedActRequest): Facade.ActAnswer<Facade.SharedActExecuted> => this.#call(() => this.#client.vaultSharedExecute(input) as Facade.ActAnswer<Facade.SharedActExecuted>),
       /** One shared-act or membership receipt its reader was told about, by id. */
       receipt: (input: Facade.SharedReceiptRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultSharedReceipt(input) as Facade.SharedActExecutionReceipt),
       /** The reader's own outcome notices for a shared vault. */
@@ -1400,7 +1400,7 @@ export class Oneiron {
       /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
       erase_preview: (input: Facade.RecordEraseRequest): Facade.RecordErasePreview => this.#call(() => this.#client.vaultRecordsErasePreview(input) as Facade.RecordErasePreview),
       /** Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead. */
-      erase_confirm: (input: Facade.RecordEraseConfirmRequest): Facade.RecordEraseOutcome => this.#call(() => this.#client.vaultRecordsEraseConfirm(input) as Facade.RecordEraseOutcome),
+      erase_confirm: (input: Facade.RecordEraseConfirmRequest): Facade.ActAnswer<Facade.RecordEraseOutcome> => this.#call(() => this.#client.vaultRecordsEraseConfirm(input) as Facade.ActAnswer<Facade.RecordEraseOutcome>),
       /** Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep. */
       erase_sweep: (input: Facade.RecordEraseSweepRequest): Facade.RecordEraseSweep | null => this.#call(() => this.#client.vaultRecordsEraseSweep(input) as Facade.RecordEraseSweep | null),
     },
@@ -2070,6 +2070,8 @@ export class Oneiron {
       update: (input: Facade.WorkflowUpdateRequest): Facade.WorkflowView => this.#call(() => this.#client.vaultWorkflowsUpdate(input) as Facade.WorkflowView),
       /** The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run. */
       dispatch: (input: Facade.WorkflowDispatchRequest): Facade.WorkflowRunView => this.#call(() => this.#client.vaultWorkflowsDispatch(input) as Facade.WorkflowRunView),
+      /** A member binds one run of a saved workflow to an idle standard TASK they own, as themselves, under funding terms they accepted: its root spend scope names them as payer, and a retried intent key with the same terms returns the same run. */
+      dispatch_bound: (input: Facade.WorkflowPersonDispatchRequest): Facade.WorkflowRunView => this.#call(() => this.#client.vaultWorkflowsDispatchBound(input) as Facade.WorkflowRunView),
       /** The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result. */
       status: (input: Facade.WorkflowRunRequest): Facade.WorkflowRunView => this.#call(() => this.#client.vaultWorkflowsStatus(input) as Facade.WorkflowRunView),
     },
@@ -3003,7 +3005,7 @@ export class Oneiron {
   peek(request: TaskAskHandle): TaskAskPersonEvidence[] { return this.#call(() => {  const result = JSON.parse(this.#client.peek(keyedJson(request))) as TaskAskPersonEvidence[]; return result.map(item => item) }) }
   /** Asks people or an authority a typed question and returns at admission with the ask's handle. */
   ask(...args: [spec: TaskAskSpec] | [who: TaskAskWho | undefined, what: TaskAskQuestion, until?: number | null, defaultBranch?: TaskAskDefault]): TaskAskReceipt { return this.#call(() => { const input: TaskAskSpec | TaskAskShort = args.length === 1 ? args[0] : {who: typeof args[0] === "string" ? {people: [args[0]]} : Array.isArray(args[0]) ? {people: args[0]} : args[0], what: args[1], until: args[2], default: args[3]}; return this.#client.ask(input) as TaskAskReceipt }) }
-  /** Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode. */
+  /** Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode. */
   wait(handle: TaskAskHandle, stepKey = "sdk.wait"): Facade.TaskAskWait { return this.#call(() => this.#client.wait({handle, step_key: stepKey}) as Facade.TaskAskWait) }
   readonly connector = {
     /** Every live catalogued connector whose name or summary matches the query. */

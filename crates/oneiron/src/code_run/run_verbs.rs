@@ -18,6 +18,7 @@ pub const JS_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
 use serde::{Deserialize, Serialize};
 
+use crate::code_run::SessionHookDisposition;
 use crate::entity_id::EntityId;
 
 /// `vault.search`: a bounded text search over the run's storage route.
@@ -459,10 +460,44 @@ pub struct TaskWaitSetRequest {
     pub step_key: String,
 }
 
-/// `vault.search`'s output: the hits, best first.
+/// `tasks.wait`'s input: one wait over reader children the run spawned, or
+/// one on a world-privacy request the run's actor opened (FIX 4706).
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum TaskWaitInput {
+    Readers(TaskWaitSetRequest),
+    WorldPrivacy(TaskWaitWorldRequest),
+}
+
+/// `tasks.wait({request, step_key})`: a wait on one world-privacy request
+/// the run's actor opened, answered once a holder applied or declined it,
+/// with no reader child, quorum or reader cutoff.
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskWaitWorldRequest {
+    /// The request's id, hex: the `wait` handle's `group_ref` that
+    /// `vault.worlds.privacy.set` answered with.
+    pub request: String,
+    /// The wait's key in the run.
+    pub step_key: String,
+}
+
+/// What `tasks.wait` answers: the reduction over reader children, or a
+/// world-privacy request's terminal state (`WorldPrivacyReady`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum TaskWaitOutput {
+    Readers(crate::code_run::TaskWaitSetResult),
+    WorldPrivacy(crate::task_verb::TaskAskWait),
+}
+
+/// `vault.search`'s output: the hits, best first, and in an off-record room
+/// what each verb hook bound to the search did (WILL L11-01 S01-2c).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MemorySearchOutput {
     pub results: Vec<MemorySearchHit>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<SessionHookDisposition>,
 }
 
 /// One `vault.search` hit.

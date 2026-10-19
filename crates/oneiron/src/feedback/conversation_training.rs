@@ -19,12 +19,37 @@
 //! (`training_pack`), its connector and the reservoir export it reads are not
 //! gated by this switch.
 //!
-//! [`share_for_publisher_training`] is the only door in the engine that
-//! hands conversation text toward a publisher, and nothing else may send it
-//! there. It judges each source with [`eligible`] before filtering and again
-//! at the send itself: turning the switch off takes no lock a send waits on,
-//! so the send-time read is the guard. With no machine-only intake
-//! configured it reads, judges and filters nothing.
+//! Two doors in the engine hand conversation text toward a publisher, and
+//! nothing else may send it there: [`share_for_publisher_training`], over a
+//! sink its caller supplies, and the publisher training outbox
+//! ([`Vault::offer_conversation_training`], OF-420), which selects each
+//! source from the canonical rows itself and publishes only what a release
+//! lets through ([`Vault::release_training_submission`]). Each judges a
+//! source with [`eligible`] before filtering and again at the send or the
+//! release itself: turning the switch off takes no lock a send waits on, so
+//! the send-time read is the guard. With no machine-only intake configured
+//! neither reads, judges or filters anything.
+
+mod crypto;
+mod custody;
+mod lifecycle;
+mod receipts;
+mod reconcile;
+mod release;
+mod source;
+
+pub use self::crypto::{IntakeReceiptKey, IntakeRecipient};
+pub use self::lifecycle::{
+    PublisherTrainingLifecycle, ReceiptCursor, ReceivedTrainingReceipt, ReleaseDecision,
+    SealedTrainingOffer, SignedTrainingControl, TrainingControlId, TrainingQueued,
+    TrainingReceiptPage, TrainingSubmissionId, TrainingUnavailable, TrainingWithheld,
+};
+pub use self::receipts::{
+    PersonTrainingControl, PersonTrainingReceipts, PersonTrainingSubmission, TrainingCustody,
+    TrainingReceiptsCursor, TrainingUsedRun,
+};
+pub use self::reconcile::TrainingUpkeep;
+pub use self::release::TrainingOfferPass;
 
 use std::collections::BTreeSet;
 

@@ -177,6 +177,27 @@ pub(crate) fn owned_bodies_in_txn(
         .collect())
 }
 
+/// The file a raw `vault_meta` row holds when it is a descriptor whose held
+/// body (a complete one, or an incomplete one's retained part) is a file: its
+/// digest and length. A checkpoint reads its rows raw, so this is how it
+/// finds every file a descriptor holds, a legal hold's superseded ASSET file
+/// included (FIX 5348).
+///
+/// # Errors
+///
+/// A descriptor row that does not decode.
+pub(crate) fn file_body_of_row(key: &[u8], value: &[u8]) -> Result<Option<([u8; 32], u64)>> {
+    if !key.starts_with(BODY.decl().prefix) {
+        return Ok(None);
+    }
+    Ok(BODY
+        .decode_value(value)?
+        .state
+        .held()
+        .filter(|held| held.location == BodyLocation::File)
+        .map(|held| (held.blake3, held.bytes)))
+}
+
 /// Whether any descriptor still holds `blake3`.
 pub(crate) fn digest_is_held_in_txn(
     store: &impl ManifestDbs,
@@ -202,6 +223,27 @@ pub(crate) fn release_owner_bodies_in_txn(
         }
     }
     Ok(bodies.len())
+}
+
+/// Drops `owner`'s one `occurrence` and queues its file digest for the
+/// collector when no other descriptor holds it. `false` when the owner holds
+/// no such occurrence.
+pub(crate) fn release_body_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    owner: &EntityId,
+    occurrence: &EntityId,
+) -> Result<bool> {
+    let key = (*owner, *occurrence);
+    let Some(body) = BODY.get(store, txn, &key)? else {
+        return Ok(false);
+    };
+    BODY.delete(store, txn, &key)?;
+    if let Some(held) = body.state.held() {
+        BODY_DIGEST.delete(store, txn, &(held.blake3, *occurrence))?;
+        release_if_unheld(store, txn, held)?;
+    }
+    Ok(true)
 }
 
 /// Up to `limit` released file digests, oldest key first. The collector

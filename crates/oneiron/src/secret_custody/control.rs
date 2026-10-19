@@ -39,17 +39,22 @@ mod doors;
 mod execute;
 pub(super) mod input;
 mod manifest;
+mod pending_revoke;
 pub(super) mod permits;
 mod revoked;
 #[cfg(feature = "sync")]
 mod roster;
 
+use oneiron_authority::authority::CustodyRegisterCheck;
 use zeroize::Zeroizing;
 
 pub use self::doors::{CustodyCandidate, SealedCustodyChange, SecretCustodyView};
 pub(crate) use self::execute::Material;
-use self::input::{InputBinding, RelayedInput, input_digest, keep_input_in_txn};
+use self::input::{
+    InputBinding, RelayedInput, input_digest, keep_input_in_txn, request_witness_in_txn,
+};
 pub use self::manifest::CustodyManifestCheck;
+pub(crate) use self::pending_revoke::erase_pending_revoke_actor_in_txn;
 pub(crate) use self::revoked::{
     custody_revoked_in_txn, drop_revoked_copies_in_txn, refuse_revoked_use_in_txn,
     settle_revoked_in_txn,
@@ -124,10 +129,12 @@ pub(crate) fn custody_work_executor(
 }
 
 /// The outcome an executor's result records once its custody change is
-/// committed (CALLS CUSTODY_COMPLETION).
-fn enacted() -> OwnerWorkOutcome {
+/// committed (CALLS CUSTODY_COMPLETION), with what a register's holder
+/// checked the record against when its surface stated no `manifest_ref`
+/// (FIX 5334).
+fn enacted(check: Option<CustodyRegisterCheck>) -> OwnerWorkOutcome {
     match CUSTODY_COMPLETION {
-        CustodyCompletion::CommitNotDelivery => OwnerWorkOutcome::Enacted,
+        CustodyCompletion::CommitNotDelivery => OwnerWorkOutcome::Enacted { detail: check },
     }
 }
 
@@ -154,8 +161,12 @@ pub enum CustodyKeptHere {
     /// "this device only".
     DeviceLocal,
     /// This install has no live machine profile to carry the owner's act,
-    /// so no other machine learns of the change from here (FIX 4851).
+    /// so no other machine learns of the change from here.
     NoCarrier,
+    /// A revoke this install cannot carry yet, with no live machine profile
+    /// or no install key loaded: it stands here, and its carry is pending
+    /// until this install can sign (CALLS CUSTODY_REVOKE_PENDING_CARRY).
+    CarryPending,
     /// This install, the holder, has no encryption key that imports, so no
     /// request can name it (CALLS CUSTODY_EXECUTOR).
     NoHolderKey,
@@ -168,6 +179,7 @@ impl CustodyKeptHere {
         match self {
             Self::DeviceLocal => "device_local",
             Self::NoCarrier => "no_carrier",
+            Self::CarryPending => "carry_pending",
             Self::NoHolderKey => "no_holder_key",
         }
     }
@@ -184,6 +196,10 @@ impl CustodyKeptHere {
             Self::NoHolderKey => {
                 "kept on this install only: it has no encryption key to hold the secret for \
                  your other machines"
+            }
+            Self::CarryPending => {
+                "revoked here; your other machines learn of it once this install can sign your \
+                 act (it has no live machine profile yet, or its install key is not loaded)"
             }
         }
     }
@@ -224,8 +240,10 @@ pub struct SecretCustodyWork {
     pub delivery: CustodyDelivery,
     /// For a register the owner's surface sealed without stating a
     /// `manifest_ref`, what its holder checked the record against when this
-    /// install is the holder, else what this install attached for it (CALLS
-    /// CUSTODY_MANIFEST_UNSTATED); `None` for any other change.
+    /// install is the holder, else what this install attached for it: every
+    /// manifest the vault publishes (CALLS CUSTODY_MANIFEST_UNSTATED_MULTI).
+    /// A remote holder's own judgment reaches `work.manifest_check` with its
+    /// signed result. `None` for any other change.
     pub manifest: Option<CustodyManifestCheck>,
 }
 
@@ -260,23 +278,27 @@ impl SecretCustodyWork {
     #[must_use]
     pub fn text(&self) -> &'static str {
         match (&self.work, self.kept_here) {
-            (Some(receipt), _) => receipt.unassigned.map_or_else(
-                || self.status_text(receipt.status),
-                OwnerWorkUnassigned::text,
-            ),
+            (Some(receipt), _) => receipt
+                .unassigned
+                .map_or_else(|| self.status_text(receipt), OwnerWorkUnassigned::text),
             (None, Some(why)) => why.text(),
             (None, None) => "not recorded",
         }
     }
 
     /// A recorded request's words: a register taken, or to be taken,
-    /// without a manifest check says so (CALLS CUSTODY_MANIFEST_UNSTATED).
-    fn status_text(&self, status: OwnerWorkStatus) -> &'static str {
+    /// without a manifest check says so, by this install's word or its
+    /// holder's signed result (CALLS CUSTODY_MANIFEST_UNSTATED).
+    fn status_text(&self, receipt: &OwnerWorkReceipt) -> &'static str {
         let unchecked = self
             .manifest
             .as_ref()
-            .is_some_and(CustodyManifestCheck::unchecked);
-        match (status, unchecked) {
+            .is_some_and(CustodyManifestCheck::unchecked)
+            || receipt
+                .manifest_check
+                .as_ref()
+                .is_some_and(CustodyRegisterCheck::unchecked);
+        match (receipt.status, unchecked) {
             (OwnerWorkStatus::RecordedAwaitingHolder, true) => {
                 "recorded, awaiting a holder; to be registered without a manifest check"
             }
@@ -300,9 +322,10 @@ pub struct SecretRevoked {
     /// holds it yet (CALLS CUSTODY_COMPLETION). Kept here, with nothing
     /// recorded, as [`CustodyKeptHere::DeviceLocal`] for a record that stays
     /// on its device (device bound, cross-vault or "this device only"), or
-    /// [`CustodyKeptHere::NoCarrier`] when this install has no live machine
-    /// profile to carry the owner's act, so no other machine learns of it
-    /// from here.
+    /// [`CustodyKeptHere::CarryPending`] when this install cannot carry the
+    /// owner's act yet, with no live machine profile or no install key
+    /// loaded: his other machines learn of it once this install can sign
+    /// (CALLS CUSTODY_REVOKE_PENDING_CARRY).
     pub custody: SecretCustodyWork,
 }
 
@@ -467,6 +490,8 @@ impl Vault {
                 &RelayedInput {
                     sealed_at: at,
                     request: hash,
+                    witness: request_witness_in_txn(self, txn, &hash)?,
+                    part: None,
                     envelope,
                 },
             )?;
@@ -486,9 +511,12 @@ impl Vault {
                         reason.as_str()
                     )));
                 }
-                self.append_owner_work_result_in_txn(txn, hash, machine, done.outcome)?;
+                manifest = done
+                    .manifest_check()
+                    .cloned()
+                    .map(CustodyManifestCheck::Judged);
                 rotation = done.rotation;
-                manifest = done.manifest;
+                self.append_owner_work_result_in_txn(txn, hash, machine, done.outcome)?;
             }
         }
         let after = self.authority_view_readonly_in_txn(txn)?;
@@ -508,8 +536,9 @@ impl Vault {
     /// active change whose secret an admitted revoke names is refused as
     /// stale; any other is executed from its protected input, opened with
     /// `secret`, or for a rewrap that carries none from the record held here
-    /// ([`execute`]). `None` leaves it pending: no secret, input or record
-    /// here yet.
+    /// ([`execute`]); an enacted register carries what this holder checked
+    /// it against, signed in its result (FIX 5334). `None` leaves it pending:
+    /// no secret, input or record, or part of a split input, here yet.
     pub(crate) fn custody_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -525,7 +554,7 @@ impl Vault {
         let at = self.instant_in_txn(txn)?.secs();
         if *change == CustodyChange::Revoke {
             settle_revoked_in_txn(self, txn, &id, at)?;
-            return Ok(Some(enacted()));
+            return Ok(Some(enacted(None)));
         }
         if fold.custody_revoked(&id) {
             return Ok(Some(OwnerWorkOutcome::Refused {

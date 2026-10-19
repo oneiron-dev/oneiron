@@ -21,6 +21,8 @@
 
 use std::sync::Arc;
 
+mod session;
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -138,6 +140,8 @@ pub fn stop_refusal(stop: VerbHookStop, session: Option<&HookSession>) -> Memory
     }
     error
 }
+
+pub(crate) use session::{session_row_call, session_row_post, session_row_pre};
 
 /// A row's domain: a blocking hook that fails hides a read row's result and
 /// sends any other row to an ask.

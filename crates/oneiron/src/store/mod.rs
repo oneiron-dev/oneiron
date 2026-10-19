@@ -118,6 +118,10 @@ pub mod ports {
 
 mod archive_scratch;
 #[cfg(unix)]
+mod asset_body;
+#[cfg(unix)]
+mod body_envelope;
+#[cfg(unix)]
 mod body_store;
 mod channel_identity_receipts;
 mod commitment_due;
@@ -151,6 +155,18 @@ pub(crate) mod test_hooks;
 mod tests;
 
 pub(crate) use archive_scratch::ScratchEnv;
+#[cfg(unix)]
+pub(crate) use asset_body::{
+    ASSET_FILE_PLANE, AssetBodyFacts, asset_body_file_of_row, asset_file_in_txn,
+    file_put_body_in_txn, short_content_hash_in_txn, stage_asset_body_in_txn,
+};
+#[cfg(unix)]
+pub(crate) use body_envelope::{
+    BODY_FILE_SHRED_SCOPE, BODY_FILE_WRAP_CONTEXT, BODY_KEYS, BodyFile, BodyKeyRow, BodySeal,
+    BodySealSlot, BodySpill, DirSeal, KeyScope, SealedStream, SpilledBody, StagedBodyKey,
+    bind_body_key_in_txn, body_key_row_in_txn, keep_promoted_body_key_in_txn,
+    retire_body_key_in_txn, sealed_body_file_name,
+};
 #[cfg(unix)]
 pub(crate) use body_store::{
     BodyDir, BodyFacts, BodyMeter, BodySink, LINE_INDEX_BLOCK_BYTES, LINE_INDEX_SUFFIX, SunkBody,

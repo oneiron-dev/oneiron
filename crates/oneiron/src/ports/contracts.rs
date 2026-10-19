@@ -306,6 +306,35 @@ pub trait BlobStore: Transactions {
         learned_at: u64,
     ) -> Result<[u8; 32]>;
     fn port_blob_get(&self, txn: &Self::Read<'_>, hash: &[u8; 32]) -> Result<Option<Vec<u8>>>;
+    /// [`Self::port_blob_put`] of the bytes `body` yields, staged as they
+    /// stream rather than held whole where the backend can (FIX 3677). The
+    /// default reads them whole.
+    fn port_blob_put_staged(
+        &self,
+        txn: &mut Self::Write<'_>,
+        reference: &EntityId,
+        body: &mut dyn std::io::Read,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<[u8; 32]> {
+        let mut bytes = Vec::new();
+        body.read_to_end(&mut bytes)?;
+        self.port_blob_put(txn, reference, &bytes, occurred, learned_at)
+    }
+    /// Runs `read` over the blob with `hash` as it streams, checked against
+    /// its hash; `false` when no blob has it. The default reads it whole.
+    fn port_blob_reader(
+        &self,
+        txn: &Self::Read<'_>,
+        hash: &[u8; 32],
+        read: &mut dyn FnMut(&mut dyn std::io::Read) -> Result<()>,
+    ) -> Result<bool> {
+        let Some(bytes) = self.port_blob_get(txn, hash)? else {
+            return Ok(false);
+        };
+        read(&mut bytes.as_slice())?;
+        Ok(true)
+    }
     fn port_blob_delete(
         &self,
         txn: &mut Self::Write<'_>,

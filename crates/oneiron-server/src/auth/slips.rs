@@ -387,7 +387,12 @@ impl CoreAuth {
     }
 
     /// Long-lived sessions refold liveness for their original verified mint.
+    /// A managed vault's attested owner has no mint and no token id: his
+    /// session stands while the vault records him as its live owner.
     pub(crate) fn credential_is_live(&self, vault: &oneiron::Vault) -> bool {
+        if let Some(holder) = self.managed_owner {
+            return managed_owner_is_live(vault, holder);
+        }
         if let Some(verified) = &self.verified_slip {
             vault.capability_slip_is_live(verified).unwrap_or(false)
         } else {
@@ -395,6 +400,21 @@ impl CoreAuth {
                 .is_none_or(|jti| vault.is_revoked(jti).is_ok_and(|revoked| !revoked))
         }
     }
+}
+/// Whether `vault` records `holder` as its live owner now, read as the owner
+/// door reads a managed vault's attested owner
+/// (`owner_routes::managed_owner_proof`): the standing a session he opened
+/// holds on (FIX 5255).
+fn managed_owner_is_live(vault: &oneiron::Vault, holder: oneiron::EntityId) -> bool {
+    vault
+        .authenticate_recorded_owner(
+            holder,
+            &holder.to_hex(),
+            oneiron::store::GateDecisionId::now(),
+        )
+        .ok()
+        .flatten()
+        .is_some_and(|owner| vault.is_live_vault_owner(&owner).unwrap_or(false))
 }
 fn hex_id(bytes: &[u8; 32]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()

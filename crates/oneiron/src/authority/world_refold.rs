@@ -5,6 +5,26 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::world_privacy::side_world;
 use super::*;
 
+/// Whether a row with no state is folded again above a main-log row the fold
+/// did not keep: a world's side row, and the main-log rows that are
+/// restrictive too. A world edit and a grant travel choice must not fall with
+/// an unrelated row either (FIX 2998; settings edits left the side branch
+/// for the mesh, contract §6), and neither may the owner's checkpoint policy
+/// choice (mesh PR2c), home pick (DOOR-101) or a person's conversation
+/// training choice (FIX 4489). A fold past an adopted image reads the same
+/// class (FIX 5463).
+pub(super) fn refolds(op: &AuthorityOp) -> bool {
+    side_world(op).is_some()
+        || matches!(
+            op,
+            AuthorityOp::WorldPrivacy(_)
+                | AuthorityOp::GrantTravelSet(_)
+                | AuthorityOp::CheckpointPolicySet(_)
+                | AuthorityOp::HomeNodePick(_)
+                | AuthorityOp::ConversationTrainingSet(_)
+        )
+}
+
 /// Settlement drops every row above a main-log row it refuses (a retired
 /// signer's fence, a confirmation collision, an unsettled handoff), and the door names every main-log head as a parent, so
 /// a world's edits would fall with an unrelated row and the world would read
@@ -32,26 +52,13 @@ pub(super) fn refold_world_edits(
                 .get(hash)
                 .is_some_and(|entry| side_world(&entry.op).is_none())
     };
-    // A world edit and a grant travel choice are main-log rows, but
-    // restrictive: they must not fall with an unrelated row either (FIX
-    // 2998; settings edits left the side branch for the mesh, contract §6),
-    // and neither may the owner's checkpoint policy choice (mesh PR2c), home
-    // pick (DOOR-101) or a person's conversation training choice (FIX 4489).
     // An invalid edit or choice one descends from is crossed like any
     // main-log row.
     let lost = causal(
         by_hash
             .iter()
             .filter(|(hash, entry)| {
-                (side_world(&entry.op).is_some()
-                    || matches!(
-                        entry.op,
-                        AuthorityOp::WorldPrivacy(_)
-                            | AuthorityOp::GrantTravelSet(_)
-                            | AuthorityOp::CheckpointPolicySet(_)
-                            | AuthorityOp::HomeNodePick(_)
-                            | AuthorityOp::ConversationTrainingSet(_)
-                    ))
+                refolds(&entry.op)
                     && !states.contains_key(*hash)
                     && ancestors
                         .get(*hash)

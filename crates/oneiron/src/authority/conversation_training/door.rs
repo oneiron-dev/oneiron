@@ -22,8 +22,8 @@ const NO_CARRIER: &str = "this install has no live machine profile in the vault'
                           the conversation training choice";
 /// The choice would name more rows than one authority entry may: the log's
 /// encoding bound, never a possession test.
-const TOO_MANY_HEADS: &str = "the conversation training choice has more concurrent choices than \
-                              one choice may name; nothing was written";
+const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than one conversation \
+                              training choice may name; nothing was written";
 /// The supplied `seen` is not the person's current choice revision.
 const STALE: &str = "the conversation training choice changed since it was read";
 /// A listed world may not be named; the whole choice is refused.
@@ -103,9 +103,9 @@ impl Vault {
     /// Every listed world must be eligible now (a live WORLD row, or base
     /// reality, that reads everywhere), or the whole choice is refused;
     /// turning it off never judges the worlds of an earlier yes. The choice
-    /// names the main-log heads, this install's standing rows and every live
-    /// choice of the person's, so it supersedes all of them, and lands
-    /// atomically or not at all.
+    /// names the main-log heads alone, whose fold carries this install's
+    /// standing rows and every live choice of the person's (FIX 4987), so it
+    /// supersedes all of them, and lands atomically or not at all.
     ///
     /// # Errors
     /// A refusal when the proof is no longer a live person of this vault;
@@ -150,15 +150,7 @@ impl Vault {
         }
         let signer = AuthorityKey::Ed25519(public_key);
         let seq = next_sequence(&fold, &signer)?;
-        let mut parents = fold.append_heads.clone();
-        parents.extend(standing_rows(&fold, machine));
-        parents.extend(
-            fold.conversation_training
-                .persons
-                .get(&person)
-                .into_iter()
-                .flat_map(|folded| folded.live.keys().copied()),
-        );
+        let parents = fold.append_heads.clone();
         if parents.len() > MAX_PARENTS {
             return Err(Error::InvalidConfig(TOO_MANY_HEADS.to_owned()));
         }

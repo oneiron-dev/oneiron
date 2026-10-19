@@ -342,7 +342,7 @@ class Oneiron:
             input = {"who": who, "what": what, "until": until, "default": default}
         return json.loads(_translate(lambda: self._client.ask(json.dumps(input))))
     def wait(self, handle, step_key="sdk.wait"):
-        """Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode."""
+        """Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode."""
         return json.loads(_translate(lambda: self._client.wait(json.dumps({"handle": handle, "step_key": step_key}))))
     @property
     def connector(self) -> "Oneiron._ConnectorVerbs":
@@ -1353,7 +1353,7 @@ class Oneiron:
             """Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds."""
             return json.loads(_translate(lambda: self._client.vault_search_temporal(json.dumps(input, allow_nan=False))))
         def bm25(self, input: dict[str, Any]) -> Any:
-            """BM25 text search over the engine index; surfaceable claims only."""
+            """BM25 text search over the engine index; surfaceable claims only. On a device that syncs only what it opened, a server's door asks the home under the caller's own proof, and its references ride in residence."""
             return json.loads(_translate(lambda: self._client.vault_search_bm25(json.dumps(input, allow_nan=False))))
     class _VaultSearchVectorVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -3650,6 +3650,9 @@ class Oneiron:
         def dispatch(self, spec):
             """The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run."""
             return json.loads(_translate(lambda: self._client.vault_workflows_dispatch(json.dumps(spec))))
+        def dispatch_bound(self, spec):
+            """A member binds one run of a saved workflow to an idle standard TASK they own, as themselves, under funding terms they accepted: its root spend scope names them as payer, and a retried intent key with the same terms returns the same run."""
+            return json.loads(_translate(lambda: self._client.vault_workflows_dispatch_bound(json.dumps(spec))))
         def status(self, spec):
             """The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."""
             return json.loads(_translate(lambda: self._client.vault_workflows_status(json.dumps(spec))))

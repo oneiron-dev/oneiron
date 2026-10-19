@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1050 facade rows, 3550 declarations.
-Inputs: 986 of 1050 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 940 of 1050 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1051 facade rows, 3563 declarations.
+Inputs: 987 of 1051 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 941 of 1051 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
 """
 
@@ -438,10 +438,14 @@ class AgentHealthPadReadRefused(TypedDict):
     code: str
 AgentHealthPadRead = AgentHealthPadReadRead | AgentHealthPadReadPendingReview | AgentHealthPadReadDeclined | AgentHealthPadReadNotCovered | AgentHealthPadReadRefused
 AgentHealthCoachRoute = Literal["skill_edit", "prompt_inject", "neither"]
+class AgentHealthSkillTarget(TypedDict):
+    skill: str
+    version: str
 class AgentHealthCoachDraft(TypedDict):
     route: AgentHealthCoachRoute
     diagnosis: str
     proposal: str
+    target: NotRequired[AgentHealthSkillTarget | None]
 class AgentHealthCoachAnswer(TypedDict):
     at: int
     pads: AgentHealthPadRead
@@ -534,6 +538,12 @@ class AgentHealthRunTree(TypedDict):
     run_id: str
     tree: RunTree
     marked: str
+class AgentHealthLoadedSkill(TypedDict):
+    skill: str
+    name: str
+    version: str
+    active: bool
+    instructions: str
 class AgentHealthPromptInject(TypedDict):
     approval: str
     successor: str
@@ -545,6 +555,7 @@ class AgentHealthCardView(TypedDict):
     card: str
     body: AgentHealthCard
     run_tree: NotRequired[AgentHealthRunTree | None]
+    skills: NotRequired[list[AgentHealthLoadedSkill]]
     prompt_inject: NotRequired[AgentHealthPromptInject | None]
 ConcernOutcome = Literal["confirmed", "dismissed", "unresolved"]
 class ConcernOutcomeRequest(TypedDict):
@@ -1488,6 +1499,43 @@ class TaskAskResult(TypedDict):
     fallback: NotRequired[TaskAskFallback | None]
     evidence: list[TaskAskEvidence]
     settlement: TaskAskSettlement
+WorldPrivacyRequestKind = Literal["proposal", "widen_ask"]
+class ReadLocationOneMachine(TypedDict):
+    OneMachine: EntityId
+ReadLocation = Literal["MyMachines", "Everywhere"] | ReadLocationOneMachine
+SealedCopies = Literal["off", "my_machines", "cloud_and_my_machines"]
+class ModelOrderOrdered(TypedDict):
+    Ordered: list[str]
+ModelOrder = Literal["Inherit"] | ModelOrderOrdered
+class WorldPrivacy(TypedDict):
+    read: ReadLocation
+    sealed: SealedCopies
+    models: ModelOrder
+class WorldPrivacyRequestStatusPending(TypedDict):
+    state: Literal["pending"]
+class WorldPrivacyRequestStatusApplied(TypedDict):
+    state: Literal["applied"]
+    receipt_id: str
+    holder: str
+class WorldPrivacyRequestStatusDeclined(TypedDict):
+    state: Literal["declined"]
+    holder: str
+WorldPrivacyRequestStatus = WorldPrivacyRequestStatusPending | WorldPrivacyRequestStatusApplied | WorldPrivacyRequestStatusDeclined
+class WorldPrivacyRequest(TypedDict):
+    request_id: str
+    kind: WorldPrivacyRequestKind
+    agent: NotRequired[str | None]
+    opener_lineage: NotRequired[list[str]]
+    author: str
+    world: str
+    settings: WorldPrivacy
+    seen: str
+    holders: list[str]
+    needs: NotRequired[list[str]]
+    yes: NotRequired[list[str]]
+    ask: NotRequired[int | None]
+    status: WorldPrivacyRequestStatus
+    at: int
 class TaskAskStatusPendingBody(TypedDict):
     hold: NotRequired[TaskAskHoldReason | None]
 class TaskAskStatusPending(TypedDict):
@@ -1499,7 +1547,9 @@ class TaskAskStatusChanged(TypedDict):
     Changed: TaskAskStatusChangedBody
 class TaskAskStatusSettled(TypedDict):
     Settled: TaskAskResult
-TaskAskStatus = TaskAskStatusPending | TaskAskStatusChanged | TaskAskStatusSettled
+class TaskAskStatusWorldPrivacy(TypedDict):
+    WorldPrivacy: WorldPrivacyRequest
+TaskAskStatus = TaskAskStatusPending | TaskAskStatusChanged | TaskAskStatusSettled | TaskAskStatusWorldPrivacy
 class TaskStatusView(TypedDict):
     handle: TaskHandle
     task_ref: NotRequired[EntityId | None]
@@ -2002,6 +2052,9 @@ class FanoutResumeRequest(TypedDict):
     plan_digest: str
     ruling: FanoutLaunchRuling
     remembered_cap: NotRequired[int | None]
+class DetailsOnDevice(TypedDict):
+    details_on_device: bool
+ActAnswer = DetailsOnDevice | T
 FanoutCheckChoice = Literal["ack", "ack_and_remember"]
 class FanoutAckRequest(TypedDict):
     launch_ref: EntityId
@@ -10691,6 +10744,15 @@ class WorkflowRunView(TypedDict):
     active_attempt_ref: EntityId
     steps: list[WorkflowStepCapture]
     results: list[WorkflowStepRun]
+class WorkflowPersonDispatchRequest(TypedDict):
+    workflow_ref: EntityId
+    intent_key: str
+    briefing: str
+    context_spec: NotRequired[ContextSpec | None]
+    task_ref: EntityId
+    cap_units: int
+    unit: str
+    shown_at_ms: int
 class WorkflowRunRequest(TypedDict):
     root_attempt_ref: EntityId
 class TaskTypeNodeSpec(TypedDict):
@@ -12022,7 +12084,9 @@ class TaskAskWaitReady(TypedDict):
     Ready: TaskAskResult
 class TaskAskWaitPark(TypedDict):
     Park: SelfDurableWait
-TaskAskWait = TaskAskWaitPending | TaskAskWaitChanged | TaskAskWaitReady | TaskAskWaitPark
+class TaskAskWaitWorldPrivacyReady(TypedDict):
+    WorldPrivacyReady: WorldPrivacyRequest
+TaskAskWait = TaskAskWaitPending | TaskAskWaitChanged | TaskAskWaitReady | TaskAskWaitPark | TaskAskWaitWorldPrivacyReady
 class TaskAnswerRequest(TypedDict):
     handle: TaskAskHandle
     word: TaskAskWord
@@ -14769,6 +14833,10 @@ class LexicalHit(TypedDict):
     score: float
     snippet: NotRequired[str | None]
     record: NotRequired[RecordRef | None]
+class Bm25Search(TypedDict):
+    value: list[LexicalHit]
+    narrowing: ScopedReadReceipt
+    residence: NotRequired[RecallResidence | None]
 class NeighborOpts(TypedDict):
     edge_kind: NotRequired[str | None]
     min_weight: NotRequired[float | None]
@@ -15820,6 +15888,7 @@ class OfficeBodyExportRecord(TypedDict):
     source_version: int
     actor: BodyActor
     author: str
+    token: NotRequired[str | None]
     at: int
     changes: int
     recalc: NotRequired[str | None]

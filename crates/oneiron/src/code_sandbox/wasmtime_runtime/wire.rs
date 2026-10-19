@@ -21,6 +21,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 mod describe;
+mod search;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -603,18 +604,7 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
                 tgt: value.tgt,
             }
         }),
-        SelfDispatchOutcome::MemorySearch(value) => json!({
-            "output": crate::code_run::MemorySearchOutput {
-                results: value
-                    .results
-                    .iter()
-                    .map(|hit| crate::code_run::MemorySearchHit {
-                        id: hit.id,
-                        score: hit.score,
-                    })
-                    .collect(),
-            }
-        }),
+        SelfDispatchOutcome::MemorySearch(value) => search::reply(value),
         // Any call that parks, and every call past a park, answers the wait.
         SelfDispatchOutcome::DurableWait(value) => json!({"waitId":value.wait_id.to_hex()}),
         SelfDispatchOutcome::TaskRefusal(value) => json!({
@@ -675,6 +665,9 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
                     generation: *generation,
                 },
                 TaskAskStatus::Settled(result) => TaskAskWait::Ready(result.clone()),
+                TaskAskStatus::WorldPrivacy(request) => {
+                    TaskAskWait::WorldPrivacyReady(request.clone())
+                }
             };
             json!({ "output": wait })
         }

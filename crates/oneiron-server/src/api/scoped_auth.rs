@@ -8,19 +8,29 @@ use axum::http::{HeaderMap, request::Parts};
 use oneiron::claim::CallerLocality;
 use oneiron::runtime_hooks::verb::{VerbAskCredentialSource, VerbAskInstrument};
 
-/// Gates the legacy `/api/*` routes on an owner-grade bearer.
+/// Gates the legacy `/api/*` routes on an owner-grade bearer, from the
+/// request's headers alone.
 ///
 /// These routes read the whole vault under one actor ref, so they stay a
 /// trust-root surface: scoped `/v1` delegation tokens do not reach them.
-/// On a managed vault a request with no slip is the host's root as before,
-/// and a caller's own forwarded slip keeps its own grade: a narrower one is
-/// refused, named, never served as the host (WILL-PLAN L14 row 01).
+/// On a managed vault a request with no slip is anonymous and refused, and
+/// a caller's own forwarded slip keeps its own grade: a narrower one is
+/// refused, named, never served as the host (WILL-PLAN L14 row 01). A slip
+/// the host holds never passes there: a managed vault's host acts as nobody
+/// (FIX 2222), and operator help on it goes through the owner's support
+/// grants (FIX 4408). It never names a managed vault's attested owner: a
+/// door that may take him asks [`check_request_auth`].
 pub(super) fn check_api_auth(
     headers: &HeaderMap,
     server: &SyncServer,
 ) -> Result<CoreAuth, ApiError> {
     if server.managed_issuer.is_some() {
         let auth = CoreAuth::for_server(headers, server)?;
+        if auth.is_host_holder() {
+            return Err(super::host_action::host_action_refusal(
+                oneiron::Error::HostActionRequiresSupportGrant,
+            ));
+        }
         if !auth.is_owner_grade() {
             return Err(crate::auth::caller_slip_too_narrow("this legacy door"));
         }
@@ -33,8 +43,9 @@ pub(super) fn check_api_auth(
 /// owner on (WILL-PLAN L14 row 01): on a managed vault the caller is the
 /// request's one caller ([`CoreAuth::for_managed_request`]), its own slip,
 /// else the attested owner while the vault records him as its live owner,
-/// else the host's root as before, at owner grade. Elsewhere it is the
-/// owner-grade credential the headers carry.
+/// at owner grade; a request with neither is anonymous and refused, never
+/// the host's root (FIX 2222). Elsewhere it is the owner-grade credential
+/// the headers carry.
 pub(super) fn check_request_auth(parts: &Parts, server: &SyncServer) -> Result<CoreAuth, ApiError> {
     let Some(auth) = managed_request_caller(parts, server) else {
         return require_owner_auth(&parts.headers, &server.config, server.vault().as_ref());
@@ -75,25 +86,13 @@ pub(crate) fn require_live_managed_owner(
         .ok_or_else(|| ApiError::forbidden_scope("owner"))
 }
 
-/// [`check_api_auth`] for an OWNER ACT door (FIX 2222): the grade it
+/// [`check_request_auth`] for an OWNER ACT door (FIX 2222): the grade it
 /// authenticates, then the owner-act admission
 /// ([`super::host_action::require_host_owner_act`]) before the door reads,
 /// writes or answers anything. On a self-hosted vault the host root and the
 /// dev mode act as the owner; a hosted operator's root gets the typed 403
 /// (`required_scope: support_grant`). A ROOT ADMIN door keeps
-/// [`check_api_auth`] alone.
-pub(super) fn check_api_owner_act(
-    headers: &HeaderMap,
-    server: &SyncServer,
-) -> Result<CoreAuth, ApiError> {
-    let auth = check_api_auth(headers, server)?;
-    super::host_action::require_host_owner_act(server, &auth)?;
-    Ok(auth)
-}
-
-/// [`check_api_owner_act`] for a door a managed vault's supervisor may
-/// attest the owner on: [`check_request_auth`]'s caller, then the same
-/// owner-act admission.
+/// [`check_request_auth`] alone.
 pub(super) fn check_request_owner_act(
     parts: &Parts,
     server: &SyncServer,
@@ -302,7 +301,9 @@ pub(crate) fn scoped_read_for_core_auth<'a>(
 /// refused on a hosted one (FIX 2222). A managed vault's attested owner reads
 /// with his own guarded key ([`managed_owner_read_key`]). Any other credential
 /// that verifies no slip reads only as the explicit local dev mode, with the
-/// owner's key; no other slip-less caller is taken for the host root.
+/// owner's key, which a managed vault never has
+/// ([`scoped_read_for_host_root`]); no other slip-less caller is taken for the
+/// host root.
 pub(super) fn scoped_read_for_legacy_api<'a>(
     server: &'a SyncServer,
     auth: &CoreAuth,
@@ -359,18 +360,17 @@ fn live_owner_read_key(
 
 /// The host root's read, for a caller whose connection sits at `locality`:
 /// the owner's guarded key on a self-hosted vault, the typed refusal on a
-/// hosted one (FIX 2222).
+/// hosted one (FIX 2222). A managed vault has none: its request is its own
+/// slip's or its attested owner's, else anonymous, and reads nothing as the
+/// host or as the dev mode.
 pub(super) fn scoped_read_for_host_root(
     server: &SyncServer,
     locality: CallerLocality,
 ) -> Result<oneiron::claim::ScopedRead<'_>, ApiError> {
-    let vault = server.vault().as_ref();
-    if let Some(issuer) = server.managed_issuer.as_ref() {
-        let proof = vault
-            .verified_host_root_slip(issuer)
-            .map_err(|_| ApiError::unauthorized())?;
-        return Ok(vault.scoped_read(credential_read_key(vault, &proof)?.at(locality)));
+    if server.managed_issuer.is_some() {
+        return Err(ApiError::forbidden_scope("owner"));
     }
+    let vault = server.vault().as_ref();
     if let Some(secret) = server.config.auth_secret.as_deref() {
         let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())
             .map_err(|_| ApiError::unauthorized())?;

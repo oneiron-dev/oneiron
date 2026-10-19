@@ -23,6 +23,40 @@ pub fn execute_live_skill_call(
     input: crate::code_run::SkillCallInput,
     runtime: &mut dyn JsCodeModeRuntime,
 ) -> MemoryResult<serde_json::Value> {
+    execute_live_skill_call_listing(vault, binding, dispatcher, executor, input, runtime).0
+}
+
+/// [`execute_live_skill_call`], beside the rows its answer stands on
+/// (DEC-0005): each stored skill a callable in it read and loaded (the one
+/// requested, the skill or proposal its load chose, and every one it
+/// called), the rows of each result a read took from another run, and the
+/// union of the rows the run's recorded and this call's nested verb answers
+/// were served from. `None` when one of those kept no set; a refusal before
+/// the call runs lists none.
+pub fn execute_live_skill_call_listing(
+    vault: &Vault,
+    binding: &HostBinding,
+    dispatcher: &GatedActorWrite<'_>,
+    executor: &ModelId,
+    input: crate::code_run::SkillCallInput,
+    runtime: &mut dyn JsCodeModeRuntime,
+) -> (MemoryResult<serde_json::Value>, Option<Vec<EntityId>>) {
+    let mut rows = Some(Vec::new());
+    let answer = live_skill_call(
+        vault, binding, dispatcher, executor, input, runtime, &mut rows,
+    );
+    (answer, rows)
+}
+
+fn live_skill_call(
+    vault: &Vault,
+    binding: &HostBinding,
+    dispatcher: &GatedActorWrite<'_>,
+    executor: &ModelId,
+    input: crate::code_run::SkillCallInput,
+    runtime: &mut dyn JsCodeModeRuntime,
+    rows: &mut Option<Vec<EntityId>>,
+) -> MemoryResult<serde_json::Value> {
     let leased = binding.leased_record(vault)?;
     let run = binding
         .executor_run()
@@ -53,6 +87,12 @@ pub fn execute_live_skill_call(
         runtime,
         root.token(),
     );
+    // Read before the record takes the step's calls, failed or not.
+    let (skills, read) = std::mem::take(&mut host.callable_rows);
+    *rows = host
+        .result_rows()
+        .zip(read)
+        .map(|(results, read)| [results, read, skills].concat());
     // Keep all recorded nested calls even when the callable failed. Loading
     // and a callable invocation witness never settle the attempt's outcome.
     record.bridge_calls.extend(host.bridge_calls);

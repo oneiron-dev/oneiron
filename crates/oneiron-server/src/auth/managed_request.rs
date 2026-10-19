@@ -9,11 +9,16 @@
 //! never the host's root (FIX 2222). A slip that fails is refused, never
 //! replaced by the owner's or the root's credential.
 //!
-//! A request that carries no slip is served as it was: the host's root,
-//! projected onto the vault's owner where his supervisor attested him for
-//! that one request (`ManagedOwnerAction`). A slip beside an attestation of
-//! the same person stays the slip, with its own bounds; beside another
-//! person's, the request is refused.
+//! A request that carries no slip, where its supervisor attested the
+//! vault's owner for it (`ManagedOwnerAction`), is that owner himself (FIX
+//! 5255): the person, with every owner scope and no host credential behind
+//! him, while the vault records him as its live owner. A request with
+//! neither is anonymous (FIX 2222, FIX 5255): it names no caller, so a door
+//! that needs one refuses it, and only the public doors, whose own
+//! capability, signature or provider proof stands alone, serve it; never
+//! the host's root or the dev mode. A slip beside an attestation of the same
+//! person stays the slip, with its own bounds; beside another person's, the
+//! request is refused.
 
 use axum::http::header::AUTHORIZATION;
 use axum::http::{Extensions, HeaderMap, request::Parts};
@@ -49,7 +54,7 @@ pub(crate) fn carries_caller_slip(headers: &HeaderMap) -> bool {
 /// never touches), for the child to verify. Any other bearer or connector
 /// credential terminated at the supervisor and is removed, as is a holder
 /// proof no slip rides with, so a request without a slip reaches the child
-/// as it always has.
+/// with no caller credential at all.
 pub(crate) fn forward_caller_credentials(headers: &mut HeaderMap) {
     let bearer = carries_caller_slip(headers);
     let connector = headers
@@ -76,6 +81,19 @@ pub(super) fn caller_binding_refused() -> ApiError {
          the owner's or the host's credential",
         ApiErrorDetails::Unauthorized,
         ["Present a live slip with a fresh holder proof, or send the request with no slip."],
+    )
+}
+
+/// The refusal of an owner attestation managed ingress could not verify
+/// over the request it came with: nothing stands in for it, neither the
+/// owner nor the host's root.
+pub(crate) fn owner_attestation_refused() -> ApiError {
+    ApiError::new(
+        "request is not authorized: managed_owner_attestation: the owner attestation this \
+         request carries did not verify over its method, path, query, placing headers and \
+         body; a refused attestation is never replaced by the host's credential",
+        ApiErrorDetails::Unauthorized,
+        ["Send the request again through the vault's supervisor, which signs it afresh."],
     )
 }
 
@@ -127,15 +145,17 @@ fn caller_conflicts_with_owner() -> ApiError {
 
 impl CoreAuth {
     /// The caller `headers` name on a managed vault: the slip they carry,
-    /// verified read-only, or, with none, the host's root as the supervisor
-    /// it serves. A slip that does not verify is refused, named.
+    /// verified read-only. A slip that does not verify is refused, named.
+    /// Headers that carry none name no caller: the request is anonymous and
+    /// refused here, never served as the host's root (FIX 2222). The owner
+    /// its supervisor attested is [`Self::for_managed_request`]'s, which
+    /// reads the request's extensions too.
     pub(super) fn managed_caller(
         headers: &HeaderMap,
         server: &SyncServer,
-        issuer: &oneiron::authority::HostSlipIssuer,
     ) -> Result<Self, ApiError> {
         let Some(token) = caller_slip(headers)? else {
-            return Self::managed_supervisor(server, issuer);
+            return Err(ApiError::unauthorized());
         };
         let proof = BindingProof::from_headers(headers).map_err(|_| caller_binding_refused())?;
         Self::from_slip_token(token, &proof, server.vault().as_ref()).map_err(|refused| {
@@ -147,60 +167,71 @@ impl CoreAuth {
         })
     }
 
-    /// The vault owner `holder` his supervisor attested for an act no HTTP
-    /// request carries: a managed voice hello's `ManagedOwnerAction`, once
-    /// the voice loop verified it (FIX 2391, FIX 5203). The same caller
-    /// [`Self::for_request`] makes of an attested request that carries no
-    /// slip, built without reading any header. Refused on a vault no
-    /// supervisor manages; the owner door still judges `holder` as the
-    /// vault's live owner.
+    /// The vault owner `holder` his supervisor attested: for an attested
+    /// request that carries no slip ([`Self::for_managed_request`]), and for
+    /// an act no HTTP request carries, a managed voice hello's
+    /// `ManagedOwnerAction` once the voice loop verified it (FIX 2391, FIX
+    /// 5203). The person himself, as a human, built without reading any
+    /// header and without the host's root: every owner scope, set here, and
+    /// no slip, instrument, token id or Grant of anyone's. Refused on a
+    /// vault no supervisor manages, and unless the vault records `holder` as
+    /// its live owner now (`require_live_managed_owner`), so no door that
+    /// takes this caller has to check that again.
     pub(crate) fn for_attested_owner(
         holder: oneiron::EntityId,
         server: &SyncServer,
     ) -> Result<Self, ApiError> {
-        let issuer = server
-            .managed_issuer
-            .as_ref()
-            .ok_or_else(ApiError::unauthorized)?;
-        Ok(Self::managed_supervisor(server, issuer)?.as_managed_owner(holder))
-    }
-
-    /// The host's root on a managed vault, for a request that carries no
-    /// caller slip: all scopes, as the supervisor's own.
-    fn managed_supervisor(
-        server: &SyncServer,
-        issuer: &oneiron::authority::HostSlipIssuer,
-    ) -> Result<Self, ApiError> {
-        let proof = server
-            .vault()
-            .verified_host_root_slip(issuer)
-            .map_err(|_| ApiError::unauthorized())?;
-        let mut auth = Self::from_verified(proof, true)?;
-        auth.principal = "managed-supervisor".to_owned();
+        if server.managed_issuer.is_none() {
+            return Err(ApiError::unauthorized());
+        }
+        let auth = Self {
+            principal: holder.to_hex(),
+            principal_ref: Some(holder.to_hex()),
+            scopes: super::CoreScope::owner(),
+            implicit_all_scopes: true,
+            jti: None,
+            actor_class: Some("human".to_owned()),
+            org_ref: None,
+            verified_slip: None,
+            invocation_slip: None,
+            instrument: None,
+            locality: oneiron::claim::CallerLocality::OffDevice,
+            peer: oneiron::authority::PeerMachine::Unknown,
+            facets_owner_exempt: false,
+            off_record_session: None,
+            managed_owner: Some(holder),
+        };
+        crate::api::require_live_managed_owner(server, &auth)?;
         Ok(auth)
     }
 
     /// The one caller of a request, from its headers and its extensions
-    /// together: the slip it carries, else the owner managed ingress
-    /// verified for it, else the host's own credential as before. A slip
-    /// beside another person's attestation is refused. The caller is then
-    /// placed where its connection sits, toward the machine it proved, at
-    /// the invitee door its path names and inside the session it names.
+    /// together: on a managed vault [`Self::for_managed_request`]'s, on any
+    /// other the credential its headers carry. The caller is then placed
+    /// where its connection sits, toward the machine it proved, at the
+    /// invitee door its path names and inside the session it names.
     pub(crate) async fn for_request(parts: &Parts, server: &SyncServer) -> Result<Self, ApiError> {
-        let auth = Self::for_server_async(&parts.headers, server).await?;
-        auth.of_request(
-            &parts.headers,
-            &parts.extensions,
-            request_path(parts),
-            server,
-        )
+        let path = request_path(parts);
+        if let Some(auth) =
+            Self::for_managed_request(&parts.headers, &parts.extensions, path, server)
+        {
+            return auth;
+        }
+        Ok(Self::for_server_async(&parts.headers, server)
+            .await?
+            .placed(&parts.headers, &parts.extensions, path))
     }
 
     /// [`Self::for_request`]'s caller on a managed vault, for a door that
     /// judges its caller without awaiting, from the request's headers,
-    /// extensions and path: a managed vault's callers never reach the
-    /// account-key door, so it is the same one caller. `None` on any other
-    /// vault, whose door keeps its own header path.
+    /// extensions and path: the slip the request carries, else the owner
+    /// managed ingress verified for it ([`Self::for_attested_owner`]), with
+    /// no header authenticated first. A request with neither is anonymous
+    /// and refused ([`Self::managed_caller`]): no host credential stands in
+    /// for a missing one. A slip beside another person's attestation is
+    /// refused. A managed vault's callers never reach the account-key door,
+    /// so it is the same one caller. `None` on any other vault, whose door
+    /// keeps its own header path.
     pub(crate) fn for_managed_request(
         headers: &HeaderMap,
         extensions: &Extensions,
@@ -208,38 +239,46 @@ impl CoreAuth {
         server: &SyncServer,
     ) -> Option<Result<Self, ApiError>> {
         server.managed_issuer.as_ref()?;
-        Some(
-            Self::for_server(headers, server)
-                .and_then(|auth| auth.of_request(headers, extensions, path, server)),
-        )
+        let caller = match attested_owner(extensions, server) {
+            None => Self::for_server(headers, server),
+            // The caller's own slip stays the caller, with its own bounds;
+            // the attestation lends it nothing.
+            Some(holder) if carries_caller_slip(headers) => Self::for_server(headers, server)
+                .and_then(|auth| {
+                    if auth.principal_ref() == Some(holder.to_hex().as_str()) {
+                        Ok(auth)
+                    } else {
+                        Err(caller_conflicts_with_owner())
+                    }
+                }),
+            Some(holder) => Self::for_attested_owner(holder, server),
+        };
+        Some(caller.map(|auth| auth.placed(headers, extensions, path)))
     }
 
-    /// The credential a request's headers carry, as that request's one
-    /// caller ([`Self::for_request`]), placed.
-    fn of_request(
-        self,
+    /// [`Self::for_managed_request`]'s caller for a door that otherwise
+    /// judges its caller by its headers alone (git smart HTTP and LFS, the
+    /// sync socket's upgrade), on a request managed ingress verified its
+    /// supervisor's owner attestation on: the owner himself
+    /// ([`Self::for_attested_owner`]), or the slip beside him that names
+    /// him. `None` for any other request, which keeps that door's own
+    /// header path as it was.
+    pub(crate) fn for_attested_request(
         headers: &HeaderMap,
         extensions: &Extensions,
         path: &str,
         server: &SyncServer,
-    ) -> Result<Self, ApiError> {
-        let auth = match attested_owner(extensions, server) {
-            None => self,
-            // The caller's own slip stays the caller, with its own bounds;
-            // the attestation lends it nothing.
-            Some(holder) if carries_caller_slip(headers) => {
-                if self.principal_ref() != Some(holder.to_hex().as_str()) {
-                    return Err(caller_conflicts_with_owner());
-                }
-                self
-            }
-            Some(holder) => self.as_managed_owner(holder),
-        };
-        Ok(auth
-            .at(caller_locality(headers, extensions))
+    ) -> Option<Result<Self, ApiError>> {
+        attested_owner(extensions, server)?;
+        Self::for_managed_request(headers, extensions, path, server)
+    }
+
+    /// This request's one caller ([`Self::for_request`]), placed.
+    fn placed(self, headers: &HeaderMap, extensions: &Extensions, path: &str) -> Self {
+        self.at(caller_locality(headers, extensions))
             .toward(proved_peer(headers, extensions))
             .at_invitee_door(path)
-            .in_off_record_session(crate::api::call_receipt::request_session_ref(headers)))
+            .in_off_record_session(crate::api::call_receipt::request_session_ref(headers))
     }
 }
 

@@ -232,6 +232,10 @@ pub struct ManagedArgs {
     /// Where this vault hands its authorized e-sign mail to the supervisor's
     /// sender (`--esign-delivery-outbox-dir`); no outbox runs without it.
     pub esign_delivery_outbox: Option<PathBuf>,
+    /// Where this vault writes its training offers and withdrawals for the
+    /// supervisor to ship, and reads the intake's receipts
+    /// (`--publisher-training-outbox-dir`); no outbox runs without it.
+    pub publisher_training_outbox: Option<PathBuf>,
 }
 
 impl ManagedArgs {
@@ -342,6 +346,7 @@ impl ManagedArgs {
             seal_signing_url: nonempty(args.seal_signing_url.as_deref()),
             seal_organ: args.seal_organ.clone(),
             esign_delivery_outbox: args.esign_delivery_outbox_dir.clone(),
+            publisher_training_outbox: args.publisher_training_outbox_dir.clone(),
         };
         if managed
             .artifact_socket
@@ -371,6 +376,10 @@ impl ManagedArgs {
             ("seal-trust-file", &managed.seal_trust),
             ("seal-organ", &managed.seal_organ),
             ("esign-delivery-outbox-dir", &managed.esign_delivery_outbox),
+            (
+                "publisher-training-outbox-dir",
+                &managed.publisher_training_outbox,
+            ),
         ] {
             if path.as_deref().is_some_and(std::path::Path::is_relative) {
                 return Err(ManagedError::RelativeRecipientFile { flag });
@@ -438,17 +447,21 @@ impl ManagedArgs {
     /// else on `ServeArgs` is refused before this runs, so nothing reaches
     /// here to be quietly dropped.
     ///
-    /// `auth_secret` stays `None` and unauthenticated requests are allowed:
-    /// bearer auth terminates at the supervisor, which owns the listening
-    /// socket inside an owner-only directory. Consulting
-    /// `ONEIRON_AUTH_SECRET` here would give the child a second, weaker
-    /// opinion about who may talk to it.
+    /// `auth_secret` stays `None`: bearer auth terminates at the supervisor,
+    /// which owns the listening socket inside an owner-only directory.
+    /// Consulting `ONEIRON_AUTH_SECRET` here would give the child a second,
+    /// weaker opinion about who may talk to it. Unauthenticated requests are
+    /// not allowed: a request the supervisor forwards is its caller's own
+    /// slip, the owner it attested, or anonymous, and an anonymous one never
+    /// takes the dev mode's owner credential at a door that reads headers
+    /// alone (FIX 2222, FIX 5255); the public doors serve it on their own
+    /// proofs.
     pub fn serve_config(&self, args: &ServeArgs) -> ServeConfig {
         let defaults = ServeConfig::default();
         let mut config = ServeConfig {
             vault_path: self.data_dir.clone(),
             auth_secret: None,
-            allow_unauthenticated: true,
+            allow_unauthenticated: false,
             // Browser origins are argv policy too, for the external shared UI.
             allowed_origins: args.allowed_origins.clone().unwrap_or_default(),
             // The host's public https origin and the URLs a kit dials, as
@@ -493,6 +506,8 @@ impl ManagedArgs {
             failure_signal_training: args.failure_signal_training,
             // The supervisor's e-sign delivery outbox, when it runs a sender.
             esign_delivery_outbox_dir: self.esign_delivery_outbox.clone(),
+            // The supervisor's training outbox, when it ships for one.
+            publisher_training_outbox_dir: self.publisher_training_outbox.clone(),
             ..defaults
         };
         if let Some(log_level) = args.log_level.clone() {
@@ -728,6 +743,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "esign-delivery-outbox-dir",
         |args| args.esign_delivery_outbox_dir.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "publisher-training-outbox-dir",
+        |args| args.publisher_training_outbox_dir.is_some(),
         ArgvUse::Read,
     ),
     // The bind: the supervisor's socket, never a host:port.

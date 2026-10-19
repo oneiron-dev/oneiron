@@ -283,9 +283,13 @@ pub fn open_served_vault<H: oneiron_vault_contract::host::Host>(
 pub(crate) async fn build_server(
     vault: Arc<oneiron::Vault>,
     config: &ServeConfig,
-    server_config: crate::config::SyncServerConfig,
+    mut server_config: crate::config::SyncServerConfig,
     owner_host: crate::owner::schedule::OwnerHost,
 ) -> anyhow::Result<(SyncServer, Option<tokio::task::JoinHandle<()>>)> {
+    // The Linear host's settings: `[linear]`, or with none the
+    // `ONEIRON_LINEAR_*` environment read into the same settings, never both.
+    server_config.linear =
+        crate::config::LinearConfig::or_environment(server_config.linear.take()).await?;
     // The one credential-broker context the `[models]` providers, the System
     // One seat, the embedder and the GPU pods send their vault-secret keys
     // through.
@@ -415,8 +419,6 @@ pub(crate) async fn start_desktop_workers(
 ) -> anyhow::Result<StartedWorkers> {
     #[cfg(unix)]
     let import_queue = super::history_import::queue::ImportQueue::from_config(config);
-    #[cfg(unix)]
-    let folder_rescans = super::history_import::notes::folder::FolderRescans::from_config(config);
     // Model seats, the Dreamer and the workflow pump, from `[models]`. With
     // no section every seat stays empty and the model-free server is whole.
     // A startup error below drops `ai`, which tells its workers to stop.
@@ -434,7 +436,12 @@ pub(crate) async fn start_desktop_workers(
     let oversight = sync_server
         .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, || Some(()))
         .await?;
-    let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
+    // The `[linear]` mirror, every pass admitted.
+    let linear_handle = crate::linear_host::spawn_configured(
+        sync_server.clone(),
+        crate::server::admit_every_pass(),
+    )
+    .await?;
     let lifecycle = sync_server.spawn_lifecycle_scheduler(lifecycle_admission());
     // An answered code consent wait's effect runs on this server, whatever
     // hooks or models it serves, before the connector settler starts
@@ -538,11 +545,22 @@ pub(crate) async fn start_desktop_workers(
             dir,
         )
     }));
+    // The publisher training outbox, only with its flag (OF-420).
+    workers.extend(config.publisher_training_outbox_dir.clone().map(|dir| {
+        crate::conversation_training::spawn(
+            Arc::clone(&sync_server),
+            crate::server::admit_every_pass(),
+            dir,
+            crate::conversation_training::Placement::SelfHost,
+        )
+    }));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
     // Attached folders rescan after the import queue starts (OF-554).
     #[cfg(unix)]
-    workers.extend(folder_rescans.map(|rescans| rescans.spawn(Arc::clone(&sync_server))));
+    workers.push(super::history_import::notes::folder::spawn_rescans(
+        Arc::clone(&sync_server),
+    ));
     // Open sockets may never close by themselves, so the drain is bounded.
     let (stopping, stopped) = tokio::sync::watch::channel(false);
     // Fact hooks (ARCH-0080) run unless `--no-hooks`; they stop with serve.

@@ -8,7 +8,10 @@
 //! after the call the guest's view of its result. A rewrite decodes back into
 //! the same call, which then meets its own gate as the guest's call would; the
 //! host's own fields carry over, and the refs it changes are admitted again. A
-//! Redact changes only the guest's view, never the run's record.
+//! Redact changes only the guest's view, never the run's record. In an
+//! off-record room the run's search takes its hooks in the room ([`session`]).
+
+mod session;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -92,7 +95,7 @@ impl HostSelfDispatcher<'_> {
     /// Runs the pre chain of `call`. `Ok` carries the call to dispatch,
     /// rewritten when a hook rewrote it, and what its post chain picks up;
     /// `Err` the answer a stop gives in its place. A run bound to an
-    /// off-record session runs no hook: its receipts would land on record.
+    /// off-record session runs its search's hooks in the room ([`session`]).
     /// A call no binding can take passes before its args are built, unless
     /// an earlier try of its invocation is parked on a hook's ask or settled
     /// there: that one always meets its saved continuation. A hook
@@ -106,8 +109,9 @@ impl HostSelfDispatcher<'_> {
         site: Option<ExecutorCallSite<'_>>,
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<std::result::Result<(SelfCall, HookedCall), SelfDispatchOutcome>> {
-        let ExecutorStorage::Canonical(vault) = &self.storage else {
-            return Ok(Ok((call, HookedCall(None))));
+        let vault = match &self.storage {
+            ExecutorStorage::Canonical(vault) => vault,
+            ExecutorStorage::Session(_) => return self.enter_room_verb_hooks(call, site, read_as),
         };
         if matches!(call, SelfCall::AgentVerb(_)) {
             return Ok(Ok((call, HookedCall(None))));
@@ -194,6 +198,9 @@ impl HostSelfDispatcher<'_> {
         hooked: HookedCall,
         outcome: SelfDispatchOutcome,
     ) -> Result<SelfDispatchOutcome> {
+        if let ExecutorStorage::Session(_) = &self.storage {
+            return self.leave_room_verb_hooks(hooked, outcome);
+        }
         let (Some(pre), ExecutorStorage::Canonical(vault)) = (hooked.0, &self.storage) else {
             return Ok(outcome);
         };
@@ -434,6 +441,10 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
         }
         SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Settled(result)) => {
             let wait = TaskAskWait::Ready(result.clone());
+            json!({"output": wait})
+        }
+        SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::WorldPrivacy(request)) => {
+            let wait = TaskAskWait::WorldPrivacyReady(request.clone());
             json!({"output": wait})
         }
         SelfDispatchOutcome::Speech(value) => {

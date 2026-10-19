@@ -68,6 +68,7 @@ pub(in crate::authority) fn apply_machine_profile(
         signer_class,
         entry: hash,
         act: None,
+        say_so: None,
     };
     let revisions = crate::authority::machine_standing::with_revision(
         roster_chain(state, profile.machine),
@@ -125,6 +126,9 @@ pub(in crate::authority) fn apply_machine_profile(
 /// that anchor's chain; the roster's chain and every other anchor's stay as
 /// they are. No install key and no host cosign vouches here. One past its
 /// signer's sequence floor lands restriction only, as a roster revision does.
+/// It is the owner's say-so (FIX 4610): what it saw is every revision of the
+/// machine its entry's parents held, and while it is live it supersedes an
+/// answer among them as an answer supersedes an anchor's head.
 pub(in crate::authority) fn apply_anchor_profile(
     state: &mut FoldState,
     anchor: [u8; 32],
@@ -144,6 +148,7 @@ pub(in crate::authority) fn apply_anchor_profile(
     if refused_revision(state, profile, head) {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
+    let say_so = super::owner_answers::SaySo::at(state, profile.machine);
     let folded = MachineRevision {
         profile: profile.clone(),
         conflicted: false,
@@ -155,6 +160,7 @@ pub(in crate::authority) fn apply_anchor_profile(
         signer_class: SignerClass::OwnerHeld,
         entry: hash,
         act: None,
+        say_so: Some(say_so),
     };
     let revisions =
         crate::authority::machine_standing::with_revision(chain, &folded, true, restriction_only);

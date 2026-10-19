@@ -3,6 +3,7 @@
 //! owner's hub doors, where it lands a candidate behind its own permission
 //! ask, so declaring a skill activates nothing.
 use super::invalid;
+use super::live::ShapeSources;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::skill::SkillLifecycle;
@@ -44,7 +45,9 @@ impl Vault {
     /// Imports the skill `source` carries, as `owner`, and checks it is the
     /// skill the row declares. A source carrying another skill or version
     /// refuses the item; what it imported stays a candidate, and plans as
-    /// undeclared.
+    /// undeclared. `sources` lists that candidate as soon as it lands,
+    /// beside either refusal; an import refused before it lands one reads
+    /// rows it does not name, so they are unknown.
     pub(super) fn import_shape_skill(
         &self,
         owner: &AuthenticatedOwner,
@@ -52,15 +55,16 @@ impl Vault {
         version: Option<&str>,
         source: &ShapeSkillSource,
         now: u64,
+        sources: &mut ShapeSources,
     ) -> Result<String> {
         let occurred = TimeRange {
             start: now,
             end: now,
         };
         owner.revalidate(self)?;
-        let entity = match source {
+        let imported = match source {
             ShapeSkillSource::Library { subtree } => {
-                self.import_default_hub_skill(subtree, occurred, now)?
+                self.import_default_hub_skill(subtree, occurred, now)
             }
             ShapeSkillSource::Hub {
                 hub,
@@ -68,14 +72,15 @@ impl Vault {
                 pin_type,
                 pin_value,
                 publisher,
-            } => self.import_skill_from_hub_ref(
-                owner,
-                EntityId::from_hex(hub).map_err(|_| invalid("a hub is named by entity id hex"))?,
-                folder,
-                hub_pin(pin_type, pin_value)?,
-                publisher,
-            )?,
+            } => EntityId::from_hex(hub)
+                .map_err(|_| invalid("a hub is named by entity id hex"))
+                .and_then(|hub| {
+                    let pin = hub_pin(pin_type, pin_value)?;
+                    self.import_skill_from_hub_ref(owner, hub, folder, pin, publisher)
+                }),
         };
+        let entity = imported.inspect_err(|_| sources.unknown())?;
+        sources.list(entity);
         let record = self
             .get_skill_record(&entity)?
             .ok_or_else(|| invalid("the import left no skill record"))?;

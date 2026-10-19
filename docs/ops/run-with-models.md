@@ -188,8 +188,14 @@ The file is read once at start, before anything else reads the configuration,
 and it is the vault's one settings layer. Each section the owner sets
 (`[limits]`, `[connectors.<name>]`, `[native_mail]`, `[browser]`, `[desktop]`,
 `[oneironer]`, `[embedding]`, `[self_heal]`, `[recall]`, `[skills]`,
-`[failure_signals]`, `[feedback]`, `[runtime]` and the rest) works as it does
-on a self-hosted server. A value the supervisor also passes on argv
+`[failure_signals]`, `[feedback]`, `[runtime]`, `[linear]` and the rest) works
+as it does on a self-hosted server. The `[linear]` mirror starts before the
+vault reports ready (settings it cannot use stop the start), admits each pass
+like a served write, and reads its API key or bridge token at each pass from
+the vault secret `api_key_secret` or `bridge_token_secret` names, bound to
+`connector:linear`; a direct mirror keeps its response custody in
+`<data_dir>.linear-responses` (`/vault/data.linear-responses` in the vault VM),
+made private at start. A value the supervisor also passes on argv
 (`--dimensions`, `--fast-dims`, `--map-size`, `--log-level`,
 `--dict-search-paths`, `--assistant-display-names`, `--maximum-tier`,
 `--failure-signal-export`, `--failure-signal-training`) keeps the supervisor's
@@ -204,7 +210,8 @@ names the field and never its value:
   `kit_bundle_public_urls`, `allow_unauthenticated`, `allowed_origins`,
   `artifact_domains`, `artifact_vault_name`, `trusted_proxies`,
   `lease_vault_id`, `privacy_posture`, `hosted_kms_key_ref`, `device_class`,
-  every `[models.broker]` key, `[models.voice] socket` and `[keystore] dir`.
+  every `[models.broker]` key, `[models.voice] socket`, `[keystore] dir` and
+  `[linear] response_dir`, which the vault derives itself.
   The supervisor passes the voice loop's socket as `--voice-socket`, the key
   directory as `--keystore-dir`, the host's public https origin as
   `--oauth-resource-indicator <url>` and the URLs a recovery kit dials as
@@ -239,6 +246,22 @@ background pass runs under the vault's write admission, so a vault frozen for
 reap fills nothing until it thaws. Without the file a managed vault runs on the
 defaults: no model seats (its ladder is the rule table and the owner's asks),
 no embedder (lexical and graph recall only) and no tagger.
+
+The supervisor gives a vault its publisher training outbox (OF-420, "Learn from
+my conversations") as `--publisher-training-outbox-dir <vault>/training-outbox`,
+an absolute path, on argv only: a settings file that names
+`publisher_training_outbox_dir` is refused `SupervisorOwned`. The vault keeps
+three subdirectories there, `offers/`, `controls/` and `receipts/`
+(`oneiron_vault_contract::conversation_training`), and reads the intake's keys
+from `intake-recipient.v1` (every offer chunk is sealed to it) and
+`intake-receipt-key.v1` (every receipt is checked against it). Without the
+recipient key it writes no offer, logs offers as unavailable naming the missing
+file, and still writes withdrawals; without the receipt key it applies no
+receipt. Offers wait for the vault's admission like every background pass;
+withdrawals the vault already recorded are written even while it is frozen for
+reap, and stay shippable from a cold vault. The supervisor binds the registry
+vault id and the node's bearer when it ships: the files carry the engine vault
+id and the install's signature only.
 
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
