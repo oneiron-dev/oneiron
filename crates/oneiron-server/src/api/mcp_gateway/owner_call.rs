@@ -2,9 +2,12 @@
 //!
 //! The owner's console carries no connector credential: its supervisor
 //! attests the vault's owner for one request (`ManagedOwnerAction`, verified
-//! at managed ingress). Such a request is the owner's own call, never a
-//! paired agent's or a slip's. A request that carries a credential stays
-//! that credential's caller, with its registration, scope and Grant.
+//! at managed ingress), or for the upgrade of his own held MCP socket, each
+//! of whose calls names that socket (`ManagedOwnerSession`, FIX 5128). Such
+//! a request is the owner's own call, never a paired agent's or a slip's,
+//! while the vault records him as its live owner. A request that carries a
+//! credential stays that credential's caller, with its registration, scope
+//! and Grant.
 
 use std::sync::Arc;
 
@@ -14,11 +17,9 @@ use oneiron::context_board::StreamConnectionId;
 
 use super::actor_dispatch::mcp_request_placement;
 use super::{MCP_CREDENTIAL_HEADER, McpCallContext, McpGatewayError, resolve_mcp_gateway_actor};
+use crate::auth::CoreAuth;
 use crate::mcp::{McpConnectorScope, McpResolvedActor, McpSurfaceMode};
 use crate::server::SyncServer;
-
-/// The route a managed vault's supervisor attests an owner's MCP call on.
-const MCP_OWNER_PATH: &str = "/mcp";
 
 /// The `blake3::derive_key` context of an attested owner's STREAM
 /// connection ([`owner_stream_connection`]).
@@ -26,10 +27,11 @@ const MCP_OWNER_STREAM_CONTEXT: &str = "oneiron-server 2026-10 mcp managed-owner
 
 /// The caller of one `/mcp` request. A request that carries no connector
 /// credential of its own, on a managed vault whose supervisor attested its
-/// owner for it, is that owner's own call ([`managed_owner_context`]). Any
-/// other request is the registered connector its credential names
-/// ([`resolve_mcp_gateway_actor`]); beside an attestation that credential
-/// stays the caller, with its own bounds, and must name the attested person.
+/// owner for it or for the held socket it came on, is that owner's own call
+/// ([`managed_owner_context`]). Any other request is the registered
+/// connector its credential names ([`resolve_mcp_gateway_actor`]); beside
+/// an attestation that credential stays the caller, with its own bounds,
+/// and must name the attested person.
 pub(crate) async fn resolve_mcp_caller(
     mode: McpSurfaceMode,
     request_id: &str,
@@ -38,11 +40,24 @@ pub(crate) async fn resolve_mcp_caller(
     locality: oneiron::claim::CallerLocality,
     server: &Arc<SyncServer>,
 ) -> Result<McpCallContext, McpGatewayError> {
-    let Some(owner) = crate::auth::attested_owner(connection, server) else {
+    let attested = crate::auth::attested_owner(connection, server);
+    let Some(owner) = attested.or_else(|| session_owner(connection, server)) else {
         return resolve_mcp_gateway_actor(mode, request_id, headers, locality, server).await;
     };
     if !headers.contains_key(MCP_CREDENTIAL_HEADER) && !headers.contains_key(AUTHORIZATION) {
-        return managed_owner_context(mode, request_id, headers, connection, owner, server);
+        // This request's own caller, or for a call on his held socket the
+        // owner himself, built again for this call.
+        let auth = match attested {
+            Some(_) => CoreAuth::for_managed_request(headers, connection, owner_path(mode), server)
+                .and_then(Result::ok),
+            None => CoreAuth::for_attested_owner(owner, server)
+                .ok()
+                .map(|auth| {
+                    auth.at(crate::auth::caller_locality(headers, connection))
+                        .toward(crate::auth::proved_peer(headers, connection))
+                }),
+        };
+        return managed_owner_context(mode, request_id, headers, owner, auth, server);
     }
     let context = resolve_mcp_gateway_actor(mode, request_id, headers, locality, server).await?;
     let principal = context
@@ -63,35 +78,27 @@ pub(crate) async fn resolve_mcp_caller(
 
 /// A managed vault's attested owner's own `/mcp` call: the person, as a
 /// human, vault-wide, while the vault records him as its live owner. Its
-/// auth is the request's one caller
-/// ([`CoreAuth::for_managed_request`](crate::auth::CoreAuth::for_managed_request)),
-/// so his reads run under his own key held to this request's owner proof,
-/// and each verb's own owner and Grant checks judge him. No registration
-/// stands behind it: no connector record, slip or bound-verb ceiling is made
-/// for him, and a call settlement runs again finds none. Pagination, wakes
-/// and code runs key on his own STREAM connection
-/// ([`owner_stream_connection`]).
+/// `auth` is the request's one caller
+/// ([`CoreAuth::for_managed_request`]), or on his held socket the owner
+/// himself ([`CoreAuth::for_attested_owner`]), so his reads run under his
+/// own key held to this call's owner proof, and each verb's own owner and
+/// Grant checks judge him. No registration stands behind it: no connector
+/// record, slip or bound-verb ceiling is made for him, and a call
+/// settlement runs again finds none. Pagination, wakes and code runs key on
+/// his own STREAM connection ([`owner_stream_connection`]).
 fn managed_owner_context(
     mode: McpSurfaceMode,
     request_id: &str,
     headers: &HeaderMap,
-    connection: &Extensions,
     owner: oneiron::EntityId,
+    auth: Option<CoreAuth>,
     server: &Arc<SyncServer>,
 ) -> Result<McpCallContext, McpGatewayError> {
-    let refused = || {
-        McpGatewayError::new(
-            -32001,
-            "mcp_auth_required",
-            "the attested owner is not this vault's live owner",
-        )
-    };
-    let auth =
-        crate::auth::CoreAuth::for_managed_request(headers, connection, MCP_OWNER_PATH, server)
-            .and_then(Result::ok)
-            .filter(|auth| auth.managed_owner() == Some(owner))
-            .ok_or_else(refused)?;
-    crate::api::scoped_auth::require_live_managed_owner(server, &auth).map_err(|_| refused())?;
+    let auth = auth
+        .filter(|auth| auth.managed_owner() == Some(owner))
+        .ok_or_else(owner_not_live)?;
+    crate::api::scoped_auth::require_live_managed_owner(server, &auth)
+        .map_err(|_| owner_not_live())?;
     let (session, room_turn) = mcp_request_placement(headers)?;
     let session_ref = session.map(|session| session.to_hex());
     let scope = McpConnectorScope::vault_wide();
@@ -123,6 +130,55 @@ fn managed_owner_context(
         drain: None,
         forwarded: None,
     })
+}
+
+/// The refusal of an owner's call the vault no longer records him as its
+/// live owner for.
+fn owner_not_live() -> McpGatewayError {
+    McpGatewayError::new(
+        -32001,
+        "mcp_auth_required",
+        "the attested owner is not this vault's live owner",
+    )
+}
+
+/// The route an owner's call on `mode` names, where its caller is placed.
+fn owner_path(mode: McpSurfaceMode) -> &'static str {
+    match mode {
+        McpSurfaceMode::Primary => crate::cli::McpSurface::Primary.path(),
+        McpSurfaceMode::ToolFirst => crate::cli::McpSurface::ToolFirst.path(),
+    }
+}
+
+/// The owner whose held MCP socket this request came on, on a managed vault
+/// (FIX 5128): what the socket's upgrade attested, never this request.
+fn session_owner(connection: &Extensions, server: &SyncServer) -> Option<oneiron::EntityId> {
+    connection
+        .get::<crate::managed::ManagedOwnerSession>()
+        .filter(|_| server.managed_issuer.is_some())
+        .map(crate::managed::ManagedOwnerSession::holder)
+}
+
+/// The owner a claimed MCP invocation is keyed by, as 32 hex, or empty for
+/// none: the one a managed vault's supervisor attested for this request,
+/// else the one whose held socket it came on (FIX 5128), who must still be
+/// the vault's live owner. Judged before an invocation is claimed or
+/// replayed, and again once a claim's wait is over, so a replay is never
+/// released to a socket whose owner no longer stands.
+pub(super) fn invocation_owner(
+    connection: &Extensions,
+    server: &SyncServer,
+) -> Result<String, McpGatewayError> {
+    if let Some(owner) = crate::auth::attested_owner(connection, server) {
+        return Ok(owner.to_hex());
+    }
+    let Some(owner) = session_owner(connection, server) else {
+        return Ok(String::new());
+    };
+    let auth = CoreAuth::for_attested_owner(owner, server).map_err(|_| owner_not_live())?;
+    crate::api::scoped_auth::require_live_managed_owner(server, &auth)
+        .map_err(|_| owner_not_live())?;
+    Ok(owner.to_hex())
 }
 
 /// An attested owner's STREAM connection: one per person, derived from him
