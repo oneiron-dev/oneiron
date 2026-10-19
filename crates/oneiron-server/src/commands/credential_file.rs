@@ -143,18 +143,24 @@ impl PairedCredentialFile {
         let mut text = String::new();
         file.read_to_string(&mut text)
             .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+        Self::parse(&text).ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} does not hold a paired credential ({PAIRED_PREFIX}…)",
+                path.display()
+            )
+        })
+    }
+
+    /// Reads the one-string form from `text`, whitespace around it ignored as
+    /// [`Self::read`] ignores it: `None` when `text` is not one. A device's
+    /// renewal reads its replacement with it before the file is written.
+    pub(crate) fn parse(text: &str) -> Option<Self> {
         text.trim()
             .strip_prefix(PAIRED_PREFIX)
             .and_then(|rest| rest.rsplit_once('.'))
             .map(|(slip, seed)| Self {
                 token: format!("v2.slip.{slip}"),
                 seed: seed.to_owned(),
-            })
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "{} does not hold a paired credential ({PAIRED_PREFIX}…)",
-                    path.display()
-                )
             })
     }
 

@@ -6,9 +6,10 @@
 //!
 //! It renews once at start, then at half each new slip's lifetime, which it
 //! reads from that slip's own claims: never the home's `expires_at` against
-//! this machine's clock. A renewal writes the replacement over the
-//! credential file and hands it to the connection, which is rebuilt on it.
-//! A failed one keeps the old file and connection, whose slip stays live
+//! this machine's clock. A renewal only fetches the replacement: the link
+//! writes it over the credential file itself, unless a stop came first, and
+//! rebuilds the connection on it (FIX 3563). A failed renewal, or a write
+//! that fails, keeps the old file and connection, whose slip stays live
 //! until it runs out, and tries again. A refusal (an expired or revoked slip)
 //! stands until this machine is paired again.
 
@@ -44,8 +45,9 @@ const PAIR_AGAIN: &str = "pair this machine again: stop the vault, remove its de
                           enrolment (the .json and .cred files) and run `oneiron device enrol` \
                           with a new link";
 
-/// A renewed credential, written to its file, and how long its slip lives.
-pub(super) struct Renewed {
+/// A renewed credential the home answered, not yet written to its file,
+/// and how long its slip lives.
+pub(super) struct Candidate {
     pub(super) credential: PairedCredentialFile,
     ttl_secs: u64,
 }
@@ -72,7 +74,7 @@ pub(super) struct Renewal {
     due: Instant,
     retry: Duration,
     /// The renewal under way, kept across a caller that stopped waiting.
-    in_flight: Option<JoinHandle<Result<Renewed, Failure>>>,
+    in_flight: Option<JoinHandle<Result<Candidate, Failure>>>,
     /// Refused or unusable: no renewal until the next start.
     refused: bool,
 }
@@ -105,10 +107,12 @@ impl Renewal {
         }
     }
 
-    /// The next renewed credential. Never ends once a renewal is refused.
-    /// Cancel-safe: a renewal still under way when the caller stops waiting
-    /// is the one the next call waits on.
-    pub(super) async fn next(&mut self) -> Renewed {
+    /// The next renewed credential, not yet written: the caller writes it
+    /// with [`Self::commit`], or reports it unused with [`Self::failed`].
+    /// Never ends once a renewal is refused. Cancel-safe: a renewal still
+    /// under way when the caller stops waiting is the one the next call
+    /// waits on, and one no call takes writes nothing.
+    pub(super) async fn next(&mut self) -> Candidate {
         loop {
             let Some(origin) = self.origin.clone().filter(|_| !self.refused) else {
                 return std::future::pending().await;
@@ -129,13 +133,7 @@ impl Renewal {
             let outcome = in_flight.await;
             self.in_flight = None;
             let reason = match outcome {
-                Ok(Ok(renewed)) => {
-                    let next = Duration::from_secs((renewed.ttl_secs / 2).max(1));
-                    self.due = Instant::now() + next;
-                    self.retry = RETRY_FIRST;
-                    tracing::info!(next_in_secs = next.as_secs(), "device credential renewed");
-                    return renewed;
-                }
+                Ok(Ok(candidate)) => return candidate,
                 Ok(Err(Failure::Refused(reason))) => {
                     tracing::warn!(
                         "device credential renewal refused ({reason}); the credential runs \
@@ -152,19 +150,51 @@ impl Renewal {
                 Ok(Err(Failure::Failed(reason))) => reason,
                 Err(error) => format!("the renewal task failed: {error}"),
             };
-            tracing::warn!(
-                retry_in_secs = self.retry.as_secs(),
-                "device credential renewal failed ({reason}); the current credential stays"
-            );
-            self.due = Instant::now() + self.retry;
-            self.retry = (self.retry * 2).min(RETRY_MOST);
+            self.failed(&reason);
         }
+    }
+
+    /// Writes `candidate` over the credential file, whole or not at all
+    /// ([`credential_file::replace`]), and says whether it landed. It awaits
+    /// nothing, so no stop comes between the caller's last look for one and
+    /// the write's end. Only a landed write is a renewal: the next one is due
+    /// at half the new slip's lifetime. A failed write keeps the old file and
+    /// is tried again as any failed renewal is.
+    pub(super) fn commit(&mut self, candidate: &Candidate) -> bool {
+        let written = credential_file::replace(
+            &self.credential_file,
+            candidate.credential.credential().as_bytes(),
+        );
+        match written {
+            Ok(()) => {
+                let next = Duration::from_secs((candidate.ttl_secs / 2).max(1));
+                self.due = Instant::now() + next;
+                self.retry = RETRY_FIRST;
+                tracing::info!(next_in_secs = next.as_secs(), "device credential renewed");
+                true
+            }
+            Err(error) => {
+                self.failed(&format!("{error:#}"));
+                false
+            }
+        }
+    }
+
+    /// A renewal that did not land, for `reason`: the current credential
+    /// stays, and it is tried again after the retry wait, which then doubles.
+    pub(super) fn failed(&mut self, reason: &str) {
+        tracing::warn!(
+            retry_in_secs = self.retry.as_secs(),
+            "device credential renewal failed ({reason}); the current credential stays"
+        );
+        self.due = Instant::now() + self.retry;
+        self.retry = (self.retry * 2).min(RETRY_MOST);
     }
 }
 
 /// One renewal of the credential `path` holds, off the async loop: the
-/// replacement, written over `path`, read back as the file now holds it.
-fn renew(origin: &str, path: &Path, vault: &oneiron::Vault) -> Result<Renewed, Failure> {
+/// replacement the home answered, read but not written.
+fn renew(origin: &str, path: &Path, vault: &oneiron::Vault) -> Result<Candidate, Failure> {
     let failed = |error: anyhow::Error| Failure::Failed(format!("{error:#}"));
     let current = PairedCredentialFile::read(path).map_err(failed)?;
     let replacement = oneiron_remote::OneironClient::renew_owner_device_credential(
@@ -183,7 +213,7 @@ fn renew(origin: &str, path: &Path, vault: &oneiron::Vault) -> Result<Renewed, F
             Failure::Failed(reason)
         }
     })?;
-    finish(path, &replacement)
+    candidate(&replacement)
 }
 
 /// The same renewal over one fresh mesh stream to the home: the same
@@ -194,7 +224,7 @@ async fn renew_mesh(
     path: &Path,
     vault: &oneiron::Vault,
     dialer: &dyn oneiron::sync::SyncDialer,
-) -> Result<Renewed, Failure> {
+) -> Result<Candidate, Failure> {
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, Uri, header};
     use oneiron::authority::{
@@ -271,20 +301,20 @@ async fn renew_mesh(
     CapabilitySlip::from_token(&reply.token)
         .map_err(|_| Failure::Failed(format!("the home answered {status} with no slip")))?;
     current.token = reply.token;
-    finish(path, &current.credential())
+    candidate(&current.credential())
 }
 
-/// Writes `replacement` over `path` and reads it back as the file now
-/// holds it, with its slip's lifetime.
-fn finish(path: &Path, replacement: &str) -> Result<Renewed, Failure> {
-    let failed = |error: anyhow::Error| Failure::Failed(format!("{error:#}"));
-    credential_file::replace(path, replacement.as_bytes()).map_err(failed)?;
-    let credential = PairedCredentialFile::read(path).map_err(failed)?;
+/// `replacement` read as the file would hold it, with its slip's lifetime.
+/// Nothing is written here: the link writes it ([`Renewal::commit`]).
+fn candidate(replacement: &str) -> Result<Candidate, Failure> {
+    let credential = PairedCredentialFile::parse(replacement).ok_or_else(|| {
+        Failure::Failed("the renewed credential is not a paired credential".to_owned())
+    })?;
     let ttl_secs = oneiron::authority::CapabilitySlip::from_token(&credential.token)
         .map_err(|_| Failure::Failed("the renewed credential holds no v2 slip".to_owned()))?
         .claims
         .ttl_secs;
-    Ok(Renewed {
+    Ok(Candidate {
         credential,
         ttl_secs,
     })

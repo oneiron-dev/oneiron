@@ -138,8 +138,13 @@ carries the slip, a holder proof with its key, and this machine's own proof.
 - On success the replacement, bound to the same seed, is written over the credential file (the
   enrolled `.cred` or the hand-named `credential_file`): to a new owner-only file beside it,
   synced, then renamed over it. The connection then stops and starts again on the new slip.
-- On failure the file and the connection stay as they are, and the renewal is tried again after
-  30 seconds, doubling up to 15 minutes. The old slip works until it runs out.
+- The connection's own loop writes the replacement, never the request that fetched it. A stop
+  that comes first leaves the file as it was, and the old slip works until it runs out; a write
+  already under way ends before serve stops, and stays. A request still waiting on the home at
+  stop writes nothing.
+- On failure, of the request or of the write, the file and the connection stay as they are, and
+  the renewal is tried again after 30 seconds, doubling up to 15 minutes. The old slip works
+  until it runs out.
 - A refusal (an expired or revoked slip, or a machine the home no longer counts as the owner's)
   stands until serve starts again. Pair the machine again: with the vault stopped, remove both
   device-sync files and run `oneiron device enrol` with a new link.
