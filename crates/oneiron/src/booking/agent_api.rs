@@ -41,7 +41,7 @@ pub const BOOKING_AGENT_INSTRUCTIONS_MIME: &str = "application/vnd.oneiron.booki
 // adapter in `super::constraint`.
 // -------------------------------------------------------------------------
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct TimeRangeWire {
     start: u64,
@@ -218,7 +218,7 @@ fn is_relative_same_origin_path(path: &str) -> bool {
 /// executor replaces it with a canonical [`ConstraintObject`] before the
 /// oracle is called, and [`crate::booking::SolveRequest`] has no text field to
 /// carry the original sentence even if a caller tried.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum BookingConstraintInput {
     Object(ConstraintObject),
@@ -226,11 +226,12 @@ pub enum BookingConstraintInput {
 }
 
 /// Ask the page's oracle for public slots.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BookingAvailabilityInput {
     pub event_type: EventTypeKey,
     #[serde(with = "time_range_serde")]
+    #[schemars(with = "TimeRangeWire")]
     pub window: TimeRange,
     pub visitor_tz: String,
     pub constraint: Option<BookingConstraintInput>,
@@ -239,7 +240,7 @@ pub struct BookingAvailabilityInput {
 
 /// One concrete UTC slot the caller picked out of an availability answer.
 /// Half-open `[start_utc, end_utc)`, the oracle's own convention.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SelectedSlot {
     pub start_utc: u64,
@@ -247,7 +248,7 @@ pub struct SelectedSlot {
 }
 
 /// One answer to one configured intake field.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BookingIntakeAnswer {
     pub field_key: String,
@@ -260,7 +261,7 @@ pub struct BookingIntakeAnswer {
 /// default, or the server-capped extension a VERIFIED server-issued checkout
 /// lease grants — a caller cannot ask for a longer hold, only present a lease
 /// the server minted.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BookingHoldInput {
     pub event_type: EventTypeKey,
@@ -275,7 +276,7 @@ pub struct BookingHoldInput {
 }
 
 /// Stage two of booking: convert a live hold into a booking.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BookingConfirmInput {
     pub hold_token: String,
@@ -287,7 +288,7 @@ pub struct BookingConfirmInput {
 }
 
 /// The typed two-stage book flow.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "stage", content = "input", rename_all = "snake_case")]
 pub enum BookingBookInput {
     Hold(BookingHoldInput),
@@ -306,7 +307,7 @@ impl BookingBookInput {
 }
 
 /// Move a booking, proving authority with its action-scoped reschedule token.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BookingRescheduleInput {
     pub reschedule_token: String,
@@ -317,7 +318,7 @@ pub struct BookingRescheduleInput {
 }
 
 /// Cancel a booking, proving authority with its action-scoped cancel token.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BookingCancelInput {
     pub cancel_token: String,
@@ -359,7 +360,7 @@ impl BookingOperationRequest {
 /// `SlotTaken` is a result, not an error: the lifecycle transition ran,
 /// decided nothing was writable, and returned the same oracle's nearest
 /// alternatives.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "stage", content = "result", rename_all = "snake_case")]
 pub enum BookingBookResult {
     Held {
@@ -390,7 +391,7 @@ pub enum BookingBookResult {
 /// and its answer nest to the same depth. A named field here would wrap the
 /// stage union in a second `result` object the request side has no counterpart
 /// for.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "op", content = "result", rename_all = "snake_case")]
 pub enum BookingOperationResponse {
     Availability {

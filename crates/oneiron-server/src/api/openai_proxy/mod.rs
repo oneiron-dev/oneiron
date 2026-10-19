@@ -31,13 +31,17 @@ use oneiron::{
     LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
     TierPrecedence,
 };
-use serde_json::{Value, json};
+use serde_json::json;
 
-use self::wire::{ChatCompletionRequest, ChatMessage, error, invalid};
+use self::wire::{error, invalid};
 use super::McpCallContext;
 use crate::auth::{CoreScope, Locality};
 use crate::mcp::McpSurfaceMode;
 use crate::server::SyncServer;
+use oneiron::task_verb::sdk::{
+    ChatCompletionMemory, ChatCompletionRememberError, ChatCompletionRemembered,
+    ChatCompletionRequest, ChatCompletionResponse, ChatMessage,
+};
 
 /// The predicate an exchange is proposed under (Engine ruling on OF-445,
 /// 10-17): the newest user text and the settled answer, one claim.
@@ -75,9 +79,50 @@ async fn complete(
     locality: CallerLocality,
     server: &Arc<SyncServer>,
     body: &[u8],
-) -> Result<Value, Response> {
+) -> Result<ChatCompletionResponse, Response> {
     let chat: ChatCompletionRequest = serde_json::from_slice(body)
         .map_err(|refused| invalid("invalid_body", refused.to_string()))?;
+    let actor = super::resolve_mcp_gateway_actor(
+        McpSurfaceMode::Primary,
+        "memory-proxy",
+        headers,
+        locality,
+        server,
+    )
+    .await
+    .map_err(|_| unauthorized())?;
+    complete_as(server, actor, chat, &mut Vec::new()).await
+}
+
+/// The generated SDK/MCP/facade projection, after that door verified the
+/// holder proof. Resolves the exact credential's registration, as the raw
+/// OpenAI route does; no owner or unregistered-actor fallback participates.
+pub(crate) async fn ai_chat_completions(
+    server: &Arc<SyncServer>,
+    auth: &crate::auth::CoreAuth,
+    session: Option<EntityId>,
+    chat: ChatCompletionRequest,
+) -> super::facade::host_doors::Listed<ChatCompletionResponse> {
+    let actor = super::mcp_gateway::resolve_mcp_actor_for_auth(server, auth, session).await;
+    let mut listed = Vec::new();
+    let answer = match actor {
+        Ok(actor) => complete_as(server, actor, chat, &mut listed).await,
+        Err(_) => Err(unauthorized()),
+    };
+    let answer = match answer {
+        Ok(answer) => Ok(answer),
+        Err(refused) => Err(wire::facade_error(refused).await),
+    };
+    (answer, listed)
+}
+
+/// Recall, inject, forward and propose, shared by every public door.
+async fn complete_as(
+    server: &Arc<SyncServer>,
+    actor: McpCallContext,
+    chat: ChatCompletionRequest,
+    listed: &mut Vec<EntityId>,
+) -> Result<ChatCompletionResponse, Response> {
     if chat.stream == Some(true) {
         return Err(invalid(
             "stream_unsupported",
@@ -98,7 +143,7 @@ async fn complete(
     };
     let query = chat.messages[newest].text();
     let completion_id = format!("chatcmpl-{}", EntityId::now().to_hex());
-    let (actor, landing) = admit_connector(headers, locality, server, &completion_id).await?;
+    let landing = admit_connector(&actor, server)?;
 
     let mut request = model_request(server, &chat)?;
     let (ladder, run) =
@@ -113,7 +158,7 @@ async fn complete(
     } else {
         CallerLocality::OffDevice
     };
-    let recalled = recall(server, &actor, reads_at, query.clone()).await?;
+    let recalled = recall(server, &actor, reads_at, query.clone(), listed).await?;
     let injected = recalled.is_some();
     if let Some(memory) = recalled {
         // Just before the message it was recalled for.
@@ -128,13 +173,7 @@ async fn complete(
         .map_err(wire::upstream_error)?;
     // A credential revoked while the model answered gets nothing back, and
     // proposes nothing.
-    if !actor
-        .auth
-        .as_ref()
-        .is_some_and(|auth| auth.credential_is_live(&server.vault))
-    {
-        return Err(unauthorized());
-    }
+    admit_connector(&actor, server)?;
     let answer = wire::answer_text(&response.message);
     let remembered = remember(server, &actor, landing, &query, &answer, &model);
     Ok(wire::completion(
@@ -142,7 +181,10 @@ async fn complete(
         super::params::unix_seconds_now(),
         &chat.model,
         &response,
-        json!({"injected": injected, "remembered": remembered}),
+        ChatCompletionMemory {
+            injected,
+            remembered,
+        },
     ))
 }
 
@@ -154,21 +196,10 @@ async fn complete(
 /// into it (FIX 1400); one narrowed any other way, or by record or channel,
 /// is refused, never widened. The actor also holds a live key on the proxy's
 /// own connector, its grant slate stamped.
-async fn admit_connector(
-    headers: &HeaderMap,
-    locality: CallerLocality,
-    server: &Arc<SyncServer>,
-    request_id: &str,
-) -> Result<(McpCallContext, Option<EntityId>), Response> {
-    let actor = super::resolve_mcp_gateway_actor(
-        McpSurfaceMode::Primary,
-        request_id,
-        headers,
-        locality,
-        server,
-    )
-    .await
-    .map_err(|_| unauthorized())?;
+fn admit_connector(
+    actor: &McpCallContext,
+    server: &SyncServer,
+) -> Result<Option<EntityId>, Response> {
     let auth = actor.auth.as_ref().ok_or_else(unauthorized)?;
     if !auth.credential_is_live(&server.vault) {
         return Err(unauthorized());
@@ -205,17 +236,22 @@ async fn admit_connector(
     }
     // An Active key bound to this actor, whose slate's owner stamp holds at
     // the revision the key admitted. A read that fails admits nothing.
-    let registered = server
-        .vault
+    let registration = server.vault
         .live_connector_registration(PROXY_CONNECTOR, &actor.actor_ref)
-        .is_ok_and(|registration| registration.is_some());
-    if !registered {
-        return Err(forbidden(
+        .ok().flatten().ok_or_else(|| forbidden(
             "connector_unregistered",
             "the paired actor holds no live openai_proxy connector key with a stamped grant slate; the owner admits it at POST /v1/owner/connectors/proxy",
+        ))?;
+    if ["vault.recall", "vault.remember"].iter().any(|tool| {
+        registration.slate.tool_setting(tool)
+            == oneiron::connector_key::SlateDisposition::NeverAllow
+    }) {
+        return Err(forbidden(
+            "connector_grant_revoked",
+            "the proxy needs both its read and remember grants",
         ));
     }
-    Ok((actor, landing))
+    Ok(landing)
 }
 
 /// The model call the body asks for, before the memory goes in. Only a
@@ -280,6 +316,7 @@ async fn recall(
     actor: &McpCallContext,
     reads_at: CallerLocality,
     query: String,
+    served: &mut Vec<EntityId>,
 ) -> Result<Option<LlmMessage>, Response> {
     let proof = actor
         .auth
@@ -308,6 +345,7 @@ async fn recall(
             input,
         )
         .await;
+    served.extend(listed.iter().copied());
     let pack = pack.map_err(|failed| {
         error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -350,7 +388,7 @@ fn remember(
     user: &str,
     answer: &str,
     model: &str,
-) -> Value {
+) -> ChatCompletionRemembered {
     let mut position = actor.scope.birth_position();
     if let Some(facet) = landing {
         position.facet = Some(facet);
@@ -379,21 +417,21 @@ fn remember(
         learned_at: None,
         salience: None,
     };
-    let narrowed = actor
-        .auth
-        .as_ref()
-        .is_some_and(|auth| auth.require_unrestricted_record_scope().is_err());
-    // Past the claim payload cap the exchange is refused, as any proposal
-    // is at the boundary.
-    match oneiron::memory::caps::check_claim_input(&input).and_then(|()| {
-        if narrowed {
-            memory.claim_propose_carried(&input)
-        } else {
-            memory.claim_propose(&input)
-        }
-    }) {
-        Ok(receipt) => json!({"claim": receipt.claim_short_id, "approval": receipt.approval}),
-        Err(refused) => json!({"error": {"code": refused.code, "message": refused.message}}),
+    // The shared carried-proposal writer checks the credential, placement,
+    // live proxy key and both slate legs in the transaction that writes.
+    match oneiron::memory::caps::check_claim_input(&input)
+        .and_then(|()| memory.claim_propose_for_proxy(&input))
+    {
+        Ok(receipt) => ChatCompletionRemembered::Saved {
+            claim: receipt.claim_short_id,
+            approval: receipt.approval,
+        },
+        Err(refused) => ChatCompletionRemembered::Refused {
+            error: ChatCompletionRememberError {
+                code: refused.code,
+                message: refused.message,
+            },
+        },
     }
 }
 

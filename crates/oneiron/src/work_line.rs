@@ -41,6 +41,14 @@ pub trait LineCrossing: Send + Sync {
     fn crossed(&self, bound: u64, observed: u64);
 }
 
+/// Observation of one caller's place in an existing line. It grants no
+/// permit and never changes the line's bound, order or deadline. Called
+/// outside the line's lock, before waiting and after the permit arrives.
+pub trait LineObserver: Send + Sync {
+    fn queued(&self);
+    fn held(&self);
+}
+
 /// A wait that reached its deadline before a permit came free. Nothing was
 /// started.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -176,7 +184,23 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
         &self,
         key: K,
     ) -> impl Future<Output = Result<LinePermit, WaitTimedOut>> + Send + 'static {
+        self.admit_in_line_observed(key, None)
+    }
+
+    /// The same permit and fair line as [`Self::admit_in_line`], with an
+    /// observation of this caller's queued/held transition.
+    pub fn admit_in_line_observed(
+        &self,
+        key: K,
+        observer: Option<Arc<dyn LineObserver>>,
+    ) -> impl Future<Output = Result<LinePermit, WaitTimedOut>> + Send + 'static {
         let entry = self.enter(Some(key));
+        if let Some(observer) = &observer {
+            match &entry {
+                Entry::Admitted(_) => observer.held(),
+                Entry::Queued(_) => observer.queued(),
+            }
+        }
         let wait = *lock(&self.pool.wait);
         async move {
             let mut place = match entry {
@@ -185,7 +209,11 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
             };
             let waiter = Arc::clone(&place.waiter);
             let _ = tokio::time::timeout(wait, waiter.granted()).await;
-            place.settle().ok_or(WaitTimedOut)
+            let permit = place.settle().ok_or(WaitTimedOut)?;
+            if let Some(observer) = observer {
+                observer.held();
+            }
+            Ok(permit)
         }
     }
 
@@ -479,8 +507,28 @@ impl Vault {
         &self,
         caller: EntityId,
     ) -> impl Future<Output = TaskWorkTurn> + Send + 'static {
-        let admitted = self.task_work.admit_in_line(caller);
-        async move { TaskWorkTurn::after(caller, admitted.await) }
+        self.admit_task_work_observed(caller, None)
+    }
+
+    /// The same task-work turn, reporting its wait to the serving call's
+    /// durable admission receipt when it has one.
+    pub fn admit_task_work_observed(
+        &self,
+        caller: EntityId,
+        observer: Option<Arc<dyn LineObserver>>,
+    ) -> impl Future<Output = TaskWorkTurn> + Send + 'static {
+        let admitted = self
+            .task_work
+            .admit_in_line_observed(caller, observer.clone());
+        async move {
+            let admitted = admitted.await;
+            if admitted.is_err()
+                && let Some(observer) = observer
+            {
+                observer.held();
+            }
+            TaskWorkTurn::after(caller, admitted)
+        }
     }
 
     /// [`Self::admit_task_work`] on this thread: for the embedded SDK, a

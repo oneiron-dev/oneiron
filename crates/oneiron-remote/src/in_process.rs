@@ -12,7 +12,9 @@
 //! handle) and claims no authority of its own.
 //!
 //! This crate holds no server type. The binding that runs the server
-//! implements the transport over the server's buffered request.
+//! implements the transport over the server's buffered request, and over its
+//! streamed one for a long call (`vault.export`), whose reply is read as the
+//! server writes it under the reader's own ceiling, never a buffered cap.
 
 use std::sync::Arc;
 
@@ -25,9 +27,17 @@ use crate::{Backend, OneironClient};
 /// runs.
 pub trait InProcessTransport: Send + Sync {
     /// Sends `request` and returns the whole reply; a 4xx or 5xx status is a
-    /// reply. `Err` is a request that reached no server, in words a caller
-    /// may read; it never repeats the request's headers.
-    fn exchange(&self, request: InProcessRequest) -> Result<InProcessReply, String>;
+    /// reply. `Err` is a request that reached no server, as the error the
+    /// handle raises: an embedded engine's names its cause's stable code
+    /// (`ENGINE_STOPPED`, ...). It never repeats the request's headers.
+    fn exchange(&self, request: InProcessRequest) -> Result<InProcessReply, MemoryError>;
+
+    /// [`Self::exchange`], returning once the reply's head arrives, with its
+    /// body read as the server writes it: no whole-body buffer and no
+    /// buffered reply cap, so the reader's own ceiling is the only one. A
+    /// long call (`vault.export`) rides it. A body that ends before the
+    /// server finished fails its read.
+    fn exchange_streamed(&self, request: InProcessRequest) -> Result<InProcessStream, MemoryError>;
 }
 
 /// One request a served client sends. Its headers carry the caller's
@@ -48,6 +58,15 @@ pub struct InProcessReply {
     /// Every header the reply carried, repeats included.
     pub headers: Vec<(String, Vec<u8>)>,
     pub body: Vec<u8>,
+}
+
+/// The server's reply to one streamed [`InProcessRequest`].
+pub struct InProcessStream {
+    pub status: u16,
+    /// Every header the reply carried, repeats included.
+    pub headers: Vec<(String, Vec<u8>)>,
+    /// The body as the server writes it.
+    pub body: Box<dyn std::io::Read + Send>,
 }
 
 impl OneironClient {

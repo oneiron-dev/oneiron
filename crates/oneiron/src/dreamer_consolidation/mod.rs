@@ -101,7 +101,9 @@ pub use resources::ScopedConsolidationWrite;
 pub use revert::{
     DreamerChange, DreamerChangeKind, DreamerChanges, DreamerRevertReceipt, RevertedDreamerChange,
 };
-pub(crate) use revert::{dreamer_changes_in_txn, revert_dreamer_change_in_txn};
+pub(crate) use revert::{
+    dreamer_changes_in_txn, revert_authored_change_in_txn, revert_dreamer_change_in_txn,
+};
 pub use roles::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, DREAMER_VERDICT_ROLE,
     RoleBackend, RoleBackends, RoleCall,

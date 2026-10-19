@@ -99,17 +99,24 @@ pub enum ManagedError {
     #[error("credentials fd rejected: {reason}")]
     CredentialsRejected { reason: String },
 
+    /// The real-tenant tripwire: `missing` names each isolation facility the
+    /// probe did not find, so the operator knows what to provision.
     #[error(
-        "refusing to open vault {vault:?} in managed mode: vault_meta carries no `{marker}` marker, and the hardened real-tenant preconditions are absent (managed mode requires a probed fscrypt policy AND a dedicated non-root UID owning the data directory). Without both, only explicitly marked synthetic canaries are admitted; this refusal is the real-tenant tripwire."
+        "refusing to open vault {vault:?} in managed mode, and it was not opened: vault_meta carries no `{marker}` marker, and this host has not provisioned the isolation a real tenant needs. Missing: {}. Provision them and start the vault again; only an explicitly marked synthetic canary opens without them, and marking a real tenant as one is no workaround.",
+        missing.join("; ")
     )]
-    ManagedRealTenantRefused { vault: String, marker: &'static str },
+    ManagedRealTenantRefused {
+        vault: String,
+        marker: &'static str,
+        missing: Vec<&'static str>,
+    },
 
     #[error(
         "managed vault {vault:?} DEK MAC mismatch at `{key}`: the delivered DEK does not match the one this vault was sealed under. Refused before reading any content."
     )]
     DekMacMismatch { vault: String, key: &'static str },
 
-    #[error("vault is frozen for reap; new writes are refused")]
+    #[error("{}", super::state_serve::WRITES_FROZEN_MESSAGE)]
     WritesFrozen,
 
     #[error("ctl line of {len} bytes exceeds the {cap}-byte cap; rejected whole")]
@@ -490,8 +497,9 @@ impl ManagedArgs {
     /// Serve configuration for managed mode, built from argv alone.
     ///
     /// Outside the managed group, the argv allowlist permits exactly the
-    /// fields read here: dimensions, map size, dictionary roots, log level
-    /// and `--no-hooks`.
+    /// fields read here: dimensions, map size, dictionary roots, log level,
+    /// `--no-hooks` and the owner's failure-signal export and training
+    /// choices.
     /// Everything else on `ServeArgs` is refused before this runs, so nothing
     /// reaches here to be quietly dropped.
     ///
@@ -530,6 +538,11 @@ impl ManagedArgs {
             // Our cloud sends feedback to our own inbox unless told otherwise
             // (ARCH-0056 r6); every send still asks the owner first.
             feedback: crate::config::FeedbackConfig::cloud_default(),
+            // The owner's "Help improve Oneiron" choice as the supervisor
+            // passes it, either way; unset, the managed default applies.
+            failure_signal_export: args.failure_signal_export,
+            // Training is its own explicit yes, off unless passed.
+            failure_signal_training: args.failure_signal_training.unwrap_or(false),
             ..defaults
         };
         if let Some(log_level) = args.log_level.clone() {
@@ -827,10 +840,16 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.trusted_proxies.is_some(),
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
     ),
+    // The owner's own choices, which the supervisor passes on (FIX 4488).
     (
         "failure-signal-export",
         |args| args.failure_signal_export.is_some(),
-        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+        ArgvUse::Read,
+    ),
+    (
+        "failure-signal-training",
+        |args| args.failure_signal_training.is_some(),
+        ArgvUse::Read,
     ),
     // Contract v1 has no managed privacy override: refuse instead of dropping it.
     (

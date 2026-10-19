@@ -93,6 +93,7 @@ impl EnvConfig {
         values.trusted_proxies = lookup_list(&mut lookup, "ONEIRON_TRUSTED_PROXIES");
         values.lease_vault_id = lookup_parse(&mut lookup, "ONEIRON_LEASE_VAULT_ID")?;
         values.dimensions = lookup_parse(&mut lookup, "ONEIRON_DIMENSIONS")?;
+        values.fast_dims = lookup_parse(&mut lookup, "ONEIRON_FAST_DIMS")?;
         values.map_size = lookup_parse(&mut lookup, "ONEIRON_MAP_SIZE")?;
         values.log_level = lookup("ONEIRON_LOG_LEVEL");
         values.dict_search_paths = lookup_path_list(&mut lookup, "ONEIRON_DICT_SEARCH_PATHS");
@@ -507,6 +508,7 @@ struct FileServeConfig {
     trusted_proxies: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
+    fast_dims: Option<u16>,
     map_size: Option<usize>,
     log_level: Option<String>,
     dict_search_paths: Option<Vec<PathBuf>>,
@@ -572,6 +574,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             trusted_proxies: value.trusted_proxies,
             lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
+            fast_dims: value.fast_dims,
             map_size: value.map_size,
             log_level: value.log_level,
             dict_search_paths: value.dict_search_paths,
@@ -638,6 +641,7 @@ struct PartialServeConfig {
     trusted_proxies: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
+    fast_dims: Option<u16>,
     map_size: Option<usize>,
     log_level: Option<String>,
     dict_search_paths: Option<Vec<PathBuf>>,
@@ -714,6 +718,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("dimensions", &self.dimensions)
+            .field("fast_dims", &self.fast_dims)
             .field("map_size", &self.map_size)
             .field("log_level", &self.log_level)
             .field("dict_search_paths", &self.dict_search_paths)
@@ -826,6 +831,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.dimensions {
             resolved.dimensions = value;
+        }
+        if let Some(value) = self.fast_dims {
+            resolved.fast_dims = Some(value);
         }
         if let Some(value) = self.map_size {
             resolved.map_size = value;
@@ -953,8 +961,9 @@ impl PartialServeConfig {
         if let Some(value) = self.connectors {
             resolved.connectors = value;
         }
+        // An explicit no stands as firmly as a yes.
         if let Some(value) = self.failure_signal_export {
-            resolved.failure_signal_export = value;
+            resolved.failure_signal_export = Some(value);
         }
         if let Some(value) = self.failure_signal_training {
             resolved.failure_signal_training = value;
@@ -998,6 +1007,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             trusted_proxies: value.trusted_proxies.clone(),
             lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
+            fast_dims: value.fast_dims,
             map_size: value.map_size,
             log_level: value.log_level.clone(),
             dict_search_paths: value.dict_search_paths.clone(),
