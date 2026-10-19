@@ -1260,6 +1260,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
             (
+                "vault.org_admin.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OrgAdminConfigureRequest,
+                >(),
+            ),
+            (
+                "vault.org_admin.powers",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OrgAdminPowersRequest,
+                >(),
+            ),
+            (
+                "vault.members.reset_project_access",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedProjectAccessResetRequest,
+                >(),
+            ),
+            (
+                "vault.members.delegate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FederationDelegateRequest,
+                >(),
+            ),
+            (
+                "vault.members.projection",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedMemberRequest,
+                >(),
+            ),
+            (
                 "vault.members.add",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::SharedMemberAddRequest,
@@ -1641,6 +1671,60 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "self.off_record.execute",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::OffRecordExecuteRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.rooms.status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordRoomRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.rooms.start",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordRoomStartRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.rooms.witness",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordRoomWitnessRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.rooms.save",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordRoomRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.rooms.save_from_here",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordRoomRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.rooms.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordRoomRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.rooms.suggest_save",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordRoomRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.rooms.confirm_save",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordRoomRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.rooms.decline_save",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordRoomRequest,
                 >(),
             ),
             (
@@ -5470,6 +5554,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.slim.resume_step",
     "vault.slim.drop_heavy",
     "vault.slim.resume",
+    "vault.org_admin.configure",
+    "vault.org_admin.powers",
+    "vault.members.reset_project_access",
+    "vault.members.delegate",
+    "vault.members.projection",
     "vault.shared.policy.get",
     "vault.shared.policy.propose",
     "vault.shared.policy.answer",
@@ -5514,6 +5603,15 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.off_record.notes.create",
     "vault.off_record.claims.upsert",
     "self.off_record.execute",
+    "vault.off_record.rooms.status",
+    "vault.off_record.rooms.start",
+    "vault.off_record.rooms.witness",
+    "vault.off_record.rooms.save",
+    "vault.off_record.rooms.save_from_here",
+    "vault.off_record.rooms.export",
+    "vault.off_record.rooms.suggest_save",
+    "vault.off_record.rooms.confirm_save",
+    "vault.off_record.rooms.decline_save",
     "vault.records.erase_sweep",
     "vault.research.create_child",
     "vault.research.archive",
@@ -6414,6 +6512,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.slim.resume" => {
             crate::code_run::vault_read::request_schema::<crate::slim::public::SlimResumeReceipt>()
         }
+        "vault.org_admin.configure" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OrgAdminConfigured,
+        >(),
+        "vault.org_admin.powers" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::OrgAdminPowers>()
+        }
+        "vault.members.reset_project_access" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::SharedProjectAccessReset,
+        >(),
+        "vault.members.delegate" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::FederationMemberGrant,
+        >(),
+        "vault.members.projection" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::MemberProjection>()
+        }
         "vault.shared.policy.get" => crate::code_run::vault_read::request_schema::<
             crate::federation::SharedActPoliciesView,
         >(),
@@ -6549,6 +6662,33 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "self.off_record.execute" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::OffRecordExecuted,
+        >(),
+        "vault.off_record.rooms.status" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordRoomView,
+        >(),
+        "vault.off_record.rooms.start" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordRoomView,
+        >(),
+        "vault.off_record.rooms.witness" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::WitnessReceipt>()
+        }
+        "vault.off_record.rooms.save" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordRoomSaved,
+        >(),
+        "vault.off_record.rooms.save_from_here" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordRoomView,
+        >(),
+        "vault.off_record.rooms.export" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordRoomExport,
+        >(),
+        "vault.off_record.rooms.suggest_save" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordRoomView,
+        >(),
+        "vault.off_record.rooms.confirm_save" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordRoomSaved,
+        >(),
+        "vault.off_record.rooms.decline_save" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordRoomView,
         >(),
         "vault.records.erase_sweep" => crate::code_run::vault_read::request_schema::<
             Option<crate::memory::erase_sweep::RecordEraseSweep>,
@@ -7738,6 +7878,15 @@ pub const NO_RECORD_ROWS: &[&str] = &[
     "vault.off_record.notes.create",
     "vault.off_record.claims.upsert",
     "self.off_record.execute",
+    "vault.off_record.rooms.status",
+    "vault.off_record.rooms.start",
+    "vault.off_record.rooms.witness",
+    "vault.off_record.rooms.save",
+    "vault.off_record.rooms.save_from_here",
+    "vault.off_record.rooms.export",
+    "vault.off_record.rooms.suggest_save",
+    "vault.off_record.rooms.confirm_save",
+    "vault.off_record.rooms.decline_save",
     "ai.anonymous_chat",
 ];
 pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> {
@@ -9569,6 +9718,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.shared.deletion" => &[],
+        "vault.org_admin.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.org_admin.powers" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.reset_project_access" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.delegate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.projection" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.members.add" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -10012,6 +10196,69 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.off_record.execute" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.rooms.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.rooms.start" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.rooms.witness" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.rooms.save" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.rooms.save_from_here" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.rooms.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.rooms.suggest_save" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.rooms.confirm_save" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.rooms.decline_save" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -15216,6 +15463,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.shared.deletion" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
+        "vault.org_admin.configure" => {
+            let _input: crate::task_verb::sdk::OrgAdminConfigureRequest = decode(value.clone())?;
+        }
+        "vault.org_admin.powers" => {
+            let _input: crate::task_verb::sdk::OrgAdminPowersRequest = decode(value.clone())?;
+        }
+        "vault.members.reset_project_access" => {
+            let _input: crate::task_verb::sdk::SharedProjectAccessResetRequest =
+                decode(value.clone())?;
+        }
+        "vault.members.delegate" => {
+            let _input: crate::task_verb::sdk::FederationDelegateRequest = decode(value.clone())?;
+        }
+        "vault.members.projection" => {
+            let _input: crate::task_verb::sdk::SharedMemberRequest = decode(value.clone())?;
+        }
         "vault.members.add" => {
             let _input: crate::task_verb::sdk::SharedMemberAddRequest = decode(value.clone())?;
         }
@@ -15421,6 +15684,33 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "self.off_record.execute" => {
             let _input: crate::task_verb::sdk::OffRecordExecuteRequest = decode(value.clone())?;
+        }
+        "vault.off_record.rooms.status" => {
+            let _input: crate::task_verb::sdk::OffRecordRoomRequest = decode(value.clone())?;
+        }
+        "vault.off_record.rooms.start" => {
+            let _input: crate::task_verb::sdk::OffRecordRoomStartRequest = decode(value.clone())?;
+        }
+        "vault.off_record.rooms.witness" => {
+            let _input: crate::task_verb::sdk::OffRecordRoomWitnessRequest = decode(value.clone())?;
+        }
+        "vault.off_record.rooms.save" => {
+            let _input: crate::task_verb::sdk::OffRecordRoomRequest = decode(value.clone())?;
+        }
+        "vault.off_record.rooms.save_from_here" => {
+            let _input: crate::task_verb::sdk::OffRecordRoomRequest = decode(value.clone())?;
+        }
+        "vault.off_record.rooms.export" => {
+            let _input: crate::task_verb::sdk::OffRecordRoomRequest = decode(value.clone())?;
+        }
+        "vault.off_record.rooms.suggest_save" => {
+            let _input: crate::task_verb::sdk::OffRecordRoomRequest = decode(value.clone())?;
+        }
+        "vault.off_record.rooms.confirm_save" => {
+            let _input: crate::task_verb::sdk::OffRecordRoomRequest = decode(value.clone())?;
+        }
+        "vault.off_record.rooms.decline_save" => {
+            let _input: crate::task_verb::sdk::OffRecordRoomRequest = decode(value.clone())?;
         }
         "vault.records.erase_preview" => {
             let _input: crate::task_verb::sdk::RecordEraseRequest = decode(value.clone())?;
@@ -18152,6 +18442,13 @@ pub fn invoke(
         "vault.shared.receipt" => encode(vault_shared_receipt(memory, decode(value)?)?),
         "vault.shared.outcomes" => encode(vault_shared_outcomes(memory, decode(value)?)?),
         "vault.shared.deletion" => encode(vault_shared_deletion(memory, decode(value)?)?),
+        "vault.org_admin.configure" => encode(vault_org_admin_configure(memory, decode(value)?)?),
+        "vault.org_admin.powers" => encode(vault_org_admin_powers(memory, decode(value)?)?),
+        "vault.members.reset_project_access" => {
+            encode(vault_members_reset_project_access(memory, decode(value)?)?)
+        }
+        "vault.members.delegate" => encode(vault_members_delegate(memory, decode(value)?)?),
+        "vault.members.projection" => encode(vault_members_projection(memory, decode(value)?)?),
         "vault.members.add" => encode(vault_members_add(memory, decode(value)?)?),
         "vault.members.invitation_slip" => {
             encode(vault_members_invitation_slip(memory, decode(value)?)?)
@@ -18288,6 +18585,34 @@ pub fn invoke(
             encode(vault_off_record_claims_upsert(memory, decode(value)?)?)
         }
         "self.off_record.execute" => encode(self_off_record_execute(memory, decode(value)?)?),
+        "vault.off_record.rooms.status" => {
+            encode(vault_off_record_rooms_status(memory, decode(value)?)?)
+        }
+        "vault.off_record.rooms.start" => {
+            encode(vault_off_record_rooms_start(memory, decode(value)?)?)
+        }
+        "vault.off_record.rooms.witness" => {
+            encode(vault_off_record_rooms_witness(memory, decode(value)?)?)
+        }
+        "vault.off_record.rooms.save" => {
+            encode(vault_off_record_rooms_save(memory, decode(value)?)?)
+        }
+        "vault.off_record.rooms.save_from_here" => encode(vault_off_record_rooms_save_from_here(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.off_record.rooms.export" => {
+            encode(vault_off_record_rooms_export(memory, decode(value)?)?)
+        }
+        "vault.off_record.rooms.suggest_save" => {
+            encode(vault_off_record_rooms_suggest_save(memory, decode(value)?)?)
+        }
+        "vault.off_record.rooms.confirm_save" => {
+            encode(vault_off_record_rooms_confirm_save(memory, decode(value)?)?)
+        }
+        "vault.off_record.rooms.decline_save" => {
+            encode(vault_off_record_rooms_decline_save(memory, decode(value)?)?)
+        }
         "vault.records.erase_preview" => {
             encode(vault_records_erase_preview(memory, decode(value)?)?)
         }
@@ -21693,6 +22018,44 @@ pub fn vault_shared_deletion(
 ) -> MemoryResult<Option<crate::federation::SharedVaultDeletion>> {
     crate::task_verb::sdk::read_shared_deletion(memory.vault())
 }
+pub fn vault_org_admin_configure(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OrgAdminConfigureRequest,
+) -> MemoryResult<crate::task_verb::sdk::OrgAdminConfigured> {
+    crate::task_verb::sdk::configure_org_admin_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.org_admin.configure")?,
+        input,
+    )
+}
+pub fn vault_org_admin_powers(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OrgAdminPowersRequest,
+) -> MemoryResult<crate::task_verb::sdk::OrgAdminPowers> {
+    crate::task_verb::sdk::read_org_admin_powers(memory, input)
+}
+pub fn vault_members_reset_project_access(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedProjectAccessResetRequest,
+) -> MemoryResult<crate::task_verb::sdk::SharedProjectAccessReset> {
+    crate::task_verb::sdk::reset_shared_project_access(memory, input)
+}
+pub fn vault_members_delegate(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FederationDelegateRequest,
+) -> MemoryResult<crate::task_verb::sdk::FederationMemberGrant> {
+    crate::task_verb::sdk::create_federation_delegate_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.delegate")?,
+        input,
+    )
+}
+pub fn vault_members_projection(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedMemberRequest,
+) -> MemoryResult<crate::task_verb::sdk::MemberProjection> {
+    crate::task_verb::sdk::read_member_projection(memory, input)
+}
 pub fn vault_members_add(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::SharedMemberAddRequest,
@@ -22230,6 +22593,76 @@ pub fn self_off_record_execute(
     input: crate::task_verb::sdk::OffRecordExecuteRequest,
 ) -> MemoryResult<crate::task_verb::sdk::OffRecordExecuted> {
     crate::task_verb::sdk::off_record_host_only(memory, "self.off_record.execute", &input)
+}
+pub fn vault_off_record_rooms_status(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordRoomRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordRoomView> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.rooms.status", &input)
+}
+pub fn vault_off_record_rooms_start(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordRoomStartRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordRoomView> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.rooms.start", &input)
+}
+pub fn vault_off_record_rooms_witness(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordRoomWitnessRequest,
+) -> MemoryResult<crate::memory::WitnessReceipt> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.rooms.witness", &input)
+}
+pub fn vault_off_record_rooms_save(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordRoomRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordRoomSaved> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.rooms.save", &input)
+}
+pub fn vault_off_record_rooms_save_from_here(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordRoomRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordRoomView> {
+    crate::task_verb::sdk::off_record_host_only(
+        memory,
+        "vault.off_record.rooms.save_from_here",
+        &input,
+    )
+}
+pub fn vault_off_record_rooms_export(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordRoomRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordRoomExport> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.rooms.export", &input)
+}
+pub fn vault_off_record_rooms_suggest_save(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordRoomRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordRoomView> {
+    crate::task_verb::sdk::off_record_host_only(
+        memory,
+        "vault.off_record.rooms.suggest_save",
+        &input,
+    )
+}
+pub fn vault_off_record_rooms_confirm_save(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordRoomRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordRoomSaved> {
+    crate::task_verb::sdk::off_record_host_only(
+        memory,
+        "vault.off_record.rooms.confirm_save",
+        &input,
+    )
+}
+pub fn vault_off_record_rooms_decline_save(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordRoomRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordRoomView> {
+    crate::task_verb::sdk::off_record_host_only(
+        memory,
+        "vault.off_record.rooms.decline_save",
+        &input,
+    )
 }
 pub fn vault_records_erase_preview(
     memory: &Memory<'_>,

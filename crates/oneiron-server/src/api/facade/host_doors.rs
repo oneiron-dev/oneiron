@@ -63,6 +63,7 @@ pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::agent_definition_doors::*;
 pub(crate) use super::shared_act_doors::*;
+pub(crate) use super::shared_admin_doors::*;
 // The shared-vault invitation doors (OF-531) too.
 pub(crate) use super::shared_member_doors::*;
 // The shared-act policy doors (DOOR-129) too.
@@ -107,6 +108,7 @@ pub(crate) use super::fold_doors::*;
 pub(crate) use super::foreign_code_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::off_record_doors::*;
+pub(crate) use super::off_record_room_doors::*;
 pub(crate) use super::persona_doors::*;
 pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
@@ -1550,6 +1552,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.trusted_contacts.concern.asks"
         | "vault.trusted_contacts.concern.authorize"
         | "vault.trusted_contacts.concern.propose"
+        | "vault.org_admin.configure"
         | "vault.shared.policy.get"
         | "vault.shared.policy.change"
         | "vault.notes.history_purge"
@@ -1578,6 +1581,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.execute"
         | "vault.shared.receipt"
         | "vault.shared.outcomes"
+        | "vault.members.delegate"
         | "vault.members.add"
         | "vault.members.change"
         | "vault.members.remove"
@@ -1617,6 +1621,17 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.off_record.claims.upsert"
         | "self.off_record.execute" => {
             super::off_record_doors::off_record_admits(server, auth, verb)
+        }
+        "vault.off_record.rooms.start"
+        | "vault.off_record.rooms.status"
+        | "vault.off_record.rooms.witness"
+        | "vault.off_record.rooms.save"
+        | "vault.off_record.rooms.save_from_here"
+        | "vault.off_record.rooms.suggest_save"
+        | "vault.off_record.rooms.confirm_save"
+        | "vault.off_record.rooms.decline_save"
+        | "vault.off_record.rooms.export" => {
+            super::off_record_room_doors::off_record_room_admits(auth, verb)
         }
         "vault.guests.export_envelope" => {
             super::guest_document_doors::guest_document_reader(server, auth).map(drop)

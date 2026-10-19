@@ -24465,7 +24465,7 @@
      "purpose": "Vault-resident default capability rows for member-grant minting",
      "surface": {
       "crate-vis": 9,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -24541,7 +24541,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "mod": 2,
       "re-export": 18
      }
@@ -24558,7 +24558,7 @@
      "purpose": "Closed organization-administration powers",
      "surface": {
       "enum": 2,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -24701,6 +24701,7 @@
      "purpose": "Member-to-person binding, label trust classes, and relationship claim doors",
      "surface": {
       "const": 3,
+      "crate-vis": 1,
       "enum": 2,
       "fn": 6,
       "struct": 1
@@ -52436,7 +52437,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 63,
+      "re-export": 65,
       "struct": 40
      }
     },
@@ -52873,7 +52874,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 971
+      "fn": 985
      }
     },
     {
@@ -53224,6 +53225,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "OffRecordRoomExport",
+      "OffRecordRoomExportTurn",
+      "OffRecordRoomNotice",
+      "OffRecordRoomRequest",
+      "OffRecordRoomSaved",
+      "OffRecordRoomSavedTurn",
+      "OffRecordRoomShortIdPair",
+      "OffRecordRoomStartRequest",
+      "OffRecordRoomSuggestion",
+      "OffRecordRoomView",
+      "OffRecordRoomWitnessRequest"
+     ],
+     "path": "src/task_verb/sdk_off_record_rooms.rs",
+     "purpose": "The typed room off-record doors (ARCH-0052 D5, PRIVACY-07)",
+     "surface": {
+      "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CompanionAccessRequestAnswer",
       "CompanionAccessRequestAnswerRequest",
       "CompanionAccessRequestAnswered",
@@ -53549,6 +53572,27 @@
       "crate-vis": 1,
       "fn": 14,
       "struct": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FederationDelegateRequest",
+      "FederationMemberGrant",
+      "MemberProjection",
+      "OrgAdminConfigureRequest",
+      "OrgAdminConfigured",
+      "OrgAdminPowers",
+      "OrgAdminPowersRequest",
+      "SharedProjectAccessReset",
+      "SharedProjectAccessResetRequest"
+     ],
+     "path": "src/task_verb/sdk_shared_admin.rs",
+     "purpose": "Named organization administration, one-hop Delegate grants and scoped member projections",
+     "surface": {
+      "fn": 5,
+      "struct": 9
      }
     },
     {
@@ -57102,7 +57146,7 @@
      "path": "src/workspace_roster/project/roster.rs",
      "purpose": "The authenticated roster-update door (OF-417 slice 2)",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -60364,7 +60408,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 180,
+     "files": 182,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60534,7 +60578,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3692,
+   "source_files": 3694,
    "test_files": 902
   },
   "oneiron-android": {
@@ -60546,7 +60590,7 @@
      "path": "src/engine.rs",
      "purpose": "The embedded engine (OF-237) behind the Kotlin `EmbeddedEngine`: the full server `oneiron serve` runs, in…",
      "surface": {
-      "fn": 10
+      "fn": 11
      }
     },
     {
@@ -60557,7 +60601,17 @@
      "purpose": "Minimal JNI/Kotlin ownership adapter",
      "surface": {
       "fn": 10,
-      "mod": 1
+      "mod": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/reads.rs",
+     "purpose": "The Kotlin `EmbeddedVault`'s context pack, text search and graph reads, lowered to the same core reads the C…",
+     "surface": {
+      "fn": 6
      }
     }
    ],
@@ -60568,11 +60622,18 @@
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The embedded engine (OF-237) behind the Kotlin `EmbeddedEngine`: the full server `oneiron serve` runs, in…"
+    },
+    "reads": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The Kotlin `EmbeddedVault`'s context pack, text search and graph reads, lowered to the same core reads the C…"
     }
    },
    "over_bar": 0,
    "purpose": "Minimal JNI/Kotlin ownership adapter",
-   "source_files": 2,
+   "source_files": 3,
    "test_files": 0
   },
   "oneiron-authority": {
@@ -66755,8 +66816,22 @@
      "path": "src/lib/engine.rs",
      "purpose": "The embedded engine (OF-237): the full server `oneiron serve` runs, in the app's own process, over the vault…",
      "surface": {
-      "fn": 13,
+      "fn": 15,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OneironEngineErrorCode"
+     ],
+     "path": "src/lib/engine_error.rs",
+     "purpose": "Why an embedded engine call failed (OF-237): each call that fails `EngineError` leaves its cause on the…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -66797,7 +66872,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -66855,7 +66930,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -66864,7 +66939,7 @@
    },
    "over_bar": 0,
    "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
-   "source_files": 10,
+   "source_files": 11,
    "test_files": 1
   },
   "oneiron-guest": {
@@ -69125,7 +69200,21 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 942
+      "fn": 956
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NapiEngineOptions",
+      "NativeEngine"
+     ],
+     "path": "src/facade/client/embedded_engine.rs",
+     "purpose": "The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron…",
+     "surface": {
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -69384,7 +69473,7 @@
      "purpose": "JS bindings for the typed `companion.expression.*` doors"
     },
     "facade": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69407,7 +69496,7 @@
    },
    "over_bar": 2,
    "purpose": "—",
-   "source_files": 21,
+   "source_files": 22,
    "test_files": 1
   },
   "oneiron-organ-host": {
@@ -70139,6 +70228,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedded_engine.rs",
+     "purpose": "The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
@@ -70158,6 +70257,13 @@
     }
    ],
    "modules": {
+    "embedded_engine": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron…"
+    },
     "pairing": {
      "files": 1,
      "impl_vault": false,
@@ -70168,7 +70274,7 @@
    },
    "over_bar": 1,
    "purpose": "`oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1)",
-   "source_files": 3,
+   "source_files": 4,
    "test_files": 0
   },
   "oneiron-remote": {
@@ -70188,7 +70294,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 943
+      "fn": 957
      }
     },
     {
@@ -70228,13 +70334,14 @@
      "notable": [
       "InProcessReply",
       "InProcessRequest",
+      "InProcessStream",
       "InProcessTransport"
      ],
      "path": "src/in_process.rs",
      "purpose": "A served client (OF-237): the remote backend over an `oneiron-server` this process runs, with no socket…",
      "surface": {
       "fn": 1,
-      "struct": 2,
+      "struct": 3,
       "trait": 1
      }
     },
@@ -73701,7 +73808,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 153
+      "crate-vis": 155
      }
     },
     {
@@ -73852,6 +73959,16 @@
      "purpose": "The host doors of the off-record session rows (DOOR-127, e2e PRIVACY-06)",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/off_record_room_doors.rs",
+     "purpose": "Typed room off-record verbs over the existing participant handlers",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -74072,6 +74189,16 @@
      "purpose": "The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)…",
      "surface": {
       "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/shared_admin_doors.rs",
+     "purpose": "Typed named Admin policy/powers and the one-hop scoped Delegate mint",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -74781,7 +74908,7 @@
      "path": "src/api/off_record_rooms.rs",
      "purpose": "Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 11
      }
     },
     {
@@ -77849,26 +77976,71 @@
      "surface": {
       "crate-vis": 6,
       "fn": 1,
-      "re-export": 2
+      "re-export": 5
      }
     },
     {
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "BlockingBody",
       "BlockingConnection",
       "BlockingEngine",
+      "BlockingReply"
+     ],
+     "path": "src/embedded/blocking.rs",
+     "purpose": "The embedded engine for a binding whose callers are app threads (OF-237): [`BlockingEngine`] runs an…",
+     "surface": {
+      "fn": 15,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EmbeddedBody",
       "EmbeddedConnection",
       "EmbeddedEngine",
       "EmbeddedReply",
+      "EmbeddedReplyStream",
       "EmbeddedRequest"
      ],
      "path": "src/embedded/engine.rs",
      "purpose": "The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding",
      "surface": {
       "const": 1,
-      "fn": 28,
+      "fn": 20,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EngineErrorKind",
+      "EngineFailure"
+     ],
+     "path": "src/embedded/failure.rs",
+     "purpose": "Why an embedded engine call failed, by cause (OF-237): the one projection every binding raises, a stable…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProcessHost"
+     ],
+     "path": "src/embedded/process_host.rs",
+     "purpose": "The app host of a binding whose app is a plain process (OF-237): the Python and Node served clients, which…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -81704,7 +81876,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 418,
+     "files": 420,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81872,7 +82044,7 @@
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…"
     },
     "embedded": {
-     "files": 2,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -82133,7 +82305,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 769,
+   "source_files": 774,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82298,7 +82470,7 @@
      "path": "src/embedded_engine.rs",
      "purpose": "The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the…",
      "surface": {
-      "fn": 11,
+      "fn": 13,
       "struct": 6,
       "trait": 1
      }
@@ -83425,9 +83597,11 @@
       "FanoutSlotTerminal",
       "FanoutStatement",
       "FatalLlmError",
+      "FederationDelegateRequest",
       "FederationDirectionScope",
       "FederationGrantRole",
       "FederationGrantScope",
+      "FederationMemberGrant",
       "FederationPactScope",
       "FederationPactStatus",
       "FeedbackCategory",
@@ -83958,6 +84132,9 @@
       "MediaUsage",
       "MemberAnswer",
       "MemberOnboardingOutcome",
+      "MemberProjection",
+      "MemberRelationship",
+      "MemberRelationshipContext",
       "MemberVerdict",
       "MembershipConsent",
       "MemoryExport",
@@ -83998,6 +84175,8 @@
       "MessageReactionExternal",
       "MessageReactionReceipt",
       "MessageReactionRequest",
+      "MessageResultAttachment",
+      "MessageResultSource",
       "MessageStreamHandle",
       "MessageStreamMode",
       "MessageStreamOptions",
@@ -84143,11 +84322,24 @@
       "OffRecordExecuted",
       "OffRecordMode",
       "OffRecordNoteRequest",
+      "OffRecordNoticeAct",
       "OffRecordRecallRequest",
+      "OffRecordRoomExport",
+      "OffRecordRoomExportTurn",
+      "OffRecordRoomNotice",
+      "OffRecordRoomRequest",
+      "OffRecordRoomSaved",
+      "OffRecordRoomSavedTurn",
+      "OffRecordRoomShortIdPair",
+      "OffRecordRoomStartRequest",
+      "OffRecordRoomSuggestion",
+      "OffRecordRoomView",
+      "OffRecordRoomWitnessRequest",
       "OffRecordRunStatus",
       "OffRecordSessionRequest",
       "OffRecordSessionView",
       "OffRecordStartRequest",
+      "OffRecordTalkMessage",
       "OffRecordWitnessRequest",
       "Offer",
       "OfferAnswer",
@@ -84221,6 +84413,12 @@
       "OpenInput",
       "OpenSpendLeaseRequest",
       "OracleReceipt",
+      "OrgAdminConfigureRequest",
+      "OrgAdminConfigured",
+      "OrgAdminPolicy",
+      "OrgAdminPower",
+      "OrgAdminPowers",
+      "OrgAdminPowersRequest",
       "OrganWaitView",
       "OriginAuthority",
       "OriginAuthoritySetRequest",
@@ -84495,6 +84693,7 @@
       "RefusalOutcome",
       "RelationshipChange",
       "RelationshipContext",
+      "RelationshipTrustClass",
       "RelayBoundaryDegrade",
       "RelayClassifierMode",
       "RelayResolution",
@@ -84959,6 +85158,8 @@
       "SharedMemberInvited",
       "SharedMemberRequest",
       "SharedMemberRoleRequest",
+      "SharedProjectAccessReset",
+      "SharedProjectAccessResetRequest",
       "SharedReceiptRequest",
       "SharedRemoveOwnerRequest",
       "SharedTransferRequest",
@@ -85520,8 +85721,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 779,
-      "struct": 2410
+      "enum": 783,
+      "struct": 2435
      }
     },
     {

@@ -255,6 +255,11 @@ pub enum AgentVerb {
     VaultSharedReceipt,
     VaultSharedOutcomes,
     VaultSharedDeletion,
+    VaultOrgAdminConfigure,
+    VaultOrgAdminPowers,
+    VaultMembersResetProjectAccess,
+    VaultMembersDelegate,
+    VaultMembersProjection,
     VaultMembersAdd,
     VaultMembersInvitationSlip,
     VaultMembersChange,
@@ -320,6 +325,15 @@ pub enum AgentVerb {
     VaultOffRecordNotesCreate,
     VaultOffRecordClaimsUpsert,
     SelfOffRecordExecute,
+    VaultOffRecordRoomsStatus,
+    VaultOffRecordRoomsStart,
+    VaultOffRecordRoomsWitness,
+    VaultOffRecordRoomsSave,
+    VaultOffRecordRoomsSaveFromHere,
+    VaultOffRecordRoomsExport,
+    VaultOffRecordRoomsSuggestSave,
+    VaultOffRecordRoomsConfirmSave,
+    VaultOffRecordRoomsDeclineSave,
     VaultRecordsErasePreview,
     VaultRecordsEraseConfirm,
     VaultRecordsEraseSweep,
@@ -1220,6 +1234,11 @@ impl AgentVerb {
         Self::VaultSharedReceipt,
         Self::VaultSharedOutcomes,
         Self::VaultSharedDeletion,
+        Self::VaultOrgAdminConfigure,
+        Self::VaultOrgAdminPowers,
+        Self::VaultMembersResetProjectAccess,
+        Self::VaultMembersDelegate,
+        Self::VaultMembersProjection,
         Self::VaultMembersAdd,
         Self::VaultMembersInvitationSlip,
         Self::VaultMembersChange,
@@ -1285,6 +1304,15 @@ impl AgentVerb {
         Self::VaultOffRecordNotesCreate,
         Self::VaultOffRecordClaimsUpsert,
         Self::SelfOffRecordExecute,
+        Self::VaultOffRecordRoomsStatus,
+        Self::VaultOffRecordRoomsStart,
+        Self::VaultOffRecordRoomsWitness,
+        Self::VaultOffRecordRoomsSave,
+        Self::VaultOffRecordRoomsSaveFromHere,
+        Self::VaultOffRecordRoomsExport,
+        Self::VaultOffRecordRoomsSuggestSave,
+        Self::VaultOffRecordRoomsConfirmSave,
+        Self::VaultOffRecordRoomsDeclineSave,
         Self::VaultRecordsErasePreview,
         Self::VaultRecordsEraseConfirm,
         Self::VaultRecordsEraseSweep,
@@ -2188,6 +2216,11 @@ impl AgentVerb {
             Self::VaultSharedReceipt => "vault.shared.receipt",
             Self::VaultSharedOutcomes => "vault.shared.outcomes",
             Self::VaultSharedDeletion => "vault.shared.deletion",
+            Self::VaultOrgAdminConfigure => "vault.org_admin.configure",
+            Self::VaultOrgAdminPowers => "vault.org_admin.powers",
+            Self::VaultMembersResetProjectAccess => "vault.members.reset_project_access",
+            Self::VaultMembersDelegate => "vault.members.delegate",
+            Self::VaultMembersProjection => "vault.members.projection",
             Self::VaultMembersAdd => "vault.members.add",
             Self::VaultMembersInvitationSlip => "vault.members.invitation_slip",
             Self::VaultMembersChange => "vault.members.change",
@@ -2257,6 +2290,15 @@ impl AgentVerb {
             Self::VaultOffRecordNotesCreate => "vault.off_record.notes.create",
             Self::VaultOffRecordClaimsUpsert => "vault.off_record.claims.upsert",
             Self::SelfOffRecordExecute => "self.off_record.execute",
+            Self::VaultOffRecordRoomsStatus => "vault.off_record.rooms.status",
+            Self::VaultOffRecordRoomsStart => "vault.off_record.rooms.start",
+            Self::VaultOffRecordRoomsWitness => "vault.off_record.rooms.witness",
+            Self::VaultOffRecordRoomsSave => "vault.off_record.rooms.save",
+            Self::VaultOffRecordRoomsSaveFromHere => "vault.off_record.rooms.save_from_here",
+            Self::VaultOffRecordRoomsExport => "vault.off_record.rooms.export",
+            Self::VaultOffRecordRoomsSuggestSave => "vault.off_record.rooms.suggest_save",
+            Self::VaultOffRecordRoomsConfirmSave => "vault.off_record.rooms.confirm_save",
+            Self::VaultOffRecordRoomsDeclineSave => "vault.off_record.rooms.decline_save",
             Self::VaultRecordsErasePreview => "vault.records.erase_preview",
             Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
             Self::VaultRecordsEraseSweep => "vault.records.erase_sweep",
@@ -3177,6 +3219,11 @@ impl AgentVerb {
                 | Self::VaultSharedReceipt
                 | Self::VaultSharedOutcomes
                 | Self::VaultSharedDeletion
+                | Self::VaultOrgAdminConfigure
+                | Self::VaultOrgAdminPowers
+                | Self::VaultMembersResetProjectAccess
+                | Self::VaultMembersDelegate
+                | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
@@ -3242,6 +3289,15 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::VaultOffRecordRoomsStatus
+                | Self::VaultOffRecordRoomsStart
+                | Self::VaultOffRecordRoomsWitness
+                | Self::VaultOffRecordRoomsSave
+                | Self::VaultOffRecordRoomsSaveFromHere
+                | Self::VaultOffRecordRoomsExport
+                | Self::VaultOffRecordRoomsSuggestSave
+                | Self::VaultOffRecordRoomsConfirmSave
+                | Self::VaultOffRecordRoomsDeclineSave
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultRecordsEraseSweep
@@ -4169,6 +4225,11 @@ impl AgentVerb {
                 | Self::VaultSharedReceipt
                 | Self::VaultSharedOutcomes
                 | Self::VaultSharedDeletion
+                | Self::VaultOrgAdminConfigure
+                | Self::VaultOrgAdminPowers
+                | Self::VaultMembersResetProjectAccess
+                | Self::VaultMembersDelegate
+                | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
@@ -4234,6 +4295,15 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::VaultOffRecordRoomsStatus
+                | Self::VaultOffRecordRoomsStart
+                | Self::VaultOffRecordRoomsWitness
+                | Self::VaultOffRecordRoomsSave
+                | Self::VaultOffRecordRoomsSaveFromHere
+                | Self::VaultOffRecordRoomsExport
+                | Self::VaultOffRecordRoomsSuggestSave
+                | Self::VaultOffRecordRoomsConfirmSave
+                | Self::VaultOffRecordRoomsDeclineSave
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultRecordsEraseSweep
@@ -4979,6 +5049,7 @@ impl AgentVerb {
                 | Self::VaultAssetsResolve
                 | Self::VaultSearchVector
                 | Self::AiChatCompletions
+                | Self::VaultOffRecordRoomsSuggestSave
                 | Self::Mount
                 | Self::GraphFsReaddir
                 | Self::GraphFsReadFile
@@ -5256,6 +5327,11 @@ impl AgentVerb {
                 | Self::VaultSharedReceipt
                 | Self::VaultSharedOutcomes
                 | Self::VaultSharedDeletion
+                | Self::VaultOrgAdminConfigure
+                | Self::VaultOrgAdminPowers
+                | Self::VaultMembersResetProjectAccess
+                | Self::VaultMembersDelegate
+                | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
@@ -5321,6 +5397,14 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::VaultOffRecordRoomsStatus
+                | Self::VaultOffRecordRoomsStart
+                | Self::VaultOffRecordRoomsWitness
+                | Self::VaultOffRecordRoomsSave
+                | Self::VaultOffRecordRoomsSaveFromHere
+                | Self::VaultOffRecordRoomsExport
+                | Self::VaultOffRecordRoomsConfirmSave
+                | Self::VaultOffRecordRoomsDeclineSave
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultRecordsEraseSweep
@@ -6069,6 +6153,9 @@ impl AgentVerb {
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
                 | Self::VaultSharedExecute
+                | Self::VaultOrgAdminConfigure
+                | Self::VaultMembersResetProjectAccess
+                | Self::VaultMembersDelegate
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
@@ -6116,6 +6203,13 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::VaultOffRecordRoomsStart
+                | Self::VaultOffRecordRoomsWitness
+                | Self::VaultOffRecordRoomsSave
+                | Self::VaultOffRecordRoomsSaveFromHere
+                | Self::VaultOffRecordRoomsSuggestSave
+                | Self::VaultOffRecordRoomsConfirmSave
+                | Self::VaultOffRecordRoomsDeclineSave
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchCreateChild
@@ -6496,6 +6590,7 @@ impl AgentVerb {
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultClusterPropose
                 | Self::AiChatCompletions
+                | Self::VaultOffRecordRoomsSuggestSave
                 | Self::VaultGatePolicyPropose
                 | Self::VaultLensesPropose
                 | Self::VaultDisclosureOffer
@@ -6783,6 +6878,11 @@ impl AgentVerb {
             Self::VaultSharedReceipt => &["spec"],
             Self::VaultSharedOutcomes => &["spec"],
             Self::VaultSharedDeletion => &[],
+            Self::VaultOrgAdminConfigure => &["spec"],
+            Self::VaultOrgAdminPowers => &["spec"],
+            Self::VaultMembersResetProjectAccess => &["spec"],
+            Self::VaultMembersDelegate => &["spec"],
+            Self::VaultMembersProjection => &["spec"],
             Self::VaultMembersAdd => &["spec"],
             Self::VaultMembersInvitationSlip => &["spec"],
             Self::VaultMembersChange => &["spec"],
@@ -6848,6 +6948,15 @@ impl AgentVerb {
             Self::VaultOffRecordNotesCreate => &["spec"],
             Self::VaultOffRecordClaimsUpsert => &["spec"],
             Self::SelfOffRecordExecute => &["spec"],
+            Self::VaultOffRecordRoomsStatus => &["spec"],
+            Self::VaultOffRecordRoomsStart => &["spec"],
+            Self::VaultOffRecordRoomsWitness => &["spec"],
+            Self::VaultOffRecordRoomsSave => &["spec"],
+            Self::VaultOffRecordRoomsSaveFromHere => &["spec"],
+            Self::VaultOffRecordRoomsExport => &["spec"],
+            Self::VaultOffRecordRoomsSuggestSave => &["spec"],
+            Self::VaultOffRecordRoomsConfirmSave => &["spec"],
+            Self::VaultOffRecordRoomsDeclineSave => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultRecordsEraseSweep => &["spec"],
@@ -7749,6 +7858,11 @@ impl AgentVerb {
             Self::VaultSharedReceipt => &["spec"],
             Self::VaultSharedOutcomes => &["spec"],
             Self::VaultSharedDeletion => &[],
+            Self::VaultOrgAdminConfigure => &["spec"],
+            Self::VaultOrgAdminPowers => &["spec"],
+            Self::VaultMembersResetProjectAccess => &["spec"],
+            Self::VaultMembersDelegate => &["spec"],
+            Self::VaultMembersProjection => &["spec"],
             Self::VaultMembersAdd => &["spec"],
             Self::VaultMembersInvitationSlip => &["spec"],
             Self::VaultMembersChange => &["spec"],
@@ -7814,6 +7928,15 @@ impl AgentVerb {
             Self::VaultOffRecordNotesCreate => &["spec"],
             Self::VaultOffRecordClaimsUpsert => &["spec"],
             Self::SelfOffRecordExecute => &["spec"],
+            Self::VaultOffRecordRoomsStatus => &["spec"],
+            Self::VaultOffRecordRoomsStart => &["spec"],
+            Self::VaultOffRecordRoomsWitness => &["spec"],
+            Self::VaultOffRecordRoomsSave => &["spec"],
+            Self::VaultOffRecordRoomsSaveFromHere => &["spec"],
+            Self::VaultOffRecordRoomsExport => &["spec"],
+            Self::VaultOffRecordRoomsSuggestSave => &["spec"],
+            Self::VaultOffRecordRoomsConfirmSave => &["spec"],
+            Self::VaultOffRecordRoomsDeclineSave => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultRecordsEraseSweep => &["spec"],
@@ -9204,6 +9327,21 @@ impl AgentVerb {
             }
             Self::VaultSharedOutcomes => "The reader's own outcome notices for a shared vault.",
             Self::VaultSharedDeletion => "The executed delete-the-vault act, if any.",
+            Self::VaultOrgAdminConfigure => {
+                "The owner fixes an organization's Admin identities and closed named-power set once; no root or private-vault power can be configured."
+            }
+            Self::VaultOrgAdminPowers => {
+                "The caller reads only the organization's fixed named Admin powers that their own credential carries."
+            }
+            Self::VaultMembersResetProjectAccess => {
+                "An Admin resets only a non-root shared project's signed access roster through the existing project-proof gate; it never changes a personal root or grants an unsigned override."
+            }
+            Self::VaultMembersDelegate => {
+                "A live parent Admin or Owner mints one explicit scope narrowing for a holder, bounded by policy and a server-clock expiry of at most 90 days; the Delegate cannot delegate onward."
+            }
+            Self::VaultMembersProjection => {
+                "Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."
+            }
             Self::VaultMembersAdd => {
                 "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."
             }
@@ -9394,6 +9532,33 @@ impl AgentVerb {
             }
             Self::SelfOffRecordExecute => {
                 "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."
+            }
+            Self::VaultOffRecordRoomsStatus => {
+                "Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk."
+            }
+            Self::VaultOffRecordRoomsStart => {
+                "A person starts an off-record stretch in a room they belong to, on their own credential."
+            }
+            Self::VaultOffRecordRoomsWitness => {
+                "Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant."
+            }
+            Self::VaultOffRecordRoomsSave => {
+                "A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential."
+            }
+            Self::VaultOffRecordRoomsSaveFromHere => {
+                "A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."
+            }
+            Self::VaultOffRecordRoomsExport => {
+                "A person exports only their visible room talk as a JSON attachment, posts a content-free notice and writes no vault."
+            }
+            Self::VaultOffRecordRoomsSuggestSave => {
+                "An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."
+            }
+            Self::VaultOffRecordRoomsConfirmSave => {
+                "A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits."
+            }
+            Self::VaultOffRecordRoomsDeclineSave => {
+                "A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits."
             }
             Self::VaultRecordsErasePreview => {
                 "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."
