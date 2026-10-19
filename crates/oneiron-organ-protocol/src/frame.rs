@@ -195,12 +195,13 @@ pub fn send_frame<T: Serialize>(
     fds: &[BorrowedFd<'_>],
     limit: u32,
 ) -> Result<(), FrameError> {
-    send_frame_with(stream, msg, fds, limit, Wait::Syscall, Gate::open())
+    send_frame_with(stream, msg, fds, limit, Wait::Syscall, Gate::open()).map(|_| ())
 }
 
 /// [`send_frame`], with the whole frame bounded by `deadline`, on a socket
 /// the caller made nonblocking. A frame cut off by the deadline leaves the
-/// stream out of step: close it.
+/// stream out of step: close it. Returns the encoded body's length, the
+/// four-byte header aside.
 ///
 /// # Errors
 /// As [`send_frame`], plus [`FrameError::Refused`] for a frame the receiver
@@ -213,7 +214,7 @@ pub fn send_frame_until<T: Serialize>(
     fds: &[BorrowedFd<'_>],
     limit: u32,
     deadline: Option<Instant>,
-) -> Result<(), FrameError> {
+) -> Result<u32, FrameError> {
     send_frame_with(stream, msg, fds, limit, Wait::until(deadline), Gate::open())
 }
 
@@ -227,7 +228,7 @@ pub fn send_frame_until<T: Serialize>(
 /// asked every 20 ms, so a frame withdrawn then ends at once, not at its
 /// deadline. A frame that has started is finished. The deadline is checked
 /// again once `still` returns, but not while it waits: it should take only
-/// a lock its holders keep briefly.
+/// a lock its holders keep briefly. Returns the encoded body's length.
 ///
 /// # Errors
 /// As [`send_frame_until`], plus [`FrameError::Withdrawn`] when `still`
@@ -240,7 +241,7 @@ pub fn send_frame_if<T: Serialize, G>(
     deadline: Instant,
     still: impl FnMut() -> Option<G>,
     started: impl FnMut(&mut G),
-) -> Result<(), FrameError> {
+) -> Result<u32, FrameError> {
     let gate = Gate {
         still,
         started,
@@ -275,7 +276,7 @@ fn send_frame_with<T: Serialize, G>(
     limit: u32,
     wait: Wait,
     mut gate: Gate<impl FnMut() -> Option<G>, impl FnMut(&mut G)>,
-) -> Result<(), FrameError> {
+) -> Result<u32, FrameError> {
     if wait.polls() && !fcntl_getfl(stream).is_ok_and(|mode| mode.contains(OFlags::NONBLOCK)) {
         return Err(FrameError::Blocking);
     }
@@ -370,7 +371,7 @@ fn send_frame_with<T: Serialize, G>(
             Err(errno) => return Err(io::Error::from(errno).into()),
         }
     }
-    Ok(())
+    Ok(len)
 }
 
 /// Reads one frame and the descriptors that rode with it.
@@ -382,7 +383,7 @@ pub fn recv_frame<T: DeserializeOwned>(
     stream: &UnixStream,
     limit: u32,
 ) -> Result<(T, Vec<OwnedFd>), FrameError> {
-    recv_frame_with(stream, limit, Wait::Syscall)
+    recv_frame_with(stream, limit, Wait::Syscall).map(|(msg, fds, _)| (msg, fds))
 }
 
 /// [`recv_frame`] for a socket in nonblocking mode: the frame waits in
@@ -394,6 +395,18 @@ pub fn recv_frame_polled<T: DeserializeOwned>(
     stream: &UnixStream,
     limit: u32,
 ) -> Result<(T, Vec<OwnedFd>), FrameError> {
+    recv_frame_polled_len(stream, limit).map(|(msg, fds, _)| (msg, fds))
+}
+
+/// [`recv_frame_polled`], with the encoded body's length, the four-byte
+/// header aside.
+///
+/// # Errors
+/// As [`recv_frame`].
+pub fn recv_frame_polled_len<T: DeserializeOwned>(
+    stream: &UnixStream,
+    limit: u32,
+) -> Result<(T, Vec<OwnedFd>, u32), FrameError> {
     recv_frame_with(stream, limit, Wait::Poll(None))
 }
 
@@ -427,14 +440,14 @@ pub fn recv_frame_until<T: DeserializeOwned>(
     limit: u32,
     deadline: Option<Instant>,
 ) -> Result<(T, Vec<OwnedFd>), FrameError> {
-    recv_frame_with(stream, limit, Wait::until(deadline))
+    recv_frame_with(stream, limit, Wait::until(deadline)).map(|(msg, fds, _)| (msg, fds))
 }
 
 fn recv_frame_with<T: DeserializeOwned>(
     stream: &UnixStream,
     limit: u32,
     wait: Wait,
-) -> Result<(T, Vec<OwnedFd>), FrameError> {
+) -> Result<(T, Vec<OwnedFd>, u32), FrameError> {
     let mut header = [0u8; HEADER];
     let mut got = 0;
     let mut fds = Vec::new();
@@ -495,5 +508,5 @@ fn recv_frame_with<T: DeserializeOwned>(
         }
     }
     shape::check(&body).map_err(FrameError::Protocol)?;
-    Ok((rmp_serde::from_slice(&body)?, fds))
+    Ok((rmp_serde::from_slice(&body)?, fds, len))
 }
