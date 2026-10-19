@@ -3,10 +3,10 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 961 facade rows, 3229 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 913.
+// UniFFI census: 975 facade rows, 3304 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 927.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
-// WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
+// WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
@@ -24145,6 +24145,131 @@ pub struct RevokeGrantRequest {
     pub grant: String,
 }
 
+/// `oneiron::consent::effect::CatastropheClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CatastropheClass {
+    #[serde(rename = "WidenOwnAuthority")]
+    WidenOwnAuthority,
+    #[serde(rename = "KeyRecovery")]
+    KeyRecovery,
+    #[serde(rename = "VaultWideDestruction")]
+    VaultWideDestruction,
+    #[serde(rename = "SecurityControlDisable")]
+    SecurityControlDisable,
+    #[serde(rename = "MassSecretExport")]
+    MassSecretExport,
+    #[serde(rename = "WorldPrivacyWiden")]
+    WorldPrivacyWiden,
+}
+
+/// `oneiron::consent::bypass_lifecycle::BypassActionEnvelopeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BypassActionEnvelopeRequest {
+    #[serde(rename = "selectors")]
+    pub selectors: Vec<String>,
+    #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(rename = "budget", default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<u64>,
+    #[serde(
+        rename = "receipt_required",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub receipt_required: Option<bool>,
+}
+
+/// `oneiron::consent::bypass_lifecycle::BypassGrantBoundRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BypassGrantBoundRequest {
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(
+        rename = "actor_class",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub actor_class: Option<String>,
+    #[serde(rename = "classes")]
+    pub classes: Vec<CatastropheClass>,
+    #[serde(rename = "scope")]
+    pub scope: BypassScope,
+    #[serde(rename = "envelope")]
+    pub envelope: BypassActionEnvelopeRequest,
+}
+
+/// `oneiron::consent::bypass_lifecycle::BypassGrantWarningRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BypassGrantWarningRequest {
+    #[serde(rename = "bound")]
+    pub bound: BypassGrantBoundRequest,
+}
+
+/// `oneiron::consent::bypass_lifecycle::BypassGrantWarningView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BypassGrantWarningView {
+    #[serde(rename = "owner")]
+    pub owner: String,
+    #[serde(rename = "bound")]
+    pub bound: BypassGrantBoundRequest,
+    #[serde(rename = "floor_version")]
+    pub floor_version: u16,
+    #[serde(rename = "bound_digests")]
+    pub bound_digests: Vec<String>,
+}
+
+/// `oneiron::consent::bypass_lifecycle::CreateBypassGrantRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CreateBypassGrantRequest {
+    #[serde(rename = "warning")]
+    pub warning: BypassGrantWarningView,
+}
+
+/// `oneiron::consent::bypass_lifecycle::BypassActiveState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BypassActiveState {
+    #[serde(rename = "active")]
+    pub active: bool,
+    #[serde(rename = "grant")]
+    pub grant: String,
+    #[serde(rename = "bound")]
+    pub bound: BypassGrantBoundRequest,
+    #[serde(rename = "floor_version")]
+    pub floor_version: u16,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+}
+
+/// `oneiron::consent::bypass_lifecycle::BypassedEffectReceiptsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BypassedEffectReceiptsRequest {
+    #[serde(rename = "grant")]
+    pub grant: String,
+}
+
+/// `oneiron::consent::bypass_lifecycle::BypassedEffectReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BypassedEffectReceipt {
+    #[serde(rename = "decision_ref")]
+    pub decision_ref: String,
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "effect_digest")]
+    pub effect_digest: String,
+    #[serde(rename = "reason_code")]
+    pub reason_code: String,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+}
+
 /// `oneiron::consent_graduation::api::GraduationScope`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -32989,6 +33114,838 @@ pub struct CriticReviewOutcome {
     pub receipts: Vec<DecisionReceipt>,
 }
 
+/// `oneiron::blob_artifact::deck_creation::outline::OutlineCommunication`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OutlineCommunication {
+    #[serde(rename = "audience")]
+    pub audience: String,
+    #[serde(rename = "outcome")]
+    pub outcome: String,
+    #[serde(rename = "main_message")]
+    pub main_message: String,
+}
+
+/// `oneiron::blob_artifact::deck_creation::outline::OutlineDivision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OutlineDivision {
+    #[serde(rename = "fixed")]
+    Fixed,
+    #[serde(rename = "split")]
+    Split,
+}
+
+/// `oneiron::blob_artifact::deck_creation::outline::OutlinePriority`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OutlinePriority {
+    #[serde(rename = "required")]
+    Required,
+    #[serde(rename = "optional")]
+    Optional,
+}
+
+/// `oneiron::blob_artifact::deck_creation::outline::OutlinePin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OutlinePin {
+    #[serde(rename = "claim", default, skip_serializing_if = "Option::is_none")]
+    pub claim: Option<String>,
+    #[serde(rename = "document")]
+    pub document: String,
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "start")]
+    pub start: String,
+    #[serde(rename = "end")]
+    pub end: String,
+    #[serde(rename = "quote")]
+    pub quote: String,
+    #[serde(rename = "quote_hash")]
+    pub quote_hash: String,
+    #[serde(rename = "drift", default, skip_serializing_if = "Option::is_none")]
+    pub drift: Option<bool>,
+}
+
+/// `oneiron::blob_artifact::deck_creation::outline::OutlineCarrier`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OutlineCarrier {
+    #[serde(rename = "chart")]
+    Chart,
+    #[serde(rename = "table")]
+    Table,
+    #[serde(rename = "share")]
+    Share,
+}
+
+/// `oneiron::blob_artifact::deck_creation::outline::OutlineBlock`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum OutlineBlock {
+    #[serde(rename = "title")]
+    Title {
+        #[serde(rename = "id")]
+        id: String,
+        #[serde(rename = "priority", default, skip_serializing_if = "Option::is_none")]
+        priority: Option<OutlinePriority>,
+        #[serde(rename = "text")]
+        text: String,
+    },
+    #[serde(rename = "claim")]
+    Claim {
+        #[serde(rename = "id")]
+        id: String,
+        #[serde(rename = "priority", default, skip_serializing_if = "Option::is_none")]
+        priority: Option<OutlinePriority>,
+        #[serde(rename = "text")]
+        text: String,
+        #[serde(
+            rename = "qualifications",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        qualifications: Option<Vec<String>>,
+        #[serde(rename = "evidence")]
+        evidence: Vec<OutlinePin>,
+    },
+    #[serde(rename = "data")]
+    Data {
+        #[serde(rename = "id")]
+        id: String,
+        #[serde(rename = "priority", default, skip_serializing_if = "Option::is_none")]
+        priority: Option<OutlinePriority>,
+        #[serde(rename = "dataset")]
+        dataset: String,
+        #[serde(rename = "carriers")]
+        carriers: Vec<OutlineCarrier>,
+    },
+    #[serde(rename = "asset")]
+    Asset {
+        #[serde(rename = "id")]
+        id: String,
+        #[serde(rename = "priority", default, skip_serializing_if = "Option::is_none")]
+        priority: Option<OutlinePriority>,
+        #[serde(rename = "asset")]
+        asset: String,
+    },
+}
+
+/// `oneiron::blob_artifact::deck_creation::outline::OutlinePage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OutlinePage {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "job")]
+    pub job: String,
+    #[serde(rename = "division", default, skip_serializing_if = "Option::is_none")]
+    pub division: Option<OutlineDivision>,
+    #[serde(rename = "blocks")]
+    pub blocks: Vec<OutlineBlock>,
+}
+
+/// `oneiron::blob_artifact::deck_creation::outline::OutlineColumnKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OutlineColumnKind {
+    #[serde(rename = "number")]
+    Number,
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "date")]
+    Date,
+}
+
+/// `oneiron::blob_artifact::deck_creation::outline::OutlineNumberFormat`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OutlineNumberFormat {
+    #[serde(rename = "decimals", default, skip_serializing_if = "Option::is_none")]
+    pub decimals: Option<u8>,
+    #[serde(rename = "grouping", default, skip_serializing_if = "Option::is_none")]
+    pub grouping: Option<bool>,
+    #[serde(rename = "percent", default, skip_serializing_if = "Option::is_none")]
+    pub percent: Option<bool>,
+}
+
+/// `oneiron::blob_artifact::deck_creation::outline::OutlineColumn`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OutlineColumn {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "type")]
+    pub r#type: OutlineColumnKind,
+    #[serde(rename = "unit", default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    #[serde(rename = "format", default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<OutlineNumberFormat>,
+}
+
+/// `oneiron::blob_artifact::deck_creation::outline::OutlineCell`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum OutlineCell {
+    Number(f64),
+    Text(String),
+}
+
+/// `oneiron::blob_artifact::deck_creation::outline::OutlineMerge`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OutlineMerge {
+    #[serde(rename = "row")]
+    pub row: u64,
+    #[serde(rename = "col")]
+    pub col: u64,
+    #[serde(rename = "rows")]
+    pub rows: u64,
+    #[serde(rename = "cols")]
+    pub cols: u64,
+}
+
+/// `oneiron::blob_artifact::deck_creation::outline::OutlineDataset`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OutlineDataset {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "columns")]
+    pub columns: Vec<OutlineColumn>,
+    #[serde(rename = "rows", default, skip_serializing_if = "Option::is_none")]
+    pub rows: Option<Vec<Vec<Option<OutlineCell>>>>,
+    #[serde(rename = "missing", default, skip_serializing_if = "Option::is_none")]
+    pub missing: Option<String>,
+    #[serde(rename = "sources")]
+    pub sources: Vec<String>,
+    #[serde(rename = "merges", default, skip_serializing_if = "Option::is_none")]
+    pub merges: Option<Vec<OutlineMerge>>,
+}
+
+/// `oneiron::blob_artifact::deck_creation::outline::OutlineAssetKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OutlineAssetKind {
+    #[serde(rename = "factual")]
+    Factual,
+    #[serde(rename = "illustration")]
+    Illustration,
+}
+
+/// `oneiron::blob_artifact::deck_creation::outline::OutlineAsset`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OutlineAsset {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "kind")]
+    pub kind: OutlineAssetKind,
+    #[serde(rename = "content")]
+    pub content: String,
+}
+
+/// `oneiron::blob_artifact::deck_creation::outline::DeckOutline`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DeckOutline {
+    #[serde(rename = "communication")]
+    pub communication: OutlineCommunication,
+    #[serde(rename = "language")]
+    pub language: String,
+    #[serde(
+        rename = "accessibility",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub accessibility: Option<Vec<String>>,
+    #[serde(rename = "pages")]
+    pub pages: Vec<OutlinePage>,
+    #[serde(rename = "datasets", default, skip_serializing_if = "Option::is_none")]
+    pub datasets: Option<Vec<OutlineDataset>>,
+    #[serde(rename = "assets", default, skip_serializing_if = "Option::is_none")]
+    pub assets: Option<Vec<OutlineAsset>>,
+}
+
+/// `oneiron::blob_artifact::deck_creation::DeckOutlineProposeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DeckOutlineProposeRequest {
+    #[serde(rename = "outline")]
+    pub outline: DeckOutline,
+}
+
+/// `oneiron::edit_roundtrip::deck_create::KeptOutline`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct KeptOutline {
+    #[serde(rename = "note")]
+    pub note: String,
+    #[serde(rename = "frontier")]
+    pub frontier: Vec<u8>,
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "bytes")]
+    pub bytes: Vec<u8>,
+    #[serde(rename = "content_hash")]
+    pub content_hash: Vec<u8>,
+    #[serde(rename = "kept_by")]
+    pub kept_by: String,
+    #[serde(rename = "kept_at")]
+    pub kept_at: u64,
+}
+
+/// `oneiron::edit_roundtrip::deck_create::OutlineFreshness`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OutlineFreshness {
+    #[serde(rename = "fresh")]
+    Fresh,
+    #[serde(rename = "not_kept")]
+    NotKept,
+    #[serde(rename = "edited")]
+    Edited,
+    #[serde(rename = "evidence_moved")]
+    EvidenceMoved {
+        #[serde(rename = "pins")]
+        pins: Vec<u64>,
+    },
+}
+
+/// `oneiron::blob_artifact::deck_creation::DeckOutlineView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckOutlineView {
+    #[serde(rename = "outline_ref")]
+    pub outline_ref: String,
+    #[serde(rename = "frontier")]
+    pub frontier: Vec<u8>,
+    #[serde(rename = "outline")]
+    pub outline: DeckOutline,
+    #[serde(rename = "kept", default, skip_serializing_if = "Option::is_none")]
+    pub kept: Option<KeptOutline>,
+    #[serde(rename = "freshness")]
+    pub freshness: OutlineFreshness,
+}
+
+/// `oneiron::blob_artifact::deck_creation::DeckOutlineRefRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DeckOutlineRefRequest {
+    #[serde(rename = "outline_ref")]
+    pub outline_ref: String,
+}
+
+/// `oneiron::blob_artifact::deck_creation::DeckOutlineSettleRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DeckOutlineSettleRequest {
+    #[serde(rename = "outline_ref")]
+    pub outline_ref: String,
+    #[serde(rename = "expected_frontier")]
+    pub expected_frontier: Vec<u8>,
+}
+
+/// `oneiron::blob_artifact::deck_creation::DeckOutlineDeclined`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckOutlineDeclined {
+    #[serde(rename = "outline_ref")]
+    pub outline_ref: String,
+    #[serde(rename = "declined")]
+    pub declined: bool,
+}
+
+/// `oneiron::blob_artifact::deck_creation::DeckKeepBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DeckKeepBinding {
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "content_hash")]
+    pub content_hash: Vec<u8>,
+}
+
+/// `oneiron::edit_roundtrip::deck_create::ArtifactVersionRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ArtifactVersionRef {
+    #[serde(rename = "artifact")]
+    pub artifact: String,
+    #[serde(rename = "version")]
+    pub version: u64,
+}
+
+/// `oneiron::blob_artifact::deck_creation::DeckDesignRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DeckDesignRequest {
+    #[serde(rename = "outline_ref")]
+    pub outline_ref: String,
+    #[serde(rename = "kept")]
+    pub kept: DeckKeepBinding,
+    #[serde(rename = "templates")]
+    pub templates: Vec<ArtifactVersionRef>,
+    #[serde(rename = "assets", default, skip_serializing_if = "Option::is_none")]
+    pub assets: Option<std::collections::HashMap<String, ArtifactVersionRef>>,
+    #[serde(rename = "fonts", default, skip_serializing_if = "Option::is_none")]
+    pub fonts: Option<Vec<ArtifactVersionRef>>,
+}
+
+/// `oneiron::edit_roundtrip::deck_create::DirectionSlide`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DirectionSlide {
+    #[serde(rename = "page")]
+    pub page: String,
+    #[serde(rename = "layout")]
+    pub layout: String,
+    #[serde(rename = "fallback", default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+}
+
+/// `oneiron::edit_roundtrip::deck_create::DirectionOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DirectionOutcome {
+    #[serde(rename = "plan")]
+    Plan {
+        #[serde(rename = "slides")]
+        slides: Vec<DirectionSlide>,
+        #[serde(rename = "omitted")]
+        omitted: Vec<String>,
+        #[serde(rename = "measured")]
+        measured: u64,
+        #[serde(rename = "estimated")]
+        estimated: u64,
+    },
+    #[serde(rename = "ask")]
+    Ask {
+        #[serde(rename = "pages")]
+        pages: Vec<String>,
+    },
+}
+
+/// `oneiron::edit_roundtrip::deck_create::DesignDirection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DesignDirection {
+    #[serde(rename = "template")]
+    pub template: ArtifactVersionRef,
+    #[serde(rename = "template_hash")]
+    pub template_hash: Vec<u8>,
+    #[serde(rename = "outcome")]
+    pub outcome: DirectionOutcome,
+}
+
+/// `oneiron::edit_roundtrip::deck_create::DesignSpec`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DesignSpec {
+    #[serde(rename = "note")]
+    pub note: String,
+    #[serde(rename = "content_hash")]
+    pub content_hash: Vec<u8>,
+    #[serde(rename = "directions")]
+    pub directions: Vec<DesignDirection>,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckVisualChoices`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckVisualChoices {
+    #[serde(rename = "master")]
+    pub master: String,
+    #[serde(rename = "theme", default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+    #[serde(
+        rename = "major_font",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub major_font: Option<String>,
+    #[serde(
+        rename = "minor_font",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub minor_font: Option<String>,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckFallback`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DeckFallback {
+    #[serde(rename = "ordinary_shapes")]
+    OrdinaryShapes,
+    #[serde(rename = "split")]
+    Split,
+    #[serde(rename = "rows")]
+    Rows,
+    #[serde(rename = "ask")]
+    Ask,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckPlannedContent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DeckPlannedContent {
+    #[serde(rename = "title")]
+    Title(String),
+    #[serde(rename = "text")]
+    Text(Vec<String>),
+    #[serde(rename = "table")]
+    Table(String),
+    #[serde(rename = "chart")]
+    Chart(String),
+    #[serde(rename = "share")]
+    Share(String),
+    #[serde(rename = "picture")]
+    Picture(String),
+    #[serde(rename = "figure")]
+    Figure(String),
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckRect`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckRect {
+    #[serde(rename = "x")]
+    pub x: i64,
+    #[serde(rename = "y")]
+    pub y: i64,
+    #[serde(rename = "cx")]
+    pub cx: i64,
+    #[serde(rename = "cy")]
+    pub cy: i64,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckDestination`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum DeckDestination {
+    #[serde(rename = "placeholder")]
+    Placeholder {
+        #[serde(rename = "role")]
+        role: String,
+        #[serde(rename = "idx")]
+        idx: u32,
+        #[serde(rename = "part")]
+        part: String,
+        #[serde(rename = "element")]
+        element: u64,
+        #[serde(rename = "bounds")]
+        bounds: DeckRect,
+    },
+    #[serde(rename = "shape")]
+    Shape {
+        #[serde(rename = "bounds")]
+        bounds: DeckRect,
+    },
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckPlacement`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckPlacement {
+    #[serde(rename = "block")]
+    pub block: String,
+    #[serde(rename = "content")]
+    pub content: DeckPlannedContent,
+    #[serde(rename = "destination")]
+    pub destination: DeckDestination,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckFitPolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DeckFitPolicy {
+    #[serde(rename = "no_shrink")]
+    NoShrink,
+}
+
+/// `oneiron::edit_roundtrip::deck_create::CreatedEstimate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CreatedEstimate {
+    #[serde(rename = "block")]
+    pub block: String,
+    #[serde(rename = "need")]
+    pub need: i64,
+    #[serde(rename = "room")]
+    pub room: i64,
+    #[serde(rename = "font", default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckFit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckFit {
+    #[serde(rename = "policy")]
+    pub policy: DeckFitPolicy,
+    #[serde(rename = "estimates")]
+    pub estimates: Vec<CreatedEstimate>,
+    #[serde(rename = "alternatives")]
+    pub alternatives: Vec<DeckFallback>,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckPlannedSlide`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckPlannedSlide {
+    #[serde(rename = "page")]
+    pub page: String,
+    #[serde(rename = "part")]
+    pub part: String,
+    #[serde(rename = "layout")]
+    pub layout: String,
+    #[serde(rename = "fallback", default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<DeckFallback>,
+    #[serde(rename = "split", default, skip_serializing_if = "Option::is_none")]
+    pub split: Option<crate::WireJson>,
+    #[serde(rename = "placements")]
+    pub placements: Vec<DeckPlacement>,
+    #[serde(rename = "fit")]
+    pub fit: DeckFit,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckAssetMedia`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DeckAssetMedia {
+    #[serde(rename = "png")]
+    Png,
+    #[serde(rename = "jpeg")]
+    Jpeg,
+    #[serde(rename = "svg")]
+    Svg,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckAssetBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckAssetBinding {
+    #[serde(rename = "asset")]
+    pub asset: String,
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "media")]
+    pub media: DeckAssetMedia,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckNewPart`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckNewPart {
+    #[serde(rename = "part")]
+    pub part: String,
+    #[serde(rename = "content_type")]
+    pub content_type: String,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckPlannedRelationship`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckPlannedRelationship {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "target")]
+    pub target: String,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckPackagePlan`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckPackagePlan {
+    #[serde(rename = "new_parts")]
+    pub new_parts: Vec<DeckNewPart>,
+    #[serde(rename = "changed_parts")]
+    pub changed_parts: Vec<String>,
+    #[serde(rename = "relationships")]
+    pub relationships: Vec<DeckPlannedRelationship>,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckTraceOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DeckTraceOutcome {
+    #[serde(rename = "placed")]
+    Placed(Vec<crate::WireJson>),
+    #[serde(rename = "omitted")]
+    Omitted,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckTraceEntry`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckTraceEntry {
+    #[serde(rename = "block")]
+    pub block: String,
+    #[serde(rename = "page")]
+    pub page: String,
+    #[serde(rename = "outcome")]
+    pub outcome: DeckTraceOutcome,
+    #[serde(rename = "drifted")]
+    pub drifted: bool,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckPlanView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckPlanView {
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "content_hash")]
+    pub content_hash: Vec<u8>,
+    #[serde(rename = "template_hash")]
+    pub template_hash: Vec<u8>,
+    #[serde(rename = "visual")]
+    pub visual: DeckVisualChoices,
+    #[serde(rename = "slides")]
+    pub slides: Vec<DeckPlannedSlide>,
+    #[serde(rename = "data")]
+    pub data: Vec<OutlineDataset>,
+    #[serde(rename = "assets")]
+    pub assets: Vec<DeckAssetBinding>,
+    #[serde(rename = "package")]
+    pub package: DeckPackagePlan,
+    #[serde(rename = "trace")]
+    pub trace: Vec<DeckTraceEntry>,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckDesignOption`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DeckDesignOption {
+    #[serde(rename = "other_template")]
+    OtherTemplate,
+    #[serde(rename = "design_change")]
+    DesignChange,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckShortfallReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DeckShortfallReason {
+    #[serde(rename = "no_suitable_slot")]
+    NoSuitableSlot,
+    #[serde(rename = "overflow")]
+    Overflow,
+    #[serde(rename = "crowded")]
+    Crowded,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckDesignShortfall`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckDesignShortfall {
+    #[serde(rename = "block")]
+    pub block: String,
+    #[serde(rename = "reason")]
+    pub reason: DeckShortfallReason,
+}
+
+/// `oneiron::blob_artifact::deck_creation::plan::DeckDesignDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckDesignDecision {
+    #[serde(rename = "page")]
+    pub page: String,
+    #[serde(rename = "options")]
+    pub options: Vec<DeckDesignOption>,
+    #[serde(rename = "shortfalls")]
+    pub shortfalls: Vec<DeckDesignShortfall>,
+}
+
+/// `oneiron::blob_artifact::deck_creation::DeckDesignView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckDesignView {
+    #[serde(rename = "spec")]
+    pub spec: DesignSpec,
+    #[serde(rename = "plans")]
+    pub plans: Vec<Option<DeckPlanView>>,
+    #[serde(rename = "decisions")]
+    pub decisions: Vec<Vec<DeckDesignDecision>>,
+}
+
+/// `oneiron::blob_artifact::deck_creation::DeckEmissionNames`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DeckEmissionNames {
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "table")]
+    pub table: String,
+    #[serde(rename = "chart")]
+    pub chart: String,
+    #[serde(rename = "picture")]
+    pub picture: String,
+    #[serde(rename = "figure")]
+    pub figure: String,
+    #[serde(rename = "sheet")]
+    pub sheet: String,
+}
+
+/// `oneiron::blob_artifact::deck_creation::DeckEmissionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DeckEmissionRequest {
+    #[serde(rename = "outline_ref")]
+    pub outline_ref: String,
+    #[serde(rename = "kept")]
+    pub kept: DeckKeepBinding,
+    #[serde(rename = "template")]
+    pub template: ArtifactVersionRef,
+    #[serde(rename = "assets", default, skip_serializing_if = "Option::is_none")]
+    pub assets: Option<std::collections::HashMap<String, ArtifactVersionRef>>,
+    #[serde(rename = "fonts", default, skip_serializing_if = "Option::is_none")]
+    pub fonts: Option<Vec<ArtifactVersionRef>>,
+    #[serde(rename = "names")]
+    pub names: DeckEmissionNames,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "trigger", default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<MadeByTrigger>,
+}
+
+/// `oneiron::edit_roundtrip::deck_create::CreatedSlide`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CreatedSlide {
+    #[serde(rename = "part")]
+    pub part: String,
+    #[serde(rename = "sld_id")]
+    pub sld_id: u32,
+    #[serde(rename = "page")]
+    pub page: String,
+    #[serde(rename = "layout")]
+    pub layout: String,
+}
+
+/// `oneiron::edit_roundtrip::deck_create::DeckCreationRecord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckCreationRecord {
+    #[serde(rename = "artifact")]
+    pub artifact: String,
+    #[serde(rename = "version")]
+    pub version: u64,
+    #[serde(rename = "content_hash")]
+    pub content_hash: Vec<u8>,
+    #[serde(rename = "outline")]
+    pub outline: String,
+    #[serde(rename = "outline_version")]
+    pub outline_version: String,
+    #[serde(rename = "outline_hash")]
+    pub outline_hash: Vec<u8>,
+    #[serde(rename = "template")]
+    pub template: ArtifactVersionRef,
+    #[serde(rename = "template_hash")]
+    pub template_hash: Vec<u8>,
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "made_by", default, skip_serializing_if = "Option::is_none")]
+    pub made_by: Option<String>,
+    #[serde(rename = "slides")]
+    pub slides: Vec<CreatedSlide>,
+    #[serde(rename = "write_set")]
+    pub write_set: Vec<String>,
+    #[serde(rename = "omitted")]
+    pub omitted: Vec<String>,
+    #[serde(rename = "fit_unverified")]
+    pub fit_unverified: Vec<crate::WireJson>,
+    #[serde(rename = "estimates")]
+    pub estimates: Vec<CreatedEstimate>,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+}
+
+/// `oneiron::blob_artifact::deck_creation::DeckEmissionOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum DeckEmissionOutcome {
+    #[serde(rename = "created")]
+    Created {
+        #[serde(rename = "record")]
+        record: DeckCreationRecord,
+    },
+    #[serde(rename = "ask")]
+    Ask {
+        #[serde(rename = "pages")]
+        pages: Vec<String>,
+    },
+}
+
 /// `oneiron::blob_artifact::deck_doors::DeckInspectRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -41185,6 +42142,109 @@ pub struct ScopedReadResultOptionalClaimView {
     pub value: Option<WireClaimView>,
     #[serde(rename = "narrowing")]
     pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::memory::critical_confirm::CriticalWriteConfirmPendingRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CriticalWriteConfirmPendingRequest {
+    #[serde(rename = "pending_operation")]
+    pub pending_operation: String,
+}
+
+/// `oneiron::memory::critical_confirm::CriticalWriteConfirmPending`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CriticalWriteConfirmPending {
+    #[serde(rename = "pending_operation")]
+    pub pending_operation: String,
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "confirm_id")]
+    pub confirm_id: String,
+    #[serde(rename = "nonce")]
+    pub nonce: String,
+    #[serde(rename = "read_frontier_hash")]
+    pub read_frontier_hash: String,
+    #[serde(rename = "effect_digest")]
+    pub effect_digest: String,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+    #[serde(rename = "has_deadline")]
+    pub has_deadline: bool,
+}
+
+/// `oneiron::memory::critical_confirm::CriticalWriteConfirmRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CriticalWriteConfirmRequest {
+    #[serde(rename = "pending_operation")]
+    pub pending_operation: String,
+    #[serde(rename = "nonce")]
+    pub nonce: String,
+    #[serde(rename = "read_frontier_hash")]
+    pub read_frontier_hash: String,
+}
+
+/// `oneiron::memory::critical_confirm::CriticalWriteConfirmAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CriticalWriteConfirmAnswer {
+    #[serde(rename = "clear")]
+    Clear,
+    #[serde(rename = "decline")]
+    Decline,
+}
+
+/// `oneiron::memory::critical_confirm::CriticalWriteConfirmReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CriticalWriteConfirmReceipt {
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "confirm_id")]
+    pub confirm_id: String,
+    #[serde(rename = "pending_operation")]
+    pub pending_operation: String,
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "nonce")]
+    pub nonce: String,
+    #[serde(rename = "read_frontier_hash")]
+    pub read_frontier_hash: String,
+    #[serde(rename = "effect_digest")]
+    pub effect_digest: String,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+    #[serde(rename = "disposition")]
+    pub disposition: CriticalWriteConfirmAnswer,
+}
+
+/// `oneiron::gate::confirm::CriticalWriteConfirmResolution`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CriticalWriteConfirmResolution {
+    #[serde(rename = "Cleared")]
+    Cleared,
+    #[serde(rename = "Retracted")]
+    Retracted,
+    #[serde(rename = "DemotedToProposed")]
+    DemotedToProposed,
+    #[serde(rename = "AlreadySettled")]
+    AlreadySettled,
+}
+
+/// `oneiron::memory::critical_confirm::CriticalWriteConfirmSettlement`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CriticalWriteConfirmSettlement {
+    #[serde(rename = "receipt")]
+    pub receipt: CriticalWriteConfirmReceipt,
+    #[serde(rename = "resolution")]
+    pub resolution: CriticalWriteConfirmResolution,
+}
+
+/// `oneiron::memory::critical_confirm::CriticalWriteConfirmReceiptRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CriticalWriteConfirmReceiptRequest {
+    #[serde(rename = "confirm_id")]
+    pub confirm_id: String,
 }
 
 /// `oneiron::lens::record_ref::ResolveRecordRefRequest`.

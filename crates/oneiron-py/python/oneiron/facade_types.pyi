@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 961 facade rows, 3250 declarations.
-Inputs: 904 of 961 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 863 of 961 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 975 facade rows, 3326 declarations.
+Inputs: 918 of 975 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 877 of 975 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -7835,6 +7835,43 @@ class ConsentRegistry(TypedDict):
     rows: list[ConsentRegistryRow]
 class RevokeGrantRequest(TypedDict):
     grant: str
+CatastropheClass = Literal["WidenOwnAuthority", "KeyRecovery", "VaultWideDestruction", "SecurityControlDisable", "MassSecretExport", "WorldPrivacyWiden"]
+class BypassActionEnvelopeRequest(TypedDict):
+    selectors: list[str]
+    target: NotRequired[str | None]
+    budget: NotRequired[int | None]
+    receipt_required: NotRequired[bool]
+class BypassGrantBoundRequest(TypedDict):
+    actor: str
+    actor_class: NotRequired[str | None]
+    classes: list[CatastropheClass]
+    scope: BypassScope
+    envelope: BypassActionEnvelopeRequest
+class BypassGrantWarningRequest(TypedDict):
+    bound: BypassGrantBoundRequest
+class BypassGrantWarningView(TypedDict):
+    owner: str
+    bound: BypassGrantBoundRequest
+    floor_version: int
+    bound_digests: list[str]
+class CreateBypassGrantRequest(TypedDict):
+    warning: BypassGrantWarningView
+class ActiveBypassGrantsRequest(TypedDict):
+    ...
+class BypassActiveState(TypedDict):
+    active: bool
+    grant: str
+    bound: BypassGrantBoundRequest
+    floor_version: int
+    created_at: int
+class BypassedEffectReceiptsRequest(TypedDict):
+    grant: str
+class BypassedEffectReceipt(TypedDict):
+    decision_ref: str
+    grant_ref: str
+    effect_digest: str
+    reason_code: str
+    created_at: int
 class GraduationScope(TypedDict):
     op_kind: str
     target_class: str
@@ -10606,6 +10643,303 @@ class CriticReviewOutcome(TypedDict):
     triage: CritiqueTriage
     artifacts: list[CritiqueArtifact]
     receipts: list[DecisionReceipt]
+class OutlineCommunication(TypedDict):
+    audience: str
+    outcome: str
+    main_message: str
+OutlineDivision = Literal["fixed", "split"]
+OutlinePriority = Literal["required", "optional"]
+class OutlinePin(TypedDict):
+    claim: NotRequired[str | None]
+    document: str
+    version: str
+    start: str
+    end: str
+    quote: str
+    quote_hash: str
+    drift: NotRequired[bool]
+OutlineCarrier = Literal["chart", "table", "share"]
+class OutlineBlockTitle(TypedDict):
+    kind: Literal["title"]
+    id: str
+    priority: NotRequired[OutlinePriority | None]
+    text: str
+class OutlineBlockClaim(TypedDict):
+    kind: Literal["claim"]
+    id: str
+    priority: NotRequired[OutlinePriority | None]
+    text: str
+    qualifications: NotRequired[list[str]]
+    evidence: list[OutlinePin]
+class OutlineBlockData(TypedDict):
+    kind: Literal["data"]
+    id: str
+    priority: NotRequired[OutlinePriority | None]
+    dataset: str
+    carriers: list[OutlineCarrier]
+class OutlineBlockAsset(TypedDict):
+    kind: Literal["asset"]
+    id: str
+    priority: NotRequired[OutlinePriority | None]
+    asset: str
+OutlineBlock = OutlineBlockTitle | OutlineBlockClaim | OutlineBlockData | OutlineBlockAsset
+class OutlinePage(TypedDict):
+    id: str
+    job: str
+    division: NotRequired[OutlineDivision | None]
+    blocks: list[OutlineBlock]
+OutlineColumnKind = Literal["number", "text", "date"]
+class OutlineNumberFormat(TypedDict):
+    decimals: NotRequired[int]
+    grouping: NotRequired[bool]
+    percent: NotRequired[bool]
+class OutlineColumn(TypedDict):
+    name: str
+    type: OutlineColumnKind
+    unit: NotRequired[str | None]
+    format: NotRequired[OutlineNumberFormat | None]
+OutlineCell = float | str
+class OutlineMerge(TypedDict):
+    row: int
+    col: int
+    rows: int
+    cols: int
+class OutlineDataset(TypedDict):
+    id: str
+    columns: list[OutlineColumn]
+    rows: NotRequired[list[list[OutlineCell | None]]]
+    missing: NotRequired[str | None]
+    sources: list[str]
+    merges: NotRequired[list[OutlineMerge]]
+OutlineAssetKind = Literal["factual", "illustration"]
+class OutlineAsset(TypedDict):
+    id: str
+    kind: OutlineAssetKind
+    content: str
+class DeckOutline(TypedDict):
+    communication: OutlineCommunication
+    language: str
+    accessibility: NotRequired[list[str]]
+    pages: list[OutlinePage]
+    datasets: NotRequired[list[OutlineDataset]]
+    assets: NotRequired[list[OutlineAsset]]
+class DeckOutlineProposeRequest(TypedDict):
+    outline: DeckOutline
+class KeptOutline(TypedDict):
+    note: EntityId
+    frontier: list[int]
+    version: str
+    bytes: list[int]
+    content_hash: list[int]
+    kept_by: EntityId
+    kept_at: int
+class OutlineFreshnessEvidenceMovedBody(TypedDict):
+    pins: list[int]
+class OutlineFreshnessEvidenceMoved(TypedDict):
+    evidence_moved: OutlineFreshnessEvidenceMovedBody
+OutlineFreshness = Literal["fresh", "not_kept", "edited"] | OutlineFreshnessEvidenceMoved
+class DeckOutlineView(TypedDict):
+    outline_ref: str
+    frontier: list[int]
+    outline: DeckOutline
+    kept: NotRequired[KeptOutline | None]
+    freshness: OutlineFreshness
+class DeckOutlineRefRequest(TypedDict):
+    outline_ref: str
+class DeckOutlineSettleRequest(TypedDict):
+    outline_ref: str
+    expected_frontier: list[int]
+class DeckOutlineDeclined(TypedDict):
+    outline_ref: str
+    declined: bool
+class DeckKeepBinding(TypedDict):
+    version: str
+    content_hash: list[int]
+class ArtifactVersionRef(TypedDict):
+    artifact: EntityId
+    version: int
+class DeckDesignRequest(TypedDict):
+    outline_ref: str
+    kept: DeckKeepBinding
+    templates: list[ArtifactVersionRef]
+    assets: NotRequired[dict[str, ArtifactVersionRef]]
+    fonts: NotRequired[list[ArtifactVersionRef]]
+class DirectionSlide(TypedDict):
+    page: str
+    layout: str
+    fallback: NotRequired[str | None]
+class DirectionOutcomePlanBody(TypedDict):
+    slides: list[DirectionSlide]
+    omitted: list[str]
+    measured: int
+    estimated: int
+class DirectionOutcomePlan(TypedDict):
+    plan: DirectionOutcomePlanBody
+class DirectionOutcomeAskBody(TypedDict):
+    pages: list[str]
+class DirectionOutcomeAsk(TypedDict):
+    ask: DirectionOutcomeAskBody
+DirectionOutcome = DirectionOutcomePlan | DirectionOutcomeAsk
+class DesignDirection(TypedDict):
+    template: ArtifactVersionRef
+    template_hash: list[int]
+    outcome: DirectionOutcome
+class DesignSpec(TypedDict):
+    note: EntityId
+    content_hash: list[int]
+    directions: list[DesignDirection]
+class DeckVisualChoices(TypedDict):
+    master: str
+    theme: NotRequired[str | None]
+    major_font: NotRequired[str | None]
+    minor_font: NotRequired[str | None]
+DeckFallback = Literal["ordinary_shapes", "split", "rows", "ask"]
+class DeckPlannedContentTitle(TypedDict):
+    title: str
+class DeckPlannedContentText(TypedDict):
+    text: list[str]
+class DeckPlannedContentTable(TypedDict):
+    table: str
+class DeckPlannedContentChart(TypedDict):
+    chart: str
+class DeckPlannedContentShare(TypedDict):
+    share: str
+class DeckPlannedContentPicture(TypedDict):
+    picture: str
+class DeckPlannedContentFigure(TypedDict):
+    figure: str
+DeckPlannedContent = DeckPlannedContentTitle | DeckPlannedContentText | DeckPlannedContentTable | DeckPlannedContentChart | DeckPlannedContentShare | DeckPlannedContentPicture | DeckPlannedContentFigure
+class DeckRect(TypedDict):
+    x: int
+    y: int
+    cx: int
+    cy: int
+class DeckDestinationPlaceholder(TypedDict):
+    kind: Literal["placeholder"]
+    role: str
+    idx: int
+    part: str
+    element: int
+    bounds: DeckRect
+class DeckDestinationShape(TypedDict):
+    kind: Literal["shape"]
+    bounds: DeckRect
+DeckDestination = DeckDestinationPlaceholder | DeckDestinationShape
+class DeckPlacement(TypedDict):
+    block: str
+    content: DeckPlannedContent
+    destination: DeckDestination
+DeckFitPolicy = Literal["no_shrink"]
+class CreatedEstimate(TypedDict):
+    block: str
+    need: int
+    room: int
+    font: NotRequired[str | None]
+class DeckFit(TypedDict):
+    policy: DeckFitPolicy
+    estimates: list[CreatedEstimate]
+    alternatives: list[DeckFallback]
+class DeckPlannedSlide(TypedDict):
+    page: str
+    part: str
+    layout: str
+    fallback: NotRequired[DeckFallback | None]
+    split: NotRequired[tuple[int, int] | None]
+    placements: list[DeckPlacement]
+    fit: DeckFit
+DeckAssetMedia = Literal["png", "jpeg", "svg"]
+class DeckAssetBinding(TypedDict):
+    asset: str
+    handle: str
+    media: DeckAssetMedia
+class DeckNewPart(TypedDict):
+    part: str
+    content_type: str
+class DeckPlannedRelationship(TypedDict):
+    source: str
+    kind: str
+    target: str
+class DeckPackagePlan(TypedDict):
+    new_parts: list[DeckNewPart]
+    changed_parts: list[str]
+    relationships: list[DeckPlannedRelationship]
+class DeckTraceOutcomePlaced(TypedDict):
+    placed: list[tuple[int, int]]
+DeckTraceOutcome = Literal["omitted"] | DeckTraceOutcomePlaced
+class DeckTraceEntry(TypedDict):
+    block: str
+    page: str
+    outcome: DeckTraceOutcome
+    drifted: bool
+class DeckPlanView(TypedDict):
+    version: str
+    content_hash: list[int]
+    template_hash: list[int]
+    visual: DeckVisualChoices
+    slides: list[DeckPlannedSlide]
+    data: list[OutlineDataset]
+    assets: list[DeckAssetBinding]
+    package: DeckPackagePlan
+    trace: list[DeckTraceEntry]
+DeckDesignOption = Literal["other_template", "design_change"]
+DeckShortfallReason = Literal["no_suitable_slot", "overflow", "crowded"]
+class DeckDesignShortfall(TypedDict):
+    block: str
+    reason: DeckShortfallReason
+class DeckDesignDecision(TypedDict):
+    page: str
+    options: list[DeckDesignOption]
+    shortfalls: list[DeckDesignShortfall]
+class DeckDesignView(TypedDict):
+    spec: DesignSpec
+    plans: list[DeckPlanView | None]
+    decisions: list[list[DeckDesignDecision]]
+class DeckEmissionNames(TypedDict):
+    text: str
+    table: str
+    chart: str
+    picture: str
+    figure: str
+    sheet: str
+class DeckEmissionRequest(TypedDict):
+    outline_ref: str
+    kept: DeckKeepBinding
+    template: ArtifactVersionRef
+    assets: NotRequired[dict[str, ArtifactVersionRef]]
+    fonts: NotRequired[list[ArtifactVersionRef]]
+    names: DeckEmissionNames
+    name: str
+    run_ref: str
+    trigger: NotRequired[MadeByTrigger | None]
+class CreatedSlide(TypedDict):
+    part: str
+    sld_id: int
+    page: str
+    layout: str
+class DeckCreationRecord(TypedDict):
+    artifact: EntityId
+    version: int
+    content_hash: list[int]
+    outline: EntityId
+    outline_version: str
+    outline_hash: list[int]
+    template: ArtifactVersionRef
+    template_hash: list[int]
+    run_ref: str
+    made_by: NotRequired[EntityId | None]
+    slides: list[CreatedSlide]
+    write_set: list[str]
+    omitted: list[str]
+    fit_unverified: list[tuple[str, str, int]]
+    estimates: list[CreatedEstimate]
+    created_at: int
+class DeckEmissionOutcomeCreated(TypedDict):
+    state: Literal["created"]
+    record: DeckCreationRecord
+class DeckEmissionOutcomeAsk(TypedDict):
+    state: Literal["ask"]
+    pages: list[str]
+DeckEmissionOutcome = DeckEmissionOutcomeCreated | DeckEmissionOutcomeAsk
 class DeckInspectRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]
@@ -13276,6 +13610,38 @@ SafeDeleteReason = Literal["user_delete", "user_hard_delete", "gdpr_delete", "po
 class SafeDeleteRequest(TypedDict):
     entity_ref: str
     reason: SafeDeleteReason
+class CriticalWriteConfirmPendingRequest(TypedDict):
+    pending_operation: str
+class CriticalWriteConfirmPending(TypedDict):
+    pending_operation: str
+    claim_ref: str
+    confirm_id: str
+    nonce: str
+    read_frontier_hash: str
+    effect_digest: str
+    expires_at: int
+    has_deadline: bool
+class CriticalWriteConfirmRequest(TypedDict):
+    pending_operation: str
+    nonce: str
+    read_frontier_hash: str
+CriticalWriteConfirmAnswer = Literal["clear", "decline"]
+class CriticalWriteConfirmReceipt(TypedDict):
+    receipt_ref: str
+    confirm_id: str
+    pending_operation: str
+    claim_ref: str
+    nonce: str
+    read_frontier_hash: str
+    effect_digest: str
+    expires_at: int
+    disposition: CriticalWriteConfirmAnswer
+CriticalWriteConfirmResolution = Literal["Cleared", "Retracted", "DemotedToProposed", "AlreadySettled"]
+class CriticalWriteConfirmSettlement(TypedDict):
+    receipt: CriticalWriteConfirmReceipt
+    resolution: CriticalWriteConfirmResolution
+class CriticalWriteConfirmReceiptRequest(TypedDict):
+    confirm_id: str
 class ReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
 class PendingWrite(TypedDict):

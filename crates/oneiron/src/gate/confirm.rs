@@ -62,7 +62,7 @@ pub(crate) fn pending_row_holds_critical_confirm(row: &PendingGateConsentRecord)
 /// Whether `row`'s confirm waits for its owner however long that takes: a hold
 /// this device attached on sync, or an item an open obligation shows. Only the
 /// claim door's own confirm has the deadline a timeout demotes past.
-fn critical_confirm_has_no_deadline(row: &PendingGateConsentRecord) -> bool {
+pub(crate) fn critical_confirm_has_no_deadline(row: &PendingGateConsentRecord) -> bool {
     matches!(
         row.reason_codes.as_slice(),
         [reason] if reason == GATE_REASON_PENDING_REPLICATED_CRITICAL_CONFIRM
@@ -229,212 +229,161 @@ impl Vault {
         &self,
         confirm_id: [u8; 32],
     ) -> Result<CriticalWriteConfirmResolution> {
-        let now = self.store.clock.now_recorded_at();
         self.with_write_txn_grouped(|wtxn| {
-            let fold = self.authority_fold_readonly_in_txn(&*wtxn)?;
-            // Confirm IDs have a dedicated exact index; unrelated calls cannot
-            // influence absence detection or turn a live target into terminal state.
-            let Some(claim_id) = self
-                .store
-                .critical_confirm_claim_id_in_txn(&*wtxn, &confirm_id)?
-            else {
-                return Ok(Ok(CriticalWriteConfirmResolution::AlreadySettled));
-            };
-            let Some(pending) = self.store.pending_gate_consent_in_txn(&*wtxn, &claim_id)? else {
-                // A stale sidecar is removed transactionally and never causes
-                // a scan for a different confirmation.
+            let now = self.store.clock.now_recorded_at();
+            self.settle_critical_write_confirm_in_txn(wtxn, confirm_id, now, None)
+        })?
+    }
+
+    /// Applies the folded answer in the caller's writer. An owner ceremony
+    /// supplies its revalidated person for the settlement fact; replay uses
+    /// the signing key's existing actor binding.
+    pub(crate) fn settle_critical_write_confirm_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        confirm_id: [u8; 32],
+        now: u64,
+        answered_by: Option<EntityId>,
+    ) -> Result<Result<CriticalWriteConfirmResolution>> {
+        let fold = self.authority_fold_readonly_in_txn(&*wtxn)?;
+        // Confirm IDs have a dedicated exact index; unrelated calls cannot
+        // influence absence detection or turn a live target into terminal state.
+        let Some(claim_id) = self
+            .store
+            .critical_confirm_claim_id_in_txn(&*wtxn, &confirm_id)?
+        else {
+            return Ok(Ok(CriticalWriteConfirmResolution::AlreadySettled));
+        };
+        let Some(pending) = self.store.pending_gate_consent_in_txn(&*wtxn, &claim_id)? else {
+            // A stale sidecar is removed transactionally and never causes
+            // a scan for a different confirmation.
+            self.store
+                .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
+            return Ok(Ok(CriticalWriteConfirmResolution::AlreadySettled));
+        };
+        let binding = match critical_write_confirm_binding(&pending) {
+            Ok(binding) => binding,
+            Err(error) => {
+                // A malformed or non-critical primary cannot retain an
+                // exact-confirm alias forever. Remove it, but preserve the
+                // validation error so settlement remains fail-closed.
                 self.store
                     .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
-                return Ok(Ok(CriticalWriteConfirmResolution::AlreadySettled));
-            };
-            let binding = match critical_write_confirm_binding(&pending) {
-                Ok(binding) => binding,
-                Err(error) => {
-                    // A malformed or non-critical primary cannot retain an
-                    // exact-confirm alias forever. Remove it, but preserve the
-                    // validation error so settlement remains fail-closed.
-                    self.store
-                        .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
-                    return Ok(Err(error));
-                }
-            };
-            // The sidecar is only an address; re-derive authority from the
-            // primary row before reading state or mutating a claim.
-            if binding.confirm_id != confirm_id {
-                self.store
-                    .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
-                return Ok(Ok(CriticalWriteConfirmResolution::AlreadySettled));
+                return Ok(Err(error));
             }
-            // An answer to a parked decay or stale mark settles a restriction,
-            // so it reads a held machine history; every other answer waits.
-            let mut body =
-                if self.deferred_claim_is_in_place_demotion_in_txn(&*wtxn, &binding.claim_id)? {
-                    self.claim_for_restriction_in_txn(&*wtxn, &binding.claim_id)?
-                } else {
-                    self.get_claim_in_txn(&*wtxn, &binding.claim_id)?
-                }
-                .ok_or(Error::EntityNotFound)?;
-            let raw = self
-                .store
-                .port_entity_record(&*wtxn, &binding.claim_id)?
-                .map(|row| row.encode())
-                .ok_or(Error::EntityNotFound)?;
-            let header =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            let expired = binding.expires_at <= now && !critical_confirm_has_no_deadline(&pending);
-            let answered = pending.diff_handle.clone();
-            let deferred = self.has_deferred_claim_in_txn(wtxn, &binding.claim_id)?;
-            if expired && !deferred {
-                put_preauthorized_claim_status_in_txn(
-                    self,
-                    wtxn,
-                    &binding.claim_id,
-                    &body,
-                    PreauthorizedClaimStatusGrant::TimeoutDemotion,
-                    TimeRange {
-                        start: header.occurred_start,
-                        end: header.occurred_end,
-                    },
-                    header.learned_at,
-                )?;
-                // The decline below must bind the transaction's staged Proposed row.
-                body.approval = ClaimApprovalStatus::Proposed;
-                let mut timed_out = pending;
-                timed_out.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];
-                self.store
-                    .put_pending_gate_consent_in_txn(wtxn, &timed_out)?;
+        };
+        // The sidecar is only an address; re-derive authority from the
+        // primary row before reading state or mutating a claim.
+        if binding.confirm_id != confirm_id {
+            self.store
+                .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
+            return Ok(Ok(CriticalWriteConfirmResolution::AlreadySettled));
+        }
+        // An answer to a parked decay or stale mark settles a restriction,
+        // so it reads a held machine history; every other answer waits.
+        let mut body =
+            if self.deferred_claim_is_in_place_demotion_in_txn(&*wtxn, &binding.claim_id)? {
+                self.claim_for_restriction_in_txn(&*wtxn, &binding.claim_id)?
+            } else {
+                self.get_claim_in_txn(&*wtxn, &binding.claim_id)?
             }
-            let Some(state) = fold.critical_write_confirms.get(&confirm_id) else {
-                return Ok(Ok(if expired && !deferred {
-                    CriticalWriteConfirmResolution::DemotedToProposed
-                } else {
-                    CriticalWriteConfirmResolution::AlreadySettled
-                }));
-            };
-            if fold
-                .conflicted_critical_write_confirms
-                .contains(&confirm_id)
-            {
-                return Ok(Ok(if expired && !deferred {
-                    CriticalWriteConfirmResolution::DemotedToProposed
-                } else {
-                    CriticalWriteConfirmResolution::AlreadySettled
-                }));
-            }
-            if expired && state.action.disposition == CriticalWriteConfirmDisposition::Clear {
-                return Ok(Ok(if deferred {
-                    CriticalWriteConfirmResolution::AlreadySettled
-                } else {
-                    CriticalWriteConfirmResolution::DemotedToProposed
-                }));
-            }
-            if state.action.gate_decision_id != binding.gate_decision_id.as_bytes()
-                || state.action.claim_id != binding.claim_id
-                || state.action.effect_digest != binding.effect_digest
-                || state.action.read_frontier_hash != binding.read_frontier_hash
-                || state.action.nonce != binding.nonce
-                || state.action.expires_at != binding.expires_at
-            {
-                return Ok(Ok(CriticalWriteConfirmResolution::AlreadySettled));
-            }
-            // The fact hooks' settlement feed names who answered: the
-            // actor the confirm's signing key speaks for, else the owner.
-            let settled_by = match fold.actor_bindings.get(&state.signer) {
+            .ok_or(Error::EntityNotFound)?;
+        let raw = self
+            .store
+            .port_entity_record(&*wtxn, &binding.claim_id)?
+            .map(|row| row.encode())
+            .ok_or(Error::EntityNotFound)?;
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let expired = binding.expires_at <= now && !critical_confirm_has_no_deadline(&pending);
+        let answered = pending.diff_handle.clone();
+        let deferred = self.has_deferred_claim_in_txn(wtxn, &binding.claim_id)?;
+        if expired && !deferred {
+            put_preauthorized_claim_status_in_txn(
+                self,
+                wtxn,
+                &binding.claim_id,
+                &body,
+                PreauthorizedClaimStatusGrant::TimeoutDemotion,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+            )?;
+            // The decline below must bind the transaction's staged Proposed row.
+            body.approval = ClaimApprovalStatus::Proposed;
+            let mut timed_out = pending;
+            timed_out.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];
+            self.store
+                .put_pending_gate_consent_in_txn(wtxn, &timed_out)?;
+        }
+        let Some(state) = fold.critical_write_confirms.get(&confirm_id) else {
+            return Ok(Ok(if expired && !deferred {
+                CriticalWriteConfirmResolution::DemotedToProposed
+            } else {
+                CriticalWriteConfirmResolution::AlreadySettled
+            }));
+        };
+        if fold
+            .conflicted_critical_write_confirms
+            .contains(&confirm_id)
+        {
+            return Ok(Ok(if expired && !deferred {
+                CriticalWriteConfirmResolution::DemotedToProposed
+            } else {
+                CriticalWriteConfirmResolution::AlreadySettled
+            }));
+        }
+        if expired && state.action.disposition == CriticalWriteConfirmDisposition::Clear {
+            return Ok(Ok(if deferred {
+                CriticalWriteConfirmResolution::AlreadySettled
+            } else {
+                CriticalWriteConfirmResolution::DemotedToProposed
+            }));
+        }
+        if state.action.gate_decision_id != binding.gate_decision_id.as_bytes()
+            || state.action.claim_id != binding.claim_id
+            || state.action.effect_digest != binding.effect_digest
+            || state.action.read_frontier_hash != binding.read_frontier_hash
+            || state.action.nonce != binding.nonce
+            || state.action.expires_at != binding.expires_at
+        {
+            return Ok(Ok(CriticalWriteConfirmResolution::AlreadySettled));
+        }
+        // A local ceremony names its revalidated owner. Replay names the
+        // actor the confirm's signing key speaks for, else the owner.
+        let settled_by = match answered_by {
+            Some(actor) => actor,
+            None => match fold.actor_bindings.get(&state.signer) {
                 Some(binding) => binding.actor_ref,
                 None => crate::vault::embedded_owner_actor_id()?,
-            };
-            let settled = |outcome| crate::runtime_hooks::SettledFact {
-                proposal: binding.claim_id,
-                outcome,
-                settled_by,
-                kind: crate::runtime_hooks::SettlementKind::CriticalWriteConfirm,
-            };
-            match state.action.disposition {
-                CriticalWriteConfirmDisposition::Clear => {
-                    // The owner's Clear answers the item this confirm bound.
-                    let removal = super::owner_answer::close_owner_answer_obligation_in_txn(
-                        &self.store,
-                        wtxn,
-                        &binding.claim_id,
-                        &answered,
-                        super::owner_answer::OwnerAnswer::authority_log(),
-                    )?;
-                    if deferred {
-                        if self.deferred_claim_is_supersession_in_txn(wtxn, &binding.claim_id)? {
-                            put_preauthorized_claim_status_in_txn(
-                                self,
-                                wtxn,
-                                &binding.claim_id,
-                                &body,
-                                PreauthorizedClaimStatusGrant::FoldClear,
-                                TimeRange {
-                                    start: header.occurred_start,
-                                    end: header.occurred_end,
-                                },
-                                header.learned_at,
-                            )?;
-                        }
-                        self.complete_deferred_claim_in_txn(wtxn, &binding.claim_id, true, now)?;
-                    }
-                    self.store.remove_pending_gate_consent_in_txn(
-                        wtxn,
-                        &binding.claim_id,
-                        removal,
-                    )?;
-                    self.store
-                        .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
-                    // A held provenance claim stamped no flags on its edge.
-                    if removal == crate::store::TrayRemoval::Answered
-                        && body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE
-                    {
-                        self.restamp_cleared_edge_provenance_in_txn(wtxn, &binding.claim_id)?;
-                    }
-                    // A Clear changes no claim bytes, so it logs a mutation of
-                    // its own: a consumer that skipped the held claim, such as
-                    // the Dreamer wake count, meets it again.
-                    crate::ports::audit_mutation_in_txn(
-                        &self.store,
-                        wtxn,
-                        crate::ports::MutationAudit {
-                            entity: binding.claim_id,
-                            op: crate::ports::ChangeOp::Update,
-                            actor_principal: None,
-                            occurred_at: now,
-                            input: &confirm_id,
-                            reason: Some(CHANGE_REASON_CRITICAL_CONFIRM_CLEARED),
-                        },
-                    )?;
-                    crate::reaction::release_cleared_reaction_in_txn(
-                        self,
-                        wtxn,
-                        binding.claim_id,
-                        &body,
-                    )?;
-                    crate::runtime_hooks::record_settlement_in_txn(
-                        self,
-                        wtxn,
-                        settled(crate::runtime_hooks::SettledOutcome::Approved),
-                    )?;
-                    Ok(Ok(CriticalWriteConfirmResolution::Cleared))
-                }
-                CriticalWriteConfirmDisposition::Decline => {
-                    let removal = super::owner_answer::close_owner_answer_obligation_in_txn(
-                        &self.store,
-                        wtxn,
-                        &binding.claim_id,
-                        &answered,
-                        super::owner_answer::OwnerAnswer::authority_log(),
-                    )?;
-                    let retract = !deferred
-                        || self.deferred_claim_is_supersession_in_txn(wtxn, &binding.claim_id)?;
-                    self.cancel_deferred_claim_in_txn(wtxn, &binding.claim_id)?;
-                    if retract {
+            },
+        };
+        let settled = |outcome| crate::runtime_hooks::SettledFact {
+            proposal: binding.claim_id,
+            outcome,
+            settled_by,
+            kind: crate::runtime_hooks::SettlementKind::CriticalWriteConfirm,
+        };
+        match state.action.disposition {
+            CriticalWriteConfirmDisposition::Clear => {
+                // The owner's Clear answers the item this confirm bound.
+                let removal = super::owner_answer::close_owner_answer_obligation_in_txn(
+                    &self.store,
+                    wtxn,
+                    &binding.claim_id,
+                    &answered,
+                    super::owner_answer::OwnerAnswer::authority_log(),
+                )?;
+                if deferred {
+                    if self.deferred_claim_is_supersession_in_txn(wtxn, &binding.claim_id)? {
                         put_preauthorized_claim_status_in_txn(
                             self,
                             wtxn,
                             &binding.claim_id,
                             &body,
-                            PreauthorizedClaimStatusGrant::FoldDecline,
+                            PreauthorizedClaimStatusGrant::FoldClear,
                             TimeRange {
                                 start: header.occurred_start,
                                 end: header.occurred_end,
@@ -442,36 +391,103 @@ impl Vault {
                             header.learned_at,
                         )?;
                     }
-                    self.store.close_pending_gate_consent_as_in_txn(
-                        wtxn,
-                        &binding.claim_id,
-                        now,
-                        "rejected",
-                        vec![GATE_REASON_CRITICAL_CONFIRM_DECLINED.to_owned()],
-                        None,
-                        removal,
-                    )?;
-                    self.store
-                        .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
-                    // A retracted write, or a deferred one that never landed
-                    // and is cancelled: declined.
-                    crate::runtime_hooks::record_settlement_in_txn(
+                    self.complete_deferred_claim_in_txn(wtxn, &binding.claim_id, true, now)?;
+                }
+                self.store.remove_pending_gate_consent_in_txn(
+                    wtxn,
+                    &binding.claim_id,
+                    removal,
+                )?;
+                self.store
+                    .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
+                // A held provenance claim stamped no flags on its edge.
+                if removal == crate::store::TrayRemoval::Answered
+                    && body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE
+                {
+                    self.restamp_cleared_edge_provenance_in_txn(wtxn, &binding.claim_id)?;
+                }
+                // A Clear changes no claim bytes, so it logs a mutation of
+                // its own: a consumer that skipped the held claim, such as
+                // the Dreamer wake count, meets it again.
+                crate::ports::audit_mutation_in_txn(
+                    &self.store,
+                    wtxn,
+                    crate::ports::MutationAudit {
+                        entity: binding.claim_id,
+                        op: crate::ports::ChangeOp::Update,
+                        actor_principal: None,
+                        occurred_at: now,
+                        input: &confirm_id,
+                        reason: Some(CHANGE_REASON_CRITICAL_CONFIRM_CLEARED),
+                    },
+                )?;
+                crate::reaction::release_cleared_reaction_in_txn(
+                    self,
+                    wtxn,
+                    binding.claim_id,
+                    &body,
+                )?;
+                crate::runtime_hooks::record_settlement_in_txn(
+                    self,
+                    wtxn,
+                    settled(crate::runtime_hooks::SettledOutcome::Approved),
+                )?;
+                Ok(Ok(CriticalWriteConfirmResolution::Cleared))
+            }
+            CriticalWriteConfirmDisposition::Decline => {
+                let removal = super::owner_answer::close_owner_answer_obligation_in_txn(
+                    &self.store,
+                    wtxn,
+                    &binding.claim_id,
+                    &answered,
+                    super::owner_answer::OwnerAnswer::authority_log(),
+                )?;
+                let retract = !deferred
+                    || self.deferred_claim_is_supersession_in_txn(wtxn, &binding.claim_id)?;
+                self.cancel_deferred_claim_in_txn(wtxn, &binding.claim_id)?;
+                if retract {
+                    put_preauthorized_claim_status_in_txn(
                         self,
                         wtxn,
-                        settled(if retract {
-                            crate::runtime_hooks::SettledOutcome::Retracted
-                        } else {
-                            crate::runtime_hooks::SettledOutcome::Declined
-                        }),
+                        &binding.claim_id,
+                        &body,
+                        PreauthorizedClaimStatusGrant::FoldDecline,
+                        TimeRange {
+                            start: header.occurred_start,
+                            end: header.occurred_end,
+                        },
+                        header.learned_at,
                     )?;
-                    Ok(Ok(if retract {
-                        CriticalWriteConfirmResolution::Retracted
-                    } else {
-                        CriticalWriteConfirmResolution::AlreadySettled
-                    }))
                 }
+                self.store.close_pending_gate_consent_as_in_txn(
+                    wtxn,
+                    &binding.claim_id,
+                    now,
+                    "rejected",
+                    vec![GATE_REASON_CRITICAL_CONFIRM_DECLINED.to_owned()],
+                    None,
+                    removal,
+                )?;
+                self.store
+                    .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
+                // A retracted write, or a deferred one that never landed
+                // and is cancelled: declined.
+                crate::runtime_hooks::record_settlement_in_txn(
+                    self,
+                    wtxn,
+                    settled(if retract {
+                        crate::runtime_hooks::SettledOutcome::Retracted
+                    } else {
+                        crate::runtime_hooks::SettledOutcome::Declined
+                    }),
+                )?;
+                Ok(Ok(if retract {
+                    CriticalWriteConfirmResolution::Retracted
+                } else {
+                    CriticalWriteConfirmResolution::AlreadySettled
+                }))
             }
-        })?
+        }
     }
 
     pub(crate) fn expire_critical_write_confirms(&self) -> Result<usize> {
@@ -587,7 +603,9 @@ pub struct CriticalWriteConfirmBinding {
     pub expires_at: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub enum CriticalWriteConfirmResolution {
     Cleared,
     Retracted,

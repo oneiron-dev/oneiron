@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 995 code-mode rows (971 host rows, 24 run rows), 3291 declarations.
-// Replies: 890 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1009 code-mode rows (985 host rows, 24 run rows), 3367 declarations.
+// Replies: 904 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1610,6 +1610,16 @@ declare namespace Sdk {
   type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null };
   type ConsentRegistry = { rows: ConsentRegistryRow[] };
   type RevokeGrantRequest = { grant: string };
+  type CatastropheClass = "WidenOwnAuthority" | "KeyRecovery" | "VaultWideDestruction" | "SecurityControlDisable" | "MassSecretExport" | "WorldPrivacyWiden";
+  type BypassActionEnvelopeRequest = { selectors: string[]; target?: string | null; budget?: number | null; receipt_required?: boolean };
+  type BypassGrantBoundRequest = { actor: string; actor_class?: string | null; classes: CatastropheClass[]; scope: BypassScope; envelope: BypassActionEnvelopeRequest };
+  type BypassGrantWarningRequest = { bound: BypassGrantBoundRequest };
+  type BypassGrantWarningView = { owner: string; bound: BypassGrantBoundRequest; floor_version: number; bound_digests: string[] };
+  type CreateBypassGrantRequest = { warning: BypassGrantWarningView };
+  type ActiveBypassGrantsRequest = Record<string, never>;
+  type BypassActiveState = { active: boolean; grant: string; bound: BypassGrantBoundRequest; floor_version: number; created_at: number };
+  type BypassedEffectReceiptsRequest = { grant: string };
+  type BypassedEffectReceipt = { decision_ref: string; grant_ref: string; effect_digest: string; reason_code: string; created_at: number };
   type GraduationScope = { op_kind: string; target_class: string; actor: string };
   type GraduationPolicyRequest = { scope?: GraduationScope | null };
   type GraduationPolicy = { scope_pattern: string; required_streak: number; posterior_guard: number; snooze_backoff_seconds: number[] };
@@ -2191,6 +2201,64 @@ declare namespace Sdk {
   type CriticPrediction = { what: string; by_when: number; how_checked: OutcomeBinding };
   type CritiqueArtifact = { schema_version: number; artifact_id: string; run_id: string; branch_job: AttemptId; candidate_ref: string; lens_id: string; domain: string; provenance: CritiqueProvenance; calibration: LearningCell; prediction?: CriticPrediction | null; verdict: CritiqueVerdict; severity: CritiqueSeverity; hard_check_passed?: boolean | null; evidence_refs: string[]; suggested_edit?: string | null; out_of_scope?: boolean; created_at: number };
   type CriticReviewOutcome = { verdict_claim_ref: string; triage: CritiqueTriage; artifacts: CritiqueArtifact[]; receipts: DecisionReceipt[] };
+  type OutlineCommunication = { audience: string; outcome: string; main_message: string };
+  type OutlineDivision = "fixed" | "split";
+  type OutlinePriority = "required" | "optional";
+  type OutlinePin = { claim?: string | null; document: string; version: string; start: string; end: string; quote: string; quote_hash: string; drift?: boolean };
+  type OutlineCarrier = "chart" | "table" | "share";
+  type OutlineBlock = { kind: "title"; id: string; priority?: OutlinePriority | null; text: string } | { kind: "claim"; id: string; priority?: OutlinePriority | null; text: string; qualifications?: string[]; evidence: OutlinePin[] } | { kind: "data"; id: string; priority?: OutlinePriority | null; dataset: string; carriers: OutlineCarrier[] } | { kind: "asset"; id: string; priority?: OutlinePriority | null; asset: string };
+  type OutlinePage = { id: string; job: string; division?: OutlineDivision | null; blocks: OutlineBlock[] };
+  type OutlineColumnKind = "number" | "text" | "date";
+  type OutlineNumberFormat = { decimals?: number; grouping?: boolean; percent?: boolean };
+  type OutlineColumn = { name: string; type: OutlineColumnKind; unit?: string | null; format?: OutlineNumberFormat | null };
+  type OutlineCell = number | string;
+  type OutlineMerge = { row: number; col: number; rows: number; cols: number };
+  type OutlineDataset = { id: string; columns: OutlineColumn[]; rows?: (OutlineCell | null)[][]; missing?: string | null; sources: string[]; merges?: OutlineMerge[] };
+  type OutlineAssetKind = "factual" | "illustration";
+  type OutlineAsset = { id: string; kind: OutlineAssetKind; content: string };
+  type DeckOutline = { communication: OutlineCommunication; language: string; accessibility?: string[]; pages: OutlinePage[]; datasets?: OutlineDataset[]; assets?: OutlineAsset[] };
+  type DeckOutlineProposeRequest = { outline: DeckOutline };
+  type KeptOutline = { note: EntityId; frontier: number[]; version: string; bytes: number[]; content_hash: number[]; kept_by: EntityId; kept_at: number };
+  type OutlineFreshness = "fresh" | "not_kept" | "edited" | { evidence_moved: { pins: number[] } };
+  type DeckOutlineView = { outline_ref: string; frontier: number[]; outline: DeckOutline; kept?: KeptOutline | null; freshness: OutlineFreshness };
+  type DeckOutlineRefRequest = { outline_ref: string };
+  type DeckOutlineSettleRequest = { outline_ref: string; expected_frontier: number[] };
+  type DeckOutlineDeclined = { outline_ref: string; declined: boolean };
+  type DeckKeepBinding = { version: string; content_hash: number[] };
+  type ArtifactVersionRef = { artifact: EntityId; version: number };
+  type DeckDesignRequest = { outline_ref: string; kept: DeckKeepBinding; templates: ArtifactVersionRef[]; assets?: Record<string, ArtifactVersionRef>; fonts?: ArtifactVersionRef[] };
+  type DirectionSlide = { page: string; layout: string; fallback?: string | null };
+  type DirectionOutcome = { plan: { slides: DirectionSlide[]; omitted: string[]; measured: number; estimated: number } } | { ask: { pages: string[] } };
+  type DesignDirection = { template: ArtifactVersionRef; template_hash: number[]; outcome: DirectionOutcome };
+  type DesignSpec = { note: EntityId; content_hash: number[]; directions: DesignDirection[] };
+  type DeckVisualChoices = { master: string; theme?: string | null; major_font?: string | null; minor_font?: string | null };
+  type DeckFallback = "ordinary_shapes" | "split" | "rows" | "ask";
+  type DeckPlannedContent = { title: string } | { text: string[] } | { table: string } | { chart: string } | { share: string } | { picture: string } | { figure: string };
+  type DeckRect = { x: number; y: number; cx: number; cy: number };
+  type DeckDestination = { kind: "placeholder"; role: string; idx: number; part: string; element: number; bounds: DeckRect } | { kind: "shape"; bounds: DeckRect };
+  type DeckPlacement = { block: string; content: DeckPlannedContent; destination: DeckDestination };
+  type DeckFitPolicy = "no_shrink";
+  type CreatedEstimate = { block: string; need: number; room: number; font?: string | null };
+  type DeckFit = { policy: DeckFitPolicy; estimates: CreatedEstimate[]; alternatives: DeckFallback[] };
+  type DeckPlannedSlide = { page: string; part: string; layout: string; fallback?: DeckFallback | null; split?: [number, number] | null; placements: DeckPlacement[]; fit: DeckFit };
+  type DeckAssetMedia = "png" | "jpeg" | "svg";
+  type DeckAssetBinding = { asset: string; handle: string; media: DeckAssetMedia };
+  type DeckNewPart = { part: string; content_type: string };
+  type DeckPlannedRelationship = { source: string; kind: string; target: string };
+  type DeckPackagePlan = { new_parts: DeckNewPart[]; changed_parts: string[]; relationships: DeckPlannedRelationship[] };
+  type DeckTraceOutcome = { placed: [number, number][] } | "omitted";
+  type DeckTraceEntry = { block: string; page: string; outcome: DeckTraceOutcome; drifted: boolean };
+  type DeckPlanView = { version: string; content_hash: number[]; template_hash: number[]; visual: DeckVisualChoices; slides: DeckPlannedSlide[]; data: OutlineDataset[]; assets: DeckAssetBinding[]; package: DeckPackagePlan; trace: DeckTraceEntry[] };
+  type DeckDesignOption = "other_template" | "design_change";
+  type DeckShortfallReason = "no_suitable_slot" | "overflow" | "crowded";
+  type DeckDesignShortfall = { block: string; reason: DeckShortfallReason };
+  type DeckDesignDecision = { page: string; options: DeckDesignOption[]; shortfalls: DeckDesignShortfall[] };
+  type DeckDesignView = { spec: DesignSpec; plans: (DeckPlanView | null)[]; decisions: DeckDesignDecision[][] };
+  type DeckEmissionNames = { text: string; table: string; chart: string; picture: string; figure: string; sheet: string };
+  type DeckEmissionRequest = { outline_ref: string; kept: DeckKeepBinding; template: ArtifactVersionRef; assets?: Record<string, ArtifactVersionRef>; fonts?: ArtifactVersionRef[]; names: DeckEmissionNames; name: string; run_ref: string; trigger?: MadeByTrigger | null };
+  type CreatedSlide = { part: string; sld_id: number; page: string; layout: string };
+  type DeckCreationRecord = { artifact: EntityId; version: number; content_hash: number[]; outline: EntityId; outline_version: string; outline_hash: number[]; template: ArtifactVersionRef; template_hash: number[]; run_ref: string; made_by?: EntityId | null; slides: CreatedSlide[]; write_set: string[]; omitted: string[]; fit_unverified: [string, string, number][]; estimates: CreatedEstimate[]; created_at: number };
+  type DeckEmissionOutcome = { state: "created"; record: DeckCreationRecord } | { state: "ask"; pages: string[] };
   type DeckInspectRequest = { artifact_ref: string; version?: number | null };
   type Digest = string;
   type IdMarks = { slide?: number; shapes?: Record<string, number> };
@@ -2726,6 +2794,14 @@ declare namespace Sdk {
   type ClaimFilteredReadRequest = { claim_ref: string; filter?: ReadFilterInput | null };
   type SafeDeleteReason = "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete";
   type SafeDeleteRequest = { entity_ref: string; reason: SafeDeleteReason };
+  type CriticalWriteConfirmPendingRequest = { pending_operation: string };
+  type CriticalWriteConfirmPending = { pending_operation: string; claim_ref: string; confirm_id: string; nonce: string; read_frontier_hash: string; effect_digest: string; expires_at: number; has_deadline: boolean };
+  type CriticalWriteConfirmRequest = { pending_operation: string; nonce: string; read_frontier_hash: string };
+  type CriticalWriteConfirmAnswer = "clear" | "decline";
+  type CriticalWriteConfirmReceipt = { receipt_ref: string; confirm_id: string; pending_operation: string; claim_ref: string; nonce: string; read_frontier_hash: string; effect_digest: string; expires_at: number; disposition: CriticalWriteConfirmAnswer };
+  type CriticalWriteConfirmResolution = "Cleared" | "Retracted" | "DemotedToProposed" | "AlreadySettled";
+  type CriticalWriteConfirmSettlement = { receipt: CriticalWriteConfirmReceipt; resolution: CriticalWriteConfirmResolution };
+  type CriticalWriteConfirmReceiptRequest = { confirm_id: string };
   type ReceiptsRequest = { limit?: number | null };
   type PendingWrite = { claim_ref: string; decision_ref: string; created_at: number; reason_codes: string[]; dreamer_run_id?: string | null };
   type HydrateRequest = { refs: string[] };
@@ -3846,6 +3922,12 @@ declare const vault: Sdk.VaultHost & {
     born_from(input: Sdk.BornFromRequest): Promise<Sdk.BornFromView | StoredResult>;
     /** Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run. */
     create(input: Sdk.ArtifactCreateRequest): Promise<Sdk.ArtifactView | null | StoredResult>;
+    /** Emits one checked deck from a fresh kept outline and a planned template, retaining born-from and unverified fit. */
+    create_deck(input: Sdk.DeckEmissionRequest): Promise<Sdk.DeckEmissionOutcome | StoredResult>;
+    /** The owner declines the exact outline frontier, clearing its keep and design directions. */
+    decline_outline(input: Sdk.DeckOutlineSettleRequest): Promise<Sdk.DeckOutlineDeclined | StoredResult>;
+    /** Compiles one to three template directions from the exact fresh keep into validated plans or typed design decisions. */
+    design_deck(input: Sdk.DeckDesignRequest): Promise<Sdk.DeckDesignView | StoredResult>;
     /** Drops one waiting artifact proposal, once. */
     discard(input: Sdk.ProposalSettleRequest): Promise<Sdk.DiscardedProposal | StoredResult>;
     /** One artifact version's export file, with the born-with text the caller chose and a share receipt listing it. */
@@ -3854,6 +3936,8 @@ declare const vault: Sdk.VaultHost & {
     inspect_deck(input: Sdk.DeckInspectRequest): Promise<Sdk.DeckInspectionView | StoredResult>;
     /** Settles one waiting artifact proposal into a version. */
     keep(input: Sdk.ProposalSettleRequest): Promise<Sdk.KeptProposal | StoredResult>;
+    /** The owner keeps the exact outline frontier, freezing its version and content hash. */
+    keep_outline(input: Sdk.DeckOutlineSettleRequest): Promise<Sdk.KeptOutline | StoredResult>;
     /** Mints a serving-only link token and its digest tier; publication still requires a separate exact Gate authorization. */
     link_token(input: Sdk.EmptyRequest): Promise<Sdk.ArtifactLinkToken | StoredResult>;
     live_preview: {
@@ -3872,12 +3956,16 @@ declare const vault: Sdk.VaultHost & {
       /** Mints a revocable sharing URL for one private live preview, replacing any earlier sharing URL; no artifact is published. */
       share(input: Sdk.ArtifactPreviewRequest): Promise<Sdk.ArtifactPreviewShare | StoredResult>;
     };
+    /** Reads a typed deck outline, its current NOTE frontier, its keep and its freshness. */
+    outline(input: Sdk.DeckOutlineRefRequest): Promise<Sdk.DeckOutlineView | StoredResult>;
     /** Reads the current artifact channel pin and audience under the owner credential; null when absent or withheld. */
     pointer(input: Sdk.ArtifactPointerRequest): Promise<Sdk.ArtifactPointer | null | StoredResult>;
     /** The proposals waiting beside one artifact. */
     proposals(input: Sdk.ArtifactRefRequest): Promise<Sdk.PendingProposalView[] | StoredResult>;
     /** Runs one native deck transaction over an artifact's head and holds the proposal for Keep. */
     propose_deck(input: Sdk.DeckProposeRequest): Promise<Sdk.DeckProposeOutcome | StoredResult>;
+    /** Proposes a closed typed deck outline as a brief NOTE for the person to keep or decline. */
+    propose_outline(input: Sdk.DeckOutlineProposeRequest): Promise<Sdk.DeckOutlineView | StoredResult>;
     /** Offers one native organ result to an artifact as its next version, held for Keep. */
     propose_output(input: Sdk.NativeOutputRequest): Promise<Sdk.PendingProposalView | StoredResult>;
     /** Publishes one immutable code fork or numbered blob export with an explicit audience through the existing Gate, returning its pointer and durable receipt ref. */
@@ -4346,8 +4434,16 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   consent: {
+    /** The owner reads live scoped bypass states and their complete bounds, newest first; vault.consent.revoke ends each grant. */
+    active_bypass_grants(input: Sdk.ActiveBypassGrantsRequest): Promise<Sdk.BypassActiveState[] | StoredResult>;
     /** The owner approves exactly one engine-emitted effect digest; no standing grant is created. */
     approve_once(input: Sdk.ApproveOnceRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
+    /** The owner previews the exact actor, classes, envelope and project or thread of a scoped bypass; this warning grants nothing. */
+    bypass_grant_warning(input: Sdk.BypassGrantWarningRequest): Promise<Sdk.BypassGrantWarningView | StoredResult>;
+    /** The owner reads the existing Gate receipts for effects covered by one bypass grant, including after its revocation. */
+    bypassed_effect_receipts(input: Sdk.BypassedEffectReceiptsRequest): Promise<Sdk.BypassedEffectReceipt[] | StoredResult>;
+    /** The owner explicitly acknowledges a scoped bypass warning and atomically creates one receipted standing bypass per class. */
+    create_bypass_grant(input: Sdk.CreateBypassGrantRequest): Promise<Sdk.ConsentActReceipt[] | StoredResult>;
     /** The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision. */
     create_standing_grant(input: Sdk.CreateStandingGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
     /** The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority. */
@@ -5815,6 +5911,16 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   writes: {
+    critical_confirm: {
+      /** The owner clears exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt. */
+      clear(input: Sdk.CriticalWriteConfirmRequest): Promise<Sdk.CriticalWriteConfirmSettlement | StoredResult>;
+      /** The owner declines exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt. */
+      decline(input: Sdk.CriticalWriteConfirmRequest): Promise<Sdk.CriticalWriteConfirmSettlement | StoredResult>;
+      /** The owner reads a candidate's exact critical confirmation, with its nonce, effect digest, policy frontier and deadline. */
+      pending(input: Sdk.CriticalWriteConfirmPendingRequest): Promise<Sdk.CriticalWriteConfirmPending | null | StoredResult>;
+      /** The owner reads a critical confirmation's existing signed authority receipt without settling or rewriting the claim. */
+      receipt(input: Sdk.CriticalWriteConfirmReceiptRequest): Promise<Sdk.CriticalWriteConfirmReceipt | StoredResult>;
+    };
     /** Gated writes parked for consent, newest first. */
     pending(input: Sdk.ReceiptsRequest): Promise<Sdk.PendingWrite[] | StoredResult>;
   };

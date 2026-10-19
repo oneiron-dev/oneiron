@@ -2116,6 +2116,26 @@ export_facade! {
     let output = client.vault_consent_revoke(&input)?;
     crate::codec::lift_record("vault.consent.revoke", &output)
 };
+"vault.consent.bypass_grant_warning" => fn vault_consent_bypass_grant_warning(&self, input: BypassGrantWarningRequest) -> BypassGrantWarningView = |client| {
+    let input: oneiron::consent::bypass_lifecycle::BypassGrantWarningRequest = crate::codec::lower_record("vault.consent.bypass_grant_warning", input)?;
+    let output = client.vault_consent_bypass_grant_warning(&input)?;
+    crate::codec::lift_record("vault.consent.bypass_grant_warning", &output)
+};
+"vault.consent.create_bypass_grant" => fn vault_consent_create_bypass_grant(&self, input: CreateBypassGrantRequest) -> Vec<ConsentActReceipt> = |client| {
+    let input: oneiron::consent::bypass_lifecycle::CreateBypassGrantRequest = crate::codec::lower_record("vault.consent.create_bypass_grant", input)?;
+    let output = client.vault_consent_create_bypass_grant(&input)?;
+    crate::codec::lift_record("vault.consent.create_bypass_grant", &output)
+};
+"vault.consent.active_bypass_grants" => fn vault_consent_active_bypass_grants(&self) -> Vec<BypassActiveState> = |client| {
+    let input: oneiron::consent::bypass_lifecycle::ActiveBypassGrantsRequest = crate::codec::lower_empty("vault.consent.active_bypass_grants")?;
+    let output = client.vault_consent_active_bypass_grants(&input)?;
+    crate::codec::lift_record("vault.consent.active_bypass_grants", &output)
+};
+"vault.consent.bypassed_effect_receipts" => fn vault_consent_bypassed_effect_receipts(&self, input: BypassedEffectReceiptsRequest) -> Vec<BypassedEffectReceipt> = |client| {
+    let input: oneiron::consent::bypass_lifecycle::BypassedEffectReceiptsRequest = crate::codec::lower_record("vault.consent.bypassed_effect_receipts", input)?;
+    let output = client.vault_consent_bypassed_effect_receipts(&input)?;
+    crate::codec::lift_record("vault.consent.bypassed_effect_receipts", &output)
+};
 "vault.consent.graduation.policy" => fn vault_consent_graduation_policy(&self, input: GraduationPolicyRequest) -> GraduationPolicies = |client| {
     let input: oneiron::consent_graduation::api::GraduationPolicyRequest = crate::codec::lower_record("vault.consent.graduation.policy", input)?;
     let output = client.vault_consent_graduation_policy(&input)?;
@@ -3036,6 +3056,36 @@ export_facade! {
     let output = client.vault_critic_review(&input)?;
     crate::codec::lift_record("vault.critic.review", &output)
 };
+"vault.artifacts.propose_outline" => fn vault_artifacts_propose_outline(&self, input: DeckOutlineProposeRequest) -> DeckOutlineView = |client| {
+    let input: oneiron::blob_artifact::deck_creation::DeckOutlineProposeRequest = crate::codec::lower_record("vault.artifacts.propose_outline", input)?;
+    let output = client.vault_artifacts_propose_outline(&input)?;
+    crate::codec::lift_record("vault.artifacts.propose_outline", &output)
+};
+"vault.artifacts.outline" => fn vault_artifacts_outline(&self, input: DeckOutlineRefRequest) -> DeckOutlineView = |client| {
+    let input: oneiron::blob_artifact::deck_creation::DeckOutlineRefRequest = crate::codec::lower_record("vault.artifacts.outline", input)?;
+    let output = client.vault_artifacts_outline(&input)?;
+    crate::codec::lift_record("vault.artifacts.outline", &output)
+};
+"vault.artifacts.keep_outline" => fn vault_artifacts_keep_outline(&self, input: DeckOutlineSettleRequest) -> KeptOutline = |client| {
+    let input: oneiron::blob_artifact::deck_creation::DeckOutlineSettleRequest = crate::codec::lower_record("vault.artifacts.keep_outline", input)?;
+    let output = client.vault_artifacts_keep_outline(&input)?;
+    crate::codec::lift_record("vault.artifacts.keep_outline", &output)
+};
+"vault.artifacts.decline_outline" => fn vault_artifacts_decline_outline(&self, input: DeckOutlineSettleRequest) -> DeckOutlineDeclined = |client| {
+    let input: oneiron::blob_artifact::deck_creation::DeckOutlineSettleRequest = crate::codec::lower_record("vault.artifacts.decline_outline", input)?;
+    let output = client.vault_artifacts_decline_outline(&input)?;
+    crate::codec::lift_record("vault.artifacts.decline_outline", &output)
+};
+"vault.artifacts.design_deck" => fn vault_artifacts_design_deck(&self, input: DeckDesignRequest) -> DeckDesignView = |client| {
+    let input: oneiron::blob_artifact::deck_creation::DeckDesignRequest = crate::codec::lower_record("vault.artifacts.design_deck", input)?;
+    let output = client.vault_artifacts_design_deck(&input)?;
+    crate::codec::lift_record("vault.artifacts.design_deck", &output)
+};
+"vault.artifacts.create_deck" => fn vault_artifacts_create_deck(&self, input: DeckEmissionRequest) -> DeckEmissionOutcome = |client| {
+    let input: oneiron::blob_artifact::deck_creation::DeckEmissionRequest = crate::codec::lower_record("vault.artifacts.create_deck", input)?;
+    let output = client.vault_artifacts_create_deck(&input)?;
+    crate::codec::lift_record("vault.artifacts.create_deck", &output)
+};
 "vault.artifacts.inspect_deck" => fn vault_artifacts_inspect_deck(&self, input: DeckInspectRequest) -> DeckInspectionView = |client| {
     let input: oneiron::blob_artifact::DeckInspectRequest = crate::codec::lower_record("vault.artifacts.inspect_deck", input)?;
     let output = client.vault_artifacts_inspect_deck(&input)?;
@@ -3860,6 +3910,26 @@ export_facade! {
     let input: oneiron::task_verb::sdk::SafeDeleteRequest = (entity_ref, reason).lower()?;
     let output = client.vault_delete(&input)?;
     Lift::lift(output)
+};
+"vault.writes.critical_confirm.pending" => fn vault_writes_critical_confirm_pending(&self, input: CriticalWriteConfirmPendingRequest) -> Option<CriticalWriteConfirmPending> = |client| {
+    let input: oneiron::memory::CriticalWriteConfirmPendingRequest = crate::codec::lower_record("vault.writes.critical_confirm.pending", input)?;
+    let output = client.vault_writes_critical_confirm_pending(&input)?;
+    crate::codec::lift_record("vault.writes.critical_confirm.pending", &output)
+};
+"vault.writes.critical_confirm.clear" => fn vault_writes_critical_confirm_clear(&self, input: CriticalWriteConfirmRequest) -> CriticalWriteConfirmSettlement = |client| {
+    let input: oneiron::memory::CriticalWriteConfirmRequest = crate::codec::lower_record("vault.writes.critical_confirm.clear", input)?;
+    let output = client.vault_writes_critical_confirm_clear(&input)?;
+    crate::codec::lift_record("vault.writes.critical_confirm.clear", &output)
+};
+"vault.writes.critical_confirm.decline" => fn vault_writes_critical_confirm_decline(&self, input: CriticalWriteConfirmRequest) -> CriticalWriteConfirmSettlement = |client| {
+    let input: oneiron::memory::CriticalWriteConfirmRequest = crate::codec::lower_record("vault.writes.critical_confirm.decline", input)?;
+    let output = client.vault_writes_critical_confirm_decline(&input)?;
+    crate::codec::lift_record("vault.writes.critical_confirm.decline", &output)
+};
+"vault.writes.critical_confirm.receipt" => fn vault_writes_critical_confirm_receipt(&self, input: CriticalWriteConfirmReceiptRequest) -> CriticalWriteConfirmReceipt = |client| {
+    let input: oneiron::memory::CriticalWriteConfirmReceiptRequest = crate::codec::lower_record("vault.writes.critical_confirm.receipt", input)?;
+    let output = client.vault_writes_critical_confirm_receipt(&input)?;
+    crate::codec::lift_record("vault.writes.critical_confirm.receipt", &output)
 };
 "vault.writes.pending" => fn vault_writes_pending(&self, limit: u32) -> Vec<PendingWrite> = |client| {
     let input: oneiron::task_verb::sdk::ReceiptsRequest = limit.lower()?;

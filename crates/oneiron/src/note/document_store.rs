@@ -210,7 +210,25 @@ impl Memory<'_> {
         markdown: impl Into<String>,
         pins: &[NotePin],
     ) -> MemoryResult<EntityRefReceipt> {
-        let markdown = markdown.into();
+        self.author_brief_inner(markdown.into(), pins, false)
+    }
+
+    pub(crate) fn author_deck_outline(&self, bytes: &[u8]) -> MemoryResult<EntityRefReceipt> {
+        oneiron_docedit::design_plan::Brief::parse(bytes)
+            .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+        let pins = crate::edit_roundtrip::deck_create::outline_pins(bytes)
+            .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+        let markdown = String::from_utf8(bytes.to_vec())
+            .map_err(|_| MemoryError::bad_request("outline is not UTF-8"))?;
+        self.author_brief_inner(markdown, &pins, true)
+    }
+
+    fn author_brief_inner(
+        &self,
+        markdown: String,
+        pins: &[NotePin],
+        outline: bool,
+    ) -> MemoryResult<EntityRefReceipt> {
         let kind = NoteKind::Plugin("brief".into());
         let read = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         let id = self.vault().new_entity_id()?;
@@ -228,13 +246,24 @@ impl Memory<'_> {
                 self.actor_class(),
                 &markdown,
             )?;
-            if pins.is_empty() {
+            if pins.is_empty() && !outline {
                 return Err(invalid("a brief requires supporting claim citations").into());
             }
-            let sources: Vec<_> = pins
+            let mut sources: Vec<_> = pins
                 .iter()
                 .flat_map(|pin| [pin.claim, pin.document])
                 .collect();
+            if outline {
+                let brief = oneiron_docedit::design_plan::Brief::parse(markdown.as_bytes())
+                    .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+                for block in brief.pages.iter().flat_map(|page| &page.blocks) {
+                    if let oneiron_docedit::design_plan::BlockContent::Claim { evidence, .. } = &block.content {
+                        for pin in evidence {
+                            sources.push(EntityId::from_hex(&pin.document)?);
+                        }
+                    }
+                }
+            }
             if read
                 .get_entities_parts_in_txn(content.read(), &sources)?
                 .iter()
@@ -554,4 +583,26 @@ pub(super) fn require_note_writer(
         crate::memory::verify_owner_actor_binding_in_txn(memory.vault(), txn, memory.actor())?;
     }
     Ok(())
+}
+
+/// The creation pipeline only accepts the brief NOTE kind, in its write snapshot.
+pub(crate) fn deck_outline_document_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+) -> Result<NoteDocumentView> {
+    let (_, body) = super::verbs::note_core(vault, txn, note)?;
+    if body.kind != NoteKind::Plugin("brief".to_owned()) {
+        return Err(invalid("a deck outline is a brief NOTE"));
+    }
+    load(vault, txn, note)?.view()
+}
+
+pub(crate) fn resolve_deck_pin_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pin: &NotePin,
+) -> Result<NoteSpanResolution> {
+    super::citation_erase::validate_pins(vault, txn, std::slice::from_ref(pin))?;
+    load(vault, txn, pin.document)?.resolve(pin)
 }
