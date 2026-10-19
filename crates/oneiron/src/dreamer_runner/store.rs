@@ -992,6 +992,7 @@ fn is_dreamer_queue_kind(kind: &str) -> bool {
         || kind == DREAMER_NOTE_REVIEW_ATTEMPT_KIND
         || kind == DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
         || kind == DREAMER_WEAVE_LENS_ATTEMPT_KIND
+        || kind == super::DREAMER_TURN_PROGRAM_ATTEMPT_KIND
         || kind == super::COACH_HEAL_ATTEMPT_KIND
         || kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND
 }

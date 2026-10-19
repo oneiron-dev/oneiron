@@ -254,6 +254,19 @@ side_tables! {
     /// store-minted order id, the row learned_at it was taken against and the scopes that consumed
     /// it. Key: id16(turn).
     DREAMER_TURN_REDIRTY: VaultMeta b"dreamer:turn-redirty:v1:" Named;
+    /// DOOR-141: one turn program admission: the sealed wake, its Gate receipt, and the attempt it
+    /// queued or why it was refused. Key: hash32(actor, registration, revision, turn).
+    DREAMER_TURN_PROGRAM_ADMISSION: VaultMeta b"dreamer:turn_program:admission:v1:" Named;
+    /// DOOR-141: one armed turn program: its actor, the conversation its turns wake it from, and its
+    /// pinned callable SKILL entry with its revision. Key: id16(actor) + id16(registration).
+    DREAMER_TURN_PROGRAM_ARM: VaultMeta b"dreamer:turn_program:arm:v1:" Named
+        => crate::dreamer_runner::erase_turn_program_actor_in_txn;
+    /// DOOR-141: the waking actor one turn program attempt runs as, never a base-agent stamp, and
+    /// the admission that bound it. Key: id16(attempt).
+    DREAMER_TURN_PROGRAM_ATTEMPT: VaultMeta b"dreamer:turn_program:attempt:v1:" Named;
+    /// DOOR-141: a wake a landed turn owes an armed program, recorded in that turn's own commit and
+    /// consumed by its admission. Key: id16(turn) + id16(registration).
+    DREAMER_TURN_PROGRAM_WAKE: VaultMeta b"dreamer:turn_program:wake:v1:" Named;
     /// Coalesced recipe input for one wake recipe. Key: u8(recipe).
     DREAMER_WAKE_RECIPE_INPUT: VaultMeta b"dreamer:wake-policy:recipe-input:v1:" LegacyJson;
     /// Wake cursor and pending state. Key: ().
