@@ -199,8 +199,8 @@ pub(crate) fn mirror_custody_transitions(
 
 /// Relays each input this vault keeps into window `key`, the base window of
 /// its sealing month, while its request awaits the holder, and drops from
-/// the window every input row whose request is answered. Returns whether it
-/// wrote any.
+/// the window every input row whose request this vault folds as answered.
+/// Returns whether it wrote any.
 fn mirror_custody_inputs(vault: &Vault, doc: &LoroDoc, key: &WindowKey) -> Result<bool> {
     let kept = held_inputs(vault)?;
     let holds = holds_custody_map(doc);
@@ -233,8 +233,11 @@ fn mirror_custody_inputs(vault: &Vault, doc: &LoroDoc, key: &WindowKey) -> Resul
             if !map_key.starts_with(INPUT_ROW_PREFIX) {
                 return;
             }
+            // Only an answered request's input leaves: one whose request
+            // this vault has not folded yet may still be its holder's.
             if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value
-                && RelayedInput::decode(&bytes).is_some_and(|input| !input_open(&fold, &input))
+                && RelayedInput::decode(&bytes)
+                    .is_some_and(|input| fold.owner_work_result(&input.request).is_some())
             {
                 answered.push(map_key.to_owned());
             }
