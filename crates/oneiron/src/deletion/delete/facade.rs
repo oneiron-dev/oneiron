@@ -224,10 +224,24 @@ impl Vault {
             &self.store.env.read_txn()?,
             id,
         )?;
+        // A privacy erase keeps a thread audience edit its live root folds,
+        // made by no one (FIX 5639); any other delete of it refuses below.
+        if reason == DeleteReason::GdprDelete
+            && let Some(outcome) = crate::workspace_roster::erase_audience_edit(
+                self,
+                id,
+                gate.as_ref()
+                    .map_or(HoldActor::UNATTRIBUTED, GatedDeletion::hold_actor),
+                |txn| reverify_deletion_authority_before_publication(gate.as_ref(), txn),
+            )?
+        {
+            return Ok(outcome);
+        }
         {
             let txn = self.store.env.read_txn()?;
             crate::federation::reject_ruling_delete(&self.store, &txn, id)?;
             crate::task_authority::reject_fact_delete(&self.store, &txn, id)?;
+            crate::workspace_roster::reject_audience_edit_delete(&self.store, &txn, id)?;
             crate::workspace_roster::precheck_goal_delete(&self.store, &txn, *id, gate.is_some())?;
             self.store.guard_pack_map_carrier_delete_in_txn(&txn, id)?;
         }
