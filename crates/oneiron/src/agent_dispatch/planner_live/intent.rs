@@ -24,13 +24,21 @@
 //! frozen winning; the launched row, with the identities the launch queued,
 //! is written in the launch's own group writer. A launched intent answers
 //! them and never launches again. Its leader's run reads the frozen pack
-//! from the row (`child`, S4c-5), and the row keeps where that run put the
-//! pack's SKILL.md in its task, which a continuation of the run reuses.
+//! from the row (`child`, S4c-5), and the row keeps, for each of the
+//! leader's runs, where that run put the pack's SKILL.md in its task, which
+//! a continuation of that run reuses.
+//!
+//! An actor's erase leaves every intent it asked, its custody, launch and
+//! frozen pack included, and forgets only the asker (FIX 4582): the erased
+//! asker can no longer replay, settle or launch it.
 
 mod child;
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
+use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::code_run::{SelfSpawnAsk, TaskExposure};
 use crate::consent::AuthenticatedOwner;
@@ -121,8 +129,9 @@ impl IntentAsk {
 #[serde(deny_unknown_fields)]
 struct PlannedIntent {
     /// The asker: the owner, from the proof's revalidation, or the leased
-    /// agent its parent's own dispatch runs as.
-    actor: EntityId,
+    /// agent its parent's own dispatch runs as; `None` once an erase has
+    /// forgotten it.
+    actor: Option<EntityId>,
     /// The spawning attempt; an owner's root intent has none.
     parent: Option<AttemptId>,
     /// The original ask as its asker gave it, and its digest.
@@ -146,9 +155,10 @@ struct PlannedIntent {
     /// pack it ran on, frozen with it as one pair.
     pattern_launch: Option<PatternLaunchSpec>,
     pattern_pack: Option<FrozenPatternPack>,
-    /// Where a launched team's leader's last fresh run put the frozen
-    /// pack's SKILL.md in its task (S4c-5).
-    leader_exposure: Option<TaskExposure>,
+    /// Where each of a launched team's leader's runs put the frozen pack's
+    /// SKILL.md in its task, by its executor run id (S4c-5). Each run
+    /// writes its own, and a continuation reads its source run's.
+    leader_exposures: BTreeMap<EntityId, TaskExposure>,
     /// What the launch queued and bound: the leader, or a solo's one agent,
     /// each member in launch order, and the team.
     root_attempt: Option<AttemptId>,
@@ -320,7 +330,7 @@ impl AgentDispatcher<'_> {
         let existing = INTENTS.get(&self.vault.store, &txn, &key)?;
         let reserved = match existing {
             None => PlannedIntent {
-                actor,
+                actor: Some(actor),
                 parent,
                 ask: ask(),
                 ask_digest: name.digest,
@@ -336,13 +346,15 @@ impl AgentDispatcher<'_> {
                 refusal: None,
                 pattern_launch: None,
                 pattern_pack: None,
-                leader_exposure: None,
+                leader_exposures: BTreeMap::new(),
                 root_attempt: None,
                 member_attempts: Vec::new(),
                 team_ref: None,
             },
+            // An intent whose asker an erase forgot is no longer this
+            // asker's.
             Some(row)
-                if row.actor != actor
+                if row.actor != Some(actor)
                     || row.parent != parent
                     || row.ask.intent_key() != name.intent_key
                     || row.ask_digest != name.digest =>
@@ -460,7 +472,8 @@ impl AgentDispatcher<'_> {
     }
 
     /// Settles the intent `reservation` took custody of, in one writer, and
-    /// only while it is still in flight under that custody's fence.
+    /// only while it is still in flight under that custody's fence and its
+    /// asker, whom the row key frames, is not erased.
     fn settle_planned_intent(
         &self,
         name: &IntentName<'_>,
@@ -473,7 +486,11 @@ impl AgentDispatcher<'_> {
         self.prove_lease_in_txn(&txn, name.asker)?;
         let mut row = INTENTS
             .get(&self.vault.store, &txn, &reservation.key)?
-            .filter(|row| row.phase == IntentPhase::InFlight && row.fence == reservation.fence)
+            .filter(|row| {
+                row.phase == IntentPhase::InFlight
+                    && row.fence == reservation.fence
+                    && row.actor.is_some()
+            })
             .ok_or_else(|| invalid(CUSTODY_LOST))?;
         settle(&mut row);
         row.phase = phase.into();
@@ -516,8 +533,9 @@ impl AgentDispatcher<'_> {
     }
 
     /// Where the intent `name` names stands for its launch, on `txn`: the
-    /// asker's proof first, then the intent under its key, which must hold
-    /// the same ask. A launched or refused intent answers what it kept.
+    /// asker's proof first, then the intent under its key, which must still
+    /// name that asker and hold the same ask. A launched or refused intent
+    /// answers what it kept.
     pub(super) fn planned_launch_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -527,6 +545,7 @@ impl AgentDispatcher<'_> {
         let key = intent_row_key(&actor, parent, name.intent_key);
         let row = INTENTS
             .get(&self.vault.store, txn, &key)?
+            .filter(|row| row.actor == Some(actor))
             .ok_or_else(|| invalid(CUSTODY_LOST))?;
         if row.ask_digest != name.digest {
             return Err(invalid(DIFFERENT_ASK));
@@ -583,7 +602,8 @@ impl AgentDispatcher<'_> {
 
     /// Keeps a launch's refusal under an intent still planned, as a
     /// placement or planner refusal is kept. An intent another call
-    /// launched or refused meanwhile answers what it kept.
+    /// launched or refused meanwhile answers what it kept; one whose asker
+    /// an erase forgot meanwhile takes no refusal.
     pub(super) fn refuse_planned_launch(
         &self,
         name: &IntentName<'_>,
@@ -595,6 +615,7 @@ impl AgentDispatcher<'_> {
         self.prove_lease_in_txn(&txn, name.asker)?;
         let row = INTENTS
             .get(&self.vault.store, &txn, &planned.key)?
+            .filter(|row| row.actor.is_some())
             .ok_or_else(|| invalid(CUSTODY_LOST))?;
         let PlannedLaunch { key, mut row } = match launch_stand(planned.key, row)? {
             LaunchStand::Planned(current) => *current,
@@ -606,6 +627,38 @@ impl AgentDispatcher<'_> {
         INTENTS.put(&self.vault.store, &mut txn, &key, &row)?;
         txn.commit()?;
         Ok(row.view(SpawnPhase::Refused))
+    }
+
+    /// Erasing `actor` from the planned intents it asked (FIX 4582): each
+    /// keeps its key, ask, custody, plan or refusal, frozen start and pack,
+    /// launch and leader exposures, and names no asker. Its asker can no
+    /// longer replay, settle or launch it, and a launched team's leader
+    /// still runs with what its launch froze. One-way, in the erase's own
+    /// transaction. An id whose entity is no actor scans nothing.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, or an intent row that cannot be read.
+    pub(crate) fn erase_planned_intent_actor_in_txn(
+        vault: &Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<()> {
+        if crate::typed_body::names_no_actor(vault, wtxn, actor)? {
+            return Ok(());
+        }
+        let mut named = Vec::new();
+        for row in INTENTS.iter_from(&vault.store, wtxn, &[])? {
+            let (key, mut intent) = row?;
+            if intent.actor == Some(*actor) {
+                intent.actor = None;
+                named.push((key, intent));
+            }
+        }
+        for (key, intent) in named {
+            INTENTS.put(&vault.store, wtxn, &key, &intent)?;
+        }
+        Ok(())
     }
 }
 

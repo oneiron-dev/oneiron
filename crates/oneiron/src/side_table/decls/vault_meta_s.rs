@@ -522,10 +522,13 @@ side_tables! {
     /// The same outcome row for a named executor's arm. Key: id16 + u16be length + executor string +
     /// receipt string.
     SKILL_RELIABILITY_PAIRED_OUTCOME: VaultMeta b"skill_reliability:outcome:v2:" Raw;
-    /// The owner's planned spawn under one intent key (DOOR-111): the original ask and its
-    /// digest, the custody phase and fence, and the placed stamp and plan receipt or the kept
-    /// refusal. Key: blake3 (32) of the framed owner, parent and intent key.
-    SPAWN_PLANNED_INTENT: VaultMeta b"spawn:planned_intent:v1:" Named;
+    /// A planned spawn under one asker's intent key (DOOR-111): the asker, the original ask and
+    /// its digest, the custody phase and fence, the placed stamp and plan receipt or the kept
+    /// refusal, and a launched team's frozen start and pack and its leader runs' exposures. An
+    /// actor's erase forgets the asker and keeps the row. Key: blake3 (32) of the framed asker,
+    /// parent and intent key.
+    SPAWN_PLANNED_INTENT: VaultMeta b"spawn:planned_intent:v1:" Named
+        => crate::agent_dispatch::AgentDispatcher::erase_planned_intent_actor_in_txn;
     /// Durable handle for one named (agent, world) companion standing-context block. Key: hex64
     /// (blake3 of prefix+agent+world).
     STANDING_BLOCK: VaultMeta b"standing.block.v1:" LegacyJson;

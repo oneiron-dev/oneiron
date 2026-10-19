@@ -21,6 +21,8 @@
 //! answers its team, its members, the start and the exact pack that start
 //! ran on, never the skill's current head.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::agent_dispatch::{
@@ -261,10 +263,11 @@ pub struct PlannedLeaderLaunch {
     pub members: Vec<AttemptId>,
     pub start: PatternLaunchSpec,
     pub pack: FrozenPatternPack,
-    /// Where the leader's last fresh run put the pack's SKILL.md in its
-    /// task; `None` until one has. A continued run, whose task is its
-    /// source's fork, reuses it rather than append the body again.
-    pub exposure: Option<TaskExposure>,
+    /// Where each of the leader's runs put the pack's SKILL.md in its task,
+    /// by its executor run id; empty until one has. A continued run, whose
+    /// task is its source run's fork, reuses its source's rather than append
+    /// the body again.
+    pub exposures: BTreeMap<EntityId, TaskExposure>,
 }
 
 /// A frozen pack's body hash: BLAKE3 over its files, each path and its
