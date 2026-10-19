@@ -18,6 +18,12 @@ use super::super::txn::{
     rewrite_connector_key_in_txn,
 };
 
+/// FIX 5941, Ask-first: a pack update (another source of the pack installed
+/// over the one a catalog connector's slate names) halts that connector's
+/// route as the pack's removal does. False keeps today's update: the key
+/// stays Active and routes until the owner revises and requalifies it.
+const PACK_UPDATE_HALTS_CONNECTOR_ROUTES: bool = false;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectorQualificationError {
     #[error(transparent)]
@@ -318,9 +324,26 @@ impl Vault {
         Ok(adopted)
     }
 
+    /// A pack update superseded the install a catalog connector's slate
+    /// names: its route halts as on removal only while
+    /// [`PACK_UPDATE_HALTS_CONNECTOR_ROUTES`] holds.
+    pub(crate) fn halt_updated_pack_connector_routes_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        source_ref: &str,
+        content_hash: &str,
+        at: u64,
+    ) -> Result<()> {
+        if !PACK_UPDATE_HALTS_CONNECTOR_ROUTES {
+            return Ok(());
+        }
+        self.halt_pack_connector_routes_in_txn(wtxn, source_ref, content_hash, at)
+    }
+
     /// The install a catalog connector's slate is bound to left the install
-    /// catalog, in the caller's transaction: the owner removed the pack, or
-    /// another source superseded it (FIX 5941). Every Active catalog key
+    /// catalog, in the caller's transaction: the owner removed the pack
+    /// (FIX 5941), or an update superseded it while
+    /// [`PACK_UPDATE_HALTS_CONNECTOR_ROUTES`] holds. Every Active catalog key
     /// whose slate names that exact source goes back to Pending, as a
     /// revision change leaves it: its route stops, its per-grant keys are
     /// held, and only a re-install that qualifies again through
