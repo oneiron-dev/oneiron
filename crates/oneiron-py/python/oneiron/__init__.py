@@ -2429,7 +2429,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def start(self, spec):
-            """The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it."""
+            """The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous, under their own name for it, and answers the handle later calls name it by."""
             return json.loads(_translate(lambda: self._client.vault_off_record_start(json.dumps(spec))))
         def status(self, spec):
             """The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows."""
@@ -2471,7 +2471,7 @@ class Oneiron:
             """Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk."""
             return json.loads(_translate(lambda: self._client.vault_off_record_rooms_status(json.dumps(spec))))
         def start(self, spec):
-            """A person starts an off-record stretch in a room they belong to, on their own credential."""
+            """A person, or an agent within its Write Grant, starts an off-record stretch in a room they belong to, on their own credential."""
             return json.loads(_translate(lambda: self._client.vault_off_record_rooms_start(json.dumps(spec))))
         def witness(self, spec):
             """Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant."""

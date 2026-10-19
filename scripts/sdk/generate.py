@@ -685,11 +685,16 @@ def mcp_argument_projection(row):
             lines.append(f'if let Some(value) = input.get({json.dumps(path.removeprefix("="))}) {{ arguments.insert({json.dumps(field)}.to_owned(), value.clone()); }}')
     return f'{json.dumps(row["name"])} => {{\n' + '\n'.join(lines) + '\n},\n'
 
-# OF-533: the task rows that may ask the host's decision ladder: a post's take
-# question, a report's done and ask-up questions. A model rung may block on the
-# server's runtime, so MCP and the facade run these rows on a blocking thread,
-# on a credential surface built there with the ladder bound.
-TASK_DECISION_ROWS = ('tasks.create', 'tasks.update')
+# OF-533 (FIX 2762): `task_decisions` marks a task row that may ask the host's
+# decision ladder: a post's take question, a report's done and ask-up
+# questions. A model rung may block on the server's runtime, so MCP and the
+# facade run these rows on a blocking thread, on a credential surface built
+# there with the ladder bound. The flag is the one source: the emitters pick
+# the worker from it, and the facade binds the ladder by the catalog's
+# `takes_task_decisions`, read from it too. Absent is false.
+def takes_task_decisions(row):
+    'Whether the served doors run this row on a worker with the ladder bound.'
+    return bool(row.get('task_decisions'))
 
 # Rule 5 (FIX 2166): plain memory rows whose engine call is a task-work producer
 # the engine queues in the vault's task-work line, though the row is not
@@ -700,16 +705,17 @@ TASK_DECISION_ROWS = ('tasks.create', 'tasks.update')
 TASK_PRODUCER_ROWS = ('tasks.accept', 'vault.projects.route_tradeoff',
                       'vault.artifacts.body.fork.merge', 'vault.artifacts.body.proposal.settle')
 # Rule 5 (FIX 2166): plain memory rows one branch of whose engine call is a
-# task-work producer, each keyed to the predicate over the raw request that
-# says the request takes that branch: describe(handle/after) answers a highway
-# handle's status, whose entry admits. The served dispatch and its MCP
-# dispatch await a turn for such a request and bind it, as for a producer row.
+# task-work producer, each keyed to the predicate over the request that says
+# it takes that branch: describe(handle/after) answers a highway handle's
+# status, whose entry admits. The served dispatch and its MCP dispatch ask it
+# of the args the pre hooks left (FIX 4445), then await a turn for such a
+# request and bind it, as for a producer row.
 TASK_PRODUCER_BRANCHES = {'describe': 'oneiron::task_verb::sdk::describe_takes_task_work_turn'}
 
-def task_producer_branch_turns():
-    'The MCP turn test for each producer branch, after the producer rows.'
-    return ''.join(f' || (tool == {json.dumps(name)} && {predicate}(&input))'
-                   for name, predicate in TASK_PRODUCER_BRANCHES.items())
+def task_producer_branch_turns(args):
+    'The MCP turn test for each producer branch, over the args its pre hooks left.'
+    return ' || '.join(f'(tool == {json.dumps(name)} && {predicate}(&{args}))'
+                       for name, predicate in TASK_PRODUCER_BRANCHES.items()) or 'false'
 
 def takes_task_work_turn(row):
     'Whether the served doors await a task-work turn for this row and bind it.'
@@ -717,7 +723,7 @@ def takes_task_work_turn(row):
         return bool(row.get('task_work'))
     if (row.get('host_door') or row.get('server_door') or row.get('context', 'memory') != 'memory'
             or row.get('admission', {}).get('born_record_scope') or 'rows' in row.get('admission', {}).get('readable', [])
-            or row['name'] in TASK_DECISION_ROWS):
+            or takes_task_decisions(row)):
         raise ValueError(f'{row["name"]}: a task-work producer row is a plain memory row')
     return True
 
@@ -729,6 +735,9 @@ def mcp_input_dispatch(row):
         return f'{json.dumps(name)} => {{\n{decode}execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::task_verb::sdk::{method}(context, input)).await }},\n'
     body = ''
     if name == 'describe':
+        # One target per describe (FIX 3256), on the args the pre hooks left,
+        # before the self, card-key and TASKS-section paths.
+        body += f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n'
         # describe(self) renders the authenticated run brief, the same door REST takes.
         body += ('if input.get("self").and_then(Value::as_bool) == Some(true) {\n'
                  '    let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
@@ -803,7 +812,7 @@ def mcp_input_dispatch(row):
         if 'mcp_served' in row:
             # The rows the verb reads by name: a continuation of its result is released only while they may leave.
             body += f'served.extend({row["mcp_served"]});\n'
-        if name in TASK_DECISION_ROWS:
+        if takes_task_decisions(row):
             # Its hooks stay here; the typed row alone crosses to the worker.
             body += (f'let (output, listed) = mcp_task_row(server, tool, actor, surface, move |memory| oneiron::task_verb::sdk::{method}(memory, input)).await?;\n'
                      '// Derived from the rows its reads listed, on a refusal too.\n'
@@ -918,20 +927,36 @@ async fn execute_agent_verb_listing(
         position.facet = Some(facet);
     }
     let invocation = actor.invocation.unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
+    // describe names one target (FIX 3256): a conflict is refused before its
+    // hooks see it, as on REST, and again on the args they leave.
+    if tool == "describe" {
+        oneiron::task_verb::sdk::validate_input(tool, &input).map_err(mcp_facade_error)?;
+    }
     // Rule 5: a task-work row, or a row whose engine call produces task work,
     // takes its one turn here, for MCP and code mode alike, binds it on the
     // surface its row runs on and holds it through its hooks and its row.
     let task_work_turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work)
-        || matches!(tool, ''' + ' | '.join(json.dumps(name) for name in TASK_PRODUCER_ROWS) + ''')''' + task_producer_branch_turns() + ''' {
+        || matches!(tool, ''' + ' | '.join(json.dumps(name) for name in TASK_PRODUCER_ROWS) + ''') {
         Some(Arc::new(server.admit_task_work(actor.actor_ref).await))
     } else {
         None
     };
-    let surface = McpRowSurface { position, invocation, run, task_work_turn: task_work_turn.clone() };
+    let mut surface = McpRowSurface { position, invocation, run, task_work_turn: task_work_turn.clone() };
     // The direct caller's own proof, on the rows whose HTTP door binds it
     // outside a room turn (OF-417, OF-365).
     let memory = mcp_direct_authorship(server, tool, actor, surface.memory(server, actor, producers))?;
     let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
+    // Rule 5 (FIX 4445): a row one branch of whose engine call produces task
+    // work takes its turn on the args its pre hooks left, as the served
+    // facade does, so a rewrite into that branch runs on an awaited turn.
+    // The row holds one turn only, bound on its surface and its memory alike.
+    let (memory, task_work_turn) = if task_work_turn.is_none() && (''' + task_producer_branch_turns('hooks.args') + ''') {
+        let turn = Arc::new(server.admit_task_work(actor.actor_ref).await);
+        surface.task_work_turn = Some(Arc::clone(&turn));
+        (memory.with_task_work_turn(Arc::clone(&turn)), Some(turn))
+    } else {
+        (memory, task_work_turn)
+    };
     let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks).await?;
     let output = crate::api::facade::row_hooks_post(server, hooks, output).await.map_err(mcp_facade_error)?;
     // The row's turn ends after its post hooks.
@@ -1356,7 +1381,7 @@ def facade_dispatch(facade_rows):
         # refused before the engine call, and `rows` filters the typed result.
         room_guard, ref_guard = '', ''
         # A task-decision row invokes on its worker's own server and call.
-        on = '&server, &call' if name in TASK_DECISION_ROWS else 'server, call'
+        on = '&server, &call' if takes_task_decisions(r) else 'server, call'
         result = f'facade_invoke({on}, actor, class, "{name}", value, &producers)?'
         if takes_task_work_turn(r):
             # Rule 5: the engine call runs on the turn the dispatch awaited.
@@ -1417,7 +1442,9 @@ def facade_dispatch(facade_rows):
             if name == 'describe':
                 # describe(self) renders the authenticated run brief, under no
                 # actor, and lists the rows its card is derived from.
-                self_branch = ('if value.get("self").and_then(serde_json::Value::as_bool) == Some(true) { '
+                # The one target check meets the args the hooks left (FIX 3256).
+                self_branch = ('oneiron::task_verb::sdk::validate_input("describe", &value)?; '
+                               'if value.get("self").and_then(serde_json::Value::as_bool) == Some(true) { '
                                'let (output, rows) = crate::api::context_board::describe_self_for_auth(server, auth, &value).await?; '
                                'return Ok(FacadeCallOutput { value: facade_hooks_post(server, hooks, output).await?, rows: Some(rows) }); } ' + actor)
                 actor = ''
@@ -1434,7 +1461,7 @@ def facade_dispatch(facade_rows):
         # Rule 5: a task-work row's turn, bound on the surface its engine call
         # runs on and held until that call returns.
         turn = '\nlet turn = Arc::new(server.admit_task_work(actor).await);' if takes_task_work_turn(r) else ''
-        if name in TASK_DECISION_ROWS:
+        if takes_task_decisions(r):
             # OF-533: after the call's own refusals, the whole invoke runs on a
             # blocking thread, its surface, rewrite admission, drain, room turn
             # and hooks with it as one row, since a model rung of the decision
@@ -1674,6 +1701,7 @@ def outputs():
         ('writes', lambda r: r['scope'] == 'Write'),
         ('proposes', lambda r: r.get('proposes', False)),
         ('is_task_work', lambda r: r.get('task_work', False)),
+        ('takes_task_decisions', takes_task_decisions),
     ]:
         selected = ['Self::' + variants[r['name']] for r in ROWS if select(r)]
         catalog += f'pub const fn {method}(self) -> bool {{ matches!(self, ' + (' | '.join(selected) if selected else '_ if false') + ') }\n'
