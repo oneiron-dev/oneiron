@@ -36,6 +36,7 @@ mod act_standing;
 mod adopted_build;
 mod adopted_evidence;
 mod adopted_fold;
+mod agent_grant_act;
 mod ancestor_index;
 mod ancestry_evaluator;
 mod anchor_fold;
@@ -294,6 +295,7 @@ pub(crate) use act_standing::{
     CausalPoints, ExternalAct, ExternalActStanding, act_heads, causal_points_in_txn,
 };
 pub(crate) use adopted_evidence::adopted_evidence_in_txn;
+pub(crate) use agent_grant_act::{AgentGrantAct, AgentGrantActRef};
 pub(crate) use checkpoint::note_new_authority_row_in_txn;
 pub(crate) use checkpoint_adopt::{
     adopted_authority_checkpoint_in_txn, adopted_checkpoint_id_in_txn,
