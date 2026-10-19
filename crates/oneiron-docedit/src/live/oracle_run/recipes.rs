@@ -3,13 +3,14 @@
 //! checks PowerPoint owes the export.
 
 use super::assets::OracleAssets;
-use super::edits::{EDIT_MARK, Ids, Scope, Subject, add, appended, body, frame, shifted};
+use super::edits::{
+    EDIT_MARK, Ids, Scope, Subject, add, appended, body, frame, office_text, shifted,
+};
 use super::record::{OfficeCheck, Res};
 use super::spec::Recipe;
 use crate::edit::Preset;
 use crate::live::{
     ChartKind, ChartSeries, ChartSource, ConnectorEnd, DeckOp, NodeId, NodeKind, NodePayload,
-    Paragraph,
 };
 
 /// One mutation over the probed baseline.
@@ -243,7 +244,7 @@ fn listed(recipe: Recipe, subject: &Subject<'_>, n: NodeId, ids: &mut Ids) -> Re
         .texts
         .get(&t)
         .and_then(|body| body.paragraphs.first())
-        .map(Paragraph::text)
+        .map(|paragraph| office_text(&paragraph.text()))
         .unwrap_or_default();
     Ok(match recipe {
         Recipe::AddSlide => new_slide(n, ids),

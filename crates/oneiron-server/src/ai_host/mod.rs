@@ -19,8 +19,8 @@ use oneiron_driver::{HintPusher, IdleSample, SessionHint};
 use crate::config::models::{ChatSettings, ModelsConfig, VoiceSettings};
 use crate::decision_host::DecisionHost;
 use crate::models::{
-    KeyDoor, LoggedReceipts, ModelRuntime, ModelsStatus, OfferCooldowns, RawInference, RoleCall,
-    RoleRefusal, Seat, VaultKeyDoor,
+    BrokerContext, LoggedReceipts, ModelRuntime, ModelsStatus, OfferCooldowns, RawInference,
+    RoleCall, RoleRefusal, Seat,
 };
 use crate::server::SyncServer;
 
@@ -493,6 +493,7 @@ impl AiHost {
             server.run_receipts(),
             Some(server.host_account()),
             device,
+            server.broker_context(),
         )
         .await;
         if host.handle.hints.is_some() {
@@ -576,7 +577,8 @@ impl AiHost {
 
     /// Builds every seat from `models` and starts the workers those seats can
     /// serve. Every model call they make is admitted as a run whose receipts
-    /// are written to the log.
+    /// are written to the log. With no credential-broker context, a
+    /// `key_secret` provider is unavailable.
     pub async fn start(vault: Arc<Vault>, models: Option<&ModelsConfig>, host_root: bool) -> Self {
         Self::start_receipted(vault, models, host_root, Arc::new(LoggedReceipts), None).await
     }
@@ -589,10 +591,12 @@ impl AiHost {
         receipts: Arc<dyn RunReceiptSink>,
         account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
     ) -> Self {
-        Self::start_with(vault, models, host_root, receipts, account, false).await
+        Self::start_with(vault, models, host_root, receipts, account, false, None).await
     }
 
-    /// `start_receipted`, on a device host when `device`.
+    /// `start_receipted`, on a device host when `device`, its `key_secret`
+    /// providers sending through `broker`, the vault's one credential-broker
+    /// context.
     async fn start_with(
         vault: Arc<Vault>,
         models: Option<&ModelsConfig>,
@@ -600,11 +604,11 @@ impl AiHost {
         receipts: Arc<dyn RunReceiptSink>,
         account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
         device: bool,
+        broker: Option<&BrokerContext>,
     ) -> Self {
         recover_dead_leases(&vault);
-        let keys: Arc<dyn KeyDoor> = Arc::new(VaultKeyDoor::new(Arc::clone(&vault)));
         let rests = OfferCooldowns::in_vault(Arc::clone(&vault));
-        let mut runtime = ModelRuntime::build_hosted(models, Some(keys), rests)
+        let mut runtime = ModelRuntime::build_hosted(models, broker, rests)
             .with_receipts(receipts)
             .with_media_vault(Arc::clone(&vault));
         if let Some(account) = account {

@@ -644,12 +644,16 @@ it there. An agent about to send, pay, invite or share on that name is still sto
 choice card first.
 
 - `GET /v1/owner/dreamer/maintenance/applied` (optionally `?limit=<n>`): every applied write,
-  reverted ones too, newest first, with its finding (or, for a name kept separate, its `ask`),
-  kind (`finding`, `curator`, `proactivity_policy`, `reach_out`, `representation_plan` or
-  `identity_provisional`), facet, attempt, receipt and your revert once made.
+  reverted ones too, newest first, with its finding (or, for a name kept separate, its `ask`; for
+  a project's team-shape fork, its `project` and `fork`), kind (`finding`, `curator`,
+  `proactivity_policy`, `reach_out`, `representation_plan`, `identity_provisional` or
+  `project_tree_fork`), facet, attempt, receipt and your revert once made.
 - `POST /v1/owner/dreamer/maintenance/revert` with `{"finding": "<32 hex>"}` (or
-  `{"ask": "<64 hex>"}` for a name kept separate) undoes its effect, retracts its finding as yours
-  and leaves one receipt. A curator rung's claim comes back at its prior confidence and rung: in
+  `{"ask": "<64 hex>"}` for a name kept separate, or `{"project": "<32 hex>", "fork": "<32 hex>"}`
+  for a project's team-shape fork) undoes its effect, retracts its finding as yours and leaves one
+  receipt. A fork's revert takes it off its project, which goes back to the vault tree, and the
+  Coach does not fork that project again until the vault's team-shape head moves. A curator
+  rung's claim comes back at its prior confidence and rung: in
   place when a weakening closed a claim with no signed history, else as the Dreamer's fresh copy
   born of it, since a signed claim's history never reopens (the copy carries the default `ClaimOf`
   weight). A digest request puts back the rows it replaced, or the defaults. A reach-out's revert
