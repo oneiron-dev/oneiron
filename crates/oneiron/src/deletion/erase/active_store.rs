@@ -320,6 +320,9 @@ impl Vault {
             turns,
             crate::ports::DependentWalkDoor::SoftErase,
         )?;
+        // A Grant a decision seal names decides seal standing again here
+        // (FIX 4652).
+        self.reconcile_identity_topology_after_delete_in_txn(wtxn, id)?;
         Ok((true, had_vector, ledger_changed))
     }
 }

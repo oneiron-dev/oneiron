@@ -259,6 +259,9 @@ pub struct StoreCore {
     /// What the authority store doors read of one committed generation.
     pub(crate) authority_door_view:
         Mutex<Option<(u64, std::sync::Arc<crate::authority::AuthorityDoorView>)>>,
+    /// The causal standing of the topology decision seals one committed
+    /// authority generation judged (FIX 4649). Never persisted.
+    pub(crate) act_causal_points: Mutex<Option<std::sync::Arc<crate::authority::CausalPoints>>>,
     /// Rows the authority doors refused because a key a handoff this vault
     /// holds retired signed them (OF-166 evidence). Never persisted.
     pub(crate) authority_handoff_equivocations: crate::authority::HandoffEquivocations,
