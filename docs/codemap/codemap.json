@@ -19427,8 +19427,8 @@
      "path": "src/dispatch_byoa/connector.rs",
      "purpose": "Connector shapes, wire enums, attempt-payload codec, and serde adapters",
      "surface": {
-      "const": 6,
-      "crate-vis": 26,
+      "const": 5,
+      "crate-vis": 24,
       "enum": 5,
       "fn": 12,
       "struct": 6
@@ -19476,7 +19476,7 @@
      "path": "src/dispatch_byoa/error.rs",
      "purpose": "Error enum, literal refusal reasons, result alias, and the invalid() constructor",
      "surface": {
-      "crate-vis": 47,
+      "crate-vis": 46,
       "enum": 1,
       "type": 1
      }
@@ -19496,7 +19496,7 @@
      "purpose": "Exhaust types, terminal receipts, artifact and result-ref addressing, and capture helpers",
      "surface": {
       "const": 2,
-      "crate-vis": 10,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 8,
       "struct": 4,
@@ -19511,7 +19511,7 @@
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
       "mod": 1,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -19595,6 +19595,21 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ByoaStream",
+      "ByoaStreamWriter"
+     ],
+     "path": "src/dispatch_byoa/stream.rs",
+     "purpose": "One exhaust stream, held whole however long it runs: in memory up to the inline budget, and past it in an…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -19615,9 +19630,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/dispatch_byoa/validate.rs",
-     "purpose": "Dispatch and execution door validators and bounded-encoding helpers",
+     "purpose": "Dispatch and execution door validators and the execution transcript encoders",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -45061,7 +45076,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DevRunnerDispatch",
@@ -60740,7 +60755,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61799,7 +61814,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3769,
+   "source_files": 3770,
    "test_files": 902
   },
   "oneiron-android": {
