@@ -53,6 +53,12 @@ side_tables! {
     /// latest transition by id. A retry finds it and changes nothing. Key: hash32 (the request's
     /// entry hash).
     SECRET_CUSTODY_OUTPUT: VaultMeta b"secret_custody:output:v1:" Raw Engine;
+    /// The rewrap request whose bindings this vault took into one custody record it holds as a
+    /// receiver (CALLS CUSTODY_REBIND_PENDING_FLOOR): a replay of its carrier never applies again,
+    /// while a carrier kept as this vault's latest whose bindings the live floor refused stays
+    /// pending. Node-local and derived: a restore drops it, and the kept carriers and the fold
+    /// rebuild what is pending. Key: hex32(entity id).
+    SECRET_CUSTODY_REBIND: VaultMeta b"secret_custody:rebind:v1:" Raw Engine;
     /// The latest owner-signed custody transition this vault signed of one portable credential
     /// (OF-422): the record without its value, the value sealed to each machine mine here. Key:
     /// hex32(entity id).

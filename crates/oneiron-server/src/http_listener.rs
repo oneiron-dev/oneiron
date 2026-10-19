@@ -184,7 +184,7 @@ pub(crate) async fn serve_with_pool(
         // (FIX 811): minted here, never derived from the peer's address.
         let socket_id = crate::api::call_receipt::mint_connection_id();
         let service = hyper::service::service_fn(move |request: hyper::Request<Incoming>| {
-            let mut request = request.map(|body| Body::new(IdleBody::new(body, body_idle)));
+            let mut request = request.map(|body| idle_body(body, body_idle));
             request.extensions_mut().insert(ConnectInfo(peer));
             CONNECTION.scope(
                 Arc::clone(&connection),
@@ -325,9 +325,10 @@ impl IdleBody {
     }
 }
 
-/// `body` under this listener's body-idle limit ([`IdleBody`]), for the mesh
-/// listener's requests (OF-535).
-#[cfg(feature = "mesh")]
+/// `body` under this listener's body-idle limit ([`IdleBody`]): for its own
+/// requests, the mesh listener's (OF-535) and the trusted in-process duplex
+/// channels an embedded engine serves (FIX 2663), which meet the same
+/// idle limit and no connection floor or stranger share.
 pub(crate) fn idle_body(body: Incoming, idle: Duration) -> Body {
     Body::new(IdleBody::new(body, idle))
 }

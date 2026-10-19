@@ -14,6 +14,11 @@ pub type HostFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostLimits {
     pub memory_bytes: u64,
+    /// The CPU share the host grants, in CPU milliseconds each second;
+    /// `u32::MAX` is unbounded. Advisory, not an OS-enforced quota: an
+    /// embedded engine sizes the worker pool of the runtime it owns from it,
+    /// one worker per whole CPU second, rounded up, at least one and at most
+    /// the CPUs available.
     pub cpu_millis_per_second: u32,
 }
 
