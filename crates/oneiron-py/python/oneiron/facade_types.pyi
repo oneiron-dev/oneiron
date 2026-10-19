@@ -17777,6 +17777,7 @@ class EffectReceipt(TypedDict):
     effect_class: NotRequired[str | None]
     press: str
     screenshot: NotRequired[str | None]
+    capture_id: NotRequired[str | None]
     screenshot_evidence: NotRequired[ReceiptEvidence | None]
 class LibraryCard(TypedDict):
     workflow: str
@@ -17867,6 +17868,7 @@ class ExpectOutput(TypedDict):
 ScreenshotTrigger = Literal["outline_thin", "no_postcondition", "decider_reobserve", "no_accessibility_tree", "effect_receipt"]
 class ScreenshotInput(TypedDict):
     trigger: ScreenshotTrigger
+    since_capture: NotRequired[str | None]
 class ScreenshotOutput(TypedDict):
     image: str
     media_type: str
@@ -17876,6 +17878,8 @@ class ScreenshotOutput(TypedDict):
     trigger: ScreenshotTrigger
     url: str
     title: str
+    capture_id: str
+    unchanged_from: NotRequired[str | None]
 class ViewInput(TypedDict):
     image: str
 class ImageOutput(TypedDict):

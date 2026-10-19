@@ -491,13 +491,16 @@ impl BrowserSession {
         observation: &mut Observation,
     ) {
         self.receipt_seq += 1;
-        let screenshot = self
+        // Never compared: each receipt's screenshot is a capture of its own.
+        let (screenshot, capture_id) = self
             .driver
             .screenshot(ScreenshotInput {
                 trigger: ScreenshotTrigger::EffectReceipt,
+                since_capture: None,
             })
             .ok()
-            .map(|shot| shot.image);
+            .map(|shot| (shot.image, shot.capture_id))
+            .unzip();
         let mut receipt = EffectReceipt {
             seq: self.receipt_seq,
             verb: verb.to_owned(),
@@ -510,6 +513,7 @@ impl BrowserSession {
             effect_class: effect_class.map(str::to_owned),
             press: press.as_str().to_owned(),
             screenshot,
+            capture_id,
             screenshot_evidence: None,
         };
         // The pixels are kept before the receipt is stored, while the

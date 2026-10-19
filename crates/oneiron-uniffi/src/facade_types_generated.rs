@@ -54305,6 +54305,12 @@ pub struct EffectReceipt {
     )]
     pub screenshot: Option<String>,
     #[serde(
+        rename = "capture_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub capture_id: Option<String>,
+    #[serde(
         rename = "screenshot_evidence",
         default,
         skip_serializing_if = "Option::is_none"
@@ -54656,6 +54662,12 @@ pub enum ScreenshotTrigger {
 pub struct ScreenshotInput {
     #[serde(rename = "trigger")]
     pub trigger: ScreenshotTrigger,
+    #[serde(
+        rename = "since_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub since_capture: Option<String>,
 }
 
 /// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `ScreenshotInput`.
@@ -54687,6 +54699,14 @@ pub struct ScreenshotOutput {
     pub url: String,
     #[serde(rename = "title")]
     pub title: String,
+    #[serde(rename = "capture_id")]
+    pub capture_id: String,
+    #[serde(
+        rename = "unchanged_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub unchanged_from: Option<String>,
 }
 
 /// `oneiron_browser::ViewInput`.
