@@ -200,13 +200,27 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         }
         RunVerb::SelfTeamSubmit => SelfCall::TeamSubmit(decode(input)?),
         RunVerb::TasksWait => {
-            let args: crate::code_run::TaskWaitSetRequest = decode(input)?;
-            SelfCall::TasksWaitSet(crate::code_run::TaskWaitSetCall {
-                tasks: args.tasks,
-                all: args.all,
-                n_of: args.n_of,
-                until: args.until.map(js_time).transpose()?,
-                step_key: args.step_key,
+            let input: crate::code_run::TaskWaitInput = decode(input)?;
+            SelfCall::TasksWaitSet(match input {
+                crate::code_run::TaskWaitInput::Readers(args) => crate::code_run::TaskWaitSetCall {
+                    tasks: args.tasks,
+                    all: args.all,
+                    n_of: args.n_of,
+                    until: args.until.map(js_time).transpose()?,
+                    step_key: args.step_key,
+                    request: None,
+                },
+                // FIX 4706: a wait on one world-privacy request, no children.
+                crate::code_run::TaskWaitInput::WorldPrivacy(args) => {
+                    crate::code_run::TaskWaitSetCall {
+                        tasks: Vec::new(),
+                        all: None,
+                        n_of: None,
+                        until: None,
+                        step_key: args.step_key,
+                        request: Some(args.request),
+                    }
+                }
             })
         }
         // ONE-2510: the run's answer to a connector's mid-call questions.

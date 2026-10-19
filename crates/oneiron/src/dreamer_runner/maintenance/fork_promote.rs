@@ -22,6 +22,12 @@
 //! through the shared-skill merge's "useful upstream?" question and held-out
 //! replay ([`leaf_promote`]).
 //!
+//! A project tree's judge and reshape check read a thin leaf with the vault
+//! tree's counts on the same path blended in, under one weight that fades
+//! with the leaf's own runs (FIX 5176, [`super::type_tree_prior`]). The pass
+//! builds that donor once and lends it; the fork trigger, the fit counts,
+//! promotion and the revisions' evidence never read it.
+//!
 //! The owner's revert takes the fork off the project, which goes back to the
 //! vault tree; the pass forks that project again only from a newer head.
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,6 +35,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::applied;
 use super::coach::COACH_FORK_PROMOTE_FACET;
 use super::type_tree_gate::{TreeReplayScorer, record_team_shape_outcomes, team_leader};
+use super::type_tree_prior::DonorTree;
 use super::type_tree_upkeep::{recount, type_evidence};
 use crate::agent_dispatch::{TASK_TYPE_TREE_FILE, load_team_type_tree, team_shape_skill_in_force};
 use crate::attempt_queue::AttemptId;
@@ -147,6 +154,10 @@ pub struct ForkPromoteReport {
     /// write (each waits for a later night), and revisions retired because
     /// the tree they revise is no longer the project's.
     pub upkeep_refused: u32,
+    /// The donor the pass lent its project tree reads (FIX 5176): the vault
+    /// team-shape head in force and its tree version. `None` when no head is
+    /// in force, and no project read borrowed.
+    pub donor: Option<(EntityId, u64)>,
 }
 
 /// What one pass reads once.
@@ -217,9 +228,22 @@ impl Vault {
             }
         }
         report.projects = u32::try_from(by_project.len()).unwrap_or(u32::MAX);
+        // One donor for the pass: the vault's current tree on its own fit
+        // runs, lent to every project tree read below.
+        let donor = DonorTree::of_vault(self, &settled)?;
+        report.donor = donor.as_ref().map(|donor| (donor.skill, donor.version));
         if let (Some(pass), Some(scorer)) = (&pass, scorer) {
             for (project, teams) in &by_project {
-                match fork_project(self, pass, scorer, *project, teams, &mut report) {
+                let fork = fork_project(
+                    self,
+                    pass,
+                    scorer,
+                    *project,
+                    teams,
+                    donor.as_ref(),
+                    &mut report,
+                );
+                match fork {
                     Ok(()) => {}
                     Err(Error::Artifact(ArtifactError::InvalidSkillBody(_))) => {
                         report.refused += 1;
@@ -228,7 +252,15 @@ impl Vault {
                 }
             }
         }
-        let projects = project_upkeep::run(self, attempt, scorer, &by_project, now, &mut report)?;
+        let projects = project_upkeep::run(
+            self,
+            attempt,
+            scorer,
+            &by_project,
+            donor.as_ref(),
+            now,
+            &mut report,
+        )?;
         if PROJECT_LEAF_PROMOTES && let Some(pass) = &pass {
             leaf_promote::run(
                 self,
@@ -293,6 +325,7 @@ fn fork_project(
     scorer: &dyn HeldOutReplayNotes,
     project: EntityId,
     teams: &[TeamReceipt],
+    donor: Option<&DonorTree>,
     report: &mut ForkPromoteReport,
 ) -> Result<()> {
     if pass.reverted.contains(&project)
@@ -354,6 +387,8 @@ fn fork_project(
     let fork_record = vault
         .get_skill_record(&fork)?
         .ok_or(Error::EntityNotFound)?;
+    // The fork's thin leaves read with the pass's donor lent; the head's
+    // vault tree reads as before.
     let judge = TreeReplayScorer::new(
         vault,
         scorer,
@@ -361,7 +396,8 @@ fn fork_project(
         &pass.head,
         pass.vault_tree.clone(),
         teams,
-    )?;
+    )?
+    .with_donor(donor);
     let judge: &dyn HeldOutReplayNotes = &judge;
     // A judge that abstains rules nothing: the fork stays open.
     let score = |record: &SkillRecord| -> Result<f32> {

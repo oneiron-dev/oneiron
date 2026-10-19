@@ -5,6 +5,11 @@
 //! it, once. Under "widen needs every owner" the yeses are collected on the
 //! ask, and the last one applies it: the live Owners it needs are read again
 //! at each answer, so one who left neither counts nor holds it up.
+//!
+//! An applied or declined request settles its waits in that same commit: the
+//! tasks bound to it are signalled, and every run parked on it gets its
+//! terminal state (FIX 4706). Its decision ask's waiters wake only after the
+//! commit returned. A collected yes wakes nothing: the request still waits.
 
 use crate::authority::{ActSurface, WorldEditAuthor};
 use crate::consent::AuthenticatedOwner;
@@ -58,7 +63,7 @@ impl Vault {
         request: EntityId,
         yes: bool,
     ) -> Result<WorldPrivacyAnswer> {
-        self.with_world_settings_writer(|txn, secret| {
+        let (answer, settled) = self.with_world_settings_writer(|txn, secret| {
             let mut stored = self
                 .world_privacy_request_in_txn(txn, request)?
                 .ok_or(Error::EntityNotFound)?;
@@ -102,10 +107,12 @@ impl Vault {
                     holder: actor.to_hex(),
                 };
                 self.put_world_privacy_request_in_txn(txn, &stored)?;
-                if let Some(seq) = stored.ask {
-                    self.settle_world_privacy_ask_in_txn(txn, seq, actor, false)?;
-                }
-                return Ok(WorldPrivacyAnswer::Declined(stored));
+                crate::task_verb::deliver_world_privacy_wait_in_txn(self, txn, &stored)?;
+                let settled = match stored.ask {
+                    Some(seq) => self.settle_world_privacy_ask_in_txn(txn, seq, actor, false)?,
+                    None => None,
+                };
+                return Ok((WorldPrivacyAnswer::Declined(stored), settled));
             }
             if let Some(needs) = &live_needs {
                 stored.needs = needs.iter().map(EntityId::to_hex).collect();
@@ -119,7 +126,7 @@ impl Vault {
                     .all(|needed| stored.yes.contains(needed))
                 {
                     self.put_world_privacy_request_in_txn(txn, &stored)?;
-                    return Ok(WorldPrivacyAnswer::Collected(stored));
+                    return Ok((WorldPrivacyAnswer::Collected(stored), None));
                 }
             }
             let author = WorldEditAuthor {
@@ -142,9 +149,11 @@ impl Vault {
                 holder: actor.to_hex(),
             };
             self.put_world_privacy_request_in_txn(txn, &stored)?;
-            if let Some(seq) = stored.ask {
-                self.settle_world_privacy_ask_in_txn(txn, seq, actor, true)?;
-            }
+            crate::task_verb::deliver_world_privacy_wait_in_txn(self, txn, &stored)?;
+            let settled = match stored.ask {
+                Some(seq) => self.settle_world_privacy_ask_in_txn(txn, seq, actor, true)?,
+                None => None,
+            };
             // An agent's tighten a holder accepted tells every holder, with
             // its one-tap undo, as one it applied under its Grant does.
             if stored.kind == WorldPrivacyRequestKind::Proposal {
@@ -157,7 +166,12 @@ impl Vault {
                     CHANGED_NOTICE,
                 )?;
             }
-            Ok(WorldPrivacyAnswer::Applied(receipt))
-        })
+            Ok((WorldPrivacyAnswer::Applied(receipt), settled))
+        })?;
+        // The writer returned only once its commit was durable.
+        if let Some(seq) = settled {
+            self.signal_decision_answer(seq);
+        }
+        Ok(answer)
     }
 }

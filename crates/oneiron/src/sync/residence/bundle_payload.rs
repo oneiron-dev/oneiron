@@ -135,13 +135,16 @@ impl WindowManager {
     /// world this machine may not read whose capsule `latest` files, carried
     /// unchanged under the same filter (FIX 4211). `request` is the owner's
     /// counted ask this upload publishes for (WILL L04 row 03), signed into
-    /// its provenance.
+    /// its provenance. `materialize` is a full machine's (effective residence
+    /// mode All): the rows of each window `latest` carries land here too, as
+    /// its take lands them (FIX 4788).
     pub fn assemble_sealed_bundle(
         &self,
         slot: u64,
         holder: Destination,
         latest: Option<(&SealedVaultBundle, &SealedKeyPads)>,
         request: Option<AuthorityEntryHash>,
+        materialize: bool,
     ) -> Result<SealedVaultUpload> {
         let vault = self.vault();
         let windows = discover_local_window_keys(vault)?;
@@ -169,7 +172,8 @@ impl WindowManager {
                 continue;
             }
             let opened = latest.as_ref().map(|(opened, _)| opened);
-            let Some(held) = self.complete_source(world, &windows, opened, &keys) else {
+            let Some(held) = self.complete_source(world, &windows, opened, &keys, materialize)
+            else {
                 continue;
             };
             let mut snapshots = Vec::new();
@@ -336,14 +340,19 @@ impl WindowManager {
     /// the world held here, and each window that section carries (opened with
     /// one of `keys`), merged into its mirror first. The actual source and key
     /// access decide, never the machine's residence mode (WILL L04 row 03):
-    /// an opened-item machine seals what it holds whole. `None` when that
-    /// section does not open, decode or merge here: it rides on unchanged.
+    /// an opened-item machine seals what it holds whole. With `materialize`
+    /// (a full machine) each window's rows land here too, merged or already
+    /// held (FIX 4788); a window whose rows do not land stays in its mirror,
+    /// as an opened-item machine keeps them all, and still rides. `None` when
+    /// that section does not open, decode or merge here: it rides on
+    /// unchanged.
     fn complete_source(
         &self,
         world: EntityId,
         windows: &[WindowKey],
         latest: Option<&OpenedVaultBundle>,
         keys: &[WorldKey],
+        materialize: bool,
     ) -> Option<Vec<WindowKey>> {
         let mut held: Vec<WindowKey> = windows
             .iter()
@@ -359,8 +368,14 @@ impl WindowManager {
             };
             let carried = decode_world_section(&section.payload, world).ok()?;
             for (window, snapshot) in carried {
-                self.merge_bundle_mirror(world, &window, &snapshot, false)
-                    .ok()?;
+                let landed = materialize
+                    && self
+                        .merge_bundle_mirror(world, &window, &snapshot, true)
+                        .is_ok();
+                if !landed {
+                    self.merge_bundle_mirror(world, &window, &snapshot, false)
+                        .ok()?;
+                }
                 if !held.contains(&window) {
                     held.push(window);
                 }

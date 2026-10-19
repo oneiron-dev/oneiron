@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1051 facade rows, 3556 declarations.
-Inputs: 987 of 1051 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 941 of 1051 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 107; unread shapes: 0.
+Census: 1053 facade rows, 3567 declarations.
+Inputs: 988 of 1053 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 943 of 1053 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1499,6 +1499,43 @@ class TaskAskResult(TypedDict):
     fallback: NotRequired[TaskAskFallback | None]
     evidence: list[TaskAskEvidence]
     settlement: TaskAskSettlement
+WorldPrivacyRequestKind = Literal["proposal", "widen_ask"]
+class ReadLocationOneMachine(TypedDict):
+    OneMachine: EntityId
+ReadLocation = Literal["MyMachines", "Everywhere"] | ReadLocationOneMachine
+SealedCopies = Literal["off", "my_machines", "cloud_and_my_machines"]
+class ModelOrderOrdered(TypedDict):
+    Ordered: list[str]
+ModelOrder = Literal["Inherit"] | ModelOrderOrdered
+class WorldPrivacy(TypedDict):
+    read: ReadLocation
+    sealed: SealedCopies
+    models: ModelOrder
+class WorldPrivacyRequestStatusPending(TypedDict):
+    state: Literal["pending"]
+class WorldPrivacyRequestStatusApplied(TypedDict):
+    state: Literal["applied"]
+    receipt_id: str
+    holder: str
+class WorldPrivacyRequestStatusDeclined(TypedDict):
+    state: Literal["declined"]
+    holder: str
+WorldPrivacyRequestStatus = WorldPrivacyRequestStatusPending | WorldPrivacyRequestStatusApplied | WorldPrivacyRequestStatusDeclined
+class WorldPrivacyRequest(TypedDict):
+    request_id: str
+    kind: WorldPrivacyRequestKind
+    agent: NotRequired[str | None]
+    opener_lineage: NotRequired[list[str]]
+    author: str
+    world: str
+    settings: WorldPrivacy
+    seen: str
+    holders: list[str]
+    needs: NotRequired[list[str]]
+    yes: NotRequired[list[str]]
+    ask: NotRequired[int | None]
+    status: WorldPrivacyRequestStatus
+    at: int
 class TaskAskStatusPendingBody(TypedDict):
     hold: NotRequired[TaskAskHoldReason | None]
 class TaskAskStatusPending(TypedDict):
@@ -1510,7 +1547,9 @@ class TaskAskStatusChanged(TypedDict):
     Changed: TaskAskStatusChangedBody
 class TaskAskStatusSettled(TypedDict):
     Settled: TaskAskResult
-TaskAskStatus = TaskAskStatusPending | TaskAskStatusChanged | TaskAskStatusSettled
+class TaskAskStatusWorldPrivacy(TypedDict):
+    WorldPrivacy: WorldPrivacyRequest
+TaskAskStatus = TaskAskStatusPending | TaskAskStatusChanged | TaskAskStatusSettled | TaskAskStatusWorldPrivacy
 class TaskStatusView(TypedDict):
     handle: TaskHandle
     task_ref: NotRequired[EntityId | None]
@@ -3540,6 +3579,29 @@ class ArchiveCampaignProgramRequest(TypedDict):
     campaign_ref: str
     program_ref: str
     expected_definition_version: int
+class ArmTurnProgram(TypedDict):
+    skill: EntityId
+    executor: str
+    args: Any
+    conversation: NotRequired[EntityId | None]
+class ProgramRecipePin(TypedDict):
+    skill: EntityId
+    version: str
+    content_hash: str
+    entry: str
+    contract_digest: str
+    executor: str
+    args: str
+class TurnProgramRegistration(TypedDict):
+    registration: EntityId
+    actor: EntityId
+    conversation: NotRequired[EntityId | None]
+    definition: ProgramRecipePin
+    revision: str
+    armed_at: int
+    newly_armed: bool
+class DisarmTurnProgram(TypedDict):
+    registration: EntityId
 class SavedQueryScopeSpec(TypedDict):
     worlds: NotRequired[list[EntityId]]
     facets: NotRequired[list[str]]
@@ -12045,7 +12107,9 @@ class TaskAskWaitReady(TypedDict):
     Ready: TaskAskResult
 class TaskAskWaitPark(TypedDict):
     Park: SelfDurableWait
-TaskAskWait = TaskAskWaitPending | TaskAskWaitChanged | TaskAskWaitReady | TaskAskWaitPark
+class TaskAskWaitWorldPrivacyReady(TypedDict):
+    WorldPrivacyReady: WorldPrivacyRequest
+TaskAskWait = TaskAskWaitPending | TaskAskWaitChanged | TaskAskWaitReady | TaskAskWaitPark | TaskAskWaitWorldPrivacyReady
 class TaskAnswerRequest(TypedDict):
     handle: TaskAskHandle
     word: TaskAskWord

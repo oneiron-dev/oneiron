@@ -62,7 +62,7 @@ impl HostSelfDispatcher<'_> {
             }
             _ => return Ok(refused(WORLD_PRIVACY_NEEDS_AGENT)),
         };
-        let output = serde_json::to_value(WorldPrivacySetOutput::from(&outcome))
+        let output = serde_json::to_value(WorldPrivacySetOutput::try_from(&outcome)?)
             .map_err(|_| Error::InvariantViolation("world privacy answer encode"))?;
         // The answer names ids only, and serves no vault rows.
         Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
