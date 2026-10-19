@@ -58,6 +58,55 @@ impl DreamerWakeDriver<'_> {
         let Some(author) = &self.milestones else {
             return Ok(());
         };
+        self.write_milestone_as(attempt_id, kind, now, author.subject, &author.envelope)
+    }
+
+    /// [`Self::write_milestone`] for an admitted attempt. A turn program's
+    /// milestone is its waking actor's, never the Dreamer author's (DOOR-141
+    /// PR2); one it cannot write is logged, never the settlement's failure.
+    /// Every other attempt's is [`Self::write_milestone`]'s.
+    pub(super) fn write_attempt_milestone(
+        &self,
+        admitted: &DreamerAdmittedAttempt,
+        kind: DreamerMilestoneKind,
+        now: u64,
+    ) -> Result<()> {
+        let attempt_id = admitted.status.attempt.id;
+        if admitted.status.attempt.kind != crate::dreamer_runner::DREAMER_TURN_PROGRAM_ATTEMPT_KIND
+        {
+            return self.write_milestone(attempt_id, kind, now);
+        }
+        let Some(author) = &self.milestones else {
+            return Ok(());
+        };
+        let written = crate::dreamer_runner::program_milestone_envelope(
+            self.vault,
+            attempt_id,
+            &author.envelope,
+        )
+        .and_then(|envelope| {
+            self.write_milestone_as(attempt_id, kind, now, author.subject, &envelope)
+        });
+        if let Err(error) = written {
+            tracing::warn!(
+                kind = ?error.kind(),
+                attempt = ?attempt_id,
+                "a turn program's milestone was not written; its settlement stands"
+            );
+        }
+        Ok(())
+    }
+
+    /// One milestone claim for `attempt_id`, about `subject`, under
+    /// `envelope`.
+    fn write_milestone_as(
+        &self,
+        attempt_id: AttemptId,
+        kind: DreamerMilestoneKind,
+        now: u64,
+        subject: crate::EntityId,
+        envelope: &crate::write_envelope::WriteEnvelope,
+    ) -> Result<()> {
         let claim_id = self.vault.store.clock.entity_id()?;
         let value = Value::Map(vec![
             (
@@ -73,7 +122,7 @@ impl DreamerWakeDriver<'_> {
         ]);
         let candidate = ClaimCandidate::new(
             DREAMER_MILESTONE_PREDICATE,
-            crate::claim::ClaimSubject::Entity(author.subject),
+            crate::claim::ClaimSubject::Entity(subject),
             value,
             1.0,
         );
@@ -82,7 +131,7 @@ impl DreamerWakeDriver<'_> {
             end: now,
         };
         self.vault.with_write_txn_grouped(|wtxn| {
-            let mut envelope = author.envelope.clone();
+            let mut envelope = envelope.clone();
             self.vault.sign_retained_machine_claim_in_txn(
                 &*wtxn,
                 &claim_id,

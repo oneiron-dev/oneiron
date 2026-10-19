@@ -76,8 +76,9 @@ const LANDS_TURN: [AgentVerb; 5] = [
     AgentVerb::VaultProjectsRouteTradeoff,
 ];
 
-/// The door one pumped run binds, under its own agent.
-pub(super) struct RunHostDoor {
+/// The door one pumped run binds, under its own agent; a Dreamer turn
+/// program's entry binds one too (DOOR-141 PR2).
+pub(crate) struct RunHostDoor {
     server: Arc<SyncServer>,
     actor: WriteActor,
     /// The server's runtime: each row runs on one of its blocking threads.
@@ -95,7 +96,7 @@ pub(super) struct RunHostDoor {
 }
 
 impl RunHostDoor {
-    pub(super) fn new(
+    pub(crate) fn new(
         server: &Arc<SyncServer>,
         actor: WriteActor,
         runtime: tokio::runtime::Handle,
@@ -115,7 +116,7 @@ impl RunHostDoor {
     /// Binds the meter the run's next entry makes its model calls on, and
     /// the payer they bill, so its `ai.speech` spends there too, as its other
     /// model calls do (FIX 3194). `None` clears it once the entry ends.
-    pub(super) fn bind_meter(&self, meter: Option<(BudgetGuard, Option<PayerPerson>)>) {
+    pub(crate) fn bind_meter(&self, meter: Option<(BudgetGuard, Option<PayerPerson>)>) {
         let line = meter.map(|(guard, payer)| {
             self.server
                 .ai

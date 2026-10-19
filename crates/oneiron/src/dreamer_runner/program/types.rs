@@ -10,6 +10,7 @@ use super::authority::TurnProgramAuthority;
 
 const PIN_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-pin:v1";
 const ADMISSION_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-admission:v1";
+const CODE_RUN_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-code-run:v1";
 
 /// The executable one armed program runs (DOOR-141 §3): a callable SKILL's
 /// JS entry at an exact version and content hash, the digest of its call
@@ -122,9 +123,10 @@ pub struct LandedTurnRef {
 #[non_exhaustive]
 pub enum TurnProgramAdmissionOutcome {
     /// Queued as one Dreamer program attempt, the root of its run tree,
-    /// under the waking actor's own stamp, and parked: the program runtime
-    /// lands with DOOR-141 PR2. Nothing has run and nothing is complete.
-    Parked { attempt: AttemptId, run_id: String },
+    /// under the waking actor's own stamp, for the program runtime to run.
+    /// `run_id` is its code run's id: the run its callable entry is called
+    /// in. Nothing has run and nothing is complete.
+    Queued { attempt: AttemptId, run_id: String },
     /// Refused in the admission writer; nothing was queued.
     Refused { reason: String },
 }
@@ -262,7 +264,7 @@ impl TurnProgramAdmissionRecord {
             sealed_scope: self.wake.authority.scope_digest(),
             gate_receipt: self.receipt_id,
             outcome: match self.attempt {
-                Some(attempt) => TurnProgramAdmissionOutcome::Parked {
+                Some(attempt) => TurnProgramAdmissionOutcome::Queued {
                     attempt,
                     run_id: run_id(&self.admission),
                 },
@@ -288,10 +290,22 @@ pub(super) struct TurnProgramAttemptStamp {
     pub(super) receipt_id: [u8; 16],
 }
 
-/// The queue run id one admission's attempt carries.
+/// The queue run id one admission's attempt carries: its code run's id, as
+/// the callable it calls checks it against the caller's leased run.
 pub(super) fn run_id(admission: &[u8; 32]) -> String {
-    let hex = bytes_to_hex_lower(admission);
-    format!("turn-program:{hex}")
+    bytes_to_hex_lower(&code_run_bytes(admission))
+}
+
+/// The code run one admission's program runs as (DOOR-141 PR2), fixed by
+/// the admission so every try of it names the same run.
+pub(super) fn code_run_bytes(admission: &[u8; 32]) -> [u8; 16] {
+    let digest = blake3::Hasher::new()
+        .update(CODE_RUN_DOMAIN)
+        .update(admission)
+        .finalize();
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&digest.as_bytes()[..16]);
+    bytes
 }
 
 /// A 32-byte digest as 64 lowercase hex, the crate's byte-hash wire form.

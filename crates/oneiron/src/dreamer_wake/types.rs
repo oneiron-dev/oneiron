@@ -281,6 +281,13 @@ pub trait DreamerAttemptExecutor {
     fn runner_budget_id(&mut self, _candidate: &AttemptRecord) -> Option<String> {
         None
     }
+
+    /// Whether this executor runs turn programs (DOOR-141 PR2): the driver
+    /// admits program attempts only to one that does, so a pass whose host
+    /// binds no program runtime admits none and changes nothing else.
+    fn runs_turn_programs(&self) -> bool {
+        false
+    }
 }
 
 /// Durable milestone authorship for driver-written Started/Done milestones.

@@ -308,6 +308,9 @@ impl ExecutorStorage<'_> {
                     if let Some(parked) = parked {
                         seal_parked_code_consent_in_txn(vault, wtxn, record, parked)?;
                     }
+                    // A turn program's frontier joins its checkpoint's own
+                    // commit (DOOR-141 PR2); it never fails it.
+                    crate::dreamer_runner::join_program_checkpoint_in_txn(vault, wtxn, record);
                     Ok(())
                 },
             ),

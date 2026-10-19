@@ -28,6 +28,12 @@ impl RawOutboundResult {
         }
     }
 
+    /// The body the transport returned, for the send's own terminal bridge
+    /// alone (DOOR-141 PR2): it is never logged or scrubbed into a count.
+    pub(crate) fn body(&self) -> Option<&[u8]> {
+        self.body.as_deref()
+    }
+
     #[must_use]
     pub fn scrubbable_field_count(&self) -> usize {
         usize::from(self.body.is_some())

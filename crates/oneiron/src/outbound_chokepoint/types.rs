@@ -138,6 +138,14 @@ impl PreparedEffect {
 /// readable only from the frozen call supplied here.
 pub(crate) trait OutboundTransport {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome;
+
+    /// The body the last send's transport returned, when it hands one on:
+    /// the send's terminal bridge settles a turn program's step with it
+    /// (DOOR-141 PR2). The outcome stays the ACK contract above; by default
+    /// a transport hands on none.
+    fn settled_result(&self) -> Option<&[u8]> {
+        None
+    }
 }
 
 /// The CA-05 send-hygiene headers this call must go out under, read from the

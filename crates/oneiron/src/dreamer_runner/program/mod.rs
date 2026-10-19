@@ -10,13 +10,16 @@
 //! never a Dreamer stamp standing in for the actor. Its own lease is the
 //! program kind's (`lease`).
 //!
-//! PR1 stops at admission: an admitted attempt is parked until the program
-//! runtime lands (PR2). Nothing here runs or completes it.
+//! PR2 runs it: the Dreamer's program runtime (`dreamer_wake::program`)
+//! binds each attempt to its live authority and its code run (`run`), runs
+//! the pinned entry there, and settles each effect into its step. A run cut
+//! before it settled parks; its resume lands with PR3.
 
 mod admit;
 mod arm;
 mod authority;
 mod lease;
+mod run;
 mod types;
 mod wake;
 
@@ -28,7 +31,12 @@ pub(crate) use self::arm::{
     arm_turn_program_in_txn, disarm_turn_program_in_txn, erase_turn_program_actor_in_txn,
 };
 pub(crate) use self::authority::{
-    TurnProgramAuthority, require_program_actor_in_txn, stamp_program_attempt,
+    TurnProgramAuthority, TurnProgramBinding, TurnProgramBound, apply_program_started_in_txn,
+    program_milestone_envelope, require_program_actor_in_txn, stamp_program_attempt,
+};
+pub(crate) use self::run::{
+    ProgramWrite, TurnProgramEntered, bind_program_write_in_txn, join_program_checkpoint_in_txn,
+    note_program_write_uncertain, settle_program_outbound_in_txn, settle_program_write_in_txn,
 };
 pub use self::types::{
     ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin,
@@ -56,7 +64,8 @@ const ATTEMPT: SideTable<AttemptId, TurnProgramAttemptStamp, Named> =
 const WAKE: SideTable<(EntityId, EntityId), TurnProgramWake, Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_WAKE);
 
-/// Who parks an admitted program until its runtime resumes it.
-const PARK_OWNER: &str = "dreamer.turn_program";
-/// Why: the attempt is admitted and has not run.
-const PARK_REASON: &str = "admitted; the turn program runtime lands with DOOR-141 PR2";
+/// Who parks a program attempt the program runtime holds.
+pub(crate) const PROGRAM_PARK_OWNER: &str = "dreamer.turn_program";
+/// The park DOOR-141 PR1 left on each admitted attempt, exactly: the runtime
+/// resumes these (`lease`), and no other park.
+const PR1_PARK_REASON: &str = "admitted; the turn program runtime lands with DOOR-141 PR2";

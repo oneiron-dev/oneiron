@@ -12,8 +12,8 @@ use crate::outbound_consent::{FrozenCallValidation, OutboundBindingAuthority};
 use crate::outbound_intent_ledger::{
     FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentId,
     IntentLedgerError, IntentState, OutboundCallClass, OutboundSendOutcome,
-    RecordedOutboundOutcome, abandon_record, begin_definite_non_delivery_retry, complete_record,
-    record_definite_non_delivery, record_possible_delivery,
+    RecordedOutboundOutcome, abandon_record, begin_definite_non_delivery_retry,
+    complete_record_bridged, record_definite_non_delivery, record_possible_delivery,
 };
 
 pub(super) enum RecoveryGovernance {
@@ -273,7 +273,19 @@ fn send_pending_with_gate<T: OutboundTransport>(
     vault.resume_from_slim_on_inbound()?;
     match outcome {
         OutboundSendOutcome::Acked => {
-            let done = complete_record(vault, record.id, now_ms)?;
+            // A turn program's send settles its step in the Done commit,
+            // with the body its transport returned (DOOR-141 PR2); any
+            // other send writes nothing more, and nothing here fails it.
+            let body = transport.settled_result();
+            let done = complete_record_bridged(vault, record.id, now_ms, |wtxn, done| {
+                crate::dreamer_runner::settle_program_outbound_in_txn(
+                    vault,
+                    wtxn,
+                    done,
+                    body,
+                    now_ms / 1_000,
+                );
+            })?;
             Ok(effect_result(&done, Some(outcome), replayed, None))
         }
         OutboundSendOutcome::Ambiguous if record.idempotency_supported => {
