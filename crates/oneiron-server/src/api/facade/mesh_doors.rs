@@ -20,9 +20,14 @@ pub(crate) async fn vault_mesh_identity(
     auth: &CoreAuth,
     _input: EmptyRequest,
 ) -> Listed<MeshBindingIdentity> {
-    as_owner_naming(server, auth, "vault.mesh.identity", |server, owner| {
-        Ok(server.vault().mesh_binding_identity_as_owner(owner)?)
-    }, |_| Vec::new()).await
+    as_owner_naming(
+        server,
+        auth,
+        "vault.mesh.identity",
+        |server, owner| Ok(server.vault().mesh_binding_identity_as_owner(owner)?),
+        |_| Vec::new(),
+    )
+    .await
 }
 
 /// The same host issuer pairing uses; the caller's proof reaches the writer.
@@ -31,16 +36,26 @@ pub(crate) async fn vault_mesh_bind_machine(
     auth: &CoreAuth,
     input: MeshMachineBinding,
 ) -> Listed<MeshMachineBound> {
-    as_owner_naming(server, auth, "vault.mesh.bind_machine", move |server, owner| {
-        let bound = MeshMachineBound {
-            machine: input.machine,
-            endpoint_key: input.address.endpoint_key,
-        };
-        crate::api::pairing::with_issuer(server, |issuer| {
-            server.vault().bind_mesh_machine_as_owner(issuer, owner, input)
-        }).map_err(|error| super::FacadeApiError::from(error).into_memory_error())?;
-        Ok(bound)
-    }, |bound| vec![bound.machine]).await
+    as_owner_naming(
+        server,
+        auth,
+        "vault.mesh.bind_machine",
+        move |server, owner| {
+            let bound = MeshMachineBound {
+                machine: input.machine,
+                endpoint_key: input.address.endpoint_key,
+            };
+            crate::api::pairing::with_issuer(server, |issuer| {
+                server
+                    .vault()
+                    .bind_mesh_machine_as_owner(issuer, owner, input)
+            })
+            .map_err(|error| super::FacadeApiError::from(error).into_memory_error())?;
+            Ok(bound)
+        },
+        |bound| vec![bound.machine],
+    )
+    .await
 }
 
 /// Both allowing and revoking the exact key/ALPN, through one engine operation.
@@ -49,12 +64,22 @@ pub(crate) async fn vault_mesh_set_alpn_grant(
     auth: &CoreAuth,
     input: MeshAlpnGrant,
 ) -> Listed<MeshAlpnGrant> {
-    as_owner_naming(server, auth, "vault.mesh.set_alpn_grant", move |server, owner| {
-        crate::api::pairing::with_issuer(server, |issuer| {
-            server.vault().set_mesh_alpn_grant_as_owner(issuer, owner, input.clone())
-        }).map_err(|error| super::FacadeApiError::from(error).into_memory_error())?;
-        Ok(input)
-    }, |grant| vec![grant.machine]).await
+    as_owner_naming(
+        server,
+        auth,
+        "vault.mesh.set_alpn_grant",
+        move |server, owner| {
+            crate::api::pairing::with_issuer(server, |issuer| {
+                server
+                    .vault()
+                    .set_mesh_alpn_grant_as_owner(issuer, owner, input.clone())
+            })
+            .map_err(|error| super::FacadeApiError::from(error).into_memory_error())?;
+            Ok(input)
+        },
+        |grant| vec![grant.machine],
+    )
+    .await
 }
 
 pub(crate) async fn vault_mesh_revoke_machine(
@@ -62,12 +87,24 @@ pub(crate) async fn vault_mesh_revoke_machine(
     auth: &CoreAuth,
     input: MeshMachineRevokeRequest,
 ) -> Listed<MeshMachineRevoked> {
-    as_owner_naming(server, auth, "vault.mesh.revoke_machine", move |server, owner| {
-        crate::api::pairing::with_issuer(server, |issuer| {
-            server.vault().revoke_mesh_machine_as_owner(issuer, owner, input.machine)
-        }).map_err(|error| super::FacadeApiError::from(error).into_memory_error())?;
-        Ok(MeshMachineRevoked { machine: input.machine })
-    }, |revoked| vec![revoked.machine]).await
+    as_owner_naming(
+        server,
+        auth,
+        "vault.mesh.revoke_machine",
+        move |server, owner| {
+            crate::api::pairing::with_issuer(server, |issuer| {
+                server
+                    .vault()
+                    .revoke_mesh_machine_as_owner(issuer, owner, input.machine)
+            })
+            .map_err(|error| super::FacadeApiError::from(error).into_memory_error())?;
+            Ok(MeshMachineRevoked {
+                machine: input.machine,
+            })
+        },
+        |revoked| vec![revoked.machine],
+    )
+    .await
 }
 
 /// An unpaired caller still uses its install's real transport key. Only the
@@ -95,19 +132,22 @@ async fn dial(
     auth: &CoreAuth,
     input: MeshDialRequest,
 ) -> MemoryResult<MeshPathReceipt> {
-    let transport = super::legal_hold_doors::as_owner(
-        server, auth, "vault.mesh.dial", |server, owner| {
+    let transport =
+        super::legal_hold_doors::as_owner(server, auth, "vault.mesh.dial", |server, owner| {
             server.vault().recheck_owner(owner)?;
             server.mesh_transport.get().cloned().ok_or_else(unavailable)
-        },
-    ).await?;
-    transport.dial_address(&input.address, &input.alpn).await.map_err(|error| {
-        oneiron::memory::MemoryError::new(
-            oneiron::memory::MEMORY_CODE_BAD_REQUEST,
-            format!("mesh dial: {error}"),
-            &["Check the endpoint key, direct addresses, ALPN and configured private relays."],
-        )
-    })
+        })
+        .await?;
+    transport
+        .dial_address(&input.address, &input.alpn)
+        .await
+        .map_err(|error| {
+            oneiron::memory::MemoryError::new(
+                oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+                format!("mesh dial: {error}"),
+                &["Check the endpoint key, direct addresses, ALPN and configured private relays."],
+            )
+        })
 }
 
 #[cfg(not(feature = "mesh"))]
