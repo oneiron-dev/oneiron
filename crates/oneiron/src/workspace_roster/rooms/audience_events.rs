@@ -11,7 +11,10 @@
 //! on an add, the history it shares. Its carrier is the thread's room, and an
 //! `About` edge names the root, so a root's edits are its incoming `About`
 //! edges. No side table holds them: an edit syncs as the TURN it is, and one
-//! that has not arrived yet is not folded.
+//! that has not arrived yet is not folded. A privacy erase leaves the TURN
+//! in place, its editor no one (FIX 5639, [`super::audience_erase`]), so it
+//! folds as it did; no plain delete removes it while its root lives
+//! ([`super::audience_edit_guard`]).
 //!
 //! # The fold
 //!
@@ -27,6 +30,7 @@ use super::*;
 use crate::edge::EdgeKind;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::workspace_roster::RosterActor;
 use std::collections::BTreeMap;
 
 /// The door-owned TURN body key an audience edit rides under.
@@ -51,17 +55,28 @@ pub(crate) enum AudienceOp {
 }
 
 /// One audience edit as its TURN carries it: the thread's root, the person
-/// added or removed, the actor whose door wrote it and, on an add alone, the
-/// history it shares.
+/// added or removed, the actor whose door wrote it (no one once a privacy
+/// erase took it, FIX 5639) and, on an add alone, the history it shares.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AudienceEvent {
     pub(crate) root: EntityId,
     pub(crate) person: EntityId,
-    pub(crate) by: EntityId,
+    pub(crate) by: RosterActor,
     pub(crate) op: AudienceOp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) history: Option<ThreadAudienceHistory>,
+}
+
+impl AudienceEvent {
+    /// This edit as a privacy erase leaves it: the same root, person, op and
+    /// history, made by no one.
+    fn erased(self) -> Self {
+        Self {
+            by: RosterActor::Erased,
+            ..self
+        }
+    }
 }
 
 /// The audience edit a TURN's MessagePack `body` carries; `None` for a body
@@ -100,10 +115,21 @@ pub(super) fn event_body(binding: &ThreadBinding, event: &AudienceEvent) -> Resu
     super::audience::stamp_thread(&body, binding)
 }
 
+/// The erased form of the audience edit a TURN's `body` carries (FIX 5639),
+/// `None` for a body that carries none: its thread binding and its edit,
+/// made by no one, and no other byte. An erased edit is its own erased form.
+pub(crate) fn erased_audience_edit(body: &[u8]) -> Result<Option<Vec<u8>>> {
+    let (Some(event), Some(binding)) = (audience_event(body)?, thread_binding(body)?) else {
+        return Ok(None);
+    };
+    event_body(&binding, &event.erased()).map(Some)
+}
+
 /// Why a put of the TURN `id` with `body`, over the stored `prior` body if
 /// any, is refused for its audience edit, or `None` when it is not. An edit
 /// rides a reply of the thread it names, never the root; and it is a birth
-/// fact of its TURN, as the thread binding is, so a re-put keeps it whole.
+/// fact of its TURN, as the thread binding is, so a re-put keeps it whole,
+/// but for a privacy erase of who made it (FIX 5639).
 pub(crate) fn audience_event_put_refusal(
     id: EntityId,
     prior: Option<&[u8]>,
@@ -116,10 +142,11 @@ pub(crate) fn audience_event_put_refusal(
     {
         return Ok(Some("a thread audience edit rides a reply of its thread"));
     }
-    if let Some(prior) = prior.filter(|prior| !prior.is_empty())
-        && audience_event(prior)? != event
-    {
-        return Ok(Some("a TURN's thread audience edit is immutable"));
+    if let Some(prior) = prior.filter(|prior| !prior.is_empty()) {
+        let held = audience_event(prior)?;
+        if held != event && held.map(AudienceEvent::erased) != event {
+            return Ok(Some("a TURN's thread audience edit is immutable"));
+        }
     }
     Ok(None)
 }

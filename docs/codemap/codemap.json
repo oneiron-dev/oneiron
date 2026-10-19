@@ -26624,28 +26624,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "ConversationSource",
-      "ConversationText",
       "ConversationTrainingChoice",
       "Eligibility",
       "NoChoicesYet",
-      "PublisherTrainingSink",
-      "ShareOutcome",
-      "ShareWithheld",
       "Withheld"
      ],
      "path": "src/feedback/conversation_training.rs",
      "purpose": "\"Learn from my conversations\" (FIX 4489, FIX 5502 owner rulings, OF-420): the one check real conversation…",
      "surface": {
-      "const": 1,
-      "enum": 4,
-      "fn": 2,
+      "enum": 2,
+      "fn": 1,
       "re-export": 5,
-      "struct": 3,
-      "trait": 2
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -26668,13 +26663,13 @@
      "kind": "src",
      "notable": [],
      "path": "src/feedback/conversation_training/custody.rs",
-     "purpose": "Local custody of publisher training offers and controls (OF-420): what this vault prepared, published and…",
+     "purpose": "Local custody of publisher training offers and controls (OF-420; TRAINING-LINK = C): what this vault…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 30
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PublisherTrainingLifecycle",
@@ -26686,6 +26681,7 @@
       "TrainingControlId",
       "TrainingQueued",
       "TrainingReceiptPage",
+      "TrainingScope",
       "TrainingSubmissionId",
       "TrainingUnavailable",
       "TrainingWithheld"
@@ -26694,9 +26690,30 @@
      "purpose": "The publisher training lifecycle (OF-420 A2): what an outbox takes, and what the engine decides about it",
      "surface": {
       "enum": 3,
-      "fn": 4,
-      "struct": 8,
+      "fn": 5,
+      "struct": 9,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/conversation_training/link.rs",
+     "purpose": "The training link (TRAINING-LINK = C, TL-1): the opaque codes that stand in for this vault, its sources…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/conversation_training/purge.rs",
+     "purpose": "The training purge (TRAINING-LINK = C, TL-5, the engine half): before an erase destroys the vault, every…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -26726,7 +26743,7 @@
      "path": "src/feedback/conversation_training/reconcile.rs",
      "purpose": "Withdrawal by reconciliation (OF-420 A4, D2), receipts (C2, C3, C5) and the outbox's upkeep",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "struct": 1
      }
@@ -26738,7 +26755,7 @@
       "TrainingOfferPass"
      ],
      "path": "src/feedback/conversation_training/release.rs",
-     "purpose": "The offer pass and its release gate (OF-420 A2, A3; D1; FIX 5502)",
+     "purpose": "The offer pass and its release gate (OF-420 A2, A3; D1; FIX 5502; TRAINING-LINK = C)",
      "surface": {
       "fn": 2,
       "struct": 1
@@ -51567,6 +51584,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/training_link.rs",
+     "purpose": "The training link key's custody client (TRAINING-LINK = C, TL-2): K, the one key the vault's publisher…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -51576,8 +51603,8 @@
      "purpose": "Process-owner writer lease, shared by the server and embedded SDK",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
-      "fn": 4,
+      "crate-vis": 6,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -60229,7 +60256,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 26,
       "re-export": 20
      }
     },
@@ -60955,13 +60982,33 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/audience_edit_guard.rs",
+     "purpose": "A thread audience edit stays while its thread's root lives (FIX 5639)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/audience_erase.rs",
+     "purpose": "A privacy erase of a thread audience edit (FIX 5639)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ThreadAudienceHistory"
      ],
      "path": "src/workspace_roster/rooms/audience_events.rs",
      "purpose": "A private thread's audience edits (FIX 5545)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1
      }
     },
@@ -61078,7 +61125,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 36,
       "enum": 2,
       "fn": 6,
       "re-export": 13,
@@ -63359,7 +63406,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 24,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -64031,7 +64078,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 98,
+     "files": 99,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64234,7 +64281,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 100,
+     "files": 102,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64257,7 +64304,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3964,
+   "source_files": 3969,
    "test_files": 902
   },
   "oneiron-android": {
@@ -82645,11 +82692,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_training/outbox.rs",
-     "purpose": "The outbox directory as the engine's training transport: three protocol subdirectories under one lock…",
+     "purpose": "The outbox directory as the engine's training transport: three protocol subdirectories and the vault's…",
      "surface": {
       "crate-vis": 2
      }
@@ -87060,7 +87107,7 @@
     "conversation_training": {
      "files": 4,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "The publisher training outbox (OF-420 A1, \"Learn from my conversations\"): the worker that writes this…"
     },
@@ -91393,33 +91440,36 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "TrainingChunkV1",
-      "TrainingControlBodyV1",
-      "TrainingControlChangeV1",
-      "TrainingControlV1",
+      "TrainingChunkV2",
+      "TrainingControlBodyV2",
+      "TrainingControlChangeV2",
+      "TrainingControlV2",
       "TrainingFileName",
-      "TrainingFilterV1",
-      "TrainingForgetSourceV1",
-      "TrainingNoHumanReadV1",
-      "TrainingOfferBodyV1",
-      "TrainingOfferV1",
-      "TrainingPayloadV1",
-      "TrainingReceiptBodyV1",
-      "TrainingReceiptStatusV1",
-      "TrainingReceiptSubjectV1",
-      "TrainingReceiptV1",
-      "TrainingSettingV1",
-      "TrainingSignatureV1",
-      "TrainingUsedRunV1",
-      "TrainingWorldEligibilityV1"
+      "TrainingFilterV2",
+      "TrainingForgetSourceV2",
+      "TrainingNoHumanReadV2",
+      "TrainingOfferBodyV2",
+      "TrainingOfferV2",
+      "TrainingPayloadV2",
+      "TrainingPurgeScopeV2",
+      "TrainingReceiptBodyV2",
+      "TrainingReceiptStatusV2",
+      "TrainingReceiptSubjectV2",
+      "TrainingReceiptV2",
+      "TrainingScopeCursorV2",
+      "TrainingScopesV2",
+      "TrainingSettingV2",
+      "TrainingSignatureV2",
+      "TrainingUsedRunV2",
+      "TrainingWorldEligibilityV2"
      ],
      "path": "src/lib/conversation_training.rs",
-     "purpose": "The publisher training outbox (OF-420, \"Learn from my conversations\"): the files a vault hands toward…",
+     "purpose": "The publisher training outbox (OF-420, \"Learn from my conversations\"; TRAINING-LINK = C): the files a vault…",
      "surface": {
-      "const": 15,
+      "const": 17,
       "enum": 4,
-      "fn": 11,
-      "struct": 15
+      "fn": 12,
+      "struct": 18
      }
     },
     {
@@ -91441,15 +91491,17 @@
       "ManagedReadiness",
       "ShedBlockerWire",
       "ShedCause",
-      "ShedStatus"
+      "ShedStatus",
+      "TrainingPurgeState",
+      "TrainingPurgeStateWire"
      ],
      "path": "src/lib/ctl.rs",
      "purpose": "Supervisor ctl request/response wire types and shed/slim validation",
      "surface": {
-      "const": 1,
-      "enum": 12,
+      "const": 4,
+      "enum": 13,
       "fn": 9,
-      "struct": 4
+      "struct": 5
      }
     },
     {
