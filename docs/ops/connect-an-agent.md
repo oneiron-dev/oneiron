@@ -43,6 +43,10 @@ oneiron token agent --name codex --out ~/.config/oneiron/codex.cred
     `core:write`, so no route that commits a write directly (such as
     `/v1/core/batch`) accepts it.
   - `read-only`: it only reads.
+- `--comm` caps whom the agent may message: `parent`, `subtree`, `project`
+  or `vault`, signed into its slip. Outside a run, anything narrower than
+  `vault` reaches your owners only. The output shows the reach as `comm`
+  (`vault` when you named none); a wider reach later is a new mint.
 - Nothing else can be minted for an agent: no `core:auth`, no organization
   power, never your own owner credential.
 

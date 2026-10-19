@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::authority::{
-    HostSlipIssuer, SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantQuery, SupportGrantRequest,
-    SupportGrantRow, SupportGrantStatus, SupportHolderClass,
+    CommReach, HostSlipIssuer, SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantQuery,
+    SupportGrantRequest, SupportGrantRow, SupportGrantStatus, SupportHolderClass,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -51,6 +51,12 @@ pub struct SupportGrantMintRequest {
     /// The support ticket the visit serves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ticket_ref: Option<String>,
+    /// The owner's cap on whom the support holder may message (FIX 3899),
+    /// signed into the slip: `parent`, `subtree`, `project` or `vault`.
+    /// Outside a run, anything narrower than `vault` reaches the vault's
+    /// owners only. Absent is `vault`; a wider reach later is a new mint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comm: Option<CommReach>,
 }
 
 /// One support grant as the owner reviews it.
@@ -74,6 +80,9 @@ pub struct SupportGrantView {
     /// The wall deadline (Unix seconds); the grant ends at it.
     pub wall_expires_at: u64,
     pub status: SupportGrantStatus,
+    /// Whom the support holder may message (FIX 3899): the reach the owner
+    /// set at mint, `vault` when he set none.
+    pub comm: CommReach,
     /// The one-tap revoke command: `vault.support_grants.revoke`.
     pub revoke_command: String,
 }
@@ -158,6 +167,7 @@ pub fn mint_support_grant_as(
             ttl_secs: input.ttl_secs,
             purpose: input.purpose,
             ticket_ref: input.ticket_ref,
+            comm: input.comm,
         },
     )?;
     Ok(SupportGrantMintAnswer {
@@ -264,6 +274,7 @@ fn support_grant_view(row: &SupportGrantRow) -> SupportGrantView {
         approved_at: row.delegation.approved_at,
         wall_expires_at: row.delegation.wall_expires_at,
         status: row.status,
+        comm: row.comm,
         revoke_command: SUPPORT_GRANT_REVOKE_COMMAND.to_owned(),
     }
 }

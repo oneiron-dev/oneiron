@@ -1218,8 +1218,10 @@ export type SelectorRange = "Semantic" | "Core" | "Maintenance" | { Family: Type
 export type FederationDirectionScope = { worlds: ScopeAxis<ScopeId>; facets: ScopeAxis<ScopeId>; bands: ScopeAxis<SelectorRange> }
 /** `oneiron::task_verb::sdk_credential::CredentialPactCeiling` */
 export type CredentialPactCeiling = { grant_ref: ScopeId; ceiling: FederationDirectionScope }
+/** `oneiron_authority::authority::comm_reach::CommReach` */
+export type CommReach = "parent" | "subtree" | "project" | "vault"
 /** `oneiron::task_verb::sdk_credential::CredentialCaveat` */
-export type CredentialCaveat = { scope?: CredentialCeiling | null; expires_at?: number | null; ttl_secs?: number | null; single_use?: boolean; records?: string[] | null; channels?: string[] | null; pact?: CredentialPactCeiling | null }
+export type CredentialCaveat = { scope?: CredentialCeiling | null; expires_at?: number | null; ttl_secs?: number | null; single_use?: boolean; records?: string[] | null; channels?: string[] | null; pact?: CredentialPactCeiling | null; comm?: CommReach | null }
 /** `oneiron::task_verb::sdk_credential::CredentialAttenuationRequest` */
 export type CredentialAttenuationRequest = { holder_seed: number[]; caveat: CredentialCaveat; next_binding_key?: number[] | null }
 /** `oneiron::task_verb::sdk_credential::CredentialAttenuated` */
@@ -2586,8 +2588,6 @@ export type GuestRevokeDisclosure = { copied_bytes_recallable: NotRecallable; re
 export type GuestRevokeCourtesyTargetView = { pact: string; peer_vault_id: string; epoch_cutoff: number; deletion_request_status: GuestDeletionRequestStatus; request?: string | null; error?: string | null }
 /** `oneiron::receipt::guest_revoke::GuestRevokeResponse` */
 export type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure; courtesy_targets?: GuestRevokeCourtesyTargetView[] }
-/** `oneiron_authority::authority::comm_reach::CommReach` */
-export type CommReach = "parent" | "subtree" | "project" | "vault"
 /** `oneiron::task_verb::sdk_shared_members::GuestSlipMintRequest` */
 export type GuestSlipMintRequest = { grant_ref: EntityId; holder_key: string; expires_at: number; comm?: CommReach | null }
 /** `oneiron::task_verb::sdk_shared_members::GuestSlipMinted` */
@@ -2595,11 +2595,11 @@ export type GuestSlipMinted = { slip_id: string; slip: string; expires_at: numbe
 /** `oneiron::authority::support_grant::SupportHolderClass` */
 export type SupportHolderClass = "human" | "agent"
 /** `oneiron::task_verb::sdk_support_grant::SupportGrantMintRequest` */
-export type SupportGrantMintRequest = { holder: EntityId; holder_class: SupportHolderClass; holder_key: string; scope: Scope; records?: EntityId[]; ttl_secs?: number | null; purpose: string; ticket_ref?: string | null }
+export type SupportGrantMintRequest = { holder: EntityId; holder_class: SupportHolderClass; holder_key: string; scope: Scope; records?: EntityId[]; ttl_secs?: number | null; purpose: string; ticket_ref?: string | null; comm?: CommReach | null }
 /** `oneiron::authority::support_grant::SupportGrantStatus` */
 export type SupportGrantStatus = "active" | "expired" | "revoked" | "ended"
 /** `oneiron::task_verb::sdk_support_grant::SupportGrantView` */
-export type SupportGrantView = { grant_ref: string; holder: EntityId; holder_class: string; scope: Scope; records?: string[]; purpose: string; ticket_ref?: string | null; approved_by: string; approved_at: number; wall_expires_at: number; status: SupportGrantStatus; revoke_command: string }
+export type SupportGrantView = { grant_ref: string; holder: EntityId; holder_class: string; scope: Scope; records?: string[]; purpose: string; ticket_ref?: string | null; approved_by: string; approved_at: number; wall_expires_at: number; status: SupportGrantStatus; comm: CommReach; revoke_command: string }
 /** `oneiron::task_verb::sdk_support_grant::SupportGrantMintAnswer` */
 export type SupportGrantMintAnswer = { slip: string; grant: SupportGrantView; decision_ref: string }
 /** `oneiron::task_verb::sdk_support_grant::SupportGrantListRequest` */

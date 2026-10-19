@@ -1423,7 +1423,9 @@ leader's `self.leader.advice` and `self.leader.pattern`. An outside harness gets
 like this:
 1. Pair a credential with write scope to that agent's AGENT_DEF: `POST /v1/core/pairing/links`
    with `principal.holder_ref` set to the AGENT_DEF id and `principal.actor_class` set to
-   `agent`. The harness redeems the link at `POST /v1/core/pairing/redeem`.
+   `agent`. The harness redeems the link at `POST /v1/core/pairing/redeem`. `principal.comm`
+   (`parent`, `subtree`, `project` or `vault`) caps whom it may message; both answers show
+   that reach as `comm`, `vault` when you named none.
 2. While the server runs the agent, call `POST /v1/core/live-runs/{run}/attach` with that
    credential. It answers `{"liveRun": "<handle>"}` to this caller only.
 3. Send `"liveRun": "<handle>"` in the body of `POST /v1/core/actions/{verb}`.

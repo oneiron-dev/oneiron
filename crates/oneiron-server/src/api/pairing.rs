@@ -164,6 +164,7 @@ pub(super) async fn oauth_exchange(
         token: slip.to_token().map_err(|_| ApiError::unauthorized())?,
         pin: None,
         home: None,
+        comm: oneiron::authority::effective_slip_comm(slip.claims.comm),
     }))
 }
 
@@ -228,6 +229,9 @@ pub(super) struct Paired {
     /// device dials (`oneiron device enrol`).
     #[serde(skip_serializing_if = "Option::is_none")]
     home: Option<PairedHome>,
+    /// Whom the paired slip may message (FIX 3899): the reach the owner set
+    /// on the link, `vault` when he set none.
+    comm: oneiron::authority::CommReach,
 }
 #[derive(Serialize)]
 pub(super) struct PairedHome {
@@ -314,6 +318,7 @@ pub(super) async fn redeem(
         token,
         pin: redeemed.pin,
         home,
+        comm: oneiron::authority::effective_slip_comm(redeemed.slip.claims.comm),
     }))
 }
 

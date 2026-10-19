@@ -626,7 +626,8 @@ declare namespace Sdk {
   type SelectorRange = "Semantic" | "Core" | "Maintenance" | { Family: TypeByteFamily };
   type FederationDirectionScope = { worlds: ScopeAxis<ScopeId>; facets: ScopeAxis<ScopeId>; bands: ScopeAxis<SelectorRange> };
   type CredentialPactCeiling = { grant_ref: ScopeId; ceiling: FederationDirectionScope };
-  type CredentialCaveat = { scope?: CredentialCeiling | null; expires_at?: number | null; ttl_secs?: number | null; single_use?: boolean; records?: string[] | null; channels?: string[] | null; pact?: CredentialPactCeiling | null };
+  type CommReach = "parent" | "subtree" | "project" | "vault";
+  type CredentialCaveat = { scope?: CredentialCeiling | null; expires_at?: number | null; ttl_secs?: number | null; single_use?: boolean; records?: string[] | null; channels?: string[] | null; pact?: CredentialPactCeiling | null; comm?: CommReach | null };
   type CredentialAttenuationRequest = { holder_seed: number[]; caveat: CredentialCaveat; next_binding_key?: number[] | null };
   type CredentialAttenuated = { token: string; binding_key: number[] };
   type RecordPositionRequest = { record_ref: string };
@@ -1310,13 +1311,12 @@ declare namespace Sdk {
   type GuestRevokeDisclosure = { copied_bytes_recallable: NotRecallable; recipient_copy_state: GuestCopyState; deletion_request_status: GuestDeletionRequestStatus };
   type GuestRevokeCourtesyTargetView = { pact: string; peer_vault_id: string; epoch_cutoff: number; deletion_request_status: GuestDeletionRequestStatus; request?: string | null; error?: string | null };
   type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure; courtesy_targets?: GuestRevokeCourtesyTargetView[] };
-  type CommReach = "parent" | "subtree" | "project" | "vault";
   type GuestSlipMintRequest = { grant_ref: EntityId; holder_key: string; expires_at: number; comm?: CommReach | null };
   type GuestSlipMinted = { slip_id: string; slip: string; expires_at: number };
   type SupportHolderClass = "human" | "agent";
-  type SupportGrantMintRequest = { holder: EntityId; holder_class: SupportHolderClass; holder_key: string; scope: Scope; records?: EntityId[]; ttl_secs?: number | null; purpose: string; ticket_ref?: string | null };
+  type SupportGrantMintRequest = { holder: EntityId; holder_class: SupportHolderClass; holder_key: string; scope: Scope; records?: EntityId[]; ttl_secs?: number | null; purpose: string; ticket_ref?: string | null; comm?: CommReach | null };
   type SupportGrantStatus = "active" | "expired" | "revoked" | "ended";
-  type SupportGrantView = { grant_ref: string; holder: EntityId; holder_class: string; scope: Scope; records?: string[]; purpose: string; ticket_ref?: string | null; approved_by: string; approved_at: number; wall_expires_at: number; status: SupportGrantStatus; revoke_command: string };
+  type SupportGrantView = { grant_ref: string; holder: EntityId; holder_class: string; scope: Scope; records?: string[]; purpose: string; ticket_ref?: string | null; approved_by: string; approved_at: number; wall_expires_at: number; status: SupportGrantStatus; comm: CommReach; revoke_command: string };
   type SupportGrantMintAnswer = { slip: string; grant: SupportGrantView; decision_ref: string };
   type SupportGrantListRequest = { include_inactive?: boolean; limit?: number | null };
   type SupportGrantList = { grants: SupportGrantView[] };

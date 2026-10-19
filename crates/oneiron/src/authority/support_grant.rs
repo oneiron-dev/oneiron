@@ -84,6 +84,11 @@ pub struct SupportGrantRequest {
     pub ttl_secs: Option<u64>,
     pub purpose: String,
     pub ticket_ref: Option<String>,
+    /// Whom the support holder may message (FIX 3899), signed into the
+    /// slip; `None` is the vault-wide reach. The owner door admits only a
+    /// full owner-grade proof, whose reach is the vault's, so any value is
+    /// within it.
+    pub comm: Option<CommReach>,
 }
 
 /// Where a support grant stands, as its list and the registry show it.
@@ -113,6 +118,9 @@ pub struct SupportGrantRow {
     /// The slip's own lifetime end, on the authority clock.
     pub expires_at: u64,
     pub status: SupportGrantStatus,
+    /// Whom the holder may message: the signed reach, or `vault` when the
+    /// owner set none.
+    pub comm: CommReach,
 }
 
 /// A minted support grant: the credential for the support party (no private
@@ -211,7 +219,7 @@ impl Vault {
                 approved_at,
                 wall_expires_at: approved_at.checked_add(ttl).ok_or_else(overflow)?,
             }),
-            comm: None,
+            comm: request.comm,
         };
         claims.validate().map_err(|_| {
             refused("the support grant's purpose, ticket or bounds are not well formed")
@@ -477,6 +485,7 @@ fn support_row(claims: &SlipClaims, status: SupportGrantStatus) -> Result<Suppor
         delegation,
         expires_at: claims.expires_at,
         status,
+        comm: effective_slip_comm(claims.comm),
     })
 }
 
