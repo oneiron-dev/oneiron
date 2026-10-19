@@ -277,9 +277,11 @@ impl Vault {
     fn require_mirror_pusher(&self, repo_name: &str) -> Result<()> {
         match self.origin_host_authority(repo_name)? {
             OriginHostAuthority::Unconfigured | OriginHostAuthority::Held(_) => Ok(()),
-            OriginHostAuthority::Mirror(_) | OriginHostAuthority::Elsewhere(_) => Err(
-                Error::ConcurrentWrite("only the repository's origin pushes its mirror"),
-            ),
+            OriginHostAuthority::Mirror(_)
+            | OriginHostAuthority::Elsewhere(_)
+            | OriginHostAuthority::WriterErased(_) => Err(Error::ConcurrentWrite(
+                "only the repository's origin pushes its mirror",
+            )),
         }
     }
 
