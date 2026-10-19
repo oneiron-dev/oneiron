@@ -15082,7 +15082,7 @@
     },
     {
       "name": "vault.consolidation.home.get",
-      "description": "The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything.",
+      "description": "The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything.",
       "input": "EmptyRequest",
       "output": "crate::dreamer_runner::ConsolidationHomeView",
       "call": "crate::dreamer_runner::consolidation_home_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.home.get\")?)?",
@@ -15097,7 +15097,7 @@
     },
     {
       "name": "vault.consolidation.home.pick",
-      "description": "The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget.",
+      "description": "The owner picks or clears the node that runs his vault's MACRO consolidation: a signed act every linked machine folds, recorded even for a node unknown here; a stale seen revision refuses. It re-elects this home and moves no job or lease.",
       "input": "crate::dreamer_runner::ConsolidationHomePickRequest",
       "output": "crate::dreamer_runner::ConsolidationHomePickReceipt",
       "call": "crate::dreamer_runner::consolidation_home_pick_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.home.pick\")?, crate::authority::ActSurface::ThisInstall, input)?",
