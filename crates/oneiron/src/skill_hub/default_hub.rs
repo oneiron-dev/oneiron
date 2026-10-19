@@ -1,8 +1,9 @@
 //! First-party library source: offline seeding, immutable Git ref, explicit import.
 
 use super::{
-    ForeignSkillPublisher, GitEndpointSkillHubAdapter, HubPin, HubRef, HubSyncPolicy, SkillHubKind,
-    SkillHubAdapter, SkillHubRecord, SkillHubTrustTier, TrackedHubRef, encode_skill_hub_record,
+    ForeignSkillPublisher, GitEndpointSkillHubAdapter, HubPin, HubRef, HubSyncPolicy,
+    SkillHubAdapter, SkillHubKind, SkillHubRecord, SkillHubTrustTier, TrackedHubRef,
+    encode_skill_hub_record,
     pack_catalog::{
         PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackInstallReceipt, PackPermissions,
         PackSource,
