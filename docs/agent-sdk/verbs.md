@@ -874,6 +874,9 @@ both bindings and their export-census tests in one change.
 - `vault.consolidation.home.get`
 - `vault.consolidation.lineage`
 - `vault.consolidation.promote`
+- `vault.consolidation.pin`
+- `vault.consolidation.frontier`
+- `vault.consolidation.accounting`
 - `vault.consolidation.evidence`
 - `vault.sieve.evidence`
 - `vault.sieve.evidence.replay`

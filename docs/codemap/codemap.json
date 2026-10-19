@@ -19379,7 +19379,7 @@
      "path": "src/dreamer_consolidation/conflict.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 9,
       "struct": 9
      }
@@ -19497,7 +19497,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 4,
       "re-export": 18
      }
@@ -19622,7 +19622,7 @@
      "path": "src/dreamer_consolidation/provenance.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 10,
       "struct": 7,
@@ -19755,6 +19755,16 @@
       "crate-vis": 2,
       "fn": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/root_evidence.rs",
+     "purpose": "Root-owned reference pins",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -33035,6 +33045,31 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConsolidationAccountingRequest",
+      "ConsolidationAncestor",
+      "ConsolidationBucketAccounting",
+      "ConsolidationChildFrontier",
+      "ConsolidationChildReceipt",
+      "ConsolidationFrontierRequest",
+      "ConsolidationJudgement",
+      "ConsolidationPinRequest",
+      "ConsolidationReference",
+      "ConsolidationRootAccounting",
+      "ConsolidationRootBucket",
+      "ConsolidationRootEvidence",
+      "ConsolidationRootInput"
+     ],
+     "path": "src/memory/consolidation_frontier.rs",
+     "purpose": "Typed reference frontiers and the root's immutable evidence-accounting receipts",
+     "surface": {
+      "fn": 3,
+      "struct": 13
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -33581,7 +33616,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 16,
-      "mod": 23,
+      "mod": 24,
       "re-export": 53
      }
     },
@@ -40492,7 +40527,7 @@
      "path": "src/provenance/queries.rs",
      "purpose": "Vault read scans: named-target guards and live/retracted cohort queries",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
      }
     },
@@ -53191,7 +53226,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1024
+      "fn": 1027
      }
     },
     {
@@ -59921,7 +59956,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60285,7 +60320,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 214,
+     "files": 215,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60966,7 +61001,7 @@
    },
    "over_bar": 201,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3712,
+   "source_files": 3714,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69598,7 +69633,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 995
+      "fn": 998
      }
     },
     {
@@ -70694,7 +70729,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 996
+      "fn": 999
      }
     },
     {
@@ -73948,7 +73983,7 @@
      "path": "src/api/facade/consolidation_doors.rs",
      "purpose": "Owner-bound generated-claim promotion, vetting and evidence reads",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -83750,18 +83785,31 @@
       "ConsentStateMembershipConsent",
       "ConsentStateRosterActor",
       "ConsentStateSpendConsent",
+      "ConsolidationAccountingRequest",
+      "ConsolidationAncestor",
+      "ConsolidationBucketAccounting",
+      "ConsolidationChildFrontier",
+      "ConsolidationChildReceipt",
       "ConsolidationEvidenceHop",
       "ConsolidationEvidenceLocator",
       "ConsolidationEvidenceRequest",
       "ConsolidationEvidenceSource",
+      "ConsolidationFrontierRequest",
       "ConsolidationHomeNode",
       "ConsolidationHomeView",
+      "ConsolidationJudgement",
       "ConsolidationLineageRequest",
       "ConsolidationLineageView",
       "ConsolidationMessageEvidence",
+      "ConsolidationPinRequest",
       "ConsolidationPromoteRequest",
       "ConsolidationPromotion",
+      "ConsolidationReference",
       "ConsolidationRejection",
+      "ConsolidationRootAccounting",
+      "ConsolidationRootBucket",
+      "ConsolidationRootEvidence",
+      "ConsolidationRootInput",
       "ConsolidationStepRef",
       "ConsolidationTryView",
       "ConstraintContinuation",
@@ -86373,7 +86421,7 @@
      "purpose": "—",
      "surface": {
       "enum": 814,
-      "struct": 2562
+      "struct": 2575
      }
     },
     {

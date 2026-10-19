@@ -84,6 +84,9 @@ side_tables! {
     /// Key: ().
     DREAMER_FAILURE_RULES: VaultMeta b"dreamer:consolidation:failure_rules:v1" Raw;
     DREAMER_CONSOLIDATION_KEY_RULES: VaultMeta b"dreamer:consolidation:keys:v1" LegacyJson;
+    /// Owner-root reference pins and immutable child evidence accounting. Key: id16(root).
+    DREAMER_CONSOLIDATION_ROOT: VaultMeta b"dreamer:consolidation:root:v1:" Named
+        => crate::dreamer_consolidation::root_evidence::erase_actor_in_txn;
     /// Operator-set consolidation candidate-selection config (strength weights, caps). Key: ().
     DREAMER_CONSOLIDATION_SELECTION: VaultMeta b"dreamer:consolidation:selection:v1" LegacyJson;
     /// Parent-verified promotion evidence observations. Key: id16(claim).
