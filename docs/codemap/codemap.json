@@ -3373,7 +3373,7 @@
      "path": "src/authority/owner_act.rs",
      "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "enum": 2,
       "fn": 4,
       "struct": 1
@@ -11842,7 +11842,49 @@
       "crate-vis": 9,
       "enum": 2,
       "fn": 10,
+      "re-export": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_digest/changes.rs",
+     "purpose": "The Coach's changes to an owner's digest settings (FIX 5495; DEC-0005 policy residence)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_digest/coach.rs",
+     "purpose": "The Coach's rule for an owner's digest settings (FIX 5495): closed-form, no model call, over the owner's own…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WeaveDigestFeedback",
+      "WeaveDigestSettingAnswer",
+      "WeaveDigestSettingChange",
+      "WeaveDigestSettingChangeStatus",
+      "WeaveDigestSettingUndo",
+      "WeaveDigestSettings"
+     ],
+     "path": "src/claim/scoped_read/weave_digest/settings.rs",
+     "purpose": "The owner's own digest settings record (FIX 5495): the generation every change to his Owner schedule bumps…",
+     "surface": {
+      "crate-vis": 16,
+      "enum": 1,
+      "struct": 5
      }
     },
     {
@@ -55359,7 +55401,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1086
+      "fn": 1090
      }
     },
     {
@@ -56393,7 +56435,7 @@
      "path": "src/task_verb/sdk_weave.rs",
      "purpose": "Typed owner setup for weave work and the inbox's real producers",
      "surface": {
-      "fn": 5,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -62007,7 +62049,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 72,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63332,7 +63374,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3892,
+   "source_files": 3895,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72123,7 +72165,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1057
+      "fn": 1061
      }
     },
     {
@@ -73262,7 +73304,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1058
+      "fn": 1062
      }
     },
     {
@@ -77628,7 +77670,7 @@
      "path": "src/api/facade/weave_doors.rs",
      "purpose": "The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link, claim, project or…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 19
      }
     },
     {
@@ -89639,8 +89681,14 @@
       "WakeSettlementsPage",
       "WakeSettlementsRequest",
       "WeaveDigestCadence",
+      "WeaveDigestFeedback",
       "WeaveDigestRendered",
       "WeaveDigestRequest",
+      "WeaveDigestSettingAnswer",
+      "WeaveDigestSettingChange",
+      "WeaveDigestSettingChangeStatus",
+      "WeaveDigestSettingUndo",
+      "WeaveDigestSettings",
       "WeaveDigestView",
       "WeaveEnqueueRequest",
       "WeaveItemCorrectionView",
@@ -89750,8 +89798,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 853,
-      "struct": 2700
+      "enum": 854,
+      "struct": 2705
      }
     },
     {
