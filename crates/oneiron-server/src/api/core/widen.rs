@@ -9,6 +9,7 @@ use crate::{
 use axum::{
     Json,
     extract::{Extension, State, rejection::JsonRejection},
+    http::request::Parts,
 };
 use oneiron::{ErrorKind, store::GateDecisionId};
 use serde::{Deserialize, Serialize};
@@ -43,29 +44,50 @@ pub(crate) struct CoreRejectWidenResponse {
     decision_id: String,
 }
 
-/// The holder a widen answer runs as. Managed mode takes only a
-/// supervisor-MACed account action installed by its socket middleware: a
-/// host root by itself is never a holder. Unmanaged HTTP and local clients
-/// use the same logged human slip door.
-fn widen_holder<'a>(
-    auth: &'a CoreAuth,
+/// The holder a widen answer runs as, and the verified slip it answers on.
+type WidenHolder = (
+    oneiron::EntityId,
+    String,
+    Option<oneiron::authority::VerifiedSlip>,
+);
+
+/// The holder a widen answer runs as. The caller's own human slip comes
+/// first, on every vault: the same logged slip door unmanaged HTTP and local
+/// clients use. On a managed vault a request that carries none is the owner
+/// its supervisor attested for it (`ManagedOwnerAction`), as himself while he
+/// is the vault's live owner, else the holder a supervisor-MACed account
+/// action names (`ManagedWidenHolder`), with no other caller built: a host
+/// root by itself is never a holder. A dedicated action beside a caller
+/// naming another person is refused.
+async fn widen_holder(
+    parts: &Parts,
     server: &SyncServer,
     managed_holder: Option<Extension<ManagedWidenHolder>>,
-) -> Result<
-    (
-        oneiron::EntityId,
-        String,
-        Option<&'a oneiron::authority::VerifiedSlip>,
-    ),
-    EnvelopedApiError,
-> {
-    if server.managed_issuer.is_some() {
-        let actor = managed_holder
-            .ok_or_else(|| ApiError::forbidden_scope("consent:widen:holder"))?
-            .0
-            .0;
+) -> Result<WidenHolder, EnvelopedApiError> {
+    let refused = || ApiError::forbidden_scope("consent:widen:holder");
+    let managed_holder = managed_holder.map(|Extension(holder)| holder.0);
+    if server.managed_issuer.is_some()
+        && !crate::auth::carries_caller_slip(&parts.headers)
+        && crate::auth::attested_owner(&parts.extensions, server).is_none()
+    {
+        let actor = managed_holder.ok_or_else(refused)?;
         return Ok((actor, actor.to_hex(), None));
     }
+    let auth = CoreAuth::for_request(parts, server).await?;
+    auth.require(CoreScope::Auth)?;
+    let (actor, principal, credential) = if let Some(owner) = auth.managed_owner() {
+        (owner, owner.to_hex(), None)
+    } else {
+        slip_holder(&auth)?
+    };
+    if managed_holder.is_some_and(|holder| holder != actor) {
+        return Err(refused().into());
+    }
+    Ok((actor, principal, credential))
+}
+
+/// The human holder a caller's own logged slip names, with that slip.
+fn slip_holder(auth: &CoreAuth) -> Result<WidenHolder, EnvelopedApiError> {
     let credential = auth
         .verified_slip()
         .filter(|_| auth.actor_class() == Some("human"))
@@ -75,7 +97,7 @@ fn widen_holder<'a>(
         .ok_or_else(|| ApiError::forbidden_scope("consent:widen:holder"))?;
     let actor = oneiron::EntityId::from_hex(principal)
         .map_err(|_| ApiError::forbidden_scope("consent:widen:holder"))?;
-    Ok((actor, principal.to_owned(), Some(credential)))
+    Ok((actor, principal.to_owned(), Some(credential.clone())))
 }
 
 /// A widen door's refusal as the route answers it.
@@ -98,13 +120,12 @@ fn widen_refusal(error: &oneiron::Error, failed: &'static str) -> ApiError {
         (status=403,description="Verified human holder with core:auth required.",body=ApiErrorEnvelope),
         (status=409,description="Proposal changed, expired, or already resolved.",body=ApiErrorEnvelope)))]
 pub(crate) async fn core_accept_widen(
-    auth: CoreAuth,
+    parts: Parts,
     State(server): State<Arc<SyncServer>>,
     managed_holder: Option<Extension<ManagedWidenHolder>>,
     payload: Result<Json<CoreAcceptWidenRequest>, JsonRejection>,
 ) -> Result<Json<CoreAcceptWidenResponse>, EnvelopedApiError> {
-    auth.require(CoreScope::Auth)?;
-    let (actor, principal, credential) = widen_holder(&auth, &server, managed_holder)?;
+    let (actor, principal, credential) = widen_holder(&parts, &server, managed_holder).await?;
     let req = json_payload(payload)?;
     let delta = req.expected_delta.as_bytes().chunks_exact(2);
     if !delta.remainder().is_empty() {
@@ -126,7 +147,7 @@ pub(crate) async fn core_accept_widen(
         .vault()
         .authenticate_owner(actor, &principal, true, GateDecisionId::now())
         .map_err(|_| ApiError::forbidden_scope("consent:widen:holder"))?;
-    let result = match credential {
+    let result = match &credential {
         Some(credential) => {
             server
                 .vault()
@@ -152,19 +173,18 @@ pub(crate) async fn core_accept_widen(
         (status=403,description="Verified human holder with core:auth required.",body=ApiErrorEnvelope),
         (status=409,description="Proposal already resolved, or a contact-disclosure offer.",body=ApiErrorEnvelope)))]
 pub(crate) async fn core_reject_widen(
-    auth: CoreAuth,
+    parts: Parts,
     State(server): State<Arc<SyncServer>>,
     managed_holder: Option<Extension<ManagedWidenHolder>>,
     payload: Result<Json<CoreRejectWidenRequest>, JsonRejection>,
 ) -> Result<Json<CoreRejectWidenResponse>, EnvelopedApiError> {
-    auth.require(CoreScope::Auth)?;
-    let (actor, principal, credential) = widen_holder(&auth, &server, managed_holder)?;
+    let (actor, principal, credential) = widen_holder(&parts, &server, managed_holder).await?;
     let req = json_payload(payload)?;
     let owner = server
         .vault()
         .authenticate_owner(actor, &principal, true, GateDecisionId::now())
         .map_err(|_| ApiError::forbidden_scope("consent:widen:holder"))?;
-    let result = match credential {
+    let result = match &credential {
         Some(credential) => {
             server
                 .vault()

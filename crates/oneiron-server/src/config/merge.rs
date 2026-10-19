@@ -435,6 +435,9 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
         connector.validate(name)?;
     }
     config.line.validate()?;
+    crate::conversation_training::validate_outbox_dir(
+        config.publisher_training_outbox_dir.as_deref(),
+    )?;
     if let Some(embedding) = &config.embedding {
         embedding.validate()?;
     }
@@ -725,6 +728,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             maximum_tier: value.maximum_tier,
             device_class: value.device_class,
             esign_delivery_outbox_dir: None,
+            publisher_training_outbox_dir: None,
         }
     }
 }
@@ -806,6 +810,8 @@ struct PartialServeConfig {
     device_class: Option<oneiron::authority::MachineDeviceClass>,
     /// `--esign-delivery-outbox-dir` is argv-only: no file key, no env.
     esign_delivery_outbox_dir: Option<PathBuf>,
+    /// `--publisher-training-outbox-dir` is argv-only: no file key, no env.
+    publisher_training_outbox_dir: Option<PathBuf>,
 }
 
 impl fmt::Debug for PartialServeConfig {
@@ -887,6 +893,10 @@ impl fmt::Debug for PartialServeConfig {
             .field("maximum_tier", &self.maximum_tier)
             .field("device_class", &self.device_class)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
+            .field(
+                "publisher_training_outbox_dir",
+                &self.publisher_training_outbox_dir,
+            )
             .finish()
     }
 }
@@ -1096,6 +1106,9 @@ impl PartialServeConfig {
         if let Some(value) = self.esign_delivery_outbox_dir {
             resolved.esign_delivery_outbox_dir = Some(value);
         }
+        if let Some(value) = self.publisher_training_outbox_dir {
+            resolved.publisher_training_outbox_dir = Some(value);
+        }
         Ok(())
     }
 }
@@ -1178,6 +1191,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             maximum_tier: None,
             device_class: None,
             esign_delivery_outbox_dir: value.esign_delivery_outbox_dir.clone(),
+            publisher_training_outbox_dir: value.publisher_training_outbox_dir.clone(),
         }
     }
 }

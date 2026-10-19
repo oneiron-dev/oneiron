@@ -327,7 +327,9 @@ impl Vault {
         {
             return Ok(None);
         }
-        Ok(Some(bytes))
+        // The public raw read hands an ASSET's body, never the manifest a
+        // file-plane row keeps in its place (FIX 3677).
+        Ok(Some(self.materialized_row_in_txn(&rtxn, id, bytes)?))
     }
 
     /// Raw entity bytes WITHOUT the custody seal.

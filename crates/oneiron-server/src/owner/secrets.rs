@@ -545,9 +545,10 @@ pub(crate) async fn read_revoke(body: Body) -> OwnerResult<String> {
 /// `from_generation` equal to `to_generation` (nothing replaced the value)
 /// and `kind: "revoked"`, beside the custody revoke request carried for the
 /// owner's other machines from `surface` (audit only). With none recorded
-/// the reply says exactly why the revoke stayed here: the record never
-/// leaves its device, or this install has no live machine profile to carry
-/// the act (FIX 4994).
+/// the reply says exactly why (FIX 4994): the record never leaves its
+/// device, or this install cannot carry the act yet, so the carry is
+/// pending and his other machines learn of it once this install can sign
+/// (`carry_pending`, FIX 4851).
 pub(crate) fn revoke(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,

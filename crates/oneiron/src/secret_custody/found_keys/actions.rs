@@ -147,7 +147,8 @@ impl Vault {
     ///
     /// Only a key found in a record's body or in a file is ruled here; one in
     /// a claim, a text field alone or a row outside the entity tables keeps
-    /// its handle.
+    /// its handle. The revoke's owner act records `surface`, where his
+    /// request reached this install: audit only (FIX 4650).
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is not the
@@ -159,6 +160,7 @@ impl Vault {
     pub fn rule_found_key_not_a_secret(
         &self,
         owner: &AuthenticatedOwner,
+        surface: crate::authority::ActSurface,
         handle: &str,
     ) -> Result<FoundKeySettled> {
         self.load_install_signing_if_minted()?;
@@ -208,14 +210,9 @@ impl Vault {
             } else {
                 restore_body_in_txn(self, txn, &found.record, &found.handle, &value)?;
             }
-            // The ruling's surface is this install's: audit only.
-            let carried = self.carry_custody_revoke_in_txn(
-                txn,
-                owner,
-                crate::authority::ActSurface::ThisInstall,
-                &rec.name,
-                at,
-            )?;
+            // The ruling's surface is where the request reached this
+            // install: audit only.
+            let carried = self.carry_custody_revoke_in_txn(txn, actor, surface, &rec.name, at)?;
             Ok((settled, carried))
         })?;
         self.mirror_custody_change(&carried);
@@ -246,6 +243,25 @@ pub(crate) fn settle_found_key_in_txn(
     };
     key.settled = Some(settled);
     FOUND.put(store, txn, &origin.record, &found)
+}
+
+/// Whether the owner ruled the found key custody record `custody` holds no
+/// secret: the one record a revoke leaves its bytes (CALLS
+/// CUSTODY_REVOKE_ERASE), which the found-key screen reads.
+pub(crate) fn ruled_no_secret_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    custody: &EntityId,
+) -> Result<bool> {
+    let Some(origin) = crate::batch::secret_scan::mask_origin_in_txn(store, txn, custody)? else {
+        return Ok(false);
+    };
+    Ok(FOUND.get(store, txn, &origin.record)?.is_some_and(|found| {
+        found
+            .keys
+            .iter()
+            .any(|key| key.custody == *custody && key.ruled_no_secret())
+    }))
 }
 
 /// One found key as the owner reads it, with what they may still do.

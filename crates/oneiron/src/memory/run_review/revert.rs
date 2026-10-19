@@ -224,9 +224,11 @@ fn compensate(
             .map(|receipt| receipt.map(|receipt| (receipt, Vec::new()))),
         Some(RunInverse::Topology { event }) => {
             let event = EntityId::from_hex(event)?;
+            // Where his request reached this install, as the host bound it
+            // (FIX 4650): audit only.
             let seal = TopologySeal::decision(crate::authority::ActAuthority::Owner(
                 owner.clone(),
-                crate::authority::ActSurface::ThisInstall,
+                memory.owner_surface(),
             ));
             let write = IdentityOpWrite {
                 source: crate::claim::ClaimSource::UserStated,

@@ -25,8 +25,10 @@ fn owner_write(
     })
 }
 
-fn owner_seal(owner: &AuthenticatedOwner) -> TopologySeal {
-    TopologySeal::decision(ActAuthority::Owner(owner.clone(), ActSurface::ThisInstall))
+/// The owner's decision, recording where his request reached this install
+/// (`surface`, the host's own reading of it): audit only (FIX 4650).
+fn owner_seal(owner: &AuthenticatedOwner, surface: ActSurface) -> TopologySeal {
+    TopologySeal::decision(ActAuthority::Owner(owner.clone(), surface))
 }
 
 fn event_receipt(
@@ -171,6 +173,7 @@ fn result_in_txn(
 fn apply_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     op: IdentityTopologyOp,
     approval: ClaimApprovalStatus,
 ) -> MemoryResult<IdentityTopologyResult> {
@@ -180,7 +183,7 @@ fn apply_as_owner(
         &mut txn,
         &op,
         &write,
-        &owner_seal(owner),
+        &owner_seal(owner, surface),
         vault.now_recorded_at(),
     )?;
     let result = result_in_txn(vault, &txn, outcome)?;
@@ -191,11 +194,13 @@ fn apply_as_owner(
 pub fn merge_identity_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     input: IdentityMergeRequest,
 ) -> MemoryResult<IdentityTopologyResult> {
     apply_as_owner(
         vault,
         owner,
+        surface,
         IdentityTopologyOp::Merge(input.into_engine()),
         ClaimApprovalStatus::Auto,
     )
@@ -204,11 +209,13 @@ pub fn merge_identity_as_owner(
 pub fn split_identity_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     input: IdentitySplitRequest,
 ) -> MemoryResult<IdentityTopologyResult> {
     apply_as_owner(
         vault,
         owner,
+        surface,
         IdentityTopologyOp::Split(input.into_engine()?),
         ClaimApprovalStatus::Auto,
     )
@@ -217,11 +224,13 @@ pub fn split_identity_as_owner(
 pub fn facet_identity_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     input: IdentityFacetRequest,
 ) -> MemoryResult<IdentityTopologyResult> {
     apply_as_owner(
         vault,
         owner,
+        surface,
         IdentityTopologyOp::Facet(input.into_engine()?),
         ClaimApprovalStatus::Auto,
     )
@@ -230,11 +239,13 @@ pub fn facet_identity_as_owner(
 pub fn assert_distinct_identity_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     input: IdentityAssertDistinctRequest,
 ) -> MemoryResult<IdentityTopologyResult> {
     apply_as_owner(
         vault,
         owner,
+        surface,
         IdentityTopologyOp::AssertDistinct(topology::AssertDistinctOp {
             a: input.a,
             b: input.b,
@@ -247,11 +258,13 @@ pub fn assert_distinct_identity_as_owner(
 pub fn propose_identity_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     input: IdentityProposeRequest,
 ) -> MemoryResult<IdentityTopologyResult> {
     apply_as_owner(
         vault,
         owner,
+        surface,
         input.operation.into_engine()?,
         ClaimApprovalStatus::Proposed,
     )
@@ -260,11 +273,12 @@ pub fn propose_identity_as_owner(
 pub fn undo_identity_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     input: IdentityUndoRequest,
 ) -> MemoryResult<IdentityTopologyResult> {
     let mut txn = vault.store.env.write_txn().map_err(Error::from)?;
     let write = owner_write(vault, &txn, owner, ClaimApprovalStatus::Auto)?;
-    let seal = owner_seal(owner).with_seen(Some(input.seen));
+    let seal = owner_seal(owner, surface).with_seen(Some(input.seen));
     let outcome = vault.undo_identity_topology_event_in_txn(
         &mut txn,
         &input.event,
@@ -280,6 +294,7 @@ pub fn undo_identity_as_owner(
 pub fn resolve_identity_proposal_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     input: IdentityProposalResolveRequest,
 ) -> MemoryResult<IdentityProposalResolutionResult> {
     let amendment = match &input.decision {
@@ -301,7 +316,7 @@ pub fn resolve_identity_proposal_as_owner(
     };
     let mut txn = vault.store.env.write_txn().map_err(Error::from)?;
     let write = owner_write(vault, &txn, owner, ClaimApprovalStatus::Approved)?;
-    let seal = owner_seal(owner).with_seen(Some(input.seen));
+    let seal = owner_seal(owner, surface).with_seen(Some(input.seen));
     let (_, event, applied) = vault.resolve_identity_proposal_with_applied_in_txn(
         &mut txn,
         &input.proposal,

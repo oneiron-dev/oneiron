@@ -158,10 +158,24 @@ pub struct ManagedState {
 pub(crate) struct ManagedWidenHolder(pub(crate) oneiron::EntityId);
 
 /// The vault owner a supervisor-signed `ManagedOwnerAction` names for one
-/// facade, owner or console request, verified at ingress; never the host
-/// root.
+/// request, verified at ingress; never the host root.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ManagedOwnerHolder(pub(crate) oneiron::EntityId);
+
+/// Managed ingress's mark on every request it hands the app (FIX 5125): the
+/// supervisor forwarded it on its caller's behalf, so the caller sits off this
+/// device whatever socket it arrived on, and the machine its own proof shows
+/// is still the one it proved.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ManagedIngress;
+
+/// The listener a request reached: the API's, or the artifact origin's,
+/// which serves artifact reads alone.
+#[derive(Clone, Copy)]
+enum Surface {
+    Api,
+    Artifact,
+}
 
 /// The facade's nest: its `POST`s are the requests a `ManagedOwnerAction`
 /// may name the owner for, with every request under [`OWNER_PREFIX`].
@@ -177,12 +191,21 @@ const ACTIONS_PREFIX: &str = "/v1/core/actions/";
 /// and `DELETE /v1/core/lens-frames/{card_id}`.
 const LENS_FRAMES_PREFIX: &str = "/v1/core/lens-frames/";
 
-/// Whether a `ManagedOwnerAction` may name the owner for this request.
-fn owner_attestable(method: &Method, path: &str) -> bool {
-    (*method == Method::POST && path.starts_with(FACADE_PREFIX))
-        || path.starts_with(OWNER_PREFIX)
-        || action_or_frame_attestable(method, path)
-        || console_attestable(method, path)
+/// Whether a `ManagedOwnerAction` may name the owner for this request: the
+/// facade's and the owner's nests, the action and frame transports, the
+/// console's own routes, and every other route
+/// [`super::attested_routes`] lists for the listener it reached.
+fn owner_attestable(surface: Surface, method: &Method, path: &str) -> bool {
+    match surface {
+        Surface::Api => {
+            (*method == Method::POST && path.starts_with(FACADE_PREFIX))
+                || path.starts_with(OWNER_PREFIX)
+                || action_or_frame_attestable(method, path)
+                || console_attestable(method, path)
+                || super::attested_routes::owner_route(method, path)
+        }
+        Surface::Artifact => super::attested_routes::artifact_route(method, path),
+    }
 }
 
 /// The console's own reads and acts outside those nests, each matched
@@ -194,9 +217,8 @@ fn owner_attestable(method: &Method, path: &str) -> bool {
 /// /v1/core/pairing/links`, `/v1/core/slips/revoke`,
 /// `/v1/core/org-admin/{org}/policy`, the four
 /// `/api/booking/{page_token}/{availability|book|reschedule|cancel}` and
-/// `/mcp`. No root-admin door (the schema, skills, usage, lease repair,
-/// operator recovery) is here, and no credential transport (`/ws`, git):
-/// those stay as they are without a slip.
+/// `/mcp`. The rest of the attested routes, root-admin doors among them, are
+/// [`super::attested_routes`]'s.
 fn console_attestable(method: &Method, path: &str) -> bool {
     let between = |prefix: &str, suffix: &str| {
         path.strip_prefix(prefix)
@@ -229,10 +251,9 @@ fn console_attestable(method: &Method, path: &str) -> bool {
 /// L13 row 01): `POST /v1/core/actions/{verb}`, `POST
 /// /v1/core/lens-frames/{card_id}/events` and `DELETE
 /// /v1/core/lens-frames/{card_id}`, each `{..}` one non-empty path segment.
-/// No other `/v1/core/*` route but the console's few
-/// ([`console_attestable`]): the action list, a live run's attach and every
-/// other REST route stay unattested. The assertion is verified over the
-/// method, path, raw query, placing headers and exact body as for the facade.
+/// The other `/v1/core/*` routes are [`console_attestable`]'s and
+/// [`super::attested_routes`]'s. The assertion is verified over the method,
+/// path, raw query, placing headers and exact body as for the facade.
 fn action_or_frame_attestable(method: &Method, path: &str) -> bool {
     let segment = |rest: &str| !rest.is_empty() && !rest.contains('/');
     if *method == Method::POST {
@@ -552,7 +573,7 @@ pub(super) fn build_managed_artifact_app(
     server: Arc<SyncServer>,
     state: Arc<ManagedState>,
 ) -> Router {
-    let freeze = middleware::from_fn_with_state(state, refuse_frozen_writes);
+    let freeze = middleware::from_fn_with_state(state, refuse_frozen_artifact_writes);
     crate::build_artifact_app(server).layer(freeze)
 }
 
@@ -570,10 +591,31 @@ pub(super) fn build_managed_artifact_app(
 /// pass through HTTP middleware.
 async fn refuse_frozen_writes(
     State(state): State<Arc<ManagedState>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    freeze_gate(state, Surface::Api, request, next).await
+}
+
+/// [`refuse_frozen_writes`] on the artifact listener.
+async fn refuse_frozen_artifact_writes(
+    State(state): State<Arc<ManagedState>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    freeze_gate(state, Surface::Artifact, request, next).await
+}
+
+/// The freeze gate, and managed ingress before it, for a request that reached
+/// `surface`.
+async fn freeze_gate(
+    state: Arc<ManagedState>,
+    surface: Surface,
     mut request: Request,
     next: Next,
 ) -> Response {
     if state.server.managed_issuer.is_some() {
+        request.extensions_mut().insert(ManagedIngress);
         // The widen answer routes need the SUPERVISOR'S holder action, not
         // the host root. Verify the account-authenticated assertion against
         // the per-spawn secret and the exact request body before removing
@@ -602,12 +644,13 @@ async fn refuse_frozen_writes(
                 }
             }
         }
-        // A facade, owner or console request the supervisor attests is the
-        // vault owner's own (`ManagedOwnerAction`): verified the same way,
-        // over the method, path, raw query, placing headers and exact body.
-        // Only a verified one names the owner, as a request extension the
-        // credential reads.
-        if owner_attestable(request.method(), request.uri().path()) {
+        // A request the supervisor attests is the vault owner's own
+        // (`ManagedOwnerAction`), on every route whose body the buffer holds:
+        // verified the same way, over the method, path, raw query, placing
+        // headers and exact body. A verified one names the owner, as a
+        // request extension the credential reads; one that does not verify
+        // is refused, never served as the host's root.
+        if owner_attestable(surface, request.method(), request.uri().path()) {
             let assertion = request
                 .headers()
                 .get(oneiron_vault_contract::MANAGED_OWNER_ACTION_HEADER)
@@ -641,10 +684,19 @@ async fn refuse_frozen_writes(
                         body: &bytes,
                     },
                 );
+                let holder = oneiron::EntityId::from_hex(&assertion.holder_ref)
+                    .ok()
+                    .filter(|_| verified);
+                let Some(holder) = holder else {
+                    return owner_attestation_refused(parts.uri.path());
+                };
                 request = Request::from_parts(parts, Body::from(bytes));
-                if verified && let Ok(holder) = oneiron::EntityId::from_hex(&assertion.holder_ref) {
-                    request.extensions_mut().insert(ManagedOwnerHolder(holder));
-                }
+                request.extensions_mut().insert(ManagedOwnerHolder(holder));
+            } else if request
+                .headers()
+                .contains_key(oneiron_vault_contract::MANAGED_OWNER_ACTION_HEADER)
+            {
+                return owner_attestation_refused(request.uri().path());
             }
         }
         request
@@ -657,7 +709,8 @@ async fn refuse_frozen_writes(
         // unchanged: the child verifies them, spends the proof once, and the
         // caller stays itself (WILL-PLAN L14 row 01). Any other bearer
         // terminated at the supervisor; a legacy or dev claim never selects a
-        // principal, so a request without a slip is served as it was.
+        // principal, so a request with neither a slip nor an attestation is
+        // served as it was.
         crate::auth::forward_caller_credentials(request.headers_mut());
     }
     if is_read_only(&request) {
@@ -675,6 +728,17 @@ async fn refuse_frozen_writes(
     })
     .await
     .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// The answer to an owner attestation managed ingress could not verify on
+/// `path`: refused, named, with nothing served in the owner's place.
+fn owner_attestation_refused(path: &str) -> Response {
+    let error = crate::auth::owner_attestation_refused();
+    if path.starts_with("/v1/") {
+        crate::error::EnvelopedApiError::from(error).into_response()
+    } else {
+        error.into_response()
+    }
 }
 
 async fn run_admitted_request(state: Arc<ManagedState>, request: Request, next: Next) -> Response {
@@ -1170,6 +1234,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // outbox, under the same admission; without the flag none runs (OF-415).
     ladder_workers.extend(config.esign_delivery_outbox_dir.clone().map(|dir| {
         crate::api::spawn_esign_delivery_outbox(Arc::clone(&sync_server), admitted(), dir)
+    }));
+    // Training offers and withdrawals go to the supervisor's outbox, offers
+    // under the same admission; without the flag none runs (OF-420).
+    ladder_workers.extend(config.publisher_training_outbox_dir.clone().map(|dir| {
+        crate::conversation_training::spawn(
+            Arc::clone(&sync_server),
+            admitted(),
+            dir,
+            crate::conversation_training::Placement::Managed,
+        )
     }));
     // Due standing questions are answered through the ladder (OF-506).
     if !ai.bind_question_timer(&sync_server) {

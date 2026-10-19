@@ -190,6 +190,9 @@ impl Vault {
                 if !live_entity_row_in_txn(&self.store, &wtxn, &id)?.is_live() {
                     return Err(invalid("import ID collides with a deleted entity"));
                 }
+                // A file-plane ASSET compares as its body, never the manifest
+                // its row keeps (FIX 3677).
+                let existing = self.materialized_row_in_txn(&wtxn, &id, existing)?;
                 if matches_archived_row(&row, &existing, &archive.files)? {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
                     unchanged_entities += 1;
@@ -309,7 +312,7 @@ impl Vault {
             super::archive_side_tables::restore_side_rows_in_txn(&self.store, &mut wtxn, &archive)?;
         let (imported_results, withheld_results) =
             put_run_results_in_txn(self, &mut wtxn, &mut archive, known)?;
-        let (restored_secrets, unchanged_secrets, missing_secrets) =
+        let (restored_secrets, unchanged_secrets, skipped_revoked_secrets, missing_secrets) =
             restore_secrets_in_txn(self, &mut wtxn, &mut archive)?;
         // OF-013: each session's floor rises to the archive's and never falls,
         // so numbering here never goes back under an epoch a purge removed.
@@ -348,6 +351,7 @@ impl Vault {
             withheld_results,
             restored_secrets,
             unchanged_secrets,
+            skipped_revoked_secrets,
             missing_secrets,
             embedding_setup,
             restored_side_rows,
@@ -605,7 +609,8 @@ fn parse_digest(text: &str) -> Result<[u8; 32]> {
 /// through the custody registration door, in the import's transaction. A
 /// record already here byte for byte is unchanged; any other collision is
 /// refused, never overwritten. A record the archive carried as its handle
-/// only is returned as a missing secret to re-enter.
+/// only is returned as a missing secret to re-enter; one an admitted revoke
+/// ended is counted as skipped (FIX 4852).
 fn restore_secrets_in_txn<R: Read + Seek>(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -613,10 +618,11 @@ fn restore_secrets_in_txn<R: Read + Seek>(
 ) -> Result<(
     usize,
     usize,
+    usize,
     Vec<crate::secret_custody::SecretCustodyMetadata>,
 )> {
     use base64::Engine as _;
-    let (mut restored, mut unchanged, mut missing) = (0, 0, Vec::new());
+    let (mut restored, mut unchanged, mut skipped, mut missing) = (0, 0, 0, Vec::new());
     let mut secrets = archive.spool.rows(ArchiveRecordKind::SecretCustody);
     while let Some((_, secret)) =
         secrets.next_parsed::<super::ArchiveSecretCustody>(&archive.spool)?
@@ -660,9 +666,11 @@ fn restore_secrets_in_txn<R: Read + Seek>(
         }
         if crate::secret_custody::restore_secret_custody_in_txn(vault, wtxn, &id, &mut record)? {
             restored += 1;
+        } else {
+            skipped += 1;
         }
     }
-    Ok((restored, unchanged, missing))
+    Ok((restored, unchanged, skipped, missing))
 }
 
 fn validate_existing_source<R: Read + Seek>(

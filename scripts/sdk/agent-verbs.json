@@ -442,6 +442,7 @@
       "host_door": true,
       "host_door_caller": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "openapi": true
     },
     {
@@ -1916,6 +1917,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "openapi": true,
       "proposes": true
     },
@@ -1932,6 +1934,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "openapi": true
     },
     {
@@ -1947,6 +1950,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "openapi": true
     },
     {
@@ -1962,6 +1966,7 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "openapi": true
     },
     {
@@ -15443,6 +15448,7 @@
       "call": "crate::dreamer_runner::consolidation_home_pick_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.home.pick\")?, crate::authority::ActSurface::ThisInstall, input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -17289,6 +17295,7 @@
       "call": "memory.settle_run_as_owner(&memory.embedded_owner(\"vault.runs.settle\")?, &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "host_door_caller": true,
       "scope": "Write",
       "admission": {
@@ -17321,6 +17328,7 @@
       "call": "memory.revert_run_as_owner(&memory.embedded_owner(\"vault.revert_run\")?, &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "host_door_caller": true,
       "scope": "Write",
       "admission": {
@@ -17337,6 +17345,7 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.merge\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -17352,6 +17361,7 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.split\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -17367,6 +17377,7 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.facet\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -17382,6 +17393,7 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.assert_distinct\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -17397,6 +17409,7 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.propose\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -17412,6 +17425,7 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.undo\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -17457,6 +17471,7 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.identity.proposals.resolve\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
