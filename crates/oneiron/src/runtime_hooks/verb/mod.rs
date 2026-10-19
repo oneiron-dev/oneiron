@@ -207,6 +207,13 @@ impl VerbHookPre {
     pub fn call(&self) -> &VerbCall {
         &self.call
     }
+
+    /// The session a call that keeps no record keeps its hooks' records for
+    /// (FIX 4283), when hooks ran on it: whatever reports on the call keeps
+    /// its invocation out of the vault.
+    pub(crate) fn session(&self) -> Option<&crate::task_verb::verb_hook_boundary::HookSession> {
+        self.carry.as_ref().and_then(|carry| carry.session.as_ref())
+    }
 }
 
 /// Re-validates rewritten args as if the caller sent them.
@@ -246,7 +253,7 @@ impl Vault {
         args: Value,
         check: VerbArgsCheck<'_>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
-        chain::pre(self, call, args, check, None, None)
+        chain::pre(self, call, args, check, None, None, None)
     }
 
     /// [`Self::pre_verb_hooks`] for a call settlement can run again without
@@ -256,6 +263,10 @@ impl Vault {
     /// caller's retry resumes. `turn` is the task-work turn the calling
     /// operation already holds, if any: a hook's ask, and a retry's read of
     /// it, run on that turn and never wait in the line for another.
+    /// `session` is set for a call that keeps no record
+    /// ([`crate::task_verb::verb_hook_boundary::hook_session`]): its hooks
+    /// run as on any call, and their records and ask pauses stay with that
+    /// session in this process, never in the vault (FIX 4283).
     ///
     /// # Errors
     ///
@@ -267,8 +278,9 @@ impl Vault {
         check: VerbArgsCheck<'_>,
         resume: Option<VerbResume>,
         turn: Option<Arc<TaskWorkTurn>>,
+        session: Option<&crate::task_verb::verb_hook_boundary::HookSession>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
-        chain::pre(self, call, args, check, resume.as_ref(), turn)
+        chain::pre(self, call, args, check, resume.as_ref(), turn, session)
     }
 
     /// [`Self::pre_verb_hooks`] for a credential caller's call its host can
@@ -298,7 +310,7 @@ impl Vault {
             });
         let _witness =
             credential::WitnessScope::enter(credential.map(VerbAskCredential::into_witness));
-        self.pre_verb_hooks_resumable(call, args, check, resume, turn)
+        self.pre_verb_hooks_resumable(call, args, check, resume, turn, None)
     }
 
     /// Runs the post chain over the verb's `result`: the caller's view after

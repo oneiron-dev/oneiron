@@ -55,6 +55,9 @@ pub(crate) struct VerbHookState {
     /// The host's check that runs a credential caller's settled call again;
     /// serve installs it once, before its hook runner starts.
     credential: OnceLock<CredentialCheck>,
+    /// What calls that keep no record left of their hooks, held for their
+    /// live sessions only (FIX 4283).
+    pub(crate) session: crate::off_record::session_hooks::SessionHookStore,
 }
 
 /// The enabled verb bindings as of one read, in run order: priority
@@ -111,6 +114,8 @@ pub(crate) struct Carry {
     pub(super) mark: Option<InFlightMark>,
     /// Unix milliseconds from the vault clock at dispatch.
     pub(super) now: u64,
+    /// Where a call that keeps no record keeps its post chain's records.
+    pub(super) session: Option<crate::task_verb::verb_hook_boundary::HookSession>,
 }
 
 impl VerbHookState {

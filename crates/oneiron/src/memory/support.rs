@@ -952,6 +952,19 @@ impl Memory<'_> {
         })
     }
 
+    /// The off-record session this surface binds and the principal it binds
+    /// it for, as [`Self::keeps_no_record`] reads them: where a call that
+    /// keeps no record keeps its verb hooks' records (FIX 4283). `None` when
+    /// it binds no session.
+    pub(crate) fn off_record_binding(&self) -> Option<(&str, Option<EntityId>)> {
+        let session = self.off_record_session.as_deref()?;
+        let principal = match &self.read_proof {
+            Some(proof) => EntityId::from_hex(&proof.claims().holder_ref).ok(),
+            None => Some(self.actor),
+        };
+        Some((session, principal))
+    }
+
     /// The logical verb's id a host bound, if any.
     #[must_use]
     pub fn invocation(&self) -> Option<crate::runtime_hooks::InvocationId> {

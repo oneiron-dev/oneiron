@@ -14,17 +14,95 @@
 //! caller, wherever the caller sits, while the authority its ask saved still
 //! stands: the owner still a live owner, or the same Grants under the same
 //! ceiling.
+//!
+//! A call that keeps no record (a `no_record` row, or a call in an anonymous
+//! off-record session its principal is verified in) runs its hooks as any
+//! call does; only their records change place ([`hook_session`], FIX 4283).
+
+use std::sync::Arc;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::runtime_hooks::verb::{HOOK_RESULT_NOT_RETAINED, VerbAskCredential};
+use crate::off_record::session_hooks::SessionHookKey;
+use crate::runtime_hooks::verb::{HOOK_RESULT_NOT_RETAINED, VerbArgsCheck, VerbAskCredential};
 use crate::runtime_hooks::{VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume};
 use crate::task_verb::revoke_lands;
-use crate::task_verb::sdk::{AgentVerb, masked_reveal_reply, revealed_hook_view, validate_input};
+use crate::task_verb::sdk::{
+    AgentVerb, NO_RECORD_ROWS, masked_reveal_reply, revealed_hook_view, validate_input,
+};
+use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Vault};
+
+/// What a session-only call's caller reads beside the Pending its hook's ask
+/// left: the pause lives only while its session does, on this server.
+pub const SESSION_PAUSE_NOTE: &str = "This call keeps no record, so its hook's pause lives only \
+     while its session lasts on this server: once the ask is answered, retry with the same \
+     invocation in the same session. After the session ends or the server restarts, it is not \
+     resumed; call again.";
+
+/// Where a call that keeps no record keeps its verb hooks' records: its live
+/// off-record session, in this process only, never the vault (FIX 4283).
+/// Only [`hook_session`] makes one; a door hands it to the chain as it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookSession(pub(crate) SessionHookKey);
+
+/// The session a call of row `verb` keeps its verb hooks' records for when
+/// it keeps no record (FIX 4283; Engine ruling 10-19): a `no_record` row
+/// (`NO_RECORD_ROWS`), or a call on `memory` in an anonymous off-record
+/// session its principal is verified in (`Memory::keeps_no_record`, never a
+/// raw header claim). Its hooks still run. Their receipts, saved runs,
+/// blocks, lineage and intents, the call a hook's ask stopped and the use of
+/// its answer stay with that session in this process; none is written to the
+/// vault, and settlement's drain never runs the call again. `None` for every
+/// other call. `memory` is `None` for a host's own call that binds no
+/// surface: the row alone decides.
+#[must_use]
+pub fn hook_session(memory: Option<&Memory<'_>>, verb: &str) -> Option<HookSession> {
+    let anonymous = memory.is_some_and(Memory::keeps_no_record);
+    if !anonymous && !NO_RECORD_ROWS.contains(&verb) {
+        return None;
+    }
+    Some(HookSession(match memory {
+        Some(memory) => SessionHookKey::of(memory.vault(), memory.off_record_binding()),
+        None => SessionHookKey::Process,
+    }))
+}
+
+/// The pre chain of a session-only call ([`hook_session`]) a server door
+/// runs itself: its hooks run as on any call, `check` re-admitting a
+/// rewrite, and their records and ask pauses stay with `session`. Only its
+/// caller's retry in that session resumes a paused call. A hook's ask runs
+/// on `turn`, the task-work turn the calling operation holds, if any.
+///
+/// # Errors
+///
+/// Storage errors as they occur; a hook's own failure is never one.
+pub fn session_pre(
+    vault: &Vault,
+    call: VerbCall,
+    args: Value,
+    check: VerbArgsCheck<'_>,
+    session: &HookSession,
+    turn: Option<Arc<TaskWorkTurn>>,
+) -> crate::Result<Result<VerbHookPre, VerbHookStop>> {
+    vault.pre_verb_hooks_resumable(call, args, check, None, turn, Some(session))
+}
+
+/// The refusal a caller reads for a hook's stop. A session-only call's
+/// Pending also says that its pause lives only while its session does
+/// ([`SESSION_PAUSE_NOTE`]).
+#[must_use]
+pub fn stop_refusal(stop: VerbHookStop, session: Option<&HookSession>) -> MemoryError {
+    let paused = session.is_some() && matches!(stop, VerbHookStop::Pending { .. });
+    let mut error = stopped(stop);
+    if paused {
+        error.suggestions.push(SESSION_PAUSE_NOTE.to_owned());
+    }
+    error
+}
 
 /// A row's domain: a blocking hook that fails hides a read row's result and
 /// sends any other row to an ask.
@@ -61,13 +139,24 @@ pub fn row_call(memory: &Memory<'_>, verb: &str) -> MemoryResult<VerbCall> {
 ///
 /// A hook's stop, as the refusal the caller reads; storage errors.
 pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
-    row_pre_resumable(memory, verb, args, None, None, validate_input)?.map_err(stopped)
+    let session = hook_session(Some(memory), verb);
+    row_pre_resumable(
+        memory,
+        verb,
+        args,
+        None,
+        None,
+        validate_input,
+        session.as_ref(),
+    )?
+    .map_err(|stop| stop_refusal(stop, session.as_ref()))
 }
 
 /// The run-bound browser projection of a row uses its original browser input,
 /// not the facade's credential-bound live-run wrapper. All other hooks and
 /// rewrite admission stay the same as [`row_pre`].
 pub fn browser_row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
+    let session = hook_session(Some(memory), verb);
     row_pre_resumable(
         memory,
         verb,
@@ -75,8 +164,9 @@ pub fn browser_row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryRe
         None,
         None,
         crate::task_verb::sdk::validate_browser_input,
+        session.as_ref(),
     )?
-    .map_err(stopped)
+    .map_err(|stop| stop_refusal(stop, session.as_ref()))
 }
 
 /// [`row_pre`] with the stop as it is. `resume` is how settlement runs the
@@ -86,7 +176,9 @@ pub fn browser_row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryRe
 /// run it the way that door does. A hook's ask runs on the task-work turn
 /// `memory`'s operation already holds, if any, never waiting for another. A
 /// restrictive call's args that fail the row's input check give way to the
-/// caller's own ([`revoke_lands::settle`]).
+/// caller's own ([`revoke_lands::settle`]). A session-only call's `session`
+/// takes its records, and it saves no way to run it again but its caller's
+/// retry there.
 fn row_pre_resumable(
     memory: &Memory<'_>,
     verb: &str,
@@ -94,6 +186,7 @@ fn row_pre_resumable(
     resume: Option<VerbResume>,
     credential: Option<VerbAskCredential>,
     validate: fn(&str, &Value) -> MemoryResult<()>,
+    session: Option<&HookSession>,
 ) -> MemoryResult<Result<VerbHookPre, VerbHookStop>> {
     if matches!(verb, "host.compact" | "host.wake" | "host.budget.hit") {
         memory.embedded_owner(verb)?.revalidate(memory.vault())?;
@@ -108,11 +201,12 @@ fn row_pre_resumable(
     let vault = memory.vault();
     let call = row_call(memory, verb)?;
     let turn = memory.task_work_turn();
-    let mut ended = match credential {
-        Some(credential) => {
+    let mut ended = match (session, credential) {
+        (Some(session), _) => session_pre(vault, call, args, &check, session, turn)?,
+        (None, Some(credential)) => {
             vault.pre_verb_hooks_for_credential(call, args, &check, Some(credential), turn)?
         }
-        None => vault.pre_verb_hooks_resumable(call, args, &check, resume, turn)?,
+        (None, None) => vault.pre_verb_hooks_resumable(call, args, &check, resume, turn, None)?,
     };
     if let Ok(pre) = &mut ended {
         revoke_lands::settle(pre, &|args| validate(verb, args).is_ok());
@@ -187,9 +281,18 @@ pub fn row(
         .plain_resume()
         .filter(|_| credential.is_none() && verb != AgentVerb::RevealWait.as_str())
         .map(VerbResume::Row);
-    let pre = match row_pre_resumable(memory, verb, args, resume, credential, validate_input)? {
+    let session = hook_session(Some(memory), verb);
+    let pre = match row_pre_resumable(
+        memory,
+        verb,
+        args,
+        resume,
+        credential,
+        validate_input,
+        session.as_ref(),
+    )? {
         Ok(pre) => pre,
-        Err(stop) => return completed(verb, stop),
+        Err(stop) => return completed(verb, stop, session.as_ref()),
     };
     let result = run(pre.args.clone())?;
     row_post(memory.vault(), pre, result)
@@ -217,9 +320,18 @@ where
     let args = encode(&input)?;
     // A typed door's own call may differ from the generated `invoke`'s, so
     // it saves no resume target: its caller's retry resumes it.
-    let mut pre = match row_pre_resumable(memory, verb, args.clone(), None, None, validate_input)? {
+    let session = hook_session(Some(memory), verb);
+    let mut pre = match row_pre_resumable(
+        memory,
+        verb,
+        args.clone(),
+        None,
+        None,
+        validate_input,
+        session.as_ref(),
+    )? {
         Ok(pre) => pre,
-        Err(stop) => return completed(verb, stop),
+        Err(stop) => return completed(verb, stop, session.as_ref()),
     };
     revoke_lands::settle(&mut pre, &revoke_lands::decodes::<I>);
     let input = if pre.args == args {
@@ -268,8 +380,13 @@ fn stopped(stop: VerbHookStop) -> MemoryError {
 /// returned, as the row's output. Any other stop is the refusal the caller
 /// reads; the error a settled call failed with, or was refused with, keeps
 /// its code and rides in `hook` with its receipt. A call that completed with
-/// a result too large to keep says so, and not to call again.
-fn completed<O: DeserializeOwned>(verb: &str, stop: VerbHookStop) -> MemoryResult<O> {
+/// a result too large to keep says so, and not to call again; a session-only
+/// call's Pending says how long its pause lives ([`stop_refusal`]).
+fn completed<O: DeserializeOwned>(
+    verb: &str,
+    stop: VerbHookStop,
+    session: Option<&HookSession>,
+) -> MemoryResult<O> {
     match stop {
         VerbHookStop::Completed { result, .. } => serde_json::from_value(result).map_err(|error| {
             MemoryError::bad_request(format!("{verb}'s saved result does not decode: {error}"))
@@ -279,7 +396,7 @@ fn completed<O: DeserializeOwned>(verb: &str, stop: VerbHookStop) -> MemoryResul
                 &stop,
                 VerbHookStop::CompletedWithError { code, .. } if code == HOOK_RESULT_NOT_RETAINED
             );
-            let mut error = stopped(stop);
+            let mut error = stop_refusal(stop, session);
             if not_retained {
                 error.suggestions = vec![format!(
                     "{verb} ran once its hook's ask was answered; only its result was not kept. Do not call it again: read what it changed instead."

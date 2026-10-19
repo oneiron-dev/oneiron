@@ -45,6 +45,7 @@ pub(crate) fn mcp_row_hooks_pre<'a>(
     let resume = RowHookResume {
         credential: mcp_verb_ask_credential(actor, memory),
         drain: actor.drain.clone(),
+        session: oneiron::task_verb::verb_hook_boundary::hook_session(Some(memory), tool),
     };
     async move {
         let (reader, check) = admitted?;

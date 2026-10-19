@@ -89,6 +89,7 @@ mod graph_ask_doors;
 mod guest_document_doors;
 mod guest_doors;
 mod hook_regen_doors;
+mod hook_session;
 pub(super) mod host_doors;
 mod host_trigger_doors;
 mod hub_doors;
@@ -675,11 +676,14 @@ fn facade_invocation<'v>(
 /// What a row's pre chain carries for settlement (ARCH-0080 §3 Ask): the
 /// credential a caller's call can run again on through its door, and the
 /// drain's permit when settlement runs it again. The default carries
-/// neither.
+/// neither. A call that keeps no record carries its session instead
+/// (FIX 4283): its hooks' records stay there, and only its caller's retry in
+/// that session resumes it.
 #[derive(Default)]
 pub(crate) struct RowHookResume {
     pub(crate) credential: Option<VerbAskCredential>,
     pub(crate) drain: Option<VerbAskDrainPermit>,
+    pub(crate) session: Option<verb_hook_boundary::HookSession>,
 }
 
 /// The pre chain of row `verb` for `actor` over `args`, off the async
@@ -729,10 +733,21 @@ pub(crate) async fn row_hooks_pre_with(
                 .as_ref()
                 .map_or(Ok(()), |check| check(verb.as_str(), args))
         };
-        let mut pre = server
-            .vault
-            .pre_verb_hooks_for_credential(call, args, &admit, resume.credential, turn)?
-            .map_err(|stop| MemoryError::from(oneiron::Error::from(stop)))?;
+        let session = resume.session;
+        let ended = match &session {
+            Some(session) => {
+                verb_hook_boundary::session_pre(&server.vault, call, args, &admit, session, turn)?
+            }
+            None => server.vault.pre_verb_hooks_for_credential(
+                call,
+                args,
+                &admit,
+                resume.credential,
+                turn,
+            )?,
+        };
+        let mut pre =
+            ended.map_err(|stop| verb_hook_boundary::stop_refusal(stop, session.as_ref()))?;
         // A restrictive call's args that fail the row's input check give way
         // to the caller's own (FIX 5076).
         oneiron::task_verb::revoke_lands::settle(&mut pre, &|args| {
@@ -813,6 +828,7 @@ async fn facade_hooks_pre(
     let resume = RowHookResume {
         credential,
         drain: call.drain().cloned(),
+        session: hook_session::facade_hook_session(server, call, bound, verb),
     };
     // What a hook reads, built on every call so a binding installed after
     // this door looked still finds it: the caller's read key, its
