@@ -76010,7 +76010,7 @@
      "path": "src/api/facade/action_routes/execution.rs",
      "purpose": "How one action runs (OF-181): the principal its call reads as, and the blocking thread it runs on with its…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -77632,7 +77632,7 @@
      "path": "src/api/mcp_gateway/actions.rs",
      "purpose": "`invoke_action` (OF-181): one action of the app's table over MCP, run by the one door `POST…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -81709,7 +81709,7 @@
      "path": "src/handler/protocol_close.rs",
      "purpose": "A socket the server closes on a protocol rejection (FIX 3303, OF-538): a hello it refused, a frame it would…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
