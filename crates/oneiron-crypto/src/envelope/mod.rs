@@ -105,6 +105,19 @@ pub enum Purpose {
     /// offer's recipient label as the recipient, so no other envelope opens as an
     /// offer's and no offer chunk opens as an export (FIX 5371).
     PublisherTrainingOffer = 19,
+    /// One compartment of a vault's sealed key-custody head (KS-4), sealed under a
+    /// fresh random compartment key. The owner binds the head's position and the
+    /// compartment's place, scope and kinds in `key_id`, so no compartment moves to
+    /// another head or another place in one.
+    CustodyCompartment = 20,
+    /// One custody compartment's key, wrapped to one recipient: the recovery root's
+    /// hybrid key, or the vault data key's custody subkey for a host-readable scope.
+    /// The owner binds the head's position and the compartment's place in `key_id`.
+    CustodyCompartmentKey = 21,
+    /// The body of one frame of a vault's keyless custody log: which ids a frame
+    /// mints or retires, never a key. The owner binds the frame's header in
+    /// `recipient`.
+    CustodyLogFrame = 22,
 }
 
 impl Purpose {
@@ -129,6 +142,9 @@ impl Purpose {
             17 => Self::BodyFileKey,
             18 => Self::BodyFileChunk,
             19 => Self::PublisherTrainingOffer,
+            20 => Self::CustodyCompartment,
+            21 => Self::CustodyCompartmentKey,
+            22 => Self::CustodyLogFrame,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }

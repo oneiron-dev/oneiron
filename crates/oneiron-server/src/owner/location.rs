@@ -37,6 +37,10 @@ pub(crate) struct Backups {
     /// record per restore, wake or migration (OF-296). `None` when the vault
     /// could not be read.
     pub(crate) restores: Option<Vec<RestoreRecord>>,
+    /// Where the vault's custody head publication stands beside these
+    /// backups (KS-4A1): `custody_anchor_pending` while no anchor root is
+    /// set up. `None` when the vault could not be read.
+    pub(crate) custody: Option<oneiron::recovery::checkpoint::CustodyStatus>,
 }
 
 /// One restore the vault came from.
@@ -83,7 +87,7 @@ pub(crate) fn locate(
 ) -> anyhow::Result<Location> {
     let disk_bytes = disk_usage(vault_path)?;
     let backups = backup::list(plan)?;
-    let (last_export, secret_scan, restores) = match vault {
+    let (last_export, secret_scan, restores, custody) = match vault {
         Some(vault) => (
             vault.export_receipts()?.pop().map(|receipt| LastExport {
                 at: super::stamp::rfc3339_secs(receipt.at),
@@ -99,8 +103,9 @@ pub(crate) fn locate(
                     .map(RestoreRecord::from)
                     .collect(),
             ),
+            Some(backup::custody_status(vault)),
         ),
-        None => (None, None, None),
+        None => (None, None, None, None),
     };
     Ok(Location {
         vault: vault_path
@@ -115,6 +120,7 @@ pub(crate) fn locate(
             every_hours,
             keep: plan.keep,
             restores,
+            custody,
         },
         last_export,
         secret_scan,
