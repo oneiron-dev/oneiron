@@ -589,7 +589,7 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .refused_grant_travel
         .extend(right.refused_grant_travel.iter().copied());
-    super::checkpoint_choice::merge_checkpoint_choices(
+    super::owner_choice::merge_owner_choices(
         &mut merged.checkpoint_policy,
         &right.checkpoint_policy,
     );

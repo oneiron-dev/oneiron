@@ -88,6 +88,7 @@ mod mesh_machine;
 mod observation_policy;
 mod op_apply;
 mod owner_act;
+mod owner_choice;
 mod owner_project_slip;
 mod owner_roots;
 mod owner_work;
@@ -220,6 +221,7 @@ pub(crate) use owner_act::{
     GrantStanding, authority_refusal_as, authority_refused, grant_standing_in_txn,
     owner_act_signer_admits, owner_live_in_fold,
 };
+pub use owner_choice::OwnerChoiceHead;
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub use recover_many::{
