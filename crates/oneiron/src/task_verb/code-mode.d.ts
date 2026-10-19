@@ -246,7 +246,7 @@ declare namespace Sdk {
   type ClaimApprovalStatus = "auto" | "proposed" | "approved" | "rejected";
   type TaskCancelReceipt = { approval: ClaimApprovalStatus; effected: boolean; proposal_ref?: EntityId | null; gate_decision_ref?: string | null; status?: RunTreeStatus | null; cancel_requested: boolean; forced: boolean };
   type SteerRequest = { task_ref: string; instruction: string; key: string };
-  type RunSignalState = "Pending" | "Settled" | "RefusedCancelCapacity" | "RefusedCancelUnavailable";
+  type RunSignalState = "Pending" | "Settled" | "RefusedCancelUnavailable";
   type SteerReceipt = { task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState };
   type AttemptHandle = { task_ref: EntityId; attempt_ref: string; attempt_count: number; node_ref?: EntityId | null };
   type TaskHandle = { kind: "proposed"; proposal_ref: EntityId } | { kind: "task"; task_ref: EntityId } | (AttemptHandle & { kind: "attempt" }) | { kind: "ask"; group_ref: EntityId };
