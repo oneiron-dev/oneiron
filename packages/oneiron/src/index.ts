@@ -369,6 +369,42 @@ export class Oneiron {
       list: (input: Facade.PeopleListRequest): Facade.PeoplePage => this.#call(() => this.#client.vaultPeopleList(input) as Facade.PeoplePage),
       /** One person the vault knows, by their pr handle. */
       get: (input: Facade.PersonRequest): Facade.PersonRow => this.#call(() => this.#client.vaultPeopleGet(input) as Facade.PersonRow),
+      /** The owner creates a distinct PERSON with declared identity hints and existing identity-evidence refs, looking before minting an opaque id without selecting or merging a namesake. */
+      create: (input: Facade.PersonCreateRequest): Facade.PersonCreated => this.#call(() => this.#client.vaultPeopleCreate(input) as Facade.PersonCreated),
+    },
+    entities: {
+      /** The owner queries the declared PERSON, ORG or PLACE identity hints for N candidates with evidence and provenance; only stored mention evidence is scored by the waterfall, and no entity is restored, linked or minted. */
+      look_before_mint: (input: Facade.IdentityLookupRequest): Facade.IdentityLookup => this.#call(() => this.#client.vaultEntitiesLookBeforeMint(input) as Facade.IdentityLookup),
+      /** The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate. */
+      mention: (input: Facade.EntityMentionRequest): Facade.EntityResolutionWaterfallDecision => this.#call(() => this.#client.vaultEntitiesMention(input) as Facade.EntityResolutionWaterfallDecision),
+    },
+    identity: {
+      /** The owner reads one saved mention as unresolved, candidates or resolved, preserving the original tagger suggestion and the resolving owner evidence and provenance. */
+      mention: (input: Facade.MentionProvenance): Facade.IdentityMentionView => this.#call(() => this.#client.vaultIdentityMention(input) as Facade.IdentityMentionView),
+      /** The owner merges source identities into a survivor, retaining claim subjects and append-only evidence. */
+      merge: (input: Facade.IdentityMergeRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityMerge(input) as Facade.IdentityTopologyResult),
+      /** The owner splits an identity into zero, one or many heads using an evidence-guided reassignment map. */
+      split: (input: Facade.IdentitySplitRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentitySplit(input) as Facade.IdentityTopologyResult),
+      /** The owner mints identity facets and forks assigned claims under their masks without restamping original claims. */
+      facet: (input: Facade.IdentityFacetRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityFacet(input) as Facade.IdentityTopologyResult),
+      /** The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals. */
+      assert_distinct: (input: Facade.IdentityAssertDistinctRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityAssertDistinct(input) as Facade.IdentityTopologyResult),
+      /** The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals. */
+      propose: (input: Facade.IdentityProposeRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityPropose(input) as Facade.IdentityTopologyResult),
+      /** The owner undoes one current topology event by appending a counter-event under its observed revision. */
+      undo: (input: Facade.IdentityUndoRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityUndo(input) as Facade.IdentityTopologyResult),
+      /** The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments. */
+      resolve: (input: Facade.IdentityEntityRequest): Facade.IdentityResolution => this.#call(() => this.#client.vaultIdentityResolve(input) as Facade.IdentityResolution),
+      events: {
+        /** The owner reads one topology decision with its actor, evidence, action and current decision revision. */
+        get: (input: Facade.IdentityEventRequest): Facade.IdentityTopologyReceipt => this.#call(() => this.#client.vaultIdentityEventsGet(input) as Facade.IdentityTopologyReceipt),
+      },
+      proposals: {
+        /** The owner approves, amends then approves, or rejects a parked topology proposal under its observed revision. */
+        resolve: (input: Facade.IdentityProposalResolveRequest): Facade.IdentityProposalResolutionResult => this.#call(() => this.#client.vaultIdentityProposalsResolve(input) as Facade.IdentityProposalResolutionResult),
+        /** The owner reads open merge proposals and effective distinctness claims for an unordered identity pair. */
+        for_pair: (input: Facade.IdentityPairRequest): Facade.IdentityPairProposals => this.#call(() => this.#client.vaultIdentityProposalsForPair(input) as Facade.IdentityPairProposals),
+      },
     },
     shape: {
       /** The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read. */
@@ -1059,6 +1095,16 @@ export class Oneiron {
     mesh: {
       /** The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner. */
       path_receipts: (input: Facade.MeshPathReceiptsRequest): Facade.MeshPathReceipt[] => this.#call(() => this.#client.vaultMeshPathReceipts(input) as Facade.MeshPathReceipt[]),
+      /** This install's public mesh keys and both binding proofs, for the owner; no private key or grant is returned. */
+      identity: (input: Facade.EmptyRequest): Facade.MeshBindingIdentity => this.#call(() => this.#client.vaultMeshIdentity(input) as Facade.MeshBindingIdentity),
+      /** Bind a paired MACHINE's address and transport key using both possession proofs; the binding starts with no ALPN grants. */
+      bind_machine: (input: Facade.MeshMachineBinding): Facade.MeshMachineBound => this.#call(() => this.#client.vaultMeshBindMachine(input) as Facade.MeshMachineBound),
+      /** Allow or revoke one exact ALPN for a paired MACHINE and endpoint key, under the caller's own owner proof. */
+      set_alpn_grant: (input: Facade.MeshAlpnGrant): Facade.MeshAlpnGrant => this.#call(() => this.#client.vaultMeshSetAlpnGrant(input) as Facade.MeshAlpnGrant),
+      /** Permanently revoke a MACHINE's mesh admission and all its ALPN grants; a new enrollment needs a new MACHINE and pairing. */
+      revoke_machine: (input: Facade.MeshMachineRevokeRequest): Facade.MeshMachineRevoked => this.#call(() => this.#client.vaultMeshRevokeMachine(input) as Facade.MeshMachineRevoked),
+      /** Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream. */
+      dial: (input: Facade.MeshDialRequest): Facade.MeshPathReceipt => this.#call(() => this.#client.vaultMeshDial(input) as Facade.MeshPathReceipt),
     },
     inspection: {
       /** Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item. */
@@ -1377,10 +1423,6 @@ export class Oneiron {
       /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
       run: (input: Facade.CleanupRunRequest): Facade.CleanupRunView => this.#call(() => this.#client.vaultCleanupRun(input) as Facade.CleanupRunView),
     },
-    entities: {
-      /** The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate. */
-      mention: (input: Facade.EntityMentionRequest): Facade.EntityResolutionWaterfallDecision => this.#call(() => this.#client.vaultEntitiesMention(input) as Facade.EntityResolutionWaterfallDecision),
-    },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */
       place: (input: Facade.LegalHoldPlaceRequest): Facade.LegalHold => this.#call(() => this.#client.vaultLegalHoldsPlace(input) as Facade.LegalHold),
@@ -1675,6 +1717,8 @@ export class Oneiron {
       review_slides: (request: Facade.SlideReviewSubmit): Facade.SlideReviewOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReviewSlides(keyedJson(request))) as Facade.SlideReviewOutcome; return result }),
       /** Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard. */
       ask: (input: Facade.ArtifactAskSubmit): Facade.ArtifactAskOutcome => this.#call(() => this.#client.vaultArtifactsAsk(input) as Facade.ArtifactAskOutcome),
+      /** Admits the caller's own provider measurements for one artifact ask's units in place of the host ladder's, validating each decision and its provider-bound paired readings before holding the answers as one proposal for Keep or Discard. */
+      admit: (input: Facade.ArtifactAdmitSubmit): Facade.ArtifactAskOutcome => this.#call(() => this.#client.vaultArtifactsAdmit(input) as Facade.ArtifactAskOutcome),
       /** Proposes a closed typed deck outline as a brief NOTE for the person to keep or decline. */
       propose_outline: (input: Facade.DeckOutlineProposeRequest): Facade.DeckOutlineView => this.#call(() => this.#client.vaultArtifactsProposeOutline(input) as Facade.DeckOutlineView),
       /** Reads a typed deck outline, its current NOTE frontier, its keep and its freshness. */
@@ -2104,6 +2148,8 @@ export class Oneiron {
     },
     graph: {
       ask: (input: Facade.GraphAskRequest): Facade.GraphAskOutcome => this.#call(() => this.#client.vaultGraphAsk(input) as Facade.GraphAskOutcome),
+      /** Admits the caller's own provider measurement for one graph unit in place of the host ladder's, validating the whole decision and its provider-bound paired readings before landing it as a proposed claim private to the caller. */
+      admit: (input: Facade.GraphAdmitRequest): Facade.GraphAskOutcome => this.#call(() => this.#client.vaultGraphAdmit(input) as Facade.GraphAskOutcome),
     },
     questions: {
       create: (input: Facade.QuestionCreateRequest): Facade.QuestionRecord => this.#call(() => this.#client.vaultQuestionsCreate(input) as Facade.QuestionRecord),
@@ -2293,6 +2339,12 @@ export class Oneiron {
       lineage: (input: Facade.ConsolidationLineageRequest): Facade.ConsolidationLineageView | null => this.#call(() => this.#client.vaultConsolidationLineage(input) as Facade.ConsolidationLineageView | null),
       /** Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals. */
       promote: (input: Facade.ConsolidationPromoteRequest): Facade.ConsolidationPromotion => this.#call(() => this.#client.vaultConsolidationPromote(input) as Facade.ConsolidationPromotion),
+      /** Pins reference-only evidence for six-axis consolidation buckets at one owner-scoped ledger revision. Hashes, lineage taint and source eligibility are derived by the root, never accepted from children. */
+      pin: (input: Facade.ConsolidationPinRequest): Facade.ConsolidationRootAccounting => this.#call(() => this.#client.vaultConsolidationPin(input) as Facade.ConsolidationRootAccounting),
+      /** Records immutable child judgements and reference sets against an existing root pin, in any completion order, and accounts source-plus-hash corroboration without merging projects. Does not settle claims. */
+      frontier: (input: Facade.ConsolidationFrontierRequest): Facade.ConsolidationRootAccounting => this.#call(() => this.#client.vaultConsolidationFrontier(input) as Facade.ConsolidationRootAccounting),
+      /** Reads the original root revision, source hashes, ancestor and edge provenance taint, zero-signal exclusions and per-bucket corroboration accounting under current owner read authority. */
+      accounting: (input: Facade.ConsolidationAccountingRequest): Facade.ConsolidationRootAccounting => this.#call(() => this.#client.vaultConsolidationAccounting(input) as Facade.ConsolidationRootAccounting),
       /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */
       evidence: (input: Facade.ConsolidationEvidenceRequest): Facade.ScopedReadResult<Facade.ConsolidationEvidenceSource[]> => this.#call(() => this.#client.vaultConsolidationEvidence(input) as Facade.ScopedReadResult<Facade.ConsolidationEvidenceSource[]>),
     },
@@ -2468,32 +2520,6 @@ export class Oneiron {
     },
     /** The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why. */
     revert_run: (input: Facade.RevertRunRequest): Facade.RevertRunOutcome => this.#call(() => this.#client.vaultRevertRun(input) as Facade.RevertRunOutcome),
-    identity: {
-      /** The owner merges source identities into a survivor, retaining claim subjects and append-only evidence. */
-      merge: (input: Facade.IdentityMergeRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityMerge(input) as Facade.IdentityTopologyResult),
-      /** The owner splits an identity into zero, one or many heads using an evidence-guided reassignment map. */
-      split: (input: Facade.IdentitySplitRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentitySplit(input) as Facade.IdentityTopologyResult),
-      /** The owner mints identity facets and forks assigned claims under their masks without restamping original claims. */
-      facet: (input: Facade.IdentityFacetRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityFacet(input) as Facade.IdentityTopologyResult),
-      /** The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals. */
-      assert_distinct: (input: Facade.IdentityAssertDistinctRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityAssertDistinct(input) as Facade.IdentityTopologyResult),
-      /** The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals. */
-      propose: (input: Facade.IdentityProposeRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityPropose(input) as Facade.IdentityTopologyResult),
-      /** The owner undoes one current topology event by appending a counter-event under its observed revision. */
-      undo: (input: Facade.IdentityUndoRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityUndo(input) as Facade.IdentityTopologyResult),
-      /** The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments. */
-      resolve: (input: Facade.IdentityEntityRequest): Facade.IdentityResolution => this.#call(() => this.#client.vaultIdentityResolve(input) as Facade.IdentityResolution),
-      events: {
-        /** The owner reads one topology decision with its actor, evidence, action and current decision revision. */
-        get: (input: Facade.IdentityEventRequest): Facade.IdentityTopologyReceipt => this.#call(() => this.#client.vaultIdentityEventsGet(input) as Facade.IdentityTopologyReceipt),
-      },
-      proposals: {
-        /** The owner approves, amends then approves, or rejects a parked topology proposal under its observed revision. */
-        resolve: (input: Facade.IdentityProposalResolveRequest): Facade.IdentityProposalResolutionResult => this.#call(() => this.#client.vaultIdentityProposalsResolve(input) as Facade.IdentityProposalResolutionResult),
-        /** The owner reads open merge proposals and effective distinctness claims for an unordered identity pair. */
-        for_pair: (input: Facade.IdentityPairRequest): Facade.IdentityPairProposals => this.#call(() => this.#client.vaultIdentityProposalsForPair(input) as Facade.IdentityPairProposals),
-      },
-    },
   }
   /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
   fetch(input: Facade.WebFetchRequest): Facade.FetchResult { return this.#call(() => this.#client.fetch(input) as Facade.FetchResult) }
@@ -2546,8 +2572,8 @@ export class Oneiron {
       edit: (input: Facade.StandingBlockEditRequest): Facade.StandingBlockEditReceipt => this.#call(() => this.#client.selfStandingEdit(input) as Facade.StandingBlockEditReceipt),
     },
     identity: {
-      /** A vault owner's tap on an identity choice card: who a person named in their conversations is. */
-      answer: (input: Facade.IdentityAnswerRequest): Facade.IdentitySettled => this.#call(() => this.#client.selfIdentityAnswer(input) as Facade.IdentitySettled),
+      /** The owner answers an identity choice with supporting evidence refs; the original mention and verified owner resolution provenance are retained atomically. */
+      answer: (input: Facade.IdentityAnswerEvidenceRequest): Facade.IdentitySettled => this.#call(() => this.#client.selfIdentityAnswer(input) as Facade.IdentitySettled),
       /** Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask. */
       settle: (input: Facade.IdentityActNowRequest): Facade.IdentityActNow => this.#call(() => this.#client.selfIdentitySettle(input) as Facade.IdentityActNow),
     },

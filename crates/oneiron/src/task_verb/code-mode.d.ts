@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1032 code-mode rows (1008 host rows, 24 run rows), 3446 declarations.
-// Replies: 926 fully typed, 102 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1045 code-mode rows (1021 host rows, 24 run rows), 3480 declarations.
+// Replies: 937 fully typed, 104 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -94,7 +94,7 @@ declare namespace Sdk {
   type EmptyRequest = Record<string, never>;
   type StandingBlockEditRequest = { world_ref: EntityId; field: string; value: string; run_ref: string; evidence_refs?: EntityId[] };
   type StandingBlockEditReceipt = { handle: string; claim_ref: EntityId; field: string };
-  type IdentityAnswerRequest = { ask: string; choice: string };
+  type IdentityAnswerEvidenceRequest = { ask: string; choice: string; evidence_refs?: string[] };
   type IdentitySettled = { ask: string; entity: string };
   type IdentityEffect = "send" | "pay" | "invite" | "share";
   type IdentityActNowRequest = { name: string; conversation?: string | null; effect: IdentityEffect; prompt: string; someone_new: string };
@@ -164,6 +164,28 @@ declare namespace Sdk {
   type PersonRow = { person: EntityId; actors: EntityId[]; handle: string; name: string; kind: PersonKind; role: string; about?: string | null };
   type PeoplePage = { vault: string; page: number; people: PersonRow[]; more: number };
   type PersonRequest = { pr: string };
+  type IdentityHints = { name?: string | null; aliases?: string[]; phonetic?: string[]; contact_handle?: string[] };
+  type PersonCreateRequest = { identity: IdentityHints; identity_evidence_refs: string[]; occurred_at: number; learned_at?: number | null };
+  type EntityRefReceipt = { entity_ref: string; id_hex: string; receipt_ref: string; record?: RecordRef | null };
+  type PersonCreated = { person: EntityRefReceipt; identity: IdentityHints; identity_evidence_refs: string[]; owner_ref: string; recorded_at: number; prior_candidate_refs: string[] };
+  type IdentityKind = "PERSON" | "ORG" | "PLACE";
+  type EntityResolutionCandidate = { subject: EntityId; confidence_claim_ref: EntityId };
+  type IdentityLookupRequest = { kind: IdentityKind; identity: IdentityHints; mention_evidence?: EntityResolutionCandidate[] };
+  type IdentityConfidenceEvidence = { claim_ref: string; effective_confidence: number; source?: string | null; evidence?: unknown | null; made_by?: MadeBy | null };
+  type IdentityLookupCandidate = { entity_ref: string; matched_hints: string[]; identity_evidence_refs: string[]; identity_owner_ref?: string | null; identity_recorded_at?: number | null; made_by?: MadeBy | null; mention_evidence: IdentityConfidenceEvidence[] };
+  type ScoredEntityResolutionCandidate = { candidate: EntityResolutionCandidate; effective_confidence: number };
+  type EntityResolutionRoute = "hard_link" | "soft_link" | "soft_link_low" | "provisional_entity";
+  type EntityResolutionWaterfallDecision = { ranked: ScoredEntityResolutionCandidate[]; claims_suppressed: number; selected?: EntityId | null; selected_effective_confidence?: number | null; route: EntityResolutionRoute; requires_async_verification: boolean };
+  type IdentityLookup = { kind: IdentityKind; candidates: IdentityLookupCandidate[]; waterfall: EntityResolutionWaterfallDecision };
+  type MentionProvenance = { turn: string; message: string; start: number; end: number };
+  type IdentityMentionState = "unresolved" | "candidates" | "resolved";
+  type MentionLinkView = { link: "tag" } | { link: "candidates"; kind: number; entity_refs: string[] } | { link: "minted"; kind: number; entity_ref: string };
+  type TaggingSpeakerTarget = "speaker" | "addressee";
+  type MentionReferenceView = { kind: "context" } | { kind: "speaker"; target: TaggingSpeakerTarget; resolved: boolean };
+  type TaggedMentionView = { index: number; message_ref: string; start: number; end: number; label: string; confidence: number; link: MentionLinkView; antecedent?: number | null; reference?: MentionReferenceView | null; link_confidence?: number | null };
+  type DerivationEnvelopeView = { content_hash: string; model_id: string; stack?: string | null; version: string; params_hash: string };
+  type IdentityResolutionView = { ask: string; target_ref: string; source: string; owner_ref?: string | null; owner_evidence_refs: string[]; resolved_at: number; original: TaggedMentionView; original_provenance: DerivationEnvelopeView };
+  type IdentityMentionView = { mention: MentionProvenance; name: string; state: IdentityMentionState; candidate_refs: string[]; target_ref?: string | null; current: TaggedMentionView; provenance: DerivationEnvelopeView; resolution?: IdentityResolutionView | null };
   type ShapePreset = "personal" | "family" | "team" | "org" | "community";
   type ShapeMemberRole = "owner" | "admin" | "member" | "viewer";
   type ShapeCeiling = "auto" | "proposed";
@@ -197,7 +219,6 @@ declare namespace Sdk {
   type ShapePlanReach = { before: ShapeReach; after: ShapeReach; unresolved: string[]; line: string };
   type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary; reach?: ShapePlanReach };
   type ShapeApplyRequest = { plan: ShapePlan; approve?: number[] };
-  type MentionProvenance = { turn: string; message: string; start: number; end: number };
   type MessagePersonRequest = { pr: string; text: string; mention?: MentionProvenance | null; from_project?: string | null; to_project?: string | null };
   type WitnessReceipt = { turn_short_id: string; message_short_ids: string[]; receipt_ref: string; turn?: RecordRef | null; messages?: RecordRef[] };
   type MessagePersonReceipt = { room: string; receipt: WitnessReceipt };
@@ -492,11 +513,6 @@ declare namespace Sdk {
   type TaggingOutcomeView = { outcome: "saved"; spans: number; links: number; mood: boolean; linked: number; minted: number; context_links: number; speaker_links: number; unresolved_context_links: number; unresolved_speaker_links: number; surprise?: number | null } | { outcome: "shadowed"; spans: number; links: number; mood: boolean; mapped_spans: number; context_links: number; speaker_links: number } | { outcome: "imported"; spans: number; links: number; mood: boolean } | { outcome: "skipped"; reason: string } | { outcome: "superseded"; retry_at: number } | { outcome: "deferred"; retry_at: number } | { outcome: "failed"; failure: TaggingFailureView; retry_at: number } | { outcome: "rekeyed" } | { outcome: "handed_back"; reason: string; retry_at: number } | { outcome: "unreadable" };
   type TaggingTraceView = { recorded_at: number; attempt: string; turn_ref?: string | null; checkpoint: string; stack?: string | null; model?: string | null; input_hash?: string | null; try_number: number; call_micros?: number | null; outcome: TaggingOutcomeView };
   type TaggingStatusView = { turn_ref: string; state: TaggingMarkerState; configured: boolean; checkpoint?: string | null; stack?: string | null; mode?: string | null; model?: string | null; marker?: TaggingMarkerView | null; failure?: TaggingFailureView | null; retry_at?: number | null; try_number?: number | null; has_tags: boolean; saved_at?: number | null; last_trace?: TaggingTraceView | null };
-  type DerivationEnvelopeView = { content_hash: string; model_id: string; stack?: string | null; version: string; params_hash: string };
-  type MentionLinkView = { link: "tag" } | { link: "candidates"; kind: number; entity_refs: string[] } | { link: "minted"; kind: number; entity_ref: string };
-  type TaggingSpeakerTarget = "speaker" | "addressee";
-  type MentionReferenceView = { kind: "context" } | { kind: "speaker"; target: TaggingSpeakerTarget; resolved: boolean };
-  type TaggedMentionView = { index: number; message_ref: string; start: number; end: number; label: string; confidence: number; link: MentionLinkView; antecedent?: number | null; reference?: MentionReferenceView | null; link_confidence?: number | null };
   type MergeEvidenceView = { span: number; antecedent: number; confidence: number };
   type TaggingVadView = { valence: number; arousal: number; dominance: number };
   type TurnTagsView = { turn_ref: string; envelope: DerivationEnvelopeView; message_refs: string[]; mentions: TaggedMentionView[]; merge_evidence: MergeEvidenceView[]; mood?: TaggingVadView | null; saved_at: number; surprise?: number | null };
@@ -1097,6 +1113,14 @@ declare namespace Sdk {
   type MeshPathOutcome = "admitted" | "refused" | "failed";
   type MeshPathKind = "direct" | "relayed" | "mixed" | "none";
   type MeshPathReceipt = { id: string; direction: MeshPathDirection; outcome: MeshPathOutcome; machine?: string | null; endpoint_key?: string | null; alpn: string; opened_at_ms: number; closed_at_ms?: number | null; paths: MeshPathKind; used_direct: boolean; used_relay: boolean; direct_addr?: string | null; relay_url?: string | null; detail?: string | null; attempts: number };
+  type MeshBindingIdentity = { machine: EntityId; device_key: number[]; endpoint_key: number[]; device_proof: number[]; transport_proof: number[] };
+  type MeshMachineAddress = { endpoint_key: number[]; direct_addrs: string[]; relay_url?: string | null };
+  type MeshMachineBinding = { machine: EntityId; address: MeshMachineAddress; device_key: number[]; pairing_slip_id: number[]; device_proof: number[]; transport_proof: number[] };
+  type MeshMachineBound = { machine: EntityId; endpoint_key: number[] };
+  type MeshAlpnGrant = { machine: EntityId; endpoint_key: number[]; alpn: number[]; allow: boolean };
+  type MeshMachineRevokeRequest = { machine: EntityId };
+  type MeshMachineRevoked = { machine: EntityId };
+  type MeshDialRequest = { address: MeshMachineAddress; alpn: number[] };
   type InspectionResolveRequest = { handle: string };
   type LensBackingTargetKind = "entity" | "claim";
   type InspectionState = { target_ref: EntityId; target_kind: LensBackingTargetKind };
@@ -1293,7 +1317,6 @@ declare namespace Sdk {
   type OffRecordRecallRequest = { session_ref: string; query: string; limit: number };
   type CreateNoteRequest = { kind: string; markdown: string };
   type OffRecordNoteRequest = { session_ref: string; note: CreateNoteRequest };
-  type EntityRefReceipt = { entity_ref: string; id_hex: string; receipt_ref: string; record?: RecordRef | null };
   type OffRecordClaimRequest = { session_ref: string; claim: ScopedClaimInput };
   type OffRecordExecuteRequest = { session_ref: string; run_ref: string; task: string };
   type OffRecordRunStatus = "complete" | "waiting" | "yielded" | "window_full";
@@ -1542,11 +1565,7 @@ declare namespace Sdk {
   type CleanupKind = "claimless_extraction_person" | "empty_summary" | "completed_task" | "completed_attempt" | "retained_note";
   type CleanupCandidate = { entity: EntityId; kind: CleanupKind };
   type CleanupRunView = { attempt: string; posture: CleanupPosture; candidates: CleanupCandidate[]; proposal?: EntityId | null; archived: EntityId[]; digest?: EntityId | null };
-  type EntityResolutionCandidate = { subject: EntityId; confidence_claim_ref: EntityId };
   type EntityMentionRequest = { candidates: EntityResolutionCandidate[]; high_collision_mention?: boolean };
-  type ScoredEntityResolutionCandidate = { candidate: EntityResolutionCandidate; effective_confidence: number };
-  type EntityResolutionRoute = "hard_link" | "soft_link" | "soft_link_low" | "provisional_entity";
-  type EntityResolutionWaterfallDecision = { ranked: ScoredEntityResolutionCandidate[]; claims_suppressed: number; selected?: EntityId | null; selected_effective_confidence?: number | null; route: EntityResolutionRoute; requires_async_verification: boolean };
   type LegalHoldTarget = { record: EntityId } | { gate_partition: EntityId | null };
   type LegalHoldPlaceRequest = { targets: LegalHoldTarget[]; matter_ref?: string | null };
   type LegalHoldKind = "customer" | "host_order";
@@ -2231,15 +2250,19 @@ declare namespace Sdk {
   type ProposalSettleRequest = { artifact_ref: string; proposal_ref: string; brief_ref?: string | null; reason?: string | null };
   type ReleasedWait = { released: boolean };
   type SlideReviewUnitInput = { target: unknown; review_image?: string | null; review_image_ref?: string | null; renderer: string };
-  type SlideReviewSubmit = { artifact_ref: string; run_ref: string; units: SlideReviewUnitInput[]; question: unknown; author: unknown; labels: unknown; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null };
+  type DecisionClass = "retrieval" | "contradiction" | "triage" | "judgment" | "useful_upstream" | "preference" | "provenance";
+  type AnswerContract = { kind: "noul" } | { kind: "choice"; options: string[] } | { kind: "score"; min: number; max: number } | { kind: "box" } | { kind: "point" };
+  type DecisionQuestion = { id: string; version: number; text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
+  type SlideReviewSubmit = { artifact_ref: string; run_ref: string; units: SlideReviewUnitInput[]; question: DecisionQuestion; author: unknown; labels: unknown; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null };
   type SlideUnitRefused = { target: unknown; reason: string; offer?: unknown | null };
   type SlideReviewOutcome = { proposed?: PendingProposalView | null; abstained: unknown[]; refused: SlideUnitRefused[] };
   type FolderItemInput = { artifact_ref: string; row: number };
   type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; author: string; labels: unknown } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null };
-  type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: unknown; units: ArtifactAskUnits; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null };
+  type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: DecisionQuestion; units: ArtifactAskUnits; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null };
   type UnitAbstention = { unit: unknown; decision?: TypedDecision | null };
   type UnitRefusal = { unit: unknown; reason: string };
   type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[] };
+  type ArtifactAdmitSubmit = { ask: ArtifactAskSubmit; decisions: TypedDecision[] };
   type CriticBinding = { lens_id: string; lens_ref: string; actor_ref: string; actor_class: number };
   type CriticReviewSubmit = { target_ref: string; kind: string; session_ref: string; run_ref: string; type_node: string; type_tree_version: number; axis: string; auto_resolve_threshold: number; catalog: unknown; critics: CriticBinding[] };
   type CritiqueTriageScores = { accept: number; revise: number; discard: number };
@@ -2661,13 +2684,10 @@ declare namespace Sdk {
   type AiVideoJobRequest = { job: string };
   type AiVideoJob = { state: "queued" } | { state: "running"; progress?: number | null } | { state: "done"; answer: AiAnswer } | { state: "failed"; error: LlmError };
   type AiVideoCancelled = { job: string };
-  type AnswerContract = { kind: "noul" } | { kind: "choice"; options: string[] } | { kind: "score"; min: number; max: number } | { kind: "box" } | { kind: "point" };
   type AiVerdictReversibility = "reversible_read" | "outbound_effect";
   type AiVerdictRequest = { question: string; contract?: AnswerContract; evidence?: string[]; state?: unknown | null; ceiling?: DecisionRung | null; reversibility?: AiVerdictReversibility; deadline_ms?: number | null; routine?: boolean; image?: string | null; misses?: number; until_ms?: number | null };
   type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null };
   type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; presence?: TypedDecision | null; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null; evidence_cut_at_bytes?: number | null };
-  type DecisionClass = "retrieval" | "contradiction" | "triage" | "judgment" | "useful_upstream" | "preference" | "provenance";
-  type DecisionQuestion = { id: string; version: number; text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
   type GraphAskSelection = { entity_type: number; limit: number };
   type HostingPrivacyPosture = "managed" | "relay" | "self-host";
   type QuestionCriteria = { yes_if_all: string[]; no_if_any: string[]; not_a_reason_to_say_no: string[] };
@@ -2675,6 +2695,7 @@ declare namespace Sdk {
   type AnswerRecord = { claim: string; unit: string; decision: TypedDecision; frontier: number[]; source_kind: number; answered_at: number };
   type GraphAskDeclined = { unit: EntityId; decision: TypedDecision };
   type GraphAskOutcome = { state: "done"; answers: AnswerRecord[]; abstained: EntityId[]; declined: GraphAskDeclined[] } | { state: "failed"; failed_unit?: EntityId | null; code: string; message: string; answers: AnswerRecord[]; abstained: EntityId[] };
+  type GraphAdmitRequest = { question: DecisionQuestion; unit: EntityId; decision: TypedDecision };
   type DecisionDial = { first: DecisionRung; ceiling: DecisionRung; band: DecisionBand };
   type QuestionActivation = "one_off" | "standing";
   type RefreshPolicy = { on_arrival: boolean; every_seconds?: number | null };
@@ -3133,6 +3154,20 @@ declare namespace Sdk {
   type ConsolidationEvidenceLocator = { source_ref: string; claim_ref?: string | null; byte_range?: [number, number] | null; content_hash: number[]; messages: ConsolidationMessageEvidence[] };
   type ConsolidationEvidenceSource = { source_ref: string; source?: string | null; approval?: string | null; lifecycle?: string | null; evidence_taint?: string | null; generated_origin: boolean; writer_ref?: string | null; foreign_world_ref?: string | null; consolidation_eligible: boolean; corroboration_eligible: boolean; first_party_corroboration: boolean; effector_evidence_eligible: boolean; refusal?: PromotionEvidenceReason | null; source_refs: string[]; evidence_refs: EvidenceRef[]; source_meet?: string | null; chain: ConsolidationEvidenceHop[]; locators: ConsolidationEvidenceLocator[] };
   type ConsolidationPromotion = { job_ref: string; landed: string[]; pended: string[]; held: string[]; rejected: ConsolidationRejection[]; input_evidence: ConsolidationEvidenceSource[]; output_evidence: ConsolidationEvidenceSource[] };
+  type ConsolidationRootBucket = { subject: string; predicate_root: string; world?: string | null; facet?: string | null; relationship?: string | null; project: string };
+  type ConsolidationReference = { source_id: string; claim_id?: string | null; byte_range?: [number, number] | null };
+  type ConsolidationRootInput = { bucket: ConsolidationRootBucket; evidence: ConsolidationReference[] };
+  type ConsolidationPinRequest = { buckets: ConsolidationRootInput[] };
+  type ClaimSource = "user_stated" | "observed" | "inferred" | "imported" | "tool_output" | "generated";
+  type ConsolidationAncestor = { source_ref: string; source_revision: number[]; trust_class: ClaimSource };
+  type ConsolidationRootEvidence = { reference: ConsolidationReference; source_revision: number[]; content_hash: number[]; trust_class: ClaimSource; corroborates: boolean; refusal?: PromotionEvidenceReason | null; ancestors: ConsolidationAncestor[]; messages: ConsolidationMessageEvidence[] };
+  type ConsolidationChildReceipt = { child_ref: string; judgement_hash: number[]; evidence: ConsolidationReference[] };
+  type ConsolidationBucketAccounting = { bucket: ConsolidationRootBucket; bucket_hash: number[]; pinned: ConsolidationRootEvidence[]; children: ConsolidationChildReceipt[]; independent: ConsolidationRootEvidence[]; duplicates_collapsed: number; excluded_references: number; source_meet: ClaimSource };
+  type ConsolidationRootAccounting = { root_ref: string; revision: number; buckets: ConsolidationBucketAccounting[] };
+  type ConsolidationJudgement = { predicate: string; value: unknown; confidence: number };
+  type ConsolidationChildFrontier = { child_ref: string; bucket_hash: number[]; judgement: ConsolidationJudgement; evidence: ConsolidationReference[] };
+  type ConsolidationFrontierRequest = { root_ref: string; children: ConsolidationChildFrontier[] };
+  type ConsolidationAccountingRequest = { root_ref: string };
   type ConsolidationEvidenceRequest = { source_refs: string[] };
   type SieveEvidenceRequest = { turn: EntityId };
   type SieveEvidenceCursor = { learned_at: number; turn: EntityId };
@@ -3352,7 +3387,6 @@ declare namespace Sdk {
   type IdentityEvidence = { refs: EntityId[]; rationale: string };
   type IdentitySurvivorshipPlan = "read_through";
   type IdentityMergeRequest = { sources: EntityId[]; survivor: EntityId; evidence: IdentityEvidence; survivorship_plan: IdentitySurvivorshipPlan };
-  type ClaimSource = "user_stated" | "observed" | "inferred" | "imported" | "tool_output" | "generated";
   type IdentityReassignmentItem = { kind: "claim"; claim: EntityId } | { kind: "edge"; source: EntityId; edge_kind: string; target: EntityId };
   type IdentityReassignmentTarget = { kind: "head"; head: EntityId } | { kind: "facet"; index: number } | { kind: "residue" };
   type IdentityReassignment = { item: IdentityReassignmentItem; target: IdentityReassignmentTarget };
@@ -3782,8 +3816,8 @@ declare namespace self {
   /** Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled. */
   const history: (input: Sdk.FoldHistoryRequest) => Promise<Sdk.FoldHistory | StoredResult>;
   const identity: {
-    /** A vault owner's tap on an identity choice card: who a person named in their conversations is. */
-    answer(input: Sdk.IdentityAnswerRequest): Promise<Sdk.IdentitySettled | StoredResult>;
+    /** The owner answers an identity choice with supporting evidence refs; the original mention and verified owner resolution provenance are retained atomically. */
+    answer(input: Sdk.IdentityAnswerEvidenceRequest): Promise<Sdk.IdentitySettled | StoredResult>;
     /** Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask. */
     settle(input: Sdk.IdentityActNowRequest): Promise<Sdk.IdentityActNow | StoredResult>;
   };
@@ -3941,6 +3975,8 @@ declare const vault: Sdk.VaultHost & {
   /** Appends one authored delta to this actor's generation-bound stream through its existing write gate. */
   append_to_stream(input: Sdk.AppendToStreamRequest): Promise<null | StoredResult>;
   artifacts: {
+    /** Admits the caller's own provider measurements for one artifact ask's units in place of the host ladder's, validating each decision and its provider-bound paired readings before holding the answers as one proposal for Keep or Discard. */
+    admit(input: Sdk.ArtifactAdmitSubmit): Promise<Sdk.ArtifactAskOutcome | StoredResult>;
     anchors: {
       /** Pins an exact readable locator and quote in an artifact version; opening a thread makes the pin durable. */
       pin(input: Sdk.AnnotationPinRequest): Promise<Sdk.AnnotationAnchorView | StoredResult>;
@@ -4558,16 +4594,22 @@ declare const vault: Sdk.VaultHost & {
     revoke(input: Sdk.RevokeGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
   };
   consolidation: {
+    /** Reads the original root revision, source hashes, ancestor and edge provenance taint, zero-signal exclusions and per-bucket corroboration accounting under current owner read authority. */
+    accounting(input: Sdk.ConsolidationAccountingRequest): Promise<Sdk.ConsolidationRootAccounting | StoredResult>;
     /** Enqueues one consolidation attempt and returns its durable job reference. */
     enqueue(input: Sdk.ConsolidationEnqueueRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
     /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */
     evidence(input: Sdk.ConsolidationEvidenceRequest): Promise<Sdk.ScopedReadResult<Sdk.ConsolidationEvidenceSource[]> | StoredResult>;
+    /** Records immutable child judgements and reference sets against an existing root pin, in any completion order, and accounts source-plus-hash corroboration without merging projects. Does not settle claims. */
+    frontier(input: Sdk.ConsolidationFrontierRequest): Promise<Sdk.ConsolidationRootAccounting | StoredResult>;
     home: {
       /** The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything. */
       get(input: Sdk.EmptyRequest): Promise<Sdk.ConsolidationHomeView | StoredResult>;
     };
     /** The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model. */
     lineage(input: Sdk.ConsolidationLineageRequest): Promise<Sdk.ConsolidationLineageView | null | StoredResult>;
+    /** Pins reference-only evidence for six-axis consolidation buckets at one owner-scoped ledger revision. Hashes, lineage taint and source eligibility are derived by the root, never accepted from children. */
+    pin(input: Sdk.ConsolidationPinRequest): Promise<Sdk.ConsolidationRootAccounting | StoredResult>;
     /** Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals. */
     promote(input: Sdk.ConsolidationPromoteRequest): Promise<Sdk.ConsolidationPromotion | StoredResult>;
     /** Reads the status of one consolidation attempt by its durable job reference. */
@@ -4686,6 +4728,8 @@ declare const vault: Sdk.VaultHost & {
     retire(input: Sdk.EmbeddingSpaceRequest): Promise<Sdk.EmbeddingSpacesView | StoredResult>;
   };
   entities: {
+    /** The owner queries the declared PERSON, ORG or PLACE identity hints for N candidates with evidence and provenance; only stored mention evidence is scored by the waterfall, and no entity is restored, linked or minted. */
+    look_before_mint(input: Sdk.IdentityLookupRequest): Promise<Sdk.IdentityLookup | StoredResult>;
     /** The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate. */
     mention(input: Sdk.EntityMentionRequest): Promise<Sdk.EntityResolutionWaterfallDecision | StoredResult>;
   };
@@ -4844,6 +4888,8 @@ declare const vault: Sdk.VaultHost & {
   /** Reads one entity as a typed view, or none when absent or withheld; the receipt says which. */
   get(input: Sdk.EntityRequest): Promise<Sdk.ScopedReadResult<Sdk.EntityView | null> | StoredResult>;
   graph: {
+    /** Admits the caller's own provider measurement for one graph unit in place of the host ladder's, validating the whole decision and its provider-bound paired readings before landing it as a proposed claim private to the caller. */
+    admit(input: Sdk.GraphAdmitRequest): Promise<Sdk.GraphAskOutcome | StoredResult>;
     ask(input: Sdk.GraphAskRequest): Promise<Sdk.GraphAskOutcome | StoredResult>;
   };
   guests: {
@@ -4884,6 +4930,8 @@ declare const vault: Sdk.VaultHost & {
     };
     /** The owner mints identity facets and forks assigned claims under their masks without restamping original claims. */
     facet(input: Sdk.IdentityFacetRequest): Promise<Sdk.IdentityTopologyResult | StoredResult>;
+    /** The owner reads one saved mention as unresolved, candidates or resolved, preserving the original tagger suggestion and the resolving owner evidence and provenance. */
+    mention(input: Sdk.MentionProvenance): Promise<Sdk.IdentityMentionView | StoredResult>;
     /** The owner merges source identities into a survivor, retaining claim subjects and append-only evidence. */
     merge(input: Sdk.IdentityMergeRequest): Promise<Sdk.IdentityTopologyResult | StoredResult>;
     proposals: {
@@ -5003,8 +5051,18 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   mesh: {
+    /** Bind a paired MACHINE's address and transport key using both possession proofs; the binding starts with no ALPN grants. */
+    bind_machine(input: Sdk.MeshMachineBinding): Promise<Sdk.MeshMachineBound | StoredResult>;
+    /** Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream. */
+    dial(input: Sdk.MeshDialRequest): Promise<Sdk.MeshPathReceipt | StoredResult>;
+    /** This install's public mesh keys and both binding proofs, for the owner; no private key or grant is returned. */
+    identity(input: Sdk.EmptyRequest): Promise<Sdk.MeshBindingIdentity | StoredResult>;
     /** The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner. */
     path_receipts(input: Sdk.MeshPathReceiptsRequest): Promise<Sdk.MeshPathReceipt[] | StoredResult>;
+    /** Permanently revoke a MACHINE's mesh admission and all its ALPN grants; a new enrollment needs a new MACHINE and pairing. */
+    revoke_machine(input: Sdk.MeshMachineRevokeRequest): Promise<Sdk.MeshMachineRevoked | StoredResult>;
+    /** Allow or revoke one exact ALPN for a paired MACHINE and endpoint key, under the caller's own owner proof. */
+    set_alpn_grant(input: Sdk.MeshAlpnGrant): Promise<Sdk.MeshAlpnGrant | StoredResult>;
   };
   /** Reads only this actor's accepted in-memory partial using its generation-bound stream handle. */
   message_stream_partial(input: Sdk.MessageStreamRequest): Promise<Sdk.MessageStreamPartial | StoredResult>;
@@ -5229,6 +5287,8 @@ declare const vault: Sdk.VaultHost & {
     sync(input: Sdk.HubPackRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
   };
   people: {
+    /** The owner creates a distinct PERSON with declared identity hints and existing identity-evidence refs, looking before minting an opaque id without selecting or merging a namesake. */
+    create(input: Sdk.PersonCreateRequest): Promise<Sdk.PersonCreated | StoredResult>;
     /** One person the vault knows, by their pr handle. */
     get(input: Sdk.PersonRequest): Promise<Sdk.PersonRow | StoredResult>;
     /** One page of the people the caller reads, in handle order. */

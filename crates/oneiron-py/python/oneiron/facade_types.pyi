@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 998 facade rows, 3405 declarations.
-Inputs: 941 of 998 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 899 of 998 fully typed, 99 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1011 facade rows, 3439 declarations.
+Inputs: 952 of 1011 fully typed, 59 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 910 of 1011 fully typed, 101 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -357,9 +357,10 @@ class StandingBlockEditReceipt(TypedDict):
     handle: str
     claim_ref: EntityId
     field: str
-class IdentityAnswerRequest(TypedDict):
+class IdentityAnswerEvidenceRequest(TypedDict):
     ask: str
     choice: str
+    evidence_refs: NotRequired[list[str]]
 class IdentitySettled(TypedDict):
     ask: str
     entity: str
@@ -699,6 +700,125 @@ class PeoplePage(TypedDict):
     more: int
 class PersonRequest(TypedDict):
     pr: str
+class IdentityHints(TypedDict):
+    name: NotRequired[str | None]
+    aliases: NotRequired[list[str]]
+    phonetic: NotRequired[list[str]]
+    contact_handle: NotRequired[list[str]]
+class PersonCreateRequest(TypedDict):
+    identity: IdentityHints
+    identity_evidence_refs: list[str]
+    occurred_at: int
+    learned_at: NotRequired[int | None]
+class EntityRefReceipt(TypedDict):
+    entity_ref: str
+    id_hex: str
+    receipt_ref: str
+    record: NotRequired[RecordRef | None]
+class PersonCreated(TypedDict):
+    person: EntityRefReceipt
+    identity: IdentityHints
+    identity_evidence_refs: list[str]
+    owner_ref: str
+    recorded_at: int
+    prior_candidate_refs: list[str]
+IdentityKind = Literal["PERSON", "ORG", "PLACE"]
+class EntityResolutionCandidate(TypedDict):
+    subject: EntityId
+    confidence_claim_ref: EntityId
+class IdentityLookupRequest(TypedDict):
+    kind: IdentityKind
+    identity: IdentityHints
+    mention_evidence: NotRequired[list[EntityResolutionCandidate]]
+class IdentityConfidenceEvidence(TypedDict):
+    claim_ref: str
+    effective_confidence: float
+    source: NotRequired[str | None]
+    evidence: NotRequired[Any | None]
+    made_by: NotRequired[MadeBy | None]
+class IdentityLookupCandidate(TypedDict):
+    entity_ref: str
+    matched_hints: list[str]
+    identity_evidence_refs: list[str]
+    identity_owner_ref: NotRequired[str | None]
+    identity_recorded_at: NotRequired[int | None]
+    made_by: NotRequired[MadeBy | None]
+    mention_evidence: list[IdentityConfidenceEvidence]
+class ScoredEntityResolutionCandidate(TypedDict):
+    candidate: EntityResolutionCandidate
+    effective_confidence: float
+EntityResolutionRoute = Literal["hard_link", "soft_link", "soft_link_low", "provisional_entity"]
+class EntityResolutionWaterfallDecision(TypedDict):
+    ranked: list[ScoredEntityResolutionCandidate]
+    claims_suppressed: int
+    selected: NotRequired[EntityId | None]
+    selected_effective_confidence: NotRequired[float | None]
+    route: EntityResolutionRoute
+    requires_async_verification: bool
+class IdentityLookup(TypedDict):
+    kind: IdentityKind
+    candidates: list[IdentityLookupCandidate]
+    waterfall: EntityResolutionWaterfallDecision
+class MentionProvenance(TypedDict):
+    turn: str
+    message: str
+    start: int
+    end: int
+IdentityMentionState = Literal["unresolved", "candidates", "resolved"]
+class MentionLinkViewTag(TypedDict):
+    link: Literal["tag"]
+class MentionLinkViewCandidates(TypedDict):
+    link: Literal["candidates"]
+    kind: int
+    entity_refs: list[str]
+class MentionLinkViewMinted(TypedDict):
+    link: Literal["minted"]
+    kind: int
+    entity_ref: str
+MentionLinkView = MentionLinkViewTag | MentionLinkViewCandidates | MentionLinkViewMinted
+TaggingSpeakerTarget = Literal["speaker", "addressee"]
+class MentionReferenceViewContext(TypedDict):
+    kind: Literal["context"]
+class MentionReferenceViewSpeaker(TypedDict):
+    kind: Literal["speaker"]
+    target: TaggingSpeakerTarget
+    resolved: bool
+MentionReferenceView = MentionReferenceViewContext | MentionReferenceViewSpeaker
+class TaggedMentionView(TypedDict):
+    index: int
+    message_ref: str
+    start: int
+    end: int
+    label: str
+    confidence: float
+    link: MentionLinkView
+    antecedent: NotRequired[int | None]
+    reference: NotRequired[MentionReferenceView | None]
+    link_confidence: NotRequired[float | None]
+class DerivationEnvelopeView(TypedDict):
+    content_hash: str
+    model_id: str
+    stack: NotRequired[str | None]
+    version: str
+    params_hash: str
+class IdentityResolutionView(TypedDict):
+    ask: str
+    target_ref: str
+    source: str
+    owner_ref: NotRequired[str | None]
+    owner_evidence_refs: list[str]
+    resolved_at: int
+    original: TaggedMentionView
+    original_provenance: DerivationEnvelopeView
+class IdentityMentionView(TypedDict):
+    mention: MentionProvenance
+    name: str
+    state: IdentityMentionState
+    candidate_refs: list[str]
+    target_ref: NotRequired[str | None]
+    current: TaggedMentionView
+    provenance: DerivationEnvelopeView
+    resolution: NotRequired[IdentityResolutionView | None]
 ShapePreset = Literal["personal", "family", "team", "org", "community"]
 ShapeMemberRole = Literal["owner", "admin", "member", "viewer"]
 ShapeCeiling = Literal["auto", "proposed"]
@@ -902,11 +1022,6 @@ class ShapePlan(TypedDict):
 class ShapeApplyRequest(TypedDict):
     plan: ShapePlan
     approve: NotRequired[list[int]]
-class MentionProvenance(TypedDict):
-    turn: str
-    message: str
-    start: int
-    end: int
 class MessagePersonRequest(TypedDict):
     pr: str
     text: str
@@ -2439,42 +2554,6 @@ class TaggingStatusView(TypedDict):
     has_tags: bool
     saved_at: NotRequired[int | None]
     last_trace: NotRequired[TaggingTraceView | None]
-class DerivationEnvelopeView(TypedDict):
-    content_hash: str
-    model_id: str
-    stack: NotRequired[str | None]
-    version: str
-    params_hash: str
-class MentionLinkViewTag(TypedDict):
-    link: Literal["tag"]
-class MentionLinkViewCandidates(TypedDict):
-    link: Literal["candidates"]
-    kind: int
-    entity_refs: list[str]
-class MentionLinkViewMinted(TypedDict):
-    link: Literal["minted"]
-    kind: int
-    entity_ref: str
-MentionLinkView = MentionLinkViewTag | MentionLinkViewCandidates | MentionLinkViewMinted
-TaggingSpeakerTarget = Literal["speaker", "addressee"]
-class MentionReferenceViewContext(TypedDict):
-    kind: Literal["context"]
-class MentionReferenceViewSpeaker(TypedDict):
-    kind: Literal["speaker"]
-    target: TaggingSpeakerTarget
-    resolved: bool
-MentionReferenceView = MentionReferenceViewContext | MentionReferenceViewSpeaker
-class TaggedMentionView(TypedDict):
-    index: int
-    message_ref: str
-    start: int
-    end: int
-    label: str
-    confidence: float
-    link: MentionLinkView
-    antecedent: NotRequired[int | None]
-    reference: NotRequired[MentionReferenceView | None]
-    link_confidence: NotRequired[float | None]
 class MergeEvidenceView(TypedDict):
     span: int
     antecedent: int
@@ -5279,6 +5358,38 @@ class MeshPathReceipt(TypedDict):
     relay_url: NotRequired[str | None]
     detail: NotRequired[str | None]
     attempts: int
+class MeshBindingIdentity(TypedDict):
+    machine: EntityId
+    device_key: list[int]
+    endpoint_key: list[int]
+    device_proof: list[int]
+    transport_proof: list[int]
+class MeshMachineAddress(TypedDict):
+    endpoint_key: list[int]
+    direct_addrs: list[str]
+    relay_url: NotRequired[str | None]
+class MeshMachineBinding(TypedDict):
+    machine: EntityId
+    address: MeshMachineAddress
+    device_key: list[int]
+    pairing_slip_id: list[int]
+    device_proof: list[int]
+    transport_proof: list[int]
+class MeshMachineBound(TypedDict):
+    machine: EntityId
+    endpoint_key: list[int]
+class MeshAlpnGrant(TypedDict):
+    machine: EntityId
+    endpoint_key: list[int]
+    alpn: list[int]
+    allow: bool
+class MeshMachineRevokeRequest(TypedDict):
+    machine: EntityId
+class MeshMachineRevoked(TypedDict):
+    machine: EntityId
+class MeshDialRequest(TypedDict):
+    address: MeshMachineAddress
+    alpn: list[int]
 class InspectionResolveRequest(TypedDict):
     handle: str
 LensBackingTargetKind = Literal["entity", "claim"]
@@ -6212,11 +6323,6 @@ class CreateNoteRequest(TypedDict):
 class OffRecordNoteRequest(TypedDict):
     session_ref: str
     note: CreateNoteRequest
-class EntityRefReceipt(TypedDict):
-    entity_ref: str
-    id_hex: str
-    receipt_ref: str
-    record: NotRequired[RecordRef | None]
 class OffRecordClaimRequest(TypedDict):
     session_ref: str
     claim: ScopedClaimInput
@@ -7490,23 +7596,9 @@ class CleanupRunView(TypedDict):
     proposal: NotRequired[EntityId | None]
     archived: list[EntityId]
     digest: NotRequired[EntityId | None]
-class EntityResolutionCandidate(TypedDict):
-    subject: EntityId
-    confidence_claim_ref: EntityId
 class EntityMentionRequest(TypedDict):
     candidates: list[EntityResolutionCandidate]
     high_collision_mention: NotRequired[bool]
-class ScoredEntityResolutionCandidate(TypedDict):
-    candidate: EntityResolutionCandidate
-    effective_confidence: float
-EntityResolutionRoute = Literal["hard_link", "soft_link", "soft_link_low", "provisional_entity"]
-class EntityResolutionWaterfallDecision(TypedDict):
-    ranked: list[ScoredEntityResolutionCandidate]
-    claims_suppressed: int
-    selected: NotRequired[EntityId | None]
-    selected_effective_confidence: NotRequired[float | None]
-    route: EntityResolutionRoute
-    requires_async_verification: bool
 class LegalHoldTargetRecord(TypedDict):
     record: EntityId
 class LegalHoldTargetGatePartition(TypedDict):
@@ -10718,11 +10810,27 @@ class SlideReviewUnitInput(TypedDict):
     review_image: NotRequired[str | None]
     review_image_ref: NotRequired[str | None]
     renderer: str
+DecisionClass = Literal["retrieval", "contradiction", "triage", "judgment", "useful_upstream", "preference", "provenance"]
+class AnswerContractNoul(TypedDict):
+    kind: Literal["noul"]
+class AnswerContractChoice(TypedDict):
+    kind: Literal["choice"]
+    options: list[str]
+class AnswerContractScore(TypedDict):
+    kind: Literal["score"]
+    min: float
+    max: float
+class AnswerContractBox(TypedDict):
+    kind: Literal["box"]
+class AnswerContractPoint(TypedDict):
+    kind: Literal["point"]
+AnswerContract = AnswerContractNoul | AnswerContractChoice | AnswerContractScore | AnswerContractBox | AnswerContractPoint
+DecisionQuestion = TypedDict("DecisionQuestion", {"id": str, "version": int, "text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
 class SlideReviewSubmit(TypedDict):
     artifact_ref: str
     run_ref: str
     units: list[SlideReviewUnitInput]
-    question: Any
+    question: DecisionQuestion
     author: Any
     labels: Any
     reversibility: NotRequired[Any | None]
@@ -10763,7 +10871,7 @@ ArtifactAskUnits = ArtifactAskUnitsSheetRows | ArtifactAskUnitsParagraphs | Arti
 class ArtifactAskSubmit(TypedDict):
     artifact_ref: str
     run_ref: str
-    question: Any
+    question: DecisionQuestion
     units: ArtifactAskUnits
     reversibility: NotRequired[Any | None]
     evidence_refs: NotRequired[list[str]]
@@ -10780,6 +10888,9 @@ class ArtifactAskOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     abstained: list[UnitAbstention]
     refused: list[UnitRefusal]
+class ArtifactAdmitSubmit(TypedDict):
+    ask: ArtifactAskSubmit
+    decisions: list[TypedDecision]
 class CriticBinding(TypedDict):
     lens_id: str
     lens_ref: str
@@ -13174,20 +13285,6 @@ class AiVideoJobFailed(TypedDict):
 AiVideoJob = AiVideoJobQueued | AiVideoJobRunning | AiVideoJobDone | AiVideoJobFailed
 class AiVideoCancelled(TypedDict):
     job: str
-class AnswerContractNoul(TypedDict):
-    kind: Literal["noul"]
-class AnswerContractChoice(TypedDict):
-    kind: Literal["choice"]
-    options: list[str]
-class AnswerContractScore(TypedDict):
-    kind: Literal["score"]
-    min: float
-    max: float
-class AnswerContractBox(TypedDict):
-    kind: Literal["box"]
-class AnswerContractPoint(TypedDict):
-    kind: Literal["point"]
-AnswerContract = AnswerContractNoul | AnswerContractChoice | AnswerContractScore | AnswerContractBox | AnswerContractPoint
 AiVerdictReversibility = Literal["reversible_read", "outbound_effect"]
 class AiVerdictRequest(TypedDict):
     question: str
@@ -13227,8 +13324,6 @@ class AiVerdict(TypedDict):
     screenshot: NotRequired[bool]
     until_ms: NotRequired[int | None]
     evidence_cut_at_bytes: NotRequired[int | None]
-DecisionClass = Literal["retrieval", "contradiction", "triage", "judgment", "useful_upstream", "preference", "provenance"]
-DecisionQuestion = TypedDict("DecisionQuestion", {"id": str, "version": int, "text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
 class GraphAskSelection(TypedDict):
     entity_type: int
     limit: int
@@ -13268,6 +13363,10 @@ class GraphAskOutcomeFailed(TypedDict):
     answers: list[AnswerRecord]
     abstained: list[EntityId]
 GraphAskOutcome = GraphAskOutcomeDone | GraphAskOutcomeFailed
+class GraphAdmitRequest(TypedDict):
+    question: DecisionQuestion
+    unit: EntityId
+    decision: TypedDecision
 class DecisionDial(TypedDict):
     first: DecisionRung
     ceiling: DecisionRung
@@ -15559,6 +15658,67 @@ class ConsolidationPromotion(TypedDict):
     rejected: list[ConsolidationRejection]
     input_evidence: list[ConsolidationEvidenceSource]
     output_evidence: list[ConsolidationEvidenceSource]
+class ConsolidationRootBucket(TypedDict):
+    subject: str
+    predicate_root: str
+    world: NotRequired[str | None]
+    facet: NotRequired[str | None]
+    relationship: NotRequired[str | None]
+    project: str
+class ConsolidationReference(TypedDict):
+    source_id: str
+    claim_id: NotRequired[str | None]
+    byte_range: NotRequired[tuple[int, int] | None]
+class ConsolidationRootInput(TypedDict):
+    bucket: ConsolidationRootBucket
+    evidence: list[ConsolidationReference]
+class ConsolidationPinRequest(TypedDict):
+    buckets: list[ConsolidationRootInput]
+ClaimSource = Literal["user_stated", "observed", "inferred", "imported", "tool_output", "generated"]
+class ConsolidationAncestor(TypedDict):
+    source_ref: str
+    source_revision: list[int]
+    trust_class: ClaimSource
+class ConsolidationRootEvidence(TypedDict):
+    reference: ConsolidationReference
+    source_revision: list[int]
+    content_hash: list[int]
+    trust_class: ClaimSource
+    corroborates: bool
+    refusal: NotRequired[PromotionEvidenceReason | None]
+    ancestors: list[ConsolidationAncestor]
+    messages: list[ConsolidationMessageEvidence]
+class ConsolidationChildReceipt(TypedDict):
+    child_ref: str
+    judgement_hash: list[int]
+    evidence: list[ConsolidationReference]
+class ConsolidationBucketAccounting(TypedDict):
+    bucket: ConsolidationRootBucket
+    bucket_hash: list[int]
+    pinned: list[ConsolidationRootEvidence]
+    children: list[ConsolidationChildReceipt]
+    independent: list[ConsolidationRootEvidence]
+    duplicates_collapsed: int
+    excluded_references: int
+    source_meet: ClaimSource
+class ConsolidationRootAccounting(TypedDict):
+    root_ref: str
+    revision: int
+    buckets: list[ConsolidationBucketAccounting]
+class ConsolidationJudgement(TypedDict):
+    predicate: str
+    value: Any
+    confidence: float
+class ConsolidationChildFrontier(TypedDict):
+    child_ref: str
+    bucket_hash: list[int]
+    judgement: ConsolidationJudgement
+    evidence: list[ConsolidationReference]
+class ConsolidationFrontierRequest(TypedDict):
+    root_ref: str
+    children: list[ConsolidationChildFrontier]
+class ConsolidationAccountingRequest(TypedDict):
+    root_ref: str
 class ConsolidationEvidenceRequest(TypedDict):
     source_refs: list[str]
 class SieveEvidenceRequest(TypedDict):
@@ -16606,7 +16766,6 @@ class IdentityMergeRequest(TypedDict):
     survivor: EntityId
     evidence: IdentityEvidence
     survivorship_plan: IdentitySurvivorshipPlan
-ClaimSource = Literal["user_stated", "observed", "inferred", "imported", "tool_output", "generated"]
 class IdentityReassignmentItemClaim(TypedDict):
     kind: Literal["claim"]
     claim: EntityId
