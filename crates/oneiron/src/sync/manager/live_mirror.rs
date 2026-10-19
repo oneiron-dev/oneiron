@@ -18,8 +18,10 @@
 //! waited on that move lands then, through the window's remat-marker drain.
 //!
 //! It also flushes a room's side rows marked while no loaded window carried
-//! them (FIX 3095): the room or thread root is queued by its own id, and its
-//! window alone is opened for them.
+//! them (FIX 3095): the room or thread root is queued by its own id, or by a
+//! TURN whose facts it carries (FIX 3786), and its window alone is opened for
+//! them. So is a cold MESSAGE's window, for the quote pins a local write gave
+//! it (FIX 3462).
 
 use std::cell::Cell;
 use std::collections::BTreeSet;
@@ -47,6 +49,13 @@ const ROOM_FACT_COLD_FLUSH: bool = true;
 /// repair is durable (FIX 3095; a call, canon is silent). `false` unloads
 /// it, unless another holder still has it.
 const ROOM_FACT_KEEP_FLUSH_WINDOW: bool = false;
+
+/// Whether a MESSAGE a local write queued, holding quote pins, has its window
+/// opened for them where no loaded window carries it (FIX 3462; a call, canon
+/// is silent). Only the window of the message's learned month opens, and it
+/// unloads after as a room fact flush's does. `false` leaves the pins for
+/// that window's next open.
+const MESSAGE_PIN_COLD_FLUSH: bool = true;
 
 thread_local! {
     /// Set while this thread writes the rows a sync import brought.
@@ -157,9 +166,7 @@ impl WindowManager {
         // FIX 1794: a committed room turn's door wrote side rows that ride
         // its room's, parent's and thread root's windows as well as its own.
         let carriers = crate::sync::room_facts::committed_carriers(&self.vault, rows);
-        if ROOM_FACT_COLD_FLUSH {
-            self.flush_cold_room_facts(rows, &carriers);
-        }
+        self.flush_cold_windows(rows, edited, &carriers);
         for key in self.loaded_keys() {
             let Some(window) = self.window(&key) else {
                 continue;
@@ -202,23 +209,41 @@ impl WindowManager {
         }
     }
 
-    /// Opens the window of each of `carriers` queued by its own id among
-    /// `rows` whose marked side rows no loaded window takes (FIX 3095). The
-    /// open mirrors them and routes the repair
-    /// ([`Self::open_window_for_room_fact_flush`]); a window it opened is
-    /// unloaded after ([`ROOM_FACT_KEEP_FLUSH_WINDOW`]).
-    fn flush_cold_room_facts(
+    /// Opens each window no loaded one is that holds side rows `rows`, just
+    /// committed, left out of every loaded window: the window of each of
+    /// `carriers` with marked side rows (FIX 3095), each carrier of a TURN
+    /// among `edited` marked first (FIX 3786), and the window of each MESSAGE
+    /// among `edited` with quote pins (FIX 3462). The open mirrors them and
+    /// routes the repair ([`Self::open_window_for_room_fact_flush`]); a window
+    /// it opened is unloaded after ([`ROOM_FACT_KEEP_FLUSH_WINDOW`]).
+    fn flush_cold_windows(
         self: &Arc<Self>,
         rows: &BTreeSet<EntityId>,
+        edited: &BTreeSet<EntityId>,
         carriers: &[(EntityId, u8)],
     ) {
         let loaded = self.loaded_keys();
-        for key in crate::sync::room_facts::cold_flush_windows(&self.vault, rows, carriers, &loaded)
-        {
+        let mut keys = Vec::new();
+        if ROOM_FACT_COLD_FLUSH {
+            crate::sync::room_facts::mark_cold_turn_carriers(&self.vault, edited, &loaded);
+            keys =
+                crate::sync::room_facts::cold_flush_windows(&self.vault, rows, carriers, &loaded);
+        }
+        if MESSAGE_PIN_COLD_FLUSH {
+            for key in crate::sync::document_pins::cold_pin_windows(&self.vault, edited, &loaded) {
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        }
+        for key in keys {
             let opened = match self.open_window_for_room_fact_flush(&key) {
-                Ok((_, opened)) => opened,
+                Ok((window, opened)) => {
+                    crate::sync::room_facts::clear_turn_marks(&self.vault, &window.doc);
+                    opened
+                }
                 Err(error) => {
-                    tracing::warn!(window = %key, %error, "room side rows not flushed into their window");
+                    tracing::warn!(window = %key, %error, "side rows not flushed into their window");
                     continue;
                 }
             };
@@ -226,7 +251,7 @@ impl WindowManager {
                 && !ROOM_FACT_KEEP_FLUSH_WINDOW
                 && let Err(error) = self.unload_window(&key)
             {
-                tracing::debug!(window = %key, %error, "window opened for a room fact flush stays loaded");
+                tracing::debug!(window = %key, %error, "window opened for a flush stays loaded");
             }
         }
     }

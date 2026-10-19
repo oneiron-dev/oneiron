@@ -47,7 +47,11 @@ mod checkpoint_choice;
 mod checkpoint_image;
 mod checkpoint_policy;
 mod checkpoint_policy_choice;
+mod checkpoint_root_attest;
+mod checkpoint_root_intake;
+mod checkpoint_root_status;
 mod claim_write;
+mod conversation_training;
 mod critical_confirm_door;
 mod engine_machine;
 mod entry_transition;
@@ -185,6 +189,19 @@ pub use checkpoint_choice::CheckpointPolicyHead;
 pub use checkpoint_image::*;
 pub use checkpoint_policy::*;
 pub use checkpoint_policy_choice::CheckpointPolicyView;
+pub use checkpoint_root_attest::{
+    AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, CheckpointRootSigner, ROOT_CHECKPOINT_AUTHORITY,
+    ROOT_CHECKPOINT_PICKUP, RootCheckpointAttest, RootCheckpointAuthority, RootCheckpointPickup,
+};
+pub use checkpoint_root_intake::{
+    CheckpointAttestationIntake, ROOT_CHECKPOINT_RETRY, RootCheckpointRetry,
+};
+pub use checkpoint_root_status::{
+    AuthorityCheckpointRootState, AuthorityCheckpointRoots, CheckpointRootDelivery,
+    ROOT_CHECKPOINT_MISSING_SIGNER, ROOT_CHECKPOINT_POLICY_CHANGE, RootCheckpointMissingSigner,
+    RootCheckpointPolicyChange,
+};
+pub use conversation_training::ConversationTrainingView;
 pub use fold_engine::*;
 pub use fold_state::*;
 pub use forwarded_caller::{

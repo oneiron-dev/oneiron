@@ -569,6 +569,10 @@ fn admit(
         CarriedClaim::Held => return Ok(EntityStep::Skip),
         CarriedClaim::Redacted => return Ok(EntityStep::Materialized(id)),
     };
+    // FIX 3554: a Switch's moved MESSAGE pointer lands with its document's head.
+    if crate::entity_doc::moved_pointer_row_in_txn(vault, wtxn, &id, blob)? {
+        return Ok(EntityStep::Skip);
+    }
     // Replicated put: the CRDT mirror is unfiltered, so the maintenance band (REDACTION_AUDIT)
     // and reserved-predicate `edge.provenance` truth-Claims reach here on the way back into
     // LMDB. The public gate would drop them; `put_replicated` admits both engine-authored bands

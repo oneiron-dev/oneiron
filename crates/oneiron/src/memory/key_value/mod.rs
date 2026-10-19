@@ -61,6 +61,12 @@ fn check_address(address: &KeyValueAddress) -> MemoryResult<()> {
     }
     Ok(())
 }
+/// Whether `address` passes [`check_address`], with nothing read: a verb
+/// hook's rewrite of a KV delete that fails it keeps the caller's address
+/// (FIX 5076).
+pub(crate) fn address_parses(address: &KeyValueAddress) -> bool {
+    check_address(address).is_ok()
+}
 fn check_page(limit: usize, offset: usize) -> MemoryResult<()> {
     super::caps::check_limit(limit)?;
     if offset > MAX_OFFSET {

@@ -967,6 +967,12 @@ impl SyncServer {
         self
     }
 
+    /// The vault's credential-broker context serve set, which the model
+    /// attach's `key_secret` providers send through too.
+    pub(crate) fn broker_context(&self) -> Option<&crate::models::BrokerContext> {
+        self.decisions.broker.as_ref()
+    }
+
     /// The host's decision ladder, built once at serve start. Every typed
     /// decision a route or runtime job asks goes through it
     /// (`decision_ladder().ladder()` for one call).

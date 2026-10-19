@@ -532,8 +532,7 @@ async fn refuse_frozen_writes(
         // The widen answer routes need the SUPERVISOR'S holder action, not
         // the host root. Verify the account-authenticated assertion against
         // the per-spawn secret and the exact request body before removing
-        // every forwarded credential. Unverified headers never become
-        // extensions.
+        // it. Unverified headers never become extensions.
         if request.method() == Method::POST
             && matches!(
                 request.uri().path(),
@@ -607,15 +606,12 @@ async fn refuse_frozen_writes(
         request
             .headers_mut()
             .remove(oneiron_vault_contract::MANAGED_OWNER_ACTION_HEADER);
-        // Bearer authentication terminated at the supervisor. Do not let a
-        // forwarded legacy/dev claim select a principal on secondary routes.
-        for header in [
-            "authorization",
-            "x-oneiron-binding",
-            "x-oneiron-mcp-credential",
-        ] {
-            request.headers_mut().remove(header);
-        }
+        // A caller's own slip, its holder proof and its machine claim go on
+        // unchanged: the child verifies them, spends the proof once, and the
+        // caller stays itself (WILL-PLAN L14 row 01). Any other bearer
+        // terminated at the supervisor; a legacy or dev claim never selects a
+        // principal, so a request without a slip is served as it was.
+        crate::auth::forward_caller_credentials(request.headers_mut());
     }
     if is_read_only(&request) {
         return run_admitted_request(state, request, next).await;
@@ -894,10 +890,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         embedding.apply_to(&vault)?;
     }
     // The one credential-broker context, built from the opened vault: the
-    // System One seat, the embedder and the GPU pods read their
-    // `key_secret` keys at its custody door, call by call. Its broker is the
-    // same-user child beside this binary; a missing broker or secret leaves
-    // those calls refused before they start, as on any host.
+    // `[models]` providers, the System One seat, the embedder and the GPU
+    // pods read their `key_secret` keys at its custody door, call by call.
+    // Its broker is the same-user child beside this binary; a missing broker
+    // or secret leaves those calls refused before they start, as on any host.
     let broker = crate::models::BrokerContext::for_serve(&vault, &config);
     // The embedder slot and the pods' health poller, as plain serve builds
     // them; the worker that fills the slot starts under the write admission.
@@ -938,10 +934,15 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         sync_server = sync_server.with_artifact_socket();
     }
     // Model seats, the Dreamer and the decision ladder from `[models]`, as
-    // plain serve attaches them. A startup error below drops `ai`, which
-    // tells its workers to stop.
-    let (sync_server, ai) =
-        crate::ai_host::AiHost::attach(sync_server, config.models.as_ref()).await;
+    // plain serve attaches them: a vault the owner's `[device_sync]` makes a
+    // device of another home never claims the MACRO home. A startup error
+    // below drops `ai`, which tells its workers to stop.
+    let (sync_server, ai) = crate::ai_host::AiHost::attach_device(
+        sync_server,
+        config.models.as_ref(),
+        config.device_sync.is_some(),
+    )
+    .await;
     // The Dreamer's passes are admitted like a served write, and refused
     // until the managed state below exists.
     let reap_gate = Arc::new(std::sync::OnceLock::<Arc<ManagedState>>::new());
@@ -1136,9 +1137,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ));
     // The server's own voice loop (FIX 2391), off unless `[models.voice]`
     // names its socket. A call opens on a hello the supervisor attests for
-    // the vault's owner, and is admitted like a served write for its whole
-    // length: a call in flight keeps a reap from finding the vault
-    // quiescent, and a frozen vault takes no call.
+    // the vault's owner, or on the owner's own slip from a machine that
+    // stands as his enrolled device (FIX 1949 = B), and is admitted like a
+    // served write for its whole length: a call in flight keeps a reap from
+    // finding the vault quiescent, and a frozen vault takes no call.
     #[cfg(unix)]
     let voice = crate::voice_host::VoiceBoot::start(
         &sync_server,
@@ -1179,6 +1181,18 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         config.limits.connections(),
     )
     .await?;
+    // A vault that is a device of another home dials it, on that mesh when
+    // the home has a paired address there, as plain serve does (WILL-PLAN
+    // L14 row 14): the owner's `[device_sync]` or `oneiron device enrol`
+    // names the home. The connection holds one admission for its whole run,
+    // so a frozen vault starts none and a reap waits for it.
+    let device_sync = crate::device_sync::DeviceSyncHost::start_admitted(
+        &sync_server,
+        &config,
+        mesh.as_ref(),
+        &admitted(),
+    )
+    .await;
     let artifact_task = artifacts.map(|listener| {
         let app = build_managed_artifact_app(Arc::clone(&sync_server), Arc::clone(&state));
         let stop = shutdown.triggered();
@@ -1188,6 +1202,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // listener closes the moment SIGTERM lands, and this resolves once the
     // requests already in the runtime have finished.
     let result = http.serve_until(app, shutdown.triggered()).await;
+    // Its channel detaches before the mesh it rides closes.
+    if let Some(device_sync) = device_sync {
+        device_sync.stop().await;
+    }
     if let Some(mesh) = mesh {
         mesh.stop().await;
     }
