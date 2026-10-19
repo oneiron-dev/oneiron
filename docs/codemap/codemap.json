@@ -74580,7 +74580,7 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -80202,6 +80202,7 @@
      "purpose": "The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 20,
       "struct": 6
      }
@@ -80233,6 +80234,16 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedded/runtime.rs",
+     "purpose": "The runtime an embedded engine serves on, under the app's advisory CPU share (FIX 2661, OF-237)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -80701,6 +80712,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/protocol_close.rs",
+     "purpose": "A socket the server closes on a protocol rejection (FIX 3303, OF-538): a hello it refused, a frame it would…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -80733,7 +80754,7 @@
      "path": "src/handler/transport.rs",
      "purpose": "Guarded socket chokepoint with revocation consults on queue and flush",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -84319,7 +84340,7 @@
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…"
     },
     "embedded": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -84354,7 +84375,7 @@
      "purpose": "The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every…"
     },
     "handler": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84587,7 +84608,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 812,
+   "source_files": 814,
    "test_files": 182
   },
   "oneiron-spawn": {
