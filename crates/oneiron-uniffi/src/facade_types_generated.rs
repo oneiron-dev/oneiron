@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1061 facade rows, 3563 generated types.
+// UniFFI census: 1061 facade rows, 3584 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1013.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -48009,6 +48009,107 @@ pub struct SmartArtNode {
     pub text: String,
     #[serde(rename = "level")]
     pub level: u32,
+    #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+}
+
+/// `oneiron_docedit::live::points::PathFill`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum PathFill {
+    #[serde(rename = "none")]
+    Unfilled,
+    #[serde(rename = "norm")]
+    Norm,
+    #[serde(rename = "lighten")]
+    Lighten,
+    #[serde(rename = "lighten_less")]
+    LightenLess,
+    #[serde(rename = "darken")]
+    Darken,
+    #[serde(rename = "darken_less")]
+    DarkenLess,
+}
+
+/// `oneiron_docedit::live::points::Coord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum Coord {
+    Value(i64),
+    Guide(String),
+}
+
+/// `oneiron_docedit::live::points::PathPoint`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PathPoint {
+    #[serde(rename = "x")]
+    pub x: Coord,
+    #[serde(rename = "y")]
+    pub y: Coord,
+}
+
+/// `oneiron_docedit::live::points::PathCommand`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum PathCommand {
+    #[serde(rename = "move_to")]
+    MoveTo {
+        #[serde(rename = "to")]
+        to: PathPoint,
+    },
+    #[serde(rename = "line_to")]
+    LineTo {
+        #[serde(rename = "to")]
+        to: PathPoint,
+    },
+    #[serde(rename = "arc_to")]
+    ArcTo {
+        #[serde(rename = "w_r")]
+        w_r: Coord,
+        #[serde(rename = "h_r")]
+        h_r: Coord,
+        #[serde(rename = "st_ang")]
+        st_ang: Coord,
+        #[serde(rename = "sw_ang")]
+        sw_ang: Coord,
+    },
+    #[serde(rename = "quad_bez_to")]
+    QuadBezTo {
+        #[serde(rename = "control")]
+        control: PathPoint,
+        #[serde(rename = "to")]
+        to: PathPoint,
+    },
+    #[serde(rename = "cubic_bez_to")]
+    CubicBezTo {
+        #[serde(rename = "control1")]
+        control1: PathPoint,
+        #[serde(rename = "control2")]
+        control2: PathPoint,
+        #[serde(rename = "to")]
+        to: PathPoint,
+    },
+    #[serde(rename = "close")]
+    Close,
+}
+
+/// `oneiron_docedit::live::points::GeomPath`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GeomPath {
+    #[serde(rename = "w", default, skip_serializing_if = "Option::is_none")]
+    pub w: Option<i64>,
+    #[serde(rename = "h", default, skip_serializing_if = "Option::is_none")]
+    pub h: Option<i64>,
+    #[serde(rename = "fill", default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<PathFill>,
+    #[serde(rename = "stroke", default, skip_serializing_if = "Option::is_none")]
+    pub stroke: Option<bool>,
+    #[serde(
+        rename = "extrusion_ok",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub extrusion_ok: Option<bool>,
+    #[serde(rename = "commands")]
+    pub commands: Vec<PathCommand>,
 }
 
 /// `oneiron_docedit::live::pptx::NodePayload`.
@@ -48066,7 +48167,7 @@ pub enum NodePayload {
     #[serde(rename = "custom_geometry")]
     CustomGeometry {
         #[serde(rename = "paths")]
-        paths: u32,
+        paths: Vec<GeomPath>,
     },
 }
 
@@ -54192,6 +54293,45 @@ pub struct LiveRunRequestOpenInput {
     pub spec: OpenInput,
 }
 
+/// `oneiron_browser::answer::TakeoverRecord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TakeoverRecord {
+    #[serde(rename = "by")]
+    pub by: String,
+    #[serde(rename = "asked", default, skip_serializing_if = "Option::is_none")]
+    pub asked: Option<String>,
+    #[serde(rename = "taken_at_ms")]
+    pub taken_at_ms: u64,
+    #[serde(rename = "returned_at_ms")]
+    pub returned_at_ms: u64,
+    #[serde(rename = "inputs")]
+    pub inputs: u64,
+}
+
+/// `oneiron_browser::TabSwitchCause`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TabSwitchCause {
+    #[serde(rename = "opened")]
+    Opened,
+    #[serde(rename = "closed")]
+    Closed,
+}
+
+/// `oneiron_browser::TabSwitch`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TabSwitch {
+    #[serde(rename = "tab")]
+    pub tab: String,
+    #[serde(rename = "url")]
+    pub url: String,
+    #[serde(rename = "title")]
+    pub title: String,
+    #[serde(rename = "from")]
+    pub from: String,
+    #[serde(rename = "why")]
+    pub why: TabSwitchCause,
+}
+
 /// `oneiron_browser::observation::RowSplice`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RowSplice {
@@ -54305,6 +54445,12 @@ pub struct EffectReceipt {
     )]
     pub screenshot: Option<String>,
     #[serde(
+        rename = "capture_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub capture_id: Option<String>,
+    #[serde(
         rename = "screenshot_evidence",
         default,
         skip_serializing_if = "Option::is_none"
@@ -54386,6 +54532,17 @@ pub struct ObservationPage {
     pub observation2: Observation2,
 }
 
+/// `oneiron_browser::answer::BrowserAnswer` with `T` = `ObservationPage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BrowserAnswerObservationPage {
+    #[serde(rename = "takeover", default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverRecord>,
+    #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
+    pub switched: Option<TabSwitch>,
+    #[serde(flatten)]
+    pub flattened: ObservationPage,
+}
+
 /// `oneiron_browser::observation::ObservationBase`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -54449,6 +54606,19 @@ pub struct FindOutput {
     pub next: Option<String>,
     #[serde(rename = "partial", default, skip_serializing_if = "Option::is_none")]
     pub partial: Option<PartialTree>,
+    #[serde(rename = "walk_next", default, skip_serializing_if = "Option::is_none")]
+    pub walk_next: Option<String>,
+}
+
+/// `oneiron_browser::answer::BrowserAnswer` with `T` = `FindOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BrowserAnswerFindOutput {
+    #[serde(rename = "takeover", default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverRecord>,
+    #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
+    pub switched: Option<TabSwitch>,
+    #[serde(flatten)]
+    pub flattened: FindOutput,
 }
 
 /// `oneiron_browser::ClickInput`.
@@ -54584,12 +54754,25 @@ pub struct WaitForOutput {
     pub next: Option<String>,
     #[serde(rename = "partial", default, skip_serializing_if = "Option::is_none")]
     pub partial: Option<PartialTree>,
+    #[serde(rename = "walk_next", default, skip_serializing_if = "Option::is_none")]
+    pub walk_next: Option<String>,
     #[serde(
         rename = "rebindings",
         default,
         skip_serializing_if = "Option::is_none"
     )]
     pub rebindings: Option<Vec<Rebound>>,
+}
+
+/// `oneiron_browser::answer::BrowserAnswer` with `T` = `WaitForOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BrowserAnswerWaitForOutput {
+    #[serde(rename = "takeover", default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverRecord>,
+    #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
+    pub switched: Option<TabSwitch>,
+    #[serde(flatten)]
+    pub flattened: WaitForOutput,
 }
 
 /// `oneiron_browser::ExpectInput`.
@@ -54635,6 +54818,17 @@ pub struct ExpectOutput {
     pub rebindings: Option<Vec<Rebound>>,
 }
 
+/// `oneiron_browser::answer::BrowserAnswer` with `T` = `ExpectOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BrowserAnswerExpectOutput {
+    #[serde(rename = "takeover", default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverRecord>,
+    #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
+    pub switched: Option<TabSwitch>,
+    #[serde(flatten)]
+    pub flattened: ExpectOutput,
+}
+
 /// `oneiron_browser::ScreenshotTrigger`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ScreenshotTrigger {
@@ -54656,6 +54850,12 @@ pub enum ScreenshotTrigger {
 pub struct ScreenshotInput {
     #[serde(rename = "trigger")]
     pub trigger: ScreenshotTrigger,
+    #[serde(
+        rename = "since_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub since_capture: Option<String>,
 }
 
 /// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `ScreenshotInput`.
@@ -54687,6 +54887,25 @@ pub struct ScreenshotOutput {
     pub url: String,
     #[serde(rename = "title")]
     pub title: String,
+    #[serde(rename = "capture_id")]
+    pub capture_id: String,
+    #[serde(
+        rename = "unchanged_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub unchanged_from: Option<String>,
+}
+
+/// `oneiron_browser::answer::BrowserAnswer` with `T` = `ScreenshotOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BrowserAnswerScreenshotOutput {
+    #[serde(rename = "takeover", default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverRecord>,
+    #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
+    pub switched: Option<TabSwitch>,
+    #[serde(flatten)]
+    pub flattened: ScreenshotOutput,
 }
 
 /// `oneiron_browser::ViewInput`.
@@ -54722,6 +54941,17 @@ pub struct ImageOutput {
     pub bytes: u64,
     #[serde(rename = "source")]
     pub source: String,
+}
+
+/// `oneiron_browser::answer::BrowserAnswer` with `T` = `ImageOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BrowserAnswerImageOutput {
+    #[serde(rename = "takeover", default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverRecord>,
+    #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
+    pub switched: Option<TabSwitch>,
+    #[serde(flatten)]
+    pub flattened: ImageOutput,
 }
 
 /// `oneiron_browser::CropInput`.
@@ -54986,6 +55216,17 @@ pub struct BatchOutput {
     pub rebindings: Option<Vec<StepRebound>>,
 }
 
+/// `oneiron_browser::answer::BrowserAnswer` with `T` = `BatchOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BrowserAnswerBatchOutput {
+    #[serde(rename = "takeover", default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverRecord>,
+    #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
+    pub switched: Option<TabSwitch>,
+    #[serde(flatten)]
+    pub flattened: BatchOutput,
+}
+
 /// `oneiron_browser::library::LibraryFindInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -55013,6 +55254,17 @@ pub struct LibraryFindOutput {
     pub site: String,
     #[serde(rename = "workflows")]
     pub workflows: Vec<LibraryCard>,
+}
+
+/// `oneiron_browser::answer::BrowserAnswer` with `T` = `LibraryFindOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BrowserAnswerLibraryFindOutput {
+    #[serde(rename = "takeover", default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverRecord>,
+    #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
+    pub switched: Option<TabSwitch>,
+    #[serde(flatten)]
+    pub flattened: LibraryFindOutput,
 }
 
 /// `oneiron_browser::library::ProposeInput`.
@@ -55069,6 +55321,17 @@ pub struct ProposeOutput {
     pub replay: Option<BatchOutput>,
 }
 
+/// `oneiron_browser::answer::BrowserAnswer` with `T` = `ProposeOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BrowserAnswerProposeOutput {
+    #[serde(rename = "takeover", default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverRecord>,
+    #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
+    pub switched: Option<TabSwitch>,
+    #[serde(flatten)]
+    pub flattened: ProposeOutput,
+}
+
 /// `oneiron_browser::library::LibraryRetireInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -55094,6 +55357,17 @@ pub struct LiveRunRequestLibraryRetireInput {
 pub struct LibraryRetireOutput {
     #[serde(rename = "retired")]
     pub retired: LibraryCard,
+}
+
+/// `oneiron_browser::answer::BrowserAnswer` with `T` = `LibraryRetireOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BrowserAnswerLibraryRetireOutput {
+    #[serde(rename = "takeover", default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverRecord>,
+    #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
+    pub switched: Option<TabSwitch>,
+    #[serde(flatten)]
+    pub flattened: LibraryRetireOutput,
 }
 
 /// `oneiron_browser::library::LibraryRetiredInput`.
@@ -55134,6 +55408,17 @@ pub struct LibraryRetiredOutput {
     pub retired: Vec<RetiredCard>,
 }
 
+/// `oneiron_browser::answer::BrowserAnswer` with `T` = `LibraryRetiredOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BrowserAnswerLibraryRetiredOutput {
+    #[serde(rename = "takeover", default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverRecord>,
+    #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
+    pub switched: Option<TabSwitch>,
+    #[serde(flatten)]
+    pub flattened: LibraryRetiredOutput,
+}
+
 /// `oneiron_browser::library::LibraryRunInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -55169,6 +55454,17 @@ pub struct LibraryRunOutput {
     pub batch: BatchOutput,
 }
 
+/// `oneiron_browser::answer::BrowserAnswer` with `T` = `LibraryRunOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BrowserAnswerLibraryRunOutput {
+    #[serde(rename = "takeover", default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverRecord>,
+    #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
+    pub switched: Option<TabSwitch>,
+    #[serde(flatten)]
+    pub flattened: LibraryRunOutput,
+}
+
 /// `oneiron_browser::HandoverInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -55194,6 +55490,17 @@ pub struct HandoverOutput {
     pub reason: String,
     #[serde(rename = "asked_at_ms")]
     pub asked_at_ms: u64,
+}
+
+/// `oneiron_browser::answer::BrowserAnswer` with `T` = `HandoverOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BrowserAnswerHandoverOutput {
+    #[serde(rename = "takeover", default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverRecord>,
+    #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
+    pub switched: Option<TabSwitch>,
+    #[serde(flatten)]
+    pub flattened: HandoverOutput,
 }
 
 /// `oneiron::code_run::run_verbs::MemorySupersedeInput`.

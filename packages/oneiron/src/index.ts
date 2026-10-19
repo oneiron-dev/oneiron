@@ -2840,47 +2840,47 @@ export class Oneiron {
     history: (input: Facade.FoldHistoryRequest): Facade.FoldHistory => this.#call(() => this.#client.selfHistory(input) as Facade.FoldHistory),
     browser: {
       /** Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor. */
-      open: (input: Facade.LiveRunRequest<Facade.OpenInput>): Facade.ObservationPage => this.#call(() => this.#client.selfBrowserOpen(input) as Facade.ObservationPage),
+      open: (input: Facade.LiveRunRequest<Facade.OpenInput>): Facade.BrowserObservationPage => this.#call(() => this.#client.selfBrowserOpen(input) as Facade.BrowserObservationPage),
       /** Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with observe and next; acts follow new tabs and name the move as switched. */
-      observe: (input: Facade.LiveRunRequest<Facade.ObserveInput>): Facade.ObservationPage => this.#call(() => this.#client.selfBrowserObserve(input) as Facade.ObservationPage),
+      observe: (input: Facade.LiveRunRequest<Facade.ObserveInput>): Facade.BrowserObservationPage => this.#call(() => this.#client.selfBrowserObserve(input) as Facade.BrowserObservationPage),
       /** Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page. */
-      find: (input: Facade.LiveRunRequest<Facade.FindInput>): Facade.FindOutput => this.#call(() => this.#client.selfBrowserFind(input) as Facade.FindOutput),
+      find: (input: Facade.LiveRunRequest<Facade.FindInput>): Facade.BrowserFindOutput => this.#call(() => this.#client.selfBrowserFind(input) as Facade.BrowserFindOutput),
       /** Clicks one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next. */
-      click: (input: Facade.LiveRunRequest<Facade.ClickInput>): Facade.ObservationPage => this.#call(() => this.#client.selfBrowserClick(input) as Facade.ObservationPage),
+      click: (input: Facade.LiveRunRequest<Facade.ClickInput>): Facade.BrowserObservationPage => this.#call(() => this.#client.selfBrowserClick(input) as Facade.BrowserObservationPage),
       /** Clicks a point of a held screenshot, mapped onto the viewport, and observes the result as an ordered edit of the caller's base; a long page's observation comes in pages, read on with observe and its next cursor. */
-      click_at: (input: Facade.LiveRunRequest<Facade.PointInput>): Facade.ObservationPage => this.#call(() => this.#client.selfBrowserClickAt(input) as Facade.ObservationPage),
+      click_at: (input: Facade.LiveRunRequest<Facade.PointInput>): Facade.BrowserObservationPage => this.#call(() => this.#client.selfBrowserClickAt(input) as Facade.BrowserObservationPage),
       /** Types text into one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next. */
-      type: (input: Facade.LiveRunRequest<Facade.TypeInput>): Facade.ObservationPage => this.#call(() => this.#client.selfBrowserType(input) as Facade.ObservationPage),
+      type: (input: Facade.LiveRunRequest<Facade.TypeInput>): Facade.BrowserObservationPage => this.#call(() => this.#client.selfBrowserType(input) as Facade.BrowserObservationPage),
       /** Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor. */
-      select: (input: Facade.LiveRunRequest<Facade.SelectInput>): Facade.ObservationPage => this.#call(() => this.#client.selfBrowserSelect(input) as Facade.ObservationPage),
+      select: (input: Facade.LiveRunRequest<Facade.SelectInput>): Facade.BrowserObservationPage => this.#call(() => this.#client.selfBrowserSelect(input) as Facade.BrowserObservationPage),
       /** Waits until a page row its live refs or locators name, or else a row matching a role and name, is there; a ref whose node is gone matches its locator's row, listed in rebindings; many rows come in pages, read on with find and next. */
-      wait_for: (input: Facade.LiveRunRequest<Facade.WaitForInput>): Facade.WaitForOutput => this.#call(() => this.#client.selfBrowserWaitFor(input) as Facade.WaitForOutput),
+      wait_for: (input: Facade.LiveRunRequest<Facade.WaitForInput>): Facade.BrowserWaitForOutput => this.#call(() => this.#client.selfBrowserWaitFor(input) as Facade.BrowserWaitForOutput),
       /** Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings. */
-      expect: (input: Facade.LiveRunRequest<Facade.ExpectInput>): Facade.ExpectOutput => this.#call(() => this.#client.selfBrowserExpect(input) as Facade.ExpectOutput),
-      /** Takes a screenshot the session holds, by image ref and never captioned. */
-      screenshot: (input: Facade.LiveRunRequest<Facade.ScreenshotInput>): Facade.ScreenshotOutput => this.#call(() => this.#client.selfBrowserScreenshot(input) as Facade.ScreenshotOutput),
+      expect: (input: Facade.LiveRunRequest<Facade.ExpectInput>): Facade.BrowserExpectOutput => this.#call(() => this.#client.selfBrowserExpect(input) as Facade.BrowserExpectOutput),
+      /** Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope. */
+      screenshot: (input: Facade.LiveRunRequest<Facade.ScreenshotInput>): Facade.BrowserScreenshotOutput => this.#call(() => this.#client.selfBrowserScreenshot(input) as Facade.BrowserScreenshotOutput),
       /** Reads back a held image by its ref. */
-      view: (input: Facade.LiveRunRequest<Facade.ViewInput>): Facade.ImageOutput => this.#call(() => this.#client.selfBrowserView(input) as Facade.ImageOutput),
+      view: (input: Facade.LiveRunRequest<Facade.ViewInput>): Facade.BrowserImageOutput => this.#call(() => this.#client.selfBrowserView(input) as Facade.BrowserImageOutput),
       /** Crops a held image to a rectangle. */
-      crop: (input: Facade.LiveRunRequest<Facade.CropInput>): Facade.ImageOutput => this.#call(() => this.#client.selfBrowserCrop(input) as Facade.ImageOutput),
+      crop: (input: Facade.LiveRunRequest<Facade.CropInput>): Facade.BrowserImageOutput => this.#call(() => this.#client.selfBrowserCrop(input) as Facade.BrowserImageOutput),
       /** Zooms into a rectangle of a held image. */
-      zoom: (input: Facade.LiveRunRequest<Facade.ZoomInput>): Facade.ImageOutput => this.#call(() => this.#client.selfBrowserZoom(input) as Facade.ImageOutput),
+      zoom: (input: Facade.LiveRunRequest<Facade.ZoomInput>): Facade.BrowserImageOutput => this.#call(() => this.#client.selfBrowserZoom(input) as Facade.BrowserImageOutput),
       /** Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one. */
-      batch: (input: Facade.LiveRunRequest<Facade.BatchInput>): Facade.BatchOutput => this.#call(() => this.#client.selfBrowserBatch(input) as Facade.BatchOutput),
+      batch: (input: Facade.LiveRunRequest<Facade.BatchInput>): Facade.BrowserBatchOutput => this.#call(() => this.#client.selfBrowserBatch(input) as Facade.BrowserBatchOutput),
       library: {
         /** The replay library's programs for a site, or for the attached run's open page's site. */
-        find: (input: Facade.LiveRunRequest<Facade.LibraryFindInput>): Facade.LibraryFindOutput => this.#call(() => this.#client.selfBrowserLibraryFind(input) as Facade.LibraryFindOutput),
+        find: (input: Facade.LiveRunRequest<Facade.LibraryFindInput>): Facade.BrowserLibraryFindOutput => this.#call(() => this.#client.selfBrowserLibraryFind(input) as Facade.BrowserLibraryFindOutput),
         /** Offers a solved run's program to the replay library of the attached run's browser session, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition. */
-        propose: (input: Facade.LiveRunRequest<Facade.ProposeInput>): Facade.ProposeOutput => this.#call(() => this.#client.selfBrowserLibraryPropose(input) as Facade.ProposeOutput),
+        propose: (input: Facade.LiveRunRequest<Facade.ProposeInput>): Facade.BrowserLibraryProposeOutput => this.#call(() => this.#client.selfBrowserLibraryPropose(input) as Facade.BrowserLibraryProposeOutput),
         /** Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had. */
-        retire: (input: Facade.LiveRunRequest<Facade.LibraryRetireInput>): Facade.LibraryRetireOutput => this.#call(() => this.#client.selfBrowserLibraryRetire(input) as Facade.LibraryRetireOutput),
+        retire: (input: Facade.LiveRunRequest<Facade.LibraryRetireInput>): Facade.BrowserLibraryRetireOutput => this.#call(() => this.#client.selfBrowserLibraryRetire(input) as Facade.BrowserLibraryRetireOutput),
         /** The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why. */
-        retired: (input: Facade.LiveRunRequest<Facade.LibraryRetiredInput>): Facade.LibraryRetiredOutput => this.#call(() => this.#client.selfBrowserLibraryRetired(input) as Facade.LibraryRetiredOutput),
+        retired: (input: Facade.LiveRunRequest<Facade.LibraryRetiredInput>): Facade.BrowserLibraryRetiredOutput => this.#call(() => this.#client.selfBrowserLibraryRetired(input) as Facade.BrowserLibraryRetiredOutput),
         /** Runs a replay library program live with its arguments in the attached run's browser session, resolving locators step by step; its last observation edits the caller's base, and a missed postcondition goes back to the planner. */
-        run: (input: Facade.LiveRunRequest<Facade.LibraryRunInput>): Facade.LibraryRunOutput => this.#call(() => this.#client.selfBrowserLibraryRun(input) as Facade.LibraryRunOutput),
+        run: (input: Facade.LiveRunRequest<Facade.LibraryRunInput>): Facade.BrowserLibraryRunOutput => this.#call(() => this.#client.selfBrowserLibraryRun(input) as Facade.BrowserLibraryRunOutput),
       },
       /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
-      handover: (input: Facade.LiveRunRequest<Facade.HandoverInput>): Facade.HandoverOutput => this.#call(() => this.#client.selfBrowserHandover(input) as Facade.HandoverOutput),
+      handover: (input: Facade.LiveRunRequest<Facade.HandoverInput>): Facade.BrowserHandoverOutput => this.#call(() => this.#client.selfBrowserHandover(input) as Facade.BrowserHandoverOutput),
     },
     /** Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. */
     fold: (input: Facade.FoldMarkRequest): Facade.FoldReply<Facade.FoldMarked> => this.#call(() => this.#client.selfFold(input) as Facade.FoldReply<Facade.FoldMarked>),

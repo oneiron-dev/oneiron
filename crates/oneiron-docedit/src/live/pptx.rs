@@ -9,8 +9,10 @@
 //! its maker.
 
 use super::LiveError;
-use super::convert::{self, Conversion, HELD_MEDIA, SMART_ART_NODES};
-use super::held;
+use super::conversion::Conversion;
+use super::convert::{self, HELD_MEDIA};
+use super::points::GeomPath;
+use super::{diagram, held, points};
 use crate::deck::{DeckView, ShapeKind, ShapeView, TextView};
 use crate::edit::{AssetRef, BREAK, ConnectorPreset, Digest, Effect, IdMarks, Preset};
 use crate::ooxml::XmlTree;
@@ -102,20 +104,21 @@ pub struct DeckNode {
     #[serde(default)]
     pub preset: Option<Preset>,
     /// What a shape, picture, graphic frame or connector is written from.
-    /// Import reads a shape's custom geometry, a picture's media, a table's
-    /// cells, a chart's data, a SmartArt's text, an OLE object's program id
-    /// and preview, and a connector's geometry and glue; any other frame
-    /// stays in the retained markup (`None`).
+    /// Import reads a shape's custom geometry paths, a picture's media, a
+    /// table's cells, a chart's data, a SmartArt's nodes, an OLE object's
+    /// program id and preview, and a connector's geometry and glue; any
+    /// other frame stays in the retained markup (`None`).
     #[serde(default)]
     pub payload: Option<NodePayload>,
 }
 
-/// What a node is written from. A live-born node carries a picture, table,
-/// chart or connector; the held forms (an imported picture's media, a
+/// What a node is written from. A live-born node carries a picture (an
+/// engine asset or an image the deck holds), table, chart, SmartArt,
+/// freeform or connector; the held forms (an imported picture's media, a
 /// SmartArt, an OLE object, custom geometry) are read from the retained
-/// package. An imported picture may show any image the deck holds, and a
-/// SmartArt takes its nodes' text; an OLE object and custom paths are read
-/// only.
+/// package. A picture may show any image the deck holds, a SmartArt takes
+/// nodes added, removed, moved or re-worded, and a shape takes new points;
+/// an OLE object is read only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NodePayload {
@@ -154,9 +157,10 @@ pub enum NodePayload {
         #[serde(default)]
         end: Option<ConnectorEnd>,
     },
-    /// A SmartArt graphic's text, read from its data part: each node in
-    /// outline order. Its nodes' text is written as PowerPoint's text pane
-    /// writes it; its layout and shapes are carried (ARCH-0077).
+    /// A SmartArt graphic's nodes, read from its data part, in outline
+    /// order. Nodes are written as PowerPoint's text pane writes them: text
+    /// in place, or nodes added, removed and moved with the diagram laid
+    /// out again by PowerPoint; a live-born one is the engine's outline list.
     SmartArt { nodes: Vec<SmartArtNode> },
     /// An embedded or linked OLE object: its program id and the preview
     /// picture its fallback shows.
@@ -164,10 +168,12 @@ pub enum NodePayload {
         prog_id: Option<String>,
         preview: Option<HeldMedia>,
     },
-    /// A shape drawn from custom geometry (`a:custGeom`) with this many
-    /// paths. A preset replaces it, as PowerPoint's Change Shape does on a
-    /// freeform, and the export names the replacement.
-    CustomGeometry { paths: u32 },
+    /// A shape drawn from custom geometry (`a:custGeom`): its paths, as
+    /// Edit Points draws them. New paths redraw the outline, and a preset
+    /// shape given paths becomes a freeform; a preset replaces the paths, as
+    /// PowerPoint's Change Shape does on a freeform, and the export names
+    /// the replacement.
+    CustomGeometry { paths: Vec<GeomPath> },
 }
 
 /// Media the retained package holds, by its part and the BLAKE3 hash of its
@@ -178,12 +184,16 @@ pub struct HeldMedia {
     pub hash: Digest,
 }
 
-/// One SmartArt node's text (paragraphs joined by `\n`) and its depth below
-/// the diagram's root.
+/// One SmartArt node's text (paragraphs joined by `\n`), its depth below
+/// the diagram's root, and its identity: the data part's model id. A node
+/// written with no id, or one the SmartArt does not hold, is new; when no
+/// node names one, nodes keep the held ones by place.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SmartArtNode {
     pub text: String,
     pub level: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 /// The classic chart families the live deck reads and writes, live-born
@@ -324,8 +334,10 @@ impl NodePayload {
     /// read from the retained package, and `parts` the hashes of the
     /// package's other parts.
     ///
-    /// An imported picture shows any image part the deck holds, and a
-    /// SmartArt takes new text for its nodes. A chart settles as
+    /// A picture, imported or live-born, shows any image part the deck
+    /// holds; a SmartArt settles its nodes' levels and identities
+    /// ([`diagram::settle`]); a shape takes paths naming only guides it
+    /// defines; a table pads ragged rows to its widest. A chart settles as
     /// [`convert::settle_chart`] lays it out: Change Chart Type between any
     /// families, for the chart or one series, data written to a chart read
     /// from its caches embedded, and a live-born chart of any family over
@@ -342,11 +354,6 @@ impl NodePayload {
         match self {
             Self::Picture { .. } | Self::Connector { .. } => same(),
             Self::HeldPicture { media } => {
-                if !bound {
-                    // Not built: a live-born picture is written from an
-                    // engine asset.
-                    return Err(LiveError::Invalid(BORN_HELD));
-                }
                 if held == Some(self)
                     || (convert::image_part(&media.part)
                         && parts.get(&media.part) == Some(&media.hash.0))
@@ -356,55 +363,78 @@ impl NodePayload {
                     Err(LiveError::Invalid(HELD_MEDIA))
                 }
             }
-            Self::SmartArt { nodes } => match (held, bound) {
-                (Some(Self::SmartArt { nodes: was }), true) => {
-                    // Not built: adding, removing or moving a node, which
-                    // PowerPoint lays out again from the diagram's layout.
-                    if was.len() == nodes.len()
-                        && was
-                            .iter()
-                            .zip(nodes)
-                            .all(|(was, now)| was.level == now.level)
-                    {
-                        same()
-                    } else {
-                        Err(LiveError::Invalid(SMART_ART_NODES))
-                    }
-                }
-                (_, true) => Err(LiveError::Invalid(WRITTEN_FRAME)),
-                // Not built: a live-born SmartArt.
-                (_, false) => Err(LiveError::Invalid(BORN_HELD)),
-            },
+            Self::SmartArt { nodes } => {
+                let was = match (held, bound) {
+                    (Some(Self::SmartArt { nodes: was }), true) => was.as_slice(),
+                    // Kept: PowerPoint has no direct swap of a table or
+                    // chart for a diagram.
+                    (_, true) => return Err(LiveError::Invalid(WRITTEN_FRAME)),
+                    (_, false) => &[],
+                };
+                let (nodes, done) = diagram::settle(was, nodes);
+                Ok((Self::SmartArt { nodes }, done))
+            }
             // Kept: an OLE object's program id and preview are its embedded
-            // object's own, made by its server application, and a count of
-            // paths is not geometry. Another value would describe an object
-            // or a freeform PowerPoint never writes.
-            Self::Ole { .. } | Self::CustomGeometry { .. } => {
+            // object's own, made by its server application: changing them
+            // needs the embedding app, which the deck does not run.
+            Self::Ole { .. } => {
                 if bound && held == Some(self) {
                     same()
                 } else {
                     Err(LiveError::Invalid(HELD))
                 }
             }
-            Self::Table { header, rows } => {
-                if !bound {
-                    return same();
-                }
-                // Kept: a table is a rectangular grid (a merge spans cells
-                // and removes none), and PowerPoint deletes a table whose
-                // last column goes, which `RemoveNode` does.
-                if header.is_empty() || rows.iter().any(|row| row.len() != header.len()) {
-                    return Err(LiveError::Invalid(WRITTEN_TABLE));
-                }
-                // Kept: PowerPoint turns no chart or diagram into a table.
-                if !matches!(held, Some(Self::Table { .. })) {
-                    return Err(LiveError::Invalid(WRITTEN_FRAME));
-                }
+            Self::CustomGeometry { paths } => {
+                let was = match held {
+                    Some(Self::CustomGeometry { paths: was }) => was.as_slice(),
+                    _ => &[],
+                };
+                points::check(paths, was)?;
                 same()
             }
+            Self::Table { header, rows } => {
+                // A table is a grid (a merge spans cells and removes none):
+                // a ragged row, or a short header, is padded with empty
+                // cells to the widest row, live-born or written.
+                let columns = rows
+                    .iter()
+                    .map(Vec::len)
+                    .chain([header.len()])
+                    .max()
+                    .unwrap_or(0);
+                // Kept: a table of no column has no grid, and PowerPoint
+                // deletes a table whose last column goes, which
+                // `RemoveNode` does.
+                if columns == 0 {
+                    return Err(LiveError::Invalid(WRITTEN_TABLE));
+                }
+                // Kept: PowerPoint has no direct table/chart swap: it turns
+                // no chart or diagram into a table.
+                if bound && !matches!(held, Some(Self::Table { .. })) {
+                    return Err(LiveError::Invalid(WRITTEN_FRAME));
+                }
+                if header.len() == columns && rows.iter().all(|row| row.len() == columns) {
+                    return same();
+                }
+                let mut header = header.clone();
+                header.resize(columns, String::new());
+                let rows = rows
+                    .iter()
+                    .map(|row| {
+                        let mut row = row.clone();
+                        row.resize(columns, None);
+                        row
+                    })
+                    .collect();
+                Ok((
+                    Self::Table { header, rows },
+                    vec![Conversion::TableRowsPadded { columns }],
+                ))
+            }
             Self::Chart { .. } => {
-                // Kept: PowerPoint turns no table into a chart, and a chart
-                // the reader cannot read has no live form to write over.
+                // Kept: PowerPoint has no direct table/chart swap, and a
+                // chart the reader cannot read has no live form to write
+                // over.
                 if bound && !matches!(held, Some(Self::Chart { .. })) {
                     return Err(LiveError::Invalid(WRITTEN_FRAME));
                 }
@@ -422,17 +452,12 @@ impl NodePayload {
     }
 }
 
-/// The held-form refusal: an OLE object's program and preview, and a
-/// shape's custom paths, are read from the retained package.
+/// The held-form refusal: an OLE object's program and preview are read
+/// from the retained package; changing them needs the embedding app.
 pub(crate) const HELD: &str =
-    "read from the retained package: no deck op writes an OLE object or custom paths";
-/// A live-born picture shows an engine asset, and a live-born SmartArt is
-/// not built.
-pub(crate) const BORN_HELD: &str =
-    "a live-born picture shows an engine asset, and a live-born SmartArt is not built";
-/// The written-table refusal: a written table stays a rectangular grid.
-pub(crate) const WRITTEN_TABLE: &str =
-    "a written table holds at least one column and one cell per column in every row";
+    "read from the retained package: no deck op writes an OLE object (it needs its embedding app)";
+/// The empty-table refusal: a table holds at least one column.
+pub(crate) const WRITTEN_TABLE: &str = "a table holds at least one column";
 /// A written frame stays the kind of frame the live deck read in it.
 pub(crate) const WRITTEN_FRAME: &str =
     "a written frame keeps the table or chart the live deck reads in it";
@@ -837,14 +862,14 @@ pub enum DeckOp {
         node: NodeId,
         preset: Preset,
     },
-    /// What a picture, graphic frame or connector is written from: new
-    /// media or held media the deck holds, a table's cells, a chart's data,
-    /// a SmartArt's node text, or a connector's geometry and glue. A written
-    /// table or chart may change shape (rows, columns, series, categories),
-    /// and a chart its type, for the whole chart or one series, as
-    /// PowerPoint does; the export rewrites it. A reshaped written table's
-    /// frame takes its grid's size: its own extent clears. The edit's
-    /// effects name what it did PowerPoint's way.
+    /// What a shape, picture, graphic frame or connector is written from:
+    /// a shape's points, new media or held media the deck holds, a table's
+    /// cells, a chart's data, a SmartArt's nodes, or a connector's geometry
+    /// and glue. A written table or chart may change shape (rows, columns,
+    /// series, categories), and a chart its type, for the whole chart or one
+    /// series, as PowerPoint does; the export rewrites it. A reshaped
+    /// written table's frame takes its grid's size: its own extent clears.
+    /// The edit's effects name what it did PowerPoint's way.
     SetPayload {
         node: NodeId,
         payload: NodePayload,
@@ -1012,6 +1037,12 @@ impl LiveDeck {
                     }
                     None => (None, Vec::new()),
                 };
+                // A live-born freeform's paths are its outline: no preset.
+                let preset = if matches!(payload, Some(NodePayload::CustomGeometry { .. })) {
+                    None
+                } else {
+                    *preset
+                };
                 let id = self.take(*id)?;
                 effects.extend(done.into_iter().map(|conversion| Effect::Converted {
                     node: id,
@@ -1027,7 +1058,7 @@ impl LiveDeck {
                         binding: None,
                         geometry: GeometryProps::default(),
                         placeholder: None,
-                        preset: *preset,
+                        preset,
                         payload,
                     },
                 );
@@ -1136,9 +1167,17 @@ impl LiveDeck {
                     ));
                 }
                 let bound = found.binding.is_some();
-                let (settled, done) =
+                let (settled, mut done) =
                     payload.settle(found.payload.as_ref(), bound, &self.opaque_parts)?;
                 settled.check()?;
+                // Edit Points draws the shape's own outline: its preset goes,
+                // and a preset shape becomes a freeform.
+                if matches!(settled, NodePayload::CustomGeometry { .. }) {
+                    if !matches!(found.payload, Some(NodePayload::CustomGeometry { .. })) {
+                        done.push(Conversion::ConvertedToFreeform);
+                    }
+                    found.preset = None;
+                }
                 // A written table that changes shape takes its grid's size at
                 // export, as PowerPoint lays it out: its own extent clears.
                 if bound

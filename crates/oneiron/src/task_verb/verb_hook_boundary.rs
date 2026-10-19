@@ -105,9 +105,9 @@ pub fn hook_session(memory: Option<&Memory<'_>>, verb: &str) -> MemoryResult<Opt
     // none resumes nothing.
     let resume = memory.and_then(|memory| memory.invocation().and(memory.hook_ask()));
     if !anonymous && !NO_RECORD_ROWS.contains(&verb) {
-        if let (Some(memory), Some(_)) = (memory, resume)
+        if let (Some(memory), Some(ask)) = (memory, resume)
             && let Some(invocation) = memory.invocation()
-            && let Some(stop) = memory.vault().gone_hook_pause(invocation)?
+            && let Some(stop) = memory.vault().gone_hook_pause(invocation, ask)?
         {
             return Err(stopped(stop));
         }
@@ -118,6 +118,15 @@ pub fn hook_session(memory: Option<&Memory<'_>>, verb: &str) -> MemoryResult<Opt
         None => SessionHookKey::Process,
     };
     Ok(Some(HookSession { key, resume }))
+}
+
+/// Whether a call on `memory` sits in an anonymous off-record session its
+/// principal is verified in (`Memory::keeps_no_record`, judged now on the
+/// surface, never a raw header claim): a host keeps no durable record of
+/// it, its sitting included (Engine #1968, FIX 5564).
+#[must_use]
+pub fn keeps_no_record(memory: &Memory<'_>) -> bool {
+    memory.keeps_no_record()
 }
 
 /// The invocation a host door keeps in its own rows for the call `pre` ran
@@ -276,8 +285,10 @@ pub fn session_post(
 /// Keeps what `pre`'s chain held for a session-only call that ended with no
 /// result for its post chain: its verb failed, was refused or parked. A call
 /// that keeps its record holds nothing here. A failure to keep is logged:
-/// the call's own error stands.
-fn abort(vault: &Vault, pre: VerbHookPre) {
+/// the call's own error stands. A host door that ran `pre` itself calls it
+/// when the door, its input's decode or its answer's encoding fails; no post
+/// chain runs then (FIX 5527).
+pub fn abort(vault: &Vault, pre: VerbHookPre) {
     let Some(session) = pre.session().cloned().map(HookSession::kept) else {
         return;
     };

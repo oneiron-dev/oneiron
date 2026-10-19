@@ -228,6 +228,7 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
             super::conversation_training_vault::decode_conversation_training_vault(entries)
         }
         OP_KIND_HOME_CANDIDACY => super::home_candidacy::decode_home_candidacy(entries),
+        OP_KIND_AGENT_GRANT_ACT => super::agent_grant_act::decode_agent_grant_act(entries),
         _ => Err(invalid_authority()),
     }
 }

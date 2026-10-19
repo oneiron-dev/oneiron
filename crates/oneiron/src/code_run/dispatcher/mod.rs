@@ -100,9 +100,15 @@ pub struct HostSelfDispatcher<'a> {
     /// executor's host takes it for its reply; the run records the result.
     pub(super) hook_view: RefCell<Option<serde_json::Value>>,
     /// The calls a verb hook's ask parked, as the run's history shows them,
-    /// with the invocation each ask waits under.
-    pub(super) parked_hooks:
-        RefCell<Vec<(verb_hooks::ParkedCall, crate::runtime_hooks::InvocationId)>>,
+    /// with the invocation each ask waits under and the ask's handle, which
+    /// the same call names as the pause it resumes (FIX 5526).
+    pub(super) parked_hooks: RefCell<
+        Vec<(
+            verb_hooks::ParkedCall,
+            crate::runtime_hooks::InvocationId,
+            Option<EntityId>,
+        )>,
+    >,
     /// The seat the host lent the run to spawn reader children under, if
     /// any (ARCH-0079 #reader-forks).
     pub(super) reader_spawn: Option<crate::code_run::SpawnHostSeat>,

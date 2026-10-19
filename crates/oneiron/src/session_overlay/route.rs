@@ -41,6 +41,9 @@ impl RouteTarget {
 /// Fields are private to this module: `batch.rs` receives a route and NEVER
 /// reads its fields — the route revalidates itself. That is why `revalidate`
 /// lives here, in the fields' owner module, rather than at the call site.
+/// A clone is the same route: a room's hook pause keeps one in RAM to
+/// revalidate on resume (FIX 5524).
+#[derive(Clone)]
 pub(crate) struct SessionWriteRoute {
     overlay: Arc<SessionOverlay>,
     target: RouteTarget,

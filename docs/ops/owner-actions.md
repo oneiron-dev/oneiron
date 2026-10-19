@@ -1173,6 +1173,37 @@ revoked ones included. `POST /v1/owner/decisions/rules/revoke` with
 `{"id": "<32 hex>"}` revokes one (the undo). After that the row answers
 nothing, and the question goes up the ladder again.
 
+## Place signing fields on a PDF (the field editor)
+
+`GET /sign/editor` opens the field geography editor. It needs your
+owner-grade credential, as before: your top-scope slip with its holder
+proof, or your managed vault's attested owner. The page reads the PDF and
+the geography pack from your own files; it reads no private PDF from the
+vault and stores nothing there. Export saves the pack as a local download.
+
+Each time the page loads it gets a fresh editor token, kept only in the
+page's memory. It sends the token with its two computations, page geometry
+(`POST /sign/geometry`) and field layout (`POST /sign/layout`). The server
+keeps only the token's digest. The token admits new computations for an
+hour; one already running finishes. After that hour, or after the server
+restarts, the page says the session has ended: reload the editor and carry
+on.
+
+- No ceiling on the PDF, the pack or a select field's choices. A larger PDF
+  spools to disk and is inspected whole; only the vault's disk floor
+  (`limits.disk_reserve_bytes`) stops it, with a 507.
+- A text field still offers `max_bytes` 4096 to its signer: that is the
+  field's contract, not an upload limit.
+- Two computations run at once. The rest wait their turn; none is refused
+  for being busy.
+- A PDF past `limits.esign_geometry_body_bytes` (16 MiB), or a layout past
+  `limits.esign_body_bytes` (3 MiB), asks you whether everything is okay,
+  in the decision ladder's asks (the section above), and the work still runs.
+
+A request with no editor token, from a client that is not this page, keeps
+the old public bounds: 3 MiB layouts, 16 MiB PDFs, and two free slots with
+60 requests a minute, else 429.
+
 ## The vault key on a new host
 
 A vault's data key unlocks from any of its wraps: this device's keystore, the vault password, a
@@ -1318,7 +1349,13 @@ slot can hold a piece.
 the vault data key: a 2-of-3 copy of the key for you to keep, at today's passphrase cost. It runs on any vault, hosted ones too. Its key is unlocked with this machine's
 wrap if it is locked; no key is minted or rotated, and the world kit and its `world-kit` wrap stay
 as they are. It prints the kit's id, homes, cost and coverage, the vault id it is bound to, and
-the piece files, never a piece.
+the piece files, never a piece. `status` lists the kit with no root: it is issued, never pending,
+and never replaces a world kit or is replaced by one. Its pieces open the key on any host:
+`oneiron restore BACKUP --unlock kit --piece piece-1.txt --piece piece-2.txt --vault-id HEX
+--trust PINS`, or `oneiron vault-key add-device --unlock kit` with the same flags, takes two
+pieces, or one and the kit passphrase, rebuilds the key and checks it against the key's
+commitment. No wrap is needed, and a sealed vault's pages open on it too. `--vault-id` is the id
+`issue-vault-key` printed, which `oneiron restore BACKUP --inspect` also shows.
 
 `status` lists every kit, pending ones too, with its homes, coverage and confirmation, and each
 private world's state. `covered` means only that the world's current key has a wrap to the pinned
@@ -1843,7 +1880,14 @@ commit. Any other holder gets the value sealed to its own key and does it on its
 
 To keep the value off this install entirely, read `GET /v1/owner/secrets/custody` for the
 secret's id, generation, revision and each linked install's permit and key, seal the input to the
-holder yourself, and send only the ciphertext:
+holder yourself, and send only the ciphertext. The input is one envelope, or the numbered-envelope
+frame of two envelopes or more, which a body past one envelope's plaintext bound needs: the label
+`oneiron/custody-input-envelopes/v1` and a NUL byte, the envelope count as a big-endian `u32`, then
+each envelope's length as a big-endian `u32` and its bytes in order, then the closing mark
+`oneiron/custody-input-envelopes-end/v1` and a NUL byte. Each envelope seals the input label
+`oneiron/custody-input/v1` and the next run of the body, under the one-envelope key id followed by
+its index and the count, each a big-endian `u32`, so no envelope opens at another place, in a frame
+of another count, as a one-envelope input or as another change's:
 
 ```sh
 oneiron api raw POST /v1/owner/secrets/custody --data '{"change": "rotate",

@@ -1,10 +1,12 @@
 //! The world kit's public side, shared by `oneiron recovery-kit` and
 //! `GET /v1/owner/recovery-kit` (OF-173): the kits a vault issued, which one
-//! is current, and what each private world's key is wrapped to here. No
-//! piece, passphrase or seed passes through here.
+//! is current, and what each private world's key is wrapped to here. A
+//! data-key kit is listed beside the world kits, with no root (FIX 5614). A
+//! kit a root request issued names that request and where it stands (FIX
+//! 5585). No piece, passphrase, seed or key passes through here.
 
 use oneiron::recovery::{KitCoverage, KitId, KitSecretKind, PieceHome};
-use oneiron::world_keys::{StoredCost, StoredKit, WorldRecoveryState};
+use oneiron::world_keys::{OwnerWorkStatus, StoredCost, StoredKit, WorldRecoveryState};
 use serde::Serialize;
 
 use super::stamp::rfc3339_secs;
@@ -21,12 +23,23 @@ pub(crate) struct KitView {
     pub(crate) passphrase_cost: Option<StoredCost>,
     /// What losing one machine leaves.
     pub(crate) coverage: KitCoverage,
-    /// The root's fingerprint, hex.
-    pub(crate) root: String,
+    /// The root's fingerprint, hex; none for a data-key kit, which carries
+    /// the vault data key and no root.
+    pub(crate) root: Option<String>,
     pub(crate) created: String,
-    /// When the owner re-entered its pieces; none while it is pending.
+    /// When the owner re-entered its pieces; none while it is pending, and
+    /// always for a data-key kit, which is issued with no confirm.
     pub(crate) confirmed: Option<String>,
     pub(crate) replaced_by: Option<String>,
+    /// The root request whose activation issued the kit, its signed entry as
+    /// hex; none for a kit issued at the kit door, and for a data-key kit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) issued_for: Option<String>,
+    /// Where that request stands (FIX 5585). A pending kit whose request the
+    /// owner cancelled, or a newer request superseded, says so here; the
+    /// target's own kit confirm still finishes it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) issued_for_status: Option<OwnerWorkStatus>,
 }
 
 impl From<StoredKit> for KitView {
@@ -37,10 +50,12 @@ impl From<StoredKit> for KitView {
             homes: kit.homes,
             passphrase_cost: kit.cost,
             coverage: kit.coverage,
-            root: hex(&kit.root),
+            root: kit.root.map(|root| hex(&root)),
             created: rfc3339_secs(kit.created_at),
             confirmed: kit.confirmed_at.map(rfc3339_secs),
             replaced_by: kit.replaced_by.map(kit_id),
+            issued_for: kit.issued_for.map(|request| hex(&request)),
+            issued_for_status: None,
         }
     }
 }
@@ -78,7 +93,21 @@ pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<KitStatusView> {
         vault_id: status.vault_id.map(|id| hex(&id)),
         pinned_root: status.pinned.map(|root| hex(&root.0)),
         current: status.current.map(kit_id),
-        kits: status.kits.into_iter().map(KitView::from).collect(),
+        kits: status
+            .kits
+            .into_iter()
+            .map(|kit| {
+                let issued_for_status = status
+                    .issuing
+                    .iter()
+                    .find(|issuing| issuing.kit == kit.kit_id)
+                    .map(|issuing| issuing.status);
+                KitView {
+                    issued_for_status,
+                    ..KitView::from(kit)
+                }
+            })
+            .collect(),
         worlds: status
             .worlds
             .into_iter()

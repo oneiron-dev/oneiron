@@ -2099,26 +2099,26 @@ export interface FacadeResults {
   "vault.identity.events.get": Facade.IdentityTopologyReceipt;
   "vault.identity.proposals.resolve": Facade.IdentityProposalResolutionResult;
   "vault.identity.proposals.for_pair": Facade.IdentityPairProposals;
-  "self.browser.open": Facade.ObservationPage;
-  "self.browser.observe": Facade.ObservationPage;
-  "self.browser.find": Facade.FindOutput;
-  "self.browser.click": Facade.ObservationPage;
-  "self.browser.click_at": Facade.ObservationPage;
-  "self.browser.type": Facade.ObservationPage;
-  "self.browser.select": Facade.ObservationPage;
-  "self.browser.wait_for": Facade.WaitForOutput;
-  "self.browser.expect": Facade.ExpectOutput;
-  "self.browser.screenshot": Facade.ScreenshotOutput;
-  "self.browser.view": Facade.ImageOutput;
-  "self.browser.crop": Facade.ImageOutput;
-  "self.browser.zoom": Facade.ImageOutput;
-  "self.browser.batch": Facade.BatchOutput;
-  "self.browser.library.find": Facade.LibraryFindOutput;
-  "self.browser.library.propose": Facade.ProposeOutput;
-  "self.browser.library.retire": Facade.LibraryRetireOutput;
-  "self.browser.library.retired": Facade.LibraryRetiredOutput;
-  "self.browser.library.run": Facade.LibraryRunOutput;
-  "self.browser.handover": Facade.HandoverOutput;
+  "self.browser.open": Facade.BrowserObservationPage;
+  "self.browser.observe": Facade.BrowserObservationPage;
+  "self.browser.find": Facade.BrowserFindOutput;
+  "self.browser.click": Facade.BrowserObservationPage;
+  "self.browser.click_at": Facade.BrowserObservationPage;
+  "self.browser.type": Facade.BrowserObservationPage;
+  "self.browser.select": Facade.BrowserObservationPage;
+  "self.browser.wait_for": Facade.BrowserWaitForOutput;
+  "self.browser.expect": Facade.BrowserExpectOutput;
+  "self.browser.screenshot": Facade.BrowserScreenshotOutput;
+  "self.browser.view": Facade.BrowserImageOutput;
+  "self.browser.crop": Facade.BrowserImageOutput;
+  "self.browser.zoom": Facade.BrowserImageOutput;
+  "self.browser.batch": Facade.BrowserBatchOutput;
+  "self.browser.library.find": Facade.BrowserLibraryFindOutput;
+  "self.browser.library.propose": Facade.BrowserLibraryProposeOutput;
+  "self.browser.library.retire": Facade.BrowserLibraryRetireOutput;
+  "self.browser.library.retired": Facade.BrowserLibraryRetiredOutput;
+  "self.browser.library.run": Facade.BrowserLibraryRunOutput;
+  "self.browser.handover": Facade.BrowserHandoverOutput;
   "vault.claims.supersede": Facade.MemoryWriteOutput;
   "self.fold": Facade.FoldReply<Facade.FoldMarked>;
   "self.compact": Facade.FoldReply<Facade.FoldCompactAsked>;
@@ -3188,7 +3188,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "self.browser.select": { description: "Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "self.browser.wait_for": { description: "Waits until a page row its live refs or locators name, or else a row matching a role and name, is there; a ref whose node is gone matches its locator's row, listed in rebindings; many rows come in pages, read on with find and next.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "self.browser.expect": { description: "Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "self.browser.screenshot": { description: "Takes a screenshot the session holds, by image ref and never captioned.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "self.browser.screenshot": { description: "Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "self.browser.view": { description: "Reads back a held image by its ref.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "self.browser.crop": { description: "Crops a held image to a rectangle.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "self.browser.zoom": { description: "Zooms into a rectangle of a held image.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -5746,7 +5746,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         wait_for: (input: Facade.LiveRunRequest<Facade.WaitForInput>, options?: O): FacadeReturns<"self.browser.wait_for">[K] => invoke("self.browser.wait_for", input, options, newInvocation()),
         /** Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings. */
         expect: (input: Facade.LiveRunRequest<Facade.ExpectInput>, options?: O): FacadeReturns<"self.browser.expect">[K] => invoke("self.browser.expect", input, options, newInvocation()),
-        /** Takes a screenshot the session holds, by image ref and never captioned. */
+        /** Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope. */
         screenshot: (input: Facade.LiveRunRequest<Facade.ScreenshotInput>, options?: O): FacadeReturns<"self.browser.screenshot">[K] => invoke("self.browser.screenshot", input, options, newInvocation()),
         /** Reads back a held image by its ref. */
         view: (input: Facade.LiveRunRequest<Facade.ViewInput>, options?: O): FacadeReturns<"self.browser.view">[K] => invoke("self.browser.view", input, options, newInvocation()),

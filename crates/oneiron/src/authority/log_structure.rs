@@ -60,7 +60,9 @@ pub(crate) struct AuthorityStructure {
 /// The roots whose anchors this install's store gate takes as its own: the
 /// pin's and the earlier admitter's anchors, and the ids of the pin and of a
 /// root a pin door awaits. They come from the pin singleton, which never
-/// syncs. Every other anchor is a stranger until this install pins its root:
+/// syncs; a wait a root request committed counts only while the fold holds
+/// that request open (FIX 5582). Every other anchor is a stranger until this
+/// install pins its root:
 /// its root records, its marks and the world rows of the install keys only
 /// such marks name share one bound (Astra #1422e F1; the Engine, r23).
 #[derive(Debug, Clone, Default)]
@@ -80,7 +82,8 @@ impl LocalRoots {
         if let Some(MachineAdmitter::Anchor(anchor)) = row.earlier {
             local.anchors.insert(anchor);
         }
-        local.roots.extend(row.awaiting);
+        let awaited = super::pinned_root::effective_awaited_root_in_txn(store, txn, &row);
+        local.roots.extend(awaited);
         Ok(local)
     }
 }
@@ -380,6 +383,7 @@ impl AuthorityStructure {
             AuthorityOp::ConversationTrainingSet(set) => install_key(set.machine),
             AuthorityOp::ConversationTrainingVaultSet(set) => install_key(set.machine),
             AuthorityOp::HomeCandidacy(declaration) => install_key(declaration.machine),
+            AuthorityOp::AgentGrantAct(record) => install_key(record.machine),
             AuthorityOp::OwnerWorkRequest(request) => install_key(request.carrier),
             AuthorityOp::OwnerWorkResult(result) => install_key(result.executor),
             AuthorityOp::OwnerWorkCancel(cancel) => install_key(cancel.carrier),
@@ -432,6 +436,7 @@ impl AuthorityStructure {
             AuthorityOp::ConversationTrainingSet(set) => machine_key(set.machine),
             AuthorityOp::ConversationTrainingVaultSet(set) => machine_key(set.machine),
             AuthorityOp::HomeCandidacy(declaration) => machine_key(declaration.machine),
+            AuthorityOp::AgentGrantAct(record) => machine_key(record.machine),
             AuthorityOp::OwnerWorkRequest(request) => machine_key(request.carrier),
             AuthorityOp::OwnerWorkResult(result) => machine_key(result.executor),
             AuthorityOp::OwnerWorkCancel(cancel) => machine_key(cancel.carrier),

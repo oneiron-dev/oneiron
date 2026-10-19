@@ -23,12 +23,14 @@
 //!   unsaved rows a hook may have read: then, as the room's retrieval
 //!   telemetry does, nothing lands in base, and the landing's checks still
 //!   run;
-//! - anonymous, nowhere: the room retains no record.
+//! - anonymous, into the in-memory keep (`SessionHookKeep`) under the room's
+//!   own session-instance key, never the room's overlay or base: the room
+//!   retains no record, and the room's close drops the keep's (FIX 5431).
 //!
 //! A room that keeps no record of a chain (its budget refused the segment, a
-//! record held a secret only a vault's custody door could mint, it is
-//! anonymous, or it withheld the records from base) answers which, and the
-//! hook's outcome applies all the same (CALLS-4
+//! record held a secret only a vault's custody door could mint, an anonymous
+//! room's stretch is closing or gone, or it withheld the records from base)
+//! answers which, and the hook's outcome applies all the same (CALLS-4
 //! `session_receipt_budget_policy`, `HookRecordsKept::of`). A refusal of the
 //! room's own authority (a route that flipped, a participant who left, a
 //! saver who no longer holds, a room that is closing) fails the call, as on
@@ -42,13 +44,14 @@ use serde_json::Value;
 use crate::code_run::{SessionHookDisposition, SessionHookNotKept};
 use crate::error::Result;
 use crate::runtime_hooks::verb::{
-    HookRecordsKept, SessionHookKey, SessionHooks, VerbArgsCheck, VerbHookStorage,
+    HookRecordsKept, RoomHookCall, SessionHookKey, SessionHooks, VerbArgsCheck, VerbHookStorage,
 };
 use crate::runtime_hooks::{VerbCall, VerbHookPre, VerbHookStop};
 use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 use crate::side_table::RoutedDbs;
 use crate::{EntityId, Vault};
 
+use super::registry::session_entry_state;
 use super::session::OffRecordSession;
 
 /// The pre or post chain's end in a room, and what each hook did.
@@ -58,6 +61,20 @@ type InRoom<T> = (
 );
 
 impl OffRecordSession<'_> {
+    /// This stretch's key in the in-memory keep: its registry key and when
+    /// it was entered. An anonymous room's hook records wait there (FIX
+    /// 5431), and every room's hook pauses (FIX 5524); its close drops it.
+    ///
+    /// # Errors
+    ///
+    /// A poisoned session lock.
+    pub(crate) fn hook_key(&self) -> Result<SessionHookKey> {
+        Ok(SessionHookKey::Session {
+            key: self.session_ref.clone(),
+            entered_at: session_entry_state(&self.entry)?.record.entered_at,
+        })
+    }
+
     /// Stages one chain's records along `route`, the route the call's run
     /// captured: `rows` reads through the room's composed view and puts or
     /// deletes along the route, in one segment of its own.
@@ -73,8 +90,16 @@ impl OffRecordSession<'_> {
     ) -> Result<HookRecordsKept> {
         match route.target() {
             RouteTarget::Discard => {
+                // An anonymous room's chain keeps its records in RAM only,
+                // under this stretch's own key, which its close drops
+                // (FIX 5431); one closing or gone keeps none.
                 route.revalidate()?;
-                return Ok(HookRecordsKept::NotKept(SessionHookNotKept::NoRetention));
+                let key = self.hook_key()?;
+                return self
+                    .vault
+                    .verb_hook_state
+                    .session
+                    .stage(self.vault, &key, rows);
             }
             RouteTarget::Base if self.read_view()?.read().holds_room_rows() => {
                 let landing = self.landing(route)?;
@@ -92,32 +117,37 @@ impl OffRecordSession<'_> {
     /// The pre chain of `call` over `args` in this room, on `route`, the
     /// route the call's run captured: as on base, with the room's view for
     /// content and this store for records. A room saves no resume target
-    /// and opens no ask. The pre carries its records to the call's post
-    /// chain, or to [`Self::keep_verb_hooks_in_room`]; one that stops the
-    /// call keeps them now. With `answers_unread`, a failed read of the
-    /// hooks passes the call through and notes why
-    /// (`SessionHooks::answering_unread`). The chain's entry points for a
-    /// room live here, beside its store, since the vault a chain runs on
-    /// never leaves this module's handle.
+    /// for settlement; a hook's ask pauses the call in RAM under this
+    /// stretch, with `route`, and its caller's retry here resumes it (FIX
+    /// 5524). The pre carries its records to the call's post chain, or to
+    /// [`Self::keep_verb_hooks_in_room`]; one that stops the call keeps them
+    /// now. `how` says whether a failed read of the hooks passes the call
+    /// through and notes why (`SessionHooks::answering_unread`), the
+    /// task-work turn the calling operation holds, which a hook's ask runs
+    /// on, and the pause the call names as the one it resumes. The chain's
+    /// entry points for a room live here, beside its store, since the vault
+    /// a chain runs on never leaves this module's handle.
     ///
     /// # Errors
     ///
-    /// As [`Self::stage_hook_records`], and the vault's own storage errors.
+    /// As [`Self::stage_hook_records`], and the vault's own storage errors;
+    /// a resume where the room's route or the run's place in it no longer
+    /// holds.
     pub(crate) fn pre_verb_hooks_in_room(
         &self,
         route: &SessionWriteRoute,
         call: VerbCall,
         args: Value,
         check: VerbArgsCheck<'_>,
-        answers_unread: bool,
+        how: RoomHookCall,
     ) -> Result<InRoom<VerbHookPre>> {
-        let hooks = room_hooks(self, route, answers_unread);
+        let hooks = room_hooks(self, route, how.answers_unread)?.resuming(how.resume);
         let ended = self.vault.pre_verb_hooks_in(
             VerbHookStorage::Session(&hooks),
             call,
             args,
             check,
-            None,
+            how.turn,
         )?;
         Ok((ended, hooks.into_dispositions()))
     }
@@ -137,7 +167,7 @@ impl OffRecordSession<'_> {
         result: Value,
         answers_unread: bool,
     ) -> Result<InRoom<Value>> {
-        let hooks = room_hooks(self, route, answers_unread);
+        let hooks = room_hooks(self, route, answers_unread)?;
         let ended = self
             .vault
             .post_verb_hooks_in(VerbHookStorage::Session(&hooks), pre, result)?;
@@ -156,26 +186,27 @@ impl OffRecordSession<'_> {
         route: &SessionWriteRoute,
         pre: VerbHookPre,
     ) -> Result<Vec<SessionHookDisposition>> {
-        let hooks = SessionHooks::new(self, route);
+        let hooks = SessionHooks::new(self, route, self.hook_key()?);
         self.vault
             .keep_verb_hooks_in(VerbHookStorage::Session(&hooks), pre)?;
         Ok(hooks.into_dispositions())
     }
 }
 
-/// The hooks of a call in `session`'s room on `route`; with
-/// `answers_unread`, a call that answers when they cannot be read.
+/// The hooks of a call in `session`'s room on `route`, its hooks' pauses
+/// kept under the stretch's own key; with `answers_unread`, a call that
+/// answers when they cannot be read.
 fn room_hooks<'s>(
     session: &'s OffRecordSession<'s>,
     route: &'s SessionWriteRoute,
     answers_unread: bool,
-) -> SessionHooks<'s> {
-    let hooks = SessionHooks::new(session, route);
-    if answers_unread {
+) -> Result<SessionHooks<'s>> {
+    let hooks = SessionHooks::new(session, route, session.hook_key()?);
+    Ok(if answers_unread {
         hooks.answering_unread()
     } else {
         hooks
-    }
+    })
 }
 
 impl Vault {

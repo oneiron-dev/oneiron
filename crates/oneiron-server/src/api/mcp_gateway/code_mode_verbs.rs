@@ -621,8 +621,10 @@ impl RunDesktop {
 
     /// A desktop verb. While a person is asked or holds the desktop, the
     /// session refuses it `desktop_taken_over`; the first answer after they
-    /// hand it back carries the takeover's record as `takeover`. A handover
-    /// raises the owners' inbox Ask.
+    /// hand it back carries the takeover's record as `takeover`. An answer
+    /// after the window the agent's verbs read was gone, and the session
+    /// gave way to the window in front, names the move as `switched`. A
+    /// handover raises the owners' inbox Ask.
     fn call(
         &self,
         verb: AgentVerb,
@@ -653,14 +655,21 @@ impl RunDesktop {
         driver.set_receipt_sink(Box::new(writer));
         let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
         self.seats.asked(self.run_id, driver.takeover());
-        if let Some(object) = output.as_object_mut()
-            && let Some(record) = driver.take_returned()
-        {
-            object.insert(
-                "takeover".into(),
-                serde_json::to_value(record)
-                    .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
-            );
+        if let Some(object) = output.as_object_mut() {
+            if let Some(record) = driver.take_returned() {
+                object.insert(
+                    "takeover".into(),
+                    serde_json::to_value(record)
+                        .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
+                );
+            }
+            if let Some(switch) = driver.take_switched() {
+                object.insert(
+                    "switched".into(),
+                    serde_json::to_value(switch)
+                        .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
+                );
+            }
         }
         Ok(output)
     }
@@ -1125,10 +1134,11 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         let Some(rows) = rows else {
             return Ok(true);
         };
-        crate::device_local::withholds_retained(&self.server.vault, destination, rows, &[])
-            .map_err(|_| AgentVerbRefusal {
+        crate::device_local::withholds_retained(&self.server.vault, destination, rows, &[]).map_err(
+            |_| AgentVerbRefusal {
                 code: "engine_error".to_owned(),
-            })
+            },
+        )
     }
 }
 
@@ -1199,11 +1209,11 @@ impl AgentVerbDoor for ReaderChildDoor {
         let Some(rows) = rows else {
             return Ok(true);
         };
-        crate::device_local::withholds_retained(&self.vault, &self.caller, rows, &[]).map_err(|_| {
-            AgentVerbRefusal {
+        crate::device_local::withholds_retained(&self.vault, &self.caller, rows, &[]).map_err(
+            |_| AgentVerbRefusal {
                 code: "engine_error".to_owned(),
-            }
-        })
+            },
+        )
     }
 }
 

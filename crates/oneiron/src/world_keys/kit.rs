@@ -11,6 +11,18 @@
 //! The escrow wrap runs one way: the kit's root opens the vault key, so a kit
 //! restore on a new host opens a sealed backup. Nothing wraps the root under
 //! the vault key or a passkey, and a passkey never opens a world key.
+//!
+//! The inventory lists the data-key kit too (FIX 5614), by its public facts
+//! and with no root: it carries the vault data key, not a root, so it is
+//! issued and stays so, never pending, current or replaced, and no root
+//! door reads its row.
+//!
+//! A kit a root request's activation issued names that request, and the
+//! inventory shows where the request stands (FIX 5585): a pending kit whose
+//! request the owner cancelled, or a newer request on this install
+//! superseded, says so. Its row stays, and the target's own kit door still
+//! confirms it ([`Vault::confirm_world_kit`]); only the request's door
+//! refuses it.
 
 use std::collections::BTreeSet;
 
@@ -19,10 +31,11 @@ use serde::{Deserialize, Serialize};
 use super::doors::world_recovery_state_in;
 use super::page_seal::WrapTransition;
 use super::{
-    ActivatedRoot, KitConfirmation, PreparedRoot, RecoveryRoot, RecoveryRootId, RecoveryRootSeed,
-    RootRestore, VaultKeyStatus, VaultKeyWrapInfo, WorldRecoveryState, refused,
+    ActivatedRoot, KitConfirmation, OwnerWorkReceipt, OwnerWorkStatus, PreparedRoot, RecoveryRoot,
+    RecoveryRootId, RecoveryRootSeed, RootRestore, VaultKeyStatus, VaultKeyWrapInfo,
+    WorldRecoveryState, refused,
 };
-use crate::authority::EditOrigin;
+use crate::authority::{AuthorityEntryHash, EditOrigin};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::recovery::{
@@ -57,23 +70,32 @@ pub struct StoredKit {
     pub cost: Option<StoredCost>,
     /// What losing one machine leaves, judged from the homes at issue.
     pub coverage: KitCoverage,
-    /// The id of the root the kit's seed grows into.
-    pub root: [u8; 32],
+    /// The id of the root the kit's seed grows into; `None` for a data-key
+    /// kit, which carries the vault data key and no root.
+    pub root: Option<[u8; 32]>,
     /// The vault clock, in seconds, at issue.
     pub created_at: u64,
     /// When the owner re-entered pieces and the root went live; `None` while
-    /// pending. A pending kit never counts as coverage.
+    /// pending, and always for a data-key kit, which has no confirm. A
+    /// pending kit never counts as coverage.
     pub confirmed_at: Option<u64>,
     /// The kit confirmed after this one. Its pieces still rebuild its own
     /// seed: a replaced kit is not a revoked one.
     pub replaced_by: Option<KitId>,
+    /// The root request whose activation issued this kit, by its signed
+    /// authority-log entry; `None` for a kit issued at this install's own
+    /// kit door, and for a data-key kit (FIX 5585). No confirm reads it.
+    pub issued_for: Option<AuthorityEntryHash>,
 }
 
 impl StoredKit {
-    /// Confirmed, and no later kit replaced it.
+    /// A world kit, confirmed, and no later kit replaced it. A data-key kit
+    /// is never current: no world kit replaces it, nor it one.
     #[must_use]
     pub fn current(&self) -> bool {
-        self.confirmed_at.is_some() && self.replaced_by.is_none()
+        self.kind == KitSecretKind::RecoveryRoot
+            && self.confirmed_at.is_some()
+            && self.replaced_by.is_none()
     }
 }
 
@@ -145,6 +167,20 @@ pub struct WorldKitStatus {
     /// current key has a wrap to the pin; saved pieces and placement are the
     /// kits' own facts.
     pub worlds: Vec<(EntityId, WorldRecoveryState)>,
+    /// Where the root request that issued each such kit stands, as the fold
+    /// of this snapshot derives its receipt (FIX 5585), in kit order.
+    pub issuing: Vec<IssuingRequest>,
+}
+
+/// The root request a kit was issued under, and where it stands now: a
+/// pending kit whose request was cancelled or superseded says so, and the
+/// target's own kit door still confirms it. Ids only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IssuingRequest {
+    pub kit: KitId,
+    /// The request's signed authority-log entry.
+    pub request: AuthorityEntryHash,
+    pub status: OwnerWorkStatus,
 }
 
 fn kit_key(id: KitId) -> String {
@@ -202,7 +238,7 @@ pub(super) fn resolve_homes(
 /// root the pieces rebuild.
 fn pending_row(row: Option<StoredKit>, root: &RecoveryRoot) -> Result<StoredKit> {
     let row = row.ok_or_else(|| refused("this vault issued no kit with these pieces' id"))?;
-    if row.kind != KitSecretKind::RecoveryRoot || row.root != root.id.0 {
+    if row.kind != KitSecretKind::RecoveryRoot || row.root != Some(root.id.0) {
         return Err(refused(
             "the pieces do not rebuild the root this kit was issued with",
         ));
@@ -234,7 +270,7 @@ impl Vault {
         issue: &KitIssue<'_>,
     ) -> Result<IssuedWorldKit> {
         let kit = self.draw_world_kit(owner, issue)?;
-        self.with_write_txn(|txn| self.list_issued_kit_in_txn(txn, owner, &kit))?;
+        self.with_write_txn(|txn| self.list_issued_kit_in_txn(txn, owner, &kit, None))?;
         Ok(kit)
     }
 
@@ -285,15 +321,45 @@ impl Vault {
     }
 
     /// The pending row of a kit just drawn, in the caller's write
-    /// transaction. Public facts only.
+    /// transaction, naming the root request it was issued for, if any.
+    /// Public facts only.
     pub(super) fn list_issued_kit_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
         issued: &IssuedWorldKit,
+        issued_for: Option<AuthorityEntryHash>,
+    ) -> Result<()> {
+        let root = Some(issued.root.0);
+        self.put_kit_row_in_txn(txn, owner, &issued.manifest, root, issued_for)
+    }
+
+    /// The inventory row of a data-key kit just issued (FIX 5614), in the
+    /// caller's write transaction: its public facts and no root. It is
+    /// issued and stays so; no confirm finishes it and no root door reads
+    /// it. Public facts only.
+    pub(super) fn list_vault_key_kit_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        manifest: &KitManifest,
+    ) -> Result<()> {
+        if manifest.kind != KitSecretKind::VaultKey {
+            return Err(refused("only a data-key kit is listed with no root"));
+        }
+        self.put_kit_row_in_txn(txn, owner, manifest, None, None)
+    }
+
+    /// One kit's inventory row, its owner rechecked in this transaction.
+    fn put_kit_row_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        manifest: &KitManifest,
+        root: Option<[u8; 32]>,
+        issued_for: Option<AuthorityEntryHash>,
     ) -> Result<()> {
         owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-        let manifest = &issued.manifest;
         let key = kit_key(manifest.kit_id);
         if KITS.get(&self.store, txn, &key)?.is_some() {
             return Err(refused("a kit with this id is already listed"));
@@ -307,10 +373,11 @@ impl Vault {
                 passes: cost.passes(),
             }),
             coverage: manifest.coverage,
-            root: issued.root.0,
+            root,
             created_at: self.instant_in_txn(txn)?.secs(),
             confirmed_at: None,
             replaced_by: None,
+            issued_for,
         };
         KITS.put(&self.store, txn, &key, &row)
     }
@@ -471,11 +538,12 @@ impl Vault {
         Ok(KITS
             .scan(&self.store, txn)?
             .into_iter()
-            .any(|(_, kit)| kit.root == root.0 && kit.confirmed_at.is_none()))
+            .any(|(_, kit)| kit.root == Some(root.0) && kit.confirmed_at.is_none()))
     }
 
-    /// Every kit this vault issued, the current one, and each private world's
-    /// no-kit state on this install, from one snapshot.
+    /// Every kit this vault issued, the current one, each private world's
+    /// no-kit state on this install, and where each kit's issuing root
+    /// request stands, from one snapshot.
     pub fn world_kit_status(&self) -> Result<WorldKitStatus> {
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
@@ -487,7 +555,12 @@ impl Vault {
         let pinned = fold.pinned_root.map(|pin| pin.id);
         let current = kits
             .iter()
-            .find(|kit| kit.current() && Some(RecoveryRootId(kit.root)) == pinned)
+            .find(|kit| {
+                kit.current()
+                    && kit
+                        .root
+                        .is_some_and(|root| Some(RecoveryRootId(root)) == pinned)
+            })
             .map(|kit| kit.kit_id);
         let worlds: BTreeSet<EntityId> = fold
             .worlds
@@ -500,12 +573,27 @@ impl Vault {
             .map(|world| (world, world_recovery_state_in(&fold, world)))
             .filter(|(_, state)| *state != WorldRecoveryState::NotPrivate)
             .collect();
+        // The receipt's precedence: a result stands over a later cancel or
+        // newer request, which close only a request with none.
+        let issuing = kits
+            .iter()
+            .filter_map(|kit| {
+                let request = kit.issued_for?;
+                let receipt = OwnerWorkReceipt::of(&fold, request)?;
+                Some(IssuingRequest {
+                    kit: kit.kit_id,
+                    request,
+                    status: receipt.status,
+                })
+            })
+            .collect();
         Ok(WorldKitStatus {
             vault_id: fold.vault_id,
             pinned,
             current,
             kits,
             worlds,
+            issuing,
         })
     }
 }

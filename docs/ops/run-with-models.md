@@ -1667,7 +1667,11 @@ owner holds the desktop, every desktop verb refuses `desktop_taken_over` (a
 batch stops `NEEDS_YOU`) and no receipt screenshot is taken. Handing it back
 writes the takeover's record (who, the ask, when it was taken and returned,
 how many inputs) as the run's `desktop_takeover` sandbox receipt, and the
-agent's next desktop answer carries it as `takeover`.
+agent's next desktop answer carries it as `takeover`. When the window the
+agent's verbs read is gone (a dialog closed, an app quit), the session
+reads the window in front, and the next answer names the move as
+`switched` (`{window, app, title, from}`). Both are typed on every browser
+and desktop answer in the code-mode declarations.
 
 A handover is each owner's inbox Ask (producer `guest.takeover`): its source
 names the run, its result is the take route, and its `detail` is the
@@ -1772,11 +1776,36 @@ marked `partial` (`{reason, visited, pending, walk_ms}`), as a whole
 observation that no later one edits; its last page carries `walk_next`,
 and `observe({cursor: walk_next})` walks the window again at four times
 the time, up to cua-driver's 120 s ceiling, as a new whole observation
-with its own `seq`. `find`, `wait_for` and `expect` carry the same
-`partial` when the tree they read was cut. A routine `decide` step with
+with its own `seq`. A cut is never proof a row is gone: an act on a row
+(`click`, `type`, `select`, `key`, `scroll`), and a `find`, `wait_for` or
+`expect` that reached no row it seeks, walks the window on itself, longer
+each time, until the row is there, the walk reaches the tree's end, or a
+walk at the 120 s ceiling is still cut (a wait's own time ends it sooner).
+Only a walk that reached the end refuses `browser_stale_ref`; an act whose
+row is still past the cut refuses `desktop_tree_cut`. A search still cut
+answers what it found, with `partial` on every page and, on the last, a
+`walk_next` that `find({cursor: walk_next})` takes to search the window
+again, longer; an `expect` that saw no row past a cut is unmet, and a
+batch stops on it with `desktop_tree_cut`. A routine `decide` step with
 more than 61 candidates asks its decider in pages of 61, moving to the next
 page on NONE; a step is never refused for its count, and a batch or a
 library program holds one or more steps, never refused for their count.
+
+A browser or desktop `screenshot({trigger})` has its secret fields blacked
+out before it is held, and answers the held image by its content ref
+(`image`), never a caption, with its `capture_id` (`c<token>:<n>`, from one
+counter for the whole session, never reused). Name an earlier capture the
+program still holds as `since_capture`: the screenshot is still taken, held
+and answered whole, and `unchanged_from` names that capture when the new
+image is the same masked PNG, byte for byte, taken in the same scope (the
+same documents and URL, or the same desktop window; the same viewport or
+window rectangle, scroll, dimensions and scale; the same masking). It means
+the same PNG, not that the page did nothing; equal pixels encoded otherwise
+read as changed. A capture the session no longer holds (it holds its last
+16 images), of another scope, or never its own answers as any screenshot
+does, never a refusal. A crop or zoom is no capture. Each effect receipt's
+screenshot is a capture of its own (the receipt's `capture_id`), never
+compared, and kept as the receipt's evidence even when its pixels repeat.
 
 ## 11. When a provider refuses for a limit
 

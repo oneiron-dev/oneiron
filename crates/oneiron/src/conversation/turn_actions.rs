@@ -623,9 +623,11 @@ impl Memory<'_> {
         // speaker's entry, with no P7, which binds a turn. A room the actor no
         // longer reads refuses as unknown, and an incomplete live call holds.
         // With no roster and no live call, no one but the actor reads the
-        // reply.
+        // reply. The reply reaches the roster, so the read is held, each
+        // private thread met turn by turn (FIX 5636).
         let walk = if roomed {
             self.for_room_projection(conversation)?
+                .held()
                 .memory()
                 .walk_to_turn(&conversation, &assistant_turn, history)?
         } else {

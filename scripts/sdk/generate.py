@@ -979,7 +979,16 @@ async fn execute_agent_verb_listing(
     } else {
         (memory, task_work_turn)
     };
-    let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks).await?;
+    let ran = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks).await;
+    // A row that fails after its pre chain ran keeps a session-only call's
+    // pre hook records and runs no post chain (FIX 5527).
+    let (output, source, carrier, epoch) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            crate::api::facade::row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
     let output = crate::api::facade::row_hooks_post(server, hooks, output).await.map_err(mcp_facade_error)?;
     // The row's turn ends after its post hooks.
     drop(task_work_turn);
@@ -1333,7 +1342,12 @@ def facade_dispatch(facade_rows):
                     return Err(FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]));
                 }}
                 let hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
-                let input: oneiron::memory::ExportOptions = facade_input(hooks.args.clone())?;
+                // An export that fails after its pre chain ran keeps a
+                // session-only call's pre hook records and runs no post chain
+                // (FIX 5651), as a host door does (FIX 5527).
+                let args = hooks.args.clone();
+                let ran = async {{
+                let input: oneiron::memory::ExportOptions = facade_input(args)?;
                 // Beside the archive, the rows its snapshot read past where
                 // the caller's rows go (its locality, with the machine its
                 // connection proved; FIX 4937): every owner path lists them.
@@ -1366,6 +1380,9 @@ def facade_dispatch(facade_rows):
                     StatusCode::INTERNAL_SERVER_ERROR, MEMORY_CODE_INTERNAL,
                     "export result encoding failed", ["Report this SDK response mismatch."]
                 ))?;
+                Ok::<_, FacadeApiError>((output, rows))
+                }}.await;
+                let (output, rows) = match ran {{ Ok(ran) => ran, Err(error) => {{ row_hooks_abort(server, hooks).await; return Err(error); }} }};
                 Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: Some(rows) }})
             }}\n'''
             continue
@@ -1386,10 +1403,18 @@ def facade_dispatch(facade_rows):
             # rows: a call that keeps no record hands its hidden id (FIX 5381).
             caller_arg = 'caller, Some(oneiron::task_verb::verb_hook_boundary::door_invocation(&server.vault, &hooks)), '
             door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{surface_arg}facade_door_input(&mut hooks)?).await'
-            answer = (f'''let (output, listed) = {door};
-                let output = facade_output(output?)?;{landed}
+            # A door that fails after the pre chain ran (the door itself, its
+            # input's decode or its answer's encoding) keeps a session-only
+            # call's pre hook records and runs no post chain (FIX 5527).
+            failed = 'Err(error) => { row_hooks_abort(server, hooks).await; return Err(error); }'
+            answer = (f'''let ran = async {{
+                    let (output, listed) = {door};
+                    Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+                }}.await;
+                let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
                 Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
-                      f'''let output = facade_output({door}?)?;{landed}
+                      f'''let ran = async {{ Ok::<_, FacadeApiError>(facade_output({door}?)?) }}.await;
+                let output = match ran {{ Ok(output) => output, {failed} }};{landed}
                 Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))''')
             scope_guard = ("auth.require_granted(CoreScope::Write).or_else(|_| auth.require_granted(CoreScope::Propose))?;"
                            if r.get('proposes') and r.get('admission', {}).get('credential_record_scope')
@@ -1475,16 +1500,24 @@ def facade_dispatch(facade_rows):
                 self_branch = ('oneiron::task_verb::sdk::validate_input("describe", &value)?; '
                                'if value.get("self").and_then(serde_json::Value::as_bool) == Some(true) { '
                                'let (output, rows) = crate::api::context_board::describe_self_for_auth(server, auth, &value).await?; '
-                               'return Ok(FacadeCallOutput { value: facade_hooks_post(server, hooks, output).await?, rows: Some(rows) }); } ' + actor)
+                               'return Ok((output, Some(rows))); } ' + actor)
                 actor = ''
             door = r.get('server_door') or name in CALL_HOME_DOORS
             producers = '' if door else 'let producers = oneiron::memory::ProducerRows::default();\n'
             output = result if door else f'let output = {result}'
+            # A row that fails after its pre chain ran (its target check, its
+            # door, its input's decode or its answer's encoding) keeps a
+            # session-only call's pre hook records and runs no post chain
+            # (FIX 5651), as a host door does (FIX 5527).
             dispatch += head + f'''oneiron::task_verb::sdk::validate_input("{name}", &value)?;
         {room_guard}{actor}
         let hooks = facade_hooks_pre(server, call, "{name}", value).await?;
-        let value = hooks.args.clone(); {self_branch}{ref_guard}
+        let value = hooks.args.clone();
+        let ran = async {{ {self_branch}{ref_guard}
         {branch_turn}{producers}{output}{landed}
+        Ok::<_, FacadeApiError>((output, rows))
+        }}.await;
+        let (output, rows) = match ran {{ Ok(ran) => ran, Err(error) => {{ row_hooks_abort(server, hooks).await; return Err(error); }} }};
         Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows }})
         }}\n'''
             continue

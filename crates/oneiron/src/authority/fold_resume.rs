@@ -282,7 +282,8 @@ impl Once {
 /// 4535), a grant travel choice (only its own grant's choices), a checkpoint
 /// policy choice or a home pick (each only the vault's choices of its kind),
 /// a person's conversation training choice (only that person's choices), a
-/// machine's home candidacy (only that machine's declarations), an owner
+/// machine's home candidacy (only that machine's declarations), an owner's
+/// agent Grant act (it moves no fold state, FIX 5628), an owner
 /// work request, result or cancel (each judges only its own work), a world
 /// key record (it fills only its own key's slots, or is refused as a no-op,
 /// FIX 4881). A resumed fold and a fold past an adopted checkpoint take
@@ -321,6 +322,7 @@ pub(super) fn admits_past(
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)
+        | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::OwnerWorkCancel(_)
@@ -831,6 +833,7 @@ impl FoldBase {
             floor_vouched: (!observations.unvouched).then_some(&observations.vouched),
             install_held: None,
             entry_ancestors: None,
+            causal_past: None,
             peer_consent_roots: &inputs.peers,
             consent_arm,
             hosted: inputs.posture == crate::HostingPrivacyPosture::Hosted,

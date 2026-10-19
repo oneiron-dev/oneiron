@@ -11,15 +11,18 @@
 //! value-free view a surface reads to ask a change, and `POST
 //! /secrets/custody` takes a register or rotate whose protected input the
 //! surface sealed to the holder itself, so this install never sees the
-//! plaintext. Each act's surface is audit only: no route here refuses on
-//! where the owner said yes.
+//! plaintext; its body spools whole under the disk floor, whatever its
+//! length (`sealed_spool`, FIX 5674). Each act's surface is audit only: no
+//! route here refuses on where the owner said yes.
+
+mod sealed_spool;
 
 use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
-use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -37,25 +40,18 @@ use crate::error::ApiError;
 use crate::owner::{OwnerError, OwnerResult, entity_id, secrets};
 use crate::server::SyncServer;
 
-/// The largest sealed change body read: one input envelope at its codec's
-/// own bound (16 MiB of plaintext with its header and tag), in base64, with
-/// its binding fields. The engine carries an input past one row's bound in
-/// numbered parts and refuses none for its length (FIX 5445), so only the
-/// envelope codec bounds what a surface sends.
-const SEALED_BODY_LIMIT: usize = 24 << 20;
-
+/// `POST /secrets/custody` takes no `DefaultBodyLimit`: its body spools
+/// whole under the disk floor (`sealed_spool`), so a frame of numbered
+/// envelopes (FIX 5521) is read whatever its length, as the engine carries
+/// an input past one row's bound in numbered parts and refuses none for its
+/// length (FIX 5445).
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/secrets/register", post(register_secret))
         .route("/secrets/rotate", post(rotate_secret))
         .route("/secrets/revoke", post(revoke_secret))
         .route("/secrets/rewrap", post(rewrap_secret))
-        .route(
-            "/secrets/custody",
-            get(custody_view)
-                .post(sealed_change)
-                .layer(DefaultBodyLimit::max(SEALED_BODY_LIMIT)),
-        )
+        .route("/secrets/custody", get(custody_view).post(sealed_change))
 }
 
 /// The body is read by `RegisterSecret::read`, as rotation's is: the owner
@@ -261,7 +257,14 @@ struct SealedBody {
     seen: String,
     holder: String,
     recipients: Vec<PermitBody>,
-    /// The envelope sealed to the holder's key, as standard base64.
+    /// The input sealed to the holder's key, as standard base64: one
+    /// envelope, or the frame of numbered envelopes, two or more, which a
+    /// body past one envelope's plaintext bound needs (FIX 5521): its label,
+    /// the envelope count as a big-endian `u32`, each envelope's length as a
+    /// big-endian `u32` and its bytes in order, then the closing mark. Each
+    /// numbered envelope seals the input label and the next run of the body
+    /// under the one-envelope key id, then its index and the count, each a
+    /// big-endian `u32` (`secret_custody::control::input::envelopes`).
     input_base64: String,
     /// For a register, the `manifest_ref` its sealed record names: this
     /// install attaches the manifest it resolves for it. Absent, it attaches
@@ -273,17 +276,26 @@ struct SealedBody {
 
 /// `POST /v1/owner/secrets/custody`: records a register or rotate whose
 /// protected input the surface sealed to the holder under the binding `GET
-/// /secrets/custody` gave it. This install sees only ciphertext.
+/// /secrets/custody` gave it. This install sees only ciphertext. The body is
+/// read after the owner door, spooled whole under the disk floor, whose
+/// `disk_capacity` is the only refusal its size meets (FIX 5674); the floor
+/// keeps the room the engine stores the input in until the change returns.
 async fn sealed_change(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
-    payload: Result<Json<SealedBody>, JsonRejection>,
+    body: Body,
 ) -> OwnerReply<secrets::CustodyReply> {
     let owner = owner(&auth, &server)?;
+    if !has_json_content_type(&headers) {
+        return Err(ApiError::bad_request("invalid JSON request body", None).into());
+    }
     let surface = act_surface(&server, &auth, &headers);
-    let request = json_payload(payload)?;
+    let mut spooled = sealed_spool::spool(&server, &headers, body).await?;
     let reply = blocking(move || -> OwnerResult<secrets::CustodyReply> {
+        let request: SealedBody = spooled
+            .json()
+            .ok_or_else(|| OwnerError::Invalid("invalid JSON request body".into()))?;
         let change = CustodyChange::from_name(&request.change)
             .filter(|change| matches!(change, CustodyChange::Register | CustodyChange::Rotate))
             .ok_or_else(|| OwnerError::Invalid("change must be register or rotate".into()))?;
@@ -320,6 +332,7 @@ async fn sealed_change(
             },
             vault.now_recorded_at(),
         )?;
+        drop(spooled);
         Ok(custody.into())
     })
     .await?;

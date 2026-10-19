@@ -341,7 +341,7 @@ pub(crate) fn rehearse_keyed(
         keep_at,
         source,
         Some(key),
-        None,
+        &[],
     )
 }
 
@@ -353,11 +353,11 @@ pub(crate) fn rehearse_in(
     keep_at: Option<&Path>,
     source: &SideRestoreSource,
 ) -> anyhow::Result<Rehearsal> {
-    rehearse_in_with(temp, backup, config, keep_at, source, None, None)
+    rehearse_in_with(temp, backup, config, keep_at, source, None, &[])
 }
 
-/// [`rehearse_in`], the copy's writes claiming their room on `floor` when a
-/// serving host lent one ([`write_budget`], FIX 5479).
+/// [`rehearse_in`], the copy's writes claiming their room on each of
+/// `floors` a serving host lent ([`write_budget`], FIX 5479, FIX 5612).
 fn rehearse_in_with(
     temp: &Path,
     backup: &Path,
@@ -365,7 +365,7 @@ fn rehearse_in_with(
     keep_at: Option<&Path>,
     source: &SideRestoreSource,
     key: Option<CheckpointKey>,
-    floor: Option<&DiskFloor>,
+    floors: &[DiskFloor],
 ) -> anyhow::Result<Rehearsal> {
     let scratch = match keep_at {
         Some(path) => path.to_path_buf(),
@@ -383,7 +383,7 @@ fn rehearse_in_with(
             .unwrap_or(Path::new("/")),
     )?;
     let scratch = Owned::create(scratch)?;
-    let outcome = rehearse_into(backup, config, &scratch.vault(), source, key, floor);
+    let outcome = rehearse_into(backup, config, &scratch.vault(), source, key, floors);
     // A failed rehearsal leaves nothing behind, even where it was told to keep.
     if keep_at.is_none() || outcome.is_err() {
         scratch.remove();
@@ -400,7 +400,7 @@ fn rehearse_into(
     scratch: &Path,
     source: &SideRestoreSource,
     key: Option<CheckpointKey>,
-    floor: Option<&DiskFloor>,
+    floors: &[DiskFloor],
 ) -> anyhow::Result<Rehearsal> {
     let key = match key {
         Some(key) => key,
@@ -415,7 +415,7 @@ fn rehearse_into(
     // in a kept scratch copy never reaches the live vault's keys. Its writes
     // claim their room on the floor, given back once it is made or refused;
     // the engine's error stays the source, so capacity is named (FIX 5479).
-    let room = write_budget::WriteClaim::on(floor);
+    let room = write_budget::WriteClaim::on_each(floors);
     let (restored, report) = oneiron::Vault::restore_checkpoint_beside_within(
         backup,
         &key,
@@ -465,9 +465,9 @@ impl Owned {
             use std::os::unix::fs::DirBuilderExt;
             builder.mode(0o700);
         }
-        builder
-            .create(&dir)
-            .map_err(|error| anyhow::anyhow!("create {}: {error}", dir.display()))?;
+        builder.create(&dir).map_err(|error| {
+            anyhow::Error::new(error).context(format!("create {}", dir.display()))
+        })?;
         Self::hold(dir)
     }
 
@@ -485,7 +485,8 @@ impl Owned {
             let held = rustix::fs::open(&dir, flags, Mode::empty())
                 .map(std::fs::File::from)
                 .map_err(|error| {
-                    anyhow::anyhow!("open {}: {error}; it is left as it is", dir.display())
+                    anyhow::Error::new(std::io::Error::from(error))
+                        .context(format!("open {}; it is left as it is", dir.display()))
                 })?;
             anyhow::ensure!(
                 fresh_private_directory(&held)?,
@@ -996,9 +997,9 @@ fn create_private_dir(dir: &Path) -> anyhow::Result<()> {
         use std::os::unix::fs::DirBuilderExt;
         builder.mode(0o700);
     }
-    builder
-        .create(dir)
-        .map_err(|error| anyhow::anyhow!("create backup directory {}: {error}", dir.display()))
+    builder.create(dir).map_err(|error| {
+        anyhow::Error::new(error).context(format!("create backup directory {}", dir.display()))
+    })
 }
 
 fn sync_dir(dir: &Path) -> anyhow::Result<()> {

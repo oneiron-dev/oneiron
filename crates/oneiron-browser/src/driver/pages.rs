@@ -1,6 +1,8 @@
 //! The answers a driver holds (Rule 5, AB-002): the observations a later
 //! one may edit, the one its caller last read whole, and the pages of long
-//! answers a cursor reads on.
+//! answers a cursor reads on. A row answer searched in a desktop window
+//! whose walk stayed cut holds what it searched for and where the walk
+//! stopped, for its `walk_next` to search on.
 //!
 //! An observation is whole, or an ordered edit of a base the caller holds
 //! whole, of the same scope, that neither it nor the base is partial: the
@@ -90,7 +92,7 @@ struct Snapshot {
 /// The observations a later one may edit, and the answers held for their
 /// later pages: the last [`HISTORY`] observations, the one the caller last
 /// read whole, the last [`HISTORY`] paged observations and the last
-/// [`HISTORY`] paged row answers (`find`, `wait_for`).
+/// [`HISTORY`] paged or cut row answers (`find`, `wait_for`).
 #[derive(Default)]
 pub(crate) struct Observations {
     history: VecDeque<Snapshot>,
@@ -98,9 +100,40 @@ pub(crate) struct Observations {
     /// it out.
     delivered: Option<Snapshot>,
     paged: VecDeque<Observation>,
-    rows: VecDeque<(u64, Vec<Row>)>,
+    rows: VecDeque<Rows>,
     /// The number the last held row answer took.
     rows_seq: u64,
+}
+
+/// A held row answer: its number, its rows, and, when its window's walk
+/// stayed cut, the search its `walk_next` goes on with.
+struct Rows {
+    answer: u64,
+    rows: Vec<Row>,
+    search: Option<Search>,
+}
+
+/// A row search of a desktop window whose walk stopped before the tree's
+/// end (Rule 5): the window (as its observation's `url` names it), where the
+/// walk stopped, and what it searched for. Its `walk_next` walks the window
+/// again, longer, and searches the rows it reaches for the same.
+#[derive(Clone)]
+pub(crate) struct Search {
+    pub(crate) url: String,
+    pub(crate) cut: PartialTree,
+    /// The rows sought: `targets`, else `role` and `name`, as a wait
+    /// matches them.
+    pub(crate) query: WaitForInput,
+}
+
+/// One page of a row answer: its rows, the cursor of its next page, and,
+/// when its window's walk stayed cut, where (on every page) and the cursor
+/// that searches on (on the last).
+pub(crate) struct Found {
+    pub(crate) rows: Vec<Row>,
+    pub(crate) next: Option<String>,
+    pub(crate) partial: Option<PartialTree>,
+    pub(crate) walk_next: Option<String>,
 }
 
 impl Observations {
@@ -187,8 +220,10 @@ impl Observations {
     }
 
     /// The caller read observation `seq` whole: a later observation edits it
-    /// unless the caller names another base.
-    fn deliver(&mut self, seq: u64) {
+    /// unless the caller names another base. Every answer that gives the
+    /// caller an observation's last rows delivers it: its last page, the
+    /// unpaged rest a cursor reads, or a longer walk read unpaged.
+    pub(crate) fn deliver(&mut self, seq: u64) {
         if self.delivered.as_ref().is_some_and(|held| held.seq == seq) {
             return;
         }
@@ -231,15 +266,18 @@ impl Observations {
         Ok(page)
     }
 
-    /// The whole rest of a held observation from `cursor`, unpaged.
-    pub(crate) fn rest(&self, cursor: &str) -> Result<Observation, BrowserError> {
+    /// The whole rest of a held observation from `cursor`, unpaged: the
+    /// caller has then read it whole, so it is the caller's.
+    pub(crate) fn rest(&mut self, cursor: &str) -> Result<Observation, BrowserError> {
         let (held, from) = self.continued(cursor)?;
-        Ok(part(
+        let rest = part(
             held,
             held.rows.get(from..).unwrap_or_default().to_vec(),
             Some(from),
             true,
-        ))
+        );
+        self.deliver(rest.seq);
+        Ok(rest)
     }
 
     /// The window and the cut of the held partial observation that `cursor`
@@ -263,16 +301,8 @@ impl Observations {
     /// A row answer's first page, and the cursor of the next when the rows
     /// go on; the rest is held for it.
     pub(crate) fn first_rows(&mut self, rows: Vec<Row>) -> (Vec<Row>, Option<String>) {
-        let (page, Some(at)) = page_of(&rows, 0) else {
-            return (rows, None);
-        };
-        self.rows_seq += 1;
-        let answer = self.rows_seq;
-        self.rows.push_back((answer, rows));
-        if self.rows.len() > HISTORY {
-            self.rows.pop_front();
-        }
-        (page, Some(rows_cursor(answer, at)))
+        let found = self.first_found(rows, None);
+        (found.rows, found.next)
     }
 
     /// The page of a held row answer that `cursor` starts, and the cursor
@@ -281,6 +311,42 @@ impl Observations {
         &self,
         cursor: &str,
     ) -> Result<(Vec<Row>, Option<String>), BrowserError> {
+        let found = self.next_found(cursor)?;
+        Ok((found.rows, found.next))
+    }
+
+    /// A row answer's first page, with its `search` when its window's walk
+    /// stayed cut: the rest, and the search, are held for their cursors. A
+    /// cut answer is held even when it fits one page, so its last page's
+    /// `walk_next` searches on (Rule 5).
+    pub(crate) fn first_found(&mut self, rows: Vec<Row>, search: Option<Search>) -> Found {
+        let (page, next) = page_of(&rows, 0);
+        if next.is_none() && search.is_none() {
+            return Found {
+                rows: page,
+                next: None,
+                partial: None,
+                walk_next: None,
+            };
+        }
+        self.rows_seq += 1;
+        let answer = self.rows_seq;
+        let held = Rows {
+            answer,
+            rows,
+            search,
+        };
+        let found = found_of(&held, page, next);
+        self.rows.push_back(held);
+        if self.rows.len() > HISTORY {
+            self.rows.pop_front();
+        }
+        found
+    }
+
+    /// The page of a held row answer that `cursor` starts, the cursor of
+    /// the next when the rows go on, and its cut, as its first page had it.
+    pub(crate) fn next_found(&self, cursor: &str) -> Result<Found, BrowserError> {
         let parsed = cursor
             .strip_prefix('r')
             .and_then(|rest| rest.split_once('.'))
@@ -290,17 +356,32 @@ impl Observations {
         let Some((answer, at)) = parsed else {
             return Err(BrowserError::Input(format!("{cursor} is no row cursor")));
         };
-        let (_, rows) = self
-            .rows
+        let held = self.held_rows(answer)?;
+        let (page, next) = page_of(&held.rows, at);
+        Ok(found_of(held, page, next))
+    }
+
+    /// The search a cut row answer's `walk_next`, `cursor`, goes on with.
+    pub(crate) fn search_of(&self, cursor: &str) -> Result<Search, BrowserError> {
+        let answer = cursor
+            .strip_prefix("rw")
+            .and_then(|answer| answer.parse::<u64>().ok())
+            .ok_or_else(|| BrowserError::Input(format!("{cursor} is no search cursor")))?;
+        self.held_rows(answer)?
+            .search
+            .clone()
+            .ok_or_else(|| BrowserError::Input(format!("answer {answer} was not cut")))
+    }
+
+    fn held_rows(&self, answer: u64) -> Result<&Rows, BrowserError> {
+        self.rows
             .iter()
-            .find(|(held, _)| *held == answer)
+            .find(|held| held.answer == answer)
             .ok_or_else(|| {
                 BrowserError::Input(format!(
                     "answer {answer} is no longer held for its later pages; ask again"
                 ))
-            })?;
-        let (page, next) = page_of(rows, at);
-        Ok((page, next.map(|at| rows_cursor(answer, at))))
+            })
     }
 
     /// Forgets every observation and held answer, so the next observation is
@@ -420,6 +501,27 @@ pub(crate) fn wait_cursor(input: &WaitForInput) -> Result<Option<&str>, BrowserE
 /// Whether `cursor` is a partial observation's `walk_next`.
 pub(crate) fn is_walk(cursor: &str) -> bool {
     cursor.starts_with('w')
+}
+
+/// Whether `cursor` is a cut row answer's `walk_next`.
+pub(crate) fn is_search(cursor: &str) -> bool {
+    cursor.starts_with("rw")
+}
+
+/// `page` of the held row answer `held`, whose next page starts at `next`
+/// when the rows go on: every page carries the answer's cut, and the last
+/// its `walk_next`.
+fn found_of(held: &Rows, page: Vec<Row>, next: Option<usize>) -> Found {
+    let partial = held.search.as_ref().map(|search| search.cut.clone());
+    Found {
+        rows: page,
+        walk_next: partial
+            .as_ref()
+            .filter(|_| next.is_none())
+            .map(|_| format!("rw{}", held.answer)),
+        next: next.map(|at| rows_cursor(held.answer, at)),
+        partial,
+    }
 }
 
 /// A token for one session's handles and scopes, so a later session's
