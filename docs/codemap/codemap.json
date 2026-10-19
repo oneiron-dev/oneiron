@@ -2405,6 +2405,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/agent_grant_act.rs",
+     "purpose": "The signed half of the owner's agent Grant doors (FIX 5628, Engine 10-20 00:5x): the owner's mint or revoke…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/ancestor_index.rs",
      "purpose": "Claimed authority-entry ancestry index for deterministic fold scheduling",
      "surface": {
@@ -3343,7 +3353,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "re-export": 55
      }
     },
@@ -16431,6 +16441,17 @@
      "path": "src/consent/doors/person_credential.rs",
      "purpose": "A person's own slip bound to their proof (FIX 4707): the HTTP door of a world's settings holders, who need…",
      "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/doors/request_credential.rs",
+     "purpose": "The slip a person's request arrived with, bound to their proof as a liveness guard alone (FIX 4328…",
+     "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -42704,6 +42725,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/receipt/authority_audit/agent_grant_act.rs",
+     "purpose": "An owner's agent Grant act in the audit (FIX 5628): a mint is a grant and a revoke a revoke",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/receipt/brief_share.rs",
      "purpose": "The brief-share projection",
      "surface": {
@@ -62099,7 +62130,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 184,
+     "files": 185,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62379,7 +62410,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63079,7 +63110,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -63557,7 +63588,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3909,
+   "source_files": 3912,
    "test_files": 902
   },
   "oneiron-android": {
@@ -63617,6 +63648,23 @@
   },
   "oneiron-authority": {
    "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentGrantActRecord",
+      "AgentGrantChange"
+     ],
+     "path": "src/authority/agent_grant_act.rs",
+     "purpose": "The owner's mint or revoke of an agent's Grant as a signed owner act (FIX 5628, Engine 10-20 00:5x), and its…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
     {
      "bucket": "s",
      "kind": "src",
@@ -63847,7 +63895,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 27
+      "re-export": 28
      }
     },
     {
@@ -64030,6 +64078,7 @@
      "path": "src/authority/slip_wire.rs",
      "purpose": "Field-by-field signed capability claims and six-axis Scope wire codec",
      "surface": {
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -64238,7 +64287,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -64268,7 +64317,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 40,
+   "source_files": 41,
    "test_files": 1
   },
   "oneiron-bench": {
