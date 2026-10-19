@@ -200,8 +200,9 @@ impl SyncConnection {
         #[derive(serde::Deserialize)]
         struct LeftNotices {
             notices: Vec<crate::federation::SignedSharedActOutcome>,
-            /// The signed ReRoot rows, hex, from where this env's chain
-            /// stands to the key that signed the notices.
+            /// The signed rows, hex, that hand the root on from where this
+            /// env's chain stands to the key that signed the notices, and
+            /// the rows they stand on, parents first.
             handoff: Vec<String>,
         }
 
