@@ -1174,7 +1174,7 @@
      "path": "src/agent_dispatch/spend_lease.rs",
      "purpose": "Spend scopes: each launch's lease tree under one hard cap (OF-532, ARCH-0079 #budget, #reader-forks)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 17
      }
     },
@@ -20240,7 +20240,7 @@
      "surface": {
       "crate-vis": 23,
       "mod": 4,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -20395,6 +20395,16 @@
       "crate-vis": 3,
       "fn": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resident_for_human.rs",
+     "purpose": "An agent's free time for its human (FIX 4453, `autonomy.for_human`)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -21090,7 +21100,7 @@
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
       "crate-vis": 6,
-      "fn": 18
+      "fn": 19
      }
     },
     {
@@ -21221,8 +21231,95 @@
      "path": "src/dreamer_runner/constants.rs",
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
-      "const": 25,
+      "const": 26,
       "crate-vis": 31
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FreeTimeCycle",
+      "FreeTimeCycleState",
+      "FreeTimeItemRef",
+      "FreeTimeNote",
+      "FreeTimeOwnTimeChoice"
+     ],
+     "path": "src/dreamer_runner/free_time/cycle.rs",
+     "purpose": "A free-time cycle (FIX 4453): its owner-set clock, its opening on the elected home, and its end",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FreeTimeItemBinding"
+     ],
+     "path": "src/dreamer_runner/free_time/items.rs",
+     "purpose": "A free-time cycle's items (FIX 4453): the binding each item's attempt runs under, what it lands, and how it…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FreeTimeKind"
+     ],
+     "path": "src/dreamer_runner/free_time/mod.rs",
+     "purpose": "An agent's free time (FIX 4453, ARCH-0005b #free-time)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 1,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FreeTimeCadence",
+      "FreeTimePolicy",
+      "FreeTimePolicyInput",
+      "FreeTimeSchedule",
+      "FreeTimeSplit",
+      "UnsetFreeTimePolicy"
+     ],
+     "path": "src/dreamer_runner/free_time/policy.rs",
+     "purpose": "The owner's free-time policy for one agent (FIX 4453): the total budget one cycle may spend, the cycle's…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 3,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FreeTimeCycleSheet",
+      "FreeTimeFloor",
+      "FreeTimeItemOutcome",
+      "FreeTimeItemReceipt"
+     ],
+     "path": "src/dreamer_runner/free_time/receipt.rs",
+     "purpose": "Each free-time item's terminal receipt, and a cycle's floor (FIX 4453)",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -22017,7 +22114,7 @@
      "surface": {
       "crate-vis": 2,
       "mod": 4,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -22188,7 +22285,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 17,
       "struct": 1
      }
@@ -32854,6 +32951,7 @@
      "kind": "src",
      "notable": [
       "RunAdmission",
+      "RunAttribution",
       "RunCall",
       "RunCallError",
       "RunDenied"
@@ -32864,8 +32962,8 @@
       "const": 1,
       "crate-vis": 9,
       "enum": 2,
-      "fn": 21,
-      "struct": 2
+      "fn": 23,
+      "struct": 3
      }
     },
     {
@@ -43412,7 +43510,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/restore_class/vault_meta_d_l.rs",
@@ -62383,7 +62481,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 69,
+     "files": 70,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62411,7 +62509,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 83,
+     "files": 88,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63428,7 +63526,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3900,
+   "source_files": 3906,
    "test_files": 902
   },
   "oneiron-android": {
@@ -75094,6 +75192,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/dreamer/free_time.rs",
+     "purpose": "A resident's free-time items on this server (FIX 4453)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/eval_authoring.rs",
      "purpose": "The Coach's eval authoring (ARCH-0053 \"Eval authoring\", OF-578): each night it keeps each seat's test set…",
      "surface": {
@@ -83633,7 +83741,7 @@
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
       "crate-vis": 15,
-      "fn": 19,
+      "fn": 20,
       "re-export": 14,
       "struct": 2
      }
@@ -85761,7 +85869,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 52,
+     "files": 53,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86218,7 +86326,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 844,
+   "source_files": 845,
    "test_files": 182
   },
   "oneiron-spawn": {
