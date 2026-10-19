@@ -152,7 +152,7 @@ fn kit_key(id: KitId) -> String {
 }
 
 /// A kit refusal as the engine's: the kit's fixed reason, never piece bytes.
-fn kit_refused(error: KitError) -> Error {
+pub(super) fn kit_refused(error: KitError) -> Error {
     refused(match error {
         KitError::InvalidCustodyConfig => "the vault's key custody configuration is invalid",
         KitError::EntropyUnavailable => "backup entropy unavailable",
@@ -177,7 +177,10 @@ fn kit_refused(error: KitError) -> Error {
 /// kit judges placement and coverage: a code file on `me` is a file here,
 /// and another machine's home never names `me`. Otherwise one machine under
 /// two names would pass for two machines.
-fn resolve_homes(homes: &[PieceHome; 3], me: Option<EntityId>) -> Result<[PieceHome; 3]> {
+pub(super) fn resolve_homes(
+    homes: &[PieceHome; 3],
+    me: Option<EntityId>,
+) -> Result<[PieceHome; 3]> {
     let mut resolved = homes.clone();
     for home in &mut resolved {
         match *home {

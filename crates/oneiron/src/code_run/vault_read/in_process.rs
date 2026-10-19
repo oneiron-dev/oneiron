@@ -310,7 +310,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .edge_hop(edge_hop)
             .max_neighbors(max_neighbors)
             .field_profile(FieldProfile::Standard)
-            .caller_off_device(self.scoped_read.off_device());
+            .for_destination(self.scoped_read.actor_key().destination());
         if let Some(model) = request.executor_model.as_deref() {
             builder = builder
                 .skill_executor(model)

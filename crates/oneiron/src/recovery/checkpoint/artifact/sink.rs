@@ -7,14 +7,16 @@ use std::path::{Path, PathBuf};
 
 use getrandom::SysRng;
 use oneiron_crypto::{
-    Argon2Cost, Envelope, OpenKey, OpenPolicy, Purpose, SealKey, SealParams, WrapType, seal,
+    Argon2Cost, Envelope, MAX_PLAINTEXT_LEN, OpenKey, OpenPolicy, Purpose, SealKey, SealParams,
+    WrapType, seal,
 };
 
 use super::commitment::{self, ChainHead, Link};
 use super::{
     AEAD, ArtifactKind, CHUNK_LEN, CheckpointKey, EPOCH, IMAGE_STREAM, MAGIC, MANIFEST_STREAM,
-    MAX_KEY_HEADER, Manifest, StreamEntry, VERSION, ZSTD_LEVEL, codec,
+    MAX_FRAME, MAX_KEY_HEADER, Manifest, PRELUDE_LEN, StreamEntry, VERSION, ZSTD_LEVEL, codec,
 };
+use crate::recovery::checkpoint::write_budget::{self, RecoveryWriteBudget};
 use crate::world_keys::{CarriedVaultKey, refused};
 use crate::{Error, Result};
 
@@ -91,7 +93,10 @@ pub(in crate::recovery::checkpoint) struct ArtifactBody {
 /// each body `open_body` hands back by its place in `bodies`, then the
 /// manifest, then the commitment `link` signs. Returns the image's BLAKE3 and
 /// the chain head the signed commitment makes. A write that fails removes the
-/// file, so no part of one is left.
+/// file, so no part of one is left. The artifact's room is claimed on
+/// `budget` before its first byte, at [`artifact_room`], and set to what is
+/// left before each frame (FIX 5479); a claim the floor refuses fails the
+/// write.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::recovery::checkpoint) fn write_artifact(
     path: &Path,
@@ -103,6 +108,7 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
     image: &[u8],
     bodies: &[ArtifactBody],
     mut open_body: impl FnMut(usize) -> Result<Box<dyn Read + Send>>,
+    budget: &dyn RecoveryWriteBudget,
 ) -> Result<([u8; 32], ChainHead)> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -129,7 +135,10 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
             commitment: *carried.commitment(),
             snapshot,
         },
+        room: artifact_room(key_header.len(), image.len(), bodies),
+        budget,
     };
+    sink.claim_rest()?;
     sink.put(MAGIC)?;
     sink.put(&VERSION.to_be_bytes())?;
     sink.put(&[kind.code()])?;
@@ -196,10 +205,43 @@ impl Drop for Partial {
     }
 }
 
+/// The most an artifact of these streams takes on the disk (FIX 5479): its
+/// prelude and key header; each stream's chunks framed at their zstd bound
+/// plus the slack [`MAX_FRAME`] leaves an envelope over its plaintext; and
+/// the manifest, commitment and signature at the most a reader takes of
+/// each, with the closing offset. A bound read off the streams' lengths,
+/// never a guess at what they compress to.
+fn artifact_room(key_header: usize, image: usize, bodies: &[ArtifactBody]) -> u64 {
+    let slack = MAX_FRAME.saturating_sub(MAX_PLAINTEXT_LEN as u64);
+    let frame = |plain: usize| {
+        (zstd::zstd_safe::compress_bound(plain) as u64).saturating_add(slack.saturating_add(4))
+    };
+    let stream = |len: u64| {
+        let chunk = CHUNK_LEN as u64;
+        let rest = len % chunk;
+        (len / chunk)
+            .saturating_mul(frame(CHUNK_LEN))
+            .saturating_add(if rest == 0 { 0 } else { frame(rest as usize) })
+    };
+    let tail = MAX_FRAME
+        .saturating_add(commitment::MAX_SIGNED_FRAME.saturating_mul(2))
+        .saturating_add(4 * 3 + 8);
+    bodies.iter().fold(
+        ((PRELUDE_LEN + key_header) as u64)
+            .saturating_add(stream(image as u64))
+            .saturating_add(tail),
+        |room, body| room.saturating_add(stream(body.len)),
+    )
+}
+
 struct Sink<'k> {
     out: BufWriter<File>,
     offset: u64,
     sealer: Sealer<'k>,
+    /// The most the artifact takes ([`artifact_room`]).
+    room: u64,
+    /// The floor the artifact's writes claim their room on.
+    budget: &'k dyn RecoveryWriteBudget,
 }
 
 impl Sink<'_> {
@@ -209,7 +251,13 @@ impl Sink<'_> {
         Ok(())
     }
 
+    /// Claims what is left of the artifact's room.
+    fn claim_rest(&self) -> Result<()> {
+        write_budget::hold(self.budget, self.room.saturating_sub(self.offset))
+    }
+
     fn frame(&mut self, envelope: &[u8]) -> Result<()> {
+        self.claim_rest()?;
         let len = u32::try_from(envelope.len()).map_err(|_| codec())?;
         self.put(&len.to_be_bytes())?;
         self.put(envelope)

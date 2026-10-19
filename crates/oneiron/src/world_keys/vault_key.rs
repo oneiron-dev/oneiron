@@ -40,6 +40,8 @@ use crate::Vault;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 
+pub(super) mod kit;
+
 const PAYLOAD_LABEL: &[u8] = b"oneiron/vault-dek/v1\0";
 const PAYLOAD_LEN: usize = PAYLOAD_LABEL.len() + 32;
 const COMMITMENT_CONTEXT: &str = "oneiron/vault-key-commitment/v1";

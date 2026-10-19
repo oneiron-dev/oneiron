@@ -441,6 +441,7 @@ both bindings and their export-census tests in one change.
 - `vault.research.record_benchmark`
 - `vault.authority.handoff_alarms`
 - `vault.authority.handoff_alarms.acknowledge`
+- `vault.roots.requests.cancel`
 - `vault.cleanup.run`
 - `vault.entities.mention`
 - `vault.legal_holds.place`

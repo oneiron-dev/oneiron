@@ -59,18 +59,31 @@ pub(crate) fn held_content_hashes_in_txn(
     {
         return artifact_hashes(store, txn, id);
     }
-    Ok(carrier_content_hash(id, raw)?.into_iter().collect())
+    Ok(carrier_content_hash(store, txn, id, raw)?
+        .into_iter()
+        .collect())
 }
 
 /// The hash whose bytes the stored record `raw` at `id` carries, when it is a content-addressed
 /// version ASSET: its id is derived from the hash of its body. Every holder of those bytes reads
-/// them through it, so deleting it takes them from all of them.
-pub(crate) fn carrier_content_hash(id: &EntityId, raw: &[u8]) -> Result<Option<ContentHash>> {
+/// them through it, so deleting it takes them from all of them. A file-plane ASSET's row holds
+/// its body's manifest, not the body, so the hash is the one that manifest names, read through
+/// the file plane; an inline body is hashed as its row holds it (FIX 5394).
+pub(crate) fn carrier_content_hash(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<Option<ContentHash>> {
     if EntityMetadataHeader::parse(raw).map(|header| header.entity_type) != Some(ENTITY_TYPE_ASSET)
     {
         return Ok(None);
     }
-    let hash: ContentHash = *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes();
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    let hash: ContentHash = match crate::store::asset_file_in_txn(store, txn, id, body)? {
+        Some(manifest) => manifest.facts.blake3,
+        None => *blake3::hash(body).as_bytes(),
+    };
     Ok((blob_artifact_asset_entity_id(&hash)? == *id).then_some(hash))
 }
 

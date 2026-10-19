@@ -3787,6 +3787,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_roots_requests_cancel(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.roots.requests.cancel", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_cleanup_run(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.cleanup.run", js_json(input))

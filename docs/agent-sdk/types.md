@@ -1081,6 +1081,8 @@ class Oneiron:
         @property
         def evals(self) -> "Oneiron._VaultEvalsVerbs": ...
         @property
+        def roots(self) -> "Oneiron._VaultRootsVerbs": ...
+        @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs": ...
         @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs": ...
@@ -2365,6 +2367,12 @@ class Oneiron:
             """Read only unanswered eval-label asks for this owner, optionally by seat or blocked decision, with scoped cases and quoted human minutes; create no standing label session."""
         def pick(self, spec: Facade.EvalLabelPickRequest) -> Facade.EvalCase:
             """Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses."""
+    class _VaultRootsVerbs:
+        @property
+        def requests(self) -> "Oneiron._VaultRootsRequestsVerbs": ...
+    class _VaultRootsRequestsVerbs:
+        def cancel(self, spec: Facade.RootRequestCancelRequest) -> Facade.OwnerWorkReceipt:
+            """The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands."""
     class _VaultCleanupVerbs:
         def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""

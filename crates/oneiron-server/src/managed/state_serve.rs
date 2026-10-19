@@ -590,7 +590,8 @@ impl ManagedState {
     ///
     /// The freeze goes first so nothing new enters the lease table while it is
     /// being drained, and the export runs last so the entries the supervisor
-    /// gets describe the quiesced state rather than the one before it.
+    /// gets describe the quiesced state rather than the one before it. The
+    /// training setting rides the same report, read under the same revision.
     ///
     /// `quiescent` needs a third answer beyond "frozen" and "drained": the
     /// freeze refuses new requests and new upgrades, but a sync session
@@ -604,16 +605,20 @@ impl ManagedState {
         // turn a stale exported ledger into a quiescent reply.
         let http_drained = self.http_mutating_in_flight.load(Ordering::SeqCst) == 0;
         let drained = self.drain_lease_table().await;
-        let (ledger_rev, next_wake) = self.ledger.export_at_freeze(&self.server).await?;
+        let (ledger_rev, report) = self.ledger.export_at_freeze(&self.server).await?;
         // The reply carries the entries, so they are bounds-checked before
-        // they are serialized rather than after a supervisor has trusted them.
-        validate_wake_entries(&next_wake).map_err(|error| ManagedError::LedgerRefused {
-            reason: error.to_string(),
-        })?;
+        // they are serialized rather than after a supervisor has trusted them,
+        // and the training setting is shape-checked with them.
+        validate_wake_entries(&report.entries)
+            .and_then(|()| report.training.validate())
+            .map_err(|error| ManagedError::LedgerRefused {
+                reason: error.to_string(),
+            })?;
         Ok(CtlResponse::PrepareReap {
             quiescent: http_drained && drained && self.is_frozen() && !self.live_sync_writer(),
             ledger_rev,
-            next_wake,
+            next_wake: report.entries,
+            training: report.training,
         })
     }
 
@@ -1331,12 +1336,21 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         );
     }
 
+    // Subscribed before the opening push reads the training setting, so a
+    // change between the two still reaches the report task (FIX 5575).
+    let training_changes = vault.subscribe_proactivity_changes();
     if let Err(_error) = state.ledger().push_if_changed(&sync_server).await {
         tracing::warn!(
             reason = "wake_ledger_export_failed",
             "initial wake ledger push failed"
         );
     }
+    let training_report = spawn_training_report(
+        Arc::clone(&state),
+        Arc::clone(&sync_server),
+        training_changes,
+        shutdown.triggered(),
+    );
 
     // Housekeeping passes are admitted like a served write: a vault frozen
     // for reap sweeps nothing, and a pass in flight keeps it from reading
@@ -1581,10 +1595,50 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         tracing::warn!(%error, path = %path.display(), "artifact socket unlink failed");
     }
 
+    // The report task stops before the final push, which reads the setting
+    // again itself.
+    training_report.abort();
+    let _ = training_report.await;
     final_ledger_push(&state, &sync_server).await;
     result?;
     telemetry_drained?;
     Ok(())
+}
+
+/// Reports the vault's training setting to the supervisor as it changes
+/// (FIX 5575), so a status read there never wakes the vault.
+///
+/// Each notification on `changes` only says "re-read committed state": the
+/// setting is read again and pushed with the current entries when it moved
+/// from the last report the supervisor took, or when it took none, so a
+/// refused push goes out again on the next change. Notifications that land
+/// during a push are read as one, since each report replaces the last whole.
+/// It takes no write admission, so the reap freeze never holds it back, and
+/// it ends with shutdown.
+fn spawn_training_report(
+    state: Arc<ManagedState>,
+    server: Arc<SyncServer>,
+    mut changes: watch::Receiver<u64>,
+    mut stop: ShutdownSignal,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                () = &mut stop => return,
+                changed = changes.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                }
+            }
+            if let Err(_error) = state.ledger().push_training_if_changed(&server).await {
+                tracing::warn!(
+                    reason = "wake_ledger_export_failed",
+                    "training setting report failed"
+                );
+            }
+        }
+    })
 }
 
 /// The last thing the supervisor hears from this process.
@@ -1595,8 +1649,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
 /// entries that moved since the last accepted push — a job that became ready,
 /// a lease that changed — has to advance the revision, or a supervisor that
 /// drops `rev <= last_acked` drops precisely the snapshot this exit exists to
-/// deliver. Unchanged entries send nothing, because the supervisor already
-/// holds that snapshot at that revision.
+/// deliver. An unchanged report (entries and training setting) sends nothing,
+/// because the supervisor already holds that snapshot at that revision.
 ///
 /// Failure is logged and stepped over. A supervisor that has already died must
 /// not be able to hold this exit open.

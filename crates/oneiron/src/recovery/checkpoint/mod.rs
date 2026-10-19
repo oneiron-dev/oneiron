@@ -25,6 +25,7 @@ mod host_holds;
 mod rebuild;
 mod restore_class;
 mod tiers;
+mod write_budget;
 use crate::ports::{IndexRows, RetrievalIndexInventory};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody, MadeDestination};
@@ -39,6 +40,7 @@ use std::{
     path::{Path, PathBuf},
 };
 pub use tiers::{StorageTier, storage_tier};
+pub use write_budget::{AtWriteFloor, RecoveryWriteBudget};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
 
 /// Presence-only probes for the canonical rebuild inputs behind the text and
@@ -303,7 +305,13 @@ impl Vault {
     /// this device's wrap when this handle does not hold it. Checkpoint id
     /// hashes the entire canonical image.
     pub fn snapshot_checkpoint(&self, path: &Path, created_at: u64) -> Result<String> {
-        self.snapshot_checkpoint_checked(path, created_at, None, ArtifactKind::Checkpoint)
+        self.snapshot_checkpoint_checked(
+            path,
+            created_at,
+            None,
+            ArtifactKind::Checkpoint,
+            &write_budget::Unfloored,
+        )
     }
     /// [`Vault::snapshot_checkpoint`] on an owner's request. The proof is
     /// rechecked in the snapshot's own read transaction, so an owner whose
@@ -320,7 +328,13 @@ impl Vault {
         path: &Path,
         created_at: u64,
     ) -> Result<String> {
-        self.snapshot_checkpoint_checked(path, created_at, Some(owner), ArtifactKind::Checkpoint)
+        self.snapshot_checkpoint_checked(
+            path,
+            created_at,
+            Some(owner),
+            ArtifactKind::Checkpoint,
+            &write_budget::Unfloored,
+        )
     }
     /// An owner's backup: [`Vault::snapshot_checkpoint`] sealed as a backup,
     /// and on `owner`'s request, when given, as
@@ -331,7 +345,21 @@ impl Vault {
         created_at: u64,
         owner: Option<&crate::consent::AuthenticatedOwner>,
     ) -> Result<String> {
-        self.snapshot_checkpoint_checked(path, created_at, owner, ArtifactKind::Backup)
+        self.snapshot_backup_within(path, created_at, owner, &write_budget::Unfloored)
+    }
+    /// [`Vault::snapshot_backup`] on a disk whose host keeps a free-space
+    /// floor under its uploads (FIX 5479): the artifact's room is claimed on
+    /// `budget` before its first byte, at the most its streams can seal to,
+    /// and set to what is left at each frame. A claim the floor refuses
+    /// stops the backup with [`AtWriteFloor`], its partial file removed.
+    pub fn snapshot_backup_within(
+        &self,
+        path: &Path,
+        created_at: u64,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
+        budget: &dyn RecoveryWriteBudget,
+    ) -> Result<String> {
+        self.snapshot_checkpoint_checked(path, created_at, owner, ArtifactKind::Backup, budget)
     }
     fn snapshot_checkpoint_checked(
         &self,
@@ -339,6 +367,7 @@ impl Vault {
         created_at: u64,
         owner: Option<&crate::consent::AuthenticatedOwner>,
         kind: ArtifactKind,
+        budget: &dyn RecoveryWriteBudget,
     ) -> Result<String> {
         self.unlock_vault_key()?;
         let keys = self.checkpoint_signing_keys()?;
@@ -499,6 +528,7 @@ impl Vault {
             &bytes,
             &files.streams(),
             |index| files.open(index),
+            budget,
         )?;
         // A checkpoint the chain does not take is no checkpoint.
         if let Err(error) = self.advance_checkpoint_chain(link.head, head) {
@@ -566,6 +596,7 @@ impl Vault {
             restored_at,
             Custody::Keep,
             &BTreeSet::new(),
+            &write_budget::Unfloored,
         )?;
         finish(&vault)?;
         forked.keep();
@@ -587,6 +618,32 @@ impl Vault {
         source: &SideRestoreSource<'_>,
         restored_at: u64,
     ) -> Result<(Self, RestoreReport)> {
+        Self::restore_checkpoint_beside_within(
+            path,
+            key,
+            destination,
+            config,
+            source,
+            restored_at,
+            &write_budget::Unfloored,
+        )
+    }
+    /// [`Vault::restore_checkpoint_beside`] on a disk whose host keeps a
+    /// free-space floor under its uploads, as a rehearsal's copy is made
+    /// (FIX 5479): the copy's bodies and rows are claimed on `budget` before
+    /// it is made or opened, the rest set before each body and before the
+    /// rows land, and each write it derives after them is admitted at the
+    /// floor. A claim the floor refuses stops the restore with
+    /// [`AtWriteFloor`], and the copy is removed as any refusal removes it.
+    pub fn restore_checkpoint_beside_within(
+        path: &Path,
+        key: &CheckpointKey,
+        destination: &Path,
+        config: VaultConfig,
+        source: &SideRestoreSource<'_>,
+        restored_at: u64,
+        budget: &dyn RecoveryWriteBudget,
+    ) -> Result<(Self, RestoreReport)> {
         let live = source.capture()?;
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         image.drop_machine_identity();
@@ -602,6 +659,7 @@ impl Vault {
             restored_at,
             Custody::Fork(Some(&live)),
             &BTreeSet::new(),
+            budget,
         )?;
         forked.keep();
         made.keep(&mut vault);
@@ -768,6 +826,7 @@ impl Vault {
             restored_at,
             custody,
             &erased,
+            &write_budget::Unfloored,
         )?;
         #[cfg(test)]
         panic_if_armed();
@@ -782,7 +841,8 @@ impl Vault {
     }
     /// Restores `image` into `destination`. The made directory, the forked
     /// custody and the copy come back in that order, so a caller's bindings,
-    /// dropped in reverse, close the copy before the others go.
+    /// dropped in reverse, close the copy before the others go. The copy's
+    /// writes claim their room on `budget` (`write_budget`, FIX 5479).
     #[allow(clippy::too_many_arguments)]
     fn restore_image(
         mut image: CheckpointImage,
@@ -794,6 +854,7 @@ impl Vault {
         restored_at: u64,
         custody: Custody<'_>,
         erased: &BTreeSet<EntityId>,
+        budget: &dyn RecoveryWriteBudget,
     ) -> Result<(MadeDestination, ForkedCustody, Self, RestoreReport)> {
         // A job row of another kind in the owner-retained key range would
         // hide from that kind's scans: refused before any destination exists.
@@ -831,6 +892,8 @@ impl Vault {
         // it: only a committed restore keeps them (C8). The config is checked
         // first, as an owned open checks it before it touches the disk.
         Self::check_open_config(&config)?;
+        let mut room = write_budget::RestoreRoom::new(budget, &image);
+        room.admit()?;
         let mut made = MadeDestination::make(destination, home)?;
         // A sealed copy's open writes its page-seal mirror beside it, outside
         // the directory: a refusal removes that too.
@@ -848,8 +911,9 @@ impl Vault {
         // a sealed vault's envelope checked frame by frame under its key row
         // (FIX 5348).
         if !image.bodies.is_empty() {
-            carried_bodies::restore(&vault, &mut image, bodies)?;
+            carried_bodies::restore(&vault, &mut image, bodies, &mut room)?;
         }
+        room.landing_rows(&image)?;
         vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {
                 let db = vault
@@ -912,6 +976,7 @@ impl Vault {
         })?;
         drop(vault);
         // Re-open through all ABI, model, analyzer and manifest gates before rebuilding.
+        room.admit_derived()?;
         let vault = Self::open_under_lease(destination, config, made.lease()?)?;
         #[cfg(test)]
         fail_at(RestoreStep::SecondOpen)?;
@@ -931,9 +996,12 @@ impl Vault {
             #[cfg(test)]
             fail_at(RestoreStep::ReceiptCheck)?;
         }
+        room.admit_derived()?;
         let (rebuilt_entities, rebuilt_text_documents, pending_embeddings) =
             rebuild::rebuild(&vault)?;
+        room.admit_derived()?;
         rebuild::rebuild_auxiliary(&vault, image.created_at)?;
+        room.admit_derived()?;
         let epoch = RestoreEpoch {
             checkpoint_id,
             restored_at,

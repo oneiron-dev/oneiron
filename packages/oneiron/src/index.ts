@@ -1524,6 +1524,12 @@ export class Oneiron {
         pick: (input: Facade.EvalLabelPickRequest): Facade.EvalCase => this.#call(() => this.#client.vaultEvalsLabelsPick(input) as Facade.EvalCase),
       },
     },
+    roots: {
+      requests: {
+        /** The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands. */
+        cancel: (input: Facade.RootRequestCancelRequest): Facade.OwnerWorkReceipt => this.#call(() => this.#client.vaultRootsRequestsCancel(input) as Facade.OwnerWorkReceipt),
+      },
+    },
     cleanup: {
       /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
       run: (input: Facade.CleanupRunRequest): Facade.CleanupRunView => this.#call(() => this.#client.vaultCleanupRun(input) as Facade.CleanupRunView),

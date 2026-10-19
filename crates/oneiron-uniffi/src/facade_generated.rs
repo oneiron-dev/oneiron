@@ -2176,6 +2176,11 @@ export_facade! {
     let output = client.vault_authority_handoff_alarms_acknowledge(&input)?;
     crate::codec::lift_record("vault.authority.handoff_alarms.acknowledge", &output)
 };
+"vault.roots.requests.cancel" => fn vault_roots_requests_cancel(&self, input: RootRequestCancelRequest) -> OwnerWorkReceipt = |client| {
+    let input: oneiron::task_verb::sdk::RootRequestCancelRequest = crate::codec::lower_record("vault.roots.requests.cancel", input)?;
+    let output = client.vault_roots_requests_cancel(&input)?;
+    crate::codec::lift_record("vault.roots.requests.cancel", &output)
+};
 "vault.cleanup.run" => fn vault_cleanup_run(&self) -> CleanupRunView = |client| {
     let input: oneiron::vault_cleanup::surface::CleanupRunRequest = crate::codec::lower_empty("vault.cleanup.run")?;
     let output = client.vault_cleanup_run(&input)?;

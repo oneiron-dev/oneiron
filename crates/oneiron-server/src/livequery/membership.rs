@@ -55,7 +55,7 @@ pub(super) fn changed(
         // Metadata is used only to decide whether the authority-bound view
         // needs re-derivation. No raw entity body is sent to a subscriber.
         let Some(entity) = memory
-            .get_entity(&id.to_hex())
+            .get_entity_tolerant(&id.to_hex())
             .map_err(AppError::from)?
             .value
         else {

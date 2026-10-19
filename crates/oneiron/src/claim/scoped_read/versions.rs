@@ -35,7 +35,7 @@ enum DenseChannel<'q> {
     },
 }
 
-impl ScopedRead<'_> {
+impl<'v> ScopedRead<'v> {
     pub(crate) fn search_vector_revisioned(
         &self,
         query: &[f32],
@@ -253,44 +253,10 @@ impl ScopedRead<'_> {
         id: &EntityId,
         mode: ReadMode,
     ) -> Result<Option<AdmittedRevision>> {
-        // A read by id matches no meaning, so it takes the row predicate
-        // alone. The TURN rule of `is_entity_retrievable_with_policy_in`
-        // guards the doors that find a row (search, recall, packs, graph
-        // edges), and each runs it before it reads the row here.
-        if !self.is_entity_readable_with_filter_in(txn, policy, id, filter)? {
+        let authority = HeldAuthority::default();
+        let Some(mut raw) = self.admitted_raw_in(txn, policy, filter, id, mode, &authority)? else {
             return Ok(None);
-        }
-        let raw = match self.session_view {
-            Some(view) => crate::vault::entity_revision::read_entity_revision_from_store_in_txn(
-                self.vault, view, txn, id, mode,
-            )?,
-            None => crate::vault::entity_revision::read_entity_revision_in_txn(
-                self.vault, txn, id, mode,
-            )?,
         };
-        let Some(mut raw) = raw else { return Ok(None) };
-        // ASSET_TEXT has a fixed record scope for a given kind and entity id:
-        // its birth facet, or its substrate facet when born unplaced. A live
-        // body edit restamps the current digest while the indexed body
-        // deliberately remains behind; requiring that *current* stamp to
-        // match the retained bytes would delete an authorized subscription
-        // result during index lag. The current row was admitted above, and
-        // the revision reader selected only retained vault bytes. Its sources
-        // are judged again for the retained bytes: they are the text's, not
-        // a revision's, and are only ever narrowed or withdrawn (facet rule
-        // C). CLAIM and NOTE keep their per-body historical admission below.
-        let stable_text_scope = mode != ReadMode::Live
-            && EntityMetadataHeader::parse(&raw).is_some_and(|header| {
-                header.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT
-            });
-        let admitted = if stable_text_scope {
-            self.text_sources_readable_in(txn, policy, id, &HeldAuthority::default())?
-        } else {
-            self.is_entity_raw_readable_with_filter_in(txn, policy, id, &raw, filter)?
-        };
-        if !admitted {
-            return Ok(None);
-        }
         // The short-reference hash names the stored revision, so it is taken
         // before any live projection replaces the body.
         let content_hash =
@@ -321,6 +287,56 @@ impl ScopedRead<'_> {
             raw.extend_from_slice(&body);
         }
         Ok(Some(AdmittedRevision { raw, content_hash }))
+    }
+
+    /// The stored bytes `id` reads at `mode` in `txn` once every row gate
+    /// admits them under `authority`, before any short-reference hash or
+    /// live projection touches them.
+    pub(super) fn admitted_raw_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        id: &EntityId,
+        mode: ReadMode,
+        authority: &HeldAuthority<'v>,
+    ) -> Result<Option<Vec<u8>>> {
+        // A read by id matches no meaning, so it takes the row predicate
+        // alone. The TURN rule of `is_entity_retrievable_with_policy_in`
+        // guards the doors that find a row (search, recall, packs, graph
+        // edges), and each runs it before it reads the row here.
+        if !self.is_entity_readable_held_in(txn, policy, id, filter, authority)? {
+            return Ok(None);
+        }
+        let raw = match self.session_view {
+            Some(view) => crate::vault::entity_revision::read_entity_revision_from_store_in_txn(
+                self.vault, view, txn, id, mode,
+            )?,
+            None => crate::vault::entity_revision::read_entity_revision_in_txn(
+                self.vault, txn, id, mode,
+            )?,
+        };
+        let Some(raw) = raw else { return Ok(None) };
+        // ASSET_TEXT has a fixed record scope for a given kind and entity id:
+        // its birth facet, or its substrate facet when born unplaced. A live
+        // body edit restamps the current digest while the indexed body
+        // deliberately remains behind; requiring that *current* stamp to
+        // match the retained bytes would delete an authorized subscription
+        // result during index lag. The current row was admitted above, and
+        // the revision reader selected only retained vault bytes. Its sources
+        // are judged again for the retained bytes: they are the text's, not
+        // a revision's, and are only ever narrowed or withdrawn (facet rule
+        // C). CLAIM and NOTE keep their per-body historical admission below.
+        let stable_text_scope = mode != ReadMode::Live
+            && EntityMetadataHeader::parse(&raw).is_some_and(|header| {
+                header.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT
+            });
+        let admitted = if stable_text_scope {
+            self.text_sources_readable_in(txn, policy, id, authority)?
+        } else {
+            self.is_entity_raw_readable_held_in(txn, policy, id, &raw, filter, authority)?
+        };
+        Ok(admitted.then_some(raw))
     }
 
     pub(super) fn context_entity_revision_is_readable_in(

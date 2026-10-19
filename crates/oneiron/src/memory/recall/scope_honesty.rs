@@ -75,7 +75,9 @@ impl Memory<'_> {
             let raw = page(after.as_ref())?;
             let exhausted = raw.len() < SCOPE_HONESTY_SCAN_CAP;
             after = raw.last().copied();
-            let readable = self.vault.off_device_readable(raw)?;
+            let readable = self
+                .vault
+                .off_device_readable_for(raw, lane.actor_key().destination())?;
             let room = SCOPE_HONESTY_SCAN_CAP - ids.len();
             ids.extend(readable.into_iter().take(room));
             if exhausted || ids.len() >= SCOPE_HONESTY_SCAN_CAP {

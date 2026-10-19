@@ -2717,7 +2717,7 @@
      "purpose": "Folds the vault's signed \"Learn from my conversations\" setting (FIX 5502 owner rulings, OF-420), and the…",
      "surface": {
       "crate-vis": 13,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -6478,6 +6478,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EsignIngress"
+     ],
+     "path": "src/blob_artifact/esign/ingress.rs",
+     "purpose": "Token-first admission at the public signing doors (FIX 3808, Engine ruling 10-18): a recipient link's…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -6513,7 +6526,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 2,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -6612,7 +6625,7 @@
       "EsignRateReceipt"
      ],
      "path": "src/blob_artifact/esign/rate.rs",
-     "purpose": "Vault-local, receipt-backed ceremony observation and signature-upload `[limits]` crossings; neither ever…",
+     "purpose": "Vault-local, receipt-backed ceremony observation and the `[limits]` crossings of signature uploads and…",
      "surface": {
       "const": 2,
       "crate-vis": 3,
@@ -11504,7 +11517,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -11625,6 +11638,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/claim/scoped_read/named_reads.rs",
+     "purpose": "Named point reads (FIX 5226): a read whose caller named each target says when a legal non-use order keeps a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/claim/scoped_read/note_visibility.rs",
      "purpose": "Actor and class checks for private NOTE bodies in scoped reads",
      "surface": {
@@ -11652,7 +11675,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 8,
       "struct": 2
@@ -11771,7 +11794,7 @@
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -11781,7 +11804,7 @@
      "path": "src/claim/scoped_read/visibility.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 3
      }
     },
@@ -28496,7 +28519,7 @@
      "path": "src/graph_fs/device_scan.rs",
      "purpose": "The device-local pass of a capped Graph-FS scan (DEC-0005)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -35176,8 +35199,8 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 16,
-      "fn": 3
+      "crate-vis": 20,
+      "fn": 4
      }
     },
     {
@@ -41452,7 +41475,7 @@
      "path": "src/ports/safe_read.rs",
      "purpose": "Integrity reads compose ports without opening a transaction",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
      }
     },
@@ -42973,7 +42996,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/artifact/sink.rs",
@@ -43271,8 +43294,8 @@
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
       "enum": 1,
-      "fn": 17,
-      "re-export": 4,
+      "fn": 19,
+      "re-export": 5,
       "struct": 3
      }
     },
@@ -43384,6 +43407,22 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AtWriteFloor",
+      "RecoveryWriteBudget"
+     ],
+     "path": "src/recovery/checkpoint/write_budget.rs",
+     "purpose": "The room a backup's or a rehearsal's writes claim on a disk they share with a serving host's uploads (FIX…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 1,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -45275,6 +45314,16 @@
      "purpose": "What a sealed register's recorder attaches beside the envelope its owner's surface sealed, under the digest…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/control/input/envelopes.rs",
+     "purpose": "An input whose body passes one envelope's plaintext bound (FIX 5521; Rule 5: split, never refuse)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -54829,7 +54878,7 @@
      "surface": {
       "enum": 1,
       "fn": 10,
-      "re-export": 73,
+      "re-export": 74,
       "struct": 39
      }
     },
@@ -55310,7 +55359,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1083
+      "fn": 1084
      }
     },
     {
@@ -55906,6 +55955,19 @@
       "enum": 1,
       "fn": 15,
       "struct": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RootRequestCancelRequest"
+     ],
+     "path": "src/task_verb/sdk_root_requests.rs",
+     "purpose": "The input and answer of the owner's root-request cancel row (FIX 5586): `vault.roots.requests.cancel`, a…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -60472,7 +60534,7 @@
      "purpose": "The world kit ceremony (OF-173): issue, confirm by re-entering pieces, restore, and the public inventory of…",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 5,
       "struct": 6
      }
@@ -60500,7 +60562,7 @@
      "surface": {
       "crate-vis": 12,
       "fn": 3,
-      "re-export": 20,
+      "re-export": 21,
       "struct": 2
      }
     },
@@ -60695,7 +60757,7 @@
      "surface": {
       "crate-vis": 10,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -60802,10 +60864,23 @@
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 4,
       "fn": 27,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IssuedVaultKeyKit"
+     ],
+     "path": "src/world_keys/vault_key/kit.rs",
+     "purpose": "The data-key kit (FIX 4532): the owner's 2-of-3 copy of the vault data key this handle holds, issued on his…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -61781,7 +61856,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61893,7 +61968,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 71,
+     "files": 72,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62747,7 +62822,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -62838,7 +62913,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63048,7 +63123,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 197,
+     "files": 198,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63202,7 +63277,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63218,7 +63293,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3883,
+   "source_files": 3889,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72009,7 +72084,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1054
+      "fn": 1055
      }
     },
     {
@@ -73148,7 +73223,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1055
+      "fn": 1056
      }
     },
     {
@@ -76103,6 +76178,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/esign/ingress.rs",
+     "purpose": "Token-first ingress at the public signing doors (FIX 3808, Engine rulings 10-18 and 10-19)",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/esign/presentation.rs",
      "purpose": "Stateless field editor and capability-scoped ceremony presentation adapters",
      "surface": {
@@ -76816,7 +76901,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 170
+      "crate-vis": 171
      }
     },
     {
@@ -77165,6 +77250,16 @@
      "notable": [],
      "path": "src/api/facade/role_picks.rs",
      "purpose": "OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/root_request_doors.rs",
+     "purpose": "The owner's root-request cancel door (FIX 5586): `vault.roots.requests.cancel` over the same engine door as…",
      "surface": {
       "crate-vis": 1
      }
@@ -78184,7 +78279,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/openapi/signing_paths.rs",
-     "purpose": "The public signing ceremony routes (`/sign/*`, DOOR-117): their request and answer schemas are the verb…",
+     "purpose": "The public signing ceremony routes (`/sign/*`, DOOR-117): their payload and answer schemas are the verb…",
      "surface": {
       "crate-vis": 1
      }
@@ -79991,7 +80086,7 @@
       "RecoveryKitStatusArgs"
      ],
      "path": "src/cli/recovery_kit_args.rs",
-     "purpose": "Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173)",
+     "purpose": "Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173), and the data-key…",
      "surface": {
       "enum": 1,
       "struct": 5
@@ -80340,6 +80435,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/recovery_kit/issue.rs",
+     "purpose": "`oneiron recovery-kit issue` and `issue-vault-key`: a kit's pieces, each stored piece's recovery code…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -82431,6 +82536,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "LedgerSnapshot",
       "WakeLedger"
      ],
      "path": "src/managed/ledger.rs",
@@ -82438,8 +82544,8 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
-      "fn": 7,
-      "struct": 1
+      "fn": 10,
+      "struct": 2
      }
     },
     {
@@ -83642,7 +83748,7 @@
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -83652,6 +83758,16 @@
      "path": "src/owner/backup/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/write_budget.rs",
+     "purpose": "The floor uploads keep, lent to this vault's backups and rehearsals (FIX 5479)",
+     "surface": {
+      "crate-vis": 10
+     }
     },
     {
      "bucket": "s",
@@ -85391,7 +85507,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 454,
+     "files": 456,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -85461,7 +85577,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 38,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -85720,7 +85836,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 26,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -85841,7 +85957,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 837,
+   "source_files": 841,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -86334,6 +86450,7 @@
       "BudgetHoldState",
       "BudgetLandRequest",
       "BudgetLease",
+      "BundleHomeWarning",
       "BundleVerdict",
       "BundledSkillPermissions",
       "ButtonControl",
@@ -86942,6 +87059,8 @@
       "CritiqueVerdict",
       "CropInput",
       "CursorSpan",
+      "CustodyRegisterCheck",
+      "CustodyUncheckedReason",
       "CutDecision",
       "DagRecordAppendInput",
       "DagRecordAppendReceipt",
@@ -88191,6 +88310,13 @@
       "OwnerPolicyConfigurationReceipt",
       "OwnerPolicyConfigurationView",
       "OwnerPolicyConfigureRequest",
+      "OwnerWorkCancelNote",
+      "OwnerWorkCancelState",
+      "OwnerWorkKind",
+      "OwnerWorkReceipt",
+      "OwnerWorkRefusal",
+      "OwnerWorkStatus",
+      "OwnerWorkUnassigned",
       "PackAdapter",
       "PackAttributionFields",
       "PackBytesFile",
@@ -88710,6 +88836,7 @@
       "RoomTurn",
       "RoomTurnRequest",
       "RoomWaitKind",
+      "RootRequestCancelRequest",
       "RouteObservation",
       "RoutineOutcome",
       "Row",
@@ -89580,8 +89707,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 844,
-      "struct": 2694
+      "enum": 852,
+      "struct": 2697
      }
     },
     {
@@ -89914,13 +90041,14 @@
      "kind": "src",
      "notable": [
       "LedgerAck",
-      "LedgerUpdate"
+      "LedgerUpdate",
+      "ManagedTrainingSetting"
      ],
      "path": "src/lib/ledger.rs",
      "purpose": "Vault-to-supervisor ledger push and ack wire types",
      "surface": {
-      "fn": 1,
-      "struct": 2
+      "fn": 2,
+      "struct": 3
      }
     },
     {

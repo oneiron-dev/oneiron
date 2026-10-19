@@ -485,6 +485,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.authority.handoff_alarms.acknowledge",
             post(facade_route),
         )
+        .route("/vault.roots.requests.cancel", post(facade_route))
         .route("/vault.cleanup.run", post(facade_route))
         .route("/vault.entities.mention", post(facade_route))
         .route("/vault.legal_holds.place", post(facade_route))

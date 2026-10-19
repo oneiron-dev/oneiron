@@ -22,7 +22,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/host_adapters/embedded.rs` | src | s | 1 struct · 1 trait · 4 fn | AppHost, EmbeddedHost | The in-process adapter for an engine embedded in a mobile app (NAPI or FFI) |
 | `src/lib/host_adapters/native.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | InProcessHost | Native socket ownership, secret lookup, and cooperative idle wakeup |
 | `src/lib/host_adapters/vsock.rs` | src | m | 4 struct · 11 fn | FirecrackerGuest, GuestLink, VsockListener, VsockStream | The microVM adapter's guest half: AF_VSOCK sockets and the Firecracker backend an engine uses when it runs… |
-| `src/lib/ledger.rs` | src | s | 2 struct · 1 fn | LedgerAck, LedgerUpdate | Vault-to-supervisor ledger push and ack wire types |
+| `src/lib/ledger.rs` | src | s | 3 struct · 2 fn | LedgerAck, LedgerUpdate, ManagedTrainingSetting | Vault-to-supervisor ledger push and ack wire types |
 | `src/lib/limits.rs` | src | s | 8 const | — | Wire limit constants and ready byte |
 | `src/lib/managed_holder.rs` | src | m | 5 struct · 12 fn · 1 type · 6 const | ManagedOwnerAction, ManagedOwnerHead, ManagedOwnerRequest, ManagedOwnerTranscript, ManagedWidenAction | Host-attested account actions: one managed widen request, and one request the vault owner makes in person… |
 | `src/lib/mod.rs` | src | s | 11 mod · 7 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |

@@ -6728,6 +6728,21 @@
       "section": false
     },
     {
+      "name": "vault.roots.requests.cancel",
+      "description": "The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands.",
+      "input": "crate::task_verb::sdk::RootRequestCancelRequest",
+      "output": "crate::world_keys::OwnerWorkReceipt",
+      "call": "crate::task_verb::sdk::cancel_root_request_as(memory.vault(), &memory.embedded_owner(\"vault.roots.requests.cancel\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.cleanup.run",
       "description": "The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing.",
       "input": "crate::vault_cleanup::surface::CleanupRunRequest",

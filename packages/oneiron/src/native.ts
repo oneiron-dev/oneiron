@@ -467,6 +467,7 @@ vaultResearchBudget(input: unknown): unknown
 vaultResearchRecordBenchmark(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
+vaultRootsRequestsCancel(input: unknown): unknown
 vaultCleanupRun(input: unknown): unknown
 vaultEntitiesMention(input: unknown): unknown
 vaultLegalHoldsPlace(input: unknown): unknown
