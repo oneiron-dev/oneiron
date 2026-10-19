@@ -672,6 +672,7 @@ vaultWorkflowsSave(input: unknown): unknown
 vaultWorkflowsGet(input: unknown): unknown
 vaultWorkflowsUpdate(input: unknown): unknown
 vaultWorkflowsDispatch(input: unknown): unknown
+vaultWorkflowsDispatchBound(input: unknown): unknown
 vaultWorkflowsStatus(input: unknown): unknown
 vaultTaskTypesPin(input: unknown): unknown
 vaultTaskTypesGet(input: unknown): unknown

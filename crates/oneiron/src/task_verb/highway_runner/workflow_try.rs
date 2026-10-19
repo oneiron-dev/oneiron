@@ -4,14 +4,16 @@
 //! saved workflow to an idle standard TASK on a runner lane that no try
 //! realizes now, and the wrapper takes the TASK in the writer that admits
 //! the run. The owner binds through his door; a leased agent binds as
-//! itself, under its own lease (FIX 5316). The wrapper reaches the highway's
+//! itself, under its own lease, and a member as themselves, under the
+//! funding they accepted (FIX 5316). The wrapper reaches the highway's
 //! take and report through a host binding of its own, whose fence only a
 //! registered wrapper bound to this TASK, by this actor under its class, and
 //! still the TASK's newest try passes; no lease is relaxed. When the run
 //! ends its TASK settles in a writer of its own, after the wrapper's
 //! terminal commit, through the report reductions a runner's Done or final
-//! failure lands through, as the actor who bound it. The leaves never touch
-//! the TASK.
+//! failure lands through, as the actor who bound it: a binder other than
+//! the owner at his door on the right its bind recorded (FIX 5349). The
+//! leaves never touch the TASK.
 
 use std::collections::HashSet;
 
@@ -49,8 +51,9 @@ use crate::write_envelope::WriteActor;
 use super::{RunnerTaskEffects, runner_refusal};
 
 mod binder;
+mod recorded_right;
 
-pub(crate) use binder::WorkflowBinder;
+pub(crate) use binder::{WorkflowBinder, WorkflowFunding, WorkflowTaskBind};
 
 /// The lease owner a wrapper's own host binding names. No queue lease
 /// carries it: it selects the wrapper's fence, never a lease's.
@@ -68,6 +71,8 @@ pub(crate) struct WorkflowRunEnd {
     pub(crate) task: EntityId,
     /// The actor whose standing admitted the binding, under its class.
     pub(crate) bound_by: WriteActor,
+    /// The run settles on the right its bind recorded (FIX 5349).
+    pub(crate) settles_on_bind: bool,
     pub(crate) workflow: EntityId,
     pub(crate) steps: usize,
     pub(crate) results: Vec<WorkflowStepResult>,
@@ -142,26 +147,28 @@ pub(crate) fn dispatch_bound(
     task: EntityId,
 ) -> MemoryResult<AgentDispatchOutcome> {
     let actor = caller.actor(vault)?;
+    let bind = caller.bind(task, actor);
     let dispatcher = AgentDispatcher::new(vault);
     let spawn = dispatcher.prepare_bound_workflow(&input, spawn, caller.parent())?;
     let refusal = |key: &str, first| caller.retry_refusal(key, first);
     {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         if let Some(existing) =
-            dispatcher.bound_workflow_existing_in(&txn, &input, &spawn, task, actor, &refusal)?
+            dispatcher.bound_workflow_existing_in(&txn, &input, &spawn, &bind, &refusal)?
         {
             return Ok(existing);
         }
     }
     let mut txn = vault.store.env.write_txn().map_err(Error::from)?;
     if let Some(existing) =
-        dispatcher.bound_workflow_existing_in(&txn, &input, &spawn, task, actor, &refusal)?
+        dispatcher.bound_workflow_existing_in(&txn, &input, &spawn, &bind, &refusal)?
     {
         return Ok(existing);
     }
     caller.revalidate_in_txn(vault, &txn)?;
     admit_in_txn(vault, &txn, actor, task)?;
-    let outcome = dispatcher.dispatch_bound_workflow_in_txn(&mut txn, input, spawn, task, actor)?;
+    caller.fund_in_txn(vault, &mut txn, actor)?;
+    let outcome = dispatcher.dispatch_bound_workflow_in_txn(&mut txn, input, spawn, &bind)?;
     if let AgentDispatchOutcome::WorkflowDispatched(status) = &outcome {
         take_in_txn(vault, &mut txn, actor, &status.attempt, task)?;
     }
@@ -294,7 +301,8 @@ impl Memory<'_> {
     /// lease: the binding names a registered wrapper bound to this TASK by
     /// this actor under its class, at its current count, and still the
     /// TASK's newest try. A held fence proves the actor by the TASK's Owner
-    /// rule; a stale or missing one answers the TASK's standing.
+    /// rule, over the TASK's facts alone for a binder that settles on its
+    /// bind (FIX 5349); a stale or missing one answers the TASK's standing.
     pub(in crate::task_verb) fn workflow_try_standing_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -303,6 +311,7 @@ impl Memory<'_> {
     ) -> MemoryResult<(TaskStanding, HostFence)> {
         let vault = self.vault();
         let task_hex = task_ref.to_hex();
+        let mut on_bind = false;
         let fence = match AttemptQueue::new(vault).get_in_txn(txn, binding.parent())? {
             None => HostFence::Missing,
             Some(record) => {
@@ -312,13 +321,15 @@ impl Memory<'_> {
                         "Report against the task your own attempt realizes.",
                     ));
                 }
-                let bound = AgentDispatcher::new(vault)
+                let binder = WriteActor::new(self.actor(), self.actor_class());
+                let source = AgentDispatcher::new(vault)
                     .workflow_task_source_in_txn(txn, &record)?
-                    == Some((task_ref, WriteActor::new(self.actor(), self.actor_class())));
-                if bound
+                    .filter(|source| source.task == task_ref && source.bound_by == binder);
+                if let Some(source) = source
                     && record.attempt_count == binding.attempt_count()
                     && newest_try_in(vault, txn, &record, &task_hex)?
                 {
+                    on_bind = source.settles_on_bind();
                     HostFence::Held(record)
                 } else {
                     HostFence::Stale
@@ -326,6 +337,11 @@ impl Memory<'_> {
             }
         };
         let standing = match &fence {
+            // FIX 5349: the fence matched the binding; its bind proved the
+            // binder, and no fresh proof of its live right is asked.
+            HostFence::Held(_) if on_bind => {
+                recorded_right::standing_in(vault, txn, task_ref, self.actor())?
+            }
             HostFence::Held(_) => self.highway_task_actor_in(
                 txn,
                 task_ref,
@@ -410,12 +426,13 @@ pub(crate) fn settle(
         .task_work_memory();
     let mut txn = vault.store.env.write_txn()?;
     let receipt = if owed_in(vault, &txn, end)? {
+        let right = recorded_right::binder_right_in(&memory, &txn, end, note);
         let moved = match ended {
             RunEnd::Completed | RunEnd::Failed => {
-                report_in(&memory, &mut txn, end, ended, note, judged)
+                report_in(&memory, &mut txn, end, ended, note, right, judged)
             }
             RunEnd::Cancelled | RunEnd::Abandoned => {
-                close_in(&memory, &mut txn, end, ended, note, now)
+                close_in(&memory, &mut txn, end, ended, note, right, now)
             }
         };
         Some(moved.map_err(runner_refusal)?)
@@ -445,13 +462,15 @@ pub(crate) fn settle(
 /// A completed or failed run's report on its TASK, in the settling writer:
 /// Done with the report NOTE as its result, or a final failure keeping the
 /// NOTE as its exhaust. The highway's report runs its fence, judgment,
-/// reductions, receipt and journal.
+/// reductions, receipt and journal; the receipt names a binder's right that
+/// no longer held (`right`, FIX 5349).
 fn report_in(
     memory: &Memory<'_>,
     txn: &mut heed::RwTxn<'_>,
     end: &WorkflowRunEnd,
     ended: RunEnd,
     note: EntityId,
+    right: Option<&str>,
     judged: Option<RunnerDoneAnswer>,
 ) -> MemoryResult<TaskCallReceipt> {
     let body = if ended == RunEnd::Completed {
@@ -469,7 +488,7 @@ fn report_in(
             result_ref: Some(note),
         }
     };
-    memory.report_in_runner_txn(
+    memory.report_in_runner_txn_noting(
         txn,
         &TaskVia::Host(try_binding(&end.wrapper)),
         TaskReport {
@@ -479,19 +498,22 @@ fn report_in(
             body,
         },
         judged,
+        right.map(|right| (recorded_right::BINDER_RIGHT, right)),
     )
 }
 
 /// A cancelled or abandoned run closes its TASK the same way, in the
 /// settling writer, under the fence a report runs: the terminal record
 /// keeps the report NOTE, through the shared TASK-body writer, and its
-/// lifecycle receipt is marked the settling one.
+/// lifecycle receipt is marked the settling one, naming a binder's right
+/// that no longer held (`right`, FIX 5349).
 fn close_in(
     memory: &Memory<'_>,
     txn: &mut heed::RwTxn<'_>,
     end: &WorkflowRunEnd,
     ended: RunEnd,
     note: EntityId,
+    right: Option<&str>,
     now: u64,
 ) -> MemoryResult<TaskCallReceipt> {
     let vault = memory.vault();
@@ -520,6 +542,11 @@ fn close_in(
     lifecycle
         .fields
         .insert("result_ref".to_owned(), note.to_hex());
+    if let Some(right) = right {
+        lifecycle
+            .fields
+            .insert(recorded_right::BINDER_RIGHT.to_owned(), right.to_owned());
+    }
     let (standing, fence) = memory.workflow_try_standing_in(&*txn, &binding, end.task)?;
     let mut body = task_body_in_txn(vault, &*txn, end.task)?;
     require_live_standard(&body, &standing)?;
@@ -580,7 +607,8 @@ fn report_note_id(root: AttemptId) -> Result<EntityId> {
 /// Lands an ended run's report NOTE in a writer of its own unless it is
 /// there. Pointer-only: the run, its TASK, how it ended and each settled
 /// step's result by its handle, never an output body. The actor who bound
-/// the run authors it, under its class.
+/// the run authors it, under its class; a binder that settles on its bind
+/// authors it on that recorded right, its live Grant not asked (FIX 5349).
 fn land_report_note(
     vault: &Vault,
     end: &WorkflowRunEnd,
@@ -600,24 +628,27 @@ fn land_report_note(
         markdown: report_markdown(end, ended),
         source_revision_ref: *note.as_bytes(),
     })?;
-    {
+    let batch = || {
+        vault
+            .batch_in()
+            .put_authored_note(
+                &note,
+                &end.bound_by.entity_ref(),
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &body,
+            )
+            .edge(&note, EdgeKind::AuthoredBy, &end.bound_by.entity_ref(), 1.0)
+            .edge(&note, EdgeKind::About, &end.task, 1.0)
+    };
+    if end.settles_on_bind {
+        batch().apply(&mut txn)?;
+    } else {
         let mut content = ActorContentTxn::new(vault, &mut txn, end.bound_by)?;
-        content.apply_batch(
-            vault
-                .batch_in()
-                .put_authored_note(
-                    &note,
-                    &end.bound_by.entity_ref(),
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &body,
-                )
-                .edge(&note, EdgeKind::AuthoredBy, &end.bound_by.entity_ref(), 1.0)
-                .edge(&note, EdgeKind::About, &end.task, 1.0),
-        )?;
+        content.apply_batch(batch())?;
         content.finish()?;
     }
     txn.commit()?;

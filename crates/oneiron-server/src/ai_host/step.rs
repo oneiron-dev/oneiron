@@ -27,7 +27,7 @@ use oneiron::{
 };
 
 use super::CHAT_ROLE;
-use super::payer_funding::{PayerFault, scope_funding};
+use super::payer_funding::{PayerFault, requires_payer, scope_funding};
 use crate::models::ModelRuntime;
 
 /// The purpose a workflow step's calls are metered and routed under.
@@ -190,6 +190,9 @@ impl StepRunner {
         if !objectives.is_empty() {
             messages.push(message(LlmMessageRole::User, confession_ask(&objectives)));
         }
+        // A room-bound step, or a step of a member's bound run, must read
+        // its payer (OF-531, FIX 5316).
+        let payer_required = requires_payer(vault, step.attempt.id, step.input.room.is_some())?;
         let bytes = self.generate_in(
             runtime,
             vault,
@@ -201,7 +204,7 @@ impl StepRunner {
                 messages,
                 response_format: ResponseFormat::Text,
             },
-            step.input.room.is_some(),
+            payer_required,
         )?;
         let confession = if objectives.is_empty() {
             None
@@ -220,14 +223,15 @@ impl StepRunner {
         self.generate_in(runtime, vault, input, false)
     }
 
-    /// [`Self::generate`] for a step that knows whether it works in a room
-    /// (`room`): a room-bound step's root scope must name its payer (OF-531).
+    /// [`Self::generate`] for a step that knows whether it must read its
+    /// payer (`payer_required`): a room-bound step's root scope must name
+    /// its payer (OF-531), and so must a member's bound run's (FIX 5316).
     fn generate_in(
         &self,
         runtime: &tokio::runtime::Runtime,
         vault: &Vault,
         input: ModelStep<'_>,
-        room: bool,
+        payer_required: bool,
     ) -> Result<Vec<u8>, StepFault> {
         let ModelStep {
             definition,
@@ -312,12 +316,13 @@ impl StepRunner {
         let dispatcher = AgentDispatcher::new(vault);
         let lease = dispatcher.spend_scope_for_attempt(attempt.id)?;
         // OF-531: a room-paid step bills its root payer's own account, bound
-        // before anything is reserved, never the vault owner's by default.
-        // A payer this host cannot bill holds the step on the owners'
-        // payer-needed ask: it parks as this try (FIX 805), and once they say
-        // yes it bills the vault. Nothing went out, so taken up it replays
-        // only what the earlier tries spent.
-        let payer = match scope_funding(vault, lease.as_ref(), room) {
+        // before anything is reserved, never the vault owner's by default;
+        // so does a member's bound run's step (FIX 5316). A payer this host
+        // cannot bill holds the step on the owners' payer-needed ask: it
+        // parks as this try (FIX 805), and once they say yes it bills the
+        // vault. Nothing went out, so taken up it replays only what the
+        // earlier tries spent.
+        let payer = match scope_funding(vault, lease.as_ref(), payer_required) {
             Ok(payer) => payer,
             Err(fault) => {
                 let held = matches!(fault, PayerFault::Needed { .. });

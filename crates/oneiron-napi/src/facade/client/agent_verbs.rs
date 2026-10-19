@@ -5587,6 +5587,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_workflows_dispatch_bound(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.workflows.dispatch_bound", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_workflows_status(
         &self,
         input: serde_json::Value,

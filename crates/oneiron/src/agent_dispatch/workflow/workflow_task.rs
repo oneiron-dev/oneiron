@@ -4,10 +4,11 @@
 //!
 //! Only the wrapper carries the TASK backlink; its leaves stay TASK-less.
 //! The binding is part of the stored intent, so the same intent key naming
-//! another TASK, or none, is another intent. An owner's bound run is a root;
-//! an agent's has the try its lease holds as its real parent (FIX 5316). A
-//! TASK-less run never reaches any of this. The TASK's own gate, take, fence
-//! and settlement are the task highway's
+//! another TASK, or none, is another intent. An owner's or a member's bound
+//! run is a root; an agent's has the try its lease holds as its real parent
+//! (FIX 5316). A member's run requires a payer, which its steps find through
+//! their wrapper. A TASK-less run never reaches any of this. The TASK's own
+//! gate, take, fence and settlement are the task highway's
 //! (`task_verb::highway_runner::workflow_try`).
 
 use crate::agent_dispatch::widen_record::invalid;
@@ -19,11 +20,11 @@ use crate::agent_dispatch::{
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::context_projection::normalize_context_spec;
+use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::task_verb::highway_runner::workflow_try::{self, WorkflowRunEnd};
+use crate::task_verb::highway_runner::workflow_try::{self, WorkflowRunEnd, WorkflowTaskBind};
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
-use crate::write_envelope::WriteActor;
 
 impl AgentDispatcher<'_> {
     /// Whether a queue row's type is an inert workflow wrapper's, for a read
@@ -85,8 +86,7 @@ impl AgentDispatcher<'_> {
         txn: &heed::RoTxn<'_>,
         input: &DispatchAgent,
         spawn: &AgentSpawnContext,
-        task: EntityId,
-        bound_by: WriteActor,
+        bind: &WorkflowTaskBind,
         refusal: impl Fn(&str, AttemptId) -> Error,
     ) -> Result<Option<AgentDispatchOutcome>> {
         let Some(key) = input.dedupe_key.as_deref() else {
@@ -100,7 +100,7 @@ impl AgentDispatcher<'_> {
             .ok_or_else(|| invalid("workflow dedupe root is missing"))?;
         let record = self.read_workflow(txn, &row)?;
         let (_, mut expected) = self.workflow_intent(txn, input, spawn)?;
-        expected.task = Some(WorkflowTaskBinding::new(task, bound_by));
+        expected.task = Some(WorkflowTaskBinding::new(bind));
         if record.intent != expected {
             return Err(refusal(key, root));
         }
@@ -117,11 +117,63 @@ impl AgentDispatcher<'_> {
         txn: &mut heed::RwTxn<'_>,
         input: DispatchAgent,
         spawn: AgentSpawnContext,
-        task: EntityId,
-        bound_by: WriteActor,
+        bind: &WorkflowTaskBind,
     ) -> Result<AgentDispatchOutcome> {
-        let binding = WorkflowTaskBinding::new(task, bound_by);
+        let binding = WorkflowTaskBinding::new(bind);
         self.dispatch_workflow_bound_in_txn(txn, input, spawn, None, Some(&binding))
+    }
+
+    /// The rows a bound run's requested context projects, as its admission
+    /// resolves that context for each step's live scope: every memory and
+    /// chat section, by the row it names. A door reads them on its caller's
+    /// lane before the writer (FIX 5316). Every step is resolved, however
+    /// many.
+    pub(crate) fn bound_workflow_context_rows(
+        &self,
+        input: &DispatchAgent,
+        spawn: &AgentSpawnContext,
+    ) -> Result<Vec<EntityId>> {
+        let AgentDispatchTarget::Workflow(id) = input.target else {
+            return Err(invalid("workflow dispatch requires a workflow target"));
+        };
+        // Resolution opens its own snapshots, so the scopes are read first.
+        let scopes = {
+            let txn = self.vault.store.env.read_txn()?;
+            let steps = self.workflow_definition_in_txn(&txn, id)?.steps;
+            let mut scopes = Vec::with_capacity(steps.len());
+            for step in steps {
+                let live =
+                    self.dispatchable_definition_in_txn(&txn, &AgentDispatchTarget::Custom(step))?;
+                scopes.push(live.scope.to_world_scope());
+            }
+            scopes
+        };
+        let spec = spawn.context_spec.clone().map(normalize_context_spec);
+        let mut rows = Vec::new();
+        for world_scope in scopes {
+            let resolved = self.resolve_dispatch_context(
+                input.parent_attempt,
+                spec.as_ref(),
+                &spawn.context_from,
+                input.run_id.as_deref(),
+                world_scope,
+            )?;
+            for section in resolved
+                .memory_sections
+                .iter()
+                .chain(&resolved.chat_sections)
+            {
+                let hex = section
+                    .rsplit_once(":cl_")
+                    .map(|(_, hex)| hex)
+                    .or_else(|| section.strip_prefix("tn_"))
+                    .ok_or(Error::InvariantViolation("a context section names no row"))?;
+                rows.push(EntityId::from_hex(hex)?);
+            }
+        }
+        rows.sort_unstable();
+        rows.dedup();
+        Ok(rows)
     }
 
     /// The TASK a registered wrapper realizes and the actor who bound it,
@@ -131,7 +183,7 @@ impl AgentDispatcher<'_> {
         &self,
         txn: &heed::RoTxn<'_>,
         row: &AttemptRecord,
-    ) -> Result<Option<(EntityId, WriteActor)>> {
+    ) -> Result<Option<WorkflowTaskBind>> {
         if !is_wrapper(row) || RECORD.get(&self.vault.store, txn, &row.id)?.is_none() {
             return Ok(None);
         }
@@ -140,8 +192,40 @@ impl AgentDispatcher<'_> {
             .intent
             .task
             .as_ref()
-            .map(WorkflowTaskBinding::ids)
+            .map(WorkflowTaskBinding::bind)
             .transpose()
+    }
+
+    /// Whether `attempt`'s model calls must read a payer because it is a
+    /// step of a member's bound run (FIX 5316): its parent is a registered
+    /// wrapper whose TASK binding requires one. The wrapper alone keeps the
+    /// fact, so a step's retries find it too. `false` for any other attempt,
+    /// a missing one included.
+    ///
+    /// # Errors
+    ///
+    /// A wrapper whose record does not match it; storage errors.
+    pub fn workflow_payer_required(&self, attempt: AttemptId) -> Result<bool> {
+        let queue = AttemptQueue::new(self.vault);
+        let txn = self.vault.store.env.read_txn()?;
+        let Some(parent) = queue
+            .get_in_txn(&txn, attempt)?
+            .and_then(|row| decode_dreamer_attempt_payload(&row.payload).ok())
+            .and_then(|payload| payload.parent_attempt)
+        else {
+            return Ok(false);
+        };
+        let Some(wrapper) = queue.get_in_txn(&txn, parent)? else {
+            return Ok(false);
+        };
+        if !is_wrapper(&wrapper) || RECORD.get(&self.vault.store, &txn, &wrapper.id)?.is_none() {
+            return Ok(false);
+        }
+        Ok(self
+            .read_workflow(&txn, &wrapper)?
+            .intent
+            .task
+            .is_some_and(|binding| binding.payer_required))
     }
 
     /// Ended runs that realize a TASK and have not settled it, in creation
@@ -268,13 +352,14 @@ impl AgentDispatcher<'_> {
         else {
             return Ok(None);
         };
-        let (task, bound_by) = binding.ids()?;
+        let bind = binding.bind()?;
         Ok(Some(WorkflowRunEnd {
             workflow: EntityId::from_hex(&record.intent.workflow_ref)?,
             steps: record.steps.len(),
             results: record.results.clone(),
-            task,
-            bound_by,
+            task: bind.task,
+            bound_by: bind.bound_by,
+            settles_on_bind: bind.settles_on_bind(),
             wrapper,
         }))
     }

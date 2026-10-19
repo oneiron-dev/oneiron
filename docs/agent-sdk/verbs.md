@@ -647,6 +647,7 @@ both bindings and their export-census tests in one change.
 - `vault.workflows.get`
 - `vault.workflows.update`
 - `vault.workflows.dispatch`
+- `vault.workflows.dispatch_bound`
 - `vault.workflows.status`
 - `vault.task_types.pin`
 - `vault.task_types.get`

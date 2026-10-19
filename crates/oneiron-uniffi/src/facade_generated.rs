@@ -3206,6 +3206,11 @@ export_facade! {
     let output = client.vault_workflows_dispatch(&input)?;
     crate::codec::lift_record("vault.workflows.dispatch", &output)
 };
+"vault.workflows.dispatch_bound" => fn vault_workflows_dispatch_bound(&self, input: WorkflowPersonDispatchRequest) -> WorkflowRunView = |client| {
+    let input: oneiron::task_verb::sdk::WorkflowPersonDispatchRequest = crate::codec::lower_record("vault.workflows.dispatch_bound", input)?;
+    let output = client.vault_workflows_dispatch_bound(&input)?;
+    crate::codec::lift_record("vault.workflows.dispatch_bound", &output)
+};
 "vault.workflows.status" => fn vault_workflows_status(&self, input: WorkflowRunRequest) -> WorkflowRunView = |client| {
     let input: oneiron::task_verb::sdk::WorkflowRunRequest = crate::codec::lower_record("vault.workflows.status", input)?;
     let output = client.vault_workflows_status(&input)?;

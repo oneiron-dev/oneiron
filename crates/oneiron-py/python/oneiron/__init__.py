@@ -3650,6 +3650,9 @@ class Oneiron:
         def dispatch(self, spec):
             """The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run."""
             return json.loads(_translate(lambda: self._client.vault_workflows_dispatch(json.dumps(spec))))
+        def dispatch_bound(self, spec):
+            """A member binds one run of a saved workflow to an idle standard TASK they own, as themselves, under funding terms they accepted: its root spend scope names them as payer, and a retried intent key with the same terms returns the same run."""
+            return json.loads(_translate(lambda: self._client.vault_workflows_dispatch_bound(json.dumps(spec))))
         def status(self, spec):
             """The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."""
             return json.loads(_translate(lambda: self._client.vault_workflows_status(json.dumps(spec))))
