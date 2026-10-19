@@ -69,5 +69,6 @@ pub(crate) fn keystore_error(e: KeystoreError) -> Error {
         KeystoreError::AlreadyExists => refused("the keystore slot already exists"),
         KeystoreError::Denied => refused("the keystore denied access"),
         KeystoreError::Platform(..) => refused("the keystore failed"),
+        KeystoreError::Unsupported(reason) => refused(reason),
     }
 }
