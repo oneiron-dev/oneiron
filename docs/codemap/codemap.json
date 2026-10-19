@@ -36992,6 +36992,7 @@
      "path": "src/origin/residence.rs",
      "purpose": "Explicit owner-controlled origin epochs",
      "surface": {
+      "const": 1,
       "crate-vis": 16,
       "enum": 2,
       "fn": 7,
