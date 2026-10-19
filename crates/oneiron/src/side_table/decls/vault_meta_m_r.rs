@@ -450,8 +450,17 @@ side_tables! {
     PROVENANCE_BODY: VaultMeta b"provenance:body:v1:" Named;
     /// Who holds a body digest. Key: bytes32 (BLAKE3) + id16 (occurrence).
     PROVENANCE_BODY_DIGEST: VaultMeta b"provenance:body_digest:v1:" Named;
-    /// A sealed vault's body-file key (FIX 5348): the file's instance, format and logical length
-    /// and its data key, wrapped. Key: bytes32 (BLAKE3).
+    /// KS-2A: a body instance an erase of one of its holders owes a retirement once its last
+    /// holder releases it. Key: bytes16 (instance); value: bytes32 (BLAKE3).
+    PROVENANCE_BODY_ERASE: VaultMeta b"provenance:body_erase:v1:" Raw;
+    /// KS-2A: each body instance an owner's erase retired or owes, for its receipt. Key: id16
+    /// (owner) + bytes16 (instance).
+    PROVENANCE_BODY_ERASED: VaultMeta b"provenance:body_erased:v1:" Raw;
+    /// KS-2A: an inline ASSET body's instance, bound by the first checkpoint that carries it.
+    /// Key: id16 (entity); value: bytes16 (instance).
+    PROVENANCE_BODY_INLINE: VaultMeta b"provenance:body_inline:v1:" Raw;
+    /// A body's instance row (FIX 5348, KS-2A): its instance, format and logical length, and
+    /// whether it rests inline; never a key or a wrap of one. Key: bytes32 (BLAKE3).
     PROVENANCE_BODY_KEY: VaultMeta b"provenance:body_key:v1:" Named;
     /// File digests no descriptor holds, for the body-file collector. Key: bytes32 (BLAKE3).
     PROVENANCE_BODY_RELEASED: VaultMeta b"provenance:body_released:v1:" Named;

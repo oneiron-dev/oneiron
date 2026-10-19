@@ -154,6 +154,7 @@ pub enum ErrorKind {
     AgentNotDispatchable,
     InvalidAgentDispatchInput,
     InvalidRecoveryArtifact,
+    BodyKeyCustodyUnavailable,
     RecoveryArtifactQuarantineExhausted,
     InvalidCodebaseSnapshotBody,
     HostedMediaHashMatchKnownMatch,

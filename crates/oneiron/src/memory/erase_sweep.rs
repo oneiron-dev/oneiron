@@ -36,15 +36,27 @@ pub struct RecordEraseSweep {
     pub custody: Option<RecordEraseCustody>,
 }
 
-/// The custody part of an erase (KS-4A2): `custody_retirement_pending`, with
-/// each step still owed in order (`custody_retirement_pending`,
-/// `custody_target_pending(<target id>)`, `custody_anchor_pending`), or
-/// `custody_retirement_complete`. The committed erase stands either way.
+/// The custody part of an erase (KS-4A2, KS-2A): `custody_retirement_pending`,
+/// with each step still owed in order (`custody_retirement_pending`,
+/// `body_shared_owner_retained`, `custody_target_pending(<target id>)`,
+/// `custody_anchor_pending`), or `custody_retirement_complete`, for the
+/// erased records' claim keys and body instance keys alike. The committed
+/// erase stands either way.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RecordEraseCustody {
     pub state: String,
     pub pending: Vec<String>,
+    /// What no erase reaches: bytes read before it.
+    pub recall: String,
+    /// "rollback not proven: no custody anchor configured" while no anchor
+    /// is configured: completion then rests on every required target's
+    /// acknowledgement alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
+
+/// What an erase receipt says no erase reaches (KS-2A).
+pub const ERASE_RECALL_NOTE: &str = "bytes already read before the erase cannot be recalled";
 
 impl Memory<'_> {
     /// Reads the receipt and its linked completion in one owner-checked snapshot.
@@ -102,13 +114,15 @@ impl Memory<'_> {
             .filter_map(|id| EntityId::from_hex(id).ok())
             .map(|id| *id.as_bytes())
             .collect();
-        let custody = self
-            .vault
-            .erase_custody_in_txn(&txn, &claims)?
-            .map(|(state, pending)| RecordEraseCustody {
-                state: state.to_owned(),
-                pending,
-            });
+        let custody =
+            self.vault
+                .erase_custody_in_txn(&txn, &claims)?
+                .map(|(state, pending, note)| RecordEraseCustody {
+                    state: state.to_owned(),
+                    pending,
+                    recall: ERASE_RECALL_NOTE.to_owned(),
+                    note: note.map(str::to_owned),
+                });
         Ok(Some(RecordEraseSweep {
             receipt_ref: format!("redaction:{}", receipt_id.to_hex()),
             request_id: receipt.request_id,

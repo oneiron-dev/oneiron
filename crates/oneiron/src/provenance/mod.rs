@@ -205,11 +205,15 @@ use rmpv::Value;
 
 /// Drops `row`'s birth envelope and the bodies it owns, queuing each file no
 /// other descriptor holds. The erase paths call it beside the row's other
-/// carriers.
+/// carriers. `erase`: an erase, not a delete: each body instance whose last
+/// holder this releases retires, and one another holder keeps owes its
+/// retirement to that holder's release (KS-2A); a delete keeps every key,
+/// so its restore window stays.
 pub(crate) fn erase_row_provenance_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     row: &EntityId,
+    erase: bool,
 ) -> Result<()> {
     // A held row keeps its bodies whichever door erases it, as does a pad
     // whose world or sealed claim is held (OF-470); the refusal is queued for
@@ -217,7 +221,20 @@ pub(crate) fn erase_row_provenance_in_txn(
     store.reject_legal_hold_in_txn(txn, row.as_bytes())?;
     crate::world_keys::reject_held_pad_world_in_txn(store, txn, &[*row])?;
     birth::erase_row_birth_in_txn(store, txn, row)?;
+    // The cause is read before the descriptors go.
+    let held: Vec<[u8; 32]> = if erase {
+        body::owned_bodies_in_txn(store, txn, row)?
+            .iter()
+            .filter_map(|body| body.state.held().map(|held| held.blake3))
+            .collect()
+    } else {
+        Vec::new()
+    };
     body::release_owner_bodies_in_txn(store, txn, row)?;
+    #[cfg(unix)]
+    if erase {
+        crate::store::erase_bodies_in_txn(store, txn, row, &held)?;
+    }
     Ok(())
 }
 

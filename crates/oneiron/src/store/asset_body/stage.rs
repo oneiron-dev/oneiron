@@ -260,6 +260,12 @@ impl crate::Vault {
     /// a published file carries is found as it streams, for its put to mark
     /// (FIX 5395). Nothing is refused for its size (Rule 5).
     ///
+    /// A file is one vault instance (KS-2A), minted from `mint` before the
+    /// writer that puts it opens: a stager inside a writer passes none, and
+    /// its long body is read back whole for its row, which a checkpoint
+    /// seals under an instance of its own. A spill no instance backs is a
+    /// temp under a key held in memory, never published.
+    ///
     /// # Errors
     ///
     /// The reader's error, filesystem and storage errors, and
@@ -269,6 +275,7 @@ impl crate::Vault {
         mut reader: impl Read,
         mime: Option<&str>,
         known: Option<Arc<KnownValues>>,
+        mint: Option<&crate::store::BodyMint>,
     ) -> Result<StagedAssetBody> {
         if mime.is_some_and(|mime| mime.len() > usize::from(u16::MAX)) {
             return Err(Error::InvalidConfig(
@@ -294,9 +301,13 @@ impl crate::Vault {
             } else if (inline.len() + read) as u64 <= ASSET_INLINE_BODY_BYTES {
                 inline.extend_from_slice(bytes);
             } else {
+                let body = match mint.filter(|_| ASSET_FILE_PLANE) {
+                    Some(mint) => BodySpill::create(&dir, Some(mint.mint()?))?,
+                    None => BodySpill::ephemeral(&dir)?,
+                };
                 let mut opened = Spill {
                     dir: &dir,
-                    body: Some(BodySpill::create(&dir)?),
+                    body: Some(body),
                 };
                 opened.write(&inline)?;
                 opened.write(bytes)?;
@@ -324,7 +335,7 @@ impl crate::Vault {
                 return Err(error);
             }
         };
-        if !opaque || !ASSET_FILE_PLANE {
+        if !opaque || !ASSET_FILE_PLANE || mint.is_none() {
             // Read whole, as a slice put holds it: the batch door judges it.
             dir.discard(spilled.temp());
             let len = usize::try_from(facts.len)

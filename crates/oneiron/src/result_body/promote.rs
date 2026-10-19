@@ -13,17 +13,20 @@ impl Vault {
     /// `bodies/`, checked against its digest and synced, and keeps the room's
     /// secret mark (`secret`: the occurrence the base row will name, and the
     /// scan's reason) on that occurrence in the base vault: all before any
-    /// base row names it. A body `bodies/` holds already stays as
-    /// it is. A sealed vault's session file comes in as its ciphertext,
-    /// each envelope checked, under `key`, its key row in the room; the save
-    /// wraps that key again for the vault before its row commits (FIX 5348).
-    /// The returned pin keeps the collector off the body until the
-    /// caller's row naming it has committed.
+    /// base row names it. A body `bodies/` holds already stays as it is. Any
+    /// other comes in as a new vault instance, minted here, before the save's
+    /// transaction opens: sealed again under its key on a sealed vault (the
+    /// session's key, `key` its row in the room, is never copied or wrapped
+    /// again), plain on a plain one. The save's transaction commits its row
+    /// (KS-2A). The returned pin keeps the collector off the body, and the
+    /// instance where the save's transaction reads it, until the caller's
+    /// row naming it has committed.
     ///
     /// # Errors
     ///
     /// [`Error::CorruptedIndex`] when neither directory holds the body or the
-    /// copy does not match its digest; storage errors as they occur.
+    /// copy does not match its digest; storage and custody errors as they
+    /// occur.
     pub(crate) fn promote_off_record_result_body(
         &self,
         session_ref: &str,
@@ -32,17 +35,26 @@ impl Vault {
         key: Option<&BodyKeyRow>,
         secret: Option<(ResultOccurrence, &str)>,
     ) -> Result<ResultBodyPin> {
-        let pin = self.pin_result_body(*digest);
+        let held = self.pin_result_body(*digest);
         let target = self.store.body_dir()?;
         let source = match self.store.session_body_dir(session_ref, false)? {
             Some(dir) => dir.open_reader(digest, len, key)?,
             None => None,
         };
-        match source {
-            Some(file) => target.import_body(&self.store, digest, len, file)?,
-            None if self.store.body_file_present(digest, len)? => {}
+        let vault_row = {
+            let rtxn = self.store.env.read_txn()?;
+            body_key_row_in_txn(&self.store, &rtxn, digest)?
+        };
+        let pin = match source {
+            _ if target.holds_pair(digest, vault_row.as_ref())? => held,
+            Some(file) => {
+                let instance = self.store.body_mint()?.mint()?;
+                let promoted = *instance.instance();
+                target.import_promoted(digest, len, file, instance)?;
+                self.pin_promoted_result_body(*digest, promoted)
+            }
             None => return Err(Error::CorruptedIndex("off-record result body missing")),
-        }
+        };
         if let Some((occurrence, reason)) = secret {
             let key = occurrence.mark_key(&raw_output_handle(digest));
             self.with_write_txn_grouped(|txn| {

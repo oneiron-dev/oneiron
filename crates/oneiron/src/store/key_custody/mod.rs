@@ -19,6 +19,7 @@ mod head;
 mod home;
 mod identity;
 mod log;
+mod platform;
 pub mod protocol;
 mod publish;
 mod recovery;
@@ -41,10 +42,12 @@ pub(crate) use self::files::{EntryState, LocalCustody, custody_present};
 pub(crate) use self::folder::FolderTarget;
 pub(crate) use self::fork::{CustodyPlan, ForkedCustodyDir, Requirement};
 pub(crate) use self::head::{CUSTODY_HEAD_WRAP_CONTEXT, CustodyRecipients};
-pub(crate) use self::identity::{CustodyBinding, CustodyKind, CustodySubject};
+pub(crate) use self::identity::{CustodyBinding, CustodyId, CustodyKind, CustodySubject};
 pub(in crate::store) use self::identity::{decode_native_path, encode_native_path};
-pub(crate) use self::publish::{Publication, PublicationState};
-pub(crate) use self::recovery::{CustodyRequirement, CustodyRoute, CustodySourceAt, route_custody};
+pub(crate) use self::publish::{CUSTODY_COMPLETION_NEEDS_ANCHOR, Publication, PublicationState};
+pub(crate) use self::recovery::{
+    CustodyRequirement, CustodyRoute, CustodySourceAt, ROLLBACK_NOT_PROVEN, route_custody,
+};
 #[cfg(test)]
 pub(crate) use self::retirement::arm_before_retire_lock;
 pub(crate) use self::retirement::{

@@ -7,8 +7,10 @@
 //! holds a subject's `g<generation hex16>` entries, its
 //! `.retired-g<generation hex16>` markers and its
 //! `.g<generation hex16>-<random hex16>.pending` temporaries. Every directory
-//! and file is the effective uid's, owner-only (0700/0600), opened without
-//! following a link; an entry has exactly one link.
+//! and file is opened without following a link. On Unix each is the
+//! effective uid's, owner-only (0700/0600), and an entry has exactly one
+//! link; on Windows the user's profile ACL, which custody's directories
+//! inherit, is the boundary ([`super::platform`]).
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -22,6 +24,7 @@ use crate::error::{Error, Result};
 use super::identity::{
     CustodyBinding, CustodyId, CustodyKind, CustodySecret, CustodySubject, custody_corrupt,
 };
+use super::platform;
 
 /// What custody holds for one id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,24 +39,18 @@ pub(crate) enum EntryState {
 
 /// The custody directory beside the vault at `root`.
 pub(super) fn container(root: &Path) -> Result<PathBuf> {
-    #[cfg(unix)]
-    {
-        let mut name = std::ffi::OsString::from(".");
-        name.push(root.file_name().ok_or_else(custody_corrupt)?);
-        name.push(".key-custody");
-        Ok(root.with_file_name(name))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = root;
-        Err(Error::InvalidConfig(
-            "key custody requires a supported Unix filesystem".into(),
-        ))
-    }
+    let mut name = std::ffi::OsString::from(".");
+    name.push(root.file_name().ok_or_else(custody_corrupt)?);
+    name.push(".key-custody");
+    Ok(root.with_file_name(name))
 }
 
-/// Whether a custody directory exists beside the vault at `root`.
+/// Whether a custody directory exists beside the vault at `root`. A binding
+/// another platform wrote names no root here, so none exists for it.
 pub(crate) fn custody_present(root: &Path) -> Result<bool> {
+    if root.as_os_str().is_empty() {
+        return Ok(false);
+    }
     exists(&container(root)?)
 }
 
@@ -78,27 +75,8 @@ fn damaged(kind: Option<CustodyKind>) -> Error {
     kind.map_or_else(custody_corrupt, CustodyKind::corrupt)
 }
 
-#[cfg(unix)]
 fn verify_permissions(file: &File, is_directory: bool, kind: Option<CustodyKind>) -> Result<()> {
-    use std::os::unix::fs::MetadataExt;
-    let meta = file.metadata()?;
-    // SAFETY: geteuid has no arguments or pointers and only reads the caller's
-    // effective uid; the result is used to reject another owner's key file.
-    if meta.uid() != unsafe { libc::geteuid() }
-        || meta.mode() & 0o077 != 0
-        || (!is_directory && meta.nlink() != 1)
-        || (is_directory && !meta.is_dir())
-        || (!is_directory && !meta.is_file())
-    {
-        return Err(damaged(kind));
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn verify_permissions(file: &File, is_directory: bool, kind: Option<CustodyKind>) -> Result<()> {
-    let meta = file.metadata()?;
-    if (is_directory && !meta.is_dir()) || (!is_directory && !meta.is_file()) {
+    if !platform::owned(&file.metadata()?, is_directory, true) {
         return Err(damaged(kind));
     }
     Ok(())
@@ -115,13 +93,7 @@ pub(super) fn safe_open(
     if write_new {
         options.write(true).create_new(true);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-        options.mode(0o600);
-    }
-    let file = options.open(path)?;
+    let file = platform::secure(&mut options).open(path)?;
     verify_permissions(&file, directory, kind)?;
     Ok(file)
 }
@@ -131,14 +103,8 @@ pub(super) fn safe_open(
 /// entry in a new directory can still disappear after power loss while LMDB
 /// keeps what it decrypts.
 pub(super) fn make_new_dir(path: &Path, kind: Option<CustodyKind>) -> Result<File> {
-    let mut builder = fs::DirBuilder::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    builder.create(path)?;
-    File::open(path.parent().ok_or_else(|| damaged(kind))?)?.sync_all()?;
+    platform::dir_builder().create(path)?;
+    platform::sync_dir(path.parent().ok_or_else(|| damaged(kind))?)?;
     safe_open(path, false, true, kind)
 }
 
@@ -199,7 +165,7 @@ pub(super) fn write_once(dir: &Path, name: &str, bytes: &[u8]) -> Result<bool> {
         }
     })();
     fs::remove_file(&temp)?;
-    File::open(dir)?.sync_all()?;
+    platform::sync_dir(dir)?;
     published
 }
 
@@ -220,7 +186,7 @@ pub(super) fn replace_file(dir: &Path, name: &str, bytes: &[u8]) -> Result<()> {
         let _ = fs::remove_file(&temp);
     }
     written?;
-    File::open(dir)?.sync_all()?;
+    platform::sync_dir(dir)?;
     Ok(())
 }
 
@@ -230,25 +196,13 @@ pub(super) fn replace_file(dir: &Path, name: &str, bytes: &[u8]) -> Result<()> {
 pub(super) fn read_whole(path: &Path) -> Result<Option<Vec<u8>>> {
     let mut options = OpenOptions::new();
     options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-    }
-    let mut file = match options.open(path) {
+    let mut file = match platform::secure(&mut options).open(path) {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err.into()),
     };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let meta = file.metadata()?;
-        // SAFETY: geteuid has no arguments or pointers and only reads the
-        // caller's effective uid; the result rejects another owner's file.
-        if meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o077 != 0 || !meta.is_file() {
-            return Err(custody_corrupt());
-        }
+    if !platform::owned(&file.metadata()?, false, false) {
+        return Err(custody_corrupt());
     }
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
@@ -441,7 +395,7 @@ impl LocalCustody<'_> {
     fn prepare(&self, id: &CustodyId) -> Result<(PathBuf, File)> {
         let (dir, directory) = self.open_subject(id.subject(), Create::All)?;
         clean_pending(&dir)?;
-        directory.sync_all()?;
+        platform::sync_held(&directory, &dir)?;
         if retired_in(&dir, id.generation(), id.kind())? {
             return Err(id.kind().corrupt());
         }
@@ -461,7 +415,7 @@ impl LocalCustody<'_> {
         let path = dir.join(entry_name(id.generation()));
         let published =
             !exists(&path)? && write_entry(&dir, &path, id.generation(), secret.expose(), kind)?;
-        directory.sync_all()?;
+        platform::sync_held(&directory, &dir)?;
         if !published && self.read(id)?.expose() != secret.expose() {
             return Err(kind.corrupt());
         }
@@ -479,7 +433,7 @@ impl LocalCustody<'_> {
         }
         let secret = CustodySecret::random(kind.secret_len());
         let published = write_entry(&dir, &path, id.generation(), secret.expose(), kind)?;
-        directory.sync_all()?;
+        platform::sync_held(&directory, &dir)?;
         if !published {
             return self.read(id);
         }
@@ -511,13 +465,13 @@ impl LocalCustody<'_> {
             }
             Err(err) => return Err(err),
         }
-        directory.sync_all()?;
+        platform::sync_held(&directory, &dir)?;
         match fs::remove_file(dir.join(entry_name(id.generation()))) {
             Ok(()) => {}
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(err.into()),
         }
-        directory.sync_all()?;
+        platform::sync_held(&directory, &dir)?;
         Ok(())
     }
 }

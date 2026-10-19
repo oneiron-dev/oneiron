@@ -68,6 +68,10 @@ pub(crate) struct Publication {
     /// `Some(false)` while a member holds a head sealed when the data key
     /// was not held: it is sealed again once the key is (FIX 5791).
     pub(crate) data_key_wrapped: Option<bool>,
+    /// No anchor is configured: retirements complete on every required
+    /// target's acknowledgement alone, with rollback not proven (CALLS
+    /// CUSTODY_COMPLETION_NEEDS_ANCHOR, overruled).
+    pub(crate) anchor_unset: bool,
 }
 
 impl Publication {
@@ -79,9 +83,17 @@ impl Publication {
             anchored: None,
             detail: None,
             data_key_wrapped: None,
+            anchor_unset: false,
         }
     }
 }
+
+/// CALLS CUSTODY_COMPLETION_NEEDS_ANCHOR, OVERRULED (Engine 10-20 07:0x):
+/// `false`, so a retirement is complete once every required target acked it;
+/// with no anchor configured it carries the "rollback not proven" note
+/// instead of owing the anchor step forever. `true` would keep it pending
+/// on the anchor.
+pub(crate) const CUSTODY_COMPLETION_NEEDS_ANCHOR: bool = false;
 
 /// What the anchor step reads when no anchor root is set up (CALLS
 /// CUSTODY_ANCHOR_ROOT: unset by default).
@@ -111,8 +123,8 @@ impl PublicationState {
     }
 }
 
-/// `state | wraps (0 unknown, 1 root only, 2 data key too) | 3 x (0 | 1
-/// position) | detail utf-8`.
+/// `state | wraps (0 unknown, 1 root only, 2 data key too) | anchor (0 set,
+/// 1 unset) | 3 x (0 | 1 position) | detail utf-8`.
 fn encode_status(publication: &Publication) -> Vec<u8> {
     let mut out = vec![
         publication.state.code(),
@@ -121,6 +133,7 @@ fn encode_status(publication: &Publication) -> Vec<u8> {
             Some(false) => 1,
             Some(true) => 2,
         },
+        u8::from(publication.anchor_unset),
     ];
     for position in [
         publication.local,
@@ -141,7 +154,8 @@ fn encode_status(publication: &Publication) -> Vec<u8> {
 
 fn decode_status(bytes: &[u8]) -> Option<Publication> {
     let (&state, rest) = bytes.split_first()?;
-    let (&wraps, mut rest) = rest.split_first()?;
+    let (&wraps, rest) = rest.split_first()?;
+    let (&unset, mut rest) = rest.split_first()?;
     let mut positions = [None; 3];
     for slot in &mut positions {
         let (&present, after) = rest.split_first()?;
@@ -162,6 +176,11 @@ fn decode_status(bytes: &[u8]) -> Option<Publication> {
             0 => None,
             1 => Some(false),
             2 => Some(true),
+            _ => return None,
+        },
+        anchor_unset: match unset {
+            0 => false,
+            1 => true,
             _ => return None,
         },
     })
@@ -276,8 +295,9 @@ impl Store {
             return Ok(Publication::nothing());
         }
         let journal = custody.journal()?;
-        let publication = self.publish_pass(custody, &journal, recipients, given, anchor)?;
+        let mut publication = self.publish_pass(custody, &journal, recipients, given, anchor)?;
         if publication.state != PublicationState::Nothing {
+            publication.anchor_unset = anchor.is_none();
             replace_file(journal.dir(), STATUS, &encode_status(&publication))?;
         }
         Ok(publication)
@@ -343,6 +363,7 @@ impl Store {
                     anchored: previous.and_then(|previous| previous.anchored),
                     detail: Some(detail),
                     data_key_wrapped: wrapped_before,
+                    anchor_unset: anchor.is_none(),
                 });
             }
             Sealed::Current(position) => (position, None),
@@ -357,6 +378,7 @@ impl Store {
             anchored,
             detail: Some(detail),
             data_key_wrapped: wrapped,
+            anchor_unset: anchor.is_none(),
         };
         // The anchor is read before any target is written: a newer writer
         // epoch fenced this one, and its head would only overwrite the new
@@ -438,8 +460,11 @@ impl Store {
             .filter(|id| acked_seq(&acks, id, &position) != Some(position.seq))
             .map(TargetId::as_str)
             .collect();
+        // With no anchor configured, completion is every required target's
+        // acknowledgement (CUSTODY_COMPLETION_NEEDS_ANCHOR, overruled).
+        let unanchored = anchor.is_none() && !CUSTODY_COMPLETION_NEEDS_ANCHOR;
         if !behind.is_empty() {
-            complete(anchored)?;
+            complete(if unanchored { published } else { anchored })?;
             return Ok(pending(
                 PublicationState::TargetPending,
                 published,
@@ -454,6 +479,9 @@ impl Store {
             ));
         }
         let Some(anchor) = anchor else {
+            if unanchored {
+                complete(Some(position))?;
+            }
             return Ok(pending(
                 PublicationState::AnchorPending,
                 published,
@@ -469,6 +497,7 @@ impl Store {
             anchored: Some(anchored),
             detail: None,
             data_key_wrapped: wrapped,
+            anchor_unset: false,
         };
         if anchored == Some(position) {
             complete(Some(position))?;
@@ -510,6 +539,9 @@ impl Store {
             published: recorded.as_ref().and_then(|recorded| recorded.published),
             anchored: recorded.as_ref().and_then(|recorded| recorded.anchored),
             detail: Some(detail.to_owned()),
+            anchor_unset: recorded
+                .as_ref()
+                .is_some_and(|recorded| recorded.anchor_unset),
             data_key_wrapped: recorded.and_then(|recorded| recorded.data_key_wrapped),
         };
         Ok(match recorded(&journal)? {

@@ -55,7 +55,9 @@ to other installs: `GET /v1/owner/custody-anchor?vault=<64 hex>&namespace=<32 he
 advances only once every member acknowledged the head at that position, and never backwards.
 
 With no anchor set, heads still publish, the anchor step stays `custody_anchor_pending`, and a
-restore on a new host uses the head it finds and says rollback is not proven.
+restore on a new host uses the head it finds and says rollback is not proven. A retirement still
+completes: `custody_retirement_complete` once every required target acknowledged it, with the note
+`rollback not proven: no custody anchor configured`.
 
 ## Status
 
@@ -70,13 +72,29 @@ restore on a new host uses the head it finds and says rollback is not proven.
 - `retirement`, once any key was retired: `state` is `custody_retirement_pending` or
   `custody_retirement_complete`; `names` lists each step still owed, in order:
   `custody_retirement_pending` (a retirement not handed off yet), every
-  `custody_target_pending(<target id>)`, then `custody_anchor_pending`. `targets` lists every
+  `custody_target_pending(<target id>)`, then `custody_anchor_pending` (only while an anchor is
+  set; with none, `note` says rollback is not proven). `targets` lists every
   member with its `acked_seq` and, while pending, `pending` (`offline`, `locked`, `denied`,
   `no_adapter`, `moved` or `failed`), `pending_since` and `detail`.
 
 An erase's receipt read (`vault.records.erase_sweep`) carries the same for the erased records'
-keys: `custody: {"state": ..., "pending": [...]}`. The erase itself is done and stays done on
-this host from the moment it returns; `custody` says where the old copies stand.
+keys, claim keys and body instance keys alike: `custody: {"state": ..., "pending": [...],
+"recall": ..., "note": ...}`. `body_shared_owner_retained` names a body another record still
+holds: its key retires with that holder's release. `recall` says bytes already read before the
+erase cannot be recalled. The erase itself is done and stays done on this host from the moment it
+returns; `custody` says where the old copies stand.
+
+## Body instances
+
+Every body a vault keeps, a code-run result's or an ASSET's, as a file or inline in its row, is
+one instance whose 32-byte key custody holds (kind `0x02`). A sealed vault's file is sealed under
+it; a plain vault's file is plain and read with no key. A checkpoint or backup carries every body
+sealed under its instance's key alone, and an inline body leaves its row to travel that way, so no
+image holds a key or a wrap that recovers one. A delete keeps the key, so the restore window stays;
+an erase retires it, and the old copies become unreadable once every required target acknowledged
+the retirement. A restore needs each instance live (landed and read back) or retired (its rows
+pruned as the erase pruned them); one custody holds neither refuses as
+`body_key_custody_unavailable`.
 
 ## Restore
 

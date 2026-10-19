@@ -168,3 +168,19 @@ impl Drop for MadeDestination {
         }
     }
 }
+
+/// Deletes the `vault_meta` rows of `keys` in `wtxn`: an activation's prune
+/// of the body rows whose instances its source retired (KS-2A).
+pub(super) fn delete_vault_meta_in_txn(
+    env: &heed::Env,
+    wtxn: &mut heed::RwTxn<'_>,
+    keys: &std::collections::BTreeSet<Vec<u8>>,
+) -> Result<()> {
+    let vault_meta = env
+        .open_database::<heed::types::Bytes, heed::types::Bytes>(wtxn, Some("vault_meta"))?
+        .ok_or(Error::CorruptedIndex("vault holds no side-table database"))?;
+    for key in keys {
+        vault_meta.delete(wtxn, key)?;
+    }
+    Ok(())
+}

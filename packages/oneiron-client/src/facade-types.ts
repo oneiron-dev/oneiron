@@ -2787,7 +2787,7 @@ export type RecordEraseOutcome = { first: DeleteReceipt; first_act?: string | nu
 /** `oneiron::memory::erase_sweep::RecordEraseSweepRequest` */
 export type RecordEraseSweepRequest = { receipt_ref: string }
 /** `oneiron::memory::erase_sweep::RecordEraseCustody` */
-export type RecordEraseCustody = { state: string; pending: string[] }
+export type RecordEraseCustody = { state: string; pending: string[]; recall: string; note?: string | null }
 /** `oneiron::memory::erase_sweep::RecordEraseSweep` */
 export type RecordEraseSweep = { receipt_ref: string; request_id: string; requested_at: number; sweep_queued_at?: number | null; deadline_at?: number | null; sweep_complete_at?: number | null; custody?: RecordEraseCustody | null }
 /** `oneiron::task_verb::sdk_research::ResearchChildWire` */

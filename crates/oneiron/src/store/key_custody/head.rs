@@ -37,6 +37,10 @@ const DATA_KEY_RECIPIENT: &[u8] = b"oneiron/custody-head/data-key/v1";
 const COMPARTMENT_RECIPIENT: &[u8] = b"oneiron/custody-head/compartment/v1";
 const TO_ROOT: u8 = 1;
 const TO_DATA_KEY: u8 = 2;
+/// The most entries, live or retired, one compartment holds: a codec bound
+/// that keeps each compartment's plaintext far inside one E0 envelope; a
+/// scope with more takes more compartments.
+const COMPARTMENT_ENTRIES: usize = 32 * 1024;
 
 /// The context of the vault data key's subkey a host-readable compartment
 /// is also wrapped under.
@@ -64,7 +68,10 @@ impl CompartmentScope {
     /// Each kind's scope; a later kind names its own.
     pub(crate) fn of(kind: CustodyKind) -> Self {
         match kind {
+            // A body instance's key is one the host engine reads in its own
+            // process, as a claim key is (KS-2A).
             CustodyKind::ClaimDecision
+            | CustodyKind::BodyInstance
             | CustodyKind::CheckpointPayload
             | CustodyKind::TrainingLink => Self::HostReadable,
         }
@@ -345,11 +352,24 @@ pub(super) fn seal_head(
     retired: Vec<CustodyId>,
     recipients: &CustodyRecipients,
 ) -> Result<Zeroizing<Vec<u8>>> {
-    let mut scopes: BTreeMap<CompartmentScope, BodyWire> = BTreeMap::new();
+    // Each scope's entries go in as many compartments as they fill, each
+    // at most COMPARTMENT_ENTRIES of them: a head grows with its custody,
+    // never past one envelope's bound and never capped (Rule 5).
+    let mut scopes: BTreeMap<CompartmentScope, Vec<BodyWire>> = BTreeMap::new();
+    let chunk_of = |scopes: &mut BTreeMap<CompartmentScope, Vec<BodyWire>>, scope| {
+        let chunks = scopes.entry(scope).or_default();
+        if chunks
+            .last()
+            .is_none_or(|body| body.live.len() + body.retired.len() >= COMPARTMENT_ENTRIES)
+        {
+            chunks.push(BodyWire::default());
+        }
+        chunks.len() - 1
+    };
     for entry in entries {
-        scopes
-            .entry(CompartmentScope::of(entry.id.kind()))
-            .or_default()
+        let scope = CompartmentScope::of(entry.id.kind());
+        let at = chunk_of(&mut scopes, scope);
+        scopes.get_mut(&scope).ok_or_else(head_corrupt)?[at]
             .live
             .push(EntryWire {
                 kind: entry.id.kind().tag(),
@@ -359,9 +379,9 @@ pub(super) fn seal_head(
             });
     }
     for id in retired {
-        scopes
-            .entry(CompartmentScope::of(id.kind()))
-            .or_default()
+        let scope = CompartmentScope::of(id.kind());
+        let at = chunk_of(&mut scopes, scope);
+        scopes.get_mut(&scope).ok_or_else(head_corrupt)?[at]
             .retired
             .push(FactWire {
                 kind: id.kind().tag(),
@@ -371,7 +391,10 @@ pub(super) fn seal_head(
     }
     let mut compartments = Vec::with_capacity(scopes.len() + 1);
     let mut digests = Vec::with_capacity(scopes.len());
-    for (index, (scope, body)) in scopes.into_iter().enumerate() {
+    let chunks = scopes
+        .into_iter()
+        .flat_map(|(scope, bodies)| bodies.into_iter().map(move |body| (scope, body)));
+    for (index, (scope, body)) in chunks.enumerate() {
         let index = u32::try_from(index + 1).map_err(|_| head_corrupt())?;
         let sealed = seal_compartment(position, index, Some(scope), &body, recipients)?;
         digests.push(*blake3::hash(&sealed.sealed).as_bytes());
@@ -504,12 +527,15 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
         retired: BTreeSet::new(),
         unopened: BTreeSet::new(),
     };
-    let mut seen = BTreeSet::new();
+    // A scope's compartments follow one another, scopes in order: one
+    // canonical layout, which the control compartment's digests fix.
+    let mut last: Option<CompartmentScope> = None;
     for (index, compartment) in rest.iter().enumerate() {
         let scope = CompartmentScope::from_code(compartment.scope).ok_or_else(head_corrupt)?;
-        if !seen.insert(scope) {
+        if last.is_some_and(|last| last > scope) {
             return Err(head_corrupt());
         }
+        last = Some(scope);
         let index = u32::try_from(index + 1).map_err(|_| head_corrupt())?;
         let id = key_id(&pos, index, Some(scope));
         let Some(key) = unwrap_key(&position, &id, Some(scope), &compartment.wraps, opener) else {

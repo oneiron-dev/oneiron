@@ -102,14 +102,7 @@ impl Store {
         let path = dir.join(format!("{STAGE_PREFIX}{}", hex(&operation)));
         let mut options = OpenOptions::new();
         options.read(true).append(true).create(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options
-                .mode(0o600)
-                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-        }
-        let mut stage = options.open(&path)?;
+        let mut stage = super::platform::secure(&mut options).open(&path)?;
         let length = stage.metadata()?.len();
         let part_len =
             u64::try_from(part.len()).map_err(|_| refused("a part too long to count"))?;

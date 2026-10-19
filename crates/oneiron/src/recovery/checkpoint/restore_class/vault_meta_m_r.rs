@@ -160,6 +160,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PROVENANCE_BIRTH_BY_TRIGGER, CONTENT),
     (&t::PROVENANCE_BODY, CONTENT),
     (&t::PROVENANCE_BODY_DIGEST, CONTENT),
+    // Erasure state: a restore keeping current authority keeps the current vault's.
+    (&t::PROVENANCE_BODY_ERASE, LIVE),
+    (&t::PROVENANCE_BODY_ERASED, LIVE),
+    (&t::PROVENANCE_BODY_INLINE, CONTENT),
     (&t::PROVENANCE_BODY_KEY, CONTENT),
     (&t::PROVENANCE_BODY_RELEASED, LIVE),
     (&t::PROVENANCE_ROW_BIRTH, CONTENT),

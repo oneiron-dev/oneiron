@@ -17,6 +17,7 @@ use crate::error::Result;
 
 use super::files::{EntryState, LocalCustody, container, entry_name, make_new_dir, marker_name};
 use super::identity::{CustodyBinding, CustodyId, CustodySubject, custody_corrupt};
+use super::platform;
 use super::retirement::RetirementIntent;
 
 /// What a restore needs of one required id.
@@ -106,7 +107,7 @@ impl ForkedCustodyDir {
 
     /// Syncs the directory the fork or landing made.
     pub(super) fn sync(&self) -> crate::error::Result<()> {
-        Ok(self.directory.sync_all()?)
+        platform::sync_held(&self.directory, &self.path)
     }
 
     /// Removes the fork's entries and markers, for a restore that failed or
@@ -123,15 +124,8 @@ impl ForkedCustodyDir {
     }
 }
 
-#[cfg(unix)]
 fn directory_identity(meta: &fs::Metadata) -> Option<(u64, u64)> {
-    use std::os::unix::fs::MetadataExt;
-    meta.is_dir().then(|| (meta.dev(), meta.ino()))
-}
-
-#[cfg(not(unix))]
-fn directory_identity(_: &fs::Metadata) -> Option<(u64, u64)> {
-    None
+    platform::directory_identity(meta)
 }
 
 impl LocalCustody<'_> {
@@ -238,7 +232,7 @@ impl LocalCustody<'_> {
                     }
                 }
             }
-            forked.directory.sync_all()?;
+            forked.sync()?;
             Ok(())
         })();
         match copied {

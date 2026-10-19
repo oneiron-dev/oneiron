@@ -166,8 +166,19 @@ fn publish(vault: &oneiron::Vault, plan: &BackupPlan) -> CustodyStatus {
         Ok(anchor) => (anchor, None),
         Err(error) => (None, Some(error.to_string())),
     };
+    // The head and log frames land in the backups' directory: claimed on the
+    // floors its backups claim, before a byte is written (FIX 5858).
+    let room = super::write_budget::WriteClaim::on_each(&super::write_budget::landing_floors(
+        plan.floor.as_ref(),
+        &plan.dir,
+    ));
     let mut status = vault
-        .publish_custody(&plan.dir, &plan.custody.declared, anchor.as_deref())
+        .publish_custody_within(
+            &plan.dir,
+            &plan.custody.declared,
+            anchor.as_deref(),
+            Box::new(room),
+        )
         .unwrap_or_else(|error| not_run(&error, "the custody publication pass did not run"));
     if status.state == CUSTODY_ANCHOR_PENDING
         && let Some(unusable) = unusable

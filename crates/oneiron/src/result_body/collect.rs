@@ -27,13 +27,14 @@ pub struct ResultBodyCollectReport {
     pub pinned: usize,
     /// Orphan body files (and line indexes whose body is gone) removed.
     pub orphans: usize,
-    /// Key rows of sealed body files deleted with their final holder's
-    /// release (FIX 5348).
+    /// Instance rows of body files deleted with their final holder's
+    /// release (FIX 5348). Their keys stay in custody: a collection is never
+    /// an erase (KS-2A).
     pub keys_retired: usize,
-    /// Whether a key's retirement reaches every kept copy, older
-    /// checkpoints and backups included. `false`: it reaches the live vault
-    /// only, so no retirement here is reported complete (CALLS
-    /// "BODY_FILE_SHRED_SCOPE").
+    /// Whether an erase's key retirement reaches every kept copy, older
+    /// checkpoints and backups included: `true`, as every body instance's
+    /// key rests in typed custody, outside every image (CALLS
+    /// "BODY_FILE_SHRED_SCOPE", KS-2A).
     pub retirement_reaches_kept_copies: bool,
 }
 
@@ -56,6 +57,7 @@ impl Vault {
         if limit > 0 {
             report.orphans = self.sweep_orphan_result_bodies(&self.store.body_dir()?, limit)?;
         }
+        self.finish_body_custody_retirements_after_commit();
         Ok(report)
     }
 
@@ -122,7 +124,22 @@ impl Vault {
         if report.collected > 0 {
             sync_dir(&dir)?;
         }
+        // An erase's retirement of an instance whose file just went.
+        self.finish_body_custody_retirements_after_commit();
         Ok(report)
+    }
+
+    /// Carries out every body instance retirement nothing names any longer
+    /// (KS-2A). Post-commit and warning-only: the intent is durable, so a
+    /// failure here is retried by the next pass and never fails the act
+    /// that committed.
+    pub(crate) fn finish_body_custody_retirements_after_commit(&self) {
+        if let Err(error) = self.store.finish_body_custody_retirements() {
+            tracing::warn!(
+                error = %error,
+                "body key retirement deferred to the next collector pass"
+            );
+        }
     }
 
     /// Takes the released `digest` off the queue in `txn` and drops its
@@ -181,14 +198,20 @@ impl Vault {
     /// row does not name: a sealed file of another instance, or a plain one
     /// beside a sealed pair (FIX 5348).
     fn unnamed_result_bodies(&self, batch: Vec<BodyEntry>) -> Result<Vec<BodyEntry>> {
+        let sealed = self.store.dir_seal(crate::store::KeyScope::Vault).is_some();
         let rtxn = self.store.env.read_txn()?;
         let mut unnamed = Vec::new();
         for entry in batch {
             let named =
                 RAW_OUTPUT_ROWS.contains(&self.store, &rtxn, &raw_output_handle(&entry.digest))?
                     || digest_is_held_in_txn(&self.store, &rtxn, &entry.digest)?;
-            let keyed =
-                body_key_row_in_txn(&self.store, &rtxn, &entry.digest)?.map(|row| row.instance);
+            // A plain file is named by its digest alone; a sealed one by the
+            // instance its row names.
+            let keyed = if sealed {
+                body_key_row_in_txn(&self.store, &rtxn, &entry.digest)?.map(|row| row.instance)
+            } else {
+                None
+            };
             if !named || keyed != entry.instance {
                 unnamed.push(entry);
             }
