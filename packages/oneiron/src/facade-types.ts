@@ -3595,7 +3595,7 @@ export type ObjectiveFinding = { objective: string; flaw_present: boolean; evide
 /** `oneiron::self_heal::audit::SealCheckOutcome` */
 export type SealCheckOutcome = { judge_revision: string; checked_at: number; findings: ObjectiveFinding[] }
 /** `oneiron::self_heal::audit::SealCheckReceipt` */
-export type SealCheckReceipt = { request: SealCheckRequest; outcome?: SealCheckOutcome | null }
+export type SealCheckReceipt = { request: SealCheckRequest; outcome?: SealCheckOutcome | null; last_asked_at?: number | null }
 /** `oneiron::self_heal::audit::SealedAttemptReceipt` */
 export type SealedAttemptReceipt = { confession: AttemptConfession; executor: string; result_ref: string; sealed_at: number; passing: boolean; draw?: AuditDraw | null; checks: SealCheckReceipt[] }
 /** `oneiron::learning::honesty::SealAssessment` */

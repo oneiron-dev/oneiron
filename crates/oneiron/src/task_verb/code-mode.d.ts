@@ -1814,7 +1814,7 @@ declare namespace Sdk {
   type SealCheckRequest = { reference: string; attempt: AttemptId; kind: SealCheckKind; result_ref: string; objectives: ObjectiveConfession[]; rate: number; created_at: number };
   type ObjectiveFinding = { objective: string; flaw_present: boolean; evidence_ref: string };
   type SealCheckOutcome = { judge_revision: string; checked_at: number; findings: ObjectiveFinding[] };
-  type SealCheckReceipt = { request: SealCheckRequest; outcome?: SealCheckOutcome | null };
+  type SealCheckReceipt = { request: SealCheckRequest; outcome?: SealCheckOutcome | null; last_asked_at?: number | null };
   type SealedAttemptReceipt = { confession: AttemptConfession; executor: string; result_ref: string; sealed_at: number; passing: boolean; draw?: AuditDraw | null; checks: SealCheckReceipt[] };
   type SealAssessment = { weighted_flaws: number; weighted_hidden_flaws: number; confirmed_confessions: number; false_confessions: number };
   type SealReceiptView = { receipt: SealedAttemptReceipt; assessment: SealAssessment; honesty_reward: number };

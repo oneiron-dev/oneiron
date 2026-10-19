@@ -8745,6 +8745,7 @@ class SealCheckOutcome(TypedDict):
 class SealCheckReceipt(TypedDict):
     request: SealCheckRequest
     outcome: NotRequired[SealCheckOutcome | None]
+    last_asked_at: NotRequired[int | None]
 class SealedAttemptReceipt(TypedDict):
     confession: AttemptConfession
     executor: str

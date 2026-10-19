@@ -8,6 +8,7 @@ use crate::Vault;
 use crate::edit_distance::miner::{MinedSkillEditProposal, pending_substitution_skill_edits};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::llm::CallPurpose;
 use crate::skill_attribution::{
     AttributionVerdict, SkillEditProposal, attribution_judgments, pending_edit_proposals,
@@ -21,11 +22,10 @@ use super::gate::{
 use super::job::{PROVENANCE_OPTIMIZE_PRINCIPAL_KEY, PROVENANCE_OPTIMIZE_RATIONALE_KEY};
 use super::selection::SkillOptimizeCandidate;
 
-/// Upper bound on any one evidence list handed to the author.
-///
-/// Mirrors `SKILL_RELIABILITY_MAX_CITED_RECEIPTS`, which already caps the
-/// citation trace this brief is mostly built from: a brief is a summary, and a
-/// summary that grows without bound is a ledger.
+/// How many of the reserved receipts a gate verdict lists for display, the
+/// newest; the verdict keeps the whole scored set's count and digest beside
+/// them. The optimize brief is not cut to it: the author reads all of its DEV
+/// evidence.
 pub const SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE: usize = 64;
 
 /// Upper bound on an author's rationale, matching `skill_convert`'s.
@@ -195,7 +195,6 @@ pub(crate) fn optimize_brief_bound_at(
                 .filter(|receipt| dev.contains(receipt)),
         );
     }
-    truncate_oldest(&mut defect_receipts);
 
     // The same partition, applied to the PROPOSALS rather than only to the
     // receipt lists. A proposal is a receipt-bearing payload: it carries the
@@ -210,14 +209,13 @@ pub(crate) fn optimize_brief_bound_at(
     // deterministic partition the gate reserves by. One that cites nothing
     // cannot show it, so it is not shown either — the durable proposal is
     // untouched, and what changes is only what this READ hands the author.
-    let mut discovery_proposals: Vec<SkillEditProposal> = pending_edit_proposals(vault)?
+    let discovery_proposals: Vec<SkillEditProposal> = pending_edit_proposals(vault)?
         .into_iter()
         .filter(|proposal| {
             proposal.skill == candidate.skill
                 && rests_only_on_dev(&candidate.skill, &proposal.evidence_receipts)
         })
         .collect();
-    truncate_oldest(&mut discovery_proposals);
     let mut substitution_proposals = Vec::new();
     for proposal in pending_substitution_skill_edits(vault)? {
         if proposal.skill == candidate.skill
@@ -234,7 +232,6 @@ pub(crate) fn optimize_brief_bound_at(
             substitution_proposals.push(proposal);
         }
     }
-    truncate_oldest(&mut substitution_proposals);
 
     // A rejection is feedback about the author's own draft, not a license to
     // inspect the held-out exam. Read only terminal, scored rejections for this
@@ -242,10 +239,7 @@ pub(crate) fn optimize_brief_bound_at(
     // removed or since-mutated proposal cannot truthfully describe the body
     // the gate scored; do not display it as that body's edit.
     let mut rejected_edits = Vec::new();
-    // Newest first: the cap counts only entries that actually survive the
-    // proposal, digest, and audience joins. Otherwise 64 other principals'
-    // verdicts could evict the one rejection this author may learn from.
-    for verdict in skill_edit_verdicts(vault)?.into_iter().rev() {
+    for verdict in skill_edit_verdicts(vault)? {
         if verdict.skill != candidate.skill || verdict.disposition != SkillEditDisposition::Rejected
         {
             continue;
@@ -292,11 +286,23 @@ pub(crate) fn optimize_brief_bound_at(
                 RejectedSkillEditReason::Regression
             },
         });
-        if rejected_edits.len() == SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE {
-            break;
-        }
     }
-    rejected_edits.reverse();
+    let cited_receipts: Vec<String> = reliability_citations(vault, &candidate.skill)?
+        .into_iter()
+        .filter(|receipt| dev.contains(receipt))
+        .collect();
+    // The brief carries every list whole; the longest is measured.
+    let items = [
+        cited_receipts.len(),
+        defect_receipts.len(),
+        discovery_proposals.len(),
+        substitution_proposals.len(),
+        rejected_edits.len(),
+    ]
+    .into_iter()
+    .max()
+    .unwrap_or(0);
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
 
     Ok(SkillOptimizeBrief {
         skill: candidate.skill,
@@ -307,10 +313,7 @@ pub(crate) fn optimize_brief_bound_at(
         posterior: candidate.posterior,
         prior: candidate.prior,
         attributed_outcomes: candidate.attributed_outcomes,
-        cited_receipts: reliability_citations(vault, &candidate.skill)?
-            .into_iter()
-            .filter(|receipt| dev.contains(receipt))
-            .collect(),
+        cited_receipts,
         defect_receipts,
         discovery_proposals,
         substitution_proposals,
@@ -337,17 +340,6 @@ pub(crate) fn optimize_brief_bound_at(
 /// over-showing it fits the draft to its own exam.
 pub(super) fn rests_only_on_dev(skill: &EntityId, evidence: &[String]) -> bool {
     !evidence.is_empty() && !evidence.iter().any(|id| receipt_is_held_out(skill, id))
-}
-
-/// Keeps the most recent [`SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE`] entries.
-///
-/// Both ledgers this reads are mint-ordered (UUIDv7-derived keys), so dropping
-/// from the FRONT drops the oldest — the same choice the reliability claim's
-/// citation cap makes.
-fn truncate_oldest<T>(evidence: &mut Vec<T>) {
-    if evidence.len() > SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE {
-        evidence.drain(..evidence.len() - SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE);
-    }
 }
 
 /// The receipts the active `skill.reliability` claim cites, or none when the

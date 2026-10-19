@@ -30,10 +30,11 @@ use crate::agent_dispatch::{
 };
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::entity_id::EntityId;
+use crate::limit_ask::EngineLimit;
 use crate::skill_hub::HubFile;
 use crate::skill_optimize::{
-    HeldOutReplayNotes, SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, SkillEditDisposition, SkillRepairStamp,
-    propose_skill_package_revision, proven_cycle, receipt_is_held_out,
+    HeldOutReplayNotes, SkillEditDisposition, SkillRepairStamp, propose_skill_package_revision,
+    proven_cycle, receipt_is_held_out,
 };
 use crate::task_type::{
     DecisionAxis, DecisionObservation, TaskTypeNode, TaskTypeRef, TaskTypeTree,
@@ -518,8 +519,9 @@ impl Vault {
             .filter(|row| !row.decisions.is_empty())
             .map(|row| row.team_ref.clone())
             .collect();
+        // Every fit run with a decision, newest first.
         receipts.reverse();
-        receipts.truncate(SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE);
+        let _ = self.measure_limit(EngineLimit::MaintenanceRowItems, receipts.len() as u64);
         let id = attempt.status.attempt.id;
         let cycle = proven_cycle(self, id)?;
         let stamp = SkillRepairStamp {

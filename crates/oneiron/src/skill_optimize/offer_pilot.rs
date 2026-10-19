@@ -409,19 +409,19 @@ pub fn latest_pilot(vault: &Vault, candidate: &OfferCandidateRecord) -> Result<O
 pub fn model_offer_pin(row: &ModelRegistryRow) -> Option<(OfferModelPin, String)> {
     let backend = row.backends().ok()?.into_iter().next()?;
     let model = row.catalog.model.as_str();
-    (bounded(model, 256)
-        && bounded(&backend.pin.serving_revision, 256)
-        && bounded(&backend.pin.backend, 256))
-    .then(|| {
-        (
-            OfferModelPin {
-                model: model.to_owned(),
-                revision: backend.pin.serving_revision.clone(),
-                content_hash: None,
-            },
-            backend.pin.backend.clone(),
-        )
-    })
+    // The backend is also the stock offer's source, which the offer door
+    // still bounds at 256 B.
+    (named(model) && named(&backend.pin.serving_revision) && bounded(&backend.pin.backend, 256))
+        .then(|| {
+            (
+                OfferModelPin {
+                    model: model.to_owned(),
+                    revision: backend.pin.serving_revision.clone(),
+                    content_hash: None,
+                },
+                backend.pin.backend.clone(),
+            )
+        })
 }
 
 /// A recipe's base: the starting checkpoint at its source revision and the
@@ -430,7 +430,7 @@ pub fn training_base_pin(run: &TrainingRun) -> Option<OfferModelPin> {
     let checkpoint = &run.plan.starting_checkpoint;
     let file = checkpoint.files.first()?;
     let model = checkpoint.model.as_str();
-    (bounded(model, 256) && bounded(&file.source.revision, 256)).then(|| OfferModelPin {
+    (named(model) && named(&file.source.revision)).then(|| OfferModelPin {
         model: model.to_owned(),
         revision: file.source.revision.clone(),
         content_hash: Some(
@@ -451,10 +451,10 @@ pub fn training_destination(run: &TrainingRun) -> Option<ComputeDestination> {
             ComputeDestination::OnDevice
         }
         ComputeChoice::OwnerMachines => ComputeDestination::SelfHosted {
-            host: bounded(&compute.origin, 256).then(|| compute.origin.clone())?,
+            host: named(&compute.origin).then(|| compute.origin.clone())?,
         },
         ComputeChoice::External => ComputeDestination::Hosted {
-            provider: bounded(&compute.connector, 256).then(|| compute.connector.clone())?,
+            provider: named(&compute.connector).then(|| compute.connector.clone())?,
             rows_leaving: u64::try_from(run.corpus.rows.len()).ok()?,
         },
     })
@@ -466,12 +466,17 @@ pub fn model_offer_licence(row: &ModelRegistryRow) -> Option<String> {
         .iter()
         .find_map(|key| row.catalog.metadata.get(*key)?.as_str())
         .map(str::trim)
-        .filter(|licence| bounded(licence, 256))
+        .filter(|licence| named(licence))
         .map(str::to_owned)
 }
 
 fn bounded(value: &str, max: usize) -> bool {
-    !value.trim().is_empty() && value.len() <= max
+    named(value) && value.len() <= max
+}
+
+/// Not blank. Pins, hosts, providers and licences are kept whole (Rule 5).
+fn named(value: &str) -> bool {
+    !value.trim().is_empty()
 }
 
 /// Revalidate any pilot evidence a draft uses in the offer's committing

@@ -10,9 +10,10 @@
 //! earlier answer was given in. Each other one opens an identity ask, one
 //! open ask per name and candidate set.
 //!
-//! The host asks each open ask as one decide() Choice over the candidates
-//! plus [`SOMEONE_NEW`] ([`Vault::decide_identity_ask`]). A choice settles
-//! the mention. An abstention on a nightly ask keeps the names separate for
+//! The host asks each open ask as one decide() Choice over its candidates,
+//! as many as a Choice lists with the rest by id in its state, plus
+//! [`SOMEONE_NEW`] ([`Vault::decide_identity_ask`]). A choice settles the
+//! mention. An abstention on a nightly ask keeps the names separate for
 //! now (OF-023): nothing merges, nothing is confirmed and no one is asked.
 //! The ask stays open and answerable, is not decided again until its
 //! candidates change, and leaves the Dreamer's receipt, which the owner
@@ -62,10 +63,11 @@ use crate::lens::{
     LensText, SelfUiAction, SelfUiActionId, SelfUiControl, SelfUiControlId, SelfUiValue,
     VoiceLineAtom,
 };
+use crate::limit_ask::EngineLimit;
 use crate::llm::decision::catalogue::IDENTITY_SETTLE;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    MAX_DECISION_STATE_BYTES, Reversibility,
+    MAX_DECISION_STATE_BYTES, Reversibility, cut_text, fit_state,
 };
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_PERSON;
@@ -86,10 +88,11 @@ pub const IDENTITY_ANSWER_VERB: &str = "self.identity.answer";
 const IS_PREFIX: &str = "is:";
 /// Tag sets one nightly pass reads.
 const SCAN_TURNS: usize = 2_048;
-/// Open asks at once, besides those kept separate: past this a pass opens
-/// none.
+/// Open asks at once, besides those kept separate: a pace. Past this a pass
+/// stops at the turn that would open one, and the next pass starts there.
 const MAX_OPEN_ASKS: usize = 64;
-/// Candidates one Choice carries beside "someone new".
+/// Candidates one Choice lists beside "someone new"; the rest ride in its
+/// state by id.
 const MAX_CANDIDATES: usize = 63;
 /// Context words one mention keeps.
 const MAX_TERMS: usize = 16;
@@ -98,7 +101,6 @@ const MAX_HINT_TERMS: usize = 64;
 const MIN_TERM_CHARS: usize = 4;
 /// Bytes of text around a mention its ask keeps for the decision.
 const EXCERPT_BYTES: usize = 480;
-const MAX_NAME_BYTES: usize = 256;
 /// How long a failed decision waits before the host tries again.
 const RETRY_SECS: u64 = 3_600;
 /// The rationale on a someone-new answer's `assert_distinct` event.
@@ -160,7 +162,8 @@ pub struct IdentityAsk {
     pub message: EntityId,
     pub start: usize,
     pub end: usize,
-    /// The entities it may be, real or provisional.
+    /// The entities it may be, real or provisional, every one: a decision
+    /// lists as many as its Choice takes and carries the rest by id.
     pub candidates: Vec<EntityId>,
     /// The mention's own provisional entity, when it named only that one and
     /// the name now keys to real people: "someone new" confirms it.
@@ -532,11 +535,9 @@ fn uncertain_in_txn(
         return Ok(None);
     }
     if entities.len() >= 2 {
-        let mut candidates = entities;
-        candidates.truncate(MAX_CANDIDATES);
         return Ok(Some(Uncertain {
             kind,
-            candidates,
+            candidates: entities,
             provisional: None,
         }));
     }
@@ -558,7 +559,7 @@ fn uncertain_in_txn(
     if real.is_empty() {
         return Ok(None);
     }
-    let mut candidates: Vec<EntityId> = real.into_iter().take(MAX_CANDIDATES - 1).collect();
+    let mut candidates: Vec<EntityId> = real.into_iter().collect();
     candidates.push(own);
     Ok(Some(Uncertain {
         kind,
@@ -705,6 +706,26 @@ fn parse_choice(ask: &IdentityAsk, choice: &str) -> Option<Answer> {
         .iter()
         .find(|id| id.to_hex() == hex)
         .map(|id| Answer::Is(*id))
+}
+
+/// The candidates a decision lists as options, in stored order: the first
+/// [`MAX_CANDIDATES`], the mention's own provisional entity always among
+/// them.
+fn listed_candidates(ask: &IdentityAsk) -> Vec<EntityId> {
+    let mut listed: Vec<EntityId> = ask
+        .candidates
+        .iter()
+        .take(MAX_CANDIDATES)
+        .copied()
+        .collect();
+    if let Some(own) = ask.provisional
+        && ask.candidates.contains(&own)
+        && !listed.contains(&own)
+    {
+        listed.pop();
+        listed.push(own);
+    }
+    listed
 }
 
 /// The id an owner's answer to ask `key` binds its topology decision to.
@@ -1071,6 +1092,14 @@ fn same_question(left: &IdentityAsk, right: &IdentityAsk) -> bool {
         && set(left) == set(right)
 }
 
+/// Measures a new ask's name and candidates against the engine's rows; the
+/// ask keeps both whole either way.
+fn measure_ask(vault: &Vault, ask: &IdentityAsk) {
+    let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, ask.name.len() as u64);
+    let items = ask.candidates.len();
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
+}
+
 /// The ask a saved mention would open, when it is uncertain.
 fn ask_for_mention_in_txn(
     vault: &Vault,
@@ -1084,7 +1113,7 @@ fn ask_for_mention_in_txn(
     let Some(name) = text
         .get(mention.start..mention.end)
         .map(str::trim)
-        .filter(|name| !name.is_empty() && name.len() <= MAX_NAME_BYTES)
+        .filter(|name| !name.is_empty())
     else {
         return Ok(None);
     };
@@ -1113,16 +1142,18 @@ fn ask_for_mention_in_txn(
 
 /// Checks each mention of one turn again: a hint settles it, else it opens
 /// an ask unless one is open for it or for its question. A kept-separate
-/// ask whose candidates changed opens afresh, to be decided again.
+/// ask whose candidates changed opens afresh, to be decided again. `false`
+/// when a mention would open an ask past [`MAX_OPEN_ASKS`]: the turn is not
+/// handled, and a later pass checks it again whole.
 fn recheck_turn_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     turn: &EntityId,
     open: &mut Vec<([u8; 32], IdentityAsk)>,
     now: u64,
-) -> Result<()> {
+) -> Result<bool> {
     let Some(tags) = crate::tagging::readable_view_in_txn(&vault.store, txn, turn)? else {
-        return Ok(());
+        return Ok(true);
     };
     let mut texts: BTreeMap<EntityId, Option<String>> = BTreeMap::new();
     for mention in &tags.mentions {
@@ -1147,6 +1178,7 @@ fn recheck_turn_in_txn(
                 )?
                 && fresh.candidates != held.candidates
             {
+                measure_ask(vault, &fresh);
                 ASKS.put(&vault.store, txn, &key, &fresh)?;
                 *held = fresh;
             }
@@ -1175,17 +1207,21 @@ fn recheck_turn_in_txn(
             )?;
             continue;
         }
+        if open.iter().any(|(_, held)| same_question(held, &ask)) {
+            continue;
+        }
         let waiting = open
             .iter()
             .filter(|(_, held)| held.kept_separate_at.is_none())
             .count();
-        if waiting >= MAX_OPEN_ASKS || open.iter().any(|(_, held)| same_question(held, &ask)) {
-            continue;
+        if waiting >= MAX_OPEN_ASKS {
+            return Ok(false);
         }
+        measure_ask(vault, &ask);
         ASKS.put(&vault.store, txn, &key, &ask)?;
         open.push((key, ask));
     }
-    Ok(())
+    Ok(true)
 }
 
 impl DreamerRunnerStore<'_> {
@@ -1225,15 +1261,27 @@ impl DreamerRunnerStore<'_> {
 
 /// One nightly page: each uncertain mention of the page's turns is settled
 /// by a hint or opens an ask. The cursor moves past the page, and starts
-/// over once a page comes back short.
+/// over once a page comes back short. A turn that would open an ask past a
+/// full tray stops the page: the cursor stays at the last turn handled, so
+/// the next pass starts at the one that waited.
 pub(super) fn run(vault: &Vault, _attempt: &DreamerAdmittedAttempt, now: u64) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
         let after = CURSOR.get(&vault.store, txn, &())?;
         let (page, last) =
             crate::tagging::readable_page_in_txn(&vault.store, txn, after.as_ref(), SCAN_TURNS)?;
         let mut open = ASKS.scan(&vault.store, txn)?;
+        let mut handled = None;
         for tags in &page {
-            recheck_turn_in_txn(vault, txn, &tags.turn, &mut open, now)?;
+            if !recheck_turn_in_txn(vault, txn, &tags.turn, &mut open, now)? {
+                // The page reads after the cursor, so the next pass starts at
+                // the turn that waited; before the page's first turn the
+                // cursor stays where it was.
+                if let Some(turn) = handled {
+                    CURSOR.put(&vault.store, txn, &(), &turn)?;
+                }
+                return Ok(());
+            }
+            handled = Some(tags.turn);
         }
         match last {
             Some(last) if page.len() == SCAN_TURNS => CURSOR.put(&vault.store, txn, &(), &last)?,
@@ -1290,8 +1338,13 @@ impl Vault {
         card(&key, &held, &options, copy)
     }
 
-    /// Asks one open ask on the host's ladder: a Choice over its candidates
-    /// and [`SOMEONE_NEW`]. A choice settles the mention and saves the hint.
+    /// Asks one open ask on the host's ladder: a Choice over its listed
+    /// candidates ([`MAX_CANDIDATES`], its own provisional entity among them)
+    /// and [`SOMEONE_NEW`]. Every candidate rides in the state by id, listed
+    /// or not; past the ladder's state bound each still does, with its texts
+    /// cut to fit, and an ask whose ids alone pass it is not called. Only a
+    /// listed candidate can be chosen. A choice settles the mention and saves
+    /// the hint.
     /// Anything else keeps a nightly ask's names separate for now, with the
     /// Dreamer's receipt, and sends an act-now ask to the person. A failed
     /// call waits [`RETRY_SECS`]. An act-now ask is an outbound effect's
@@ -1311,29 +1364,39 @@ impl Vault {
         let options = options_in_txn(self, &txn, &held)?;
         let hints = hints_in_txn(self, &txn, held.kind, &held.name)?;
         drop(txn);
-        let candidates: Vec<serde_json::Value> = options
+        let listed = listed_candidates(&held);
+        // Each candidate as its id, its option when listed, its row and the
+        // words its saved hint was given in; the options hold each candidate
+        // in order, then someone new.
+        let rows: Vec<_> = held
+            .candidates
             .iter()
-            .filter(|option| option.entity.is_some())
-            .map(|option| {
-                let known = option
-                    .entity
-                    .as_deref()
-                    .and_then(|hex| EntityId::from_hex(hex).ok())
-                    .and_then(|id| hints.get(&id))
-                    .map(|hint| hint.context.clone());
-                json!({
-                    "option": option.choice,
-                    "name": option.label,
-                    "provisional": option.provisional,
-                    "known_context": known,
-                })
+            .zip(&options)
+            .map(|(id, option)| {
+                let token = listed.contains(id).then_some(option.choice.as_str());
+                let known = hints.get(id).map(|hint| hint.context.join(" "));
+                (id.to_hex(), token, option, hints.get(id), known)
             })
             .collect();
         let effect = match held.reason {
             IdentityAskReason::ActNow { effect } => Some(effect),
             IdentityAskReason::Unsettled => None,
         };
-        let mut state = json!({
+        // Whole, each candidate rides with its name and hint words; past the
+        // bound, by id with its texts cut to fit, never one left out.
+        let candidates: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|(id, token, option, hint, _)| {
+                json!({
+                    "id": id,
+                    "option": token,
+                    "name": option.label,
+                    "provisional": option.provisional,
+                    "known_context": hint.map(|hint| &hint.context),
+                })
+            })
+            .collect();
+        let whole = json!({
             "name": held.name,
             "excerpt": held.excerpt,
             "context": held.context,
@@ -1341,19 +1404,55 @@ impl Vault {
             "someone_new": SOMEONE_NEW,
             "candidates": candidates,
         });
+        let context = held.context.join(" ");
+        let longest = rows
+            .iter()
+            .map(|(_, _, option, _, known)| {
+                let known = known.as_ref().map_or(0, String::len);
+                option.label.len().max(known)
+            })
+            .chain([held.name.len(), held.excerpt.len(), context.len()])
+            .max()
+            .unwrap_or(0);
+        let state = fit_state(longest, |cut| {
+            if cut.is_none() {
+                return whole.clone();
+            }
+            let candidates: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|(id, token, option, _, known)| {
+                    json!({
+                        "id": id,
+                        "option": token,
+                        "name": cut_text(&option.label, cut),
+                        "provisional": option.provisional,
+                        "known_context": known.as_deref().map(|words| cut_text(words, cut)),
+                    })
+                })
+                .collect();
+            json!({
+                "name": cut_text(&held.name, cut),
+                "excerpt": cut_text(&held.excerpt, cut),
+                "context": cut_text(&context, cut),
+                "act_now": effect,
+                "someone_new": SOMEONE_NEW,
+                "candidates": candidates,
+                "cut_at_bytes": cut,
+            })
+        });
         let fits = |state: &serde_json::Value| {
             serde_json::to_vec(state).is_ok_and(|bytes| bytes.len() <= MAX_DECISION_STATE_BYTES)
         };
-        if !fits(&state) {
-            state["excerpt"] = json!("");
-        }
+        let mut choices: Vec<String> = rows
+            .iter()
+            .filter_map(|(_, token, ..)| token.map(str::to_owned))
+            .collect();
+        choices.push(SOMEONE_NEW.to_owned());
         let kind = [held.kind];
         let question = IDENTITY_SETTLE.question(
             &[kind.as_slice()],
             decisions.wording.clone(),
-            AnswerContract::Choice {
-                options: options.iter().map(|option| option.choice.clone()).collect(),
-            },
+            AnswerContract::Choice { options: choices },
         )?;
         let reversibility = if effect.is_some() {
             Reversibility::OutboundEffect
@@ -1372,7 +1471,12 @@ impl Vault {
                 decisions.deadline,
             ) {
                 Ok(decision) => match &decision.answer {
-                    DecisionAnswer::Choice(choice) => parse_choice(&held, choice),
+                    DecisionAnswer::Choice(choice) => {
+                        parse_choice(&held, choice).filter(|answer| match answer {
+                            Answer::Is(id) => listed.contains(id),
+                            Answer::SomeoneNew => true,
+                        })
+                    }
                     _ => None,
                 },
                 Err(_) => {
@@ -1600,10 +1704,8 @@ impl Memory<'_> {
     /// once that reaches the person, the answer carries their choice card.
     pub fn identity_act_now(&self, input: &IdentityActNowRequest) -> MemoryResult<IdentityActNow> {
         let name = input.name.trim();
-        if name.is_empty() || name.len() > MAX_NAME_BYTES {
-            return Err(MemoryError::bad_request(format!(
-                "name is 1..={MAX_NAME_BYTES} bytes"
-            )));
+        if name.is_empty() {
+            return Err(MemoryError::bad_request("name is not empty"));
         }
         let conversation = input
             .conversation
@@ -1617,6 +1719,7 @@ impl Memory<'_> {
             provisional: None,
         };
         let vault = self.vault();
+        let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, name.len() as u64);
         let hits = vault.tagged_mentions_of_name(ENTITY_TYPE_PERSON, name)?;
         let now = vault.now_recorded_at();
         let effect = input.effect;
@@ -1704,6 +1807,7 @@ impl Memory<'_> {
                     entity: entity.to_hex(),
                 });
             }
+            measure_ask(vault, &ask);
             ASKS.put(&vault.store, txn, &key, &ask)?;
             Ok(IdentityActNow::Deciding { ask: key_hex(&key) })
         })

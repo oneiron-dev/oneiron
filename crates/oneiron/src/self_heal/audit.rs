@@ -113,6 +113,11 @@ pub struct SealCheckOutcome {
 pub struct SealCheckReceipt {
     pub request: SealCheckRequest,
     pub outcome: Option<SealCheckOutcome>,
+    /// When a pass last put the pending check to a checker; none before the
+    /// first. A pass asks the never-asked first, then the longest since, so
+    /// a check that keeps coming back unsettled cannot hold every slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_asked_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -199,6 +204,7 @@ fn request(
             created_at: now,
         },
         outcome: None,
+        last_asked_at: None,
     }
 }
 
@@ -317,6 +323,41 @@ impl Vault {
             .filter(|check| check.outcome.is_none())
             .map(|check| check.request)
             .collect())
+    }
+
+    /// The pending checks as stored, each with when a pass last asked it.
+    pub(crate) fn pending_seal_check_receipts(&self) -> Result<Vec<SealCheckReceipt>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(SEALS
+            .scan(&self.store, &txn)?
+            .into_iter()
+            .flat_map(|(_, receipt)| receipt.checks)
+            .filter(|check| check.outcome.is_none())
+            .collect())
+    }
+
+    /// Records that a pass put one pending check to a checker at `now`. A
+    /// check answered meanwhile, or gone, is left as it is.
+    pub(crate) fn record_seal_check_asked(
+        &self,
+        attempt: AttemptId,
+        kind: SealCheckKind,
+        now: u64,
+    ) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            let Some(mut receipt) = SEALS.get(&self.store, txn, attempt.as_bytes())? else {
+                return Ok(());
+            };
+            let Some(check) = receipt
+                .checks
+                .iter_mut()
+                .find(|check| check.request.kind == kind && check.outcome.is_none())
+            else {
+                return Ok(());
+            };
+            check.last_asked_at = Some(now);
+            SEALS.put(&self.store, txn, attempt.as_bytes(), &receipt)
+        })
     }
 
     /// Admit an independently executed check. Raw confession never enters

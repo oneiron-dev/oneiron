@@ -9,7 +9,8 @@
 use super::applied::{self, MaintenanceInverse};
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::authority::{BaseAgent, base_agent_for_facet};
-use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::limit_ask::EngineLimit;
+use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 use crate::{
@@ -153,13 +154,13 @@ fn write_in_txn(
     ));
     let mut envelope = envelope.clone();
     vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
-    // Rule A: the finding is concluded from the records it cites, the first
-    // MAX_BIRTH_INPUTS of them.
+    // Rule A: the finding is concluded from every record it cites.
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, evidence.len() as u64);
     let birth = RowBirth::written(
         envelope.actor(),
         MadeByClass::Concluded,
         "dreamer.finding",
-        &evidence[..evidence.len().min(MAX_BIRTH_INPUTS)],
+        evidence,
         &[],
         now,
     );
