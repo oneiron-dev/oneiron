@@ -16,15 +16,15 @@ use crate::attempt_queue::telemetry::{emit_attempt_queue_cleanup_span, invalid_t
 use crate::attempt_queue::types::{
     AttemptId, AttemptInterventionEffect, AttemptInterventionKind, AttemptQueueCleanupReport,
     AttemptQueueRetryReason, AttemptRecord, AttemptState, CleanupAttemptLeases, InterveneAttempt,
-    InterveneOutcome, MAX_ATTEMPT_MANIFEST_ENTRIES, ManifestEntry, RetryAttempt, RetryOutcome,
+    InterveneOutcome, ManifestEntry, RetryAttempt, RetryOutcome,
 };
 use crate::attempt_queue::validate::{
-    ERR_MANIFEST_FULL, append_attempt_event, validate_cleanup_leases_input,
-    validate_intervention_actor, validate_lease_owner, validate_manifest_entry,
-    validate_optional_failure_reason, validate_optional_intervention_note,
-    validate_transition_lease,
+    append_attempt_event, validate_cleanup_leases_input, validate_intervention_actor,
+    validate_lease_owner, validate_manifest_entry, validate_optional_failure_reason,
+    validate_optional_intervention_note, validate_transition_lease,
 };
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 
 use super::AttemptQueue;
 use crate::error::ArtifactError;
@@ -427,9 +427,10 @@ impl AttemptQueue<'_> {
     /// terminal receipt already projected, and appending to it after the fact
     /// would rewrite history.
     ///
-    /// Never drains at the cap (see [`MAX_ATTEMPT_MANIFEST_ENTRIES`]): a full
-    /// manifest is a typed refusal, so append-only cannot be violated
-    /// silently.
+    /// Never drains and never refuses on a count: every row is kept, so
+    /// append-only holds. Past the `[limits]` `attempt_manifest_entries` row
+    /// the append asks whether everything is okay and lands (OF-520, Rule 5);
+    /// only storage capacity (LMDB's value ceiling, a full map) refuses one.
     ///
     /// `updated_at` is deliberately NOT bumped: it is the lease-expiry clock
     /// ([`Self::cleanup_leases`]), and turning a pack load into a lease
@@ -465,12 +466,14 @@ impl AttemptQueue<'_> {
                 record.state.as_str(),
             ));
         }
-        if record.manifest.len() >= MAX_ATTEMPT_MANIFEST_ENTRIES {
-            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-                ERR_MANIFEST_FULL,
-            )));
-        }
         record.manifest.push(entry);
+        // Past its `[limits]` row the append asks whether everything is okay
+        // and lands (OF-520, Rule 5). A vault-opened handle's store is its
+        // vault's, so this one watch also serves a store-only handle.
+        self.store.limit_watch.measure(
+            EngineLimit::AttemptManifestEntries,
+            record.manifest.len() as u64,
+        );
         let encoded = self.encode_in_txn(txn, &mut record)?;
         self.store
             .attempt_records
