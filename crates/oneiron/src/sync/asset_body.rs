@@ -10,6 +10,12 @@
 //! The descriptor decides, never the bytes: a row is a file row only when
 //! the ASSET owns a complete body file for the manifest it stores
 //! ([`asset_body_file_of_row`]). A peer's bytes are never read as a manifest.
+//!
+//! Cut 2 (FIX 5489) moves the body by reference: [`references`] holds the
+//! reference a carrier travels with. Nothing sends one yet.
+
+#[allow(dead_code, reason = "FIX 5489 PR2 admits and copies these references")]
+pub(crate) mod references;
 
 use std::collections::BTreeSet;
 

@@ -397,4 +397,82 @@ impl crate::Vault {
             .put(id, ENTITY_TYPE_ASSET, occurred, learned_at, &bytes)
             .apply(txn)
     }
+
+    /// [`Self::put_asset_body_in_txn`] for a body a peer sent by reference
+    /// (FIX 5489): the same marking, mask fallback and sealed-key binding,
+    /// through the replicated door at `tier` on both branches, so the row
+    /// lands as replay lands it. `birth`, the row's carried Rule A birth, is
+    /// stamped in this transaction once the row is live; a malformed or
+    /// conflicting one is left out and the row stands. Window ingest stamps
+    /// its births itself and passes `None`.
+    ///
+    /// # Errors
+    ///
+    /// The replicated door's errors.
+    #[cfg(feature = "sync")]
+    #[allow(dead_code, reason = "FIX 5489 PR2's staged replay calls this")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the staged put's arguments, its tier and its birth"
+    )]
+    pub(crate) fn put_replicated_asset_body_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        staged: &StagedAssetBody,
+        tier: crate::sync::client::ImportTier,
+        birth: Option<&crate::provenance::birth::RowBirth>,
+    ) -> Result<()> {
+        let batch = self.batch_in().with_import_tier(tier);
+        if let Staged::File(file) = &staged.body {
+            staged
+                .known
+                .mark_in_txn(&self.store, txn, id, &staged.facts.blake3, |at, len| {
+                    file.read_range(at, len)
+                })?;
+        }
+        let put = if matches!(staged.body, Staged::File(_))
+            && crate::secret_custody::masked_file_in_txn(&self.store, txn, &staged.facts.blake3)?
+                .is_none()
+        {
+            // A sealed file's key row commits with the row naming it; a
+            // digest with a committed pair keeps it (FIX 5348).
+            if let Some(key) = &staged.key {
+                crate::store::bind_body_key_in_txn(&self.store, txn, &self.store.body_dir()?, key)?;
+            }
+            let manifest = AssetFileManifest {
+                facts: staged.facts,
+                kind: AssetFileKind::Opaque,
+                mime: staged.mime.clone(),
+            }
+            .encode()?;
+            batch.put_replicated_asset_file(id, occurred, learned_at, &manifest, staged.facts)
+        } else {
+            let bytes = match &staged.body {
+                Staged::Inline(bytes) => std::borrow::Cow::Borrowed(bytes.as_slice()),
+                Staged::File(_) => std::borrow::Cow::Owned(staged.to_vec()?),
+            };
+            batch.put_replicated(id, ENTITY_TYPE_ASSET, occurred, learned_at, &bytes)
+        };
+        put.apply(txn)?;
+        if let Some(birth) = birth
+            && crate::vault::live_entity_row_in_txn(&self.store, txn, id)?.is_live()
+        {
+            match crate::provenance::birth::stamp_replicated_row_birth_in_txn(
+                &self.store,
+                txn,
+                id,
+                birth,
+            ) {
+                Ok(()) => {}
+                Err(err @ (Error::InvalidConfig(_) | Error::InvariantViolation(_))) => {
+                    tracing::warn!(entity = %id.to_hex(), error = %err, "carried row birth refused");
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(())
+    }
 }

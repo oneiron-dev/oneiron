@@ -12,6 +12,15 @@ use serde::{Deserialize, Serialize};
 use std::debug_assert_matches;
 use std::ops::{Deref, DerefMut};
 
+mod asset_bodies;
+pub use asset_bodies::{
+    ASSET_BODY_FRAME_BYTES, ASSET_BODY_RETRY, AssetBodyAddress, AssetBodyData, AssetBodyEnd,
+    AssetBodyReceipt, AssetBodyWant, TAG_ASSET_BODY_DATA, TAG_ASSET_BODY_END,
+    TAG_ASSET_BODY_RECEIPT, TAG_ASSET_BODY_WANT, asset_body_frame_bytes, decode_asset_body_data,
+    decode_asset_body_end, decode_asset_body_receipt, decode_asset_body_want,
+    encode_asset_body_data, encode_asset_body_end, encode_asset_body_receipt,
+    encode_asset_body_want,
+};
 mod codec;
 pub use codec::{
     CODEC_MIN_FRAME_BYTES, CODEC_ZSTD_LEVEL, DECODED_CODEC_IDS, LinkBytes, MAX_CODEC_INNER_BYTES,
