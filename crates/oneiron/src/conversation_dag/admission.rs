@@ -208,6 +208,16 @@ pub(crate) fn guard_record_put(
         }
         return Ok(());
     };
+    // A privacy erase rewrites an audience edit as its erased form, header
+    // kept: the one change a pinned TURN takes (FIX 5639).
+    if pin != WITHDRAWN_PIN
+        && let Some(previous) = prior.as_ref()
+        && let Some(erased) = crate::workspace_roster::erased_audience_edit(&previous.body)?
+        && (previous.entity_type, previous.occurred, previous.learned_at) == metadata
+        && erased == body
+    {
+        return Ok(());
+    }
     if !replicated || prior_kind.is_none() || pin != body_pin(kind, occurred, learned_at, body) {
         return Err(invalid("DAG records are append-only"));
     }
@@ -725,6 +735,17 @@ pub(crate) fn pin_typed_record(
 ) -> Result<()> {
     if kind == ENTITY_TYPE_TURN && record_kind(body)?.is_some() {
         pin_record(store, txn, id)?;
+    }
+    // An erased audience edit's pin follows the bytes its erase wrote, the
+    // one change `guard_record_put` lets a pinned TURN take (FIX 5639).
+    if kind == ENTITY_TYPE_TURN
+        && let Some(held) = BODY_PINS.get(store, txn, id)?
+        && let Some(pin) = stored_record_pin(store, txn, id)?
+        && held != pin
+        && held != WITHDRAWN_PIN
+        && crate::workspace_roster::erased_audience_edit(body)?.as_deref() == Some(body)
+    {
+        BODY_PINS.put(store, txn, id, &pin)?;
     }
     Ok(())
 }
