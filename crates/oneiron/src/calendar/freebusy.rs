@@ -67,10 +67,50 @@ pub fn freebusy_scoped(
     super::query::receipted(read, |lane| freebusy_in(lane, calendars, range))
 }
 
+/// [`freebusy`], beside every row the union was read from (FIX 4777): each
+/// EVENT one of whose occurrences it keeps, before components merge, each
+/// exception EVENT that masks a series it projected, and every claim on
+/// them, read beside them. A merged interval keeps one representative
+/// `source`; this list keeps them all, and no busy detail leaves through it.
+///
+/// # Errors
+///
+/// As [`freebusy`].
+pub fn freebusy_listing(
+    vault: &Vault,
+    calendars: &[CalendarSel],
+    range: TimeRange,
+) -> Result<(BusyUnion, Vec<EntityId>)> {
+    let mut events = std::collections::BTreeSet::new();
+    let union = freebusy_listed_in(
+        &CalendarRead::Vault(vault),
+        calendars,
+        range,
+        Some(&mut events),
+    )?;
+    let txn = vault.store.env.read_txn()?;
+    let mut rows = Vec::with_capacity(events.len());
+    for event in events {
+        rows.push(event);
+        rows.extend(vault.claims_for_subject_in_txn(&txn, &event)?);
+    }
+    Ok((union, rows))
+}
+
 fn freebusy_in(
     read: &CalendarRead<'_>,
     calendars: &[CalendarSel],
     range: TimeRange,
+) -> Result<BusyUnion> {
+    freebusy_listed_in(read, calendars, range, None)
+}
+
+/// [`freebusy_in`], listing in `listed` the EVENTs the union keeps.
+fn freebusy_listed_in(
+    read: &CalendarRead<'_>,
+    calendars: &[CalendarSel],
+    range: TimeRange,
+    mut listed: Option<&mut std::collections::BTreeSet<EntityId>>,
 ) -> Result<BusyUnion> {
     // Selection on `CalendarSel.system` is deferred to CAL-02's passport index
     // (ONE-1784 lands after this ticket); a well-formed selector must not empty
@@ -101,6 +141,18 @@ fn freebusy_in(
             .iter()
             .filter_map(|row| row.facts.exception().cloned())
             .collect();
+        // Each exception EVENT, by the master whose occurrence it masks.
+        let masks: Vec<(EntityId, EntityId)> = if listed.is_some() {
+            rows.iter()
+                .filter_map(|row| {
+                    row.facts
+                        .exception()
+                        .map(|exception| (row.id, exception.master_ref))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         for row in rows {
             if !matches_selectors(row.facts.systems(), calendars)
                 || !row.facts.blocks_time()
@@ -109,11 +161,24 @@ fn freebusy_in(
             {
                 continue;
             }
+            if let Some(listed) = listed.as_deref_mut()
+                && row.facts.series().is_some()
+            {
+                listed.extend(
+                    masks
+                        .iter()
+                        .filter(|(_, master)| *master == row.id)
+                        .map(|(exception, _)| *exception),
+                );
+            }
             let occurrences =
                 super::query::occurrences(&row, bounds, &exceptions, withheld_exception)?;
             for occurrence in occurrences {
                 if let Some(clipped) = clip(occurrence, bounds) {
                     let (start_utc, end_utc) = half_open(clipped)?;
+                    if let Some(listed) = listed.as_deref_mut() {
+                        listed.insert(row.id);
+                    }
                     intervals.push(BusyInterval {
                         start_utc,
                         end_utc,
