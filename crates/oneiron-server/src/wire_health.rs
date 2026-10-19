@@ -269,6 +269,9 @@ fn scan_crossing(check: &ScanCheck) -> Crossing {
 }
 
 fn esign_crossing(key: String, check: &EsignRateCheck) -> Crossing {
+    if let Some(row) = &check.limit {
+        return esign_limit_crossing(key, check, row);
+    }
     let receipt = &check.receipt;
     let scope = receipt.recipient.as_deref().unwrap_or("all");
     Crossing {
@@ -282,6 +285,30 @@ fn esign_crossing(key: String, check: &EsignRateCheck) -> Crossing {
             "window_started_at": receipt.window_started_at_secs,
             "calls": receipt.count,
             "threshold": check.threshold,
+        }),
+        read: Some((CURSOR_ESIGN.to_owned(), key)),
+    }
+}
+
+/// A signature upload past one of its `[limits]` rows (FIX 3807): its own
+/// subject per document, recipient and row, so it is asked apart from the
+/// recipient's ceremony burst, and an e-sign source, so its ask goes first to
+/// the document's sender.
+fn esign_limit_crossing(key: String, check: &EsignRateCheck, row: &str) -> Crossing {
+    let receipt = &check.receipt;
+    let scope = receipt.recipient.as_deref().unwrap_or("all");
+    Crossing {
+        subject: format!("esign:{}:{scope}:{row}", receipt.document),
+        source: CrossingSource::Esign,
+        raised_at: receipt.window_started_at_secs,
+        summary: json!({
+            "kind": EsignRateCheck::LIMIT_KIND,
+            "document": receipt.document,
+            "recipient": receipt.recipient,
+            "window_started_at": receipt.window_started_at_secs,
+            "row": row,
+            "bound": check.threshold,
+            "observed": receipt.count,
         }),
         read: Some((CURSOR_ESIGN.to_owned(), key)),
     }

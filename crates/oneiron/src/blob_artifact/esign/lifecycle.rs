@@ -3,6 +3,7 @@ use super::{
     ledger::{append, events_in, hash, state_in},
     model::*,
 };
+use crate::limit_ask::EngineLimit;
 use crate::outbound::{OutboundDispatchOutcome, OutboundDispatchRequest};
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -277,10 +278,10 @@ impl Vault {
     }
     /// Sweep is caller-scheduled. Each expiry claim and its edge notification
     /// commit atomically; a repeated or racing sweep observes the terminal.
+    /// Every document handed is swept: past the `[limits]
+    /// esign_sweep_documents` row the row asks, and the sweep goes on.
     pub fn sweep_esign_expiry(&self, documents: &[EntityId], now: u64) -> Result<usize> {
-        if documents.len() > 100 {
-            return Err(invalid("expiry sweep batch exceeds 100"));
-        }
+        self.measure_limit(EngineLimit::EsignSweepDocuments, documents.len() as u64);
         self.with_write_txn_grouped(|txn| {
             let mut count = 0;
             for &document in documents {
@@ -326,15 +327,15 @@ impl Vault {
     /// dispatch claims nothing; a successful sink appends esign.reminded and
     /// queues the exact recipient in one transaction. The caller supplies its
     /// authenticated actor, grants, window and unique intent/receipt identity.
+    /// Every document handed is swept: past the `[limits]
+    /// esign_sweep_documents` row the row asks, and the sweep goes on.
     pub fn sweep_esign_reminders(
         &self,
         documents: &[EntityId],
         now: u64,
         mut request: impl FnMut(EntityId, &EsignRecipient, u32) -> OutboundDispatchRequest,
     ) -> std::result::Result<usize, crate::outbound::OutboundDispatchError> {
-        if documents.len() > 100 {
-            return Err(invalid("reminder sweep batch exceeds 100").into());
-        }
+        self.measure_limit(EngineLimit::EsignSweepDocuments, documents.len() as u64);
         let mut sent = 0;
         for &document in documents {
             let candidates = {

@@ -3,6 +3,7 @@ use super::{
     capability::{EsignCapability, binding},
     ledger::state_in,
     model::*,
+    rate::{LimitCrossing, keep_limit_crossings},
 };
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Raw, SideTable};
@@ -31,6 +32,22 @@ fn image_binding_prefix(document: EntityId, recipient: &str) -> Vec<u8> {
     [document.as_bytes().as_slice(), recipient.as_bytes()].concat()
 }
 impl Vault {
+    /// One signature upload past this row: its bound, this vault's `[limits]`
+    /// override or the row's default, and what it measured. Only the
+    /// envelope's sender is asked about it, so the owner-wide limit ask is not
+    /// raised as well.
+    fn signature_crossing(&self, row: EngineLimit, measured: u64) -> Option<LimitCrossing> {
+        let bound = self.limit_watch().bound(row);
+        (measured > bound).then_some((row, bound, measured))
+    }
+
+    /// Stores and binds one recipient's signature image, re-encoded as PNG.
+    /// Its size and count rows (`[limits] esign_signature_*`) never refuse
+    /// it: past one, the image is stored and bound, and the crossing is kept
+    /// for the host's health check to ask the envelope's sender whether
+    /// everything is okay (FIX 3807, Engine ruling 10-19). Only its
+    /// capability and turn, its format and visible pixels, and the decoder's
+    /// bounds can refuse it.
     pub fn upload_esign_signature_image(
         &self,
         token: &EsignCapability,
@@ -49,9 +66,13 @@ impl Vault {
         let _ = self.with_write_txn_grouped(|txn| {
             super::rate::observe(self, txn, &document, &recipient, now)
         });
-        if bytes.is_empty() || bytes.len() > 2 * 1024 * 1024 {
+        if bytes.is_empty() {
             return Err(invalid("signature image size"));
         }
+        let mut crossings = Vec::new();
+        crossings.extend(
+            self.signature_crossing(EngineLimit::EsignSignatureInputBytes, bytes.len() as u64),
+        );
         let format = image::guess_format(bytes).map_err(|_| invalid("signature image format"))?;
         if !matches!(format, image::ImageFormat::Png | image::ImageFormat::Jpeg) {
             return Err(invalid("signature image format"));
@@ -65,9 +86,9 @@ impl Vault {
             .write_to(&mut canonical, image::ImageFormat::Png)
             .map_err(|_| invalid("signature image encode"))?;
         let canonical = canonical.into_inner();
-        if canonical.len() > 2 * 1024 * 1024 {
-            return Err(invalid("signature image output size"));
-        }
+        crossings.extend(
+            self.signature_crossing(EngineLimit::EsignSignaturePngBytes, canonical.len() as u64),
+        );
         let now = self.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
@@ -98,26 +119,23 @@ impl Vault {
             )?;
             let key = image_binding_key(id, &cap.recipient, &image.to_hex());
             if BINDINGS.contains(&self.store, txn, &key)? {
+                keep_limit_crossings(self, txn, &cap.document, &cap.recipient, &crossings, now)?;
                 return Ok(image.to_hex());
             }
             let prior = IMAGE_BYTES_BUDGET.get(&self.store, txn, &id)?.unwrap_or(0);
-            let total = prior
-                .checked_add(canonical.len() as u64)
-                .ok_or_else(|| invalid("image budget overflow"))?;
-            if total > 64 * 1024 * 1024 {
-                return Err(invalid("document signature image budget"));
-            }
+            let total = prior.saturating_add(canonical.len() as u64);
+            crossings
+                .extend(self.signature_crossing(EngineLimit::EsignSignatureDocumentBytes, total));
             IMAGE_BYTES_BUDGET.put(&self.store, txn, &id, &total)?;
-            let prefix = image_binding_prefix(id, &cap.recipient);
-            if BINDINGS
-                .iter_from(&self.store, txn, &prefix)?
-                .take(16)
-                .collect::<Result<Vec<_>>>()?
-                .len()
-                >= 16
-            {
-                return Err(invalid("recipient signature image limit"));
-            }
+            // Every image the recipient holds, this one included, is counted:
+            // a row that cannot be read fails the upload, never goes uncounted.
+            let images = BINDINGS
+                .iter_from(&self.store, txn, &image_binding_prefix(id, &cap.recipient))?
+                .try_fold(1u64, |held, row| row.map(|_| held.saturating_add(1)))?;
+            crossings.extend(
+                self.signature_crossing(EngineLimit::EsignSignatureRecipientImages, images),
+            );
+            keep_limit_crossings(self, txn, &cap.document, &cap.recipient, &crossings, now)?;
             let body = crate::blob_artifact::encode_blob_artifact_body(
                 &crate::blob_artifact::BlobArtifactBody::new("signature.png", "image/png"),
             )?;

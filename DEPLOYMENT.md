@@ -214,6 +214,12 @@ detector_window_runs = 64         # runs in one telemetry window a model-graded 
 blocked_detail_bytes = 4096       # bytes of one blocked report's stored detail; past it the detail is kept whole and the row asks
 seal_reference_bytes = 256        # bytes of one executor, judge or evidence reference a seal check names; past it the reference is kept whole and the row asks
 tripwire_threshold = 1024         # each count threshold a tripwire policy sets; past it the tripwire runs at that threshold and the row asks
+esign_sweep_documents = 100       # documents one e-sign seal backstop, expiry or reminder sweep is handed; past it every document is swept and the row asks
+esign_signing_principals = 256    # signing principals one owner names for e-sign; past it every principal is kept and the row asks
+esign_signature_input_bytes = 2097152 # bytes of one uploaded signature image; past it the image is stored and bound and the envelope's sender is asked
+esign_signature_png_bytes = 2097152 # bytes of one signature image's canonical PNG; past it the image is stored and bound and the envelope's sender is asked
+esign_signature_document_bytes = 67108864 # canonical signature image bytes one signing document holds; past it the image is stored and bound and the envelope's sender is asked
+esign_signature_recipient_images = 16 # signature images one recipient holds; past it the image is stored and bound and the envelope's sender is asked
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

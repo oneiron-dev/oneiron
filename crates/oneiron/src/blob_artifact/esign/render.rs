@@ -212,7 +212,6 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
     let mut kids = Vec::new();
     let mut images = fields::BurnImages::default();
     let mut contents = PageContents::default();
-    let mut annotation_arrays = BTreeSet::new();
     // Every page's content opens inside this one shared stream; the page's
     // own streams follow it by reference, and its closing stream ends it.
     let open = out.add_object(Stream::new(Dictionary::new(), b"q\n".to_vec()));
@@ -235,7 +234,6 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
         let mut ops = appearance::flatten(
             &source,
             page.get(b"Annots".as_slice()),
-            &mut annotation_arrays,
             &mut copier,
             &mut out,
             &mut resources,

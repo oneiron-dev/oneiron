@@ -1,5 +1,7 @@
-//! Vault-local, receipt-backed ceremony observation; rate never denies signing.
+//! Vault-local, receipt-backed ceremony observation and signature-upload
+//! `[limits]` crossings; neither ever denies signing.
 use super::model::invalid;
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -28,10 +30,22 @@ pub struct EsignRateReceipt {
 pub struct EsignRateCheck {
     pub receipt: EsignRateReceipt,
     pub threshold: u64,
+    /// The `[limits]` row, by its config key, a signature upload crossed,
+    /// when this check is that crossing and not a ceremony burst (FIX 3807):
+    /// `threshold` is then the row's bound and `receipt.count` what the
+    /// upload measured.
+    #[serde(default)]
+    pub limit: Option<String>,
 }
 impl EsignRateCheck {
     pub const KIND: &'static str = "esign_ceremony_burst";
+    /// The kind of a signature upload's `[limits]` crossing.
+    pub const LIMIT_KIND: &'static str = "esign_signature_limit";
 }
+
+/// One signature upload's measure past one of its `[limits]` rows: the row,
+/// the bound it stood at and what the upload measured.
+pub(super) type LimitCrossing = (EngineLimit, u64, u64);
 
 fn count_key(document: &str, recipient: Option<&str>) -> String {
     format!("{document}/{}", recipient.unwrap_or("all"))
@@ -91,6 +105,7 @@ pub(super) fn observe(
                 let check = EsignRateCheck {
                     receipt: receipt.clone(),
                     threshold,
+                    limit: None,
                 };
                 CHECK.put(&vault.store, txn, &check_key, &check)?;
             }
@@ -99,6 +114,43 @@ pub(super) fn observe(
         bytes[..8].copy_from_slice(&window.to_be_bytes());
         bytes[8..].copy_from_slice(&count.to_be_bytes());
         COUNT.put(&vault.store, txn, &key, &bytes)?;
+    }
+    Ok(())
+}
+
+/// Keeps each of one signature upload's `[limits]` crossings as a check,
+/// the first of its row in its window, which the host's OF-520 worker asks
+/// the envelope's sender as it asks a ceremony burst (FIX 3807, Engine ruling
+/// 10-19). A check never holds or refuses the upload: it is stored and bound.
+pub(super) fn keep_limit_crossings(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    document: &str,
+    recipient: &str,
+    crossings: &[LimitCrossing],
+    now: u64,
+) -> Result<()> {
+    let window = now / WINDOW_SECS * WINDOW_SECS;
+    for &(row, bound, observed) in crossings {
+        let key = [
+            check_key(document, Some(recipient), window).as_slice(),
+            b"/",
+            row.key().as_bytes(),
+        ]
+        .concat();
+        if CHECK.get(&vault.store, txn, &key)?.is_none() {
+            let check = EsignRateCheck {
+                receipt: EsignRateReceipt {
+                    document: document.to_owned(),
+                    recipient: Some(recipient.to_owned()),
+                    window_started_at_secs: window,
+                    count: observed,
+                },
+                threshold: bound,
+                limit: Some(row.key().to_owned()),
+            };
+            CHECK.put(&vault.store, txn, &key, &check)?;
+        }
     }
     Ok(())
 }
