@@ -108,7 +108,10 @@ struct SystemOneFile {
     /// Ends `/v1/systemone`; HTTPS, or HTTP on loopback.
     endpoint: String,
     /// The environment variable holding the seat's bearer token.
-    key_env: String,
+    key_env: Option<String>,
+    /// The vault secret holding the seat's bearer token, sent through the
+    /// credential broker; HTTPS only. Exactly one of this and `key_env`.
+    key_secret: Option<String>,
     model: String,
     version: String,
     /// Owner opt-in for unit state to leave a non-hosted vault.
@@ -210,7 +213,11 @@ pub struct SeatPickSettings {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SystemOneSettings {
     pub endpoint: String,
-    pub key_env: String,
+    /// The environment variable holding the bearer token, read at bind.
+    pub key_env: Option<String>,
+    /// The vault secret holding it, read at the custody door for each call
+    /// and sent by the credential broker.
+    pub key_secret: Option<String>,
     pub model: String,
     pub version: String,
     pub remote_opt_in: bool,
@@ -256,9 +263,22 @@ impl DecisionsFile {
                 if seat.budget_units == Some(0) {
                     anyhow::bail!("models budget units must be greater than zero");
                 }
+                let endpoint = filled("system_one.endpoint", seat.endpoint)?;
+                let key_env = seat
+                    .key_env
+                    .map(|name| filled("system_one.key_env", name))
+                    .transpose()?;
+                match (&key_env, &seat.key_secret) {
+                    (Some(_), Some(_)) | (None, None) => anyhow::bail!(
+                        "models.decisions.system_one: set exactly one of key_env and key_secret"
+                    ),
+                    (None, Some(secret)) => validate_seat_secret(&endpoint, secret)?,
+                    (Some(_), None) => {}
+                }
                 Ok(SystemOneSettings {
-                    endpoint: filled("system_one.endpoint", seat.endpoint)?,
-                    key_env: filled("system_one.key_env", seat.key_env)?,
+                    endpoint,
+                    key_env,
+                    key_secret: seat.key_secret,
                     model: filled("system_one.model", seat.model)?,
                     version: filled("system_one.version", seat.version)?,
                     remote_opt_in: seat.remote_opt_in.unwrap_or(false),
@@ -368,4 +388,20 @@ impl DecisionsFile {
             import_audience,
         })
     }
+}
+
+/// A System One key the credential broker sends: a vault secret's name, and
+/// an `https` endpoint, the only scheme the broker sends to.
+fn validate_seat_secret(endpoint: &str, secret: &str) -> anyhow::Result<()> {
+    if secret.is_empty() || secret.len() > 256 || !secret.bytes().all(|b| b.is_ascii_graphic()) {
+        anyhow::bail!(
+            "models.decisions.system_one.key_secret must name a vault secret (printable ASCII, no spaces); put the key itself in the vault, never in the config file"
+        );
+    }
+    if !endpoint.starts_with("https://") {
+        anyhow::bail!(
+            "models.decisions.system_one.key_secret: the credential broker sends over https only"
+        );
+    }
+    Ok(())
 }

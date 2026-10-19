@@ -3,8 +3,8 @@
 //! A widen is never an agent's act: it always asks the holders.
 
 use crate::authority::{
-    ActAuthority, ActBy, ActSurface, GrantedAct, OwnerActKind, PolicyRevision, PrivacyDirection,
-    WorldEditAuthor, WorldPrivacy,
+    ActBy, ActSurface, GrantedAct, OwnerActKind, PolicyRevision, PrivacyDirection, WorldEditAuthor,
+    WorldPrivacy,
 };
 use crate::error::{Error, Result};
 use crate::inbox::NotificationKind;
@@ -26,9 +26,11 @@ impl Vault {
     /// agent `agent` (verified as the writer here, and an agent), the
     /// credential lineage that opened its run, the world, the settings and
     /// the revision the agent read. Under a live Grant line that names a
-    /// tighten of this world it acts within it ([`ActAuthority::Agent`]);
-    /// otherwise a tighten lands as a proposal and a widen as an ask, and no
-    /// settings change.
+    /// tighten of this world it acts within it
+    /// ([`crate::authority::ActAuthority::Agent`]); otherwise a tighten lands
+    /// as a proposal and a widen as an ask, and no settings change. Every
+    /// request it opens, a Grant's widen included, carries `opener_lineage`
+    /// (FIX 4705): no answer from that lineage settles it.
     ///
     /// # Errors
     /// [`Error::InvalidConfig`] when `agent` is no agent, or the world is a
@@ -57,7 +59,9 @@ impl Vault {
             Some(grant) => {
                 let granted =
                     self.granted_act(agent.entity_ref(), grant, OwnerActKind::WorldPrivacy)?;
-                self.set_world_privacy_by(&ActAuthority::Agent(granted), world, settings, seen)
+                // The Grant's act, with the lineage that opened the run: its
+                // widen asks the holders, and that lineage never settles it.
+                self.granted_world_privacy(&granted, opener_lineage, world, settings, seen)
             }
             None => self.propose_world_privacy(
                 agent.entity_ref(),
@@ -72,10 +76,12 @@ impl Vault {
     /// An agent's act its live Grant names. A tighten or an equal change
     /// applies as `by: Agent`, its Grant checked again in the same writer,
     /// and tells every holder with the receipt and a one-tap undo; a widen
-    /// opens an ask to the holders.
+    /// opens an ask to the holders, carrying `opener_lineage`, the credential
+    /// lineage that opened the agent's run (FIX 4705).
     pub(super) fn granted_world_privacy(
         &self,
         granted: &GrantedAct,
+        opener_lineage: Vec<[u8; 32]>,
         world: EntityId,
         settings: WorldPrivacy,
         seen: Option<PolicyRevision>,
@@ -89,7 +95,7 @@ impl Vault {
                     .open_agent_request_in_txn(
                         txn,
                         granted.agent(),
-                        Vec::new(),
+                        opener_lineage,
                         world,
                         settings,
                         current,

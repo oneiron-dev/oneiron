@@ -9214,6 +9214,19 @@ pub struct CredentialPactCeiling {
     pub ceiling: FederationDirectionScope,
 }
 
+/// `oneiron_authority::authority::comm_reach::CommReach`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CommReach {
+    #[serde(rename = "parent")]
+    Parent,
+    #[serde(rename = "subtree")]
+    Subtree,
+    #[serde(rename = "project")]
+    Project,
+    #[serde(rename = "vault")]
+    Vault,
+}
+
 /// `oneiron::task_verb::sdk_credential::CredentialCaveat`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -9240,6 +9253,8 @@ pub struct CredentialCaveat {
     pub channels: Option<Vec<String>>,
     #[serde(rename = "pact", default, skip_serializing_if = "Option::is_none")]
     pub pact: Option<CredentialPactCeiling>,
+    #[serde(rename = "comm", default, skip_serializing_if = "Option::is_none")]
+    pub comm: Option<CommReach>,
 }
 
 /// `oneiron::task_verb::sdk_credential::CredentialAttenuationRequest`.
@@ -19284,19 +19299,12 @@ pub struct GuestRevokeResponse {
         skip_serializing_if = "Option::is_none"
     )]
     pub courtesy_targets: Option<Vec<GuestRevokeCourtesyTargetView>>,
-}
-
-/// `oneiron_authority::authority::comm_reach::CommReach`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum CommReach {
-    #[serde(rename = "parent")]
-    Parent,
-    #[serde(rename = "subtree")]
-    Subtree,
-    #[serde(rename = "project")]
-    Project,
-    #[serde(rename = "vault")]
-    Vault,
+    #[serde(
+        rename = "courtesy_skipped",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub courtesy_skipped: Option<String>,
 }
 
 /// `oneiron::task_verb::sdk_shared_members::GuestSlipMintRequest`.
@@ -19357,6 +19365,8 @@ pub struct SupportGrantMintRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub ticket_ref: Option<String>,
+    #[serde(rename = "comm", default, skip_serializing_if = "Option::is_none")]
+    pub comm: Option<CommReach>,
 }
 
 /// `oneiron::authority::support_grant::SupportGrantStatus`.
@@ -19402,6 +19412,8 @@ pub struct SupportGrantView {
     pub wall_expires_at: u64,
     #[serde(rename = "status")]
     pub status: SupportGrantStatus,
+    #[serde(rename = "comm")]
+    pub comm: CommReach,
     #[serde(rename = "revoke_command")]
     pub revoke_command: String,
 }
@@ -33814,6 +33826,8 @@ pub enum AgentRunStatus {
     Failed,
     #[serde(rename = "abandoned")]
     Abandoned,
+    #[serde(rename = "cancelled")]
+    Cancelled,
 }
 
 /// `oneiron::run_tree::signal::RunAskQuestion`.

@@ -392,6 +392,11 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
     ) {
         return mcp_facade_error(oneiron::MemoryError::from(error));
     }
+    // A refusal that names its bound is the facade's INVALID_STATE with its
+    // message (FIX 4618), never the generic engine error.
+    if matches!(error, oneiron::Error::Refused(_)) {
+        return mcp_facade_error(oneiron::MemoryError::from(error));
+    }
     match error.kind() {
         ErrorKind::GateWriteRejected => {
             McpGatewayError::new(-32020, "gate_write_rejected", error.to_string())

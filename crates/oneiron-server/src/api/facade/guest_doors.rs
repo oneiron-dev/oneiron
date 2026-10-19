@@ -7,6 +7,9 @@
 //! writer. It signs each pact disconnect with the host's slip issuer, the one
 //! `api/pairing.rs` builds for its own slip doors. With `peer` it then
 //! queues the courtesy deletes the route queues (`owner::guest_revoke`).
+//! It takes the hook-rewritten input, so the revoke always commits: a
+//! `peer` that fails the origin check skips only the asks, and the answer
+//! and the owner's inbox say why (FIX 4186).
 //!
 //! It lists its rows (`host_door_lists`): the grant it withdrew and the
 //! guest it conferred on. The pact standing its answer reports is the
