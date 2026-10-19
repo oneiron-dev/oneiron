@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1051 facade rows, 3529 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1003.
+// UniFFI census: 1053 facade rows, 3533 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1005.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -10883,6 +10883,76 @@ pub struct ArchiveCampaignProgramRequest {
     pub program_ref: String,
     #[serde(rename = "expected_definition_version")]
     pub expected_definition_version: u64,
+}
+
+/// `oneiron::dreamer_runner::program::types::ArmTurnProgram`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArmTurnProgram {
+    #[serde(rename = "skill")]
+    pub skill: String,
+    #[serde(rename = "executor")]
+    pub executor: String,
+    #[serde(rename = "args")]
+    pub args: crate::WireJson,
+    #[serde(
+        rename = "conversation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub conversation: Option<String>,
+}
+
+/// `oneiron::dreamer_runner::program::types::ProgramRecipePin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProgramRecipePin {
+    #[serde(rename = "skill")]
+    pub skill: String,
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "content_hash")]
+    pub content_hash: String,
+    #[serde(rename = "entry")]
+    pub entry: String,
+    #[serde(rename = "contract_digest")]
+    pub contract_digest: String,
+    #[serde(rename = "executor")]
+    pub executor: String,
+    #[serde(rename = "args")]
+    pub args: String,
+}
+
+/// `oneiron::dreamer_runner::program::types::TurnProgramRegistration`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TurnProgramRegistration {
+    #[serde(rename = "registration")]
+    pub registration: String,
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(
+        rename = "conversation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub conversation: Option<String>,
+    #[serde(rename = "definition")]
+    pub definition: ProgramRecipePin,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(rename = "armed_at")]
+    pub armed_at: u64,
+    #[serde(rename = "newly_armed")]
+    pub newly_armed: bool,
+}
+
+/// `oneiron::dreamer_runner::program::types::DisarmTurnProgram`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DisarmTurnProgram {
+    #[serde(rename = "registration")]
+    pub registration: String,
 }
 
 /// `oneiron::campaign::surface::saved_query::SavedQueryScopeSpec`.

@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1051 facade rows, 3556 declarations.
-Inputs: 987 of 1051 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 941 of 1051 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 107; unread shapes: 0.
+Census: 1053 facade rows, 3560 declarations.
+Inputs: 988 of 1053 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 943 of 1053 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -3540,6 +3540,29 @@ class ArchiveCampaignProgramRequest(TypedDict):
     campaign_ref: str
     program_ref: str
     expected_definition_version: int
+class ArmTurnProgram(TypedDict):
+    skill: EntityId
+    executor: str
+    args: Any
+    conversation: NotRequired[EntityId | None]
+class ProgramRecipePin(TypedDict):
+    skill: EntityId
+    version: str
+    content_hash: str
+    entry: str
+    contract_digest: str
+    executor: str
+    args: str
+class TurnProgramRegistration(TypedDict):
+    registration: EntityId
+    actor: EntityId
+    conversation: NotRequired[EntityId | None]
+    definition: ProgramRecipePin
+    revision: str
+    armed_at: int
+    newly_armed: bool
+class DisarmTurnProgram(TypedDict):
+    registration: EntityId
 class SavedQueryScopeSpec(TypedDict):
     worlds: NotRequired[list[EntityId]]
     facets: NotRequired[list[str]]
