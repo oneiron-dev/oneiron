@@ -854,6 +854,7 @@ pub enum AgentVerb {
     VaultRunsStep,
     VaultRunsCheckpoint,
     VaultConsolidationHomeGet,
+    VaultConsolidationHomePick,
     VaultConsolidationLineage,
     VaultConsolidationPromote,
     VaultConsolidationEvidence,
@@ -1836,6 +1837,7 @@ impl AgentVerb {
         Self::VaultRunsStep,
         Self::VaultRunsCheckpoint,
         Self::VaultConsolidationHomeGet,
+        Self::VaultConsolidationHomePick,
         Self::VaultConsolidationLineage,
         Self::VaultConsolidationPromote,
         Self::VaultConsolidationEvidence,
@@ -2839,6 +2841,7 @@ impl AgentVerb {
             Self::VaultRunsStep => "vault.runs.step",
             Self::VaultRunsCheckpoint => "vault.runs.checkpoint",
             Self::VaultConsolidationHomeGet => "vault.consolidation.home.get",
+            Self::VaultConsolidationHomePick => "vault.consolidation.home.pick",
             Self::VaultConsolidationLineage => "vault.consolidation.lineage",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
             Self::VaultConsolidationEvidence => "vault.consolidation.evidence",
@@ -3807,6 +3810,7 @@ impl AgentVerb {
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationHomeGet
+                | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
@@ -4816,6 +4820,7 @@ impl AgentVerb {
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationHomeGet
+                | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
@@ -5906,6 +5911,7 @@ impl AgentVerb {
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationHomeGet
+                | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
@@ -6525,6 +6531,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
+                | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationPromote
                 | Self::VaultSieveEvidenceReplay
                 | Self::VaultSievePolicySet
@@ -7495,6 +7502,7 @@ impl AgentVerb {
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
+            Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
@@ -8478,6 +8486,7 @@ impl AgentVerb {
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
+            Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
@@ -11071,6 +11080,9 @@ impl AgentVerb {
             }
             Self::VaultConsolidationHomeGet => {
                 "The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything."
+            }
+            Self::VaultConsolidationHomePick => {
+                "The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget."
             }
             Self::VaultConsolidationLineage => {
                 "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."

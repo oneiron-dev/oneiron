@@ -4598,6 +4598,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
             (
+                "vault.consolidation.home.pick",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::ConsolidationHomePickRequest,
+                >(),
+            ),
+            (
                 "vault.consolidation.lineage",
                 crate::code_run::vault_read::request_schema::<
                     crate::dreamer_runner::ConsolidationLineageRequest,
@@ -5901,6 +5907,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.runs.step",
     "vault.runs.checkpoint",
     "vault.consolidation.home.get",
+    "vault.consolidation.home.pick",
     "vault.consolidation.lineage",
     "vault.consolidation.promote",
     "vault.sieve.evidence",
@@ -7541,6 +7548,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.consolidation.home.get" => crate::code_run::vault_read::request_schema::<
             crate::dreamer_runner::ConsolidationHomeView,
+        >(),
+        "vault.consolidation.home.pick" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_runner::ConsolidationHomePickReceipt,
         >(),
         "vault.consolidation.lineage" => crate::code_run::vault_read::request_schema::<
             Option<crate::dreamer_runner::ConsolidationLineageView>,
@@ -13771,6 +13781,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.consolidation.home.pick" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.consolidation.lineage" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -17484,6 +17501,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consolidation.home.get" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
+        "vault.consolidation.home.pick" => {
+            let _input: crate::dreamer_runner::ConsolidationHomePickRequest =
+                decode(value.clone())?;
+        }
         "vault.consolidation.lineage" => {
             let _input: crate::dreamer_runner::ConsolidationLineageRequest = decode(value.clone())?;
         }
@@ -19525,6 +19546,9 @@ pub fn invoke(
         "vault.runs.checkpoint" => encode(vault_runs_checkpoint(memory, decode(value)?)?),
         "vault.consolidation.home.get" => {
             encode(vault_consolidation_home_get(memory, decode(value)?)?)
+        }
+        "vault.consolidation.home.pick" => {
+            encode(vault_consolidation_home_pick(memory, decode(value)?)?)
         }
         "vault.consolidation.lineage" => {
             encode(vault_consolidation_lineage(memory, decode(value)?)?)
@@ -26956,6 +26980,17 @@ pub fn vault_consolidation_home_get(
     crate::dreamer_runner::consolidation_home_as(
         memory.vault(),
         &memory.embedded_owner("vault.consolidation.home.get")?,
+    )
+}
+pub fn vault_consolidation_home_pick(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::ConsolidationHomePickRequest,
+) -> MemoryResult<crate::dreamer_runner::ConsolidationHomePickReceipt> {
+    crate::dreamer_runner::consolidation_home_pick_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.consolidation.home.pick")?,
+        crate::authority::ActSurface::ThisInstall,
+        input,
     )
 }
 pub fn vault_consolidation_lineage(

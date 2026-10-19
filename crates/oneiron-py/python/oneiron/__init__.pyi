@@ -2496,6 +2496,8 @@ class Oneiron:
     class _VaultConsolidationHomeVerbs:
         def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.ConsolidationHomeView:
             """The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything."""
+        def pick(self, spec: Facade.ConsolidationHomePickRequest) -> Facade.ConsolidationHomePickReceipt:
+            """The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget."""
     class _VaultSieveVerbs:
         @property
         def evidence(self) -> "Oneiron._VaultSieveEvidenceVerbs": ...

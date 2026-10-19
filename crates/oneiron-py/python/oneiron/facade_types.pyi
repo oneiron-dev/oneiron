@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 959 facade rows, 3248 declarations.
-Inputs: 902 of 959 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 861 of 959 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 960 facade rows, 3251 declarations.
+Inputs: 903 of 960 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 862 of 960 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -14709,11 +14709,29 @@ class CheckpointView(TypedDict):
     steps: list[CheckpointStepView]
     resumed: list[CheckpointResumeView]
     next_step: NotRequired[int | None]
-ConsolidationHomeNode = TypedDict("ConsolidationHomeNode", {"node_id": int, "class": str, "elected_at": int})
+ConsolidationHomeNode = TypedDict("ConsolidationHomeNode", {"node_id": str, "class": str, "elected_at": int})
+class ConsolidationHomePickHead(TypedDict):
+    act_ref: str
+    machine: EntityId
+    node_id: NotRequired[str | None]
+    at: int
 class ConsolidationHomeView(TypedDict):
     home: NotRequired[ConsolidationHomeNode | None]
-    this_node: NotRequired[int | None]
+    this_node: NotRequired[str | None]
     candidates_available: bool
+    pick: NotRequired[str | None]
+    revision: str
+    heads: list[ConsolidationHomePickHead]
+    conflict: list[ConsolidationHomePickHead]
+class ConsolidationHomePickRequest(TypedDict):
+    node_id: NotRequired[str | None]
+class ConsolidationHomePickReceipt(TypedDict):
+    pick: NotRequired[str | None]
+    act_ref: str
+    revision: str
+    heads: list[ConsolidationHomePickHead]
+    conflict: list[ConsolidationHomePickHead]
+    home: NotRequired[ConsolidationHomeNode | None]
 class ConsolidationLineageRequest(TypedDict):
     job_ref: str
     from_step: NotRequired[str | None]

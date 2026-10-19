@@ -131,6 +131,7 @@ pub(super) fn fold_entry_state(
             grant_travel: BTreeMap::new(),
             refused_grant_travel: BTreeSet::new(),
             checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState::default(),
+            home_pick: super::home_pick::HomePickChoiceState::default(),
             owner_work: super::owner_work::OwnerWorkState::default(),
             world_keys: BTreeMap::new(),
             refused_world_keys: BTreeSet::new(),
@@ -206,6 +207,21 @@ pub(super) fn fold_entry_state(
             &mut state,
             entry,
             set,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // So is the owner's home pick, on the same register (DOOR-101 PR2a).
+    if let AuthorityOp::HomeNodePick(pick) = &entry.op {
+        if let Err(issue) = super::home_pick::apply_home_pick(
+            &mut state,
+            entry,
+            pick,
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
@@ -429,15 +445,16 @@ fn residence_result_stands(
 }
 
 /// A row a sequence floor refuses only to restriction (Astra #1430): a world
-/// edit, a grant travel choice, a checkpoint policy choice, or a machine
-/// revision. The roster rule reads each as a replica with no floor does; this
-/// install never counts what it grants.
+/// edit, a grant travel choice, a checkpoint policy choice, a home pick, or a
+/// machine revision. The roster rule reads each as a replica with no floor
+/// does; this install never counts what it grants.
 pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
     matches!(
         op,
         AuthorityOp::WorldPrivacy(_)
             | AuthorityOp::GrantTravelSet(_)
             | AuthorityOp::CheckpointPolicySet(_)
+            | AuthorityOp::HomeNodePick(_)
             | AuthorityOp::MachineProfile(_)
     )
 }
@@ -540,6 +557,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::ResidenceResult(_)
         | AuthorityOp::GrantTravelSet(_)
         | AuthorityOp::CheckpointPolicySet(_)
+        | AuthorityOp::HomeNodePick(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_) => false,
     }

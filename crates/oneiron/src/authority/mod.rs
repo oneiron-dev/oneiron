@@ -65,6 +65,7 @@ mod history_coverage;
 mod history_fetch;
 mod history_repair;
 mod history_transfer;
+mod home_pick;
 mod host_action;
 mod host_actor;
 mod host_re_root;
@@ -200,6 +201,9 @@ pub use history_fetch::{
 };
 pub use history_repair::AuthorityRepairOutcome;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
+pub(crate) use home_pick::{
+    HomePickHead, HomePickState, election_home_pick_in_txn, home_pick_in_txn,
+};
 pub use host_action::HostActionAuthority;
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
@@ -273,7 +277,7 @@ pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
 use readonly_fold::authority_view_readonly_for_store_in_txn;
 pub(crate) use readonly_fold::{
-    AuthorityCachedFold, advance_authority_cache_generation,
+    AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
 };
 pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};

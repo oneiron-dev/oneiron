@@ -2587,6 +2587,9 @@ impl OneironClient {
                 "vault.consolidation.home.get" => remote_agent_verb_output::<
                     oneiron::dreamer_runner::ConsolidationHomeView,
                 >(client, verb, &input),
+                "vault.consolidation.home.pick" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::ConsolidationHomePickReceipt,
+                >(client, verb, &input),
                 "vault.consolidation.lineage" => remote_agent_verb_output::<
                     Option<oneiron::dreamer_runner::ConsolidationLineageView>,
                 >(client, verb, &input),
@@ -13225,6 +13228,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consolidation.home.get", value)
+    }
+    pub fn vault_consolidation_home_pick(
+        &self,
+        input: &oneiron::dreamer_runner::ConsolidationHomePickRequest,
+    ) -> Result<oneiron::dreamer_runner::ConsolidationHomePickReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consolidation.home.pick", value)
     }
     pub fn vault_consolidation_lineage(
         &self,

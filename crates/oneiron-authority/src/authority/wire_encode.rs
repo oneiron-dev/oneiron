@@ -252,6 +252,7 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         AuthorityOp::CheckpointPolicySet(set) => {
             super::checkpoint_policy::checkpoint_policy_value(set)
         }
+        AuthorityOp::HomeNodePick(pick) => super::home_pick::home_node_pick_value(pick),
     }
 }
 

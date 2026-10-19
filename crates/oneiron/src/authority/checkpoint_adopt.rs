@@ -264,6 +264,10 @@ impl Vault {
             },
         )?;
         super::readonly_fold::advance_authority_cache_generation(store, wtxn)?;
+        // The adopted fold may carry an owner home pick (DOOR-101): it
+        // re-elects this node's MACRO home in the caller's transaction, whose
+        // commit owes the wake.
+        crate::dreamer_runner::reelect_home_in_txn(store, wtxn, self.privacy_posture())?;
         Ok(id)
     }
 
@@ -281,6 +285,7 @@ impl Vault {
         let expected = self.authority_checkpoint_expectation_in_txn(&wtxn)?;
         let id = self.adopt_authority_checkpoint_in_txn(&mut wtxn, &verified, &expected)?;
         wtxn.commit()?;
+        self.store.notify_proactivity_changes();
         Ok(id)
     }
 

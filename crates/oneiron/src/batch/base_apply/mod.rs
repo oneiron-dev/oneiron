@@ -160,6 +160,7 @@ pub(super) fn apply_ops_with_origin(
     let text_births = std::mem::take(&mut gate_mode.text_births);
     let births = std::mem::take(&mut gate_mode.births);
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+    let authority_generation = crate::authority::authority_cache_generation(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
     let persist_gate_pending_consent = gate_mode.persist_pending_consent;
     let claim_gate_prechecked = gate_mode.claim_gate_prechecked;
@@ -846,6 +847,11 @@ pub(super) fn apply_ops_with_origin(
 
     masked_files.restrict(store, wtxn)?;
     crate::skill_attribution::note_run_derivations_in_txn(store, wtxn, run_derivations.as_ref())?;
+    // DOOR-101: an owner home pick this batch landed, local or from a peer's
+    // log, re-elects this node's MACRO home over the final batch state.
+    if crate::authority::authority_cache_generation(store, wtxn)? != authority_generation {
+        crate::dreamer_runner::reelect_home_in_txn(store, wtxn, config.privacy.posture)?;
+    }
 
     finalize_batch_indexes(
         store,

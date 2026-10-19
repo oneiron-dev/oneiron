@@ -541,6 +541,7 @@ pub(super) fn held_back(
         counted,
         &mut held_back,
     );
+    super::owner_choice::held_owner_choices(state, &state.home_pick, pin, counted, &mut held_back);
     InstallBound {
         held_back,
         no_vouch_deadline: None,

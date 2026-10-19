@@ -4151,6 +4151,11 @@ export_facade! {
     let output = client.vault_consolidation_home_get(&input)?;
     crate::codec::lift_record("vault.consolidation.home.get", &output)
 };
+"vault.consolidation.home.pick" => fn vault_consolidation_home_pick(&self, input: ConsolidationHomePickRequest) -> ConsolidationHomePickReceipt = |client| {
+    let input: oneiron::dreamer_runner::ConsolidationHomePickRequest = crate::codec::lower_record("vault.consolidation.home.pick", input)?;
+    let output = client.vault_consolidation_home_pick(&input)?;
+    crate::codec::lift_record("vault.consolidation.home.pick", &output)
+};
 "vault.consolidation.lineage" => fn vault_consolidation_lineage(&self, input: ConsolidationLineageRequest) -> Option<ConsolidationLineageView> = |client| {
     let input: oneiron::dreamer_runner::ConsolidationLineageRequest = crate::codec::lower_record("vault.consolidation.lineage", input)?;
     let output = client.vault_consolidation_lineage(&input)?;
