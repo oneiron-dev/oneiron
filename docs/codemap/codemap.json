@@ -80989,7 +80989,7 @@
      "path": "src/commands/credential_file.rs",
      "purpose": "A file holding a credential, readable by its owner alone",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -82222,7 +82222,7 @@
      "path": "src/device_sync/renewal.rs",
      "purpose": "FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
