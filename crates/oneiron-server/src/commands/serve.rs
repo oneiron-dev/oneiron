@@ -529,6 +529,15 @@ pub(crate) async fn start_desktop_workers(
     workers.push(crate::api::spawn_esign_hold_worker(Arc::clone(
         &sync_server,
     )));
+    // Authorized e-sign mail goes to the host's sender through its outbox;
+    // without `--esign-delivery-outbox-dir` none runs (OF-415).
+    workers.extend(config.esign_delivery_outbox_dir.clone().map(|dir| {
+        crate::api::spawn_esign_delivery_outbox(
+            Arc::clone(&sync_server),
+            crate::server::admit_every_pass(),
+            dir,
+        )
+    }));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
     // Attached folders rescan after the import queue starts (OF-554).

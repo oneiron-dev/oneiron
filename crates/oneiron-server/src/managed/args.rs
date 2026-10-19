@@ -222,6 +222,9 @@ pub struct ManagedArgs {
     pub seal_signing_url: Option<String>,
     /// The seal organ's program (`--seal-organ`).
     pub seal_organ: Option<PathBuf>,
+    /// Where this vault hands its authorized e-sign mail to the supervisor's
+    /// sender (`--esign-delivery-outbox-dir`); no outbox runs without it.
+    pub esign_delivery_outbox: Option<PathBuf>,
 }
 
 impl ManagedArgs {
@@ -331,6 +334,7 @@ impl ManagedArgs {
             seal_tsa: nonempty(args.seal_tsa_url.as_deref()),
             seal_signing_url: nonempty(args.seal_signing_url.as_deref()),
             seal_organ: args.seal_organ.clone(),
+            esign_delivery_outbox: args.esign_delivery_outbox_dir.clone(),
         };
         if managed
             .artifact_socket
@@ -359,6 +363,7 @@ impl ManagedArgs {
             ("seal-chain-file", &managed.seal_chain),
             ("seal-trust-file", &managed.seal_trust),
             ("seal-organ", &managed.seal_organ),
+            ("esign-delivery-outbox-dir", &managed.esign_delivery_outbox),
         ] {
             if path.as_deref().is_some_and(std::path::Path::is_relative) {
                 return Err(ManagedError::RelativeRecipientFile { flag });
@@ -468,6 +473,8 @@ impl ManagedArgs {
             failure_signal_export: args.failure_signal_export,
             // Training is its own explicit yes, off unless passed or set.
             failure_signal_training: args.failure_signal_training.unwrap_or(false),
+            // The supervisor's e-sign delivery outbox, when it runs a sender.
+            esign_delivery_outbox_dir: self.esign_delivery_outbox.clone(),
             ..defaults
         };
         if let Some(log_level) = args.log_level.clone() {
@@ -698,6 +705,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "seal-organ",
         |args| args.seal_organ.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "esign-delivery-outbox-dir",
+        |args| args.esign_delivery_outbox_dir.is_some(),
         ArgvUse::Read,
     ),
     // The bind: the supervisor's socket, never a host:port.
