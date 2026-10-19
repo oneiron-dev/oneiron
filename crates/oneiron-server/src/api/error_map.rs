@@ -172,6 +172,13 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             },
             ["Restart policy review from the current diff and read frontier."],
         ),
+        // A refusal that names its bound answers as the facade does (FIX
+        // 4618): the message is the whole answer.
+        ErrorKind::Refused => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState { state: None },
+            ["Do what the message names (fund, bind or configure it), then ask again."],
+        ),
         _ => ApiError::internal_server_error(message),
     }
 }
