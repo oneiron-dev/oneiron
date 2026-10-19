@@ -156,6 +156,11 @@ pub(super) fn tear_root_edits_in_txn(
         if stored_edit_in(store, txn, &edit)?.is_none_or(|event| event.root != *root) {
             continue;
         }
+        // A held edit stays, folding into no one's read: the root's erase
+        // never fails on its edits.
+        if crate::store::legal_hold::held_in_txn(store, txn, edit.as_bytes())? {
+            continue;
+        }
         let _torn = TornWithRoot::begin(edit);
         let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &edit)?;
         crate::ppr::invalidate_ppr_for_delete(store, txn, &edit, &neighbors)?;
