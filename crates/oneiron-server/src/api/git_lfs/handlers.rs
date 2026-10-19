@@ -1,6 +1,6 @@
 //! LFS batch, upload, download, and verify handlers.
 
-use super::gate::{LfsAccess, authorize, require_lfs_write};
+use super::gate::{LfsAccess, authorize_request, require_lfs_write};
 use super::support::{
     LFS_BATCH_NOT_FOUND, LFS_BATCH_UNPROCESSABLE, LFS_OBJECT_MEDIA_TYPE, declared_size, href_base,
     lfs_disk_floor, lfs_engine_error, lfs_json_response, lfs_waited_out, now_secs, read_whole,
@@ -17,9 +17,9 @@ use crate::wire_telemetry::LimitRow;
 use axum::body::{Body, Bytes};
 use axum::extract::Path;
 use axum::extract::State;
-use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
+use axum::http::request::Parts;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use oneiron::origin::lfs::LFS_BASIC_TRANSFER;
@@ -35,12 +35,13 @@ use std::sync::Arc;
 pub(crate) async fn lfs_batch(
     State(server): State<Arc<SyncServer>>,
     Path(repo): Path<String>,
-    headers: HeaderMap,
+    parts: Parts,
     body: Bytes,
 ) -> Result<Response, EnvelopedApiError> {
     // Read is the floor for reaching the object plane at all; the operation
     // the body names decides whether the write row applies as well.
-    let auth = authorize(&headers, &server, LfsAccess::Read).map_err(EnvelopedApiError::from)?;
+    let auth =
+        authorize_request(&parts, &server, LfsAccess::Read).map_err(EnvelopedApiError::from)?;
     let request: LfsBatchRequest = serde_json::from_slice(&body)
         .map_err(|_| ApiError::bad_request("lfs batch body is not a batch request", None))?;
     if request.operation == LfsBatchOperation::Upload {
@@ -58,7 +59,7 @@ pub(crate) async fn lfs_batch(
         .into());
     }
 
-    let base = href_base(&headers);
+    let base = href_base(&parts.headers);
     let objects = request
         .objects
         .iter()
@@ -147,14 +148,15 @@ fn batch_entry(
 pub(crate) async fn lfs_upload(
     State(server): State<Arc<SyncServer>>,
     Path((_repo, oid)): Path<(String, String)>,
-    headers: HeaderMap,
+    parts: Parts,
     body: Body,
 ) -> Result<Response, EnvelopedApiError> {
-    let auth = authorize(&headers, &server, LfsAccess::Write).map_err(EnvelopedApiError::from)?;
+    let auth =
+        authorize_request(&parts, &server, LfsAccess::Write).map_err(EnvelopedApiError::from)?;
     let oid = LfsOid::parse_hex(&oid)
         .map_err(|error| lfs_engine_error("lfs oid is not a 64-character sha256", &error))?;
     let size_row = server.config.max_lfs_object_bytes;
-    let declared = declared_size(&headers);
+    let declared = declared_size(&parts.headers);
     if let Some(size) = declared.filter(|size| *size > size_row) {
         server
             .transfers
@@ -231,9 +233,10 @@ pub(crate) async fn lfs_upload(
 pub(crate) async fn lfs_download(
     State(server): State<Arc<SyncServer>>,
     Path((_repo, oid)): Path<(String, String)>,
-    headers: HeaderMap,
+    parts: Parts,
 ) -> Result<Response, EnvelopedApiError> {
-    let auth = authorize(&headers, &server, LfsAccess::Read).map_err(EnvelopedApiError::from)?;
+    let auth =
+        authorize_request(&parts, &server, LfsAccess::Read).map_err(EnvelopedApiError::from)?;
     let oid = LfsOid::parse_hex(&oid)
         .map_err(|error| lfs_engine_error("lfs oid is not a 64-character sha256", &error))?;
     let Some(record) = server
@@ -297,10 +300,11 @@ const VERIFY_BODY_BYTES: usize = 64 * 1024;
 pub(crate) async fn lfs_verify(
     State(server): State<Arc<SyncServer>>,
     Path((_repo, route_oid)): Path<(String, String)>,
-    headers: HeaderMap,
+    parts: Parts,
     body: Body,
 ) -> Result<Response, EnvelopedApiError> {
-    let auth = authorize(&headers, &server, LfsAccess::Write).map_err(EnvelopedApiError::from)?;
+    let auth =
+        authorize_request(&parts, &server, LfsAccess::Write).map_err(EnvelopedApiError::from)?;
     // It waits on its headers and reads its body at its turn, so a request
     // in line holds none of it. Its room in memory is its route's object's,
     // the only one it may read, sized before it waits.

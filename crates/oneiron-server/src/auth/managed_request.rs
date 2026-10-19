@@ -265,6 +265,23 @@ impl CoreAuth {
         Some(caller.map(|auth| auth.placed(headers, extensions, path)))
     }
 
+    /// [`Self::for_managed_request`]'s caller for a door that otherwise
+    /// judges its caller by its headers alone (git smart HTTP and LFS, the
+    /// sync socket's upgrade), on a request managed ingress verified its
+    /// supervisor's owner attestation on: the owner himself
+    /// ([`Self::for_attested_owner`]), or the slip beside him that names
+    /// him. `None` for any other request, which keeps that door's own
+    /// header path as it was.
+    pub(crate) fn for_attested_request(
+        headers: &HeaderMap,
+        extensions: &Extensions,
+        path: &str,
+        server: &SyncServer,
+    ) -> Option<Result<Self, ApiError>> {
+        attested_owner(extensions, server)?;
+        Self::for_managed_request(headers, extensions, path, server)
+    }
+
     /// This request's one caller ([`Self::for_request`]), placed.
     fn placed(self, headers: &HeaderMap, extensions: &Extensions, path: &str) -> Self {
         self.at(caller_locality(headers, extensions))

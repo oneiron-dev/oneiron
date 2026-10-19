@@ -56,6 +56,14 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 /// The credential's revocable identity is carried into the connection rather
 /// than discarded with the rest of the `CoreAuth`: the handshake proves the
 /// token was live at upgrade time, and the socket outlives that instant.
+///
+/// On a managed vault, an upgrade its supervisor attested as the owner's own
+/// (managed ingress verified that over the `GET`, its path, raw query,
+/// placing headers and empty body, never the frames) is the owner himself,
+/// while the vault records him as its live owner (FIX 5255). No token id
+/// names him, so the socket asks the vault that again before every read,
+/// release and inbound effect, and its app tier is bound to him without a
+/// slip. A machine stands for the socket only where one was proved.
 async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
@@ -76,13 +84,21 @@ async fn ws_upgrade_handler(
         return super::mcp_socket::upgrade(ws, &headers, &extensions, server)
             .map_err(IntoResponse::into_response);
     }
-    let auth = require_owner_auth(&headers, &server.config, server.vault().as_ref())
-        .map_err(|_| sync_upgrade_refused(&headers, &server))?;
+    let auth = match CoreAuth::for_attested_request(&headers, &extensions, "/ws", &server) {
+        Some(Ok(auth)) if auth.is_owner_grade() => auth,
+        Some(Ok(_)) => {
+            return Err(crate::auth::caller_slip_too_narrow("full replication").into_response());
+        }
+        Some(Err(refused)) => return Err(refused.into_response()),
+        None => require_owner_auth(&headers, &server.config, server.vault().as_ref())
+            .map_err(|_| sync_upgrade_refused(&headers, &server))?,
+    };
     // Full replication reads the whole vault, an owner act: a hosted
     // operator's root is refused before the upgrade (FIX 2222).
     crate::api::host_action::require_host_owner_act(&server, &auth)
         .map_err(|_| StatusCode::FORBIDDEN.into_response())?;
     let session_jti = auth.jti().map(str::to_owned);
+    let owner = auth.managed_owner().is_some().then(|| auth.clone());
     // The socket's sync frames count under the actor its upgrade admitted,
     // as an HTTP request counts under its own (OF-520, FIX 1086).
     let telemetry_actor = auth.principal_ref().unwrap_or(auth.principal()).to_owned();
@@ -121,7 +137,7 @@ async fn ws_upgrade_handler(
                         (socket, stop),
                         server,
                         conn_id,
-                        session_jti,
+                        (session_jti, owner),
                         telemetry_actor,
                         locality,
                         machine,
@@ -209,6 +225,19 @@ pub(super) fn session_credential_revoked(
     session_jti.is_some_and(|jti| is_revoked_or_unreadable(jti, revoked))
 }
 
+/// Whether this socket's caller no longer stands: its credential revoked
+/// ([`session_credential_revoked`]), or, for a managed vault's attested
+/// owner, whom no token id names, the vault no longer recording him as its
+/// live owner (FIX 5255).
+fn session_gone(
+    vault: &oneiron::Vault,
+    session_jti: Option<&str>,
+    owner: Option<&CoreAuth>,
+) -> bool {
+    session_credential_revoked(vault, session_jti)
+        || owner.is_some_and(|owner| !owner.credential_is_live(vault))
+}
+
 /// What woke the connection loop.
 ///
 /// The select produces this and nothing borrowed, so every future it raced —
@@ -245,7 +274,7 @@ async fn handle_connection(
     (socket, mut stop): (WebSocket, crate::embedded::UpgradeStop),
     server: Arc<SyncServer>,
     conn_id: u32,
-    session_jti: Option<String>,
+    (session_jti, owner): (Option<String>, Option<CoreAuth>),
     telemetry_actor: String,
     locality: oneiron::claim::CallerLocality,
     machine: oneiron::authority::PeerMachine,
@@ -260,7 +289,8 @@ async fn handle_connection(
         session_jti.clone(),
         conn_id,
     )
-    .with_inbound_cap(server.config.max_frame_size);
+    .with_inbound_cap(server.config.max_frame_size)
+    .with_live_owner(server.vault(), owner.clone());
     // Its hello and sends give way to the engine's stop.
     let mut transport = StoppingTransport::new(transport, stop.clone());
 
@@ -315,6 +345,7 @@ async fn handle_connection(
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = ConnState::new(protocol_version).with_peer_machine(machine);
     conn_state.locality = locality;
+    conn_state.bound_auth.clone_from(&owner);
     tracing::debug!(
         conn_id,
         machine = ?conn_state.peer_machine(server.vault()),
@@ -674,7 +705,7 @@ async fn handle_connection(
                 // write reach the hub store and every live peer rather than
                 // this socket's sink.
                 if privileged_sync_message(&msg)
-                    && session_credential_revoked(server.vault().as_ref(), session_jti.as_deref())
+                    && session_gone(server.vault(), session_jti.as_deref(), owner.as_ref())
                 {
                     tracing::warn!(
                         conn_id,

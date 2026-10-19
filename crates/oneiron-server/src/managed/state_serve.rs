@@ -191,10 +191,11 @@ const ACTIONS_PREFIX: &str = "/v1/core/actions/";
 /// and `DELETE /v1/core/lens-frames/{card_id}`.
 const LENS_FRAMES_PREFIX: &str = "/v1/core/lens-frames/";
 
-/// Whether a `ManagedOwnerAction` may name the owner for this request: the
-/// facade's and the owner's nests, the action and frame transports, the
-/// console's own routes, and every other route
-/// [`super::attested_routes`] lists for the listener it reached.
+/// Whether a `ManagedOwnerAction` may name the owner for this request on
+/// the buffered path: the facade's and the owner's nests, the action and
+/// frame transports, the console's own routes, and every other route
+/// [`super::attested_routes`] lists for the listener it reached. Its staged
+/// routes are [`super::attested_routes::staged_route`]'s.
 fn owner_attestable(surface: Surface, method: &Method, path: &str) -> bool {
     match surface {
         Surface::Api => {
@@ -645,12 +646,20 @@ async fn freeze_gate(
             }
         }
         // A request the supervisor attests is the vault owner's own
-        // (`ManagedOwnerAction`), on every route whose body the buffer holds:
-        // verified the same way, over the method, path, raw query, placing
-        // headers and exact body. A verified one names the owner, as a
-        // request extension the credential reads; one that does not verify
-        // is refused, never served as the host's root.
-        if owner_attestable(surface, request.method(), request.uri().path()) {
+        // (`ManagedOwnerAction`), on every route whose body the buffer holds,
+        // and on every route whose body streams once that body is staged on
+        // the vault's disk (`owner_stage`): verified the same way, over the
+        // method, path, raw query, placing headers and exact body, before
+        // any handler runs. A verified one names the owner, as a request
+        // extension the credential reads; one that does not verify is
+        // refused, never served as the host's root.
+        let staged = match surface {
+            Surface::Api => {
+                super::attested_routes::staged_route(request.method(), request.uri().path())
+            }
+            Surface::Artifact => None,
+        };
+        if staged.is_some() || owner_attestable(surface, request.method(), request.uri().path()) {
             let assertion = request
                 .headers()
                 .get(oneiron_vault_contract::MANAGED_OWNER_ACTION_HEADER)
@@ -658,7 +667,23 @@ async fn freeze_gate(
                 .and_then(|text| {
                     serde_json::from_str::<oneiron_vault_contract::ManagedOwnerAction>(text).ok()
                 });
-            if let Some(assertion) = assertion {
+            if let Some(assertion) = &assertion
+                && let Some(staged) = staged
+            {
+                let ceiling = staged.ceiling();
+                request = match super::owner_stage::verify_staged(
+                    &state.server,
+                    &state.ledger,
+                    assertion,
+                    request,
+                    ceiling,
+                )
+                .await
+                {
+                    Ok(request) => request,
+                    Err(refusal) => return refusal,
+                };
+            } else if let Some(assertion) = assertion {
                 let (parts, body) = request.into_parts();
                 let Ok(bytes) =
                     to_bytes(body, oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES).await
@@ -732,7 +757,7 @@ async fn freeze_gate(
 
 /// The answer to an owner attestation managed ingress could not verify on
 /// `path`: refused, named, with nothing served in the owner's place.
-fn owner_attestation_refused(path: &str) -> Response {
+pub(super) fn owner_attestation_refused(path: &str) -> Response {
     let error = crate::auth::owner_attestation_refused();
     if path.starts_with("/v1/") {
         crate::error::EnvelopedApiError::from(error).into_response()

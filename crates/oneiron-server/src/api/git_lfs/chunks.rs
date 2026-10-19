@@ -1,6 +1,6 @@
 //! Grant-scoped binary have/want endpoint over the standing bearer identity.
 
-use super::gate::{LfsAccess, authorize};
+use super::gate::{LfsAccess, authorize_request};
 use super::support::{declared_size, lfs_waited_out, read_whole};
 use crate::api::Transfers;
 use crate::api::transfer::ReadHold;
@@ -8,7 +8,8 @@ use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::request::Parts;
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use futures_util::stream;
 use oneiron::Vault;
@@ -21,10 +22,10 @@ use tokio::sync::mpsc;
 pub(super) async fn exchange(
     State(server): State<Arc<SyncServer>>,
     Path(_repo): Path<String>,
-    headers: HeaderMap,
+    parts: Parts,
     body: Body,
 ) -> Result<Response, EnvelopedApiError> {
-    let auth = authorize(&headers, &server, LfsAccess::Read)?;
+    let auth = authorize_request(&parts, &server, LfsAccess::Read)?;
     let principal = auth.require_registered_principal()?;
     let principal = oneiron::EntityId::from_hex(principal)
         .map_err(|_| ApiError::forbidden_scope("registered chunk principal"))?;
@@ -35,7 +36,7 @@ pub(super) async fn exchange(
     // built, whether or not its caller is still there, and hands them on to
     // the reply. It waits on its headers and reads its body at its turn, so
     // a request in line holds none of it.
-    let declared = declared_size(&headers);
+    let declared = declared_size(&parts.headers);
     let Some(room) = server
         .transfers
         .lfs_read_room(Transfers::exchange_room(declared))

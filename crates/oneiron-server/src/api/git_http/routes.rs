@@ -1,6 +1,6 @@
 //! Git smart-HTTP routes and per-service RPC handlers.
 
-use super::gate::{advertised_service, authenticate, header_value, remote_user, repo_name};
+use super::gate::{advertised_service, authenticate_request, header_value, remote_user, repo_name};
 use super::serve::run_serve;
 use crate::auth::CoreScope;
 use crate::server::SyncServer;
@@ -9,10 +9,10 @@ use axum::body::Body;
 use axum::extract::Path;
 use axum::extract::RawQuery;
 use axum::extract::State;
-use axum::http::HeaderMap;
 use axum::http::header::CONTENT_ENCODING;
 use axum::http::header::CONTENT_LENGTH;
 use axum::http::header::CONTENT_TYPE;
+use axum::http::request::Parts;
 use axum::response::Response;
 use axum::routing::get;
 use axum::routing::post;
@@ -73,13 +73,13 @@ pub(crate) async fn git_info_refs(
     State(server): State<Arc<SyncServer>>,
     Path(repo): Path<String>,
     RawQuery(query): RawQuery,
-    headers: HeaderMap,
+    parts: Parts,
 ) -> Response {
     let service = match advertised_service(&query.unwrap_or_default()) {
         Ok(service) => service,
         Err(refusal) => return refusal.response(),
     };
-    let auth = match authenticate(&headers, &server.config, server.vault().as_ref(), service) {
+    let auth = match authenticate_request(&parts, &server, service) {
         Ok(auth) => auth,
         Err(response) => return *response,
     };
@@ -125,48 +125,50 @@ pub(super) fn advertisement_request(
 pub(crate) async fn git_upload_pack(
     State(server): State<Arc<SyncServer>>,
     Path(repo): Path<String>,
-    headers: HeaderMap,
+    parts: Parts,
     body: Body,
 ) -> Response {
-    serve_rpc(server, repo, headers, body, GitService::UploadPack, None).await
+    serve_rpc(server, repo, parts, body, GitService::UploadPack, None).await
 }
 
 /// `POST /git/{repo}/git-receive-pack` — the push, streamed.
 ///
 /// The gate is the whole of RC4: `Write` scope plus a registered
-/// `principal_ref` proved by a real bearer, on loopback and everywhere else
-/// alike. The door window and the single-writer landing happen inside
+/// `principal_ref` proved by a real bearer, or by the owner a managed
+/// vault's supervisor attested, on loopback and everywhere else alike. The
+/// door window and the single-writer landing happen inside
 /// [`smart_http::serve`]; this handler adds no ref logic of its own.
 pub(crate) async fn git_receive_pack(
     State(server): State<Arc<SyncServer>>,
     Path(repo): Path<String>,
-    headers: HeaderMap,
+    parts: Parts,
     body: Body,
 ) -> Response {
-    serve_rpc(server, repo, headers, body, GitService::ReceivePack, None).await
+    serve_rpc(server, repo, parts, body, GitService::ReceivePack, None).await
 }
 
 async fn serve_rpc(
     server: Arc<SyncServer>,
     repo: String,
-    headers: HeaderMap,
+    parts: Parts,
     body: Body,
     service: GitService,
     lease: Option<String>,
 ) -> Response {
-    let auth = match authenticate(&headers, &server.config, server.vault().as_ref(), service) {
+    let auth = match authenticate_request(&parts, &server, service) {
         Ok(auth) => auth,
         Err(response) => return *response,
     };
+    let headers = &parts.headers;
     let name = repo_name(&repo).to_owned();
     let request = smart_http::ServeRequest {
         method: "POST".to_owned(),
         path_info: format!("/{name}.git/{}", service.as_str()),
         query_string: lease.map_or_else(String::new, |ticket| format!("checkout-lease={ticket}")),
-        content_type: header_value(&headers, CONTENT_TYPE.as_str()),
-        content_length: header_value(&headers, CONTENT_LENGTH.as_str())
+        content_type: header_value(headers, CONTENT_TYPE.as_str()),
+        content_length: header_value(headers, CONTENT_LENGTH.as_str())
             .and_then(|value| value.parse::<u64>().ok()),
-        content_encoding: header_value(&headers, CONTENT_ENCODING.as_str()),
+        content_encoding: header_value(headers, CONTENT_ENCODING.as_str()),
         // Pinned for the same reason the advertisement pins it: an exchange
         // whose advertisement spoke v0 and whose RPC speaks v2 is not one
         // conversation.
@@ -183,7 +185,7 @@ async fn lease_info_refs(
     State(server): State<Arc<SyncServer>>,
     Path((lease, repo)): Path<(String, String)>,
     RawQuery(query): RawQuery,
-    headers: HeaderMap,
+    parts: Parts,
 ) -> Response {
     if !lease_shape(&lease) {
         return invalid_lease();
@@ -192,7 +194,7 @@ async fn lease_info_refs(
         Ok(service) => service,
         Err(refusal) => return refusal.response(),
     };
-    let auth = match authenticate(&headers, &server.config, server.vault().as_ref(), service) {
+    let auth = match authenticate_request(&parts, &server, service) {
         Ok(auth) => auth,
         Err(response) => return *response,
     };
@@ -207,7 +209,7 @@ async fn lease_info_refs(
 async fn lease_upload_pack(
     State(server): State<Arc<SyncServer>>,
     Path((lease, repo)): Path<(String, String)>,
-    headers: HeaderMap,
+    parts: Parts,
     body: Body,
 ) -> Response {
     if !lease_shape(&lease) {
@@ -216,7 +218,7 @@ async fn lease_upload_pack(
     serve_rpc(
         server,
         repo,
-        headers,
+        parts,
         body,
         GitService::UploadPack,
         Some(lease),
@@ -227,7 +229,7 @@ async fn lease_upload_pack(
 async fn lease_receive_pack(
     State(server): State<Arc<SyncServer>>,
     Path((lease, repo)): Path<(String, String)>,
-    headers: HeaderMap,
+    parts: Parts,
     body: Body,
 ) -> Response {
     if !lease_shape(&lease) {
@@ -236,7 +238,7 @@ async fn lease_receive_pack(
     serve_rpc(
         server,
         repo,
-        headers,
+        parts,
         body,
         GitService::ReceivePack,
         Some(lease),
