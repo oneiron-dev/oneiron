@@ -179,6 +179,7 @@ fn bind_health_answer_in_txn(
         frontier: *blake3::hash(&encoded).as_bytes(),
         source_kind: crate::registry::ENTITY_TYPE_CLAIM,
         answered_at: input.now,
+        omitted: Vec::new(),
     };
     let answer_bytes = encode(&answer)?;
     let value = rmpv::decode::read_value(&mut answer_bytes.as_slice())

@@ -417,6 +417,51 @@ pub struct AnswerRecord {
     pub frontier: [u8; 32],
     pub source_kind: u8,
     pub answered_at: u64,
+    /// The readable neighbours this answer left out, each with why: it was
+    /// answered using the sources compatible with its unit alone. Refs and
+    /// reasons only, never a body; empty when none was left out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub omitted: Vec<OmittedNeighbor>,
+}
+
+/// A readable neighbour a graph answer left out (FIX 1711): its ref and the
+/// term it could not share with the unit and the neighbours kept before it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OmittedNeighbor {
+    #[serde(with = "super::super::codec::entity")]
+    #[schemars(with = "String")]
+    pub id: EntityId,
+    pub reason: SourceConflict,
+}
+
+/// Why a source cannot share one answer with the sources before it. An
+/// answer has one facet, project and world, one relationship, one value per
+/// claim scope term and one asker, and rests only on sources with a single
+/// position and a representable scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceConflict {
+    Facet,
+    Project,
+    World,
+    Relationship,
+    ScopeTerm,
+    Principal,
+    Unrepresentable,
+}
+
+impl SourceConflict {
+    /// The refusal of a write that must rest on every source it names.
+    pub(super) fn error(self) -> crate::Error {
+        match self {
+            Self::Principal => invalid("incompatible evidence principal"),
+            Self::Unrepresentable => invalid("unrepresentable evidence scope"),
+            Self::Facet | Self::Project | Self::World | Self::Relationship | Self::ScopeTerm => {
+                invalid("incompatible evidence scope")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
