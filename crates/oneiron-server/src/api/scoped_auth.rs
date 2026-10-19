@@ -12,12 +12,19 @@ use oneiron::runtime_hooks::verb::{VerbAskCredentialSource, VerbAskInstrument};
 ///
 /// These routes read the whole vault under one actor ref, so they stay a
 /// trust-root surface: scoped `/v1` delegation tokens do not reach them.
+/// On a managed vault a request with no slip is the host's root as before,
+/// and a caller's own forwarded slip keeps its own grade: a narrower one is
+/// refused, named, never served as the host (WILL-PLAN L14 row 01).
 pub(super) fn check_api_auth(
     headers: &HeaderMap,
     server: &SyncServer,
 ) -> Result<CoreAuth, ApiError> {
     if server.managed_issuer.is_some() {
-        return CoreAuth::for_server(headers, server);
+        let auth = CoreAuth::for_server(headers, server)?;
+        if !auth.is_owner_grade() {
+            return Err(crate::auth::caller_slip_too_narrow("this legacy door"));
+        }
+        return Ok(auth);
     }
     require_owner_auth(headers, &server.config, server.vault().as_ref())
 }

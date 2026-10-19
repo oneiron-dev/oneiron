@@ -727,6 +727,12 @@ pub enum AgentVerb {
     VaultSkillsPackReceipt,
     VaultSkillsOutcomesProject,
     VaultSkillsOutcomesGet,
+    VaultModelsManifestRead,
+    VaultModelsManifestReplace,
+    VaultModelsRoutesRead,
+    VaultModelsRoutesReplace,
+    VaultModelsRolesRead,
+    VaultModelsRolesInvoke,
     VaultSkillsAttributionSettle,
     VaultSkillsAttributionRead,
     VaultSkillsAttributionEvidenceRecord,
@@ -1793,6 +1799,12 @@ impl AgentVerb {
         Self::VaultSkillsPackReceipt,
         Self::VaultSkillsOutcomesProject,
         Self::VaultSkillsOutcomesGet,
+        Self::VaultModelsManifestRead,
+        Self::VaultModelsManifestReplace,
+        Self::VaultModelsRoutesRead,
+        Self::VaultModelsRoutesReplace,
+        Self::VaultModelsRolesRead,
+        Self::VaultModelsRolesInvoke,
         Self::VaultSkillsAttributionSettle,
         Self::VaultSkillsAttributionRead,
         Self::VaultSkillsAttributionEvidenceRecord,
@@ -2880,6 +2892,12 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => "vault.skills.pack_receipt",
             Self::VaultSkillsOutcomesProject => "vault.skills.outcomes.project",
             Self::VaultSkillsOutcomesGet => "vault.skills.outcomes.get",
+            Self::VaultModelsManifestRead => "vault.models.manifest.read",
+            Self::VaultModelsManifestReplace => "vault.models.manifest.replace",
+            Self::VaultModelsRoutesRead => "vault.models.routes.read",
+            Self::VaultModelsRoutesReplace => "vault.models.routes.replace",
+            Self::VaultModelsRolesRead => "vault.models.roles.read",
+            Self::VaultModelsRolesInvoke => "vault.models.roles.invoke",
             Self::VaultSkillsAttributionSettle => "vault.skills.attribution.settle",
             Self::VaultSkillsAttributionRead => "vault.skills.attribution.read",
             Self::VaultSkillsAttributionEvidenceRecord => {
@@ -3956,6 +3974,12 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultModelsManifestRead
+                | Self::VaultModelsManifestReplace
+                | Self::VaultModelsRoutesRead
+                | Self::VaultModelsRoutesReplace
+                | Self::VaultModelsRolesRead
+                | Self::VaultModelsRolesInvoke
                 | Self::VaultSkillsAttributionSettle
                 | Self::VaultSkillsAttributionRead
                 | Self::VaultSkillsAttributionEvidenceRecord
@@ -5049,6 +5073,12 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultModelsManifestRead
+                | Self::VaultModelsManifestReplace
+                | Self::VaultModelsRoutesRead
+                | Self::VaultModelsRoutesReplace
+                | Self::VaultModelsRolesRead
+                | Self::VaultModelsRolesInvoke
                 | Self::VaultSkillsAttributionSettle
                 | Self::VaultSkillsAttributionRead
                 | Self::VaultSkillsAttributionEvidenceRecord
@@ -6233,6 +6263,12 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultModelsManifestRead
+                | Self::VaultModelsManifestReplace
+                | Self::VaultModelsRoutesRead
+                | Self::VaultModelsRoutesReplace
+                | Self::VaultModelsRolesRead
+                | Self::VaultModelsRolesInvoke
                 | Self::VaultSkillsAttributionSettle
                 | Self::VaultSkillsAttributionRead
                 | Self::VaultSkillsAttributionEvidenceRecord
@@ -6977,6 +7013,8 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::VaultSkillsOutcomesProject
+                | Self::VaultModelsManifestReplace
+                | Self::VaultModelsRoutesReplace
                 | Self::VaultSkillsAttributionSettle
                 | Self::VaultSkillsAttributionEvidenceRecord
                 | Self::VaultSkillsAttributionProject
@@ -7935,6 +7973,12 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
+            Self::VaultModelsManifestRead => &["spec"],
+            Self::VaultModelsManifestReplace => &["spec"],
+            Self::VaultModelsRoutesRead => &["spec"],
+            Self::VaultModelsRoutesReplace => &["spec"],
+            Self::VaultModelsRolesRead => &["spec"],
+            Self::VaultModelsRolesInvoke => &["spec"],
             Self::VaultSkillsAttributionSettle => &["spec"],
             Self::VaultSkillsAttributionRead => &["spec"],
             Self::VaultSkillsAttributionEvidenceRecord => &["spec"],
@@ -9002,6 +9046,12 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
+            Self::VaultModelsManifestRead => &["spec"],
+            Self::VaultModelsManifestReplace => &["spec"],
+            Self::VaultModelsRoutesRead => &["spec"],
+            Self::VaultModelsRoutesReplace => &["spec"],
+            Self::VaultModelsRolesRead => &["spec"],
+            Self::VaultModelsRolesInvoke => &["spec"],
             Self::VaultSkillsAttributionSettle => &["spec"],
             Self::VaultSkillsAttributionRead => &["spec"],
             Self::VaultSkillsAttributionEvidenceRecord => &["spec"],
@@ -11469,6 +11519,24 @@ impl AgentVerb {
             }
             Self::VaultSkillsOutcomesGet => {
                 "Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."
+            }
+            Self::VaultModelsManifestRead => {
+                "Reads the owner-pinned v2 model manifest, or none when no manifest is configured."
+            }
+            Self::VaultModelsManifestReplace => {
+                "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."
+            }
+            Self::VaultModelsRoutesRead => {
+                "Reads one independent model slot route with its manifest pin and effective resident narrowing."
+            }
+            Self::VaultModelsRoutesReplace => {
+                "Replaces one model slot route within its manifest pin without changing any other slot or role binding."
+            }
+            Self::VaultModelsRolesRead => {
+                "Reads one resolved role binding with its revision-pinned model, slot, route, provider and registered catalog fingerprint; grants no execution authority."
+            }
+            Self::VaultModelsRolesInvoke => {
+                "Invokes a pinned model role through the configured generative, retrieval-embedder or extraction-encoder door and returns its typed output and resolved-model receipt."
             }
             Self::VaultSkillsAttributionSettle => {
                 "The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer."

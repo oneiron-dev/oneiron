@@ -2144,6 +2144,24 @@ export class Oneiron {
       },
     },
     models: {
+      manifest: {
+        /** Reads the owner-pinned v2 model manifest, or none when no manifest is configured. */
+        read: (input: Facade.EmptyRequest): Facade.ModelManifest | null => this.#call(() => this.#client.vaultModelsManifestRead(input) as Facade.ModelManifest | null),
+        /** Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides. */
+        replace: (input: Facade.ModelManifestReplace): Facade.ModelManifest => this.#call(() => this.#client.vaultModelsManifestReplace(input) as Facade.ModelManifest),
+      },
+      routes: {
+        /** Reads one independent model slot route with its manifest pin and effective resident narrowing. */
+        read: (input: Facade.ModelRouteRead): Facade.ModelRouteView => this.#call(() => this.#client.vaultModelsRoutesRead(input) as Facade.ModelRouteView),
+        /** Replaces one model slot route within its manifest pin without changing any other slot or role binding. */
+        replace: (input: Facade.ModelRouteReplace): Facade.ModelRouteView => this.#call(() => this.#client.vaultModelsRoutesReplace(input) as Facade.ModelRouteView),
+      },
+      roles: {
+        /** Reads one resolved role binding with its revision-pinned model, slot, route, provider and registered catalog fingerprint; grants no execution authority. */
+        read: (input: Facade.ModelRoleRead): Facade.ModelRoleReceipt => this.#call(() => this.#client.vaultModelsRolesRead(input) as Facade.ModelRoleReceipt),
+        /** Invokes a pinned model role through the configured generative, retrieval-embedder or extraction-encoder door and returns its typed output and resolved-model receipt. */
+        invoke: (input: Facade.ModelRoleInvoke): Facade.ModelRoleInvocation => this.#call(() => this.#client.vaultModelsRolesInvoke(input) as Facade.ModelRoleInvocation),
+      },
       catalog: {
         /** Refreshes priced model catalog rows and external-score diffs under an immutable revision; changes no role binding. */
         refresh: (input: Facade.ModelCatalogRefresh): Facade.ModelCatalogRevision => this.#call(() => this.#client.vaultModelsCatalogRefresh(input) as Facade.ModelCatalogRevision),
