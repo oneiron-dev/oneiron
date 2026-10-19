@@ -34,6 +34,11 @@ pub(super) const MAX_DEDUPE_ACTOR_REF_LEN: usize = 128;
 pub(super) const READY_KEY_LEN: usize = 24;
 const ERR_DEDUPE_KIND_MISMATCH: &str = "dedupe index points at a different attempt kind";
 const ERR_RECORD_UNENCODABLE: &str = "failed to encode attempt record";
+/// The most bytes one LMDB value holds (`MAXDATASIZE` in the pinned
+/// `lmdb-master3-sys`): a storage capacity, the one size bound a row meets.
+const LMDB_MAX_VALUE_BYTES: u64 = 4_294_967_295;
+const ERR_RECORD_PAST_VALUE_CAPACITY: &str =
+    "attempt record exceeds LMDB's 4294967295-byte value capacity";
 /// The members of a row a caller authored, which the side-row wall reads beside
 /// the payload (OF-067): the failure text and the intervention, signal, ask and
 /// cancel notes. The queue's own ids, keys, states and times index the row and
@@ -181,6 +186,9 @@ pub(super) fn decode_ready_key(bytes: &[u8]) -> Result<(u64, AttemptId)> {
 /// the rule stated on [`AttemptState`] — and the header version stays at
 /// [`ATTEMPT_RECORD_VERSION`] because neither addition rewrites an existing
 /// byte.
+///
+/// A row past `LMDB_MAX_VALUE_BYTES` is refused whole, naming that capacity;
+/// nothing is cut to fit.
 pub(super) fn encode_record(record: &AttemptRecord) -> Result<Vec<u8>> {
     let mut encoded = vec![ATTEMPT_RECORD_VERSION];
     let mut body = rmp_serde::to_vec_named(record).map_err(|_| {
@@ -189,6 +197,11 @@ pub(super) fn encode_record(record: &AttemptRecord) -> Result<Vec<u8>> {
         ))
     })?;
     encoded.append(&mut body);
+    if encoded.len() as u64 > LMDB_MAX_VALUE_BYTES {
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_RECORD_PAST_VALUE_CAPACITY,
+        )));
+    }
     Ok(encoded)
 }
 
