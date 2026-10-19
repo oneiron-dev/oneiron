@@ -139,8 +139,11 @@ impl<'v> ScopedRead<'v> {
         if !self.relationship_gated_in(txn)? {
             return Ok(true);
         }
+        // The row's position is content, read where this read reads it: a
+        // room's MESSAGE or SUMMARY at the position its write staged beside
+        // it. The grants and memberships it is judged by stay base.
         let read = relationship_read_keyed(
-            &self.vault.store,
+            &self.store_read(),
             txn,
             id,
             raw,
@@ -222,13 +225,18 @@ pub(crate) fn relationship_read(
 /// `unscoped_rows_open` (a vault-internal reader,
 /// `require_relationship_grants`), a MESSAGE or SUMMARY that names neither a
 /// relationship nor a private scope is the vault's own and decides readable.
-fn relationship_read_keyed(
-    store: &Store,
+/// `store` is the content the row is read on, where its position is looked
+/// up: base, or a room's union (WILL L11-01).
+fn relationship_read_keyed<S>(
+    store: &S,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     raw: &[u8],
     unscoped_rows_open: bool,
-) -> Result<RelationshipRead> {
+) -> Result<RelationshipRead>
+where
+    S: crate::store::ManifestDbs + crate::federation::record_scope::MachineHistoryScope,
+{
     let header = crate::batch::EntityMetadataHeader::parse(raw).ok_or(
         crate::error::Error::CorruptedIndex("relationship record header"),
     )?;

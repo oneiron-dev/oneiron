@@ -16116,6 +16116,7 @@ class ConsolidationLineageView(TypedDict):
     job_ref: str
     tries: list[ConsolidationTryView]
     chain_complete: bool
+    latest_job_ref: NotRequired[str | None]
     steps: list[ConsolidationStepRef]
     next_step: NotRequired[str | None]
 EvidenceKind = Literal["turn", "message", "note", "asset_text", "import_record"]

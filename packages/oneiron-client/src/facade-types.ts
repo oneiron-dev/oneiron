@@ -6361,7 +6361,7 @@ export type ConsolidationTryView = { job_ref: string; kind: string; state: Attem
 /** `oneiron::dreamer_runner::owner_doors::ConsolidationStepRef` */
 export type ConsolidationStepRef = { step_hash: string; claim_ref: EntityId }
 /** `oneiron::dreamer_runner::owner_doors::ConsolidationLineageView` */
-export type ConsolidationLineageView = { job_ref: string; tries: ConsolidationTryView[]; chain_complete: boolean; steps: ConsolidationStepRef[]; next_step?: string | null }
+export type ConsolidationLineageView = { job_ref: string; tries: ConsolidationTryView[]; chain_complete: boolean; latest_job_ref?: string | null; steps: ConsolidationStepRef[]; next_step?: string | null }
 /** `oneiron::dreamer_promotion::admission::EvidenceKind` */
 export type EvidenceKind = "turn" | "message" | "note" | "asset_text" | "import_record"
 /** `oneiron::dreamer_promotion::admission::CursorSpan` */
