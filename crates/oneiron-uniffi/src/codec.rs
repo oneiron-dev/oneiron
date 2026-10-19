@@ -27,8 +27,9 @@ use crate::dto::{
     EntityViews, FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits,
     MemoryItem, MemoryPack, MemoryProvenance, MemoryStaleStamp, MentionProvenance, NeighborHit,
     NeighborHits, NeighborOpts, OutboundDraftInput, OutboundIntentReceipt, PendingWrite,
-    QueryAffect, QuoteSpan, ReadReceipt, ReadScope, RecallMedia, RecallScope, RecordRefusal,
-    RefusalReason, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality,
+    QueryAffect, QuoteSpan, ReadReceipt, ReadScope, RecallMedia, RecallResidence,
+    RecallResidenceHit, RecallResidenceSource, RecallScope, RecordRefusal, RefusalReason,
+    RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality,
     SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint, WireJson, WitnessAuthor,
     WitnessMessage, WitnessReceipt, WitnessTurn,
 };
@@ -546,6 +547,12 @@ impl Lift<engine::MemoryReceipt> for FacadeReceipt {
             actor_ref: value.actor_ref,
             content_kind: value.content_kind,
             claim_ref: value.claim_ref,
+            claim: value.claim.map(|record| crate::RecordRef {
+                kind: record.kind,
+                id: record.id,
+                short_id: record.short_id,
+                label: record.label,
+            }),
             fields: value.fields.into_iter().collect(),
         })
     }
@@ -877,6 +884,10 @@ impl Lift<engine::DreamerAttemptView> for DreamerJobView {
             last_error: job.last_error,
             created_at: signed_seconds("created_at", job.created_at)?,
             updated_at: signed_seconds("updated_at", job.updated_at)?,
+            parked: job
+                .parked
+                .map(|parked| lift_record("vault.consolidation.status", &parked))
+                .transpose()?,
         })
     }
 }
@@ -1122,6 +1133,29 @@ impl Lift<engine::MemoryPack> for MemoryPack {
             rendered: pack.rendered,
             narrowing: ReadReceipt::lift(*pack.narrowing)?,
             retrieval_run_id: pack.retrieval_run_id.map(|id| id.as_bytes().to_vec()),
+            residence: pack.residence.map(RecallResidence::lift).transpose()?,
+        })
+    }
+}
+
+impl Lift<engine::RecallResidence> for RecallResidence {
+    fn lift(residence: engine::RecallResidence) -> Result<Self, OneironError> {
+        Ok(Self {
+            source: match residence.source {
+                engine::RecallResidenceSource::Home => RecallResidenceSource::Home,
+                engine::RecallResidenceSource::LocalOnly => RecallResidenceSource::LocalOnly,
+            },
+            complete: residence.complete,
+            capped: residence.capped,
+            hits: residence
+                .hits
+                .into_iter()
+                .map(|hit| RecallResidenceHit {
+                    id: hit.id,
+                    score: hit.score,
+                    window: hit.window,
+                })
+                .collect(),
         })
     }
 }

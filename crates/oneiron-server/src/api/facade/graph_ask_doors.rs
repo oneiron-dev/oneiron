@@ -497,13 +497,15 @@ async fn vault_questions_outcomes_answer(
 ) -> MemoryResult<QuestionOutcomes> {
     const VERB: &str = "vault.questions.outcomes";
     let principal = asker(auth, server, VERB)?.entity_ref();
-    let locality = auth.locality();
+    // The feed goes to the requester's machine, as its connection proved it
+    // (mesh PR2b).
+    let destination = auth.destination();
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || -> MemoryResult<QuestionOutcomes> {
         let vault = server.vault();
         Ok(QuestionOutcomes {
-            labels: outcome_labels(vault, principal, input.id, locality)?,
-            calibration: calibration_pairs(vault, principal, input.id, locality)?,
+            labels: outcome_labels(vault, principal, input.id, &destination)?,
+            calibration: calibration_pairs(vault, principal, input.id, &destination)?,
         })
     })
     .await

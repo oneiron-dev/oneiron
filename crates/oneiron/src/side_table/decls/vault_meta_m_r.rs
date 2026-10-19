@@ -283,6 +283,9 @@ side_tables! {
     /// The "widen needs every owner" row: the vault's setting and per-world overrides (FIX 4480).
     /// Key: ().
     OWNER_POLICY_WORLD_PRIVACY_UNANIMITY: VaultMeta b"owner_policy:world_privacy:unanimity:v1" Named;
+    /// A "widen needs every owner" change that turns it off while on, waiting for every live
+    /// Owner's yes, with its settlement (FIX 4480). Key: request id.
+    OWNER_POLICY_WORLD_PRIVACY_UNANIMITY_OFF: VaultMeta b"owner_policy:world_privacy:unanimity_off:v1:" Named;
     /// Marker (engine version string) that the built-in connector packs have been seeded. Key: ().
     SKILL_HUB_PACK_BUILTIN_SEED: VaultMeta b"pack.builtin.seeded.v1" Raw;
     /// Candidate knowledge-pack receipt. Key: lowercase hex content hash.
@@ -531,6 +534,8 @@ side_tables! {
     /// strict-msgpack decode does not run; `RawValue` delegates to the
     /// module's own `encode_retrieval_outcome`/`decode_retrieval_outcome`.
     RETRIEVAL_OUTCOME: VaultMeta b"retr_out:v0:" Raw;
+    /// Owner-pinned retrieval blend weights no learned update may move. Key: ().
+    RETRIEVAL_POLICY_PINS: VaultMeta b"retr_policy_pins:v1:" Named;
     /// Account-local contextual retrieval posterior, updated by the Coach at sleep. Key: ().
     RETRIEVAL_POLICY_POSTERIOR: VaultMeta b"retr_policy_posterior:v1:" Named;
     /// Retrieval run telemetry record. Key: id16.
@@ -610,4 +615,6 @@ side_tables! {
     ROOMS_TURN: VaultMeta b"rooms.turn.v1/" LegacyJson;
     /// Durable wait binding for a run-branch ask. Key: attempt id16 + handle hash32 + step hash32.
     RUN_TREE_ASK_WAIT: VaultMeta b"run.ask.wait.v1/" Named;
+    /// One explicitly reviewed run's settlement and compensating-operation handles. Key: job id.
+    RUN_REVIEW_SETTLEMENT: VaultMeta b"run_review:settlement:v1:" Named;
 }

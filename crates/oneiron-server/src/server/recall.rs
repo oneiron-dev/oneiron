@@ -27,9 +27,9 @@ use oneiron::claim::CallerLocality;
 use oneiron::embed::InputKind;
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::memory::{
-    Effort, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
-    MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryPack, MemoryResult, ProducerRows,
-    RecallEffort,
+    Effort, HomeRecallAsk, HomeRecallCaller, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
+    MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryPack,
+    MemoryResult, ProducerRows, RecallEffort, complete_with_home,
 };
 use oneiron::retrieval_depth::RecallQueryVectors;
 use oneiron::task_verb::sdk::{RecallDoor, RecallRequest};
@@ -65,7 +65,18 @@ impl SyncServer {
         let media = self.recall_media(&input)?;
         let refused = Mutex::new(None);
         let embed = self.recall_embed_media(input.effort, media, &refused, payer);
+        let arrived = Instant::now();
+        let (_, budget) = oneiron::memory::resolve_recall_dial(
+            input.effort,
+            input.deadline_ms,
+            self.vault.call_mode_deadline(),
+        )?;
+        let hyde =
+            self.hyde_host
+                .expander(memory, effort, budget.map(|budget| arrived + budget))?;
         let door = RecallDoor {
+            arrived,
+            hyde: hyde.as_ref().map(|hyde| hyde.binding()),
             rerank: rerank.engine(),
             ..RecallDoor::now()
         };
@@ -76,8 +87,8 @@ impl SyncServer {
 
     /// A recall's `media` (OF-370), decoded before any work, as the context
     /// pack decodes its own: the space, the tower its MIME picks and the
-    /// bytes. Light effort refuses it ([`LIGHT_RECALL_EMBEDS_MEDIA`]), as does
-    /// a `kinds` filter, which recall's per-space list does not read.
+    /// bytes. Light effort refuses it ([`LIGHT_RECALL_EMBEDS_MEDIA`]). The
+    /// request's kind filter stays on its media-space seed.
     fn recall_media(&self, input: &RecallRequest) -> MemoryResult<Option<DecodedMediaQuery>> {
         let Some(media) = input.media.as_ref() else {
             return Ok(None);
@@ -88,12 +99,6 @@ impl SyncServer {
             return Err(MemoryError::bad_request_with(
                 "vault.recall: media needs an ai.embed call, which light effort and call mode never make",
                 &["Recall media at medium effort or above."],
-            ));
-        }
-        if !media.kinds.is_empty() {
-            return Err(MemoryError::bad_request_with(
-                "vault.recall: media.kinds is not read here; a recall's media list keeps every kind its space holds",
-                &["Leave out media.kinds, or narrow with scope.kinds."],
             ));
         }
         crate::api::ContextPackMediaQuery::from(media.clone())
@@ -137,7 +142,7 @@ impl SyncServer {
         &self,
         media: DecodedMediaQuery,
         payer: Option<&PayerPerson>,
-    ) -> MemoryResult<Vec<(String, InputKind, Vec<f32>)>> {
+    ) -> MemoryResult<Vec<(String, InputKind, Vec<f32>, Vec<InputKind>)>> {
         let Ok(runtime) = self.recall_embed_runtime() else {
             return Err(MemoryError::new(
                 MEMORY_CODE_MODEL_UNAVAILABLE,
@@ -155,7 +160,7 @@ impl SyncServer {
             .map_err(media_refusal)?;
         Ok(seeds
             .into_iter()
-            .map(|seed| (seed.space, seed.kind, seed.vector))
+            .map(|seed| (seed.space, seed.kind, seed.vector, seed.kinds))
             .collect())
     }
 
@@ -183,7 +188,7 @@ impl SyncServer {
                         return RecallQueryVectors {
                             text_index: None,
                             media: vector
-                                .map(|vector| (space, InputKind::Text, vector))
+                                .map(|vector| (space, InputKind::Text, vector, Vec::new()))
                                 .into_iter()
                                 .collect(),
                         };
@@ -274,6 +279,7 @@ impl SyncServer {
     /// without naming it (a reaction claim a line counts) as recall read it,
     /// for a door that judges the pack again before it leaves this device
     /// (DEC-0005). A pack cut at its deadline comes with the rows read by then.
+    /// It asks no home: an opened device's pack says it answered alone.
     pub(crate) async fn recall_off_runtime_listing(
         self: &Arc<Self>,
         actor: EntityId,
@@ -282,6 +288,42 @@ impl SyncServer {
         locality: CallerLocality,
         room: Option<EntityId>,
         input: RecallRequest,
+    ) -> (MemoryResult<MemoryPack>, Vec<EntityId>) {
+        self.recall_home_listing(
+            actor,
+            class,
+            proof,
+            locality,
+            room,
+            input,
+            HomeRecallCaller::none(),
+        )
+        .await
+    }
+
+    /// [`Self::recall_off_runtime_listing`] that also asks this device's
+    /// home, when it syncs only what it opened (FIX 2905): once the local
+    /// pack is ready, and before its deadline, the home is asked for the
+    /// references it holds that the pack does not, under `home`, the caller
+    /// as its ingress admitted it, and within the residence RPC timeout and
+    /// what is left of the deadline. Its hits ride in `residence`, apart
+    /// from the local items, which stay as ranked. A pack cut at its
+    /// deadline or a refused recall asks nothing; a home out of reach, or a
+    /// recall the home cannot answer, leaves the pack local-only and
+    /// `partial`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the recall door's parameters plus the caller it asks the home for"
+    )]
+    pub(crate) async fn recall_home_listing(
+        self: &Arc<Self>,
+        actor: EntityId,
+        class: EdgeActorClass,
+        proof: Option<VerifiedSlip>,
+        locality: CallerLocality,
+        room: Option<EntityId>,
+        input: RecallRequest,
+        home: HomeRecallCaller,
     ) -> (MemoryResult<MemoryPack>, Vec<EntityId>) {
         let producers = Arc::new(ProducerRows::default());
         let listing = Arc::clone(&producers);
@@ -294,19 +336,26 @@ impl SyncServer {
             )?;
             let rerank = self.door_rerank(effort, actor, class)?;
             let media = self.recall_media(&input)?;
+            let ask = HomeRecallAsk::new(&input, room.is_some());
             let ready = CutSlot::default();
             let publish = ready.clone();
             let server = Arc::clone(self);
             let task = tokio::task::spawn_blocking(move || {
                 let publish = move |pack| publish.put(pack);
+                let memory = reader(&server.vault, actor, class, proof.as_ref())
+                    .at(locality)
+                    .listing_producers(&listing);
+                let hyde = server.hyde_host.expander(
+                    &memory,
+                    effort,
+                    budget.map(|budget| arrived + budget),
+                )?;
                 let door = RecallDoor {
                     arrived,
                     on_cut: budget.map(|_| &publish as &(dyn Fn(MemoryPack) + Sync)),
                     rerank: rerank.engine(),
+                    hyde: hyde.as_ref().map(|hyde| hyde.binding()),
                 };
-                let memory = reader(&server.vault, actor, class, proof.as_ref())
-                    .at(locality)
-                    .listing_producers(&listing);
                 let refused = Mutex::new(None);
                 // A door's own recall is the owner's: no run funds it.
                 let embed = server.recall_embed_media(input.effort, media, &refused, None);
@@ -331,10 +380,15 @@ impl SyncServer {
                     }
                 }
             };
-            joined.unwrap_or_else(|error| {
+            let mut pack = joined.unwrap_or_else(|error| {
                 tracing::warn!(panicked = error.is_panic(), "recall task failed to join");
                 Err(recall_did_not_finish())
-            })
+            })?;
+            let due = budget.map(|budget| arrived + budget);
+            if due.is_none_or(|due| Instant::now() < due) {
+                complete_with_home(&self.vault, &mut pack, &ask, &home, due).await;
+            }
+            Ok(pack)
         }
         .await;
         (pack, producers.take())
@@ -400,6 +454,7 @@ impl SyncServer {
                     arrived,
                     on_cut: Some(&publish),
                     rerank: oneiron::memory::RecallRerank::Required,
+                    hyde: None,
                 };
                 let memory = reader(&vault, actor, class, proof.as_ref())
                     .at(locality)

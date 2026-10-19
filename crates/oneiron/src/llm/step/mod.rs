@@ -10,6 +10,9 @@
 //! memoized — never bit-replayed.
 
 mod codec;
+// FIX 4465 B: a self-written compaction's calls, filed in this family on
+// their run's captured route (an `ExecutorStorage` method, no export).
+mod compaction_step;
 mod execute;
 pub mod public;
 mod schema;
@@ -57,6 +60,7 @@ pub(crate) use self::step_only::{
     signal_step_wait_in_txn,
 };
 
+pub(crate) use self::settled::committed_steps_in_txn;
 pub(crate) use self::step_claim::{
     deindex_dreamer_step_claim, forget_step_memo, index_dreamer_step_claim_for_put,
     terminal_step_identity,

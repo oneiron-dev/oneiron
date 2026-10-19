@@ -3,7 +3,9 @@ use crate::claim::{WeaveReaderRef, WeaveScheduleView};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::maintenance::agent_health::COACH_AGENT_HEALTH_FACET;
 use crate::dreamer_runner::maintenance::{MAINTENANCE_QUEUE_KIND, validate_owner_in_txn};
-use crate::dreamer_runner::{DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome};
+use crate::dreamer_runner::{
+    DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+};
 use crate::memory::{DreamerAttemptRef, Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, EntityId};
 use serde::{Deserialize, Serialize};
@@ -74,7 +76,9 @@ pub fn weave_schedules(
     owner: &AuthenticatedOwner,
 ) -> MemoryResult<Vec<WeaveScheduleView>> {
     owner_handle(memory, owner)?;
-    Ok(memory.vault().weave_digest_schedules(owner)?
+    Ok(memory
+        .vault()
+        .weave_digest_schedules(owner)?
         .into_iter()
         .map(|(row, held)| WeaveScheduleView::from_schedule(&row, held))
         .collect())
@@ -98,7 +102,9 @@ pub fn weave_schedule_clear(
 ) -> MemoryResult<WeaveScheduleCleared> {
     owner_handle(memory, owner)?;
     Ok(WeaveScheduleCleared {
-        cleared: memory.vault().clear_weave_digest_schedule(owner, input.reader()?)?,
+        cleared: memory
+            .vault()
+            .clear_weave_digest_schedule(owner, input.reader()?)?,
     })
 }
 

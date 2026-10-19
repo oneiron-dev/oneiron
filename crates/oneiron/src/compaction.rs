@@ -111,13 +111,17 @@ pub use gate::{
 pub(crate) use gate::{
     compaction_input_tokens, compaction_pin_input_tokens, compaction_step_input_tokens,
 };
-pub use hooks::{CompactHooks, HOST_COMPACT, compact_invocation};
+pub(crate) use hooks::host_compact_as_owner;
+pub use hooks::{CompactHooks, HOST_COMPACT, check_host_compact_rewrite, compact_invocation};
 pub use packet_source::{CompactionHostLog, CompactionSource, admit_compaction_source};
 pub use self_writer::{
-    CompactionExecution, CompactionHomeRef, CompactionUsage, SelfCompactionUnavailable,
-    compaction_usage_projection,
+    CompactionCall, CompactionEvidence, CompactionExecution, CompactionHomeRef, CompactionLanding,
+    CompactionLandingReceipt, CompactionStepRef, CompactionUsage, HOME_PART_WORN,
+    SelfCompactionUnavailable, compaction_usage_projection,
 };
-pub(crate) use self_writer::{SelfLanding, admit_self_landing};
+pub(crate) use self_writer::{
+    SelfLanding, admit_self_landing, admit_self_landing_on, is_epoch_summary,
+};
 pub(crate) use stored_epoch::{StoredEpoch, stored_epoch_in};
 pub(crate) use withdrawn::{WithdrawnKeyframe, erased_form, scrub_withdrawn_epoch_in_txn};
 #[cfg(feature = "sync")]

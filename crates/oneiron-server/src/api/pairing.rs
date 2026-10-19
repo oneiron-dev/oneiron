@@ -385,8 +385,8 @@ fn paired_mcp_record(
 /// Records a live paired slip the in-memory registry has not seen: one
 /// redeemed before this process started, or minted on the stopped vault
 /// (`token agent`, `token read`). The slip must verify with its holder proof
-/// first, against the log and its revocations, exactly as every request's
-/// does; then it gets the record redeem would have written. Returns whether
+/// first; `auth` is the exact instrument the gateway already verified. Then
+/// it gets the record redeem would have written. Returns whether
 /// it recorded one.
 ///
 /// Only the slip as redeem minted it: a holder's caveated copy has its own
@@ -395,7 +395,7 @@ fn paired_mcp_record(
 pub(super) fn register_live_paired_mcp(
     registry: &mut crate::mcp::McpConnectorActorRegistry,
     credential: &str,
-    headers: &HeaderMap,
+    auth: &crate::auth::CoreAuth,
     server: &SyncServer,
 ) -> bool {
     let uncaveated = oneiron::authority::CapabilitySlip::from_token(credential)
@@ -403,10 +403,10 @@ pub(super) fn register_live_paired_mcp(
     if !credential.starts_with("v2.slip.") || !uncaveated {
         return false;
     }
-    let verified = crate::auth::BindingProof::from_headers(headers).and_then(|proof| {
-        crate::auth::CoreAuth::from_slip_token(credential, &proof, server.vault().as_ref())
-    });
-    let Some(slip) = verified.as_ref().ok().and_then(|auth| auth.verified_slip()) else {
+    let Some(slip) = auth
+        .verified_slip()
+        .filter(|_| auth.credential_is_live(server.vault()))
+    else {
         return false;
     };
     // Redeem pairs only a holder that exists; neither does this.

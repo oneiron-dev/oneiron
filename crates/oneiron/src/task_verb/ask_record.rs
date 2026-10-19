@@ -341,7 +341,7 @@ impl crate::memory::Memory<'_> {
             .collect::<Vec<_>>();
         self.produced_from(rows.iter().copied());
         let store = &self.vault().store;
-        let kept = crate::settings::device_local_worlds_at(self.vault(), txn, self.locality())?;
+        let kept = crate::settings::device_local_worlds_for(self.vault(), txn, self.destination())?;
         if group.class_source_unrecorded() {
             return Ok(None);
         }

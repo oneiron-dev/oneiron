@@ -545,6 +545,14 @@ impl SyncClient {
                     window.as_str().as_bytes(),
                 )?;
                 crate::sync::residence::record_item_touch_in_txn(&self.vault, txn, item, now)?;
+                // FIX 4385: a machine history the cached row needs is owed.
+                crate::sync::machine_history::owe_touched_in_txn(
+                    &self.vault,
+                    txn,
+                    window.as_str(),
+                    item,
+                    &blob,
+                )?;
                 Ok(())
             })
             .map_err(|e| TransportError::Storage(e.to_string()))?;

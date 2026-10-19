@@ -257,7 +257,8 @@ impl Vault {
     /// attesting failure after that returns the error with the image kept
     /// unattested; a later upkeep attests it again. The attested head moves
     /// only when the stored attestations reach the policy's quorum
-    /// ([`Vault::host_attest_authority_checkpoint`]).
+    /// ([`Vault::host_attest_authority_checkpoint`]). A host root the policy
+    /// in force does not name attests nothing.
     pub fn write_authority_checkpoint_v2(&self, issuer: &HostSlipIssuer) -> Result<[u8; 32]> {
         let (image, head, accounted) = {
             let txn = self.store.env.read_txn()?;
@@ -312,7 +313,11 @@ impl Vault {
             },
         )?;
         txn.commit()?;
-        self.host_attest_authority_checkpoint(issuer, id)?;
+        // The owner's selected policy may name no host root (mesh PR2c): the
+        // image then waits for the roots he named, and checkpointing goes on.
+        if self.checkpoint_root_eligible(&issuer.public_key())? {
+            self.host_attest_authority_checkpoint(issuer, id)?;
+        }
         Ok(id)
     }
 

@@ -25,8 +25,8 @@ use super::consult_result::CancelTargetState;
 use super::follow_up::peer_handle_in;
 use super::presence_diagnostics::record_read_failure;
 pub(super) use super::presence_diagnostics::{TaskPresenceReadFailure, TaskPresenceReadStage};
-use super::presence_pages::device_admitted_task_page;
 pub(super) use super::presence_pages::scan_task_entity_pages;
+use super::presence_pages::{device_admitted_task_page, retain_readable_owners};
 use super::rate_limit::task_create_owner_in;
 use super::route_receipts::TaskCancelTarget;
 use super::terminal_state::{
@@ -149,16 +149,16 @@ pub(super) fn task_presence(vault: &Vault) -> Result<TaskPresenceSnapshot> {
     task_presence_at(vault, crate::claim::CallerLocality::OnDevice)
 }
 
-/// The board's TASK presence for a reader at `locality`. It reads every TASK,
+/// The board's TASK presence for a reader toward `dest`. It reads every TASK,
 /// however many the vault keeps, so no run of rows hides a live one (rule 5,
 /// F13 H222); past the threshold row the read raises the owner's check. Off
-/// this device a TASK a device-local world keeps is passed over before it
-/// takes a place in the rows (DEC-0005); the check counts it.
+/// this device a TASK a world withheld from `dest`'s machine keeps is passed
+/// over before it takes a place in the rows (DEC-0005, mesh PR2b); the check counts it.
 pub(super) fn task_presence_at(
     vault: &Vault,
-    locality: crate::claim::CallerLocality,
+    dest: impl Into<crate::settings::ReadDestination>,
 ) -> Result<TaskPresenceSnapshot> {
-    let snapshot = task_presence_with_limits(vault, TASK_PRESENCE_PAGE_SIZE, usize::MAX, locality)?;
+    let snapshot = task_presence_with_limits(vault, TASK_PRESENCE_PAGE_SIZE, usize::MAX, dest)?;
     let txn = vault.store.env.read_txn()?;
     let mut count = crate::scan_check::ScanCount::start(
         &vault.store,
@@ -178,8 +178,9 @@ pub(super) fn task_presence_with_limits(
     vault: &Vault,
     page_size: usize,
     scan_cap: usize,
-    locality: crate::claim::CallerLocality,
+    dest: impl Into<crate::settings::ReadDestination>,
 ) -> Result<TaskPresenceSnapshot> {
+    let dest: crate::settings::ReadDestination = dest.into();
     let JobBacklinks {
         mut realizing,
         mut bare,
@@ -187,12 +188,12 @@ pub(super) fn task_presence_with_limits(
     let mut index_after: Option<EntityId> = None;
     let mut index_rows_read = 0;
     let scan = scan_task_entity_pages(page_size, scan_cap, |after, limit| {
-        if locality == crate::claim::CallerLocality::OnDevice {
+        if !dest.is_off_device() {
             let page = vault.entities_by_type_page(ENTITY_TYPE_TASK, after, limit)?;
             index_rows_read += page.len();
             return Ok(page);
         }
-        device_admitted_task_page(vault, &mut index_after, limit, &mut index_rows_read)
+        device_admitted_task_page(vault, &dest, &mut index_after, limit, &mut index_rows_read)
     })?;
 
     // Read-time clock: a consult past its deadline surfaces as expired from the
@@ -281,20 +282,7 @@ pub(super) fn task_presence_with_limits(
         }
     }
 
-    if locality != crate::claim::CallerLocality::OnDevice {
-        // Off this device, a job whose TASK a device-local world keeps stays
-        // withheld with that TASK (DEC-0005). Owners the rule lets through,
-        // missing ones included, still render as dangling bare jobs below.
-        let owners = realizing
-            .keys()
-            .filter_map(|task_hex| EntityId::from_hex(task_hex).ok())
-            .collect();
-        let readable: HashSet<EntityId> = vault.off_device_readable(owners)?.into_iter().collect();
-        realizing.retain(|task_hex, _| match EntityId::from_hex(task_hex) {
-            Err(_) => true,
-            Ok(owner) => readable.contains(&owner),
-        });
-    }
+    retain_readable_owners(vault, &dest, &mut realizing)?;
 
     if scan.source_exhausted {
         // P2 F7 (dangling backlink): every live realizing job must render

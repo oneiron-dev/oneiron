@@ -661,11 +661,11 @@ impl<'a> Routes<'a> {
             else {
                 return;
             };
-            if crate::federation::guest_claim_withheld(&body) {
+            if let Some(refusal) = crate::federation::guest_claim_withheld(&body) {
                 terminal.push(
                     crate::sync::quarantine::QuarantineContainer::Entities,
                     raw,
-                    &Error::Claim(crate::error::ClaimError::InvalidMachineClaimProof),
+                    &refusal,
                     blob,
                 );
                 routes.withheld.insert(id);
