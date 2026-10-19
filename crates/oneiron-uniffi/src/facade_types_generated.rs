@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1011 facade rows, 3413 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 963.
+// UniFFI census: 1012 facade rows, 3416 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 964.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -47384,11 +47384,24 @@ pub struct CheckpointView {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConsolidationHomeNode {
     #[serde(rename = "node_id")]
-    pub node_id: u64,
+    pub node_id: String,
     #[serde(rename = "class")]
     pub class: String,
     #[serde(rename = "elected_at")]
     pub elected_at: u64,
+}
+
+/// `oneiron::dreamer_runner::owner_doors::ConsolidationHomePickHead`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsolidationHomePickHead {
+    #[serde(rename = "act_ref")]
+    pub act_ref: String,
+    #[serde(rename = "machine")]
+    pub machine: String,
+    #[serde(rename = "node_id", default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(rename = "at")]
+    pub at: u64,
 }
 
 /// `oneiron::dreamer_runner::owner_doors::ConsolidationHomeView`.
@@ -47397,9 +47410,42 @@ pub struct ConsolidationHomeView {
     #[serde(rename = "home", default, skip_serializing_if = "Option::is_none")]
     pub home: Option<ConsolidationHomeNode>,
     #[serde(rename = "this_node", default, skip_serializing_if = "Option::is_none")]
-    pub this_node: Option<u64>,
+    pub this_node: Option<String>,
     #[serde(rename = "candidates_available")]
     pub candidates_available: bool,
+    #[serde(rename = "pick", default, skip_serializing_if = "Option::is_none")]
+    pub pick: Option<String>,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(rename = "heads")]
+    pub heads: Vec<ConsolidationHomePickHead>,
+    #[serde(rename = "conflict")]
+    pub conflict: Vec<ConsolidationHomePickHead>,
+}
+
+/// `oneiron::dreamer_runner::owner_doors::ConsolidationHomePickRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConsolidationHomePickRequest {
+    #[serde(rename = "node_id", default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+}
+
+/// `oneiron::dreamer_runner::owner_doors::ConsolidationHomePickReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsolidationHomePickReceipt {
+    #[serde(rename = "pick", default, skip_serializing_if = "Option::is_none")]
+    pub pick: Option<String>,
+    #[serde(rename = "act_ref")]
+    pub act_ref: String,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(rename = "heads")]
+    pub heads: Vec<ConsolidationHomePickHead>,
+    #[serde(rename = "conflict")]
+    pub conflict: Vec<ConsolidationHomePickHead>,
+    #[serde(rename = "home", default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<ConsolidationHomeNode>,
 }
 
 /// `oneiron::dreamer_runner::owner_doors::ConsolidationLineageRequest`.

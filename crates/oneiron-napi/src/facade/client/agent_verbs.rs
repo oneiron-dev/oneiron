@@ -7906,6 +7906,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_consolidation_home_pick(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.home.pick", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_consolidation_lineage(
         &self,
         input: serde_json::Value,

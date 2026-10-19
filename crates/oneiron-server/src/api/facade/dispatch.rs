@@ -20545,6 +20545,30 @@ async fn vault_consolidation_home_get(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_consolidation_home_pick(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consolidation.home.pick")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consolidation.home.pick", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consolidation.home.pick", value).await?;
+    let (output, listed) = super::host_doors::vault_consolidation_home_pick(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_consolidation_lineage(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -25122,6 +25146,7 @@ pub(crate) async fn call_verb(
         "vault.runs.step" => vault_runs_step(server, call, input).await,
         "vault.runs.checkpoint" => vault_runs_checkpoint(server, call, input).await,
         "vault.consolidation.home.get" => vault_consolidation_home_get(server, call, input).await,
+        "vault.consolidation.home.pick" => vault_consolidation_home_pick(server, call, input).await,
         "vault.consolidation.lineage" => vault_consolidation_lineage(server, call, input).await,
         "vault.consolidation.promote" => vault_consolidation_promote(server, call, input).await,
         "vault.consolidation.pin" => vault_consolidation_pin(server, call, input).await,

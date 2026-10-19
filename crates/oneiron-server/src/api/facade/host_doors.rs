@@ -1457,6 +1457,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.runs.branches.get"
         | "vault.consults.get"
         | "vault.consolidation.home.get"
+        | "vault.consolidation.home.pick"
         | "vault.consolidation.lineage"
         | "vault.workspace.roster"
         | "vault.booking.page_token"

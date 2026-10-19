@@ -7837,6 +7837,16 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_consolidation_home_pick(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.home.pick")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.consolidation.home.pick", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_consolidation_lineage(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.consolidation.lineage")?;
         let output = py

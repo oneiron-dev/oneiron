@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1045 code-mode rows (1021 host rows, 24 run rows), 3480 declarations.
-// Replies: 937 fully typed, 104 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1046 code-mode rows (1022 host rows, 24 run rows), 3483 declarations.
+// Replies: 938 fully typed, 104 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -3136,8 +3136,11 @@ declare namespace Sdk {
   type CheckpointStepView = { step: number; label: string; state_hash: string; created_at_ms: number };
   type CheckpointResumeView = { step: number; wait_ref: string; effect: string; output_handle: string; reply?: unknown | null };
   type CheckpointView = { run_ref: string; completed_steps: number; steps: CheckpointStepView[]; resumed: CheckpointResumeView[]; next_step?: number | null };
-  type ConsolidationHomeNode = { node_id: number; class: string; elected_at: number };
-  type ConsolidationHomeView = { home?: ConsolidationHomeNode | null; this_node?: number | null; candidates_available: boolean };
+  type ConsolidationHomeNode = { node_id: string; class: string; elected_at: number };
+  type ConsolidationHomePickHead = { act_ref: string; machine: EntityId; node_id?: string | null; at: number };
+  type ConsolidationHomeView = { home?: ConsolidationHomeNode | null; this_node?: string | null; candidates_available: boolean; pick?: string | null; revision: string; heads: ConsolidationHomePickHead[]; conflict: ConsolidationHomePickHead[] };
+  type ConsolidationHomePickRequest = { node_id?: string | null };
+  type ConsolidationHomePickReceipt = { pick?: string | null; act_ref: string; revision: string; heads: ConsolidationHomePickHead[]; conflict: ConsolidationHomePickHead[]; home?: ConsolidationHomeNode | null };
   type ConsolidationLineageRequest = { job_ref: string; from_step?: string | null; limit?: number | null };
   type ConsolidationTryView = { job_ref: string; kind: string; state: AttemptState; run_id?: string | null; parent_attempt?: string | null; retry_of?: string | null; folded_retries: number; attempt_count: number; lease_owner?: string | null; result_ref?: string | null; resume_point?: AttemptResumePoint | null; parked?: DreamerParkedAttemptView | null };
   type ConsolidationStepRef = { step_hash: string; claim_ref: EntityId };
@@ -4605,6 +4608,8 @@ declare const vault: Sdk.VaultHost & {
     home: {
       /** The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything. */
       get(input: Sdk.EmptyRequest): Promise<Sdk.ConsolidationHomeView | StoredResult>;
+      /** The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget. */
+      pick(input: Sdk.ConsolidationHomePickRequest): Promise<Sdk.ConsolidationHomePickReceipt | StoredResult>;
     };
     /** The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model. */
     lineage(input: Sdk.ConsolidationLineageRequest): Promise<Sdk.ConsolidationLineageView | null | StoredResult>;

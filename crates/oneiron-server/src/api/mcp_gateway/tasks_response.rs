@@ -1842,6 +1842,7 @@ fn mcp_agent_verb_input(
         "vault.runs.step" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.checkpoint" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.home.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.consolidation.home.pick" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.lineage" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.promote" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.pin" => a.spec.clone().ok_or_else(invalid),
@@ -4709,6 +4710,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consolidation.home.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consolidation.home.pick" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consolidation.lineage" => {
@@ -19366,6 +19370,25 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_consolidation_home_get(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consolidation.home.pick" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.consolidation.home.pick", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::dreamer_runner::ConsolidationHomePickRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_consolidation_home_pick(server, auth, input)
                     .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(

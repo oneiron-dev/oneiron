@@ -909,6 +909,7 @@ vaultConsolidationStatus(input: unknown): unknown
 vaultRunsStep(input: unknown): unknown
 vaultRunsCheckpoint(input: unknown): unknown
 vaultConsolidationHomeGet(input: unknown): unknown
+vaultConsolidationHomePick(input: unknown): unknown
 vaultConsolidationLineage(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
 vaultConsolidationPin(input: unknown): unknown

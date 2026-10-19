@@ -14854,6 +14854,21 @@
       "openapi": true
     },
     {
+      "name": "vault.consolidation.home.pick",
+      "description": "The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget.",
+      "input": "crate::dreamer_runner::ConsolidationHomePickRequest",
+      "output": "crate::dreamer_runner::ConsolidationHomePickReceipt",
+      "call": "crate::dreamer_runner::consolidation_home_pick_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.home.pick\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.consolidation.lineage",
       "description": "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model.",
       "input": "crate::dreamer_runner::ConsolidationLineageRequest",
