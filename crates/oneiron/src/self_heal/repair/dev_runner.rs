@@ -9,7 +9,7 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimSource, ScopedReadResult};
 use crate::dispatch_byoa::{
     ByoEndpointBackendFactory, ByoaConnectorSpec, ByoaDispatchOutcome, ByoaDispatcher,
-    ByoaEgressPort, ByoaError, ByoaResult, DispatchByoa, DreamerProviderAdapter,
+    ByoaEgressPort, ByoaError, ByoaResult, ByoaStream, DispatchByoa, DreamerProviderAdapter,
     DreamerProviderInput,
 };
 use crate::limit_ask::EngineLimit;
@@ -136,9 +136,10 @@ impl HealerRegistration<'_> {
     /// egress, budget and exhaust rules of every other foreign runner.
     ///
     /// The adapter must produce a CLI connector with the supplied task as its
-    /// final argv member, as the standard named adapters do. Existing argv
-    /// byte limits apply; callers select the diagnostics for each job, and
-    /// their count is measured against `limits.repair_diagnostic_refs`.
+    /// final argv member, as the standard named adapters do. The task JSON
+    /// rides that one argv entry whole: dispatch measures its length and never
+    /// refuses it for its bytes. Callers select the diagnostics for each job,
+    /// and their count is measured against `limits.repair_diagnostic_refs`.
     pub fn dispatch_dev_runner<B, E>(
         &self,
         dispatcher: &mut ByoaDispatcher<'_, B, E>,
@@ -226,7 +227,11 @@ impl HealerRegistration<'_> {
         {
             return Err(Error::InvalidConfig("dev runner identity mismatch".into()).into());
         }
-        if exhaust.diff_bundle.as_ref().is_none_or(Vec::is_empty) {
+        if exhaust
+            .diff_bundle
+            .as_ref()
+            .is_none_or(ByoaStream::is_empty)
+        {
             return Err(Error::InvalidConfig("dev runner produced no patch".into()).into());
         }
         let diagnostic_refs: Vec<_> = task

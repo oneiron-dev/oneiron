@@ -204,19 +204,14 @@ fn response_text(vault: &Vault, attempt: &AttemptRecord) -> String {
             .unwrap_or_default();
     }
     if let Ok((artifact, version)) = parse_byoa_result_ref(result) {
-        return vault
-            .read_blob_artifact_version(&artifact, version)
+        return decode_byoa_exhaust(vault, &artifact, version)
             .ok()
-            .flatten()
-            .and_then(|bytes| decode_byoa_exhaust(&bytes).ok())
-            .map(|(_, _, exhaust)| {
-                String::from_utf8_lossy(
-                    exhaust
-                        .transcript
-                        .as_deref()
-                        .unwrap_or(exhaust.stdout.as_slice()),
-                )
-                .into_owned()
+            .and_then(|(_, _, exhaust)| {
+                // The judge reads the answer whole, however long it ran.
+                let stream = exhaust.transcript.as_ref().unwrap_or(&exhaust.stdout);
+                let mut bytes = Vec::new();
+                std::io::Read::read_to_end(&mut stream.reader(), &mut bytes).ok()?;
+                Some(String::from_utf8_lossy(&bytes).into_owned())
             })
             .unwrap_or_default();
     }

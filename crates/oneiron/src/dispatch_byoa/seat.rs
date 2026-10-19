@@ -426,19 +426,25 @@ impl SeatSpent {
 /// Reads a runner's exhaust for a spent seat: a structured error event the
 /// CLI printed (an `error` field, a `type: "error"` event, or a result
 /// flagged `is_error`) whose words read as a limit. A nonzero exit or free
-/// text is never one.
-#[must_use]
-pub fn spent_seat_in(exhaust: &ByoaExhaust) -> Option<SeatSpent> {
-    [&exhaust.stdout, &exhaust.stderr]
-        .into_iter()
-        .find_map(|stream| {
-            let tail = &stream[stream.len().saturating_sub(SPENT_SCAN_BYTES)..];
-            String::from_utf8_lossy(tail)
-                .lines()
-                .rev()
-                .take(SPENT_SCAN_LINES)
-                .find_map(spent_in_line)
-        })
+/// text is never one. Only each stream's tail is read, however long it runs.
+///
+/// # Errors
+///
+/// Returns [`super::ByoaError::Store`] when a spooled stream's tail cannot be
+/// read.
+pub fn spent_seat_in(exhaust: &ByoaExhaust) -> ByoaResult<Option<SeatSpent>> {
+    for stream in [&exhaust.stdout, &exhaust.stderr] {
+        let tail = stream.tail(SPENT_SCAN_BYTES)?;
+        let spent = String::from_utf8_lossy(&tail)
+            .lines()
+            .rev()
+            .take(SPENT_SCAN_LINES)
+            .find_map(spent_in_line);
+        if spent.is_some() {
+            return Ok(spent);
+        }
+    }
+    Ok(None)
 }
 
 fn spent_in_line(line: &str) -> Option<SeatSpent> {

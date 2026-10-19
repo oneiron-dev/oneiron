@@ -42,7 +42,7 @@ pub(super) const ERR_SERVER_REF: &str = "protocol attach server_ref must be non-
 pub(super) const ERR_PROGRAM: &str =
     "cli sandbox program must be a bare executable, not a command line";
 
-pub(super) const ERR_ARGV_ENTRY: &str = "cli sandbox argv entry must be bounded and printable";
+pub(super) const ERR_ARGV_ENTRY: &str = "cli sandbox argv entry must be printable";
 
 pub(super) const ERR_ARGV_TOO_LONG: &str = "cli sandbox argv has too many entries";
 
@@ -55,8 +55,6 @@ pub(super) const ERR_CREDENTIAL_HANDLES: &str =
 pub(super) const ERR_EXHAUST_ENCODE: &str = "byoa exhaust failed to encode";
 
 pub(super) const ERR_EXHAUST_EMPTY: &str = "byoa exhaust must carry at least one stream";
-
-pub(super) const ERR_EXHAUST_TOO_LARGE: &str = "byoa exhaust exceeds its byte budget";
 
 pub(super) const ERR_EXHAUST_TAINT: &str = "byoa exhaust taint refs are malformed";
 
@@ -152,6 +150,14 @@ pub enum ByoaError {
     /// caller routes it under the owner's [`super::OnSeatSpent`].
     #[error("byoa seat spent: {}", .0.reason())]
     SeatSpent(SeatSpent),
+    /// A spooled exhaust stream's next write would take its disk below the
+    /// free-space floor the host keeps, or the disk is full. The capture
+    /// stops here rather than keep part of the stream.
+    #[error("byoa exhaust spool stopped at the disk's free-space floor")]
+    SpoolAtDiskFloor,
+    /// The run's deadline passed before its exhaust was wholly captured.
+    #[error("byoa run passed its deadline before its exhaust was captured")]
+    SpoolDeadline,
     /// Any crate-level refusal raised beneath this module — a queue door, a
     /// vault write, or a connector validator.
     #[error(transparent)]

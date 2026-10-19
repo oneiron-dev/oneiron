@@ -36,13 +36,10 @@ pub(super) const BYOA_EXHAUST_ARTIFACT_ID_DOMAIN: &[u8] = b"oneiron:byoa-exhaust
 /// Domain separator for the stable host-runtime write actor.
 pub(super) const BYOA_RUNTIME_ACTOR_DOMAIN: &[u8] = b"oneiron:byoa-runtime-actor:v1";
 
-/// Maximum bytes in each binary exhaust stream.
-pub const BYOA_MAX_EXHAUST_STREAM_BYTES: usize = 4 * 1024 * 1024;
-
-/// Maximum total stream and checkpoint text bytes in one capture.
-pub const BYOA_MAX_EXHAUST_TOTAL_BYTES: usize = 8 * 1024 * 1024;
-
-pub(super) const MAX_EXHAUST_ENCODED_BYTES: usize = 2 * BYOA_MAX_EXHAUST_TOTAL_BYTES + 64 * 1024;
+/// Bytes of one exhaust stream held in memory before the rest spools to disk,
+/// and the size of each chunk a longer stream is stored in. Never a refusal:
+/// a stream of any length is captured and stored whole.
+pub const BYOA_EXHAUST_INLINE_BYTES: usize = 4 * 1024 * 1024;
 
 pub(super) const MAX_BASE_URL_LEN: usize = 2048;
 
@@ -55,8 +52,6 @@ pub(super) const MAX_SERVER_REF_LEN: usize = 512;
 pub(super) const MAX_PROGRAM_LEN: usize = 512;
 
 pub(super) const MAX_ARGV_ENTRIES: usize = 256;
-
-pub(super) const MAX_ARGV_ENTRY_LEN: usize = 4096;
 
 pub(super) const MAX_EGRESS_PROFILE_REF_LEN: usize = 256;
 

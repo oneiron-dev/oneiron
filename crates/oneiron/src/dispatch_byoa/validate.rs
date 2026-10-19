@@ -1,23 +1,23 @@
-//! Dispatch and execution door validators and bounded-encoding helpers.
+//! Dispatch and execution door validators and the execution transcript encoders.
 
 use serde::Serialize;
 
 use crate::code_sandbox::microvm::ExecutionBudget;
 
 use super::connector::{
-    BYOA_MAX_EXHAUST_STREAM_BYTES, BYOA_MAX_EXHAUST_TOTAL_BYTES, ByoEndpointSpec,
-    ByoaConnectorSpec, CliSandboxSpec, MAX_ARGV_ENTRIES, MAX_ARGV_ENTRY_LEN, MAX_BASE_URL_LEN,
+    ByoEndpointSpec, ByoaConnectorSpec, CliSandboxSpec, MAX_ARGV_ENTRIES, MAX_BASE_URL_LEN,
     MAX_CHECKPOINT_FRONTIER_ENTRIES, MAX_CHECKPOINT_FRONTIER_ENTRY_LEN, MAX_CREDENTIAL_HANDLES,
     MAX_EGRESS_PROFILE_REF_LEN, MAX_MODEL_SLUG_ENTRIES, MAX_MODEL_SLUG_LEN, MAX_PROGRAM_LEN,
     MAX_SERVER_REF_LEN, ProtocolAttachSpec, SHELL_METACHARACTERS,
 };
 use super::error::{
-    ByoaResult, ERR_ARGV_ENTRY, ERR_ARGV_TOO_LONG, ERR_BASE_URL, ERR_CHECKPOINT_FRONTIER,
-    ERR_CREDENTIAL_HANDLES, ERR_EGRESS_PROFILE_REF, ERR_EXECUTION_BUDGET, ERR_EXHAUST_EMPTY,
-    ERR_EXHAUST_TAINT, ERR_EXHAUST_TOO_LARGE, ERR_MODEL_SLUG, ERR_PROGRAM, ERR_SERVER_REF,
-    ERR_SLUG_MAP_EMPTY, ERR_SLUG_MAP_TOO_LARGE, invalid,
+    ByoaError, ByoaResult, ERR_ARGV_ENTRY, ERR_ARGV_TOO_LONG, ERR_BASE_URL,
+    ERR_CHECKPOINT_FRONTIER, ERR_CREDENTIAL_HANDLES, ERR_EGRESS_PROFILE_REF, ERR_EXECUTION_BUDGET,
+    ERR_EXHAUST_EMPTY, ERR_EXHAUST_ENCODE, ERR_EXHAUST_TAINT, ERR_MODEL_SLUG, ERR_PROGRAM,
+    ERR_SERVER_REF, ERR_SLUG_MAP_EMPTY, ERR_SLUG_MAP_TOO_LARGE, invalid,
 };
 use super::exhaust::ByoaExhaust;
+use super::stream::{ByoaStream, ByoaStreamWriter};
 fn is_bounded_printable(value: &str, max_len: usize) -> bool {
     !value.is_empty() && value.len() <= max_len && !value.chars().any(char::is_control)
 }
@@ -98,8 +98,9 @@ pub(super) fn validate_cli_sandbox(spec: &CliSandboxSpec) -> ByoaResult<()> {
     }
     for arg in &spec.argv {
         // An argument MAY be empty — an empty argv slot is meaningful to many
-        // programs — but it may not be unbounded or carry control bytes.
-        if arg.len() > MAX_ARGV_ENTRY_LEN || arg.chars().any(char::is_control) {
+        // programs — and of any length, but it may not carry control bytes.
+        // Its length is measured where the row is written, never refused.
+        if arg.chars().any(char::is_control) {
             return Err(invalid(ERR_ARGV_ENTRY));
         }
     }
@@ -123,42 +124,60 @@ pub(super) fn validate_execution_budget(budget: ExecutionBudget) -> ByoaResult<(
     Ok(())
 }
 
-pub(super) fn encode_execution_transcript(value: &impl Serialize) -> ByoaResult<Vec<u8>> {
-    struct BoundedBytes(Vec<u8>);
-    impl std::io::Write for BoundedBytes {
+/// Encodes `value` as JSON into an exhaust stream, held in memory up to the
+/// inline budget and spooled past it; never refused for its size.
+pub(super) fn encode_execution_transcript(value: &impl Serialize) -> ByoaResult<ByoaStream> {
+    /// The stream the encoder writes into, keeping the spool's own refusal.
+    struct Spooling {
+        stream: ByoaStreamWriter,
+        refused: Option<ByoaError>,
+    }
+    impl std::io::Write for Spooling {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            if bytes.len() > BYOA_MAX_EXHAUST_STREAM_BYTES - self.0.len() {
-                return Err(std::io::Error::other(ERR_EXHAUST_TOO_LARGE));
-            }
-            self.0.extend_from_slice(bytes);
+            self.stream.append(bytes).map_err(|refused| {
+                self.refused = Some(refused);
+                std::io::Error::other(ERR_EXHAUST_ENCODE)
+            })?;
             Ok(bytes.len())
         }
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
     }
-    let mut bytes = BoundedBytes(Vec::new());
-    serde_json::to_writer(&mut bytes, value).map_err(|_| invalid(ERR_EXHAUST_TOO_LARGE))?;
-    Ok(bytes.0)
+    let mut sink = Spooling {
+        stream: ByoaStream::writer(None, None),
+        refused: None,
+    };
+    if serde_json::to_writer(&mut sink, value).is_err() {
+        return Err(sink.refused.unwrap_or_else(|| invalid(ERR_EXHAUST_ENCODE)));
+    }
+    sink.stream.finish()
 }
 
+/// How many bytes `value` encodes to as JSON, counted as they are written and
+/// never held.
+pub(super) fn encoded_json_len(value: &impl Serialize) -> ByoaResult<u64> {
+    struct Counted(u64);
+    impl std::io::Write for Counted {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 += bytes.len() as u64;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counted = Counted(0);
+    serde_json::to_writer(&mut counted, value).map_err(|_| invalid(ERR_EXHAUST_ENCODE))?;
+    Ok(counted.0)
+}
+
+/// Something durable was captured, every checkpoint frontier entry passes
+/// its checks, and the taint refs are well formed. No stream is refused for
+/// its size.
 pub(super) fn validate_exhaust(exhaust: &ByoaExhaust) -> ByoaResult<()> {
     if exhaust.is_empty() {
         return Err(invalid(ERR_EXHAUST_EMPTY));
-    }
-    let mut total = 0_usize;
-    for stream in [
-        exhaust.transcript.as_deref().unwrap_or_default(),
-        exhaust.stdout.as_slice(),
-        exhaust.stderr.as_slice(),
-        exhaust.diff_bundle.as_deref().unwrap_or_default(),
-    ] {
-        if stream.len() > BYOA_MAX_EXHAUST_STREAM_BYTES {
-            return Err(invalid(ERR_EXHAUST_TOO_LARGE));
-        }
-        total = total
-            .checked_add(stream.len())
-            .ok_or_else(|| invalid(ERR_EXHAUST_TOO_LARGE))?;
     }
     if exhaust.checkpoint_frontier.len() > MAX_CHECKPOINT_FRONTIER_ENTRIES {
         return Err(invalid(ERR_CHECKPOINT_FRONTIER));
@@ -167,12 +186,6 @@ pub(super) fn validate_exhaust(exhaust: &ByoaExhaust) -> ByoaResult<()> {
         if !is_bounded_printable(entry, MAX_CHECKPOINT_FRONTIER_ENTRY_LEN) {
             return Err(invalid(ERR_CHECKPOINT_FRONTIER));
         }
-        total = total
-            .checked_add(entry.len())
-            .ok_or_else(|| invalid(ERR_EXHAUST_TOO_LARGE))?;
-    }
-    if total > BYOA_MAX_EXHAUST_TOTAL_BYTES {
-        return Err(invalid(ERR_EXHAUST_TOO_LARGE));
     }
     crate::secret_rotation::validate_taint_refs(&exhaust.secret_taint_refs)
         .map_err(|_| invalid(ERR_EXHAUST_TAINT))
