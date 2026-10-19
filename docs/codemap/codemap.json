@@ -50382,13 +50382,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/checkpoint_custody/destination.rs",
+     "purpose": "The directory a restore makes for its copy, held under the copy's writer lease until the restore commits…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -50412,14 +50422,24 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 28,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/ledger/custody.rs",
+     "purpose": "The ledger's side of the claim custody client: a row decrypted under its claim's key, a new row sealed under…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -50439,18 +50459,18 @@
      "path": "src/store/gate_decision/mod.rs",
      "purpose": "The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 15,
       "re-export": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/orcb.rs",
-     "purpose": "ORCB v1: schema-only dictionary, per-claim hot-value AEAD and exterior key custody",
+     "purpose": "ORCB v1: schema-only dictionary and per-claim hot-value AEAD, keyed by the claim's typed custody entry…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 8
      }
     },
     {
@@ -50458,9 +50478,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/retention.rs",
-     "purpose": "Opt-in gate-decision age sweep over the actual ORCB custody unit",
+     "purpose": "Opt-in gate-decision age sweep over the actual ORCB custody unit, and the claim client's retirement policy…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 7,
       "fn": 7
      }
     },
@@ -50549,6 +50569,56 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/files.rs",
+     "purpose": "The local exterior backend: one owner-only directory tree beside the vault root, never inside it, so…",
+     "surface": {
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/fork.rs",
+     "purpose": "Restore planning and the fork a copy served beside its source takes (ARCH-0038 #erasure-completeness, \"Key…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/identity.rs",
+     "purpose": "Typed custody identities and their codecs: who a custody entry belongs to (vault, kind, item, generation)…",
+     "surface": {
+      "crate-vis": 35
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/mod.rs",
+     "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
+     "surface": {
+      "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/retirement.rs",
+     "purpose": "Durable retirement intents and the one finisher that carries them out",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -50626,7 +50696,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 1,
       "re-export": 13
      }
@@ -63500,7 +63570,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 79,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63724,9 +63794,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 195,
+   "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3922,
+   "source_files": 3929,
    "test_files": 902
   },
   "oneiron-android": {
