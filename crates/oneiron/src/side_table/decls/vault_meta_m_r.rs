@@ -111,7 +111,8 @@ side_tables! {
     OFFICE_BODY_HEAD: VaultMeta b"office_body:head:v1:" Named;
     /// The deck oracle's latest eight-step receipt per export profile and the projector it
     /// checked; the deck export gate reads it. Key: the profile name.
-    OFFICE_BODY_ORACLE: VaultMeta b"office_body:oracle:v1:" Named;
+    OFFICE_BODY_ORACLE: VaultMeta b"office_body:oracle:v1:" Named
+        => crate::office_body::erase_oracle_actor_in_txn;
     /// An office proposal: its header (opener, run root, opened at), member forks with each one's
     /// verdict and answer, and its settlement. Key: id16 (artifact) + id16 (proposal).
     OFFICE_BODY_PROPOSAL: VaultMeta b"office_body:proposal:v1:" Named
@@ -143,7 +144,8 @@ side_tables! {
     ORIGIN_CHANGE_RECEIPT: VaultMeta b"origin:change_receipt:v1:" Raw;
     /// Crash-idempotent receipt of the file operations one push landed against one ref, keyed by
     /// provenance then blake3(ref_name). Key: id16 ":" hash32.
-    ORIGIN_CODE_OPERATIONS: VaultMeta b"origin:code_operations:v1:" LegacyCompact;
+    ORIGIN_CODE_OPERATIONS: VaultMeta b"origin:code_operations:v1:" LegacyCompact
+        => crate::origin::erase_code_operations_actor_in_txn;
     /// Stable Git commit projection (oid hex text) of one finalized engine CodeRevision. Key: string
     /// ":" id16.
     ORIGIN_ENGINE_EXPORT: VaultMeta b"origin:engine_export:v1:" Raw;

@@ -626,12 +626,14 @@ fn encode_operations(ops: &[CodeProducingOperation]) -> Result<Value> {
     Ok(Value::Array(
         ops.iter()
             .map(|op| {
-                Value::Array(
-                    [op.operation, op.actor, op.turn, op.activity, op.intent]
-                        .into_iter()
-                        .map(|id| Value::Binary(id.as_bytes().to_vec()))
-                        .collect(),
-                )
+                // An erased actor's slot is nil (FIX 4476).
+                let actor = op
+                    .actor
+                    .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec()));
+                let ids = [op.operation, op.turn, op.activity, op.intent]
+                    .map(|id| Value::Binary(id.as_bytes().to_vec()));
+                let [operation, turn, activity, intent] = ids;
+                Value::Array(vec![operation, actor, turn, activity, intent])
             })
             .collect(),
     ))
@@ -655,7 +657,10 @@ fn decode_operations(value: &Value) -> Result<Vec<CodeProducingOperation>> {
                 )))?;
             Ok(CodeProducingOperation {
                 operation: entity_id_from_value(&ids[0], "operation")?,
-                actor: entity_id_from_value(&ids[1], "actor")?,
+                actor: match &ids[1] {
+                    Value::Nil => None,
+                    value => Some(entity_id_from_value(value, "actor")?),
+                },
                 turn: entity_id_from_value(&ids[2], "turn")?,
                 activity: entity_id_from_value(&ids[3], "activity")?,
                 intent: entity_id_from_value(&ids[4], "intent")?,

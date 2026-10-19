@@ -1,8 +1,10 @@
 //! An erased actor out of the office rows that name it (FIX 3520): the
-//! export records, the deck forks' records and the proposals. The typed-body
-//! forks under them go in the typed body's own scrub.
+//! export records, the deck forks' records, the proposals and the deck
+//! oracle's receipts. The typed-body forks under them go in the typed body's
+//! own scrub.
 
 use super::consent::{AnsweringAuthority, MEMBERSHIP, MemberVerdict, PROPOSALS, close_if_done};
+use super::pptx::ORACLE;
 use super::{EXPORTS, FORKS, ForkState};
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -135,6 +137,34 @@ pub(crate) fn erase_proposal_actor_in_txn(
             close_if_done(&mut record, at, None);
             PROPOSALS.put(&vault.store, wtxn, &key, &record)?;
         }
+    }
+    Ok(())
+}
+
+/// Erasing `actor` from the deck oracle's receipts (FIX 4511): a receipt it
+/// recorded keeps its outcome, projector and time and names no one, so the
+/// export gate it opened stays as it is. One-way, in the erase's own
+/// transaction. An id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or an oracle row that cannot be read.
+pub(crate) fn erase_oracle_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut records = Vec::new();
+    for (profile, mut record) in ORACLE.scan(&vault.store, wtxn)? {
+        if record.recorded_by.forget(*actor) {
+            records.push((profile, record));
+        }
+    }
+    for (profile, record) in records {
+        ORACLE.put(&vault.store, wtxn, &profile, &record)?;
     }
     Ok(())
 }

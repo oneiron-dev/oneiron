@@ -19,6 +19,7 @@ use crate::registry::{ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
+use super::actor_erase::keep_erased_actors;
 use super::codec::encode_code_symbol_entity_body;
 use super::keys::{
     MANIFEST, REVISION_INDEX, code_symbol_entity_id, code_symbol_revision_index_key,
@@ -46,9 +47,10 @@ impl Vault {
         MANIFEST.encode_value(manifest)?;
         let mut wtxn = self.store.env.write_txn()?;
         validate_code_artifact_target(&self.store, &wtxn, code_artifact_id, &manifest.repo_ref)?;
+        let manifest = keep_erased_actors(&self.store, &wtxn, code_artifact_id, manifest)?;
 
         delete_code_symbol_manifest_in_txn(&self.store, &mut wtxn, code_artifact_id)?;
-        MANIFEST.put(&self.store, &mut wtxn, code_artifact_id, manifest)?;
+        MANIFEST.put(&self.store, &mut wtxn, code_artifact_id, &manifest)?;
         for symbol in &manifest.symbols {
             let key = code_symbol_revision_index_key(
                 &manifest.repo_ref,
@@ -123,8 +125,9 @@ impl Vault {
         }
         batch.apply(wtxn)?;
         MANIFEST.encode_value(&graph.manifest)?;
+        let manifest = keep_erased_actors(&self.store, wtxn, code_artifact_id, &graph.manifest)?;
         delete_code_symbol_manifest_in_txn(&self.store, wtxn, code_artifact_id)?;
-        MANIFEST.put(&self.store, wtxn, code_artifact_id, &graph.manifest)?;
+        MANIFEST.put(&self.store, wtxn, code_artifact_id, &manifest)?;
         for symbol in &graph.manifest.symbols {
             let key = code_symbol_revision_index_key(
                 &graph.manifest.repo_ref,
