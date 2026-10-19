@@ -470,10 +470,6 @@ side_tables! {
     /// control, never text. Key: b"s" or b"c" + id16.
     PUBLISHER_TRAINING_CUSTODY: VaultMeta b"publisher_training:custody:v1:" Named
         => crate::Vault::erase_publisher_training_custody_in_txn;
-    /// The scope the publisher training outbox last delivered for one person (OF-420). Key: id16
-    /// (PERSON).
-    PUBLISHER_TRAINING_PERSON: VaultMeta b"publisher_training:person:v1:" Named
-        => crate::Vault::erase_publisher_training_scope_in_txn;
     /// The publisher training outbox's next event number and receipt cursor (OF-420). Key: `()`.
     PUBLISHER_TRAINING_STATE: VaultMeta b"publisher_training:state:v1" Named;
     /// Scope self-demotion log. Key: u64be + id16.

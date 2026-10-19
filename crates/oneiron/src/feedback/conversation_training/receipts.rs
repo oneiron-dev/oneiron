@@ -1,19 +1,18 @@
 //! A person's own publisher training receipts (OF-420, FIX 5372): what the
-//! outbox holds and what the intake answered for the submissions of their
-//! words, and for the withdrawals their own choice recorded. Read from local
-//! custody alone: nothing here reads, filters or sends conversation text.
+//! outbox holds and what the intake answered for the submissions carrying
+//! their words. Read from local custody alone: nothing here reads, filters
+//! or sends conversation text.
 //!
-//! A person sees only rows that name them. A submission names one person, so
-//! a conversation several people wrote in lists only the person's own
-//! submission of it. A person-choice control names the person whose choice
-//! it carries. A forget control (it may name several persons' submissions of
-//! one source) and a world control name no person and are not listed; a
-//! submission one withdrew reads withdrawn on its own row. Nothing says what
-//! the intake holds for anyone else.
+//! A person sees only rows that name them. A submission names every person
+//! whose words it carries (FIX 5502: one per conversation), so each of them
+//! lists it, and nobody else does; it shows its source, worlds and custody,
+//! never who else is in it. Controls name ids, not persons, and are not
+//! listed; a withdrawn submission reads withdrawn on its own row. Nothing
+//! says what the intake holds for anyone else.
 //!
-//! A page walks custody in key order, the controls and then the submissions,
-//! from a cursor. It lists [`RECEIPT_PAGE`] rows at most, a pace and not a
-//! cap: the rest come on the next page.
+//! A page walks the submissions in key order from a cursor. It lists
+//! [`RECEIPT_PAGE`] rows at most, a pace and not a cap: the rest come on the
+//! next page.
 
 use std::collections::BTreeSet;
 use std::ops::Bound;
@@ -27,11 +26,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-use super::custody::{
-    CONTROL, CONTROLS, ControlChange, ControlCustody, CustodyKey, SUBMISSION, SUBMISSIONS,
-    SubmissionCustody, SubmissionState,
-};
-use super::lifecycle::{TrainingControlId, TrainingSubmissionId};
+use super::custody::{CustodyKey, SUBMISSION, SUBMISSIONS, SubmissionCustody, SubmissionState};
+use super::lifecycle::TrainingSubmissionId;
 
 /// Rows one page lists: a pace, never a cap. The rest come on the next page.
 const RECEIPT_PAGE: usize = 64;
@@ -66,7 +62,7 @@ impl TrainingReceiptsCursor {
         let (kind, id) = bytes.split_first()?;
         let kind = [*kind];
         let id: [u8; 16] = id.try_into().ok()?;
-        (kind == CONTROL || kind == SUBMISSION).then_some(Self { kind, id })
+        (kind == SUBMISSION).then_some(Self { kind, id })
     }
 }
 
@@ -75,33 +71,13 @@ impl TrainingReceiptsCursor {
 pub struct PersonTrainingReceipts {
     /// The person, as their proof names them.
     pub person: EntityId,
-    /// The withdrawals their own choice recorded, in custody order.
-    pub controls: Vec<PersonTrainingControl>,
-    /// The submissions of their words, in custody order.
+    /// The submissions carrying their words, in custody order.
     pub submissions: Vec<PersonTrainingSubmission>,
     /// Where the next page resumes; `None` when this page reached the end.
     pub next: Option<TrainingReceiptsCursor>,
 }
 
-/// One withdrawal the person's own choice recorded: off, or a narrower set
-/// of worlds.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PersonTrainingControl {
-    /// The control.
-    pub id: TrainingControlId,
-    /// The worlds the choice still counts; `None` is off.
-    pub worlds: Option<BTreeSet<EntityId>>,
-    /// Whether its file was written to the outbox.
-    pub written: bool,
-    /// The intake's last receipt for it; `None` while it sent none.
-    pub receipt: Option<TrainingReceiptStatusV1>,
-    /// [`TRAINING_WITHDRAWAL_NOTE`], which every control carries.
-    pub withdrawal_note: &'static str,
-    /// When it was recorded, unix seconds.
-    pub recorded_at: u64,
-}
-
-/// One submission of the person's words.
+/// One submission carrying the person's words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersonTrainingSubmission {
     /// The submission.
@@ -165,9 +141,9 @@ pub struct TrainingUsedRun {
 impl Vault {
     /// One page of the authenticated person's own publisher training
     /// receipts, past `after` (from the first row with none): each
-    /// person-choice control their choice recorded, and each submission of
-    /// their words with its custody, the intake's last receipt and the runs
-    /// that used it. The person is revalidated in the reading transaction.
+    /// submission carrying their words with its custody, the intake's last
+    /// receipt and the runs that used it. The person is revalidated in the
+    /// reading transaction.
     ///
     /// # Errors
     /// A refusal when the proof is no longer a live person of this vault;
@@ -182,28 +158,15 @@ impl Vault {
         let mut page = Page {
             receipts: PersonTrainingReceipts {
                 person,
-                controls: Vec::new(),
                 submissions: Vec::new(),
                 next: None,
             },
             last: None,
         };
-        if let Some((lower, upper)) = kind_range(CONTROL, after) {
-            for row in CONTROLS.iter_range(&self.store, &txn, lower.as_ref(), upper.as_ref())? {
-                let ((_, id), row) = row?;
-                let Some(control) = own_control(person, TrainingControlId(id), row) else {
-                    continue;
-                };
-                if !page.admits(CONTROL, id) {
-                    return Ok(page.receipts);
-                }
-                page.receipts.controls.push(control);
-            }
-        }
         if let Some((lower, upper)) = kind_range(SUBMISSION, after) {
             for row in SUBMISSIONS.iter_range(&self.store, &txn, lower.as_ref(), upper.as_ref())? {
                 let ((_, id), row) = row?;
-                if row.person != Some(person) {
+                if !row.persons.contains(&person) {
                     continue;
                 }
                 if !page.admits(SUBMISSION, id) {
@@ -230,7 +193,7 @@ impl Page {
     /// holds [`RECEIPT_PAGE`] rows the next one resumes past its last, and
     /// the row waits for it.
     fn admits(&mut self, kind: [u8; 1], id: [u8; 16]) -> bool {
-        if self.receipts.controls.len() + self.receipts.submissions.len() == RECEIPT_PAGE {
+        if self.receipts.submissions.len() == RECEIPT_PAGE {
             self.receipts.next = self.last;
             return false;
         }
@@ -254,35 +217,7 @@ fn kind_range(
     Some((lower, Bound::Included((kind, [u8::MAX; 16]))))
 }
 
-/// `row` as the person's own withdrawal: a person-choice control naming
-/// `person`. Any other control is not theirs to list.
-fn own_control(
-    person: EntityId,
-    id: TrainingControlId,
-    row: ControlCustody,
-) -> Option<PersonTrainingControl> {
-    let ControlChange::PersonChoice {
-        person: named,
-        allowed_worlds,
-        ..
-    } = row.change
-    else {
-        return None;
-    };
-    if named != person {
-        return None;
-    }
-    Some(PersonTrainingControl {
-        id,
-        worlds: allowed_worlds,
-        written: row.spooled,
-        receipt: row.receipt.map(|mark| mark.status),
-        withdrawal_note: TRAINING_WITHDRAWAL_NOTE,
-        recorded_at: row.recorded_at,
-    })
-}
-
-/// One submission of the person's words as they read it.
+/// One submission carrying the person's words as they read it.
 fn own_submission(id: TrainingSubmissionId, row: SubmissionCustody) -> PersonTrainingSubmission {
     let receipt = row.receipt.map(|mark| mark.status);
     let withdrawn = row.state == SubmissionState::Withdrawn

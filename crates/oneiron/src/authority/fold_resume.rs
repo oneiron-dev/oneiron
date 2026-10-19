@@ -318,6 +318,7 @@ pub(super) fn admits_past(
         | AuthorityOp::CheckpointPolicySet(_)
         | AuthorityOp::HomeNodePick(_)
         | AuthorityOp::ConversationTrainingSet(_)
+        | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::WorldKeyWraps(_) => true,

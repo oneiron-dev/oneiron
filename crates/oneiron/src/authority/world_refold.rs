@@ -22,6 +22,7 @@ pub(super) fn refolds(op: &AuthorityOp) -> bool {
                 | AuthorityOp::CheckpointPolicySet(_)
                 | AuthorityOp::HomeNodePick(_)
                 | AuthorityOp::ConversationTrainingSet(_)
+                | AuthorityOp::ConversationTrainingVaultSet(_)
         )
 }
 

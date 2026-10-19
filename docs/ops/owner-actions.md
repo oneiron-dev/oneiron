@@ -882,17 +882,41 @@ you read. A send whose preview it no longer keeps is refused as expired (409). A
 tagger), a note is refused (409), and a proposal without a note is sent as you wrote it (OF-420).
 
 Sharing real conversation text to train the models Oneiron ships ("Learn from my conversations")
-is off until the person whose words they are says yes, per world, and private worlds are never
-included. The engine has one door for it, and it sends nothing today: no machine-only intake is
-configured. Training a model of your own on your own data (the training pack) needs no sharing.
+is one setting per vault, set by the vault's admin (your own vault's owner, or a shared vault's
+owner or admin holding the workspace-settings power) and off until they turn it on. Set it with `PUT
+/v1/owner/conversation-learning` and a body `{"on": true|false, "allow_opt_out": true|false,
+"seen": "<revision>"}`; both flags are required, and a body without one is a 400. Any live member,
+delegate or guest of the vault reads it with `GET /v1/owner/conversation-learning`: `on`,
+`allow_opt_out`, `revision`, `conflicted`, `act`, `set_by` and, while it is on, one line naming who
+set it ("Training is on. Set by <admin>." and, when people may opt out, "You can leave your own
+messages out."). Nothing leaves while no machine-only intake is configured. Training a model of
+your own on your own data (the training pack) needs no sharing.
+
+While it is on, everything in the vault counts: every live conversation, offered once, with the
+turns of people, agents and guests alike. A turn counts when its writer is a live actor of this
+vault; imports, system and tool rows, attachments, results, any metadata and deleted rows never
+do. Private worlds never count. Before anything leaves, the vault's on-device filter strips what it
+recognises as personal; nothing is called safe, and no person reads it.
+
+When the admin lets people opt out, any live person of the vault, member or guest, can leave their
+own messages out with `PUT /v1/owner/conversation-learning/me` and `{"leave_out": true|false,
+"seen": "<revision>"}` (`GET` shows their switch). Their messages then never count; a
+conversation where they are the only person (their one-on-one with agents) drops whole; in a room
+with other people only their own messages drop. Agents' own work always counts. While the admin
+does not allow opt-outs the `PUT` is refused (409, "this vault does not allow opt-outs") and a
+choice already made is kept but ignored.
+
+Turning the setting off, or opting out, stops new sharing: held offers are refused at release, and
+nothing already shared is withdrawn; it follows the intake's retention. A deleted conversation or
+message, a world turned private and a person's erasure still withdraw what was shared.
 
 A person reads their own training receipts at `GET /v1/owner/conversation-learning/receipts`,
-with the same proof as their choice: each withdrawal their choice recorded, and each submission of
-their words with its conversation, worlds, local custody (`held`, `published`, `withheld`,
-`withdrawn`), the intake's last receipt (`stored`, `excluded`, `removal_pending`, `removed`,
-`rejected`), the runs that used it, the withdrawal note and its times. It never lists another
-person's rows, even for a conversation several people wrote in. Pass a page's `next` back as
-`after` for the rest.
+with the same proof as their opt-out: each submission carrying their words with its
+conversation, worlds, local custody (`held`, `published`, `withheld`, `withdrawn`), the intake's
+last receipt (`stored`, `excluded`, `removal_pending`, `removed`, `rejected`), the runs that used
+it, the withdrawal note and its times. It never lists another person's rows: a submission of a
+conversation several people wrote in is listed to each of them, without naming the others. Pass a
+page's `next` back as `after` for the rest.
 
 A vault our cloud hosts (managed serve) sends to `collector` at `https://oneiron.dev/feedback`
 unless told otherwise; self-hosted serve sends nowhere until you set both keys. `GET

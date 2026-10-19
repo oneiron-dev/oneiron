@@ -13,14 +13,15 @@
 //!   chunks, `training-offer-<submission>.part-<part>.v1.onev`, each one
 //!   sealed envelope of filtered text. Release is publication: the vault
 //!   prepares an offer in local custody, rechecks its source, persons,
-//!   worlds and choices at release, and only an offer the release lets
-//!   through is renamed in, chunks first and the manifest last. Every
-//!   manifest in `offers/` is a released offer. A chunk with no manifest is
-//!   an interrupted publication: it is not shipped, and the vault removes it.
+//!   worlds, the vault's training setting and the opt-outs at release, and
+//!   only an offer the release lets through is renamed in, chunks first
+//!   and the manifest last. Every manifest in `offers/` is a released offer.
+//!   A chunk with no manifest is an interrupted publication: it is not
+//!   shipped, and the vault removes it.
 //! - [`CONTROLS_DIR`]: `training-control-<event_seq>-<control>.v1.json` (a
-//!   [`TrainingControlV1`]), withdrawals and scope changes naming ids only.
-//!   They are written whatever the person's learning state, and stay
-//!   shippable from a vault that is not running.
+//!   [`TrainingControlV1`]), withdrawals naming ids only. They are written
+//!   whatever the learning state, and stay shippable from a vault that is
+//!   not running.
 //! - [`RECEIPTS_DIR`]: `training-receipt-<receipt>.v1.json` (a
 //!   [`TrainingReceiptV1`]), written by the intake's side. The vault applies
 //!   each one its intake signed and removes it.
@@ -147,12 +148,14 @@ pub struct TrainingOfferBodyV1 {
     /// The digest of the exact selected snapshot: a changed source is a new
     /// offer, and the vault forgets this one by a control naming its id.
     pub source_revision: String,
-    /// Every person whose words the text carries.
+    /// Every person whose words the text carries, members and guests alike.
+    /// Never an agent; empty when the text carries only agents' words.
     pub persons: Vec<String>,
-    /// Every world the text came from.
+    /// Every world the text came from, never empty.
     pub worlds: Vec<String>,
-    /// Each person's choice in force when the offer was prepared.
-    pub person_choices: Vec<TrainingPersonChoiceV1>,
+    /// The vault's "Learn from my conversations" setting in force when the
+    /// offer was prepared (FIX 5502): the vault admin's.
+    pub training: TrainingSettingV1,
     /// The digest of the worlds' settings revisions.
     pub world_policy_revision: String,
     /// [`TRAINING_PRIVACY_EVERYWHERE`].
@@ -165,17 +168,19 @@ pub struct TrainingOfferBodyV1 {
     pub prepared_at: u64,
 }
 
-/// One person's choice, as an offer names it.
+/// The vault's training setting, as an offer names it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct TrainingPersonChoiceV1 {
-    pub person: String,
-    /// The authority entry of the choice in force, 64 hex.
-    pub act: Option<String>,
-    /// The person's choice revision, 64 hex.
+pub struct TrainingSettingV1 {
+    /// Whether it was on: true for every offer the vault released.
+    pub on: bool,
+    /// The vault's setting revision, 64 hex.
     pub revision: String,
-    /// The worlds the choice counts now.
-    pub worlds: Vec<String>,
+    /// The vault admin's PERSON who set it, 32 hex; null when the vault
+    /// cannot read it.
+    pub set_by: Option<String>,
+    /// The authority entry of the setting choice in force, 64 hex.
+    pub act: Option<String>,
 }
 
 /// The filter that made an offer's text.
@@ -216,7 +221,7 @@ pub struct TrainingChunkV1 {
     pub file: String,
 }
 
-/// One control: a withdrawal or a scope change, ids only.
+/// One control: a withdrawal, ids only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrainingControlV1 {
@@ -246,23 +251,10 @@ pub struct TrainingControlBodyV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrainingControlChangeV1 {
-    /// A person's choice now: off, or a narrower scope.
-    PersonChoice(TrainingPersonChoiceChangeV1),
     /// Remove these submissions of one source.
     ForgetSource(TrainingForgetSourceV1),
     /// A world no longer reads everywhere, or no longer exists.
     WorldEligibility(TrainingWorldEligibilityV1),
-}
-
-/// A person's choice now.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TrainingPersonChoiceChangeV1 {
-    pub person: String,
-    pub act: Option<String>,
-    pub revision: String,
-    /// `None` is off; otherwise the only worlds whose text may stay.
-    pub allowed_worlds: Option<Vec<String>>,
 }
 
 /// Remove these submissions of one source.
@@ -514,8 +506,8 @@ pub fn decode_training_offer(bytes: &[u8]) -> anyhow::Result<TrainingOfferV1> {
     check_hex("source", &body.source, ID_HEX)?;
     check_hex("source_revision", &body.source_revision, DIGEST_HEX)?;
     check_hex("key_id", &body.payload.key_id, DIGEST_HEX)?;
-    if body.persons.is_empty() || body.worlds.is_empty() {
-        anyhow::bail!("an offer names no person or no world");
+    if body.worlds.is_empty() {
+        anyhow::bail!("an offer names no world");
     }
     for (index, chunk) in body.payload.chunks.iter().enumerate() {
         let expected = offer_chunk_file_name(&body.submission_id, chunk.part);

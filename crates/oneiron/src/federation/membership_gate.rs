@@ -316,6 +316,59 @@ impl Vault {
         Ok(guest)
     }
 
+    /// Whether `person` holds a live Delegate grant over shared vault
+    /// `vault_id` in the caller's snapshot, over the same liveness, expiry
+    /// and pact checks as [`Self::membership_standing_in_txn`], which skips
+    /// it. A delegate is no member and this grants nothing: a door that shows
+    /// members a vault setting reads it (C4, FIX 5502).
+    pub(crate) fn delegate_standing_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        person: &crate::EntityId,
+    ) -> Result<bool> {
+        if vault_id == 0 || self.shared_vault_deletion_in_txn(txn)?.is_some() {
+            return Ok(false);
+        }
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        if fold.vault_root_is_conflicted() {
+            return Err(denied());
+        }
+        for entry in self
+            .store
+            .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
+        {
+            let id = entry?;
+            let raw = self
+                .store
+                .port_entity_record(txn, &id)?
+                .ok_or_else(denied)?
+                .encode();
+            if EntityMetadataHeader::parse(&raw)
+                .is_none_or(|header| header.entity_type != ENTITY_TYPE_FEDERATION_GRANT)
+            {
+                return Err(denied());
+            }
+            if raw.len() == ENTITY_METADATA_HEADER_LEN
+                || !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
+            {
+                continue;
+            }
+            let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            if grant.member_ref == *person
+                && grant.role == FederationGrantRole::Delegate
+                && grant.scope == FederationGrantScope::vault(vault_id)
+                && grant
+                    .expires_at
+                    .is_none_or(|expires| self.store.clock.now_recorded_at() < expires)
+                && super::pact_admits_grant(&fold, &id, &grant)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// The standing ONE authenticated grant gives `principal` here, for
     /// first-party admission (FIX 360). Only `grant_id` is read, never
     /// another grant the person holds: it must be live, name `principal`,

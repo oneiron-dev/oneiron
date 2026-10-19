@@ -141,11 +141,16 @@ pub enum AuthorityOp {
     /// of a live machine of the vault, in any role (DOOR-101 PR2a). A
     /// main-log entry, so every machine the owner admits folds it.
     HomeNodePick(HomeNodePick),
-    /// One person's own choice of the worlds whose conversations may train
-    /// models, signed by the install key of a live machine of the vault, in
-    /// any role (FIX 4489, OF-420). A main-log entry, so every machine the
-    /// owner admits folds it.
+    /// One person's own choice to leave their messages out of training,
+    /// signed by the install key of a live machine of the vault, in any role
+    /// (FIX 4489, FIX 5502 owner rulings, OF-420). A main-log entry, so every
+    /// machine the owner admits folds it.
     ConversationTrainingSet(ConversationTrainingSet),
+    /// One admin choice of the vault's "Learn from my conversations"
+    /// setting, signed by the install key of a live machine of the vault, in
+    /// any role (FIX 5502 owner rulings). A main-log entry, so every machine
+    /// the owner admits folds it.
+    ConversationTrainingVaultSet(ConversationTrainingVaultSet),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -206,6 +211,7 @@ impl AuthorityLogEntry {
             AuthorityOp::CheckpointPolicySet(set) => set.validate_entry(self)?,
             AuthorityOp::HomeNodePick(pick) => pick.validate_entry(self)?,
             AuthorityOp::ConversationTrainingSet(set) => set.validate_entry(self)?,
+            AuthorityOp::ConversationTrainingVaultSet(set) => set.validate_entry(self)?,
             _ => {}
         }
         self.signer.validate()?;
@@ -427,6 +433,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::CheckpointPolicySet(set) => set.validate(),
         AuthorityOp::HomeNodePick(pick) => pick.validate(),
         AuthorityOp::ConversationTrainingSet(set) => set.validate(),
+        AuthorityOp::ConversationTrainingVaultSet(set) => set.validate(),
     }
 }
 

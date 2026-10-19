@@ -1,31 +1,24 @@
-//! Folds each person's signed "Learn from my conversations" choice (FIX
-//! 4489, OF-420), and the one judge of which worlds a choice may name.
+//! Folds each person's signed "Learn from my conversations" opt-out (FIX
+//! 4489, FIX 5502 owner rulings, OF-420).
 //!
-//! The owner's ruling: real conversation text for training stays off until
-//! the PERSON says yes, the yes can be scoped per world, and private worlds
-//! are never included. The choices keep the shared owner-choice register
-//! ([`super::owner_choice`]) under their own revision domain, one frontier
-//! per acting PERSON: a choice supersedes exactly that person's live choices
-//! its parents carry, and concurrent different choices of one person
-//! conflict. A conflict reads as off, never as the last choice they agreed
-//! on; so do no choice and a clear. A choice this install does not count at
-//! full strength counts as not made. Choices are main-log entries, so every
-//! machine the owner admits folds them.
-//!
-//! The register records the worlds as the person signed them. What counts
-//! is judged on the fold it is read against
-//! ([`Vault::conversation_training_worlds`]): a world deleted, archived, or
-//! made private after the yes drops out, and a yes with no world left reads
-//! as off, as does the yes of a PERSON no longer live (FIX 5116). The
-//! person's own door ([`Vault::set_conversation_training`]) signs a choice.
+//! The owner's rulings (10-19): the vault's setting, set by its admin
+//! ([`super::conversation_training_vault`]), decides whether the vault's
+//! conversations count; when the admin lets people opt out, a person's own
+//! "leave my messages out" keeps their messages out. The choices keep the
+//! shared owner-choice register ([`super::owner_choice`]) under their own
+//! revision domain, one frontier per acting PERSON: a choice supersedes
+//! exactly that person's live choices its parents carry, and concurrent
+//! different choices of one person conflict. A conflict reads as left out,
+//! never as the last choice they agreed on; no choice reads as not left out.
+//! A choice this install does not count at full strength counts as not made.
+//! Choices are main-log entries, so every machine the owner admits folds
+//! them. The person's own door ([`Vault::set_conversation_training`]) signs
+//! a choice; it is kept, and ignored, while the vault does not let people
+//! opt out.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::Result;
-use crate::ports::TombstoneStoreRead;
-use crate::registry::ENTITY_TYPE_WORLD;
 
 use super::machine_standing::InstallCounted;
 use super::owner_choice::{
@@ -38,21 +31,14 @@ mod door;
 
 pub use door::ConversationTrainingView;
 
-/// Whether a person may list base reality beside their live WORLD rows: the
-/// ordinary conversations live there, so a yes that could never name it
-/// would scope out most of what a person says (CALLS "FIX 4489 world list
-/// eligibility", open). It must still read everywhere, as every listed world
-/// must.
-const CONVERSATION_TRAINING_LISTS_BASE_REALITY: bool = true;
-
-/// Every person's conversation training choices in one fold state, each
-/// keyed by the acting PERSON.
-pub(super) type ConversationTrainingChoiceState = OwnerChoiceState<BTreeSet<EntityId>>;
+/// Every person's opt-out choices in one fold state, each keyed by the
+/// acting PERSON.
+pub(super) type ConversationTrainingChoiceState = OwnerChoiceState<bool>;
 
 /// One person's folded choices, as this install counts them.
-pub(crate) type FoldedPersonTraining = FoldedOwnerChoice<BTreeSet<EntityId>>;
+pub(crate) type FoldedPersonTraining = FoldedOwnerChoice<bool>;
 
-/// Every person's folded conversation training choices.
+/// Every person's folded opt-out choices.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct FoldedConversationTraining {
     /// Each person's choices, keyed by the PERSON; a person who never chose
@@ -78,16 +64,31 @@ impl FoldedConversationTraining {
         }))
     }
 
-    /// The worlds `person`'s choice in force names, as signed; `None` when
-    /// their choice is off, no choice of theirs counts, or their live
-    /// choices conflict. A conflict never reads as the last choice they
-    /// agreed on.
-    pub(crate) fn chosen(&self, person: EntityId) -> Option<&BTreeSet<EntityId>> {
-        let folded = self.persons.get(&person)?;
-        if !folded.conflict.is_empty() {
-            return None;
-        }
-        folded.selected()
+    /// Whether `person` asked to leave their messages out: their choice in
+    /// force says so, or any of their live choices in conflict does. No
+    /// choice reads as not left out.
+    pub(crate) fn leaves_out(&self, person: EntityId) -> bool {
+        self.persons.get(&person).is_some_and(|folded| {
+            folded.selected() == Some(&true)
+                || folded.conflict.iter().any(|head| head.choice == Some(true))
+        })
+    }
+
+    /// Whether `person`'s live choices conflict.
+    pub(crate) fn conflicted(&self, person: EntityId) -> bool {
+        self.persons
+            .get(&person)
+            .is_some_and(|folded| !folded.conflict.is_empty())
+    }
+
+    /// The authority entry of `person`'s choice in force; `None` while none
+    /// counts or theirs conflict.
+    pub(crate) fn act(&self, person: EntityId) -> Option<AuthorityEntryHash> {
+        self.persons
+            .get(&person)
+            .filter(|folded| folded.conflict.is_empty())
+            .and_then(|folded| folded.in_force.as_ref())
+            .map(|head| head.act)
     }
 
     /// The live choices `machine` carried, for its next profile revision's
@@ -115,7 +116,7 @@ pub(super) fn apply_conversation_training(
     let op = OwnerChoiceOp {
         act: &set.act,
         machine: set.machine,
-        choice: set.worlds.as_ref(),
+        choice: Some(&set.leave_out),
         context: CONVERSATION_TRAINING_REVISION_CONTEXT,
     };
     let landing = owner_choice_landing(
@@ -141,78 +142,5 @@ pub(super) fn folded_conversation_training(
     FoldedConversationTraining {
         persons: folded_owner_choices(state, &state.conversation_training, pin, counted),
         refused: refused_owner_choices(&state.conversation_training).clone(),
-    }
-}
-
-impl Vault {
-    /// The worlds whose conversations `person` said yes to training on, as
-    /// they count now: their choice in force, less every world no longer
-    /// eligible on this snapshot's fold (the eligibility hook,
-    /// [`Self::conversation_training_world_admits`]). `None` when `person`
-    /// is no longer a live PERSON of this vault (deleted, merged or split;
-    /// FIX 5116), the choice is off, no choice of theirs counts, their live
-    /// choices conflict, or no chosen world is still eligible.
-    ///
-    /// # Errors
-    /// Storage faults, and history this vault lacks, as the fold reads them:
-    /// never an empty or partial yes.
-    pub fn conversation_training_worlds(
-        &self,
-        person: EntityId,
-    ) -> Result<Option<BTreeSet<EntityId>>> {
-        let txn = self.store.env.read_txn()?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        self.conversation_training_effective_in_txn(&txn, &fold, person)
-    }
-
-    /// [`Self::conversation_training_worlds`] on `fold`, read in `txn`.
-    pub(super) fn conversation_training_effective_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        fold: &AuthorityFold,
-        person: EntityId,
-    ) -> Result<Option<BTreeSet<EntityId>>> {
-        if !crate::consent::person_is_live_in_txn(self, txn, &person)? {
-            return Ok(None);
-        }
-        let Some(chosen) = fold.conversation_training.chosen(person) else {
-            return Ok(None);
-        };
-        let mut worlds = BTreeSet::new();
-        for world in chosen {
-            if self.conversation_training_world_admits(txn, fold, *world)? {
-                worlds.insert(*world);
-            }
-        }
-        Ok((!worlds.is_empty()).then_some(worlds))
-    }
-
-    /// Whether a person's choice may name `world` (CALLS "FIX 4489 world list
-    /// eligibility", open): a stored, live WORLD row, or base reality while
-    /// [`CONVERSATION_TRAINING_LISTS_BASE_REALITY`] holds, that reads
-    /// everywhere on `fold`. Any narrower, conflicted or unknowable read is
-    /// private, and a private world is never included. It does not judge
-    /// whether the person may read the world: the egress gate exports only
-    /// that person's own rows.
-    pub(super) fn conversation_training_world_admits(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        fold: &AuthorityFold,
-        world: EntityId,
-    ) -> Result<bool> {
-        if world == crate::claim::base_world_id() {
-            if !CONVERSATION_TRAINING_LISTS_BASE_REALITY {
-                return Ok(false);
-            }
-        } else {
-            if self.get_entity_type_in_txn(txn, &world)? != Some(ENTITY_TYPE_WORLD) {
-                return Ok(false);
-            }
-            let visibility = TombstoneStoreRead::port_deletion_state(&self.store, txn, &world)?;
-            if visibility.deleted || visibility.archived || visibility.stale {
-                return Ok(false);
-            }
-        }
-        Ok(fold.world_privacy(world).read == EffectiveRead::Everywhere)
     }
 }

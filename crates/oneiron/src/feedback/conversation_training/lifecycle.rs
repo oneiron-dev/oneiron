@@ -12,8 +12,9 @@
 //!
 //! Release is publication. An offer is prepared and held in local custody;
 //! [`crate::Vault::release_training_submission`] rechecks its source,
-//! persons, worlds and choices immediately before the transport publishes
-//! it, and only a [`ReleaseDecision::Release`] publishes.
+//! persons, worlds, the vault's training setting and the opt-outs
+//! immediately before the transport publishes it, and only a
+//! [`ReleaseDecision::Release`] publishes.
 
 use oneiron_vault_contract::conversation_training::{
     INTAKE_RECEIPT_KEY_FILE, INTAKE_RECIPIENT_FILE, TrainingReceiptV1,
@@ -191,8 +192,8 @@ pub enum ReleaseDecision {
     Release {
         /// The source's revision, recomputed now and matching.
         source_revision: [u8; 32],
-        /// The person's choice revision now.
-        consent_revision: [u8; 32],
+        /// The vault's training setting revision now.
+        setting_revision: [u8; 32],
         /// The worlds' settings revision digest now.
         policy_revision: [u8; 32],
         /// The offer's place in the event order.
@@ -207,12 +208,12 @@ pub enum ReleaseDecision {
 pub enum TrainingWithheld {
     /// No offer of that id is held for release.
     NotHeld,
-    /// The source has nothing of the person's left to offer.
+    /// The source has nothing left that counts.
     SourceGone,
     /// The source changed since the offer was prepared: a changed source
     /// needs a new offer.
     SourceChanged,
-    /// The person's choice, or the worlds it counts, changed since.
+    /// The vault's training setting changed since.
     ChoiceChanged,
     /// A world's settings changed since.
     PolicyChanged,

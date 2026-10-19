@@ -643,19 +643,40 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
-        // The person's own choice: its subject is the PERSON, and its detail
-        // names world ids only, never a conversation's text (FIX 4489).
+        // A person's own opt-out: its subject is the PERSON, and its detail
+        // says left out or not, never a conversation's text (FIX 5502).
         AuthorityOp::ConversationTrainingSet(set) => (
-            if set.worlds.is_some() { Grant } else { Revoke },
+            if set.leave_out { Revoke } else { Grant },
             "conversation_training",
             OpFields {
-                detail: Some(set.worlds.as_ref().map_or_else(
-                    || "off".to_owned(),
-                    |worlds| {
-                        let ids: Vec<_> = worlds.iter().map(|world| world.to_hex()).collect();
-                        format!("worlds {}", ids.join(","))
-                    },
-                )),
+                detail: Some(
+                    if set.leave_out {
+                        "left out"
+                    } else {
+                        "not left out"
+                    }
+                    .to_owned(),
+                ),
+                subject_ref: Some(set.act.owner.to_hex()),
+                ..OpFields::default()
+            },
+        ),
+        // The vault's setting, by its admin: its subject is the admin's
+        // PERSON, and its detail says on or off and whether people may opt
+        // out (FIX 5502).
+        AuthorityOp::ConversationTrainingVaultSet(set) => (
+            if set.on { Grant } else { Revoke },
+            "conversation_training_vault",
+            OpFields {
+                detail: Some(
+                    match (set.on, set.allow_opt_out) {
+                        (true, true) => "on, opt-outs allowed",
+                        (true, false) => "on",
+                        (false, true) => "off, opt-outs allowed",
+                        (false, false) => "off",
+                    }
+                    .to_owned(),
+                ),
                 subject_ref: Some(set.act.owner.to_hex()),
                 ..OpFields::default()
             },
