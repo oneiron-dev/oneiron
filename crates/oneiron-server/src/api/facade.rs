@@ -78,6 +78,7 @@ mod live_run_doors;
 mod live_voice_doors;
 mod merge_queue_doors;
 mod model_step_doors;
+mod model_stream_doors;
 mod note_doors;
 mod off_record_doors;
 mod origin_doors;
@@ -116,6 +117,7 @@ mod weave_doors;
 mod widen_proposal_doors;
 
 pub(crate) use asr_doors::AsrSessions;
+pub(crate) use model_stream_doors::ModelStreams;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{connector_answer_as, connector_call_as};

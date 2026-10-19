@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 665 facade rows, 2438 declarations.
-Inputs: 613 of 665 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 594 of 665 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 94; unread shapes: 0.
+Census: 671 facade rows, 2451 declarations.
+Inputs: 617 of 671 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 597 of 671 fully typed, 74 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 96; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -9184,6 +9184,122 @@ class ModelStepReceipt(TypedDict):
     result: NotRequired[ModelStepResult | None]
 class ModelStepReceiptRequest(TypedDict):
     step_key: str
+class ModelStreamOpen(TypedDict):
+    stream_key: str
+    request: LlmRequest
+ModelStreamStatus = Literal["pending", "live", "finished", "failed"]
+class ModelStreamOpened(TypedDict):
+    stream_ref: str
+    stream_key: str
+    model: ModelId
+    status: ModelStreamStatus
+class ModelStreamSubscribe(TypedDict):
+    stream_key: str
+class ModelStreamSubscribed(TypedDict):
+    stream_ref: str
+    stream_key: str
+    handle: str
+    status: ModelStreamStatus
+class ModelStreamEventsRequest(TypedDict):
+    stream_key: str
+    handle: str
+    limit: NotRequired[int | None]
+class LlmStreamEventTextStart(TypedDict):
+    event: Literal["text_start"]
+    part_id: str
+class LlmStreamEventTextDelta(TypedDict):
+    event: Literal["text_delta"]
+    part_id: str
+    text: str
+class LlmStreamEventTextEnd(TypedDict):
+    event: Literal["text_end"]
+    part_id: str
+class LlmStreamEventReasoningStart(TypedDict):
+    event: Literal["reasoning_start"]
+    part_id: str
+    signature: NotRequired[str | None]
+class LlmStreamEventReasoningDelta(TypedDict):
+    event: Literal["reasoning_delta"]
+    part_id: str
+    text: str
+class LlmStreamEventReasoningEnd(TypedDict):
+    event: Literal["reasoning_end"]
+    part_id: str
+class LlmStreamEventToolCallStart(TypedDict):
+    event: Literal["tool_call_start"]
+    part_id: str
+    call_id: str
+    name: str
+class LlmStreamEventToolCallDelta(TypedDict):
+    event: Literal["tool_call_delta"]
+    part_id: str
+    input_fragment: str
+class LlmStreamEventToolCallEnd(TypedDict):
+    event: Literal["tool_call_end"]
+    part_id: str
+    call_id: str
+    name: str
+    input: Any
+class LlmStreamEventToolResultStart(TypedDict):
+    event: Literal["tool_result_start"]
+    part_id: str
+    call_id: str
+class LlmStreamEventToolResultDelta(TypedDict):
+    event: Literal["tool_result_delta"]
+    part_id: str
+    output_fragment: str
+class LlmStreamEventToolResultEnd(TypedDict):
+    event: Literal["tool_result_end"]
+    part_id: str
+    call_id: str
+    output: Any
+    is_error: NotRequired[bool]
+class LlmStreamEventImageStart(TypedDict):
+    event: Literal["image_start"]
+    part_id: str
+    media_type: str
+class LlmStreamEventImageDelta(TypedDict):
+    event: Literal["image_delta"]
+    part_id: str
+    data_fragment: str
+class LlmStreamEventImageEnd(TypedDict):
+    event: Literal["image_end"]
+    part_id: str
+    media_type: str
+    image: ImageContent
+class LlmStreamEventDone(TypedDict):
+    event: Literal["done"]
+    message: LlmMessage
+    usage: LlmUsage
+    finish_reason: FinishReason
+LlmStreamEvent = LlmStreamEventTextStart | LlmStreamEventTextDelta | LlmStreamEventTextEnd | LlmStreamEventReasoningStart | LlmStreamEventReasoningDelta | LlmStreamEventReasoningEnd | LlmStreamEventToolCallStart | LlmStreamEventToolCallDelta | LlmStreamEventToolCallEnd | LlmStreamEventToolResultStart | LlmStreamEventToolResultDelta | LlmStreamEventToolResultEnd | LlmStreamEventImageStart | LlmStreamEventImageDelta | LlmStreamEventImageEnd | LlmStreamEventDone
+class ModelStreamEvents(TypedDict):
+    stream_ref: str
+    stream_key: str
+    handle: str
+    events: list[LlmStreamEvent]
+    closed: bool
+    status: ModelStreamStatus
+class ModelStreamDetach(TypedDict):
+    stream_key: str
+    handle: str
+class ModelStreamDetached(TypedDict):
+    stream_ref: str
+    stream_key: str
+    handle: str
+    detached: bool
+class ModelStreamAbort(TypedDict):
+    stream_key: str
+    usage: LlmUsage
+class ModelStreamTerminal(TypedDict):
+    stream_ref: str
+    stream_key: str
+    model: ModelId
+    status: ModelStreamStatus
+    response: NotRequired[LlmResponse | None]
+    failure: NotRequired[str | None]
+class ModelStreamTerminalRequest(TypedDict):
+    stream_key: str
 class AiReplyReader(TypedDict):
     definition: str
     task_family: NotRequired[str | None]

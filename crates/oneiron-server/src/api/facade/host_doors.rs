@@ -77,6 +77,7 @@ pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
+pub(crate) use super::model_stream_doors::*;
 pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -1079,6 +1080,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         }
         "ai.steps.submit"
         | "ai.steps.receipt"
+        | "ai.streams.open"
+        | "ai.streams.subscribe"
+        | "ai.streams.events"
+        | "ai.streams.detach"
+        | "ai.streams.abort"
+        | "ai.streams.terminal"
         | "ai.reply"
         | "vault.calendar.ics.import"
         | "vault.calendar.instances.move"

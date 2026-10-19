@@ -10716,6 +10716,125 @@ async fn ai_steps_receipt(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn ai_streams_open(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.streams.open")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.streams.open", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.streams.open", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_streams_open(server, auth, facade_input(hooks.args.clone())?).await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn ai_streams_subscribe(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.streams.subscribe")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.streams.subscribe", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.streams.subscribe", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_streams_subscribe(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn ai_streams_events(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.streams.events")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.streams.events", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.streams.events", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_streams_events(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn ai_streams_detach(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.streams.detach")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.streams.detach", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.streams.detach", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_streams_detach(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn ai_streams_abort(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.streams.abort")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.streams.abort", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.streams.abort", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_streams_abort(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn ai_streams_terminal(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.streams.terminal")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.streams.terminal", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.streams.terminal", value).await?;
+    let output = facade_output(
+        super::host_doors::ai_streams_terminal(server, auth, facade_input(hooks.args.clone())?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn ai_reply(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -16258,6 +16377,12 @@ pub(crate) async fn call_verb(
         "vault.skills.outcomes.get" => vault_skills_outcomes_get(server, call, input).await,
         "ai.steps.submit" => ai_steps_submit(server, call, input).await,
         "ai.steps.receipt" => ai_steps_receipt(server, call, input).await,
+        "ai.streams.open" => ai_streams_open(server, call, input).await,
+        "ai.streams.subscribe" => ai_streams_subscribe(server, call, input).await,
+        "ai.streams.events" => ai_streams_events(server, call, input).await,
+        "ai.streams.detach" => ai_streams_detach(server, call, input).await,
+        "ai.streams.abort" => ai_streams_abort(server, call, input).await,
+        "ai.streams.terminal" => ai_streams_terminal(server, call, input).await,
         "ai.reply" => ai_reply(server, call, input).await,
         "vault.receipts.context" => vault_receipts_context(server, call, input).await,
         "ai.voice.asr.open" => ai_voice_asr_open(server, call, input).await,

@@ -4181,6 +4181,45 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn ai_streams_open(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.streams.open", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_streams_subscribe(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.streams.subscribe", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_streams_events(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.streams.events", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_streams_detach(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.streams.detach", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_streams_abort(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.streams.abort", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_streams_terminal(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.streams.terminal", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_reply(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.reply", input)

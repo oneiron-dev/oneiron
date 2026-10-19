@@ -1913,6 +1913,20 @@ export class Oneiron {
       /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease. */
       receipt: (input: Facade.ModelStepReceiptRequest): Facade.ModelStepReceipt => this.#call(() => this.#client.aiStepsReceipt(input) as Facade.ModelStepReceipt),
     },
+    streams: {
+      /** Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one. */
+      open: (input: Facade.ModelStreamOpen): Facade.ModelStreamOpened => this.#call(() => this.#client.aiStreamsOpen(input) as Facade.ModelStreamOpened),
+      /** Attach before or after open to the caller's shared model stream, without starting a producer; replay every typed part event from the first under an independently detachable handle. */
+      subscribe: (input: Facade.ModelStreamSubscribe): Facade.ModelStreamSubscribed => this.#call(() => this.#client.aiStreamsSubscribe(input) as Facade.ModelStreamSubscribed),
+      /** Drain one subscription's queued typed LlmStreamEvents (part-correlated text, reasoning, tool and image deltas, then Done) without blocking; closed once the producer ended and the queue is empty. */
+      events: (input: Facade.ModelStreamEventsRequest): Facade.ModelStreamEvents => this.#call(() => this.#client.aiStreamsEvents(input) as Facade.ModelStreamEvents),
+      /** Detach only this subscription from the shared model stream; the producer and every other subscriber continue. */
+      detach: (input: Facade.ModelStreamDetach): Facade.ModelStreamDetached => this.#call(() => this.#client.aiStreamsDetach(input) as Facade.ModelStreamDetached),
+      /** Abort the caller's shared model stream with actual usage: subscribers receive the cancelled Done of the parts completed so far, recorded as the one durable terminal. */
+      abort: (input: Facade.ModelStreamAbort): Facade.ModelStreamTerminal => this.#call(() => this.#client.aiStreamsAbort(input) as Facade.ModelStreamTerminal),
+      /** Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model. */
+      terminal: (input: Facade.ModelStreamTerminalRequest): Facade.ModelStreamTerminal => this.#call(() => this.#client.aiStreamsTerminal(input) as Facade.ModelStreamTerminal),
+    },
     /** Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs. */
     reply: (input: Facade.AiReplyRequest): Facade.AiReply => this.#call(() => this.#client.aiReply(input) as Facade.AiReply),
     voice: {

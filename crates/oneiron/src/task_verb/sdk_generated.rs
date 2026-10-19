@@ -2508,6 +2508,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "ai.streams.open",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_stream::ModelStreamOpen,
+                >(),
+            ),
+            (
+                "ai.streams.subscribe",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_stream::ModelStreamSubscribe,
+                >(),
+            ),
+            (
+                "ai.streams.events",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_stream::ModelStreamEventsRequest,
+                >(),
+            ),
+            (
+                "ai.streams.detach",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_stream::ModelStreamDetach,
+                >(),
+            ),
+            (
+                "ai.streams.abort",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_stream::ModelStreamAbort,
+                >(),
+            ),
+            (
+                "ai.streams.terminal",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_stream::ModelStreamTerminalRequest,
+                >(),
+            ),
+            (
                 "ai.reply",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiReplyRequest>(
                 ),
@@ -3969,6 +4005,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.propose_deck",
     "ai.steps.submit",
     "ai.steps.receipt",
+    "ai.streams.open",
+    "ai.streams.subscribe",
+    "ai.streams.events",
+    "ai.streams.detach",
+    "ai.streams.abort",
+    "ai.streams.terminal",
     "ai.reply",
     "vault.receipts.context",
     "ai.voice.asr.open",
@@ -4698,6 +4740,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "ai.steps.receipt" => crate::code_run::vault_read::request_schema::<
             crate::llm::model_step::ModelStepReceipt,
+        >(),
+        "ai.streams.open" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_stream::ModelStreamOpened,
+        >(),
+        "ai.streams.subscribe" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_stream::ModelStreamSubscribed,
+        >(),
+        "ai.streams.events" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_stream::ModelStreamEvents,
+        >(),
+        "ai.streams.detach" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_stream::ModelStreamDetached,
+        >(),
+        "ai.streams.abort" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_stream::ModelStreamTerminal,
+        >(),
+        "ai.streams.terminal" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_stream::ModelStreamTerminal,
         >(),
         "ai.reply" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiReply>()
@@ -8312,6 +8372,48 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "ai.streams.open" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.streams.subscribe" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.streams.events" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.streams.detach" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.streams.abort" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.streams.terminal" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.reply" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11258,6 +11360,25 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "ai.steps.receipt" => {
             let _input: crate::llm::model_step::ModelStepReceiptRequest = decode(value.clone())?;
         }
+        "ai.streams.open" => {
+            let _input: crate::llm::model_stream::ModelStreamOpen = decode(value.clone())?;
+        }
+        "ai.streams.subscribe" => {
+            let _input: crate::llm::model_stream::ModelStreamSubscribe = decode(value.clone())?;
+        }
+        "ai.streams.events" => {
+            let _input: crate::llm::model_stream::ModelStreamEventsRequest = decode(value.clone())?;
+        }
+        "ai.streams.detach" => {
+            let _input: crate::llm::model_stream::ModelStreamDetach = decode(value.clone())?;
+        }
+        "ai.streams.abort" => {
+            let _input: crate::llm::model_stream::ModelStreamAbort = decode(value.clone())?;
+        }
+        "ai.streams.terminal" => {
+            let _input: crate::llm::model_stream::ModelStreamTerminalRequest =
+                decode(value.clone())?;
+        }
         "ai.reply" => {
             let _input: crate::task_verb::sdk::AiReplyRequest = decode(value.clone())?;
         }
@@ -12962,6 +13083,12 @@ pub fn invoke(
         "vault.skills.outcomes.get" => encode(vault_skills_outcomes_get(memory, decode(value)?)?),
         "ai.steps.submit" => encode(ai_steps_submit(memory, decode(value)?)?),
         "ai.steps.receipt" => encode(ai_steps_receipt(memory, decode(value)?)?),
+        "ai.streams.open" => encode(ai_streams_open(memory, decode(value)?)?),
+        "ai.streams.subscribe" => encode(ai_streams_subscribe(memory, decode(value)?)?),
+        "ai.streams.events" => encode(ai_streams_events(memory, decode(value)?)?),
+        "ai.streams.detach" => encode(ai_streams_detach(memory, decode(value)?)?),
+        "ai.streams.abort" => encode(ai_streams_abort(memory, decode(value)?)?),
+        "ai.streams.terminal" => encode(ai_streams_terminal(memory, decode(value)?)?),
         "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
         "vault.receipts.context" => encode(vault_receipts_context(memory, decode(value)?)?),
         "ai.voice.asr.open" => encode(ai_voice_asr_open(memory, decode(value)?)?),
@@ -17386,6 +17513,42 @@ pub fn ai_steps_receipt(
     input: crate::llm::model_step::ModelStepReceiptRequest,
 ) -> MemoryResult<crate::llm::model_step::ModelStepReceipt> {
     crate::task_verb::sdk::host_only(memory, "ai.steps.receipt", &input)
+}
+pub fn ai_streams_open(
+    memory: &Memory<'_>,
+    input: crate::llm::model_stream::ModelStreamOpen,
+) -> MemoryResult<crate::llm::model_stream::ModelStreamOpened> {
+    crate::task_verb::sdk::host_only(memory, "ai.streams.open", &input)
+}
+pub fn ai_streams_subscribe(
+    memory: &Memory<'_>,
+    input: crate::llm::model_stream::ModelStreamSubscribe,
+) -> MemoryResult<crate::llm::model_stream::ModelStreamSubscribed> {
+    crate::task_verb::sdk::host_only(memory, "ai.streams.subscribe", &input)
+}
+pub fn ai_streams_events(
+    memory: &Memory<'_>,
+    input: crate::llm::model_stream::ModelStreamEventsRequest,
+) -> MemoryResult<crate::llm::model_stream::ModelStreamEvents> {
+    crate::task_verb::sdk::host_only(memory, "ai.streams.events", &input)
+}
+pub fn ai_streams_detach(
+    memory: &Memory<'_>,
+    input: crate::llm::model_stream::ModelStreamDetach,
+) -> MemoryResult<crate::llm::model_stream::ModelStreamDetached> {
+    crate::task_verb::sdk::host_only(memory, "ai.streams.detach", &input)
+}
+pub fn ai_streams_abort(
+    memory: &Memory<'_>,
+    input: crate::llm::model_stream::ModelStreamAbort,
+) -> MemoryResult<crate::llm::model_stream::ModelStreamTerminal> {
+    crate::task_verb::sdk::host_only(memory, "ai.streams.abort", &input)
+}
+pub fn ai_streams_terminal(
+    memory: &Memory<'_>,
+    input: crate::llm::model_stream::ModelStreamTerminalRequest,
+) -> MemoryResult<crate::llm::model_stream::ModelStreamTerminal> {
+    crate::task_verb::sdk::host_only(memory, "ai.streams.terminal", &input)
 }
 pub fn ai_reply(
     memory: &Memory<'_>,

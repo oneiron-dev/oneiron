@@ -1425,6 +1425,12 @@ fn mcp_agent_verb_input(
         "vault.skills.outcomes.get" => a.spec.clone().ok_or_else(invalid),
         "ai.steps.submit" => a.spec.clone().ok_or_else(invalid),
         "ai.steps.receipt" => a.spec.clone().ok_or_else(invalid),
+        "ai.streams.open" => a.spec.clone().ok_or_else(invalid),
+        "ai.streams.subscribe" => a.spec.clone().ok_or_else(invalid),
+        "ai.streams.events" => a.spec.clone().ok_or_else(invalid),
+        "ai.streams.detach" => a.spec.clone().ok_or_else(invalid),
+        "ai.streams.abort" => a.spec.clone().ok_or_else(invalid),
+        "ai.streams.terminal" => a.spec.clone().ok_or_else(invalid),
         "ai.reply" => a.spec.clone().ok_or_else(invalid),
         "vault.receipts.context" => a.spec.clone().ok_or_else(invalid),
         "ai.voice.asr.open" => a.spec.clone().ok_or_else(invalid),
@@ -3117,6 +3123,24 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "ai.steps.receipt" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.streams.open" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.streams.subscribe" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.streams.events" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.streams.detach" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.streams.abort" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "ai.streams.terminal" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "ai.reply" => {
@@ -11246,6 +11270,78 @@ async fn execute_agent_verb_row(
                     .flatten(),
             );
             let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.streams.open" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.streams.open", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::llm::model_stream::ModelStreamOpen =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::ai_streams_open(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.streams.subscribe" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.streams.subscribe", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::llm::model_stream::ModelStreamSubscribe =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::ai_streams_subscribe(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.streams.events" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.streams.events", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::llm::model_stream::ModelStreamEventsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::ai_streams_events(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.streams.detach" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.streams.detach", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::llm::model_stream::ModelStreamDetach =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::ai_streams_detach(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.streams.abort" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.streams.abort", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::llm::model_stream::ModelStreamAbort =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::ai_streams_abort(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "ai.streams.terminal" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("ai.streams.terminal", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::llm::model_stream::ModelStreamTerminalRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::ai_streams_terminal(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

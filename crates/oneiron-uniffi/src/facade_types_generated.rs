@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 665 facade rows, 2392 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 13; generated in and out: 624.
+// UniFFI census: 671 facade rows, 2405 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 13; generated in and out: 630.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -28267,6 +28267,276 @@ pub struct ModelStepReceipt {
 pub struct ModelStepReceiptRequest {
     #[serde(rename = "step_key")]
     pub step_key: String,
+}
+
+/// `oneiron::llm::model_stream::ModelStreamOpen`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ModelStreamOpen {
+    #[serde(rename = "stream_key")]
+    pub stream_key: String,
+    #[serde(rename = "request")]
+    pub request: LlmRequest,
+}
+
+/// `oneiron::llm::model_stream::ModelStreamStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ModelStreamStatus {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "live")]
+    Live,
+    #[serde(rename = "finished")]
+    Finished,
+    #[serde(rename = "failed")]
+    Failed,
+}
+
+/// `oneiron::llm::model_stream::ModelStreamOpened`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ModelStreamOpened {
+    #[serde(rename = "stream_ref")]
+    pub stream_ref: String,
+    #[serde(rename = "stream_key")]
+    pub stream_key: String,
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "status")]
+    pub status: ModelStreamStatus,
+}
+
+/// `oneiron::llm::model_stream::ModelStreamSubscribe`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ModelStreamSubscribe {
+    #[serde(rename = "stream_key")]
+    pub stream_key: String,
+}
+
+/// `oneiron::llm::model_stream::ModelStreamSubscribed`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ModelStreamSubscribed {
+    #[serde(rename = "stream_ref")]
+    pub stream_ref: String,
+    #[serde(rename = "stream_key")]
+    pub stream_key: String,
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "status")]
+    pub status: ModelStreamStatus,
+}
+
+/// `oneiron::llm::model_stream::ModelStreamEventsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ModelStreamEventsRequest {
+    #[serde(rename = "stream_key")]
+    pub stream_key: String,
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron_model::llm::protocol::LlmStreamEvent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "event")]
+pub enum LlmStreamEvent {
+    #[serde(rename = "text_start")]
+    TextStart {
+        #[serde(rename = "part_id")]
+        part_id: String,
+    },
+    #[serde(rename = "text_delta")]
+    TextDelta {
+        #[serde(rename = "part_id")]
+        part_id: String,
+        #[serde(rename = "text")]
+        text: String,
+    },
+    #[serde(rename = "text_end")]
+    TextEnd {
+        #[serde(rename = "part_id")]
+        part_id: String,
+    },
+    #[serde(rename = "reasoning_start")]
+    ReasoningStart {
+        #[serde(rename = "part_id")]
+        part_id: String,
+        #[serde(rename = "signature", default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
+    #[serde(rename = "reasoning_delta")]
+    ReasoningDelta {
+        #[serde(rename = "part_id")]
+        part_id: String,
+        #[serde(rename = "text")]
+        text: String,
+    },
+    #[serde(rename = "reasoning_end")]
+    ReasoningEnd {
+        #[serde(rename = "part_id")]
+        part_id: String,
+    },
+    #[serde(rename = "tool_call_start")]
+    ToolCallStart {
+        #[serde(rename = "part_id")]
+        part_id: String,
+        #[serde(rename = "call_id")]
+        call_id: String,
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "tool_call_delta")]
+    ToolCallDelta {
+        #[serde(rename = "part_id")]
+        part_id: String,
+        #[serde(rename = "input_fragment")]
+        input_fragment: String,
+    },
+    #[serde(rename = "tool_call_end")]
+    ToolCallEnd {
+        #[serde(rename = "part_id")]
+        part_id: String,
+        #[serde(rename = "call_id")]
+        call_id: String,
+        #[serde(rename = "name")]
+        name: String,
+        #[serde(rename = "input")]
+        input: crate::WireJson,
+    },
+    #[serde(rename = "tool_result_start")]
+    ToolResultStart {
+        #[serde(rename = "part_id")]
+        part_id: String,
+        #[serde(rename = "call_id")]
+        call_id: String,
+    },
+    #[serde(rename = "tool_result_delta")]
+    ToolResultDelta {
+        #[serde(rename = "part_id")]
+        part_id: String,
+        #[serde(rename = "output_fragment")]
+        output_fragment: String,
+    },
+    #[serde(rename = "tool_result_end")]
+    ToolResultEnd {
+        #[serde(rename = "part_id")]
+        part_id: String,
+        #[serde(rename = "call_id")]
+        call_id: String,
+        #[serde(rename = "output")]
+        output: crate::WireJson,
+        #[serde(rename = "is_error", default, skip_serializing_if = "Option::is_none")]
+        is_error: Option<bool>,
+    },
+    #[serde(rename = "image_start")]
+    ImageStart {
+        #[serde(rename = "part_id")]
+        part_id: String,
+        #[serde(rename = "media_type")]
+        media_type: String,
+    },
+    #[serde(rename = "image_delta")]
+    ImageDelta {
+        #[serde(rename = "part_id")]
+        part_id: String,
+        #[serde(rename = "data_fragment")]
+        data_fragment: String,
+    },
+    #[serde(rename = "image_end")]
+    ImageEnd {
+        #[serde(rename = "part_id")]
+        part_id: String,
+        #[serde(rename = "media_type")]
+        media_type: String,
+        #[serde(rename = "image")]
+        image: ImageContent,
+    },
+    #[serde(rename = "done")]
+    Done {
+        #[serde(rename = "message")]
+        message: LlmMessage,
+        #[serde(rename = "usage")]
+        usage: LlmUsage,
+        #[serde(rename = "finish_reason")]
+        finish_reason: FinishReason,
+    },
+}
+
+/// `oneiron::llm::model_stream::ModelStreamEvents`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ModelStreamEvents {
+    #[serde(rename = "stream_ref")]
+    pub stream_ref: String,
+    #[serde(rename = "stream_key")]
+    pub stream_key: String,
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "events")]
+    pub events: Vec<LlmStreamEvent>,
+    #[serde(rename = "closed")]
+    pub closed: bool,
+    #[serde(rename = "status")]
+    pub status: ModelStreamStatus,
+}
+
+/// `oneiron::llm::model_stream::ModelStreamDetach`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ModelStreamDetach {
+    #[serde(rename = "stream_key")]
+    pub stream_key: String,
+    #[serde(rename = "handle")]
+    pub handle: String,
+}
+
+/// `oneiron::llm::model_stream::ModelStreamDetached`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ModelStreamDetached {
+    #[serde(rename = "stream_ref")]
+    pub stream_ref: String,
+    #[serde(rename = "stream_key")]
+    pub stream_key: String,
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "detached")]
+    pub detached: bool,
+}
+
+/// `oneiron::llm::model_stream::ModelStreamAbort`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ModelStreamAbort {
+    #[serde(rename = "stream_key")]
+    pub stream_key: String,
+    #[serde(rename = "usage")]
+    pub usage: LlmUsage,
+}
+
+/// `oneiron::llm::model_stream::ModelStreamTerminal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ModelStreamTerminal {
+    #[serde(rename = "stream_ref")]
+    pub stream_ref: String,
+    #[serde(rename = "stream_key")]
+    pub stream_key: String,
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "status")]
+    pub status: ModelStreamStatus,
+    #[serde(rename = "response", default, skip_serializing_if = "Option::is_none")]
+    pub response: Option<LlmResponse>,
+    #[serde(rename = "failure", default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+}
+
+/// `oneiron::llm::model_stream::ModelStreamTerminalRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ModelStreamTerminalRequest {
+    #[serde(rename = "stream_key")]
+    pub stream_key: String,
 }
 
 /// `oneiron::task_verb::sdk_reply::AiReplyReader`.

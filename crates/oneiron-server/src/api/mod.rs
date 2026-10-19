@@ -120,6 +120,7 @@ pub(crate) mod host_action;
 // the invocation a call names as the HTTP facade does (FIX 2059).
 pub(crate) use self::facade::{
     AsrSessions, DoorClaim, FacadeApiError, FacadeCall, INVOCATION_CONFLICT, INVOCATION_IN_FLIGHT,
+    ModelStreams,
     ai_speech_for_run, call_verb as facade_call_verb, claim_door_invocation, connector_answer_as,
     connector_call_as, invocation_body, self_use_as,
 };
