@@ -137,6 +137,10 @@ pub enum AuthorityOp {
     /// PR2c, K06). A main-log entry, so every machine the owner admits
     /// folds it.
     CheckpointPolicySet(CheckpointPolicySet),
+    /// One owner pick of the vault's home node, signed by the install key
+    /// of a live machine of the vault, in any role (DOOR-101 PR2a). A
+    /// main-log entry, so every machine the owner admits folds it.
+    HomeNodePick(HomeNodePick),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -195,6 +199,7 @@ impl AuthorityLogEntry {
             AuthorityOp::OwnerWorkRequest(request) => request.validate_entry(self)?,
             AuthorityOp::OwnerWorkResult(result) => result.validate_entry(self)?,
             AuthorityOp::CheckpointPolicySet(set) => set.validate_entry(self)?,
+            AuthorityOp::HomeNodePick(pick) => pick.validate_entry(self)?,
             _ => {}
         }
         self.signer.validate()?;
@@ -414,6 +419,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::OwnerWorkRequest(request) => request.validate(),
         AuthorityOp::OwnerWorkResult(result) => result.validate(),
         AuthorityOp::CheckpointPolicySet(set) => set.validate(),
+        AuthorityOp::HomeNodePick(pick) => pick.validate(),
     }
 }
 

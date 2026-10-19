@@ -4199,6 +4199,9 @@ class Oneiron:
         def get(self, spec=None):
             """The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_home_get(json.dumps({} if spec is None else spec))))
+        def pick(self, spec):
+            """The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_home_pick(json.dumps(spec))))
     class _VaultSieveVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

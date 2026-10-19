@@ -102,6 +102,9 @@ impl Vault {
         let ids = self.put_authority_log_entries_in_txn(&mut wtxn, entries)?;
         wtxn.commit()?;
         watch.finish()?;
+        // An owner home pick among them re-elected this node's MACRO home in
+        // the write (DOOR-101): its watchers re-read it now.
+        self.store.notify_proactivity_changes();
         Ok(ids)
     }
 

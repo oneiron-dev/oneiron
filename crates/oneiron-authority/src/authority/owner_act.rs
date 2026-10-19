@@ -94,6 +94,9 @@ pub enum OwnerActKind {
     /// A whole-vault export the owner made (Engine 10-19 02:4x). It changes
     /// nothing, so its `seen` is zero.
     Export,
+    /// The owner's pick of the vault's home node (`HomeNodePick`; DOOR-101
+    /// PR2a). Its `seen` is over the vault's live picks.
+    HomeNodePick,
 }
 
 impl OwnerActKind {
@@ -113,6 +116,7 @@ impl OwnerActKind {
             Self::GrantTravel => "grant_travel",
             Self::PolicySetting => "policy_setting",
             Self::Export => "export",
+            Self::HomeNodePick => "home_node_pick",
         }
     }
 
@@ -132,6 +136,7 @@ impl OwnerActKind {
             "grant_travel" => Self::GrantTravel,
             "policy_setting" => Self::PolicySetting,
             "export" => Self::Export,
+            "home_node_pick" => Self::HomeNodePick,
             _ => return None,
         })
     }

@@ -7,8 +7,9 @@
 //! and the read of every branch; and the owner's read of one consult's
 //! terminal register (DOOR-063); and the owner's reads of this node's
 //! Dreamer runner (DOOR-101): its MACRO home and one consolidation job's
-//! lineage. `host_doors` re-exports them, so the generated HTTP facade
-//! handler and the MCP dispatcher call them by the name every host door has.
+//! lineage, and his pick of the home node. `host_doors` re-exports them, so
+//! the generated HTTP facade handler and the MCP dispatcher call them by the
+//! name every host door has.
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -16,7 +17,8 @@ use oneiron::agent_dispatch::PlannerDecisions;
 use oneiron::code_run::HostPlannerBinding;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::{
-    ConsolidationHomeView, ConsolidationLineageRequest, ConsolidationLineageView,
+    ConsolidationHomePickReceipt, ConsolidationHomePickRequest, ConsolidationHomeView,
+    ConsolidationLineageRequest, ConsolidationLineageView,
 };
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::retrieval_depth::RetrievalDeadline;
@@ -295,6 +297,33 @@ pub(crate) async fn vault_consolidation_home_get(
         owner_proof(auth, server, VERB),
         |server, owner| oneiron::dreamer_runner::consolidation_home_as(server.vault(), &owner),
         |_| Some(Vec::new()),
+    )
+    .await
+}
+
+/// A pick names the AUTHORITY_LOG row it landed as. The act records where
+/// the owner said so (audit only): the hosted console for a managed vault's
+/// attested owner, else this install.
+pub(crate) async fn vault_consolidation_home_pick(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ConsolidationHomePickRequest,
+) -> MaybeListed<ConsolidationHomePickReceipt> {
+    const VERB: &str = "vault.consolidation.home.pick";
+    let surface = super::owner_binding::act_surface(auth);
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            oneiron::dreamer_runner::consolidation_home_pick_as(
+                server.vault(),
+                &owner,
+                surface,
+                input,
+            )
+        },
+        |receipt| Some(receipt.act_row().into_iter().collect()),
     )
     .await
 }

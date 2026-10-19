@@ -622,6 +622,18 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
+        AuthorityOp::HomeNodePick(pick) => (
+            Other,
+            "home_node_pick",
+            OpFields {
+                detail: Some(
+                    pick.node_id
+                        .map_or_else(|| "clear".to_owned(), |node| format!("node {node}")),
+                ),
+                subject_ref: Some(pick.machine.to_hex()),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::OwnerWorkRequest(request) => (
             Other,
             "owner_work_request",

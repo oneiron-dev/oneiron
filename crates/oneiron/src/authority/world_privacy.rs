@@ -599,7 +599,14 @@ pub(super) fn live_edits_by(
         .filter(|(_, signer)| **signer == machine)
         .map(|(hash, _)| *hash)
         .chain(super::grant_travel::live_choices_by(fold, machine))
-        .chain(super::checkpoint_choice::live_choices_by(fold, machine))
+        .chain(super::owner_choice::live_choices_by(
+            &fold.checkpoint_policy,
+            machine,
+        ))
+        .chain(super::owner_choice::live_choices_by(
+            &fold.home_pick,
+            machine,
+        ))
         .chain(super::machine_profile::live_answers_by(fold, machine))
         .chain(super::owner_work::pending_carried_by(fold, machine))
         .take(MACHINE_SEEN_WORLD_EDITS_MAX)

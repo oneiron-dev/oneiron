@@ -885,6 +885,7 @@ both bindings and their export-census tests in one change.
 - `vault.runs.step`
 - `vault.runs.checkpoint`
 - `vault.consolidation.home.get`
+- `vault.consolidation.home.pick`
 - `vault.consolidation.lineage`
 - `vault.consolidation.promote`
 - `vault.consolidation.pin`
