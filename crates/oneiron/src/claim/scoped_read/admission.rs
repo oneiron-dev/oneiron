@@ -238,11 +238,13 @@ impl<'a> ScopedRead<'a> {
 
     /// Whether a device-local world keeps `id` from this read: a caller off
     /// this device reads none of its rows (DEC-0005), neither the revision
-    /// `raw` a door serves nor the row as it stands. A row whose world cannot
-    /// be read stays here too. The flag set is the vault's, read on base; the
-    /// row is judged as this read sees it, so in a room a row the room stages
-    /// is judged as well. Such a row carries no record-scope stamp, and one
-    /// the judge cannot place is kept.
+    /// `raw` a door serves nor the row as it stands. The worlds are judged in
+    /// this snapshot for each machine the key's rows go to, its proof checked
+    /// again here (mesh PR2b); only an unproved one is unknown. A row whose
+    /// world cannot be read stays here too. The flag set is the vault's, read
+    /// on base; the row is judged as this read sees it, so in a room a row
+    /// the room stages is judged as well. Such a row carries no record-scope
+    /// stamp, and one the judge cannot place is kept.
     pub(super) fn device_withholds_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -252,11 +254,8 @@ impl<'a> ScopedRead<'a> {
         if !self.actor_key.off_device() {
             return Ok(false);
         }
-        let flagged = crate::settings::device_local_worlds_at(
-            self.vault,
-            txn,
-            crate::claim::CallerLocality::OffDevice,
-        )?;
+        let destination = self.actor_key.destination();
+        let flagged = crate::settings::device_local_worlds_for(self.vault, txn, destination)?;
         let read = self.store_read();
         let withholds = match raw {
             Some(raw) => {

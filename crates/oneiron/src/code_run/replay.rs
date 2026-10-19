@@ -166,6 +166,9 @@ impl CodeRunBridgeCall {
             SelfDispatchOutcome::AgentVerb(_) if self.effect == SelfEffect::WorldPrivacySet => {
                 Ok(())
             }
+            // `tasks.consult.result`'s answer is the landed consult's terminal
+            // register, as a verb answer (DOOR-063).
+            SelfDispatchOutcome::AgentVerb(_) if self.effect == SelfEffect::ConsultResult => Ok(()),
             SelfDispatchOutcome::AgentVerb(_) if self.effect != SelfEffect::AgentVerb => Err(
                 invalid_code_run_replay("agent verb result belongs to another effect"),
             ),
@@ -793,12 +796,16 @@ impl CodeRunReplayRecord {
 
 /// The served rows of the verb answers among `calls`, as
 /// [`CodeRunReplayRecord::agent_verb_rows`] reads them; `None` when any answer
-/// has no row set or does not decode.
+/// has no row set or does not decode. A consult landing's answer lists the
+/// refs it read (DOOR-063).
 pub(crate) fn agent_verb_rows_of(calls: &[CodeRunBridgeCall]) -> Option<Vec<EntityId>> {
     let mut rows = Vec::new();
-    let verb_calls = calls
-        .iter()
-        .filter(|call| call.effect == SelfEffect::AgentVerb);
+    let verb_calls = calls.iter().filter(|call| {
+        matches!(
+            call.effect,
+            SelfEffect::AgentVerb | SelfEffect::ConsultResult
+        )
+    });
     for call in verb_calls {
         if let SelfDispatchOutcome::AgentVerb(answer) =
             decode_self_dispatch_outcome(&call.outcome).ok()?

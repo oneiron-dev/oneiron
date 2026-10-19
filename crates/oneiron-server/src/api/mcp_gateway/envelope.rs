@@ -634,11 +634,15 @@ pub(crate) async fn handle_mcp_request(
         );
     }
     let request_id = mcp_request_id(request.id.as_ref().unwrap_or(&Value::Null));
+    // The machine this request's connection proved: the call reads, and
+    // every release is judged, for it (mesh PR2b).
+    let peer = crate::auth::proved_peer(headers, connection);
 
     match request.method.as_str() {
         "initialize" => {
-            let actor =
-                resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server).await?;
+            let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server)
+                .await?
+                .toward(peer);
             // It states the credential's scope, so it is released as every
             // result is (DEC-0005).
             let result = json!({
@@ -660,8 +664,9 @@ pub(crate) async fn handle_mcp_request(
         }
         "notifications/initialized" => Ok(json!({})),
         "oneiron/wakes" => {
-            let actor =
-                resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server).await?;
+            let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server)
+                .await?
+                .toward(peer);
             super::wakes::poll(server, &actor, request.params).await
         }
         // Deliberately actor-free: a listing that echoed the caller back would
@@ -669,16 +674,18 @@ pub(crate) async fn handle_mcp_request(
         // immutable registration is that it is the same bytes for everyone.
         // The credential is still REQUIRED, just never reflected.
         "tools/list" => {
-            let _actor =
-                resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server).await?;
+            let _actor = resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server)
+                .await?
+                .toward(peer);
             Ok(json!({
                 "surfaceMode": mode.as_str(),
                 "tools": server.mcp_surface(mode).listing(),
             }))
         }
         "tools/call" => {
-            let actor =
-                resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server).await?;
+            let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server)
+                .await?
+                .toward(peer);
             // OF-538: what the call's receipt states of its request, taken
             // before the params are consumed.
             let tool = request

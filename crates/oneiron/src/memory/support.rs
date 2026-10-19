@@ -420,6 +420,9 @@ pub struct Memory<'v> {
     pub(super) host_origin: Option<HostWriteOrigin>,
     /// Where the caller sits; see [`Memory::at`].
     pub(super) locality: crate::claim::CallerLocality,
+    /// Where the caller's rows go, each machine its connection proved beside
+    /// the locality (mesh PR2b); see [`Memory::for_destination`].
+    pub(super) destination: crate::settings::ReadDestination,
     /// Where a host collects the rows its reads pick (`listing_producers`).
     pub(super) producers: Option<&'v super::ProducerRows>,
     /// Where a host bound its writer's TASKs to be born (`with_birth_position`).
@@ -574,6 +577,7 @@ impl Vault {
             room_turn: None,
             host_origin: None,
             locality: crate::claim::CallerLocality::OnDevice,
+            destination: crate::settings::ReadDestination::on_device(),
             producers: None,
             birth_position: Default::default(),
             owner_authorship: None,
@@ -620,6 +624,7 @@ impl Vault {
             room_turn: None,
             host_origin: None,
             locality: crate::claim::CallerLocality::OnDevice,
+            destination: crate::settings::ReadDestination::on_device(),
             producers: None,
             birth_position: Default::default(),
             owner_authorship: None,
@@ -672,6 +677,7 @@ impl<'v> Memory<'v> {
                 room_turn: Some(ceiling),
                 host_origin: self.host_origin.clone(),
                 locality: self.locality,
+                destination: self.destination.clone(),
                 producers: self.producers,
                 birth_position: self.birth_position,
                 // A room turn writes into the room's talk, not as the owner
@@ -1163,23 +1169,23 @@ impl Memory<'_> {
         self.room_turn.as_ref()
     }
 
-    /// The sitting and the room turn's room a host bound, when nothing else
-    /// on this surface is something a resumed call could not rebuild: no
-    /// credential or read proof, on this device, a room's own turn rather
-    /// than a thread's, and no owner authorship, host origin, machine signer,
-    /// producer list, birth position, TASK host, off-record session or door
-    /// rewrite admission. A verb hook's ask saves
-    /// them, so settlement runs the call again as this caller (ARCH-0080 §3
-    /// Ask); `None` resumes only on the caller's retry.
-    pub(crate) fn resume_bounds(
-        &self,
-    ) -> Option<(
-        Option<crate::session_lifecycle::SessionKey>,
-        Option<EntityId>,
-    )> {
-        let plain = !self.credential
+    /// What a verb hook's ask saves so settlement runs this call again as its
+    /// caller, with no credential (ARCH-0080 §3 Ask): the sitting, the room
+    /// turn's room, where the caller reads from, the transport mark, the
+    /// origin conversation and the host action, beside the actor, class and
+    /// invocation the ask keeps. The drain takes its own task-work turn, and
+    /// the credential instrument and door name nothing without a credential.
+    /// `None` when this surface holds what only its host could rebuild: a
+    /// credential, read proof, slip or task grant, a thread's turn, owner
+    /// authorship, a host origin, a machine signer, a producer list, a birth
+    /// position, a TASK host, a decision path, an off-record session or a
+    /// door's rewrite admission. Where the caller sits decides nothing here.
+    /// `None` resumes only on the caller's retry.
+    pub(crate) fn plain_resume(&self) -> Option<crate::runtime_hooks::verb::PlainRowResume> {
+        let rebuilt = !self.credential
             && self.read_proof.is_none()
-            && self.locality == crate::claim::CallerLocality::OnDevice
+            && self.invocation_slip.is_none()
+            && self.task_grant.is_none()
             && self
                 .room_turn
                 .as_ref()
@@ -1190,12 +1196,17 @@ impl Memory<'_> {
             && self.producers.is_none()
             && self.birth_position == crate::federation::record_scope::BirthPosition::default()
             && self.task_host.is_none()
+            && self.task_decisions.is_none()
             && self.off_record_session.is_none()
             && self.rewrite_admit.is_none();
-        plain.then(|| {
-            (
+        rebuilt.then(|| {
+            crate::runtime_hooks::verb::PlainRowResume::of(
                 self.session_key,
                 self.room_turn.as_ref().map(|turn| turn.room),
+                self.locality,
+                self.transport_invocation,
+                self.origin_conversation,
+                self.host_action.as_ref(),
             )
         })
     }

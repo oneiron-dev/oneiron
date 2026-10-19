@@ -197,6 +197,7 @@ impl<'v> Memory<'v> {
                 room_turn: Some(ceiling),
                 host_origin: self.host_origin.clone(),
                 locality: self.locality,
+                destination: self.destination.clone(),
                 producers: self.producers,
                 birth_position: self.birth_position,
                 // A thread's read writes nothing as the owner in person.

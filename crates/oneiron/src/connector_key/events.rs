@@ -347,7 +347,6 @@ impl Vault {
     /// The foreign-pack door attenuates host ingress to exactly the acting
     /// agent and the key granted to that run. Caller owns the transaction so
     /// the live grant, event admission and budget debit co-commit.
-    #[cfg(any(test, feature = "microvm-firecracker"))]
     pub(crate) fn ingest_connector_event_for_pack_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,

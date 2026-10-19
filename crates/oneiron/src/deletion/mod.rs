@@ -69,11 +69,20 @@ pub use tombstone::{
     TombstoneReason, TombstoneValueV2, decode_tombstone_value,
 };
 
+// A carrier copy of an erased actor's row settles by one rule (FIX 3878).
+pub(crate) use actor_fields::carrier_actor_merged;
+pub use actor_fields::{
+    ACTOR_ERASE_CARRIER_MERGE, ACTOR_ERASE_CARRIER_SOURCE, CarrierActorMerge, CarrierEraseSource,
+};
+
+// A checkpoint restore reruns the erase's actor sweep (FIX 3655).
+pub(crate) use actor_fields::{hard_erased_ids_in, rerun_actor_scrubs_in_txn};
 pub(crate) use derived_rows::tear_derived_rows_in_txn;
 pub(crate) use gate::{DeletionClaim, DeletionGateContext, GatedDeletion};
 pub(crate) use receipt::{decode_redaction_audit_receipt, validate_redaction_receipt_body};
 pub(crate) use receipt_completion::{
-    append_redaction_sweep_completion_in_txn, redaction_sweep_completion_in_txn,
+    append_redaction_sweep_completion_in_txn, redaction_sweep_completion_id,
+    redaction_sweep_completion_in_txn,
 };
 #[cfg(feature = "sync")]
 pub(crate) use sweep_queue::withdrawn_generation_cutoff_in_txn;

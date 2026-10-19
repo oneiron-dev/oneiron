@@ -52,6 +52,25 @@ impl TaskTerminalDisposition {
     }
 }
 
+/// Why the ENGINE, not any party, settled a TASK. A lapse is the asker's own
+/// will enacted by the clock: no actor is verified or stamped for it, and the
+/// cause is named in the durable artifact the terminal record points at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TaskLapseCause {
+    /// The absolute deadline the consult's asker set passed unanswered.
+    ConsultDeadlineElapsed { deadline_at: u64 },
+}
+
+impl TaskLapseCause {
+    /// Stable wire token for the cause.
+    #[must_use]
+    pub(super) const fn as_str(self) -> &'static str {
+        match self {
+            Self::ConsultDeadlineElapsed { .. } => "consult_deadline_elapsed",
+        }
+    }
+}
+
 /// Maps a terminal disposition onto the existing five-value board axis.
 /// `Expired` and `Abandoned` both read as failed; the exact cause survives
 /// BESIDE the status, never folded into it.

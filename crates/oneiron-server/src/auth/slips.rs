@@ -219,7 +219,10 @@ impl CoreAuth {
                 verified.allows_verb(class) || verified.allows_verb(scope.as_str())
             })
             .collect();
+        // A slip whose comm reach the owner capped is never owner grade, or
+        // it could mint itself a wider one (FIX 3899).
         let owner_grade = unattenuated
+            && verified.comm() == oneiron::agent_dispatch::CommReach::Vault
             && claims.scope == Scope::top()
             && claims.org_ref.is_none()
             && claims.records.is_empty()
@@ -238,6 +241,7 @@ impl CoreAuth {
             verified_slip: Some(verified),
             invocation_slip: None,
             locality: CallerLocality::OffDevice,
+            peer: oneiron::authority::PeerMachine::Unknown,
             facets_owner_exempt: false,
             off_record_session: None,
             managed_owner: None,
@@ -334,7 +338,9 @@ impl CoreAuth {
     /// owner it acts as (FIX 2222). Any other credential with no verified
     /// slip (a managed vault's attested owner) reads every entity, but for
     /// one a device-local world keeps from a caller off this device
-    /// (DEC-0005).
+    /// (DEC-0005). Each path reads toward the machine the request's
+    /// connection proved, judged again in the read's own snapshot (mesh
+    /// PR2b).
     pub(crate) fn can_read_entity(
         &self,
         vault: &oneiron::Vault,
@@ -343,17 +349,17 @@ impl CoreAuth {
         if self.is_local_dev_hatch() {
             let action = vault.dev_action_authority()?;
             return vault
-                .scoped_read(action.read_key().at(self.locality))
+                .scoped_read(action.read_key().for_destination(&self.destination()))
                 .is_entity_readable(id);
         }
         let Some(proof) = self.verified_slip() else {
-            return Ok(self.locality == CallerLocality::OnDevice || !vault.device_local_keeps(id)?);
+            return Ok(!vault.device_local_keeps_for(id, &self.destination())?);
         };
         let Some(key) = vault.credential_read_key(proof)? else {
             return Ok(false);
         };
         vault
-            .scoped_read(key.at(self.locality))
+            .scoped_read(key.for_destination(&self.destination()))
             .is_entity_readable(id)
     }
     pub(crate) fn credential_is_live_in_write_txn(

@@ -49,6 +49,7 @@ pub use self::admission::{
 };
 pub(crate) use self::admission::{
     admit_imported_evidence_claim_for_memory, admit_imported_evidence_claim_typed_for_machine,
+    admit_imported_evidence_in_content,
 };
 pub use self::bulk_review::{
     ImportedClaimBatch, ImportedClaimBatchEntry, ImportedClaimBatchReceipt,

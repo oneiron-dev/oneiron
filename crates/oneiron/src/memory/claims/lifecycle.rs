@@ -24,7 +24,7 @@ fn carried_proposal_admitted(
     required.worlds = axis(position.world);
     required.facets = axis(position.facet);
     let granted = claims.invitation_ref.is_none()
-        && ["core:propose", "write", "core:write"]
+        && ["propose", "core:propose", "write", "core:write"]
             .iter()
             .any(|verb| proof.allows_verb(verb));
     if claims.holder_ref != actor.to_hex()
@@ -88,6 +88,50 @@ impl Memory<'_> {
     /// no axis but the world and facet the claim is born at. A handle bound
     /// to no credential is refused.
     pub fn claim_propose_carried(&self, input: &ClaimInput) -> MemoryResult<CommitReceipt> {
+        self.claim_propose_carried_guarded(input, &|_| Ok(()))
+    }
+
+    /// The proxy's independent Proposed exchange, under its still-live
+    /// read and remember rows, checked in the claim's committing writer.
+    pub fn claim_propose_for_proxy(&self, input: &ClaimInput) -> MemoryResult<CommitReceipt> {
+        if input.predicate != "integration.exchange"
+            || input.subject_ref != self.actor.to_hex()
+            || input.source != "tool_output"
+        {
+            return Err(MemoryError::bad_request(
+                "the proxy proposes its own tool-output exchange",
+            ));
+        }
+        self.claim_propose_carried_guarded(input, &|txn| {
+            let registered = self
+                .vault
+                .live_connector_registration_in_txn(
+                    txn,
+                    crate::connector_key::PROXY_CONNECTOR,
+                    &self.actor,
+                )?
+                .is_some_and(|registration| {
+                    ["vault.recall", "vault.remember"].iter().all(|tool| {
+                        registration.slate.tool_setting(tool)
+                            != crate::connector_key::SlateDisposition::NeverAllow
+                    })
+                });
+            if !registered {
+                return Err(Error::Claim(
+                    crate::error::ClaimError::ActorLacksClaimAuthority {
+                        reason: "the proxy's read or write grant is revoked",
+                    },
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    fn claim_propose_carried_guarded(
+        &self,
+        input: &ClaimInput,
+        in_writer: &dyn Fn(&heed::RoTxn<'_>) -> Result<(), Error>,
+    ) -> MemoryResult<CommitReceipt> {
         let Some(proof) = self.read_proof.as_ref() else {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
@@ -135,7 +179,8 @@ impl Memory<'_> {
             Some(ClaimApprovalStatus::Proposed),
             || {},
             &|txn: &heed::RoTxn<'_>| {
-                carried_proposal_admitted(self.vault, txn, proof, actor, position)
+                carried_proposal_admitted(self.vault, txn, proof, actor, position)?;
+                in_writer(txn)
             },
         )
     }

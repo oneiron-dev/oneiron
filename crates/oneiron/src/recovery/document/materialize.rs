@@ -3,7 +3,11 @@
 use super::{DocKey, NOTE_FORK, NOTE_PROPOSAL_BUNDLE, NOTE_PROPOSAL_DOC, NOTE_RECEIPT, workflow};
 use crate::entity_id::EntityId;
 use crate::recovery::canonical::{CanonicalSnapshot, id, invalid};
-use crate::{Vault, error::Result, note::NoteFork};
+use crate::{
+    Vault,
+    error::Result,
+    note::{NoteFork, NoteReviewBundle},
+};
 use loro::LoroDoc;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,22 +25,50 @@ struct Cleanup {
     docs: Vec<DocKey>,
     metadata: Vec<StaleMetadata>,
 }
-fn same_fork(previous: &NoteFork, expected: &NoteFork) -> bool {
+/// The fork recovery installs over `previous`, the row held here, or `None`
+/// when the two are not one fork.
+fn same_fork(previous: &NoteFork, expected: &NoteFork) -> Option<NoteFork> {
     let mut previous = previous.clone();
     if previous.recovery_merge.is_none()
         && !previous.decided
         && !previous.rewrite
         && loro::Frontiers::decode(&previous.frontier).is_err()
     {
-        return false;
+        return None;
     }
     // A native fork's merge basis is resolved at capture, not persisted in its
     // original row. Already recovered bases are immutable source values.
     if previous.recovery_merge.is_none() && !previous.decided && !previous.rewrite {
         previous.recovery_merge = expected.recovery_merge.clone();
     }
-    // The frontier the fork opened at is part of its identity, byte for byte.
-    previous == *expected
+    // The frontier the fork opened at is part of its identity, byte for byte;
+    // only who it names settles by the carrier rule (FIX 3878).
+    previous.erased_wins(expected)
+}
+
+/// The bundle recovery installs over `held`, or `None` when the two are not
+/// one bundle: `held` as a carrier holds it here, each waiting fork the
+/// artifact names settled by [`same_fork`], and who each member names by the
+/// carrier rule (FIX 3878).
+fn same_bundle(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    held: NoteReviewBundle,
+    expected: &NoteReviewBundle,
+    forks: &BTreeMap<EntityId, &NoteFork>,
+) -> Result<Option<NoteReviewBundle>> {
+    let Some(mut held) = held.carried_here(vault, txn)? else {
+        return Ok(None);
+    };
+    for fork in &mut held.waiting {
+        if let Some(expected) = forks.get(&fork.fork) {
+            let Some(merged) = same_fork(fork, expected) else {
+                return Ok(None);
+            };
+            *fork = merged;
+        }
+    }
+    Ok(held.erased_wins(expected))
 }
 
 fn plan(
@@ -91,10 +123,13 @@ fn plan(
             return Err(invalid("stored receipt key"));
         }
         match receipts.get(receipt.id.as_bytes()) {
-            Some(expected) if expected.receipt != NOTE_RECEIPT.encode_value(&receipt)? => {
-                return Err(invalid("immutable head receipt divergence"));
+            // Who a receipt names settles by the carrier rule (FIX 3878).
+            Some(expected) => {
+                let held = receipt.erased_here(vault, txn)?;
+                if held.erased_wins(&expected.decode()?).is_none() {
+                    return Err(invalid("immutable head receipt divergence"));
+                }
             }
-            Some(_) => {}
             None => cleanup.metadata.push(StaleMetadata::Receipt(receipt_id)),
         }
     }
@@ -111,10 +146,11 @@ fn plan(
                 return Err(invalid("stored fork key"));
             }
             match expected_forks.get(&fork.fork) {
-                Some(expected) if !same_fork(&fork, expected) => {
-                    return Err(invalid("immutable fork divergence"));
+                Some(expected) => {
+                    if same_fork(&fork.clone().erased_here(vault, txn)?, expected).is_none() {
+                        return Err(invalid("immutable fork divergence"));
+                    }
                 }
-                Some(_) => {}
                 None => cleanup.metadata.push(StaleMetadata::Fork(fork_id)),
             }
         }
@@ -130,7 +166,7 @@ fn plan(
             return Err(invalid("proposal was only partially admitted"));
         }
     }
-    for (bundle_id, mut bundle) in NOTE_PROPOSAL_BUNDLE.scan(&vault.store, txn)? {
+    for (bundle_id, bundle) in NOTE_PROPOSAL_BUNDLE.scan(&vault.store, txn)? {
         let mut notes = workflow::bundle_notes(&bundle);
         for fork_id in bundle
             .waiting
@@ -181,15 +217,7 @@ fn plan(
         }
         match expected_bundles.get(&bundle.id) {
             Some(expected) => {
-                for fork in &mut bundle.waiting {
-                    if let Some(expected) = expected_forks.get(&fork.fork) {
-                        if !same_fork(fork, expected) {
-                            return Err(invalid("immutable proposal fork divergence"));
-                        }
-                        *fork = (*expected).clone();
-                    }
-                }
-                if bundle != **expected {
+                if same_bundle(vault, txn, bundle, expected, &expected_forks)?.is_none() {
                     return Err(invalid("immutable proposal divergence"));
                 }
             }
@@ -333,16 +361,39 @@ pub(crate) fn run_in_txn(
     // Install the NOTE-owned final title set even when every live document
     // was value-equal and its history-free restore took the no-op path.
     crate::note::replace_recovered_titles_in_txn(vault, txn, snapshot)?;
+    // Each row goes in as it settles with the one held here, so a row this
+    // vault holds naming no one is never written back naming its actor (FIX
+    // 3878). The preflight above already refused any other difference.
     for receipt in &snapshot.head_move_receipts {
-        let value: crate::note::NoteLandingReceipt =
-            rmp_serde::from_slice(&receipt.receipt).map_err(|_| invalid("head receipt"))?;
+        let mut value = receipt.decode()?;
+        if let Some(held) = NOTE_RECEIPT.get(&vault.store, txn, &value.id)? {
+            value = held
+                .erased_here(vault, txn)?
+                .erased_wins(&value)
+                .ok_or(invalid("immutable head receipt divergence"))?;
+        }
         NOTE_RECEIPT.put(&vault.store, txn, &value.id, &value)?;
     }
+    let forks: BTreeMap<_, _> = snapshot
+        .note_forks
+        .iter()
+        .map(|fork| (fork.fork, fork))
+        .collect();
     for fork in &snapshot.note_forks {
-        NOTE_FORK.put(&vault.store, txn, &fork.fork, fork)?;
+        let value = match NOTE_FORK.get(&vault.store, txn, &fork.fork)? {
+            Some(held) => same_fork(&held.erased_here(vault, txn)?, fork)
+                .ok_or(invalid("immutable fork divergence"))?,
+            None => fork.clone(),
+        };
+        NOTE_FORK.put(&vault.store, txn, &fork.fork, &value)?;
     }
     for bundle in &snapshot.note_proposals {
-        NOTE_PROPOSAL_BUNDLE.put(&vault.store, txn, &bundle.id, bundle)?;
+        let value = match NOTE_PROPOSAL_BUNDLE.get(&vault.store, txn, &bundle.id)? {
+            Some(held) => same_bundle(vault, txn, held, bundle, &forks)?
+                .ok_or(invalid("immutable proposal divergence"))?,
+            None => bundle.clone(),
+        };
+        NOTE_PROPOSAL_BUNDLE.put(&vault.store, txn, &bundle.id, &value)?;
     }
     for row in &snapshot.entity_documents {
         crate::entity_doc::restore_canonical(vault, txn, row)?;

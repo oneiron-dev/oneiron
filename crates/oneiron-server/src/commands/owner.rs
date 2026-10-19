@@ -94,7 +94,30 @@ pub(super) fn open_stopped_vault_with(
     // A command that signs (a delete's receipt, a settings edit) needs this
     // install's keys from the keystore.
     config.keystore.install_on(&vault, path);
+    // And this install's own machine profile, under the configured host root
+    // as `serve` ensures it, to carry the owner's acts (FIX 4648). No root is
+    // minted here, and the command goes on without one.
+    vault.ensure_serving_install_profile_at_start(
+        configured_host_issuer(config, &vault).as_ref(),
+        "owner command",
+    );
     Ok(vault)
+}
+
+/// The host root issuer the configured secret names, as `serve` takes it
+/// (`SyncServer::new`): none for an absent or empty secret, or on a relay.
+pub(super) fn configured_host_issuer(
+    config: &ServeConfig,
+    vault: &oneiron::Vault,
+) -> Option<oneiron::authority::HostSlipIssuer> {
+    if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
+        return None;
+    }
+    let secret = config
+        .sync_server_config()
+        .auth_secret
+        .filter(|secret| !secret.is_empty())?;
+    oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()).ok()
 }
 
 pub fn doctor(args: DoctorArgs) -> anyhow::Result<()> {

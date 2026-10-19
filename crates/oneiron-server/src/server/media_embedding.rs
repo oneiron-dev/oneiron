@@ -33,6 +33,7 @@ use oneiron::{
 };
 
 use super::core::SyncServer;
+use super::housekeeping::{HousekeepingAdmission, admit_every_pass};
 use crate::ai_host::AiHandle;
 
 /// How long the backfill sleeps after a pass that stored nothing.
@@ -220,10 +221,21 @@ impl SyncServer {
     pub(crate) fn spawn_media_embedding_worker(
         self: &Arc<Self>,
     ) -> Option<tokio::task::JoinHandle<()>> {
+        self.spawn_media_embedding_worker_admitted(admit_every_pass())
+    }
+
+    /// Starts the backfill on a host with a write freeze: each pass is
+    /// admitted through `admit` and holds that admission on its blocking
+    /// thread through its inference and the vectors it stores. A refused
+    /// pass embeds nothing and waits [`BACKFILL_IDLE`].
+    pub(crate) fn spawn_media_embedding_worker_admitted(
+        self: &Arc<Self>,
+        admit: HousekeepingAdmission,
+    ) -> Option<tokio::task::JoinHandle<()>> {
         self.ai.model_runtime().media().seat(AiOperation::Embed)?;
         let server = Arc::clone(self);
         Some(tokio::spawn(async move {
-            server.backfill_media_forever().await
+            server.backfill_media_forever(admit).await
         }))
     }
 
@@ -234,7 +246,7 @@ impl SyncServer {
     /// that failed are tried again from the first wait. A commit ends either
     /// wait too (OF-370): an ASSET or a binding that sync admitted, or one
     /// written here, is embedded without waiting out the idle.
-    async fn backfill_media_forever(self: Arc<Self>) {
+    async fn backfill_media_forever(self: Arc<Self>, admit: HousekeepingAdmission) {
         let mut wait = BACKFILL_IDLE;
         let mut failing: BTreeMap<String, String> = BTreeMap::new();
         let mut recoveries = self.ai.model_runtime().recoveries();
@@ -245,17 +257,24 @@ impl SyncServer {
             // Level-triggered: the pass reads what is there, so every wake
             // queued before it is answered by it.
             while commits.try_recv().is_ok() {}
+            let Some(admission) = admit() else {
+                tokio::time::sleep(BACKFILL_IDLE).await;
+                continue;
+            };
             let server = Arc::clone(&self);
             let runtime = tokio::runtime::Handle::current();
-            let passes = tokio::task::spawn_blocking(move || server.backfill_media_pass(&runtime))
-                .await
-                .unwrap_or_else(|error| {
-                    tracing::warn!(
-                        panicked = error.is_panic(),
-                        "media backfill task failed to join"
-                    );
-                    Vec::new()
-                });
+            let passes = tokio::task::spawn_blocking(move || {
+                let _admission = admission;
+                server.backfill_media_pass(&runtime)
+            })
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "media backfill task failed to join"
+                );
+                Vec::new()
+            });
             let mut embedded = 0;
             let mut failed = false;
             for (space, pass) in passes {
