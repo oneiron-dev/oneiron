@@ -19547,23 +19547,25 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "LoginPlacement",
+      "HostedSeatBound",
       "OnSeatSpent",
       "RunnerSeat",
       "RunnerSeatPolicy",
       "RunnerWork",
       "SeatAuth",
+      "SeatIdentity",
       "SeatRoute",
-      "SeatSpent"
+      "SeatSpent",
+      "SkippedRunnerSeat"
      ],
      "path": "src/dispatch_byoa/seat.rs",
      "purpose": "Owner-chosen runner seats (OF-137): which named runner takes a Dreamer's work under whose sign-in, and where…",
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "enum": 4,
-      "fn": 9,
-      "struct": 4
+      "enum": 5,
+      "fn": 13,
+      "struct": 5
      }
     },
     {
