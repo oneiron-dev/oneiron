@@ -265,6 +265,9 @@ async fn serve_prepared<A: AppHost>(
     if let Some(mesh) = mesh {
         mesh.stop().await;
     }
+    // Every public live voice session ends through its own teardown, its
+    // journal finished, and none starts after, as plain serve ends them.
+    mesh_server.live_voice.stop_all().await;
     started.workers.shutdown(|| host.on_stop()).await
 }
 
