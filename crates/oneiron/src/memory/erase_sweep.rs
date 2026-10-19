@@ -31,6 +31,19 @@ pub struct RecordEraseSweep {
     pub sweep_queued_at: Option<u64>,
     pub deadline_at: Option<u64>,
     pub sweep_complete_at: Option<u64>,
+    /// Where the erased records' key retirements stand on every required
+    /// custody target and the anchor; absent when none was in custody here.
+    pub custody: Option<RecordEraseCustody>,
+}
+
+/// The custody part of an erase (KS-4A2): `custody_retirement_pending`, with
+/// each step still owed in order (`custody_retirement_pending`,
+/// `custody_target_pending(<target id>)`, `custody_anchor_pending`), or
+/// `custody_retirement_complete`. The committed erase stands either way.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RecordEraseCustody {
+    pub state: String,
+    pub pending: Vec<String>,
 }
 
 impl Memory<'_> {
@@ -82,6 +95,20 @@ impl Memory<'_> {
             }
             completed
         };
+        let claims: Vec<[u8; 16]> = receipt
+            .scope
+            .entity_ids
+            .iter()
+            .filter_map(|id| EntityId::from_hex(id).ok())
+            .map(|id| *id.as_bytes())
+            .collect();
+        let custody = self
+            .vault
+            .erase_custody_in_txn(&txn, &claims)?
+            .map(|(state, pending)| RecordEraseCustody {
+                state: state.to_owned(),
+                pending,
+            });
         Ok(Some(RecordEraseSweep {
             receipt_ref: format!("redaction:{}", receipt_id.to_hex()),
             request_id: receipt.request_id,
@@ -89,6 +116,7 @@ impl Memory<'_> {
             sweep_queued_at: receipt.sweep_queued_at,
             deadline_at: receipt.sweep_deadline_at,
             sweep_complete_at,
+            custody,
         }))
     }
 }
