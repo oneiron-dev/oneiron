@@ -18,12 +18,15 @@ use crate::auth::CoreAuth;
 use crate::server::{HeldLiveRun, ResolvedLiveRun, SyncServer, seated_planner};
 
 /// Runs `call` from the app's table under `bound`, its verb-table rows
-/// through their own routes under this request's headers and connection.
+/// through their own routes under this request's headers and connection,
+/// or, given `credential`, as that caller, for an action no request carries
+/// (a fold door's, as a held card's event runs).
 pub(super) async fn execute(
     server: &Arc<SyncServer>,
     headers: HeaderMap,
     extensions: Extensions,
     bound: ActionBound,
+    credential: Option<CoreAuth>,
     call: AgentActionCall,
 ) -> Result<ActionDispatch, FacadeApiError> {
     let ActionBound {
@@ -46,7 +49,7 @@ pub(super) async fn execute(
         headers,
         extensions,
         bound,
-        None,
+        credential,
         move |executor, vault, writer, binding| {
             executor.execute_call(vault, writer, &principal, &call, binding)
         },

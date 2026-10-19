@@ -70,11 +70,14 @@ async fn fold_action<T: DeserializeOwned>(
         None => server.vault().new_entity_id()?.to_hex(),
     };
     let args = ActionJson::new(args)?;
+    // No request reaches this door, so the verb rows the action posts run
+    // as its caller, as a held card's event does.
     let dispatch = invoke_action_dispatch(
         server,
         auth,
         HeaderMap::new(),
         Extensions::new(),
+        Some(auth.clone()),
         verb.to_owned(),
         ActionRequest {
             args: vec![ActionArgument::Json(args)],
