@@ -74,7 +74,7 @@
      "purpose": "Pinned AccessGrant body/scope key sets and fail-closed MessagePack codec",
      "surface": {
       "const": 2,
-      "crate-vis": 21,
+      "crate-vis": 25,
       "fn": 2
      }
     },
@@ -44158,17 +44158,21 @@
      "purpose": "ARCH-0069 secret custody — SECRET-02 (ONE-1920): the T0/T1/T2 materialization rungs behind a single…",
      "surface": {
       "crate-vis": 5,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "RevealLeaseErase"
+     ],
      "path": "src/secret_lease/storage.rs",
      "purpose": "Txn row reads/writes, teardown, lazy expiry, and the one stamping body",
      "surface": {
-      "crate-vis": 17
+      "const": 1,
+      "crate-vis": 19,
+      "enum": 1
      }
     },
     {
@@ -45312,7 +45316,7 @@
      "surface": {
       "crate-vis": 15,
       "fn": 6,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 3
      }
     },
@@ -45338,6 +45342,20 @@
      "purpose": "Gate-decision references held by durable share admissions",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShareRecipientErase"
+     ],
+     "path": "src/share/history.rs",
+     "purpose": "A brief share whose recipient was erased, as stored (FIX 4231): history only",
+     "surface": {
+      "const": 1,
+      "crate-vis": 6,
+      "enum": 1
      }
     },
     {
@@ -48249,6 +48267,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GateAttributionErase"
+     ],
+     "path": "src/store/gate_decision/actor_erase.rs",
+     "purpose": "An erased actor out of the Gate decision ledger (FIX 4230, 4231)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -48306,8 +48338,8 @@
      "path": "src/store/gate_decision/mod.rs",
      "purpose": "The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar…",
      "surface": {
-      "crate-vis": 16,
-      "re-export": 1
+      "crate-vis": 17,
+      "re-export": 2
      }
     },
     {
@@ -57538,10 +57570,26 @@
      "purpose": "The project card a conversation proposes (OF-501, ARCH-0067)",
      "surface": {
       "const": 1,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 7,
+      "re-export": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProjectVerdictErase",
+      "SettledProjectCardErase"
+     ],
+     "path": "src/workspace_roster/project/proposal/history.rs",
+     "purpose": "A project question's kept answer, or a settled project card, that named an erased actor, as stored (FIX…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 6,
+      "enum": 2
      }
     },
     {
@@ -60770,7 +60818,7 @@
      "purpose": "Persisted customization settings and client-visible change events"
     },
     "share": {
-     "files": 5,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -60854,7 +60902,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61057,7 +61105,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 95,
+     "files": 96,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61080,7 +61128,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3718,
+   "source_files": 3721,
    "test_files": 902
   },
   "oneiron-android": {
