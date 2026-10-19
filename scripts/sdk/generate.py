@@ -979,7 +979,16 @@ async fn execute_agent_verb_listing(
     } else {
         (memory, task_work_turn)
     };
-    let (output, source, carrier, epoch) = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks).await?;
+    let ran = execute_agent_verb_row(server, tool, hooks.args.clone(), actor, memory, surface, served, board_hooks).await;
+    // A row that fails after its pre chain ran keeps a session-only call's
+    // pre hook records and runs no post chain (FIX 5527).
+    let (output, source, carrier, epoch) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            crate::api::facade::row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
     let output = crate::api::facade::row_hooks_post(server, hooks, output).await.map_err(mcp_facade_error)?;
     // The row's turn ends after its post hooks.
     drop(task_work_turn);
@@ -1385,10 +1394,18 @@ def facade_dispatch(facade_rows):
             # rows: a call that keeps no record hands its hidden id (FIX 5381).
             caller_arg = 'caller, Some(oneiron::task_verb::verb_hook_boundary::door_invocation(&server.vault, &hooks)), '
             door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{surface_arg}facade_door_input(&mut hooks)?).await'
-            answer = (f'''let (output, listed) = {door};
-                let output = facade_output(output?)?;{landed}
+            # A door that fails after the pre chain ran (the door itself, its
+            # input's decode or its answer's encoding) keeps a session-only
+            # call's pre hook records and runs no post chain (FIX 5527).
+            failed = 'Err(error) => { row_hooks_abort(server, hooks).await; return Err(error); }'
+            answer = (f'''let ran = async {{
+                    let (output, listed) = {door};
+                    Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+                }}.await;
+                let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
                 Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
-                      f'''let output = facade_output({door}?)?;{landed}
+                      f'''let ran = async {{ Ok::<_, FacadeApiError>(facade_output({door}?)?) }}.await;
+                let output = match ran {{ Ok(output) => output, {failed} }};{landed}
                 Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))''')
             scope_guard = ("auth.require_granted(CoreScope::Write).or_else(|_| auth.require_granted(CoreScope::Propose))?;"
                            if r.get('proposes') and r.get('admission', {}).get('credential_record_scope')

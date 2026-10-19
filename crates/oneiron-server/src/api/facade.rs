@@ -780,6 +780,18 @@ pub(crate) async fn row_hooks_post(
         .map_err(|_| hooks_did_not_finish())?
 }
 
+/// A row that failed after its pre chain ran (the door, its input's decode
+/// or its answer's encoding): a session-only call keeps that chain's records,
+/// best effort and off the async runtime, and no post chain runs (FIX 5527).
+/// The caller returns its own error.
+pub(crate) async fn row_hooks_abort(server: &Arc<SyncServer>, pre: VerbHookPre) {
+    let server = Arc::clone(server);
+    let kept = tokio::task::spawn_blocking(move || verb_hook_boundary::abort(&server.vault, pre));
+    if let Err(error) = kept.await {
+        tracing::warn!(%error, "a failed row's pre hook records were not kept");
+    }
+}
+
 fn hooks_did_not_finish() -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_INTERNAL,

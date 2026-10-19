@@ -23,7 +23,7 @@ pub(crate) mod topology_delete_intent;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use coop_delivery::courtesy_retained_pacts_in;
+pub(crate) use coop_delivery::{MAX_REASON_CODE_LEN, courtesy_retained_pacts_in};
 pub use coop_delivery::{
     COOP_DELETION_DELIVERY_ATTEMPT_KIND, COOP_DELETION_GIVE_UP_SECS, COOP_DELETION_PEER_PATH,
     COOP_DELETION_REPLY_PEER_PATH, CooperativeDeletionAnswer, CooperativeDeletionDelivery,
