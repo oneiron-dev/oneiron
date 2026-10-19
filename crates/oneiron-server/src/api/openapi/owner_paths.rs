@@ -17,6 +17,18 @@ pub(crate) struct OwnerRoute {
 /// Every `/v1/owner` route, the off-record ones included.
 pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
+        method: "post",
+        path: "/agent-grants/mint",
+        summary: "Grant one named agent an explicit verb list (FIX 5628): a live agent principal of the vault (`agent`, 32 hex: an agent definition, or a base agent such as the Coach), the owner's complete six-axis scope stored exactly as given (`authority_scope`, its verbs a nonempty explicit set; it confers only with `read` among them) and an optional `expires_at` (Unix seconds; omitted, the grant stands until revoked). A second mint adds a second grant. Answers the grant, with its one-tap revoke command, and the signed act's ref.",
+        row: Some("vault.agents.grants.mint"),
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/agent-grants/revoke",
+        summary: "Revoke one agent grant (`grant_ref`, 32 hex; optional `seen`, 64 hex): the grant stops conferring at once. A repeat answers `changed: false`; an id that names no agent grant (an owner, own-device, guest or member grant included) is not found.",
+        row: Some("vault.agents.grants.revoke"),
+    },
+    OwnerRoute {
         method: "get",
         path: "/authority/handoff-alarms",
         summary: "Every saved alarm in the shape and order vault.authority.handoff_alarms answers (OF-158): unix seconds, oldest raised first, then by signer.",

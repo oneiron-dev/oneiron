@@ -38,6 +38,7 @@ use crate::owner::{
     off_record, pack_drift, persona, runs,
 };
 use crate::server::SyncServer;
+mod agent_grant_routes;
 mod browser_takeover_routes;
 mod budget_hold_routes;
 mod checkpoint_policy_routes;
@@ -155,6 +156,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(legal_hold_routes::routes())
         .merge(guest_routes::routes())
         .merge(support_grant_routes::routes())
+        .merge(agent_grant_routes::routes())
         .merge(proactivity_routes::routes())
         .merge(weave_routes::routes())
         .merge(pack_routes::routes())

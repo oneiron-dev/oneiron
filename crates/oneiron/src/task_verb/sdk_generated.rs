@@ -3531,6 +3531,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.agents.grants.mint",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AgentGrantMintRequest,
+                >(),
+            ),
+            (
+                "vault.agents.grants.revoke",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AgentGrantRevokeRequest,
+                >(),
+            ),
+            (
                 "vault.standing_blocks.configure",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::StandingBlockConfigureRequest,
@@ -6456,6 +6468,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.update",
     "vault.agents.dreaming.get",
     "vault.agents.dreaming.set",
+    "vault.agents.grants.mint",
+    "vault.agents.grants.revoke",
     "vault.standing_blocks.configure",
     "vault.standing_blocks.reconfigure",
     "vault.standing_blocks.get",
@@ -8108,6 +8122,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.agents.dreaming.set" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AgentDreamingView,
+        >(),
+        "vault.agents.grants.mint" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AgentGrantMinted>()
+        }
+        "vault.agents.grants.revoke" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AgentGrantRevoked,
         >(),
         "vault.standing_blocks.configure" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::StandingBlockView,
@@ -13450,6 +13470,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.agents.grants.mint" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.agents.grants.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.standing_blocks.configure" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -18594,6 +18628,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.agents.dreaming.set" => {
             let _input: crate::task_verb::sdk::AgentDreamingSetRequest = decode(value.clone())?;
         }
+        "vault.agents.grants.mint" => {
+            let _input: crate::task_verb::sdk::AgentGrantMintRequest = decode(value.clone())?;
+        }
+        "vault.agents.grants.revoke" => {
+            let _input: crate::task_verb::sdk::AgentGrantRevokeRequest = decode(value.clone())?;
+        }
         "vault.standing_blocks.configure" => {
             let _input: crate::task_verb::sdk::StandingBlockConfigureRequest =
                 decode(value.clone())?;
@@ -21407,6 +21447,8 @@ pub fn invoke(
         "vault.agents.update" => encode(vault_agents_update(memory, decode(value)?)?),
         "vault.agents.dreaming.get" => encode(vault_agents_dreaming_get(memory, decode(value)?)?),
         "vault.agents.dreaming.set" => encode(vault_agents_dreaming_set(memory, decode(value)?)?),
+        "vault.agents.grants.mint" => encode(vault_agents_grants_mint(memory, decode(value)?)?),
+        "vault.agents.grants.revoke" => encode(vault_agents_grants_revoke(memory, decode(value)?)?),
         "vault.standing_blocks.configure" => {
             encode(vault_standing_blocks_configure(memory, decode(value)?)?)
         }
@@ -27694,6 +27736,28 @@ pub fn vault_agents_dreaming_set(
     crate::task_verb::sdk::set_agent_dreaming_as(
         memory.vault(),
         &memory.embedded_owner("vault.agents.dreaming.set")?,
+        input,
+    )
+}
+pub fn vault_agents_grants_mint(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AgentGrantMintRequest,
+) -> MemoryResult<crate::task_verb::sdk::AgentGrantMinted> {
+    crate::task_verb::sdk::mint_agent_grant_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.grants.mint")?,
+        crate::authority::ActSurface::ThisInstall,
+        input,
+    )
+}
+pub fn vault_agents_grants_revoke(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AgentGrantRevokeRequest,
+) -> MemoryResult<crate::task_verb::sdk::AgentGrantRevoked> {
+    crate::task_verb::sdk::revoke_agent_grant_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.grants.revoke")?,
+        crate::authority::ActSurface::ThisInstall,
         input,
     )
 }
