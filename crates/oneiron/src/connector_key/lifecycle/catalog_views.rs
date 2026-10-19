@@ -214,18 +214,29 @@ impl Vault {
     /// this route. The OpenAI proxy's keys have no endpoint, so no call
     /// routes to one.
     pub fn route_connector_call(&self, name: &str) -> Result<Option<ConnectorCallRoute>> {
+        self.route_connector_call_listing(name)
+            .map(|(route, _)| route)
+    }
+
+    /// [`Self::route_connector_call`], beside the catalog key it read for
+    /// `name`, routable or not (FIX 5455): the row a connector call's answer
+    /// lists as its catalog route key.
+    pub fn route_connector_call_listing(
+        &self,
+        name: &str,
+    ) -> Result<(Option<ConnectorCallRoute>, Option<EntityId>)> {
         let rtxn = self.store.env.read_txn()?;
         let Some((key_ref, record)) = self.catalog_record_in_txn(&rtxn, name)? else {
-            return Ok(None);
+            return Ok((None, None));
         };
         if record.status != ConnectorKeyStatus::Active || record.connector == PROXY_CONNECTOR {
-            return Ok(None);
+            return Ok((None, Some(key_ref)));
         }
         let Some(mut entry) = record.catalog.clone() else {
-            return Ok(None);
+            return Ok((None, Some(key_ref)));
         };
         entry.verbs = callable_verbs_in_txn(&self.store, &rtxn, &record, entry.verbs)?;
-        Ok(Some(ConnectorCallRoute {
+        let route = ConnectorCallRoute {
             key_ref,
             name: entry.name,
             connector: record.connector,
@@ -233,7 +244,8 @@ impl Vault {
             budgeted_as_sends: entry.call_class.debits_sends(),
             verbs: entry.verbs,
             secret_ref: record.secret_ref,
-        }))
+        };
+        Ok((Some(route), Some(key_ref)))
     }
     /// Resolves a catalog name (normalized) to its key through the permanent
     /// name index, regardless of status.

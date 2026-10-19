@@ -2145,8 +2145,8 @@ class Oneiron:
         def proposals(self, request: Facade.ArtifactRefRequest) -> list[Facade.PendingProposalView]: ...
         def waits(self, request: Facade.ArtifactRefRequest) -> list[Facade.OrganWaitView]: ...
         def release_wait(self, request: Facade.ProposalSettleRequest) -> Facade.ReleasedWait: ...
-        def review_slides(self, request: Facade.SlideReviewSubmit) -> Facade.SlideReviewOutcome: ...
-        def ask(self, spec: Facade.ArtifactAskSubmit) -> Facade.ArtifactAskOutcome:
+        def review_slides(self, request: Facade.SlideReviewSubmit) -> Facade.ActAnswer[Facade.SlideReviewOutcome]: ...
+        def ask(self, spec: Facade.ArtifactAskSubmit) -> Facade.ActAnswer[Facade.ArtifactAskOutcome]:
             """Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard."""
         def admit(self, spec: Facade.ArtifactAdmitSubmit) -> Facade.ArtifactAskOutcome:
             """Admits the caller's own provider measurements for one artifact ask's units in place of the host ladder's, validating each decision and its provider-bound paired readings before holding the answers as one proposal for Keep or Discard."""
@@ -3404,7 +3404,7 @@ class Oneiron:
             """Every live catalogued connector whose name or summary matches the query."""
         def status(self, spec: Facade.ConnectorNameRequest) -> Facade.ConnectorView | None:
             """One catalogued connector by name, removed ones included."""
-        def call(self, spec: Facade.ConnectorCallRequest) -> Facade.ConnectorCallReply:
+        def call(self, spec: Facade.ConnectorCallRequest) -> Facade.ActAnswer[Facade.ConnectorCallReply]:
             """Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."""
         def schema(self, spec: Facade.ConnectorSchemaRequest) -> Facade.ConnectorSchemaReply:
             """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""

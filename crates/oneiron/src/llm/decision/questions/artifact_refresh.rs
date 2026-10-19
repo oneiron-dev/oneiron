@@ -673,6 +673,7 @@ fn ask_selection(
                     proposal: None,
                     abstained: Vec::new(),
                     refused: Vec::new(),
+                    read_rows: Vec::new(),
                 });
             }
             vault.ask_folder_items_into_sheet(
