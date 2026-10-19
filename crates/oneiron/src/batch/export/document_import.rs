@@ -190,6 +190,9 @@ impl Vault {
                 if !live_entity_row_in_txn(&self.store, &wtxn, &id)?.is_live() {
                     return Err(invalid("import ID collides with a deleted entity"));
                 }
+                // A file-plane ASSET compares as its body, never the manifest
+                // its row keeps (FIX 3677).
+                let existing = self.materialized_row_in_txn(&wtxn, &id, existing)?;
                 if matches_archived_row(&row, &existing, &archive.files)? {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
                     unchanged_entities += 1;
