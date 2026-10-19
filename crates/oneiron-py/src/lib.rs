@@ -5963,6 +5963,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_agents_grants_mint(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.agents.grants.mint")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.agents.grants.mint", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_agents_grants_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.agents.grants.revoke")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.agents.grants.revoke", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_standing_blocks_configure(
         &self,
         py: Python<'_>,

@@ -290,6 +290,7 @@ mod fanout_batch;
 mod recall_door;
 pub mod sdk;
 mod sdk_act_answer;
+mod sdk_agent_grant;
 mod sdk_agents;
 mod sdk_anonymous_chat;
 mod sdk_asr;

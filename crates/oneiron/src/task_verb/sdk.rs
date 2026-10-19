@@ -463,6 +463,7 @@ pub use super::recall_door::{
     recall_with_vector,
 };
 pub use super::sdk_act_answer::*;
+pub use super::sdk_agent_grant::*;
 pub use super::sdk_agents::*;
 pub use super::sdk_anonymous_chat::*;
 pub use super::sdk_asr::*;

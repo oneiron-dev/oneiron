@@ -645,6 +645,8 @@ pub enum AgentVerb {
     VaultAgentsUpdate,
     VaultAgentsDreamingGet,
     VaultAgentsDreamingSet,
+    VaultAgentsGrantsMint,
+    VaultAgentsGrantsRevoke,
     VaultStandingBlocksConfigure,
     VaultStandingBlocksReconfigure,
     VaultStandingBlocksGet,
@@ -1733,6 +1735,8 @@ impl AgentVerb {
         Self::VaultAgentsUpdate,
         Self::VaultAgentsDreamingGet,
         Self::VaultAgentsDreamingSet,
+        Self::VaultAgentsGrantsMint,
+        Self::VaultAgentsGrantsRevoke,
         Self::VaultStandingBlocksConfigure,
         Self::VaultStandingBlocksReconfigure,
         Self::VaultStandingBlocksGet,
@@ -2842,6 +2846,8 @@ impl AgentVerb {
             Self::VaultAgentsUpdate => "vault.agents.update",
             Self::VaultAgentsDreamingGet => "vault.agents.dreaming.get",
             Self::VaultAgentsDreamingSet => "vault.agents.dreaming.set",
+            Self::VaultAgentsGrantsMint => "vault.agents.grants.mint",
+            Self::VaultAgentsGrantsRevoke => "vault.agents.grants.revoke",
             Self::VaultStandingBlocksConfigure => "vault.standing_blocks.configure",
             Self::VaultStandingBlocksReconfigure => "vault.standing_blocks.reconfigure",
             Self::VaultStandingBlocksGet => "vault.standing_blocks.get",
@@ -3940,6 +3946,8 @@ impl AgentVerb {
                 | Self::VaultAgentsUpdate
                 | Self::VaultAgentsDreamingGet
                 | Self::VaultAgentsDreamingSet
+                | Self::VaultAgentsGrantsMint
+                | Self::VaultAgentsGrantsRevoke
                 | Self::VaultStandingBlocksConfigure
                 | Self::VaultStandingBlocksReconfigure
                 | Self::VaultStandingBlocksGet
@@ -5055,6 +5063,8 @@ impl AgentVerb {
                 | Self::VaultAgentsUpdate
                 | Self::VaultAgentsDreamingGet
                 | Self::VaultAgentsDreamingSet
+                | Self::VaultAgentsGrantsMint
+                | Self::VaultAgentsGrantsRevoke
                 | Self::VaultStandingBlocksConfigure
                 | Self::VaultStandingBlocksReconfigure
                 | Self::VaultStandingBlocksGet
@@ -6263,6 +6273,8 @@ impl AgentVerb {
                 | Self::VaultAgentsUpdate
                 | Self::VaultAgentsDreamingGet
                 | Self::VaultAgentsDreamingSet
+                | Self::VaultAgentsGrantsMint
+                | Self::VaultAgentsGrantsRevoke
                 | Self::VaultStandingBlocksConfigure
                 | Self::VaultStandingBlocksReconfigure
                 | Self::VaultStandingBlocksGet
@@ -7063,6 +7075,8 @@ impl AgentVerb {
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsUpdate
                 | Self::VaultAgentsDreamingSet
+                | Self::VaultAgentsGrantsMint
+                | Self::VaultAgentsGrantsRevoke
                 | Self::VaultStandingBlocksConfigure
                 | Self::VaultStandingBlocksReconfigure
                 | Self::VaultWorkflowsSave
@@ -8001,6 +8015,8 @@ impl AgentVerb {
             Self::VaultAgentsUpdate => &["spec"],
             Self::VaultAgentsDreamingGet => &["spec"],
             Self::VaultAgentsDreamingSet => &["spec"],
+            Self::VaultAgentsGrantsMint => &["spec"],
+            Self::VaultAgentsGrantsRevoke => &["spec"],
             Self::VaultStandingBlocksConfigure => &["spec"],
             Self::VaultStandingBlocksReconfigure => &["spec"],
             Self::VaultStandingBlocksGet => &["spec"],
@@ -9090,6 +9106,8 @@ impl AgentVerb {
             Self::VaultAgentsUpdate => &["spec"],
             Self::VaultAgentsDreamingGet => &["spec"],
             Self::VaultAgentsDreamingSet => &["spec"],
+            Self::VaultAgentsGrantsMint => &["spec"],
+            Self::VaultAgentsGrantsRevoke => &["spec"],
             Self::VaultStandingBlocksConfigure => &["spec"],
             Self::VaultStandingBlocksReconfigure => &["spec"],
             Self::VaultStandingBlocksGet => &["spec"],
@@ -11429,6 +11447,12 @@ impl AgentVerb {
             }
             Self::VaultAgentsDreamingSet => {
                 "The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."
+            }
+            Self::VaultAgentsGrantsMint => {
+                "The owner grants one named agent an explicit verb list inside his exact scope, standing until he revokes it or until the expiry he sets; a second mint adds a second grant."
+            }
+            Self::VaultAgentsGrantsRevoke => {
+                "The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."
             }
             Self::VaultStandingBlocksConfigure => {
                 "The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle."

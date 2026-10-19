@@ -112,8 +112,9 @@ pub use self::owner_reason::{
     OwnerReasonVerdict, ReasonMatchConfidence,
 };
 pub use self::registry::{
-    CONSENT_REVOKE_COMMAND, ConsentRegistry, ConsentRegistryDelegation, ConsentRegistryQuery,
-    ConsentRegistryRow, ConsentRevokeAction, SUPPORT_GRANT_CLASS,
+    AGENT_GRANT_CLASS, CONSENT_REVOKE_COMMAND, ConsentRegistry, ConsentRegistryAgentGrant,
+    ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegistryRow, ConsentRevokeAction,
+    SUPPORT_GRANT_CLASS,
 };
 
 pub(crate) use self::bound::bound_exceeded;

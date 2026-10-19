@@ -9867,6 +9867,38 @@
       "openapi": true
     },
     {
+      "name": "vault.agents.grants.mint",
+      "description": "The owner grants one named agent an explicit verb list inside his exact scope, standing until he revokes it or until the expiry he sets; a second mint adds a second grant.",
+      "input": "crate::task_verb::sdk::AgentGrantMintRequest",
+      "output": "crate::task_verb::sdk::AgentGrantMinted",
+      "call": "crate::task_verb::sdk::mint_agent_grant_as(memory.vault(), &memory.embedded_owner(\"vault.agents.grants.mint\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.agents.grants.revoke",
+      "description": "The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing.",
+      "input": "crate::task_verb::sdk::AgentGrantRevokeRequest",
+      "output": "crate::task_verb::sdk::AgentGrantRevoked",
+      "call": "crate::task_verb::sdk::revoke_agent_grant_as(memory.vault(), &memory.embedded_owner(\"vault.agents.grants.revoke\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.standing_blocks.configure",
       "description": "The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle.",
       "input": "crate::task_verb::sdk::StandingBlockConfigureRequest",

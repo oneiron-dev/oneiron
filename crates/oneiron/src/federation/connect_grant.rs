@@ -86,6 +86,7 @@ impl FederationGrant {
             expires_at,
             delegated_by: None,
             guest: None,
+            owner_agent: false,
         };
         grant.validate()?;
         Ok(grant)
