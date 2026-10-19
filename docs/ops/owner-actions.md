@@ -1225,11 +1225,12 @@ Kit material travels only in the body of the named target's own call:
 pieces as recovery codes, the passphrase, a confirm's `carry` machines, and an anchoring's
 enrolment request and code.
 
-- Each call names its `target`. The target must be the install that answers, proved by its own
-  machine identity: its profile here names the install's key.
-- The target must also be a machine the worlds' privacy lets hold their keys. For one-machine
-  and my-machines worlds that means one of your own machines (marked mine), and the host too on a
-  hosted vault. Any proven machine qualifies only where no world keeps its keys off it.
+- Each call names its `target`. The target must be the install that answers, proved by its
+  machine proof: it verifies under the key that machine stands on in the vault.
+- The target must also be a machine the worlds' privacy lets hold their keys, as the
+  verified-destination judge reads each world's recipient choice. For one-machine and
+  my-machines worlds that means one of your own machines (marked mine), and the host too on a
+  hosted vault. Any other proven machine qualifies only where no world keeps its keys off it.
 - A target that is another install, or is unproved, or is disallowed, gets a named refusal
   (`kit_target_elsewhere`, `kit_target_unproved`, `kit_target_not_allowed`) before any kit is
   read.

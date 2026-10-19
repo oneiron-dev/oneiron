@@ -24,13 +24,13 @@
 //!
 //! The recipient rule (Engine 10-19 09:3x, CALLS "owneract kit transport"):
 //! each call names its `target`, and kit material goes only in the body of
-//! that target's own call. The target must be this install, its machine
-//! identity standing here under its own key, and a machine the worlds'
-//! privacy lets hold their keys: one of the owner's own machines (marked
-//! mine) for one-machine and my-machines worlds, the host too on a hosted
-//! vault, and any proven machine where no world keeps its keys off it. An
-//! unproved or disallowed target gets a named refusal before any kit is
-//! parsed ([`kit_target`]).
+//! that target's own call. The target must be this install, proved by its
+//! machine proof, and a machine the worlds' privacy lets hold their keys, as
+//! the verified-destination judge reads it: one of the owner's own machines
+//! (marked mine) for one-machine and my-machines worlds, the host too on a
+//! hosted vault, and any proven machine where no world keeps its keys off
+//! it. An unproved or disallowed target gets a named refusal before any kit
+//! is parsed ([`kit_target`]).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -40,12 +40,13 @@ use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
-use oneiron::authority::{Destination, OwnerWorkRefusal, RequestCode};
+use oneiron::authority::{Destination, OwnerWorkRefusal, PeerMachine, RequestCode};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::recovery::{
     KitCoverage, KitIssue, KitPassphrase, KitPiece, KitSecretKind, PassphraseCost, PieceHome,
     restore_kit,
 };
+use oneiron::settings::{ReadDestination, RecipientLimit, RecipientWhy};
 use oneiron::sync::residence::sealed_generation_hex;
 use oneiron::world_keys::{
     PadAdmissionTarget, RecoveryRootSeed, RepinReport, RootMaterial, RootRestore, RootSecret,
@@ -152,63 +153,80 @@ fn kit_target_refused(state: &str, message: &str, suggestion: &str) -> ApiError 
 }
 
 /// The recipient rule for kit material (CALLS "owneract kit transport"):
-/// `named` must be this install, which must stand here under its own
-/// machine key (its profile names that key), and the worlds' privacy must
-/// let it hold their keys. One of the owner's own machines (its trusted
-/// identity names this install's key) may, for every one-machine and
-/// my-machines world; so may the host of a hosted vault, which this
-/// install is when the vault is hosted; any other proven machine only where
-/// no world's read keeps its key off it. Each refusal is named, and comes
-/// before any kit is read. A policy hook: the verified-destination judge
-/// replaces the world test when it lands (FIX-LIST).
+/// `named` must be this install, proved by the existing machine proof (this
+/// install signs a connection proof and verifies it under the key it stands
+/// on here, `PeerMachine::Proven`), and the worlds' privacy must let it hold
+/// their keys. The verified-destination judge (`Vault::world_recipient_limit`,
+/// mesh PR2b) reads each private world's recipient choice for that proved
+/// machine: one of the owner's own machines may hold the keys of every
+/// one-machine and my-machines world (a limit naming another of his machines,
+/// or his contended picks, still admits his own), the host of a hosted vault
+/// may too (this install, when the vault is hosted), and any other machine
+/// only where no world limits it. Each refusal is named and comes before any
+/// kit is read.
 fn kit_target(server: &SyncServer, named: &str) -> Result<EntityId, ApiError> {
     let named = EntityId::from_hex(named)
         .map_err(|_| ApiError::bad_request("target must be a 32-hex machine id", Some("target")))?;
     let vault = server.vault();
-    let local = vault
-        .local_machine()
-        .map_err(|error| super::owner_error(error.into()))?;
-    let local = match local {
-        Some(local) if local.id == named => local,
-        Some(_) => {
-            return Err(kit_target_refused(
-                KIT_TARGET_ELSEWHERE,
-                "the kit names another install as its target; this install takes no kit for it",
-                "Send the kit to the named install's own call.",
-            ));
-        }
-        None => {
-            return Err(kit_target_refused(
-                KIT_TARGET_UNPROVED,
-                "this install has no machine identity, so it takes no kit",
-                "Enrol this install as one of the vault's machines first.",
-            ));
-        }
-    };
-    if local.profile.is_none() {
-        return Err(kit_target_refused(
+    let engine = |error: oneiron::Error| super::owner_error(error.into());
+    let unproved = || {
+        kit_target_refused(
             KIT_TARGET_UNPROVED,
             "this install's machine identity does not stand here under its own key, so it takes \
              no kit",
-            "Wait for this install's profile to sync, or enrol it again.",
+            "Enrol this install as one of the vault's machines, or wait for its profile to sync.",
+        )
+    };
+    let token = format!("kit-target:{}", named.to_hex());
+    let nonce = EntityId::now().to_hex();
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let (machine, signature) = vault
+        .machine_connection_proof(&token, timestamp, &nonce)
+        .map_err(engine)?
+        .ok_or_else(unproved)?;
+    if machine != named {
+        return Err(kit_target_refused(
+            KIT_TARGET_ELSEWHERE,
+            "the kit names another install as its target; this install takes no kit for it",
+            "Send the kit to the named install's own call.",
         ));
     }
-    if local.mine || vault.privacy_posture() == HostingPrivacyPosture::Hosted {
+    let peer = vault
+        .verify_machine_connection_proof(machine, &signature, &token, timestamp, &nonce)
+        .map_err(engine)?;
+    if !matches!(peer, PeerMachine::Proven { .. }) {
+        return Err(unproved());
+    }
+    if vault.privacy_posture() == HostingPrivacyPosture::Hosted {
         return Ok(named);
     }
-    let withheld = vault
+    let destination = ReadDestination::toward(peer);
+    let private = vault
         .authority_fold()
-        .and_then(|fold| fold.worlds_withheld_from(Destination::Machine(named)))
-        .map_err(|error| super::owner_error(error.into()))?;
-    if withheld.is_empty() {
-        return Ok(named);
+        .and_then(|fold| fold.worlds_withheld_from(Destination::Unknown))
+        .map_err(engine)?;
+    for world in private {
+        let limit = vault
+            .world_recipient_limit(world, &destination)
+            .map_err(engine)?;
+        match limit {
+            None
+            | Some(RecipientLimit {
+                why: RecipientWhy::WrongMachine | RecipientWhy::Contended,
+                ..
+            }) => {}
+            Some(limit) => {
+                return Err(kit_target_refused(
+                    KIT_TARGET_NOT_ALLOWED,
+                    limit.reason(),
+                    "Send the kit to one of your machines, or mark this machine yours first.",
+                ));
+            }
+        }
     }
-    Err(kit_target_refused(
-        KIT_TARGET_NOT_ALLOWED,
-        "the worlds' privacy keeps their keys on the owner's own machines; this install is not \
-         marked mine",
-        "Send the kit to one of your machines, or mark this machine yours first.",
-    ))
+    Ok(named)
 }
 
 /// A kit as its caller gave it: the pieces, and the passphrase. Wiped on
