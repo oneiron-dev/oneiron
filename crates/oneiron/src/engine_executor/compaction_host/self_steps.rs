@@ -126,7 +126,7 @@ fn evidence_of(
         .step_checkpoints
         .iter()
         .find(|checkpoint| checkpoint.seq == last)?;
-    (record.run_id == run && first <= last).then(|| CompactionEvidence {
+    (record.run_id == run && first <= last).then(|| CompactionEvidence::Executor {
         run,
         first,
         last,

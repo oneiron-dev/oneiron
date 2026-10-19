@@ -26,10 +26,10 @@ use crate::server::SyncServer;
 
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod code_mode;
-#[cfg(feature = "code-sandbox-wasmtime")]
 mod compaction;
 #[cfg(all(test, feature = "code-sandbox-wasmtime"))]
 pub(crate) use compaction::tests::cross_the_passes;
+pub(crate) use compaction::{ChatBreakpointCall, ChatSelfMode};
 pub(crate) mod coach_heal;
 mod coach_health;
 pub(crate) mod coach_host;
@@ -134,6 +134,9 @@ pub struct AiHandle {
     /// The host syncs as a device of another home (`[device_sync]`): it
     /// defers to the elected home and never claims it.
     device: bool,
+    /// The compaction writer factory chat and code mode share, settled when
+    /// the host attaches (FIX 4465 D).
+    writer_compaction: Arc<OnceLock<compaction::CodeModeCompaction>>,
 }
 
 impl AiHandle {
@@ -190,6 +193,7 @@ impl AiHandle {
             decisions: Arc::default(),
             host_compaction: Arc::default(),
             device: false,
+            writer_compaction: Arc::default(),
         }
     }
 
@@ -521,9 +525,22 @@ impl AiHost {
                 budget: PROJECT_DETECTION_BUDGET,
             });
         }
+        // The writer factory chat and code mode share (FIX 4465 D, Engine
+        // D4), settled whether or not the code sandbox binds.
+        let shared =
+            compaction::CodeModeCompaction::bind_shared(&server, &host.handle.runtime, models);
+        if let Some((compaction, _)) = &shared {
+            let _ = host.handle.writer_compaction.set(compaction.clone());
+        }
         #[cfg(feature = "code-sandbox-wasmtime")]
-        let server =
-            code_mode::bind(server, &host.handle.runtime, models, &host.handle.status).await;
+        let server = code_mode::bind(
+            server,
+            &host.handle.runtime,
+            models,
+            &host.handle.status,
+            shared,
+        )
+        .await;
         (server, host)
     }
 

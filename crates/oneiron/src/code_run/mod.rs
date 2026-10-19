@@ -49,7 +49,8 @@ pub use self::codec::{
 };
 pub use self::compaction_fork::{
     AdmittedLiveFork, CACHE_BOUNDARIES_KEY, CacheBoundary, HOST_PROVIDER_OPTIONS,
-    LiveCompactionFork, LiveForkRung, cache_boundaries, mark_cache_boundary,
+    LiveCompactionFork, LiveForkRung, cache_boundaries, live_fork_offer_digest,
+    main_prefix_boundary, mark_cache_boundary, shift_cache_boundaries,
 };
 pub use self::compaction_home::{
     CompactionHome, CompactionHostBinding, CompactionIdentity, RenderedHome,

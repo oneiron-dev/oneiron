@@ -253,17 +253,25 @@ pub struct CompactionStepRef {
     pub step_hash: String,
 }
 
-/// The retained evidence a self-written summary was cut from, by revision
-/// (FIX 4465 B): its run's committed steps `first..=last`, pinned by the
-/// chained state hash the span's last checkpoint committed. A later read
-/// that finds another hash there reads other evidence.
+/// The retained evidence a self-written summary was cut from, by revision.
+/// An executor run's (FIX 4465 B) is its committed steps `first..=last`,
+/// pinned by the chained state hash the span's last checkpoint committed; a
+/// conversation's (FIX 4465 D) is its SESSION, conversation and branch and
+/// the ordered retained turns of the span, each pinned by its projection's
+/// fingerprint. A later read that finds another pin reads other evidence.
+/// Each source keeps its own fields, so an executor receipt reads as it was
+/// written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompactionEvidence {
-    pub run: EntityId,
-    pub first: u64,
-    pub last: u64,
-    /// Hex of the last step's committed state hash.
-    pub revision: String,
+#[serde(untagged)]
+pub enum CompactionEvidence {
+    Executor {
+        run: EntityId,
+        first: u64,
+        last: u64,
+        /// Hex of the last step's committed state hash.
+        revision: String,
+    },
+    Conversation(super::ConversationEvidence),
 }
 
 /// Where a self-written summary landed.
@@ -418,6 +426,24 @@ pub(crate) fn admit_self_landing_on(
 ) -> Result<SelfLanding> {
     land_packet(gated, execution, |packet, expected| {
         admit_host_log_record(packet, log, record, Some(expected))
+    })
+}
+
+/// [`admit_self_landing`] for a conversation's window (FIX 4465 D): the
+/// packet admits through the door's conversation binding, each of its turns
+/// proven a member of the window's SESSION by the witnessed membership rows.
+pub(crate) fn admit_self_conversation_landing(
+    vault: &Vault,
+    gated: &GatedCompaction,
+    execution: CompactionExecution,
+) -> Result<SelfLanding> {
+    land_packet(gated, execution, |packet, expected| {
+        admit_compaction_source(
+            vault,
+            packet,
+            CompactionSource::Conversation,
+            Some(expected),
+        )
     })
 }
 

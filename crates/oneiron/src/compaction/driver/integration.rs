@@ -6,6 +6,8 @@
 use super::*;
 use crate::compaction::gate::GatedCompaction;
 
+mod conversation;
+
 impl CompactionDriver {
     /// Commit a compaction and move its covered working outputs to references.
     /// A refused integration leaves the host-owned output context unchanged.

@@ -59,6 +59,7 @@
 //! after every serialized assembly.
 
 use crate::ports::EntityStoreRead;
+mod conversation;
 mod driver;
 mod epoch;
 mod epoch_floor;
@@ -80,6 +81,12 @@ pub use folds::{
     FoldUnfoldInput, FoldUnfolded, FoldsInput, SelfFoldCall, fold_handle, parse_fold_handle,
 };
 
+pub use conversation::{
+    ChatLog, ChatLogLine, ConversationCompactionUnavailable, ConversationEvidence,
+    ConversationFlight, ConversationFlightOutcome, ConversationTurnSpan, capture_conversation_fork,
+    read_chat_log, seal_conversation_flight,
+};
+pub(crate) use conversation::{conversation_receipt_in, put_conversation_receipt_in_txn};
 pub use driver::{
     CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver,
     CompactionProduct, CompactionRequest, CompactionSignal, CompactionTierClass,
