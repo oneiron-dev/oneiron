@@ -80,6 +80,12 @@ pub enum NotificationKind {
     /// holder (FIX 4480): `source.result` names the proposal, and the
     /// notice's one tap cancels it (`Vault::answer_world_privacy_request`).
     WorldPrivacyProposed,
+    /// The Coach's change to the owner's weave-digest rhythm or section
+    /// order applied, under his Grant that names digest settings or by his
+    /// accept (FIX 5495): `source.result` names the change, `source.detail`
+    /// its reason, and the notice's one tap is its undo, the owner's own act
+    /// (`Vault::undo_weave_digest_setting_change`).
+    WeaveDigestSettingsChanged,
 }
 
 impl NotificationKind {

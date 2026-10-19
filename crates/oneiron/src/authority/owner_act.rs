@@ -365,6 +365,61 @@ impl crate::Vault {
     }
 }
 
+/// The verb a Grant of the Coach lists to name an owner's weave-digest
+/// settings, his digest's rhythm and section order (FIX 5495).
+pub(crate) const WEAVE_DIGEST_SETTINGS_GRANT_VERB: &str = "weave_digest_settings";
+
+impl crate::Vault {
+    /// The live Grant of the Coach `coach` that names `owner`'s weave-digest
+    /// settings now (FIX 5495), when one does: a FEDERATION_GRANT row whose
+    /// member is the Coach, that confers now, lists
+    /// [`WEAVE_DIGEST_SETTINGS_GRANT_VERB`] among an explicit verb set (a
+    /// grant over every verb names nothing), and is this owner's: he
+    /// delegated it, or he is the vault's one live owner (CALLS: FIX 5495
+    /// grant owner). The first such row, in id order. The Coach's writer
+    /// reads it inside the transaction that applies.
+    pub(crate) fn coach_weave_digest_settings_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        coach: EntityId,
+        owner: EntityId,
+    ) -> crate::error::Result<Option<EntityId>> {
+        let now = self.instant_in_txn(txn)?.secs();
+        let owners = crate::policy_model::owners_in_txn(self, txn)?;
+        let sole_owner = owners.len() == 1 && owners.first() == Some(&owner);
+        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            txn,
+            crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+            None,
+        )? {
+            let id = id?;
+            let crate::vault::LiveEntityRow::Live {
+                entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+                body,
+            } = crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?
+            else {
+                continue;
+            };
+            let Ok(grant) = crate::federation::decode_federation_grant_body(&body) else {
+                continue;
+            };
+            if grant.member_ref == coach
+                && grant.confers_at(now)
+                && matches!(
+                    &grant.authority_scope.verbs,
+                    crate::federation::ScopeAxis::Some(verbs)
+                        if verbs.contains(WEAVE_DIGEST_SETTINGS_GRANT_VERB)
+                )
+                && (grant.delegated_by == Some(owner) || sole_owner)
+            {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+}
+
 /// A typed authority refusal naming its rule (mesh PR2-reasons).
 pub(crate) fn authority_refused(reason: &'static str) -> crate::error::Error {
     crate::error::Error::Record(crate::error::RecordError::AuthorityRefused(reason))

@@ -1728,6 +1728,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "post",
+        path: "/weave/digest-feedback",
+        summary: "What the owner tells the Coach about his own digest.",
+        row: Some("vault.weave.digest_feedback.put"),
+    },
+    OwnerRoute {
+        method: "post",
         path: "/weave/lens",
         summary: "The owner lens, live, rendered through the weave-report skill on this server's Dreamer narrative route, as a card whose frame this server holds for the credential's events on it.",
         row: None,
@@ -1761,6 +1767,24 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         path: "/weave/schedules/clear",
         summary: "Stop one reader's digests.",
         row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/weave/setting-changes",
+        summary: "The Coach's changes to the owner's own digest settings, newest first.",
+        row: Some("vault.weave.setting_changes.list"),
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/weave/setting-changes/answer",
+        summary: "Accept, as the owner's own act, or decline one proposed change.",
+        row: Some("vault.weave.setting_changes.answer"),
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/weave/setting-changes/undo",
+        summary: "The one-tap undo of an applied or accepted change.",
+        row: Some("vault.weave.setting_changes.undo"),
     },
     OwnerRoute {
         method: "get",

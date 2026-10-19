@@ -265,6 +265,17 @@ side_tables! {
     TASK_WAVE_PLAN_INDEX: VaultMeta b"wave.task.v1/" Raw;
     /// Weave digest of one reader. Key: reader kind byte + id16 + u64be.
     WEAVE_DIGEST: VaultMeta b"weave:digest:v1:" Raw;
+    /// An owner's own behaviour with one period of his digest, for the Coach's digest settings
+    /// rule (FIX 5495): when its due notice reached him and when he first opened it, no digest
+    /// text. Key: id16 (owner) + u64be (scheduled_for).
+    WEAVE_DIGEST_BEHAVIOUR: VaultMeta b"weave:digest_behaviour:v1:" Named;
+    /// One Coach change to an owner's digest rhythm or section order (FIX 5495): proposed,
+    /// applied under his Grant, answered or undone, with the settings before and after. Key: id16
+    /// (owner) + id16 (change).
+    WEAVE_DIGEST_SETTING_CHANGE: VaultMeta b"weave:digest_setting_change:v1:" Named;
+    /// An owner's digest settings generation, the Coach's last evaluation of him and his own
+    /// feedback (FIX 5495). Key: id16 (owner).
+    WEAVE_DIGEST_SETTINGS: VaultMeta b"weave:digest_settings:v1:" Named;
     /// Source-to-digest invalidation index. Key: source id16 ‖ digest key.
     WEAVE_DIGEST_SOURCE: VaultMeta b"weave:digest_source:v1:" Raw;
     /// Weave digest schedule of one reader. Key: reader kind byte + id16.

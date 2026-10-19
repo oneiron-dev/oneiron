@@ -305,6 +305,11 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VOICE_IDENTITY_SAMPLE, LIVE),
     (&t::TASK_WAVE_PLAN_INDEX, CONTENT),
     (&t::WEAVE_DIGEST, CONTENT),
+    // The owner's digest settings and their change history are his content,
+    // as the digest schedule is (FIX 5495).
+    (&t::WEAVE_DIGEST_BEHAVIOUR, CONTENT),
+    (&t::WEAVE_DIGEST_SETTING_CHANGE, CONTENT),
+    (&t::WEAVE_DIGEST_SETTINGS, CONTENT),
     (&t::WEAVE_DIGEST_SOURCE, CONTENT),
     (&t::WEAVE_DIGEST_SCHEDULE, CONTENT),
     (&t::WEAVE_WRONG_ITEM_LABEL, CONTENT),

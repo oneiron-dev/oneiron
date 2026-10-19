@@ -190,6 +190,10 @@ both bindings and their export-census tests in one change.
 - `vault.weave.schedules.list`
 - `vault.weave.schedules.put`
 - `vault.weave.schedules.clear`
+- `vault.weave.setting_changes.list`
+- `vault.weave.setting_changes.answer`
+- `vault.weave.setting_changes.undo`
+- `vault.weave.digest_feedback.put`
 - `vault.weave.owner.digest.render`
 - `vault.inbox.concerns.review`
 - `vault.inbox.lens`

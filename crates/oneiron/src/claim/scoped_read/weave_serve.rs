@@ -556,9 +556,23 @@ impl Memory<'_> {
             Some(at) => read.read_weave_digest(reader, at)?,
             None => read.read_latest_weave_digest(reader)?,
         };
-        stored
-            .map(|stored| self.weave_digest_view(&read, reader, stored))
-            .transpose()
+        let Some(stored) = stored else {
+            return Ok(None);
+        };
+        let period = (stored.reader, stored.scheduled_for);
+        let framed = self.weave_digest_view(&read, reader, stored)?;
+        // The owner's own open of his period, for the Coach (FIX 5495):
+        // evidence, never a gate on this read. Person and agent reads never
+        // count.
+        if let Some(owner) = owner {
+            self.vault().note_owner_weave_digest_open(
+                owner,
+                period.0,
+                period.1,
+                request.scheduled_for.is_none(),
+            );
+        }
+        Ok(Some(framed))
     }
 
     /// `vault.weave.link.wrong`: the one-tap wrong control on a link the
