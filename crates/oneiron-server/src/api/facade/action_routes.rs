@@ -38,7 +38,7 @@ use axum::Router;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::{Extensions, HeaderMap, StatusCode};
-use axum::response::Json;
+use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use oneiron::authority::ActSurface;
 use oneiron::code_run::SelfDispatchOutcome;
@@ -51,7 +51,7 @@ use oneiron::task_verb::sdk::{AgentVerb, RunVerb};
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 use serde::Deserialize;
 
-use self::execution::{execute, run_bound, run_bound_stamped};
+use self::execution::{execute, execute_stamped, run_bound, run_bound_stamped};
 use super::{FacadeApiError, facade_actor, facade_input, facade_json, owner_authorship};
 use crate::actions::SharedActionExecutor;
 use crate::api::call_receipt::CallStamp;
@@ -94,6 +94,9 @@ async fn list(auth: CoreAuth) -> Result<Json<serde_json::Value>, FacadeApiError>
     Ok(Json(serde_json::json!({ "actions": actions })))
 }
 
+/// One action call. Its reply states, success and refusal alike, the call
+/// receipt its verb-table row's reply stated (FIX 5275): the action route
+/// writes none of its own, and a reply no row ran for states nothing.
 async fn invoke(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -101,18 +104,23 @@ async fn invoke(
     headers: HeaderMap,
     extensions: Extensions,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
-) -> Result<Json<serde_json::Value>, FacadeApiError> {
-    let request: ActionRequest = facade_input(facade_json(payload)?)?;
-    invoke_action(&server, &auth, headers, extensions, verb, request)
-        .await
-        .map(Json)
+) -> Response {
+    let request = match facade_json(payload).and_then(facade_input::<ActionRequest>) {
+        Ok(request) => request,
+        Err(refused) => return refused.into_response(),
+    };
+    let (answer, stamp) = invoke_action(&server, &auth, headers, extensions, verb, request).await;
+    let mut response = answer.map(Json).into_response();
+    stamp.stamp_header(&mut response);
+    response
 }
 
 /// Runs action `verb` of the app's table under `auth`, as `request` names
-/// it, and answers its outcome and read receipt. Its verb-table rows run
-/// through their own routes under `headers` and `extensions`, the caller's
-/// own request and connection. `POST /v1/core/actions/{verb}` and MCP's
-/// `invoke_action` tool both run an action here: one scope check, one
+/// it, and answers its outcome and read receipt, beside what its verb-table
+/// row's reply stated of its call receipt (FIX 5275). Its verb-table rows
+/// run through their own routes under `headers` and `extensions`, the
+/// caller's own request and connection. `POST /v1/core/actions/{verb}` and
+/// MCP's `invoke_action` tool both run an action here: one scope check, one
 /// binding, one live-run resolution and key, one held run.
 pub(crate) async fn invoke_action(
     server: &Arc<SyncServer>,
@@ -121,13 +129,16 @@ pub(crate) async fn invoke_action(
     extensions: Extensions,
     verb: String,
     request: ActionRequest,
-) -> Result<serde_json::Value, FacadeApiError> {
-    let dispatch =
-        invoke_action_dispatch(server, auth, headers, extensions, None, verb, request).await?;
-    Ok(serde_json::json!({
-        "outcome": dispatch.outcome_value().map_err(engine)?,
-        "readReceipt": dispatch.read_receipt,
-    }))
+) -> (Result<serde_json::Value, FacadeApiError>, CallStamp) {
+    let (dispatch, stamp) =
+        invoke_action_stamped(server, auth, headers, extensions, None, verb, request).await;
+    let answer = dispatch.and_then(|dispatch| {
+        Ok(serde_json::json!({
+            "outcome": dispatch.outcome_value().map_err(engine)?,
+            "readReceipt": dispatch.read_receipt,
+        }))
+    });
+    (answer, stamp)
 }
 
 /// The same action admission and execution, retaining the typed outcome for
@@ -143,6 +154,38 @@ pub(super) async fn invoke_action_dispatch(
     verb: String,
     request: ActionRequest,
 ) -> Result<ActionDispatch, FacadeApiError> {
+    invoke_action_stamped(server, auth, headers, extensions, credential, verb, request)
+        .await
+        .0
+}
+
+/// [`invoke_action_dispatch`], beside the stamp its verb-table row's reply
+/// stated: unrecorded for an action refused before it ran.
+async fn invoke_action_stamped(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
+    credential: Option<CoreAuth>,
+    verb: String,
+    request: ActionRequest,
+) -> (Result<ActionDispatch, FacadeApiError>, CallStamp) {
+    let (bound, call) = match admit_action(server, auth, &headers, verb, request) {
+        Ok(admitted) => admitted,
+        Err(refused) => return (Err(refused), CallStamp::Unrecorded),
+    };
+    execute_stamped(server, headers, extensions, bound, credential, call).await
+}
+
+/// An action call's scope check, binding, live-run resolution and key: what
+/// it runs under, and the call, before anything runs.
+fn admit_action(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    headers: &HeaderMap,
+    verb: String,
+    request: ActionRequest,
+) -> Result<(ActionBound, AgentActionCall), FacadeApiError> {
     require_action_scope(auth, &verb)?;
     let verb_id = SelfUiActionId::new(verb).map_err(|_| {
         FacadeApiError::new(
@@ -156,7 +199,7 @@ pub(super) async fn invoke_action_dispatch(
     facade_actor(server, auth)?;
     // Where the owner spoke from: a linked machine this request's own
     // headers prove, else the header-less rule (FIX 4625).
-    let surface = act_surface(server, auth, &headers);
+    let surface = act_surface(server, auth, headers);
     let mut bound = action_bound(server, auth, surface)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",
@@ -186,7 +229,7 @@ pub(super) async fn invoke_action_dispatch(
         args: request.args,
         idempotency_key,
     };
-    execute(server, headers, extensions, bound, credential, call).await
+    Ok((bound, call))
 }
 
 /// The scope and record admission an action of `verb` meets, wherever its

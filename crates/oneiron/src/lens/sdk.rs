@@ -22,7 +22,6 @@ use super::{
 use crate::claim::{
     ClaimReadStatus, PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult,
 };
-use crate::edge::EdgeActorClass;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE};
 use crate::thread_lens::ThreadLensEntry;
@@ -199,16 +198,11 @@ fn source_ids(refs: &[&str]) -> MemoryResult<Vec<EntityId>> {
         .collect()
 }
 
-/// A frame for the caller's own selected key: an agent's task, else a
-/// person's view. The key is the one the read lane built; nothing broadens it.
+/// A frame for the caller's own selected key: an agent's task, a system
+/// job, else a person's view (FIX 5278). The key is the one the read lane
+/// built; nothing broadens it.
 fn principal_frame(read: &ScopedRead<'_>) -> Result<LensRenderFrame> {
-    let key = read.actor_key().clone();
-    let principal_ref = key.actor_ref().to_owned();
-    let principal = if key.actor_class() == Some(EdgeActorClass::Agent.gate_actor_class()) {
-        LensPrincipalBinding::agent_task(principal_ref, key.clone(), vec![key])?
-    } else {
-        LensPrincipalBinding::human_view(principal_ref, key.clone(), vec![key])?
-    };
+    let principal = LensPrincipalBinding::of_read_key(read.actor_key().clone())?;
     let render_id = LensRenderId::new(format!("default-vault-{}", EntityId::now().to_hex()))?;
     Ok(LensRenderFrame::new(render_id, principal))
 }

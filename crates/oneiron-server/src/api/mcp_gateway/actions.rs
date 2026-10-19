@@ -12,6 +12,11 @@
 //! connection.
 //!
 //! A handle is per call: no attach tool, and no run a session holds.
+//!
+//! The call receipt the action's verb-table row's reply stated rides under
+//! `row_receipt` (FIX 5275), on its result and its refusal alike, apart from
+//! this call's own receipt in `meta`: `receipt_ref`, or `receipt_ref: null`
+//! with `no_record: true`. An action no row ran for states none.
 
 use std::sync::Arc;
 
@@ -23,6 +28,7 @@ use super::{
     McpCallContext, McpCarrierPolicy, McpGatewayError, mcp_actor_result, mcp_endpoint_result,
     mcp_facade_error, mcp_release_result,
 };
+use crate::api::call_receipt::CallStamp;
 use crate::api::facade::FacadeApiError;
 use crate::api::facade::action_routes::{ActionRequest, invoke_action};
 use crate::mcp::{
@@ -47,7 +53,7 @@ pub(crate) async fn execute_mcp_invoke_action(
         idempotency_key: args.idempotency_key,
         live_run: args.live_run,
     };
-    let output = invoke_action(
+    let (output, row) = invoke_action(
         server,
         auth,
         mcp_proof_headers(headers)?,
@@ -55,9 +61,15 @@ pub(crate) async fn execute_mcp_invoke_action(
         args.verb.clone(),
         request,
     )
-    .await
-    .map_err(mcp_action_error)?;
-    let structured = json!({
+    .await;
+    let output = output.map_err(|error| {
+        let mut error = mcp_action_error(error);
+        if row_receipt(&row).is_some() {
+            error.row_receipt = Some(Box::new(row.clone()));
+        }
+        error
+    })?;
+    let mut structured = json!({
         "tool": MCP_INVOKE_ACTION_TOOL,
         "verb": args.verb,
         "output": output,
@@ -69,6 +81,9 @@ pub(crate) async fn execute_mcp_invoke_action(
             None,
         ),
     });
+    if let (Some(receipt), Some(object)) = (row_receipt(&row), structured.as_object_mut()) {
+        object.insert("row_receipt".to_owned(), receipt);
+    }
     let result = mcp_endpoint_result(
         server,
         actor,
@@ -78,6 +93,15 @@ pub(crate) async fn execute_mcp_invoke_action(
     )
     .await;
     mcp_release_result(server, actor, &[], false, result)
+}
+
+/// What the action's verb-table row's reply stated of its call receipt, as
+/// the `row_receipt` object (FIX 5275); `None` when no row ran through its
+/// route, which states nothing.
+pub(super) fn row_receipt(stamp: &CallStamp) -> Option<Value> {
+    let mut object = serde_json::Map::new();
+    stamp.stamp_json(&mut object);
+    (!object.is_empty()).then_some(Value::Object(object))
 }
 
 /// An action's refusal as the gateway's: a live-run refusal keeps its own
