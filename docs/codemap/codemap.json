@@ -44801,7 +44801,7 @@
      "path": "src/self_heal/audit.rs",
      "purpose": "OF-544: immutable attempt confessions, directed rechecks and random audit draws",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 7,
       "mod": 1,
