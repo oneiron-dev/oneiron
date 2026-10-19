@@ -901,6 +901,9 @@ vaultRunsCheckpoint(input: unknown): unknown
 vaultConsolidationHomeGet(input: unknown): unknown
 vaultConsolidationLineage(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
+vaultConsolidationPin(input: unknown): unknown
+vaultConsolidationFrontier(input: unknown): unknown
+vaultConsolidationAccounting(input: unknown): unknown
 vaultConsolidationEvidence(input: unknown): unknown
 vaultSieveEvidence(input: unknown): unknown
 vaultSieveEvidenceReplay(input: unknown): unknown

@@ -7843,6 +7843,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_consolidation_pin(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.pin", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_frontier(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.frontier", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_accounting(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.accounting", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_consolidation_evidence(
         &self,
         input: serde_json::Value,

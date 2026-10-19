@@ -45,6 +45,7 @@ pub mod clustering;
 pub mod commitment_doors;
 mod conflict_settle;
 pub mod consolidation;
+pub mod consolidation_frontier;
 pub mod coping_doors;
 mod diagnostics;
 mod diary_read;

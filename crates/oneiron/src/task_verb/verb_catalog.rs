@@ -895,6 +895,9 @@ pub enum AgentVerb {
     VaultConsolidationHomeGet,
     VaultConsolidationLineage,
     VaultConsolidationPromote,
+    VaultConsolidationPin,
+    VaultConsolidationFrontier,
+    VaultConsolidationAccounting,
     VaultConsolidationEvidence,
     VaultSieveEvidence,
     VaultSieveEvidenceReplay,
@@ -1916,6 +1919,9 @@ impl AgentVerb {
         Self::VaultConsolidationHomeGet,
         Self::VaultConsolidationLineage,
         Self::VaultConsolidationPromote,
+        Self::VaultConsolidationPin,
+        Self::VaultConsolidationFrontier,
+        Self::VaultConsolidationAccounting,
         Self::VaultConsolidationEvidence,
         Self::VaultSieveEvidence,
         Self::VaultSieveEvidenceReplay,
@@ -2962,6 +2968,9 @@ impl AgentVerb {
             Self::VaultConsolidationHomeGet => "vault.consolidation.home.get",
             Self::VaultConsolidationLineage => "vault.consolidation.lineage",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
+            Self::VaultConsolidationPin => "vault.consolidation.pin",
+            Self::VaultConsolidationFrontier => "vault.consolidation.frontier",
+            Self::VaultConsolidationAccounting => "vault.consolidation.accounting",
             Self::VaultConsolidationEvidence => "vault.consolidation.evidence",
             Self::VaultSieveEvidence => "vault.sieve.evidence",
             Self::VaultSieveEvidenceReplay => "vault.sieve.evidence.replay",
@@ -3969,6 +3978,9 @@ impl AgentVerb {
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationPin
+                | Self::VaultConsolidationFrontier
+                | Self::VaultConsolidationAccounting
                 | Self::VaultConsolidationEvidence
                 | Self::VaultSieveEvidence
                 | Self::VaultSieveEvidenceReplay
@@ -5017,6 +5029,9 @@ impl AgentVerb {
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationPin
+                | Self::VaultConsolidationFrontier
+                | Self::VaultConsolidationAccounting
                 | Self::VaultConsolidationEvidence
                 | Self::VaultSieveEvidence
                 | Self::VaultSieveEvidenceReplay
@@ -6149,6 +6164,9 @@ impl AgentVerb {
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationPin
+                | Self::VaultConsolidationFrontier
+                | Self::VaultConsolidationAccounting
                 | Self::VaultConsolidationEvidence
                 | Self::VaultSieveEvidence
                 | Self::VaultSieveEvidenceReplay
@@ -6790,6 +6808,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationPin
+                | Self::VaultConsolidationFrontier
                 | Self::VaultSieveEvidenceReplay
                 | Self::VaultSievePolicySet
                 | Self::VaultSieveRecipePolicySet
@@ -7800,6 +7820,9 @@ impl AgentVerb {
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
+            Self::VaultConsolidationPin => &["spec"],
+            Self::VaultConsolidationFrontier => &["spec"],
+            Self::VaultConsolidationAccounting => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultSieveEvidence => &["spec"],
             Self::VaultSieveEvidenceReplay => &["spec"],
@@ -8822,6 +8845,9 @@ impl AgentVerb {
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
+            Self::VaultConsolidationPin => &["spec"],
+            Self::VaultConsolidationFrontier => &["spec"],
+            Self::VaultConsolidationAccounting => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultSieveEvidence => &["spec"],
             Self::VaultSieveEvidenceReplay => &["spec"],
@@ -11536,6 +11562,15 @@ impl AgentVerb {
             }
             Self::VaultConsolidationPromote => {
                 "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."
+            }
+            Self::VaultConsolidationPin => {
+                "Pins reference-only evidence for six-axis consolidation buckets at one owner-scoped ledger revision. Hashes, lineage taint and source eligibility are derived by the root, never accepted from children."
+            }
+            Self::VaultConsolidationFrontier => {
+                "Records immutable child judgements and reference sets against an existing root pin, in any completion order, and accounts source-plus-hash corroboration without merging projects. Does not settle claims."
+            }
+            Self::VaultConsolidationAccounting => {
+                "Reads the original root revision, source hashes, ancestor and edge provenance taint, zero-signal exclusions and per-bucket corroboration accounting under current owner read authority."
             }
             Self::VaultConsolidationEvidence => {
                 "Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."
