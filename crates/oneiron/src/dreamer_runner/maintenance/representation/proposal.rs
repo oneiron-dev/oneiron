@@ -12,7 +12,7 @@ use crate::dreamer_runner::{
     DreamerAdmittedAttempt, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::limit_ask::EngineLimit;
-use crate::provenance::birth::{MAX_BIRTH_INPUTS, RowBirth};
+use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
@@ -214,14 +214,10 @@ pub(in crate::dreamer_runner::maintenance) fn run(
         1.0,
     )
     .with_evidence(evidence);
-    // Rule A: the draft is concluded from the claims it cites, over their
-    // validated quotes, the first MAX_BIRTH_INPUTS citations.
-    let cited: Vec<_> = packet
-        .evidence
-        .iter()
-        .chain(&packet.voice)
-        .take(MAX_BIRTH_INPUTS)
-        .collect();
+    // Rule A: the draft is concluded from every claim it cites, over their
+    // validated quotes.
+    let cited: Vec<_> = packet.evidence.iter().chain(&packet.voice).collect();
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, cited.len() as u64);
     let inputs: Vec<EntityId> = cited.iter().map(|citation| citation.claim).collect();
     let quotes: Vec<&[u8]> = cited
         .iter()
