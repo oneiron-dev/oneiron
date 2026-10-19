@@ -3616,6 +3616,36 @@ export_facade! {
     let output = client.vault_skills_outcomes_get(&input)?;
     crate::codec::lift_record("vault.skills.outcomes.get", &output)
 };
+"vault.models.manifest.read" => fn vault_models_manifest_read(&self) -> Option<ModelManifest> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.models.manifest.read")?;
+    let output = client.vault_models_manifest_read(&input)?;
+    crate::codec::lift_record("vault.models.manifest.read", &output)
+};
+"vault.models.manifest.replace" => fn vault_models_manifest_replace(&self, input: ModelManifestReplace) -> ModelManifest = |client| {
+    let input: oneiron::llm::manifest::doors::ModelManifestReplace = crate::codec::lower_record("vault.models.manifest.replace", input)?;
+    let output = client.vault_models_manifest_replace(&input)?;
+    crate::codec::lift_record("vault.models.manifest.replace", &output)
+};
+"vault.models.routes.read" => fn vault_models_routes_read(&self, input: ModelRouteRead) -> ModelRouteView = |client| {
+    let input: oneiron::llm::manifest::doors::ModelRouteRead = crate::codec::lower_record("vault.models.routes.read", input)?;
+    let output = client.vault_models_routes_read(&input)?;
+    crate::codec::lift_record("vault.models.routes.read", &output)
+};
+"vault.models.routes.replace" => fn vault_models_routes_replace(&self, input: ModelRouteReplace) -> ModelRouteView = |client| {
+    let input: oneiron::llm::manifest::doors::ModelRouteReplace = crate::codec::lower_record("vault.models.routes.replace", input)?;
+    let output = client.vault_models_routes_replace(&input)?;
+    crate::codec::lift_record("vault.models.routes.replace", &output)
+};
+"vault.models.roles.read" => fn vault_models_roles_read(&self, input: ModelRoleRead) -> ModelRoleReceipt = |client| {
+    let input: oneiron::llm::manifest::doors::ModelRoleRead = crate::codec::lower_record("vault.models.roles.read", input)?;
+    let output = client.vault_models_roles_read(&input)?;
+    crate::codec::lift_record("vault.models.roles.read", &output)
+};
+"vault.models.roles.invoke" => fn vault_models_roles_invoke(&self, input: ModelRoleInvoke) -> ModelRoleInvocation = |client| {
+    let input: oneiron::llm::manifest::doors::ModelRoleInvoke = crate::codec::lower_record("vault.models.roles.invoke", input)?;
+    let output = client.vault_models_roles_invoke(&input)?;
+    crate::codec::lift_record("vault.models.roles.invoke", &output)
+};
 "vault.skills.attribution.settle" => fn vault_skills_attribution_settle(&self, input: ProposalDeltaSettleRequest) -> ProposalDeltaSettlement = |client| {
     let input: oneiron::task_verb::sdk::ProposalDeltaSettleRequest = crate::codec::lower_record("vault.skills.attribution.settle", input)?;
     let output = client.vault_skills_attribution_settle(&input)?;

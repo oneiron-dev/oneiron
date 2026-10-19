@@ -48,6 +48,7 @@ pub struct BoundInference {
     model: ModelId,
     locality: ModelLocality,
     wire: Option<ModelWireFormat>,
+    catalog_revision: Option<String>,
 }
 impl BoundInference {
     pub fn model(&self) -> &ModelId {
@@ -58,6 +59,10 @@ impl BoundInference {
     }
     pub fn wire(&self) -> Option<ModelWireFormat> {
         self.wire
+    }
+    /// The registered catalog entry the authorizer read for this call.
+    pub fn catalog_revision(&self) -> Option<&str> {
+        self.catalog_revision.as_deref()
     }
 }
 
@@ -188,6 +193,7 @@ impl InferencePolicySnapshot {
             model: selected.clone(),
             locality,
             wire: self.registry.as_ref().map(|row| row.wire),
+            catalog_revision: manifest::doors::catalog_revision(self.registry.as_ref())?,
         })
     }
 }

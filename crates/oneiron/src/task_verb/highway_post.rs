@@ -118,6 +118,23 @@ enum AgentTake {
     Untaken,
 }
 
+/// Rewrites the receipt a parked post kept (`kept`: its id and what it last
+/// held) to `lifecycle`, in the transaction of the effect it records (FIX
+/// 3273). A post that keeps no receipt writes nothing.
+fn restamp_in(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    kept: Option<&mut (String, super::highway_types::TaskLifecycleRecord)>,
+    lifecycle: &super::highway_types::TaskLifecycleRecord,
+    brief: &QueueTaskBrief,
+) -> MemoryResult<()> {
+    if let Some((id, stamped)) = kept {
+        lifecycle_receipt::stamp_record_in(vault, wtxn, lifecycle, id.clone(), Some(brief))?;
+        *stamped = lifecycle.clone();
+    }
+    Ok(())
+}
+
 /// One earlier proposal under the same actor and key.
 struct HeldProposal {
     proposal_ref: EntityId,
@@ -607,8 +624,10 @@ impl Memory<'_> {
     /// whether the agent takes it. A host's key is qualified by its creator,
     /// so a replay is always the same creator's; a new proposal witnesses
     /// that creator beside it (OF-532), and its lifecycle receipt beside
-    /// that, in the proposal's own transaction. What the gate and the take
-    /// then add rewrites the same receipt once they have committed.
+    /// that, in the proposal's own transaction, once the gate has decided,
+    /// naming that decision. A take rewrites the same receipt in the
+    /// transaction of its effect, a decline or a landing (FIX 3273); a take
+    /// that moves nothing reaches it in one receipt-only write after.
     #[expect(
         clippy::too_many_arguments,
         reason = "the parked post's request, its identity, the surface's decisions, its creator and whether it keeps a receipt"
@@ -688,9 +707,11 @@ impl Memory<'_> {
         lifecycle.outcome = "proposed".to_owned();
         lifecycle.trigger_ref = None;
         // The proposal's id is the parked post's identity, so its receipt's is
-        // too; both are written in the proposal's transaction.
+        // too; both are written in the proposal's transaction, the receipt
+        // after the claim lands, with the gate's decision about it.
         let mut kept: Option<(String, super::highway_types::TaskLifecycleRecord)> = None;
-        let (proposal_ref, decision_ref) = self.persist_proposal_claim(
+        let mut decision_ref = None;
+        let proposal_ref = self.land_proposal_claim(
             TASK_CREATE_PROPOSAL_PREDICATE,
             Value::Map(entries),
             self.actor(),
@@ -700,11 +721,20 @@ impl Memory<'_> {
                 if let Some(origin) = task_create_origin_in_txn(self, &*wtxn, creator)? {
                     put_proposal_origin_in_txn(self.vault(), wtxn, proposal_ref, &origin)?;
                 }
+                Ok(())
+            },
+            |wtxn, proposal_ref| {
+                decision_ref = self.proposal_decision_ref_in(&*wtxn, proposal_ref)?;
                 if keep {
                     let mut proposed = lifecycle.clone();
                     proposed
                         .fields
                         .insert("proposal_ref".to_owned(), proposal_ref.to_hex());
+                    if let Some(decision_ref) = &decision_ref {
+                        proposed
+                            .fields
+                            .insert("decision_ref".to_owned(), decision_ref.clone());
+                    }
                     let id = lifecycle_receipt::stamp_record_in(
                         self.vault(),
                         wtxn,
@@ -757,21 +787,32 @@ impl Memory<'_> {
                 .fields
                 .insert("take".to_owned(), answer.as_str().to_owned());
             if answer == PortAnswer::No {
-                self.vault().with_write_txn_grouped(|wtxn| {
-                    self.vault().store.close_pending_gate_consent_in_txn(
-                        wtxn,
-                        &proposal_ref,
-                        now,
-                        "rejected",
-                        vec![TAKE_DECLINED_REASON.to_owned()],
-                        None,
-                    )
-                })?;
+                // The decline and the receipt naming it land together.
+                self.vault()
+                    .try_with_write_txn_grouped(|wtxn| -> MemoryResult<()> {
+                        self.vault().store.close_pending_gate_consent_in_txn(
+                            wtxn,
+                            &proposal_ref,
+                            now,
+                            "rejected",
+                            vec![TAKE_DECLINED_REASON.to_owned()],
+                            None,
+                        )?;
+                        restamp_in(self.vault(), wtxn, kept.as_mut(), &lifecycle, &post.brief)
+                    })?;
                 outcome = TaskOutcome::Rejected {
                     decision_ref: decision_ref.clone(),
                 };
             } else if answer == PortAnswer::Yes {
-                match self.take_for_agent(proposal_ref, agent_def_ref, now)? {
+                // A landed take and the receipt naming its TASK land together.
+                let taken =
+                    self.take_for_agent(proposal_ref, agent_def_ref, now, |wtxn, task_ref| {
+                        let mut created = lifecycle.clone();
+                        created.outcome = "created".to_owned();
+                        created.trigger_ref = Some(task_ref.to_hex());
+                        restamp_in(self.vault(), wtxn, kept.as_mut(), &created, &post.brief)
+                    })?;
+                match taken {
                     AgentTake::Landed(task_ref) => {
                         lifecycle.outcome = "created".to_owned();
                         lifecycle.trigger_ref = Some(task_ref.to_hex());
@@ -793,8 +834,9 @@ impl Memory<'_> {
             }
         }
 
-        // The gate's decision and the take committed after the proposal: the
-        // receipt it kept takes them in one more write.
+        // What no effect carried (a take answer that moved nothing, a take
+        // refused and rolled back) reaches the kept receipt in one
+        // receipt-only write: no effect committed without its receipt.
         let receipt_ref = match kept {
             Some((id, proposed)) if proposed != lifecycle => {
                 Some(self.vault().try_with_write_txn_grouped(|wtxn| {
@@ -822,14 +864,16 @@ impl Memory<'_> {
 
     /// An agent's yes to a guest's proposal, run as its take along the
     /// owner's approval path: in one transaction the agent approves the
-    /// proposal, settlement lands its TASK, L02's rule proves the agent, and
-    /// the tray row closes approved. A refusal of any of the take's steps
-    /// rolls the whole take back.
+    /// proposal, settlement lands its TASK, L02's rule proves the agent, the
+    /// tray row closes approved, and `stamp` writes the post's receipt of the
+    /// landed TASK (FIX 3273). A refusal of any of the take's steps rolls the
+    /// whole take back.
     fn take_for_agent(
         &self,
         proposal_ref: EntityId,
         agent_def_ref: EntityId,
         now: u64,
+        stamp: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
     ) -> MemoryResult<AgentTake> {
         // The dispatched agent's own write actor (`agent_dispatch_actor`):
         // its AGENT_DEF row, class Agent.
@@ -892,6 +936,7 @@ impl Memory<'_> {
                     redacted_at: None,
                 },
             )?;
+            stamp(wtxn, task_ref)?;
             Ok(Some(task_ref))
         });
         match taken {

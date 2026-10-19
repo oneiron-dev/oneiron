@@ -29,6 +29,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::authority::{BaseAgent, base_agent_for_facet};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::learning::{Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation};
+use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -51,8 +52,6 @@ const EVAL_AUTHORING_SKILL: &str = "eval-authoring";
 pub const OFFER_SKILL_AXIS: &str = "training_offer";
 
 const MAX_REF_BYTES: usize = 256;
-const MAX_TEXT_BYTES: usize = 4096;
-const MAX_REFS: usize = 64;
 const MAX_ALTERNATIVES: usize = 16;
 
 /// A model asset as offered: identity, revision and, for a download, the
@@ -271,14 +270,21 @@ fn bounded(value: &str, max: usize, what: &str) -> Result<()> {
     Ok(())
 }
 
+/// Refuses a blank text; the offer keeps it whole and measures its size.
+fn named(value: &str, what: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(invalid(what));
+    }
+    Ok(())
+}
+
 fn refs(values: &[String], required: bool) -> Result<()> {
     if (required && values.is_empty())
-        || values.len() > MAX_REFS
         || values
             .iter()
             .any(|value| value.trim().is_empty() || value.len() > MAX_REF_BYTES)
     {
-        return Err(invalid("an offer names at most 64 bounded receipt refs"));
+        return Err(invalid("an offer names bounded receipt refs"));
     }
     Ok(())
 }
@@ -294,18 +300,10 @@ fn amount(value: Option<f64>) -> Result<()> {
 
 impl OfferModelPin {
     fn validate(&self) -> Result<()> {
-        bounded(
-            &self.model,
-            MAX_REF_BYTES,
-            "an offered model names a bounded id",
-        )?;
-        bounded(
-            &self.revision,
-            MAX_REF_BYTES,
-            "an offered model names its revision",
-        )?;
+        named(&self.model, "an offered model names its id")?;
+        named(&self.revision, "an offered model names its revision")?;
         if let Some(hash) = &self.content_hash {
-            bounded(hash, MAX_REF_BYTES, "an offered model hash is bounded")?;
+            named(hash, "an offered model hash is not blank")?;
         }
         Ok(())
     }
@@ -328,11 +326,7 @@ impl OfferCost {
 
 impl OfferOption {
     fn validate(&self) -> Result<()> {
-        bounded(
-            &self.label,
-            MAX_REF_BYTES,
-            "an offer option names a bounded label",
-        )?;
+        named(&self.label, "an offer option names its label")?;
         self.model.validate()?;
         self.cost.validate()?;
         amount(self.score)?;
@@ -356,11 +350,7 @@ impl TrainingOfferDraft {
                 if *model == self.incumbent {
                     return Err(invalid("a switch offers a model other than the incumbent"));
                 }
-                bounded(
-                    licence,
-                    MAX_REF_BYTES,
-                    "a stock candidate names its licence",
-                )?;
+                named(licence, "a stock candidate names its licence")?;
                 bounded(source, MAX_REF_BYTES, "a stock candidate names its source")?;
             }
             OfferCandidate::TrainRecipe {
@@ -374,11 +364,7 @@ impl TrainingOfferDraft {
                     MAX_REF_BYTES,
                     "a training offer names its recipe",
                 )?;
-                bounded(
-                    licence,
-                    MAX_REF_BYTES,
-                    "a training offer names the base licence",
-                )?;
+                named(licence, "a training offer names the base licence")?;
             }
         }
         self.baseline.validate()?;
@@ -401,40 +387,65 @@ impl TrainingOfferDraft {
                 "the offer and its baseline are priced in one currency",
             ));
         }
-        if self.evidence.exposures.len() > MAX_REFS {
-            return Err(invalid("an offer cites at most 64 cohort exposures"));
-        }
         if let Some(rubric) = &self.evidence.rubric_revision {
-            bounded(
-                rubric,
-                MAX_REF_BYTES,
-                "the evidence names a bounded rubric revision",
-            )?;
+            named(rubric, "the evidence names its rubric revision")?;
         }
         for line in self.evidence.losses.iter().chain(&self.evidence.risk) {
-            bounded(
-                line,
-                MAX_TEXT_BYTES,
-                "an offer's loss and risk lines are bounded",
-            )?;
+            named(line, "an offer's loss and risk lines are not blank")?;
         }
         match &self.destination {
             ComputeDestination::OnDevice => {}
             ComputeDestination::SelfHosted { host } => {
-                bounded(host, MAX_REF_BYTES, "a self-hosted run names its host")?;
+                named(host, "a self-hosted run names its host")?;
             }
             ComputeDestination::Hosted { provider, .. } => {
-                bounded(provider, MAX_REF_BYTES, "a hosted run names its provider")?;
+                named(provider, "a hosted run names its provider")?;
             }
         }
         if self.previous.is_some() != self.what_changed.is_some() {
             return Err(invalid("a repeated offer says what changed since the last"));
         }
         if let Some(changed) = &self.what_changed {
-            bounded(changed, MAX_TEXT_BYTES, "what changed is bounded")?;
+            named(changed, "what changed is not blank")?;
         }
         Ok(())
     }
+}
+
+/// Measures an offer's longest list and longest text kept whole against the
+/// engine's rows; the offer keeps both either way.
+fn measure_offer(vault: &Vault, offer: &TrainingOffer) {
+    let (evidence, refs) = (&offer.evidence, offer.workload.receipt_refs.len());
+    let options = || std::iter::once(&offer.baseline).chain(&offer.alternatives);
+    let lists = [refs, evidence.exposures.len(), evidence.losses.len()];
+    let items = options().map(|option| option.evidence_refs.len());
+    let items = items.chain(lists).max().unwrap_or(0);
+    let (candidate, licence) = match &offer.candidate {
+        OfferCandidate::Stock { model, licence, .. } => (model, licence),
+        OfferCandidate::TrainRecipe { base, licence, .. } => (base, licence),
+    };
+    let place = match &offer.destination {
+        ComputeDestination::OnDevice => None,
+        ComputeDestination::SelfHosted { host } => Some(host),
+        ComputeDestination::Hosted { provider, .. } => Some(provider),
+    };
+    // The incumbent is the baseline's model.
+    let pins = || options().map(|option| &option.model).chain([candidate]);
+    let longest = pins()
+        .flat_map(|pin| [&pin.model, &pin.revision])
+        .chain(pins().filter_map(|pin| pin.content_hash.as_ref()))
+        .chain(options().map(|option| &option.label))
+        .chain([licence])
+        .chain(&evidence.rubric_revision)
+        .chain(&evidence.losses)
+        .chain(&evidence.risk)
+        .chain(place)
+        .chain(&offer.what_changed)
+        .map(String::len)
+        .max()
+        .unwrap_or(0);
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
+    let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
 }
 
 fn digest(offer: &TrainingOffer) -> Result<String> {
@@ -508,6 +519,7 @@ pub fn record_training_offer(
             }
         }
         super::offer_pilot::validate_snapshot_in_txn(vault, txn, &offer)?;
+        measure_offer(vault, &offer);
         OFFER.put(&vault.store, txn, &offer.id, &offer)?;
         Ok(offer)
     })
@@ -674,8 +686,8 @@ pub(crate) fn settle_training_offer_in_txn(
 /// outcome for the offer skill that drafted it, on the model it ran on, in
 /// the same transaction; an unknown one is none.
 /// # Errors
-/// An unknown offer, a check before the check date, unbounded refs or note,
-/// a negative or non-finite observation, or storage errors.
+/// An unknown offer, a check before the check date, no or bad refs, a blank
+/// note, a negative or non-finite observation, or storage errors.
 pub fn record_offer_check(
     vault: &Vault,
     offer: &EntityId,
@@ -686,7 +698,7 @@ pub fn record_offer_check(
     amount(input.observed_monthly_cost)?;
     amount(input.observed_score)?;
     if let Some(note) = &input.note {
-        bounded(note, MAX_TEXT_BYTES, "an offer check note is bounded")?;
+        named(note, "an offer check note is not blank")?;
     }
     let root = crate::task_type::type_tree(vault, None)?.root();
     vault.with_write_txn_grouped(|txn| {
@@ -706,6 +718,10 @@ pub fn record_offer_check(
             note: input.note,
             at,
         };
+        let note = check.note.as_ref().map_or(0, String::len);
+        let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, note as u64);
+        let items = check.receipt_refs.len();
+        let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
         CHECK.put(&vault.store, txn, &(*offer, check.id), &check)?;
         if let (Some(held), Some((skill, _)), Some(executor)) =
             (check.held, row.offer_skill, row.drafted_on)

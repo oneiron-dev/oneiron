@@ -22,6 +22,7 @@ use serde_json::Value;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::runtime_hooks::verb::{HOOK_RESULT_NOT_RETAINED, VerbAskCredential};
 use crate::runtime_hooks::{VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume};
+use crate::task_verb::revoke_lands;
 use crate::task_verb::sdk::{AgentVerb, masked_reveal_reply, revealed_hook_view, validate_input};
 use crate::{EntityId, Vault};
 
@@ -83,7 +84,9 @@ pub fn browser_row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryRe
 /// caller's through its door; a door that runs the row itself, not through
 /// the generated `invoke`, passes `None` for both, since the drain could not
 /// run it the way that door does. A hook's ask runs on the task-work turn
-/// `memory`'s operation already holds, if any, never waiting for another.
+/// `memory`'s operation already holds, if any, never waiting for another. A
+/// restrictive call's args that fail the row's input check give way to the
+/// caller's own ([`revoke_lands::settle`]).
 fn row_pre_resumable(
     memory: &Memory<'_>,
     verb: &str,
@@ -105,12 +108,16 @@ fn row_pre_resumable(
     let vault = memory.vault();
     let call = row_call(memory, verb)?;
     let turn = memory.task_work_turn();
-    Ok(match credential {
+    let mut ended = match credential {
         Some(credential) => {
             vault.pre_verb_hooks_for_credential(call, args, &check, Some(credential), turn)?
         }
         None => vault.pre_verb_hooks_resumable(call, args, &check, resume, turn)?,
-    })
+    };
+    if let Ok(pre) = &mut ended {
+        revoke_lands::settle(pre, &|args| validate(verb, args).is_ok());
+    }
+    Ok(ended)
 }
 
 /// Runs the post chain over the row's JSON `result`: the caller's view of it.
@@ -126,6 +133,9 @@ fn row_pre_resumable(
 /// A hook's stop, as the refusal the caller reads; a read row's storage
 /// errors.
 pub fn row_post(vault: &Vault, pre: VerbHookPre, result: Value) -> MemoryResult<Value> {
+    // The write committed: the owner hears what a hook changed on a
+    // restrictive call, or what was ignored (FIX 5076).
+    revoke_lands::notify(vault, &pre);
     if let Some(masked) = masked_reveal_reply(&pre.call().verb, &result)
         && masked != result
     {
@@ -207,10 +217,11 @@ where
     let args = encode(&input)?;
     // A typed door's own call may differ from the generated `invoke`'s, so
     // it saves no resume target: its caller's retry resumes it.
-    let pre = match row_pre_resumable(memory, verb, args.clone(), None, None, validate_input)? {
+    let mut pre = match row_pre_resumable(memory, verb, args.clone(), None, None, validate_input)? {
         Ok(pre) => pre,
         Err(stop) => return completed(verb, stop),
     };
+    revoke_lands::settle(&mut pre, &revoke_lands::decodes::<I>);
     let input = if pre.args == args {
         input
     } else {

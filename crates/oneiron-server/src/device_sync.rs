@@ -24,6 +24,12 @@
 //! the owner's other nodes offer (OF-575): it asks them on each sync and then
 //! on a cadence, since no mesh signal says a peer's offer changed, and writes
 //! their own-server rows.
+//!
+//! On a managed vault (WILL-PLAN L14 row 14) the connection runs under one
+//! admission of the reap freeze, taken before the home is held and kept
+//! until its task ends: a frozen vault starts none, and while it runs, its
+//! imports, renewals and catalog writes keep a reap from finding the vault
+//! quiescent.
 
 use std::sync::Arc;
 
@@ -32,7 +38,10 @@ use tokio::task::JoinHandle;
 
 use crate::config::{DeviceSyncConfig, ServeConfig};
 use crate::handler::mesh::MeshHost;
-use crate::server::SyncServer;
+use crate::server::{HousekeepingAdmission, SyncServer};
+
+/// The admission a managed vault's connection holds for its whole run.
+type Admission = Box<dyn Send>;
 
 mod enrolment;
 #[cfg(feature = "mesh")]
@@ -55,14 +64,51 @@ impl DeviceSyncHost {
         config: &ServeConfig,
         mesh: Option<&MeshHost>,
     ) -> Option<Self> {
-        let dial = match Dial::resolve(server, config) {
-            Ok(dial) => dial?,
+        let dial = Self::dial(server, config)?;
+        Self::open_logged(server, dial, mesh, None).await
+    }
+
+    /// [`Self::start`] on a managed vault: the connection, and every write
+    /// it makes, run under one admission `admit` grants, taken before the
+    /// home is held and kept until the connection's task ends. A frozen
+    /// vault starts none; it says so, and serve runs on without it.
+    pub(crate) async fn start_admitted(
+        server: &Arc<SyncServer>,
+        config: &ServeConfig,
+        mesh: Option<&MeshHost>,
+        admit: &HousekeepingAdmission,
+    ) -> Option<Self> {
+        let dial = Self::dial(server, config)?;
+        let Some(admission) = admit() else {
+            tracing::warn!(
+                "device sync disabled: the vault is paused for reap preparation; it starts with \
+                 the next serve"
+            );
+            return None;
+        };
+        Self::open_logged(server, dial, mesh, Some(admission)).await
+    }
+
+    /// What this machine dials, or `None` with the one line that says why.
+    fn dial(server: &SyncServer, config: &ServeConfig) -> Option<Dial> {
+        match Dial::resolve(server, config) {
+            Ok(dial) => dial,
             Err(reason) => {
                 tracing::warn!("device sync disabled: {reason:#}");
-                return None;
+                None
             }
-        };
-        match open(server, dial, mesh).await {
+        }
+    }
+
+    /// The connection to `dial`'s home, or `None` with the line that says
+    /// why. `admission`, when given, ends with the connection's task.
+    async fn open_logged(
+        server: &Arc<SyncServer>,
+        dial: Dial,
+        mesh: Option<&MeshHost>,
+        admission: Option<Admission>,
+    ) -> Option<Self> {
+        match open(server, dial, mesh, admission).await {
             Ok(host) => Some(host),
             Err(reason) => {
                 tracing::warn!("device sync disabled: {reason:#}");
@@ -157,15 +203,21 @@ async fn open(
     _server: &Arc<SyncServer>,
     _dial: Dial,
     _mesh: Option<&MeshHost>,
+    _admission: Option<Admission>,
 ) -> anyhow::Result<DeviceSyncHost> {
     anyhow::bail!("this server was built without the `mesh` feature")
 }
 
+/// Holds the home and opens the connection to it. `admission`, a managed
+/// vault's, was taken before anything here writes; it moves into the
+/// connection's task and ends with it, and a failed open drops it only
+/// once its own work has ended.
 #[cfg(feature = "mesh")]
 async fn open(
     server: &Arc<SyncServer>,
     dial: Dial,
     mesh: Option<&MeshHost>,
+    admission: Option<Admission>,
 ) -> anyhow::Result<DeviceSyncHost> {
     use oneiron::sync::SyncDialer;
     use oneiron_mesh_transport::sync_dialer::MeshSyncDialer;
@@ -227,6 +279,9 @@ async fn open(
     });
     tracing::info!(machine = %machine.to_hex(), %home, over, "device sync started");
     let task = tokio::spawn(async move {
+        // Held through every run, reconnect, renewal and catalog refresh,
+        // and dropped only once all of them end.
+        let _admission = admission;
         // The observer is synchronous, so each status goes to the catalog
         // loop; the channel closes when the last connection's run ends.
         let (statuses, status_rx) = tokio::sync::mpsc::unbounded_channel();

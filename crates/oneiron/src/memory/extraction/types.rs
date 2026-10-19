@@ -42,7 +42,7 @@ pub struct EncoderInput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speaker: Option<SpeakerRole>,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NerSpan {
     pub message: usize,
@@ -53,7 +53,7 @@ pub struct NerSpan {
 }
 /// Two spans of this turn in one entity: `antecedent` is the nearest
 /// earlier mention of it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CorefLink {
     pub span: usize,
@@ -65,7 +65,7 @@ pub struct CorefLink {
 /// A span whose antecedent is in a context turn: addressed by the turn and
 /// message ids the input sent and half-open UTF-8 byte offsets into that
 /// message's text as sent.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ContextLink {
     pub span: usize,
@@ -76,7 +76,7 @@ pub struct ContextLink {
     pub confidence: f32,
 }
 /// Who a speaker link says a span is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SpeakerTarget {
     /// Whoever speaks the span's turn.
@@ -85,7 +85,7 @@ pub enum SpeakerTarget {
     Addressee,
 }
 /// A span that is the speaker or the addressee of its turn.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SpeakerLink {
     pub span: usize,
@@ -95,7 +95,7 @@ pub struct SpeakerLink {
 /// What a tagger returns for one input. A model returns what it has heads
 /// for: a spans-only model sends no links and no mood. A span carries at
 /// most one of a link, a context link and a speaker link.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EncoderOutput {
     pub spans: Vec<NerSpan>,

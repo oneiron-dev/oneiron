@@ -26,6 +26,9 @@ pub const COOP_DELETION_REQUEST_BODY_KEYS: [&str; 8] = [
 ];
 /// Maximum explicitly named worlds. An empty list means the entire pact.
 pub const MAX_COOP_DELETION_WORLDS: usize = 256;
+/// The courtesy codec's bound on one body: an ask, an answer or a
+/// succession page (FIX 3014), each read whole.
+pub(super) const COOP_DELETION_BODY_MAX_BYTES: usize = 32_768;
 
 /// A courtesy ask about content authored/shared by the requester.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,7 +59,7 @@ pub(super) fn encode(value: &Value) -> Result<Vec<u8>> {
 }
 pub(super) fn decode(bytes: &[u8]) -> Result<Value> {
     // Bound allocation before invoking the general MessagePack reader.
-    if bytes.len() > 32_768 {
+    if bytes.len() > COOP_DELETION_BODY_MAX_BYTES {
         return Err(invalid());
     }
     let mut cursor = std::io::Cursor::new(bytes);

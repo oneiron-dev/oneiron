@@ -92,12 +92,14 @@
 mod runner;
 pub use runner::{SessionDistillDrain, drain_pending_session_actor_distills};
 mod candidate;
+mod craft_read;
 mod distill;
 mod evidence;
 mod rows;
 mod validate;
 mod write;
 
+pub use self::craft_read::resident_craft_claim_ids;
 pub use self::distill::{
     SessionActorDistiller, SessionDistillBrief, SessionDistillTurn, SessionDistillUtterance,
     actor_distill_call_purpose, pending_session_actor_distills, run_session_end_actor_distill,
