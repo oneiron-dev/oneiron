@@ -21310,10 +21310,38 @@
      "path": "src/dreamer_runner/free_time/cycle.rs",
      "purpose": "A free-time cycle (FIX 4453): its owner-set clock, its opening on the elected home, and its end",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FreeTimeCycleRequest",
+      "FreeTimeCycleSummary",
+      "FreeTimeCycleView",
+      "FreeTimeCyclesPage",
+      "FreeTimeCyclesRequest",
+      "FreeTimeItemReceiptView",
+      "FreeTimeItemView",
+      "FreeTimeLabelSpend",
+      "FreeTimeNoteView",
+      "FreeTimePolicyRequest",
+      "FreeTimePolicyRow",
+      "FreeTimePolicySetRequest",
+      "FreeTimePolicyState",
+      "FreeTimePolicyView",
+      "FreeTimeSpendView"
+     ],
+     "path": "src/dreamer_runner/free_time/doors.rs",
+     "purpose": "The owner's free-time doors (FIX 4453): one agent's policy with its revision, or Disabled; its cycles, a…",
+     "surface": {
+      "enum": 1,
+      "fn": 6,
+      "struct": 14
      }
     },
     {
@@ -21342,7 +21370,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 1,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -21378,7 +21406,7 @@
      "path": "src/dreamer_runner/free_time/receipt.rs",
      "purpose": "Each free-time item's terminal receipt, and a cycle's floor (FIX 4453)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 3,
       "struct": 2
@@ -55675,7 +55703,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1090
+      "fn": 1094
      }
     },
     {
@@ -62653,7 +62681,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 89,
+     "files": 90,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63670,7 +63698,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3919,
+   "source_files": 3920,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72634,7 +72662,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1061
+      "fn": 1065
      }
     },
     {
@@ -73773,7 +73801,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1062
+      "fn": 1066
      }
     },
     {
@@ -76821,7 +76849,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 38
      }
     },
     {
@@ -77428,6 +77456,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/free_time_doors.rs",
+     "purpose": "The owner's free-time host doors (FIX 4453): `vault.free_time.policy.get`, `.policy.set`, `.cycles` and…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/gate_policy_doors.rs",
      "purpose": "Owner policy and checker host doors",
      "surface": {
@@ -77511,7 +77549,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 171
+      "crate-vis": 172
      }
     },
     {
@@ -79150,6 +79188,16 @@
      "notable": [],
      "path": "src/api/owner_routes/federation_connect_routes.rs",
      "purpose": "`/v1/owner/federation/connect`: the owner's Connect (ARCH-0043 #relationship-lifecycle, FIX 323), behind the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/free_time_routes.rs",
+     "purpose": "`/v1/owner/free-time`: one agent's free-time policy, its cycles and one cycle's sheet (FIX 4453), behind the…",
      "surface": {
       "crate-vis": 1
      }
@@ -85424,6 +85472,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CycleSettlements",
       "SeatUsage",
       "UsageLedger"
      ],
@@ -85431,8 +85480,8 @@
      "purpose": "Durable idempotent provider-list meters, aggregated only per owner and vault",
      "surface": {
       "crate-vis": 1,
-      "fn": 5,
-      "struct": 2
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -86140,7 +86189,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 461,
+     "files": 463,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -86590,7 +86639,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 849,
+   "source_files": 851,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -88106,6 +88155,29 @@
       "ForkState",
       "ForkStatus",
       "FrameKind",
+      "FreeTimeCadence",
+      "FreeTimeCycleRequest",
+      "FreeTimeCycleState",
+      "FreeTimeCycleSummary",
+      "FreeTimeCycleView",
+      "FreeTimeCyclesPage",
+      "FreeTimeCyclesRequest",
+      "FreeTimeFloor",
+      "FreeTimeItemOutcome",
+      "FreeTimeItemReceiptView",
+      "FreeTimeItemView",
+      "FreeTimeKind",
+      "FreeTimeLabelSpend",
+      "FreeTimeNoteView",
+      "FreeTimePolicyInput",
+      "FreeTimePolicyRequest",
+      "FreeTimePolicyRow",
+      "FreeTimePolicySetRequest",
+      "FreeTimePolicyState",
+      "FreeTimePolicyView",
+      "FreeTimeSchedule",
+      "FreeTimeSpendView",
+      "FreeTimeSplit",
       "FrozenTrialCase",
       "GateCheckerReceipt",
       "GateCheckerSet",
@@ -90376,8 +90448,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 858,
-      "struct": 2727
+      "enum": 864,
+      "struct": 2744
      }
     },
     {
