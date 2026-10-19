@@ -56,6 +56,7 @@ mod checkpoint_root_stage;
 mod checkpoint_root_status;
 mod claim_write;
 mod conversation_training;
+mod conversation_training_vault;
 mod critical_confirm_door;
 mod engine_machine;
 mod entry_transition;
@@ -209,6 +210,7 @@ pub use checkpoint_root_status::{
     RootCheckpointPolicyChange,
 };
 pub use conversation_training::ConversationTrainingView;
+pub use conversation_training_vault::ConversationLearningView;
 pub use fold_engine::*;
 pub use fold_state::*;
 pub use forwarded_caller::{

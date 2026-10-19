@@ -349,19 +349,31 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "get",
         path: "/conversation-learning",
-        summary: "The caller's own \"Learn from my conversations\" choice, as the person their proof names (the owner, or another live person on their own human slip): on, the worlds that count now, the worlds chosen, the revision to present back as seen, any conflict and the act in force.",
+        summary: "The vault's \"Learn from my conversations\" setting, for a live member, delegate or guest (the owner, or another live person on their own human slip): on, allow_opt_out, the revision to present back as seen, any conflict, the act in force, set_by (the admin, 32 hex) and the one line a member's surface shows while it is on. While on, everything in the vault counts, people, agents and guests alike; private worlds never do.",
         row: None,
     },
     OwnerRoute {
         method: "put",
         path: "/conversation-learning",
-        summary: "The caller says yes to training on the conversations of the listed worlds (worlds: 32-hex ids), or turns it off (worlds missing, null or empty), as their own act. Every world must be live and read everywhere or nothing is written (400 naming it); a stale seen (64 hex) is a conflict.",
+        summary: "The vault's admin (its live owner, or a shared vault's owner or admin holding the workspace-settings power) sets it: body {on, allow_opt_out, seen}, both flags required (a body missing one is a 400). Off until turned on; turning it off stops new sharing and withdraws nothing already shared. A stale seen (64 hex) is a conflict; anyone else is refused.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/conversation-learning/me",
+        summary: "The caller's own opt-out, as the person their proof names: leave_out, whether the vault allows opt-outs now (allowed), the revision to present back as seen, any conflict and the act in force.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "put",
+        path: "/conversation-learning/me",
+        summary: "The caller leaves their own messages out of training, or lets them back in: body {leave_out, seen}, leave_out required. Refused (409) while the vault does not allow opt-outs. It stops new sharing of their messages and withdraws nothing already shared. A stale seen (64 hex) is a conflict.",
         row: None,
     },
     OwnerRoute {
         method: "get",
         path: "/conversation-learning/receipts",
-        summary: "One page of the caller's own publisher training receipts, as the person their proof names: each withdrawal their choice recorded, and each submission of their words with its source, worlds, local custody, the intake's last receipt (stored, excluded, removal_pending, removed or rejected), the runs that used it, the withdrawal note and times. Never another person's rows. Pass the page's next back as after (34 hex) for the rest.",
+        summary: "One page of the caller's own publisher training receipts, as the person their proof names: each submission carrying their words with its source, worlds, local custody, the intake's last receipt (stored, excluded, removal_pending, removed or rejected), the runs that used it, the withdrawal note and times. Never another person's rows. Pass the page's next back as after (34 hex) for the rest.",
         row: None,
     },
     OwnerRoute {
@@ -1016,6 +1028,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "get",
         path: "/owner-work/{request}",
         summary: "Where one owner work request stands, from this install's fold: the receipt (ids only), recorded and awaiting a holder until its executor's result arrives, then enacted or refused, with the engine's words.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/owner-work/{request}/diagnostics",
+        summary: "What blocks one pending owner work request, as its executor observes it: a re-assertion's keys and their blockers (paged by offset), or a bundle publication's home, relay reach, outer capsules and unresolved attempt. Ids and closed reasons only; any other install answers that the executor's observation is unavailable here.",
         row: None,
     },
     OwnerRoute {
@@ -1776,8 +1794,44 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "post",
+        path: "/worlds/privacy/asks/confirm",
+        summary: "A holder of the world's settings right says yes to an agent's widen ask (request: 32 hex): the frozen settings land as his own act, or, under \"widen needs every owner\", his yes counts until every owner's is in.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/asks/decline",
+        summary: "A holder of the world's settings right declines an agent's widen ask (request: 32 hex); the settings stay as they are.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/proposals/accept",
+        summary: "A holder of the world's settings right accepts an agent's proposal of stricter settings (request: 32 hex): they land as his own act.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/proposals/decline",
+        summary: "A holder of the world's settings right declines an agent's proposal, or cancels it from its notice (request: 32 hex).",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
         path: "/worlds/privacy/reassert",
         summary: "The owner re-asserts a world's complete settings at its current revision after a pin change: the settings receipt, with its key work done here or its owner work awaiting a holder, and that work's words.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/worlds/privacy/requests",
+        summary: "The world-privacy requests agents raised, newest first (pending=true for those still waiting): every one for a vault owner, those on the worlds whose settings right he holds for another live holder on his own human slip.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/set",
+        summary: "A holder of the world's settings right changes them as his own act, in either direction: applied, with the receipt, or asked, when his widen falls under \"widen needs every owner\". The body is vault.worlds.privacy.set's input; a stale seen is a conflict.",
         row: None,
     },
     OwnerRoute {
@@ -1790,6 +1844,42 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/worlds/privacy/settings",
         summary: "A holder sets a world's settings as his own act: the settings receipt, with its key work done here or its owner work awaiting a holder, and that work's words.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/undo",
+        summary: "The notice's one tap: restores the settings before an agent's tighten (receipt: the settings receipt the notice carried), as the holder's own act.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/worlds/privacy/widen-unanimity",
+        summary: "The vault's \"widen needs every owner\" setting and its per-world overrides.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/widen-unanimity",
+        summary: "An owner sets the vault's setting, or a world's override (world: 32 hex; on: true, false or none to clear it). It lands at once (set), unless it turns the setting off somewhere while it is on: then it waits for every owner's yes (pending).",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/widen-unanimity/off/confirm",
+        summary: "An owner's yes to a pending turn-off of \"widen needs every owner\" (request: 32 hex); the yes that completes every owner's lands it.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/widen-unanimity/off/decline",
+        summary: "An owner declines a pending turn-off (request: 32 hex); the setting stays as it is.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/worlds/privacy/widen-unanimity/requests",
+        summary: "The turn-offs of \"widen needs every owner\", newest first (pending=true for those still waiting).",
         row: None,
     },
 ];
@@ -1875,7 +1965,7 @@ fn operation(route: &OwnerRoute, path: &str) -> Value {
 const LEFT_SLIP_ROUTES: &[(&str, &str)] = &[
     (
         "/v1/shared/left-notices",
-        "The removed person's own loss-of-access notices, each signed by this host's root key. Optional application/json body: `authority_heads` (array of 64-hex authority-entry hashes; omitted or empty requests the full handoff chain). The JSON answer has `notices` (signed shared-act outcomes) and `handoff` (array of hex-encoded signed ReRoot rows, parents first, from those heads to this host's signing root; empty when already folded).",
+        "The removed person's own loss-of-access notices, each signed by this host's root key. Optional application/json body: `authority_heads` (array of 64-hex authority-entry hashes; omitted or empty requests the full handoff chain). The JSON answer has `notices` (signed shared-act outcomes) and `handoff` (array of hex-encoded signed authority rows, parents first: the ReRoot and host-root RotateKey rows that hand the root on from those heads to this host's signing root, and every row they stand on that those heads do not cover; empty when already folded).",
     ),
     (
         "/v1/shared/removal-export",
@@ -1909,7 +1999,7 @@ fn left_slip_shapes(path: &str) -> (Option<Value>, Value) {
         "required": ["notices", "handoff"],
         "properties": {
             "notices": {"type": "array", "items": {"type": "object"}, "description": "The person's signed shared-act outcomes."},
-            "handoff": {"type": "array", "items": {"type": "string"}, "description": "The signed ReRoot rows, hex, parents first, from those heads to the key that signed `notices`; empty when already folded."}
+            "handoff": {"type": "array", "items": {"type": "string"}, "description": "The signed authority rows, hex, parents first: the ReRoot and host-root RotateKey rows that hand the root on from those heads to the key that signed `notices`, and every row they stand on that those heads do not cover; empty when already folded."}
         }
     });
     (Some(body), answer)

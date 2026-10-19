@@ -134,6 +134,8 @@ pub(super) fn fold_entry_state(
             home_pick: super::home_pick::HomePickChoiceState::default(),
             conversation_training:
                 super::conversation_training::ConversationTrainingChoiceState::default(),
+            conversation_training_vault:
+                super::conversation_training_vault::ConversationTrainingVaultState::default(),
             home_candidacy: super::home_candidacy::HomeCandidacyState::default(),
             owner_work: super::owner_work::OwnerWorkState::default(),
             world_keys: BTreeMap::new(),
@@ -234,10 +236,26 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
-    // So is a person's own conversation training choice, on the same
-    // register, one frontier per PERSON (FIX 4489).
+    // So is a person's own conversation training opt-out, on the same
+    // register, one frontier per PERSON (FIX 4489, FIX 5502).
     if let AuthorityOp::ConversationTrainingSet(set) = &entry.op {
         if let Err(issue) = super::conversation_training::apply_conversation_training(
+            &mut state,
+            entry,
+            set,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // So is the vault's conversation training setting, on the vault's one
+    // frontier (FIX 5502).
+    if let AuthorityOp::ConversationTrainingVaultSet(set) = &entry.op {
+        if let Err(issue) = super::conversation_training_vault::apply_conversation_training_vault(
             &mut state,
             entry,
             set,
@@ -490,6 +508,7 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
             | AuthorityOp::CheckpointPolicySet(_)
             | AuthorityOp::HomeNodePick(_)
             | AuthorityOp::ConversationTrainingSet(_)
+            | AuthorityOp::ConversationTrainingVaultSet(_)
             | AuthorityOp::MachineProfile(_)
     )
 }
@@ -594,6 +613,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::CheckpointPolicySet(_)
         | AuthorityOp::HomeNodePick(_)
         | AuthorityOp::ConversationTrainingSet(_)
+        | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_) => false,

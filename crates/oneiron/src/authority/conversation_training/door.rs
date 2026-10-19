@@ -1,17 +1,18 @@
-//! The person's own "Learn from my conversations" door (FIX 4489, OF-420):
-//! they say yes for an explicit list of worlds, or turn it off, from any
-//! surface where they are authenticated, on any host. Their say-so is the
-//! gate, revalidated at the person tier in the writing transaction
+//! The person's own "Learn from my conversations" opt-out door (FIX 4489,
+//! FIX 5502 owner rulings, OF-420): "leave my messages out", on or off, from
+//! any surface where they are authenticated, on any host. Their say-so is
+//! the gate, revalidated at the person tier in the writing transaction
 //! (`AuthenticatedOwner::revalidate_person_in_txn`): a live person of this
-//! vault, owner or not, acting for themselves. The act's person is the
+//! vault, member or guest, acting for themselves. The act's person is the
 //! proof's own, never a caller's id, and no Grant action names it, so an
-//! agent never makes it. This install carries it under its own live machine
-//! profile, in any role the one carrier rule admits
-//! ([`super::super::owner_act_signer_admits`]).
+//! agent never makes it. It is refused while the vault's setting does not
+//! let people opt out; a choice already made then stays, ignored. This
+//! install carries it under its own live machine profile, in any role the
+//! one carrier rule admits ([`super::super::owner_act_signer_admits`]).
 
-use crate::TimeRange;
 use crate::consent::AuthenticatedOwner;
-use crate::error::Error;
+use crate::error::{Error, Result};
+use crate::{TimeRange, Vault};
 
 use super::*;
 
@@ -26,38 +27,34 @@ const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than o
                               training choice may name; nothing was written";
 /// The supplied `seen` is not the person's current choice revision.
 const STALE: &str = "the conversation training choice changed since it was read";
-/// A listed world may not be named; the whole choice is refused.
-const NOT_ELIGIBLE: &str = "conversation training may name only a live world that reads \
-                            everywhere; nothing was written";
+/// The vault's setting does not let people opt out.
+const OPT_OUTS_NOT_ALLOWED: &str = "this vault does not allow opt-outs";
 /// The fold did not count the signed choice here: it never reports success.
 const NOT_COUNTED: &str = "this install's fold does not count the conversation training choice";
 
-/// A person's "Learn from my conversations" choice, as their own surface
-/// shows it.
+/// A person's own opt-out, as their own surface shows it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ConversationTrainingView {
     /// The PERSON whose choice this is: the proof's own.
     pub person: EntityId,
-    /// The worlds the choice in force names, as signed; `None` when it is
-    /// off, no choice counts, or the person's live choices conflict.
-    pub chosen: Option<BTreeSet<EntityId>>,
-    /// The worlds that count now: `chosen` less every world no longer
-    /// eligible (deleted, archived, or no longer readable everywhere);
-    /// `None` when none is left.
-    pub worlds: Option<BTreeSet<EntityId>>,
+    /// Whether they asked to leave their own messages out. A conflict reads
+    /// as left out.
+    pub leave_out: bool,
+    /// Whether the vault's setting lets people opt out now: while it does
+    /// not, `leave_out` is kept and ignored.
+    pub allowed: bool,
     /// The revision to present back as `seen`: the digest of the person's
     /// live choices, zero when none.
     pub revision: PolicyRevision,
-    /// Whether the person's live choices conflict. While they do, the choice
-    /// reads as off until one that saw them all supersedes them.
+    /// Whether the person's live choices conflict.
     pub conflicted: bool,
-    /// The authority entry of the choice in force (a yes or an off); `None`
-    /// while no choice counts or the choices conflict.
+    /// The authority entry of the choice in force; `None` while no choice
+    /// counts or the choices conflict.
     pub act: Option<AuthorityEntryHash>,
 }
 
 impl Vault {
-    /// The authenticated person's own conversation training choice.
+    /// The authenticated person's own opt-out.
     ///
     /// # Errors
     /// A refusal when the proof is no longer a live person of this vault;
@@ -69,76 +66,45 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let person = owner.revalidate_person_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        self.conversation_training_view_in_txn(&txn, &fold, person)
+        Ok(opt_out_view(&fold, person))
     }
 
-    fn conversation_training_view_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        fold: &AuthorityFold,
-        person: EntityId,
-    ) -> Result<ConversationTrainingView> {
-        let training = &fold.conversation_training;
-        let folded = training.persons.get(&person);
-        let conflicted = folded.is_some_and(|folded| !folded.conflict.is_empty());
-        Ok(ConversationTrainingView {
-            person,
-            chosen: training.chosen(person).cloned(),
-            worlds: self.conversation_training_effective_in_txn(txn, fold, person)?,
-            revision: training.revision(person),
-            conflicted,
-            act: folded
-                .filter(|_| !conflicted)
-                .and_then(|folded| folded.in_force.as_ref())
-                .map(|head| head.act),
-        })
-    }
-
-    /// The authenticated person says yes to training on the conversations
-    /// of `worlds`, or turns it off (`None`, or an empty set), from
-    /// `surface` (audit only). `seen` is the revision their surface showed
-    /// them ([`ConversationTrainingView::revision`]); `None` takes the
-    /// current one.
-    ///
-    /// Every listed world must be eligible now (a live WORLD row, or base
-    /// reality, that reads everywhere), or the whole choice is refused;
-    /// turning it off never judges the worlds of an earlier yes. The choice
-    /// names the main-log heads alone, whose fold carries this install's
-    /// standing rows and every live choice of the person's (FIX 4987), so it
-    /// supersedes all of them, and lands atomically or not at all.
+    /// The authenticated person leaves their own messages out of training
+    /// (`leave_out`), or lets them back in, from `surface` (audit only).
+    /// `seen` is the revision their surface showed them
+    /// ([`ConversationTrainingView::revision`]); `None` takes the current
+    /// one. Refused while the vault's setting does not let people opt out.
+    /// The choice names the main-log heads alone, whose fold carries this
+    /// install's standing rows and every live choice of the person's (FIX
+    /// 4987), so it supersedes all of them, and lands atomically or not at
+    /// all. It stops new sharing of their messages; it withdraws nothing
+    /// already shared.
     ///
     /// # Errors
     /// A refusal when the proof is no longer a live person of this vault;
-    /// [`Error::ConcurrentWrite`] when `seen` is not the current revision;
-    /// [`Error::InvalidConfig`] naming the first world that may not be
-    /// listed, or when the choice would name more parents than one entry
-    /// may; [`crate::error::RecordError::AuthorityRefused`] when this install
-    /// cannot carry the choice or its fold does not count it.
+    /// [`crate::error::RecordError::AuthorityRefused`] ("this vault does not
+    /// allow opt-outs") while the vault does not let people opt out, and when
+    /// this install cannot carry the choice or its fold does not count it; [`Error::ConcurrentWrite`] when `seen` is not the current
+    /// revision; [`Error::InvalidConfig`] when the choice would name more
+    /// parents than one entry may.
     pub fn set_conversation_training(
         &self,
         owner: &AuthenticatedOwner,
         surface: ActSurface,
-        worlds: Option<BTreeSet<EntityId>>,
+        leave_out: bool,
         seen: Option<PolicyRevision>,
     ) -> Result<ConversationTrainingView> {
-        // An empty list is off: one off has one encoding.
-        let worlds = worlds.filter(|worlds| !worlds.is_empty());
         let mut txn = self.store.env.write_txn()?;
         let person = owner.revalidate_person_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
+        if !fold.conversation_training_vault.allows_opt_out() {
+            return Err(authority_refused(OPT_OUTS_NOT_ALLOWED));
+        }
         // Revision integrity (mesh contract §4): the person chose on what
         // the surface showed them.
         let current = fold.conversation_training.revision(person);
         if seen.is_some_and(|seen| seen != current) {
             return Err(Error::ConcurrentWrite(STALE));
-        }
-        for world in worlds.iter().flatten() {
-            if !self.conversation_training_world_admits(&txn, &fold, *world)? {
-                return Err(Error::InvalidConfig(format!(
-                    "{NOT_ELIGIBLE} (world {})",
-                    world.to_hex()
-                )));
-            }
         }
         let machine = crate::identity::read_machine_id_in_txn(self, &txn)?
             .ok_or_else(|| authority_refused(NO_CARRIER))?;
@@ -172,7 +138,7 @@ impl Vault {
             AuthorityOp::ConversationTrainingSet(ConversationTrainingSet {
                 act,
                 machine,
-                worlds,
+                leave_out,
             }),
             now,
         )?;
@@ -191,8 +157,21 @@ impl Vault {
         if !landed || after.install.held_back.contains(&entry_hash) {
             return Err(authority_refused(NOT_COUNTED));
         }
-        let view = self.conversation_training_view_in_txn(&txn, &after, person)?;
+        let view = opt_out_view(&after, person);
         txn.commit()?;
         Ok(view)
+    }
+}
+
+/// `person`'s opt-out as `fold` reads it.
+fn opt_out_view(fold: &AuthorityFold, person: EntityId) -> ConversationTrainingView {
+    let training = &fold.conversation_training;
+    ConversationTrainingView {
+        person,
+        leave_out: training.leaves_out(person),
+        allowed: fold.conversation_training_vault.allows_opt_out(),
+        revision: training.revision(person),
+        conflicted: training.conflicted(person),
+        act: training.act(person),
     }
 }

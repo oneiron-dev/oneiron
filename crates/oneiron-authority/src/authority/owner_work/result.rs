@@ -59,6 +59,13 @@ pub enum OwnerWorkRefusal {
     /// The live custody floor on the holder no longer admits the secret's
     /// bindings.
     WiderThanFloor,
+    /// A root request's target computes another revision of the owner roots
+    /// and its own standing than the act's `seen` (FIX 4738). It may not
+    /// have folded yet a root record or a mark of itself the recorder held,
+    /// or the roots may have moved since: the inequality alone does not say
+    /// which. The owner reviews where the target stands and asks again, once
+    /// it has synced when it lagged.
+    RootRevisionMismatch,
 }
 
 impl OwnerWorkRefusal {
@@ -77,6 +84,7 @@ impl OwnerWorkRefusal {
             Self::InvalidInput => "invalid_input",
             Self::CustodyConflict => "custody_conflict",
             Self::WiderThanFloor => "wider_than_floor",
+            Self::RootRevisionMismatch => "root_revision_mismatch",
         }
     }
 
@@ -95,6 +103,7 @@ impl OwnerWorkRefusal {
             "invalid_input" => Self::InvalidInput,
             "custody_conflict" => Self::CustodyConflict,
             "wider_than_floor" => Self::WiderThanFloor,
+            "root_revision_mismatch" => Self::RootRevisionMismatch,
             _ => return None,
         })
     }

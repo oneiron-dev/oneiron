@@ -1,23 +1,20 @@
 //! Local custody of publisher training offers and controls (OF-420): what
-//! this vault prepared, published and withdrew, by id, and the scope it last
-//! delivered for each person.
+//! this vault prepared, published and withdrew, by id.
 //!
-//! Three Named families, each LIVE across a restore: they record acts that
+//! Two Named families, each LIVE across a restore: they record acts that
 //! already left the vault, so an older image never brings back a withdrawn
-//! scope or replays an event number.
+//! submission or replays an event number.
 //!
 //! - custody (`publisher_training:custody:v1:`): one row per submission
 //!   (`s` + id) and per control (`c` + id). A row holds ids, revisions and
 //!   states, never text: an offer's bytes live only sealed, in the outbox.
-//! - person (`publisher_training:person:v1:`): the scope last delivered for
-//!   each person, what reconciliation compares their choice with.
 //! - state (`publisher_training:state:v1`): the next event number and the
 //!   receipt cursor.
 //!
-//! A person's erase (FIX 3520) forgets their name here: their scope row
-//! goes, their pending choice controls go, and every submission of theirs
-//! that reached the intake gets an id-only forget control in the erase's
-//! own transaction, so the withdrawal still flows without naming them.
+//! A person's erase (FIX 3520) forgets their name here: every submission
+//! carrying their words stands withdrawn, each that reached the intake named
+//! by an id-only forget control in the erase's own transaction, so the
+//! withdrawal still flows without naming them.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -46,9 +43,6 @@ pub(super) const SUBMISSIONS: SideTable<CustodyKey, SubmissionCustody, Named> =
 /// Each control this vault recorded.
 pub(super) const CONTROLS: SideTable<CustodyKey, ControlCustody, Named> =
     SideTable::new(&side_table::PUBLISHER_TRAINING_CUSTODY);
-/// The scope last delivered for each person.
-pub(super) const SCOPES: SideTable<EntityId, DeliveredScope, Named> =
-    SideTable::new(&side_table::PUBLISHER_TRAINING_PERSON);
 /// The event counter and the receipt cursor.
 const STATE: SideTable<(), OutboxState, Named> =
     SideTable::new(&side_table::PUBLISHER_TRAINING_STATE);
@@ -58,18 +52,19 @@ const STATE: SideTable<(), OutboxState, Named> =
 pub(super) struct SubmissionCustody {
     /// The CONVERSATION it was selected from.
     pub(super) source: EntityId,
-    /// Whose words; `None` once their erase forgot them.
-    pub(super) person: Option<EntityId>,
+    /// Every person whose words it carries, members and guests alike; empty
+    /// for text only agents wrote. A person's erase removes them.
+    pub(super) persons: BTreeSet<EntityId>,
     /// The worlds the selected rows sit in.
     pub(super) worlds: BTreeSet<EntityId>,
     /// The selected MESSAGE rows, for the deletion check.
     pub(super) messages: Vec<EntityId>,
     /// The digest of the exact selected snapshot (D4).
     pub(super) source_revision: [u8; 32],
-    /// The person's choice revision it was prepared on.
-    pub(super) consent_revision: [u8; 32],
-    /// The worlds the person's choice counted then.
-    pub(super) consent_worlds: BTreeSet<EntityId>,
+    /// The vault's training setting revision it was prepared on.
+    pub(super) setting_revision: [u8; 32],
+    /// The vault's training setting act in force then.
+    pub(super) setting_act: Option<[u8; 32]>,
     /// The worlds' settings revision digest then.
     pub(super) policy_revision: [u8; 32],
     /// Its place in the event order.
@@ -96,8 +91,8 @@ pub(super) enum SubmissionState {
     Published,
     /// Its release held it back.
     Withheld,
-    /// Withdrawn after it was prepared: off, a narrower scope, a deleted
-    /// source or person, a world no longer everywhere.
+    /// Withdrawn after it was prepared: a deleted source, a person's erase,
+    /// a world no longer everywhere, or a newer offer of its source.
     Withdrawn,
 }
 
@@ -133,13 +128,6 @@ pub(super) struct ControlCustody {
 /// What a control says, as the engine keeps it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum ControlChange {
-    /// A person's choice now: `None` worlds is off.
-    PersonChoice {
-        person: EntityId,
-        act: Option<[u8; 32]>,
-        revision: [u8; 32],
-        allowed_worlds: Option<BTreeSet<EntityId>>,
-    },
     /// Remove these submissions of one source.
     ForgetSource {
         source: EntityId,
@@ -147,17 +135,6 @@ pub(super) enum ControlChange {
     },
     /// A world's eligibility now.
     WorldEligibility { world: EntityId, everywhere: bool },
-}
-
-/// The scope last delivered for one person.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct DeliveredScope {
-    /// The worlds their choice counted at the last offer or scope control.
-    pub(super) worlds: BTreeSet<EntityId>,
-    /// Their choice revision then.
-    pub(super) revision: [u8; 32],
-    /// The event that delivered it.
-    pub(super) event_seq: u64,
 }
 
 /// The event counter and the receipt cursor.
@@ -292,34 +269,20 @@ pub(super) fn record_control_in(
     Ok((id, event_seq))
 }
 
-/// Each person's delivered scope.
-pub(super) fn scopes(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-) -> Result<Vec<(EntityId, DeliveredScope)>> {
-    SCOPES.scan(&vault.store, txn)
-}
-
 impl Vault {
     /// A person's erase over the custody family (FIX 3520), in the erase's
-    /// own transaction: their pending choice controls go, each submission
-    /// of theirs that reached the intake gets an id-only forget control,
-    /// and every row of theirs forgets their id and stands withdrawn, its
-    /// files left for the next pass to purge.
+    /// own transaction: each submission carrying their words that reached
+    /// the intake gets an id-only forget control, and every such row forgets
+    /// their id and stands withdrawn, its files left for the next pass to
+    /// purge.
     pub(crate) fn erase_publisher_training_custody_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()> {
-        for ((_, id), row) in CONTROLS.scan_from(&self.store, wtxn, &CONTROL)? {
-            if matches!(&row.change, ControlChange::PersonChoice { person, .. } if person == actor)
-            {
-                CONTROLS.delete(&self.store, wtxn, &(CONTROL, id))?;
-            }
-        }
         let mut forgets: BTreeMap<EntityId, Vec<[u8; 16]>> = BTreeMap::new();
         for ((_, id), mut row) in SUBMISSIONS.scan_from(&self.store, wtxn, &SUBMISSION)? {
-            if row.person != Some(*actor) {
+            if !row.persons.contains(actor) {
                 continue;
             }
             let removed = row
@@ -328,7 +291,7 @@ impl Vault {
             if row.published_at.is_some() && !removed {
                 forgets.entry(row.source).or_default().push(id);
             }
-            row.person = None;
+            row.persons.remove(actor);
             if matches!(
                 row.state,
                 SubmissionState::Held | SubmissionState::Published
@@ -349,18 +312,6 @@ impl Vault {
                 now,
             )?;
         }
-        Ok(())
-    }
-
-    /// A person's erase over the delivered-scope family (FIX 3520): their
-    /// row goes. The custody scrub, before it in catalog order, already
-    /// sent their withdrawals by id.
-    pub(crate) fn erase_publisher_training_scope_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        actor: &EntityId,
-    ) -> Result<()> {
-        SCOPES.delete(&self.store, wtxn, actor)?;
         Ok(())
     }
 }

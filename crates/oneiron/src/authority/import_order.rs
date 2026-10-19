@@ -92,6 +92,9 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
         AuthorityOp::ConversationTrainingSet(set) => {
             vec![Grant::InstallKey(set.machine, entry.signer_key().clone())]
         }
+        AuthorityOp::ConversationTrainingVaultSet(set) => {
+            vec![Grant::InstallKey(set.machine, entry.signer_key().clone())]
+        }
         AuthorityOp::HomeCandidacy(declaration) => {
             vec![Grant::InstallKey(
                 declaration.machine,

@@ -582,6 +582,13 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
     {
         stamp.stamp_json(object);
     }
+    if let Some(receipt) = error
+        .row_receipt
+        .and_then(|stamp| super::actions::row_receipt(&stamp))
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("row_receipt".to_owned(), receipt);
+    }
     if let Some(stop) = error.hook
         && let Some(object) = data.as_object_mut()
     {

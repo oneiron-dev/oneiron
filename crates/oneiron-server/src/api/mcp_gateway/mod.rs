@@ -13,6 +13,7 @@ mod owner_call;
 pub(crate) mod skill_execution;
 mod stream_reads;
 mod tasks_response;
+mod tool_receipt;
 mod verb_hooks;
 mod wakes;
 
