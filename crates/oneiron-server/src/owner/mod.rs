@@ -113,7 +113,9 @@ pub(crate) fn entity_id(field: &str, value: &str) -> OwnerResult<oneiron::Entity
 /// caller's view. The CLI and `/v1/owner` cross this one boundary per
 /// operation, as the owner `actor` in person, after their own owner door
 /// admitted the call, so a hook never fires on a call that door refuses. A
-/// door's own answer shape reaches the post chain as it is.
+/// door's own answer shape reaches the post chain as it is. A restrictive
+/// call whose rewritten args do not decode as `I` runs on the caller's own
+/// input, and the owner hears of it (FIX 5076).
 pub(crate) fn hooked_row<I, O>(
     vault: &oneiron::Vault,
     actor: oneiron::EntityId,
@@ -128,7 +130,12 @@ where
     use oneiron::task_verb::verb_hook_boundary;
     let memory = vault.memory(actor, oneiron::edge::EdgeActorClass::Human);
     let args = hook_json(verb, &input)?;
-    let pre = verb_hook_boundary::row_pre(&memory, verb, args.clone()).map_err(memory_refusal)?;
+    let mut pre =
+        verb_hook_boundary::row_pre(&memory, verb, args.clone()).map_err(memory_refusal)?;
+    oneiron::task_verb::revoke_lands::settle(
+        &mut pre,
+        &oneiron::task_verb::revoke_lands::decodes::<I>,
+    );
     let input = if pre.args == args {
         input
     } else {
