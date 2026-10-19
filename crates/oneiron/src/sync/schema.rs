@@ -18,6 +18,13 @@ pub fn schema_version_bytes() -> [u8; 8] {
 pub(super) const ROOT_WINDOWS_KEY: &str = "windows";
 const WINDOW_PRESENT_MARKER: &[u8] = b"1";
 
+/// The window map of by-reference ASSET body references (FIX 5489), each
+/// keyed by its owner's canonical hex id beside the owner's `entities`
+/// carrier. Made with a window's first reference, never by
+/// [`create_window_doc`]; nothing writes one while the file plane is off.
+#[allow(dead_code, reason = "FIX 5489 PR2 admits and copies this map")]
+pub(crate) const ASSET_BODY_REFS_MAP: &str = "asset_body_refs";
+
 /// Creates a new root Doc with the standard schema.
 ///
 /// The root doc holds a `meta` map with vault metadata and window list,
