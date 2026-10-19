@@ -892,6 +892,7 @@ class Oneiron:
         path: str | os.PathLike[str] | None = None,
         *,
         dimensions: int | None = None,
+        device_class: Literal["computer", "phone"] | None = None,
     ) -> "Oneiron": ...
     @classmethod
     def open_with_host_root(
@@ -900,6 +901,7 @@ class Oneiron:
         host_root_secret: bytes,
         *,
         dimensions: int | None = None,
+        device_class: Literal["computer", "phone"] | None = None,
     ) -> HostRootOpened:
         """open, then this install's machine profile from the vault's host root secret's exact bytes (FIX 5342)."""
     @classmethod
