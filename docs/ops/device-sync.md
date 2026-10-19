@@ -84,10 +84,11 @@ primary = false
 - `home_node_id`: the home's sync node id, which `oneiron whoami` prints on the home as
   `sync_node_id`. This is not its MACHINE id. Absent, the enrolled home's. Named (or enrolled),
   the connection publishes that node, with `home_url` as its endpoint, as its home-node
-  topology, so residence reads go to `home_url` while that node is the elected MACRO home. It
-  makes the home no candidate: the home stands only through its own declaration (below). A
-  hand-named home without it publishes no endpoint. A node id that is this machine's own is
-  refused.
+  topology, so residence reads go to `home_url` while that node is the elected MACRO home. This
+  machine keeps that node as its own always-on candidate for the home, so with no declaration it
+  elects the home it dials; once the home's own declaration names the node, the declared facts
+  rule (below). A hand-named home without it publishes no endpoint, and this machine elects over
+  the declarations alone. A node id that is this machine's own is refused.
 - `always_on`, `primary`: what this machine declares itself as a MACRO home candidate (below).
   Both are off by default, so a machine that syncs to a home is no candidate until its owner
   says so.
@@ -117,8 +118,11 @@ candidates every election ranks.
 
 A served host also keeps itself as its own candidate. Alone, it elects itself, and with its
 Dreamer off it still claims a vault no other candidate stands for, so its standing questions
-run. Being elected moves no dial: an elected machine that syncs to a home keeps dialing it,
-and syncs every window it may read. A lost connection is no removal and moves no election.
+run. A machine that dials a home keeps that home's node as its own candidate the same way. Such
+a kept candidate gives way to a declaration that names its node, and stands no more once only
+removed, held or key-conflicted machines declare that node. Being elected moves no dial: an
+elected machine that syncs to a home keeps dialing it, and syncs every window it may read. A
+lost connection is no removal and moves no election.
 
 The section is file-only: no environment variable or flag sets it.
 

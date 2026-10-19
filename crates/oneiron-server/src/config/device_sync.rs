@@ -38,10 +38,12 @@ pub struct DeviceSyncConfig {
     #[serde(default)]
     pub worlds: Vec<String>,
     /// The home's sync node id, as `oneiron whoami` prints it there
-    /// (`sync_node_id`). Named, residence reads go to `home_url` while that
-    /// node is the elected home; the home is a MACRO home candidate only
-    /// through its own signed declaration. Absent, the enrolled home's; a
-    /// home named by hand without it publishes no endpoint.
+    /// (`sync_node_id`). Named, this machine keeps that node as its own
+    /// always-on candidate for the home, beside the vault's declarations, and
+    /// routes residence reads to `home_url` while it is the elected home; the
+    /// home's own declaration, once it names the node, rules. Absent, the
+    /// enrolled home's; a home named by hand without it publishes no
+    /// endpoint, and this machine elects over the declarations alone.
     #[serde(default)]
     pub home_node_id: Option<u64>,
     /// The owner keeps this machine on: it declares itself an always-on

@@ -14,13 +14,15 @@
 //!
 //! Before it dials, the device declares its own MACRO home candidacy from
 //! its section's `always_on` and `primary` flags and whether its Dreamer
-//! runs (FIX 4898), and elects over the vault's authorized candidates with
-//! no candidacy of its own beside them: the home stands only through its own
-//! signed declaration, never through a configured node id. A named or
-//! enrolled `home_node_id` is published, with `home_url` as its endpoint, as
-//! the connection's home-node topology, so residence reads go there while
-//! that node is the elected home. Being elected moves no dial: an elected
-//! device keeps its home as its route. The paired credential
+//! runs (FIX 4898). A named or enrolled `home_node_id` stays this device's
+//! own candidate for the home, always-on local, beside the vault's
+//! authorized candidates, and is published, with `home_url` as its
+//! endpoint, as the connection's home-node topology, so residence reads go
+//! there while that node is the elected home. With no declaration the
+//! device elects that home as before; once the home's own declaration names
+//! its node, the declared facts rule, and a node only fallen machines
+//! declare stands no more. Being elected moves no dial: an elected device
+//! keeps its home as its route. The paired credential
 //! also binds each socket's NOTE session, and the own-device grant it names
 //! selects what residence reads (index, first touch, promotion) may return.
 //! The checkpoint the enrolment's link pinned is adopted on the first
@@ -576,13 +578,22 @@ impl MeshCatalog {
     }
 }
 
+/// The candidate a named or enrolled home stands as on this device:
+/// always-on local, the one class a configured home claims with no cloud
+/// attachment to prove.
+#[cfg(feature = "mesh")]
+const fn home_candidate(node: u64) -> oneiron::DreamerHomeNodeCandidate {
+    oneiron::DreamerHomeNodeCandidate::always_on_local(node)
+}
+
 /// Declares this machine's own MACRO home candidacy (FIX 4898) from its
 /// `[device_sync]` flags and whether its Dreamer runs (`macro_ready`), then
-/// elects over the vault's authorized candidates with no candidacy of this
-/// machine's own beside them, replacing any it kept: the home it dials is a
-/// candidate only through the home's own signed declaration, never through a
-/// configured node id. A failed election is logged and the connection still
-/// starts, as being elected moves no dial.
+/// elects with the home it dials (`home_node`) as this device's own
+/// candidate beside the vault's authorized candidates, before `standing`
+/// reads the election: a Dreamer that claimed this install yields to that
+/// home, and the home's own declaration, once it names the node, rules over
+/// it. A failed election is logged and the connection still starts, as
+/// being elected moves no dial.
 #[cfg(feature = "mesh")]
 fn declare_candidacy(
     vault: &oneiron::Vault,
@@ -600,7 +611,8 @@ fn declare_candidacy(
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
-    if let Err(error) = store.elect_home_node(&[], now) {
+    let own: Vec<_> = home_node.map(home_candidate).into_iter().collect();
+    if let Err(error) = store.elect_home_node(&own, now) {
         tracing::warn!(
             kind = ?error.kind(),
             "device sync left the MACRO home as it stood: the election failed"
@@ -609,16 +621,16 @@ fn declare_candidacy(
     Ok(())
 }
 
-/// The connection's home-node topology: no candidacy of this machine's own,
-/// so each election ranks the vault's authorized candidates alone, and the
-/// home's `node` reached at `url`, so residence reads go there while it is
-/// the elected home. It is the sync URL itself, so residence reads ride the
-/// same mesh dialer.
+/// The connection's home-node topology: the one named home, as this
+/// device's own candidate beside the vault's authorized candidates, reached
+/// at `url`, so residence reads go there while it is the elected home. It
+/// is the sync URL itself, so residence reads ride the same mesh dialer.
 #[cfg(feature = "mesh")]
 fn home_topology(node: u64, url: &str) -> oneiron::sync::HomeNodeTopology {
-    let topology = oneiron::sync::HomeNodeTopology::new(Vec::new());
+    let home = home_candidate(node);
+    let topology = oneiron::sync::HomeNodeTopology::new(vec![home]);
     topology.publish_with_endpoints(
-        Vec::new(),
+        vec![home],
         std::collections::BTreeMap::from([(node, url.to_owned())]),
     );
     topology
