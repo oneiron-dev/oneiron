@@ -274,6 +274,21 @@ impl<'a> DreamerWakeDriver<'a> {
         self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
         // PEOPLE `about`: a person whose facts moved queues its lines anew.
         crate::dreamer_consolidation::enqueue_person_about_on_wake(self.vault, now)?;
+        // Each free-time cycle whose owner-set boundary has come opens on
+        // the elected home (FIX 4453), before any attempt is admitted. A
+        // cycle that cannot open is logged and never stops the pass.
+        if !self.consolidation_only
+            && input.trigger == WakeTrigger::Timer
+            && input.scope == DreamerConsolidationScope::Macro
+            && let Err(error) = self
+                .vault
+                .enqueue_due_free_time_cycles(now, input.local_node_id)
+        {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "free-time cycles did not open this pass"
+            );
+        }
 
         Ok(())
     }
@@ -357,6 +372,26 @@ impl<'a> DreamerWakeDriver<'a> {
                         && input.scope == DreamerConsolidationScope::Macro =>
                 {
                     self.store.admit_next_note_review(AdmitDreamerAttempt {
+                        lease_owner: input.lease_owner.clone(),
+                        now: input.now,
+                        budget_id: self.budget_id.clone(),
+                        budget_total_units: input.budget_total_units,
+                        reserve_units: input.reserve_units,
+                        started_milestone: self
+                            .milestone_claim(DreamerMilestoneKind::Started, input.now)?,
+                    })?
+                }
+                outcome => outcome,
+            };
+            // Then each resident's free time for its human (FIX 4453), before
+            // its own dreaming: its choice of rest ends its own-time item.
+            let cleanup = match cleanup {
+                DreamerAdmissionOutcome::Empty
+                    if !self.consolidation_only
+                        && input.trigger == WakeTrigger::Timer
+                        && input.scope == DreamerConsolidationScope::Macro =>
+                {
+                    self.store.admit_next_free_time_item(AdmitDreamerAttempt {
                         lease_owner: input.lease_owner.clone(),
                         now: input.now,
                         budget_id: self.budget_id.clone(),
