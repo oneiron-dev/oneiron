@@ -59,7 +59,7 @@ pub use self::ctl::{
     CtlRequest, CtlResponse, CtlResumeOn, REAP_PAUSE_REFUSAL, ShedBlockerWire, ShedCause,
     ShedStatus,
 };
-pub use self::ledger::{LedgerAck, LedgerUpdate};
+pub use self::ledger::{LedgerAck, LedgerUpdate, ManagedTrainingSetting};
 pub use self::limits::{
     CREDENTIALS_LEN, DEK_LEN, MAX_CTL_LINE, MAX_LEDGER_ENTRIES, MAX_REASON_TAG, MAX_WAKE_ID,
     READY_BYTE, TOKEN_LEN,
