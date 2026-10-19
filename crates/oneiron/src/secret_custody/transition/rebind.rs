@@ -313,4 +313,31 @@ impl Vault {
             Ok(written)
         })
     }
+
+    /// [`Self::apply_pending_rebinds`] at once, after a commit that may have
+    /// changed an admitted POLICY_MANIFEST, and so the custody floor (FIX
+    /// 5338): a rebind or carrier pending on a narrower floor applies right
+    /// after the floor widens, not at the next catch-up or served tick. It is
+    /// a second commit, never part of the floor change's: a failure is logged
+    /// by its kind only, the floor change stands as committed, and the tick's
+    /// pass tries again. Call it outside any write transaction. Without the
+    /// `sync` feature no carrier waits here, and it does nothing.
+    pub(crate) fn apply_pending_rebinds_after_commit(&self) {
+        #[cfg(feature = "sync")]
+        if let Err(error) = self.apply_pending_rebinds() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "pending custody was not judged again after a floor change; the next pass retries"
+            );
+        }
+    }
+}
+
+/// Whether the row bytes `blob` a sync writer wrote are a POLICY_MANIFEST,
+/// whose body the custody floor merges (FIX 5338): that writer calls
+/// [`Vault::apply_pending_rebinds_after_commit`] once its commit lands.
+#[cfg(feature = "sync")]
+pub(crate) fn moves_custody_floor(blob: &[u8]) -> bool {
+    crate::batch::EntityMetadataHeader::parse(blob)
+        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST)
 }

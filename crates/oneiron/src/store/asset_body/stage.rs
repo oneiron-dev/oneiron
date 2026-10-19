@@ -2,19 +2,24 @@
 //! (FIX 3677): the body streams into the body directory, measured as it
 //! passes, and is published as a file only when it is long and opaque. On a
 //! sealed vault it spills sealed as it streams and is published as an
-//! envelope, whose key row the put commits (FIX 5348).
+//! envelope, whose key row the put commits (FIX 5348). While the file plane
+//! is on, the values custody holds are found in the stream too, and marked
+//! when the put binds the file (FIX 5395, `secret_scan::stream_known`).
 
 use std::io::{self, Read};
+use std::sync::Arc;
 
 use heed::RwTxn;
 
 use super::{
     ASSET_FILE_PLANE, ASSET_INLINE_BODY_BYTES, AssetBodyFacts, AssetFileKind, AssetFileManifest,
 };
+use crate::batch::secret_scan::{KnownStreamFinder, StreamKnown};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::result_body::ResultBodyPin;
+use crate::secret_custody::KnownValues;
 use crate::store::body_store::SecretScan;
 use crate::store::{
     BodyDir, BodyFile, BodySpill, LINE_INDEX_BLOCK_BYTES, SpilledBody, StagedBodyKey,
@@ -35,6 +40,9 @@ pub(crate) struct StagedAssetBody {
     body: Staged,
     /// A sealed file's key row, committed with the put (FIX 5348).
     key: Option<StagedBodyKey>,
+    /// The values custody holds that a published file's stream carries
+    /// (FIX 5395).
+    known: StreamKnown,
     _pin: Option<ResultBodyPin>,
 }
 
@@ -78,10 +86,12 @@ struct StageMeter {
     utf8: Utf8Stream,
     /// The result body store's write-door rules over a body as it streams.
     secrets: SecretScan,
+    /// The values custody holds, found as the body streams (FIX 5395).
+    known: Option<KnownStreamFinder>,
 }
 
 impl StageMeter {
-    fn new() -> Self {
+    fn new(known: Option<Arc<KnownValues>>) -> Self {
         Self {
             hasher: blake3::Hasher::new(),
             xxh32: xxhash_rust::xxh32::Xxh32::new(0),
@@ -89,6 +99,7 @@ impl StageMeter {
             head: Vec::with_capacity(HEAD_BYTES),
             utf8: Utf8Stream::default(),
             secrets: SecretScan::default(),
+            known: known.map(KnownStreamFinder::new),
         }
     }
 
@@ -100,13 +111,17 @@ impl StageMeter {
         self.head.extend_from_slice(&bytes[..room.min(bytes.len())]);
         self.utf8.feed(bytes);
         self.secrets.feed(bytes);
+        if let Some(known) = &mut self.known {
+            known.feed(bytes);
+        }
     }
 
-    /// The body's facts, and whether its stream shows it opaque: no UTF-8
-    /// text, a head no owning adapter, container or MessagePack record
-    /// starts with, and no hit of the write door's stream rules. A body the
-    /// stream cannot show opaque is read whole and judged by the batch door.
-    fn finish(mut self) -> (AssetBodyFacts, bool) {
+    /// The body's facts, whether its stream shows it opaque, and the values
+    /// custody holds that it carries. Opaque: no UTF-8 text, a head no
+    /// owning adapter, container or MessagePack record starts with, and no
+    /// hit of the write door's stream rules. A body the stream cannot show
+    /// opaque is read whole and judged by the batch door.
+    fn finish(mut self) -> (AssetBodyFacts, bool, StreamKnown) {
         let facts = AssetBodyFacts {
             blake3: *self.hasher.finalize().as_bytes(),
             len: self.len,
@@ -114,7 +129,10 @@ impl StageMeter {
         };
         let opaque =
             !self.utf8.text() && opaque_head(&self.head) && self.secrets.finish().is_none();
-        (facts, opaque)
+        let known = self
+            .known
+            .map_or_else(StreamKnown::default, KnownStreamFinder::finish);
+        (facts, opaque, known)
     }
 }
 
@@ -215,14 +233,32 @@ impl Drop for Spill<'_> {
 }
 
 impl crate::Vault {
+    /// The known-value index a streamed ASSET body is read against, as
+    /// `txn`, the transaction that puts it, holds it (FIX 5395): `None` while
+    /// the file plane is off, when every body reaches the batch door whole.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn asset_stream_known_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+    ) -> Result<Option<Arc<KnownValues>>> {
+        if !ASSET_FILE_PLANE {
+            return Ok(None);
+        }
+        Ok(KnownValues::load_backfilled_in_txn(&self.store, txn)?.map(Arc::new))
+    }
+
     /// Streams `reader` into one staged ASSET body, before the transaction
     /// that puts it (FIX 3677): a body past [`ASSET_INLINE_BODY_BYTES`]
     /// spills to a temp file in the body directory as it streams, sealed as
     /// it streams on a sealed vault, and is published under its name (synced,
     /// renamed, the directory synced) when its stream shows it opaque. Any
     /// other body is held whole for its row, as a slice put holds it. `mime`
-    /// is the body's media type, kept in its manifest. Nothing is refused for
-    /// its size (Rule 5).
+    /// is the body's media type, kept in its manifest. Each value of `known`
+    /// a published file carries is found as it streams, for its put to mark
+    /// (FIX 5395). Nothing is refused for its size (Rule 5).
     ///
     /// # Errors
     ///
@@ -232,6 +268,7 @@ impl crate::Vault {
         &self,
         mut reader: impl Read,
         mime: Option<&str>,
+        known: Option<Arc<KnownValues>>,
     ) -> Result<StagedAssetBody> {
         if mime.is_some_and(|mime| mime.len() > usize::from(u16::MAX)) {
             return Err(Error::InvalidConfig(
@@ -239,7 +276,7 @@ impl crate::Vault {
             ));
         }
         let dir = self.store.body_dir()?;
-        let mut meter = StageMeter::new();
+        let mut meter = StageMeter::new(known);
         let mut inline = Vec::new();
         let mut spill = None::<Spill<'_>>;
         let mut frame = vec![0; LINE_INDEX_BLOCK_BYTES as usize];
@@ -267,12 +304,13 @@ impl crate::Vault {
                 spill = Some(opened);
             }
         }
-        let (facts, opaque) = meter.finish();
+        let (facts, opaque, known) = meter.finish();
         let staged = |body| StagedAssetBody {
             facts,
             mime: mime.map(str::to_owned),
             body,
             key: None,
+            known: StreamKnown::default(),
             _pin: None,
         };
         let Some(spill) = spill else {
@@ -299,6 +337,7 @@ impl crate::Vault {
         let key = spilled.publish(&dir)?;
         Ok(StagedAssetBody {
             key,
+            known,
             _pin: Some(pin),
             ..staged(Staged::File(held))
         })
@@ -308,7 +347,9 @@ impl crate::Vault {
     /// batch door every ASSET put takes (its checks, staging, indexes and
     /// short id): a published file as its manifest, any other body as its
     /// bytes, which the door may still move to a file. A file the secret
-    /// mask has marked since goes in its row.
+    /// mask has marked since goes in its row, and so does one whose stream
+    /// carried a value custody holds, marked here first as the batch door
+    /// marks a file's (FIX 5395).
     ///
     /// # Errors
     ///
@@ -322,6 +363,13 @@ impl crate::Vault {
         staged: &StagedAssetBody,
     ) -> Result<()> {
         let batch = self.batch_in();
+        if let Staged::File(file) = &staged.body {
+            staged
+                .known
+                .mark_in_txn(&self.store, txn, id, &staged.facts.blake3, |at, len| {
+                    file.read_range(at, len)
+                })?;
+        }
         if matches!(staged.body, Staged::File(_))
             && crate::secret_custody::masked_file_in_txn(&self.store, txn, &staged.facts.blake3)?
                 .is_none()

@@ -116,6 +116,10 @@ pub(crate) use wire_decode::{
     task_is_blocked_in, task_text_in,
 };
 mod wire_encode;
+mod world_privacy_wait;
+pub(crate) use world_privacy_wait::{
+    deliver_world_privacy_wait_for_in_txn, deliver_world_privacy_wait_in_txn,
+};
 
 #[cfg(test)]
 mod tests;

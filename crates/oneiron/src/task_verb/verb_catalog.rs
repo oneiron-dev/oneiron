@@ -169,6 +169,8 @@ pub enum AgentVerb {
     VaultCampaignProgramRead,
     VaultCampaignProgramUpdate,
     VaultCampaignProgramArchive,
+    VaultTurnProgramsArm,
+    VaultTurnProgramsDisarm,
     SelfSavedQueryCreate,
     SelfSavedQueryRead,
     SelfSavedQueryUpdate,
@@ -1244,6 +1246,8 @@ impl AgentVerb {
         Self::VaultCampaignProgramRead,
         Self::VaultCampaignProgramUpdate,
         Self::VaultCampaignProgramArchive,
+        Self::VaultTurnProgramsArm,
+        Self::VaultTurnProgramsDisarm,
         Self::SelfSavedQueryCreate,
         Self::SelfSavedQueryRead,
         Self::SelfSavedQueryUpdate,
@@ -2322,6 +2326,8 @@ impl AgentVerb {
             Self::VaultCampaignProgramRead => "vault.campaign.program.read",
             Self::VaultCampaignProgramUpdate => "vault.campaign.program.update",
             Self::VaultCampaignProgramArchive => "vault.campaign.program.archive",
+            Self::VaultTurnProgramsArm => "vault.turn_programs.arm",
+            Self::VaultTurnProgramsDisarm => "vault.turn_programs.disarm",
             Self::SelfSavedQueryCreate => "self.saved_query.create",
             Self::SelfSavedQueryRead => "self.saved_query.read",
             Self::SelfSavedQueryUpdate => "self.saved_query.update",
@@ -3425,6 +3431,8 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::VaultTurnProgramsArm
+                | Self::VaultTurnProgramsDisarm
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryRead
                 | Self::SelfSavedQueryUpdate
@@ -4527,6 +4535,8 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::VaultTurnProgramsArm
+                | Self::VaultTurnProgramsDisarm
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryRead
                 | Self::SelfSavedQueryUpdate
@@ -5734,6 +5744,8 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::VaultTurnProgramsArm
+                | Self::VaultTurnProgramsDisarm
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryRead
                 | Self::SelfSavedQueryUpdate
@@ -6685,6 +6697,8 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::VaultTurnProgramsArm
+                | Self::VaultTurnProgramsDisarm
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryUpdate
                 | Self::SelfSavedQueryArchive
@@ -7437,6 +7451,8 @@ impl AgentVerb {
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
             Self::VaultCampaignProgramArchive => &["spec"],
+            Self::VaultTurnProgramsArm => &["spec"],
+            Self::VaultTurnProgramsDisarm => &["spec"],
             Self::SelfSavedQueryCreate => &["spec"],
             Self::SelfSavedQueryRead => &["spec"],
             Self::SelfSavedQueryUpdate => &["spec"],
@@ -8513,6 +8529,8 @@ impl AgentVerb {
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
             Self::VaultCampaignProgramArchive => &["spec"],
+            Self::VaultTurnProgramsArm => &["spec"],
+            Self::VaultTurnProgramsDisarm => &["spec"],
             Self::SelfSavedQueryCreate => &["spec"],
             Self::SelfSavedQueryRead => &["spec"],
             Self::SelfSavedQueryUpdate => &["spec"],
@@ -9913,6 +9931,12 @@ impl AgentVerb {
             }
             Self::VaultCampaignProgramArchive => {
                 "Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops."
+            }
+            Self::VaultTurnProgramsArm => {
+                "Arms a pinned callable skill entry for the caller's own future turns, in one conversation or any of its own; arming the same definition again returns the standing registration."
+            }
+            Self::VaultTurnProgramsDisarm => {
+                "Disarms one of the caller's own armed turn programs; true when it was armed."
             }
             Self::SelfSavedQueryCreate => {
                 "Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller."
@@ -11420,7 +11444,7 @@ impl AgentVerb {
                 "Asks people or an authority a typed question and returns at admission with the ask's handle."
             }
             Self::Wait => {
-                "Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode."
+                "Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode."
             }
             Self::TasksAnswer => {
                 "Admits one person's word on an ask; the word is evidence, never approval."

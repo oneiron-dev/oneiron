@@ -3898,6 +3898,50 @@ async fn vault_campaign_program_archive(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_turn_programs_arm(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.turn_programs.arm",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_turn_programs_disarm(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.turn_programs.disarm",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn self_saved_query_create(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -24778,6 +24822,8 @@ pub(crate) async fn call_verb(
         "vault.campaign.program.archive" => {
             vault_campaign_program_archive(server, call, input).await
         }
+        "vault.turn_programs.arm" => vault_turn_programs_arm(server, call, input).await,
+        "vault.turn_programs.disarm" => vault_turn_programs_disarm(server, call, input).await,
         "self.saved_query.create" => self_saved_query_create(server, call, input).await,
         "self.saved_query.read" => self_saved_query_read(server, call, input).await,
         "self.saved_query.update" => self_saved_query_update(server, call, input).await,

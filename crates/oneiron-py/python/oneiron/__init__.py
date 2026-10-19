@@ -342,7 +342,7 @@ class Oneiron:
             input = {"who": who, "what": what, "until": until, "default": default}
         return json.loads(_translate(lambda: self._client.ask(json.dumps(input))))
     def wait(self, handle, step_key="sdk.wait"):
-        """Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode."""
+        """Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode."""
         return json.loads(_translate(lambda: self._client.wait(json.dumps({"handle": handle, "step_key": step_key}))))
     @property
     def connector(self) -> "Oneiron._ConnectorVerbs":
@@ -485,6 +485,9 @@ class Oneiron:
         @property
         def campaign(self) -> "Oneiron._VaultCampaignVerbs":
             return Oneiron._VaultCampaignVerbs(self._client)
+        @property
+        def turn_programs(self) -> "Oneiron._VaultTurnProgramsVerbs":
+            return Oneiron._VaultTurnProgramsVerbs(self._client)
         @property
         def weave(self) -> "Oneiron._VaultWeaveVerbs":
             return Oneiron._VaultWeaveVerbs(self._client)
@@ -1457,6 +1460,15 @@ class Oneiron:
         def archive(self, spec):
             """Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops."""
             return json.loads(_translate(lambda: self._client.vault_campaign_program_archive(json.dumps(spec))))
+    class _VaultTurnProgramsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def arm(self, spec):
+            """Arms a pinned callable skill entry for the caller's own future turns, in one conversation or any of its own; arming the same definition again returns the standing registration."""
+            return json.loads(_translate(lambda: self._client.vault_turn_programs_arm(json.dumps(spec))))
+        def disarm(self, spec):
+            """Disarms one of the caller's own armed turn programs; true when it was armed."""
+            return json.loads(_translate(lambda: self._client.vault_turn_programs_disarm(json.dumps(spec))))
     class _VaultWeaveVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

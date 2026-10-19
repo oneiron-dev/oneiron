@@ -26,6 +26,11 @@ side_tables! {
     FEDERATION_PEER_CONFIDENCE: VaultMeta b"federation:peer_confidence:v1:" Named;
     /// One note the open feedback inbox took, kept for the triage sweep. Key: u64be(sequence).
     FEEDBACK_INBOX: VaultMeta b"feedback:inbox:v1:" Named;
+    /// An owner feedback preview as it was shown, kept until it expires (FIX 5212): its exact
+    /// bytes, encoding and digest, the digest of the bundle as built before filtering, and the
+    /// owner and route it was previewed for. A send reads it back and never filters again.
+    /// Key: u64be(issued at) + bytes32(approval component digest).
+    FEEDBACK_PREVIEW: VaultMeta b"feedback:preview:v1:" Named;
     /// Open feedback-review-item queue row awaiting triage. Key: id16.
     FEEDBACK_QUEUE: VaultMeta b"feedback:queue:v1:" Named;
     /// Dedup index from a feedback bundle's content digest to the review item id that first recorded

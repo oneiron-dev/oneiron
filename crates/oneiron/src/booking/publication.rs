@@ -262,8 +262,10 @@ fn load_public_booking_page_in_txn(
     page_ref: EntityId,
     now: u64,
 ) -> Result<Option<BookingPagePublication>> {
-    Ok(load_public_booking_page_listed_in_txn(vault, rtxn, page_ref, now)?
-        .map(|(publication, _)| publication))
+    Ok(
+        load_public_booking_page_listed_in_txn(vault, rtxn, page_ref, now)?
+            .map(|(publication, _)| publication),
+    )
 }
 
 fn load_public_booking_page_listed_in_txn(

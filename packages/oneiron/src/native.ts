@@ -196,6 +196,8 @@ vaultCampaignProgramCreate(input: unknown): unknown
 vaultCampaignProgramRead(input: unknown): unknown
 vaultCampaignProgramUpdate(input: unknown): unknown
 vaultCampaignProgramArchive(input: unknown): unknown
+vaultTurnProgramsArm(input: unknown): unknown
+vaultTurnProgramsDisarm(input: unknown): unknown
 selfSavedQueryCreate(input: unknown): unknown
 selfSavedQueryRead(input: unknown): unknown
 selfSavedQueryUpdate(input: unknown): unknown
