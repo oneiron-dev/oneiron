@@ -23,6 +23,17 @@ use crate::{EdgeKind, EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+// The owner's digest settings and the Coach's changes to them (FIX 5495).
+mod changes;
+mod coach;
+mod settings;
+pub use changes::WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER;
+use settings::SettingsEdit;
+pub use settings::{
+    WeaveDigestFeedback, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
+    WeaveDigestSettingChangeStatus, WeaveDigestSettingUndo, WeaveDigestSettings,
+};
+
 const SCHEDULE_PREFIX: &[u8] = b"weave:schedule:v1:";
 const DIGEST_PREFIX: &[u8] = b"weave:digest:v1:";
 const SOURCE_PREFIX: &[u8] = b"weave:digest_source:v1:";
@@ -534,6 +545,8 @@ pub(crate) fn invalidate_weave_digest_source_in_txn(
         store.vault_meta.delete(txn, &reader.key(SCHEDULE_PREFIX))?;
         store.vault_meta.delete(txn, &reader.key(LIVE_PREFIX))?;
     }
+    // A deleted owner reader's settings, behaviour and Coach changes.
+    settings::erase_owner_weave_digest_settings_in_txn(store, txn, source)?;
     super::weave_correction::erase_weave_labels_in_txn(store, txn, source)
 }
 
@@ -587,6 +600,8 @@ fn sources_live_in_txn(store: &Store, txn: &heed::RoTxn<'_>, report: &WeaveRepor
 
 impl Vault {
     /// Owner-authorized local schedule. Hosts enqueue due rows; this door owns no timer.
+    /// The owner's own schedule writes through the one writer his settings
+    /// have (FIX 5495), which bumps their generation in this same write.
     pub fn set_weave_digest_schedule(
         &self,
         owner: &AuthenticatedOwner,
@@ -596,6 +611,7 @@ impl Vault {
             return Err(invalid());
         }
         let bytes = serde_json::to_vec(&WireSchedule::from_row(row)).map_err(|_| invalid())?;
+        let now = self.store.clock.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let reader = match row.reader {
@@ -606,6 +622,16 @@ impl Vault {
             };
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
             super::weave_report::validate_weave_recipe(self, txn, &policy, &reader, &row.recipe)?;
+            if let WeaveDigestReader::Owner(id) = row.reader {
+                self.put_owner_weave_digest_schedule_in_txn(
+                    txn,
+                    id,
+                    &bytes,
+                    SettingsEdit::Owner,
+                    now,
+                )?;
+                return Ok(());
+            }
             self.store
                 .vault_meta
                 .put(txn, &row.reader.key(SCHEDULE_PREFIX), &bytes)?;
@@ -625,12 +651,18 @@ impl Vault {
         owner: &AuthenticatedOwner,
         reader: WeaveDigestReader,
     ) -> Result<bool> {
+        let now = self.store.clock.now_recorded_at();
         let cleared = self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
-            Ok(self
+            let cleared = self
                 .store
                 .vault_meta
-                .delete(txn, &reader.key(SCHEDULE_PREFIX))?)
+                .delete(txn, &reader.key(SCHEDULE_PREFIX))?;
+            // Stopping an owner's digest is his own settings edit (FIX 5495).
+            if cleared && let WeaveDigestReader::Owner(id) = reader {
+                self.bump_weave_digest_settings_in_txn(txn, id, SettingsEdit::Owner, now)?;
+            }
+            Ok(cleared)
         })?;
         self.store.notify_proactivity_changes();
         if cleared && let Some((at, report, last)) = self.previous_weave_lens(reader, u64::MAX)? {
@@ -751,6 +783,9 @@ impl Vault {
                 }
             }
         }
+        // The Coach's pass over the owners' digest settings (FIX 5495): each
+        // failure is logged and skipped inside it.
+        self.coach_weave_digest_settings(now);
         Ok(served)
     }
 
@@ -789,23 +824,30 @@ impl Vault {
     ) -> Result<bool> {
         let wire: WireSchedule = serde_json::from_slice(saved).map_err(|_| invalid())?;
         let scheduled_for = wire.next_due_at;
+        let cadence = wire.cadence;
         let held = serde_json::to_vec(&WireSchedule {
             held_until: Some(wire.next_boundary_after(now)?),
             held_because: None,
             ..wire
         })
         .map_err(|_| invalid())?;
-        self.with_write_txn_grouped(|txn| {
+        let notice = self.with_write_txn_grouped(|txn| {
             if self.store.vault_meta.get(&*txn, key)?.as_deref() != Some(saved) {
-                return Ok(false);
+                return Ok(None);
             }
-            self.record_notification_in_txn(
+            let notice = self.record_notification_in_txn(
                 txn,
                 &WeaveDigestReader::Owner(owner).notification(scheduled_for, now),
             )?;
             self.store.vault_meta.put(txn, key, &held)?;
-            Ok(true)
-        })
+            Ok(Some(notice))
+        })?;
+        // The owner's own exposure to the period, for the Coach (FIX 5495),
+        // in its own write after the notice's.
+        if let Some(notice) = notice {
+            self.note_owner_weave_digest_notice(owner, scheduled_for, cadence, notice, now);
+        }
+        Ok(notice.is_some())
     }
 
     /// Leave a row the timer could not serve until its next boundary, with

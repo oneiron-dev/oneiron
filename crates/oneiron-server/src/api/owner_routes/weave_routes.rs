@@ -2,7 +2,9 @@
 //! owner sets each reader's digest schedule, reads the owner lens live,
 //! renders it through the weave-report skill on demand, opens its own
 //! digest, which renders its due period first, and labels a link in the
-//! owner lens as wrong. A person's or agent's report and digests
+//! owner lens as wrong. He lists, answers and undoes the Coach's changes to
+//! his own digest settings, and tells it what he wants (FIX 5495). A
+//! person's or agent's report and digests
 //! are its own, through the `vault.weave.*` verbs; owning the vault reads
 //! none of them.
 
@@ -13,12 +15,13 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::EdgeActorClass;
 use oneiron::claim::{
-    WeaveDigestRequest, WeaveDigestView, WeaveLinkCorrectionView, WeaveReaderRef,
+    WeaveDigestFeedback, WeaveDigestRequest, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
+    WeaveDigestSettingUndo, WeaveDigestView, WeaveLinkCorrectionView, WeaveReaderRef,
     WeaveReportRequest, WeaveReportView, WeaveScheduleView, WeaveWrongLinkRequest,
 };
 use oneiron::lens::LensFrameCard;
+use oneiron::{EdgeActorClass, EntityId};
 use serde::Serialize;
 
 use super::{OwnerReply, blocking, owner};
@@ -31,6 +34,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/weave/schedules", get(schedules).put(set_schedule))
         .route("/weave/schedules/clear", post(clear_schedule))
+        .route("/weave/setting-changes", get(setting_changes))
+        .route("/weave/setting-changes/answer", post(answer_setting_change))
+        .route("/weave/setting-changes/undo", post(undo_setting_change))
+        .route("/weave/digest-feedback", post(digest_feedback))
         .route("/weave/report", post(report))
         .route("/weave/lens", post(lens))
         .route("/weave/digest", get(digest))
@@ -102,6 +109,88 @@ async fn clear_schedule(
     })
     .await?;
     Ok(Json(cleared))
+}
+
+/// A change's id off the owner's wire.
+fn change_id(change_ref: &str) -> OwnerResult<EntityId> {
+    EntityId::from_hex(change_ref)
+        .map_err(|_| OwnerError::Invalid("change_ref must be a 32-hex change id".to_owned()))
+}
+
+/// `GET /v1/owner/weave/setting-changes`: the Coach's changes to the owner's
+/// own digest settings, newest first.
+async fn setting_changes(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Vec<WeaveDigestSettingChange>> {
+    let owner = owner(&auth, &server)?;
+    let rows = blocking(move || -> OwnerResult<Vec<WeaveDigestSettingChange>> {
+        server
+            .vault()
+            .weave_digest_setting_changes(&owner)
+            .map_err(OwnerError::from)
+    })
+    .await?;
+    Ok(Json(rows))
+}
+
+/// `POST /v1/owner/weave/setting-changes/answer`: accept, as the owner's own
+/// act, or decline one proposed change.
+async fn answer_setting_change(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<WeaveDigestSettingAnswer>, JsonRejection>,
+) -> OwnerReply<WeaveDigestSettingChange> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let answered = blocking(move || -> OwnerResult<WeaveDigestSettingChange> {
+        let change = change_id(&request.change_ref)?;
+        server
+            .vault()
+            .answer_weave_digest_setting_change(&owner, change, request.accept)
+            .map_err(OwnerError::from)
+    })
+    .await?;
+    Ok(Json(answered))
+}
+
+/// `POST /v1/owner/weave/setting-changes/undo`: the one-tap undo of an
+/// applied or accepted change.
+async fn undo_setting_change(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<WeaveDigestSettingUndo>, JsonRejection>,
+) -> OwnerReply<WeaveDigestSettingChange> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let undone = blocking(move || -> OwnerResult<WeaveDigestSettingChange> {
+        let change = change_id(&request.change_ref)?;
+        server
+            .vault()
+            .undo_weave_digest_setting_change(&owner, change)
+            .map_err(OwnerError::from)
+    })
+    .await?;
+    Ok(Json(undone))
+}
+
+/// `POST /v1/owner/weave/digest-feedback`: what the owner tells the Coach
+/// about his own digest.
+async fn digest_feedback(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<WeaveDigestFeedback>, JsonRejection>,
+) -> OwnerReply<WeaveDigestFeedback> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let told = blocking(move || -> OwnerResult<WeaveDigestFeedback> {
+        server
+            .vault()
+            .set_weave_digest_feedback(&owner, &request)
+            .map_err(OwnerError::from)
+    })
+    .await?;
+    Ok(Json(told))
 }
 
 /// `POST /v1/owner/weave/report`: the owner lens, live.

@@ -1609,6 +1609,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_weave_setting_changes_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.setting_changes.list", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_weave_setting_changes_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.setting_changes.answer", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_weave_setting_changes_undo(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.setting_changes.undo", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_weave_digest_feedback_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.weave.digest_feedback.put", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_weave_owner_digest_render(
         &self,
         input: serde_json::Value,

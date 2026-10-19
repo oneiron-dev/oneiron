@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1057 facade rows, 3553 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1009.
+// UniFFI census: 1061 facade rows, 3559 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1013.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -1246,6 +1246,8 @@ pub enum NotificationKind {
     WorldPrivacyChanged,
     #[serde(rename = "world_privacy_proposed")]
     WorldPrivacyProposed,
+    #[serde(rename = "weave_digest_settings_changed")]
+    WeaveDigestSettingsChanged,
 }
 
 /// `oneiron::inbox::notification::NotificationSource`.
@@ -12470,6 +12472,117 @@ pub struct WeaveScheduleView {
 pub struct WeaveScheduleCleared {
     #[serde(rename = "cleared")]
     pub cleared: bool,
+}
+
+/// `oneiron::claim::scoped_read::weave_digest::settings::WeaveDigestSettingChangeStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WeaveDigestSettingChangeStatus {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "applied")]
+    Applied,
+    #[serde(rename = "accepted")]
+    Accepted,
+    #[serde(rename = "declined")]
+    Declined,
+    #[serde(rename = "superseded")]
+    Superseded,
+    #[serde(rename = "undone")]
+    Undone,
+}
+
+/// `oneiron::claim::scoped_read::weave_digest::settings::WeaveDigestSettings`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveDigestSettings {
+    #[serde(rename = "cadence")]
+    pub cadence: WeaveDigestCadence,
+    #[serde(rename = "sections")]
+    pub sections: Vec<WeaveSectionKind>,
+}
+
+/// `oneiron::claim::scoped_read::weave_digest::settings::WeaveDigestSettingChange`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveDigestSettingChange {
+    #[serde(rename = "change_ref")]
+    pub change_ref: String,
+    #[serde(rename = "status")]
+    pub status: WeaveDigestSettingChangeStatus,
+    #[serde(rename = "before")]
+    pub before: WeaveDigestSettings,
+    #[serde(rename = "after")]
+    pub after: WeaveDigestSettings,
+    #[serde(rename = "reason")]
+    pub reason: String,
+    #[serde(rename = "coach_ref")]
+    pub coach_ref: String,
+    #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
+    #[serde(rename = "base_generation")]
+    pub base_generation: u64,
+    #[serde(
+        rename = "after_generation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub after_generation: Option<u64>,
+    #[serde(
+        rename = "undone_generation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub undone_generation: Option<u64>,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+    #[serde(
+        rename = "settled_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub settled_at: Option<u64>,
+}
+
+/// `oneiron::claim::scoped_read::weave_digest::settings::WeaveDigestSettingAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveDigestSettingAnswer {
+    #[serde(rename = "change_ref")]
+    pub change_ref: String,
+    #[serde(rename = "accept")]
+    pub accept: bool,
+}
+
+/// `oneiron::claim::scoped_read::weave_digest::settings::WeaveDigestSettingUndo`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveDigestSettingUndo {
+    #[serde(rename = "change_ref")]
+    pub change_ref: String,
+}
+
+/// `oneiron::claim::scoped_read::weave_digest::settings::WeaveDigestFeedback`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WeaveDigestFeedback {
+    #[serde(
+        rename = "preferred_cadence",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub preferred_cadence: Option<WeaveDigestCadence>,
+    #[serde(
+        rename = "lead_section",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub lead_section: Option<WeaveSectionKind>,
+    #[serde(
+        rename = "keep_current",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub keep_current: Option<bool>,
 }
 
 /// `oneiron::claim::scoped_read::weave_trigger::WeaveDigestRendered`.
