@@ -19,6 +19,7 @@ pub enum AgentVerb {
     SelfFocusRefresh,
     SelfFocusSubscribe,
     SelfFocusUnsubscribe,
+    SelfFocusWakes,
     SelfFocusScratchpadRecall,
     SelfFocusScratchpadAppend,
     SelfFocusScratchpadSeal,
@@ -66,6 +67,7 @@ pub enum AgentVerb {
     VaultBudgetsHold,
     VaultBudgetsHoldResume,
     VaultBudgetsLocal,
+    VaultBudgetsReservations,
     VaultBudgetsSettlements,
     VaultBudgetsRsiConfigure,
     VaultBudgetsRsi,
@@ -260,6 +262,11 @@ pub enum AgentVerb {
     VaultSharedReceipt,
     VaultSharedOutcomes,
     VaultSharedDeletion,
+    VaultOrgAdminConfigure,
+    VaultOrgAdminPowers,
+    VaultMembersResetProjectAccess,
+    VaultMembersDelegate,
+    VaultMembersProjection,
     VaultMembersAdd,
     VaultMembersInvitationSlip,
     VaultMembersChange,
@@ -325,6 +332,15 @@ pub enum AgentVerb {
     VaultOffRecordNotesCreate,
     VaultOffRecordClaimsUpsert,
     SelfOffRecordExecute,
+    VaultOffRecordRoomsStatus,
+    VaultOffRecordRoomsStart,
+    VaultOffRecordRoomsWitness,
+    VaultOffRecordRoomsSave,
+    VaultOffRecordRoomsSaveFromHere,
+    VaultOffRecordRoomsExport,
+    VaultOffRecordRoomsSuggestSave,
+    VaultOffRecordRoomsConfirmSave,
+    VaultOffRecordRoomsDeclineSave,
     VaultRecordsErasePreview,
     VaultRecordsEraseConfirm,
     VaultRecordsEraseSweep,
@@ -415,6 +431,10 @@ pub enum AgentVerb {
     VaultConsentCreateStandingGrant,
     VaultConsentRegistry,
     VaultConsentRevoke,
+    VaultConsentBypassGrantWarning,
+    VaultConsentCreateBypassGrant,
+    VaultConsentActiveBypassGrants,
+    VaultConsentBypassedEffectReceipts,
     VaultConsentGraduationPolicy,
     VaultConsentGraduationPolicySet,
     VaultConsentGraduationPolicyClear,
@@ -502,6 +522,16 @@ pub enum AgentVerb {
     VaultArtifactsThreadsList,
     VaultArtifactsThreadsAssign,
     VaultArtifactsThreadsState,
+    Mount,
+    GraphFsReaddir,
+    GraphFsReadFile,
+    GraphFsReadLink,
+    GraphFsLs,
+    GraphFsFind,
+    GraphFsGrep,
+    GraphFsCat,
+    GraphFsHead,
+    GraphFsWc,
     VaultCodeDiff,
     VaultCodeBlame,
     VaultCodeProposalView,
@@ -589,6 +619,12 @@ pub enum AgentVerb {
     VaultArtifactsReviewSlides,
     VaultArtifactsAsk,
     VaultCriticReview,
+    VaultArtifactsProposeOutline,
+    VaultArtifactsOutline,
+    VaultArtifactsKeepOutline,
+    VaultArtifactsDeclineOutline,
+    VaultArtifactsDesignDeck,
+    VaultArtifactsCreateDeck,
     VaultArtifactsInspectDeck,
     VaultArtifactsProposeDeck,
     VaultArtifactsProposeOutput,
@@ -662,6 +698,19 @@ pub enum AgentVerb {
     AiVoiceEnd,
     AiVoiceClose,
     AiAnonymousChat,
+    VaultModelsCatalogRefresh,
+    VaultModelsCatalogGet,
+    VaultModelsCatalogDiff,
+    VaultModelsTrialsNominate,
+    VaultModelsTrialsGet,
+    VaultModelsTrialsApprove,
+    VaultModelsTrialsRun,
+    VaultModelsTrialsComplete,
+    VaultModelsBindingsPropose,
+    VaultModelsBindingsGet,
+    VaultModelsBindingsRead,
+    VaultModelsBindingsAccept,
+    VaultModelsBindingsDeny,
     AiOptions,
     AiImage,
     AiSpeech,
@@ -761,11 +810,17 @@ pub enum AgentVerb {
     VaultClaimsReadFiltered,
     VaultClaimsHistory,
     VaultDelete,
+    VaultWritesCriticalConfirmPending,
+    VaultWritesCriticalConfirmClear,
+    VaultWritesCriticalConfirmDecline,
+    VaultWritesCriticalConfirmReceipt,
     VaultWritesPending,
     VaultHydrate,
     VaultGet,
     VaultRefsResolve,
     VaultRefsLinks,
+    VaultSearchVectorConfig,
+    VaultVectorsPut,
     VaultSearchHybrid,
     VaultSearchTemporal,
     VaultSearchBm25,
@@ -818,6 +873,8 @@ pub enum AgentVerb {
     VaultConsolidationStatus,
     VaultRunsStep,
     VaultRunsCheckpoint,
+    VaultConsolidationHomeGet,
+    VaultConsolidationLineage,
     VaultConsolidationPromote,
     VaultConsolidationEvidence,
     VaultSieveEvidence,
@@ -964,6 +1021,7 @@ impl AgentVerb {
         Self::SelfFocusRefresh,
         Self::SelfFocusSubscribe,
         Self::SelfFocusUnsubscribe,
+        Self::SelfFocusWakes,
         Self::SelfFocusScratchpadRecall,
         Self::SelfFocusScratchpadAppend,
         Self::SelfFocusScratchpadSeal,
@@ -1011,6 +1069,7 @@ impl AgentVerb {
         Self::VaultBudgetsHold,
         Self::VaultBudgetsHoldResume,
         Self::VaultBudgetsLocal,
+        Self::VaultBudgetsReservations,
         Self::VaultBudgetsSettlements,
         Self::VaultBudgetsRsiConfigure,
         Self::VaultBudgetsRsi,
@@ -1205,6 +1264,11 @@ impl AgentVerb {
         Self::VaultSharedReceipt,
         Self::VaultSharedOutcomes,
         Self::VaultSharedDeletion,
+        Self::VaultOrgAdminConfigure,
+        Self::VaultOrgAdminPowers,
+        Self::VaultMembersResetProjectAccess,
+        Self::VaultMembersDelegate,
+        Self::VaultMembersProjection,
         Self::VaultMembersAdd,
         Self::VaultMembersInvitationSlip,
         Self::VaultMembersChange,
@@ -1270,6 +1334,15 @@ impl AgentVerb {
         Self::VaultOffRecordNotesCreate,
         Self::VaultOffRecordClaimsUpsert,
         Self::SelfOffRecordExecute,
+        Self::VaultOffRecordRoomsStatus,
+        Self::VaultOffRecordRoomsStart,
+        Self::VaultOffRecordRoomsWitness,
+        Self::VaultOffRecordRoomsSave,
+        Self::VaultOffRecordRoomsSaveFromHere,
+        Self::VaultOffRecordRoomsExport,
+        Self::VaultOffRecordRoomsSuggestSave,
+        Self::VaultOffRecordRoomsConfirmSave,
+        Self::VaultOffRecordRoomsDeclineSave,
         Self::VaultRecordsErasePreview,
         Self::VaultRecordsEraseConfirm,
         Self::VaultRecordsEraseSweep,
@@ -1360,6 +1433,10 @@ impl AgentVerb {
         Self::VaultConsentCreateStandingGrant,
         Self::VaultConsentRegistry,
         Self::VaultConsentRevoke,
+        Self::VaultConsentBypassGrantWarning,
+        Self::VaultConsentCreateBypassGrant,
+        Self::VaultConsentActiveBypassGrants,
+        Self::VaultConsentBypassedEffectReceipts,
         Self::VaultConsentGraduationPolicy,
         Self::VaultConsentGraduationPolicySet,
         Self::VaultConsentGraduationPolicyClear,
@@ -1447,6 +1524,16 @@ impl AgentVerb {
         Self::VaultArtifactsThreadsList,
         Self::VaultArtifactsThreadsAssign,
         Self::VaultArtifactsThreadsState,
+        Self::Mount,
+        Self::GraphFsReaddir,
+        Self::GraphFsReadFile,
+        Self::GraphFsReadLink,
+        Self::GraphFsLs,
+        Self::GraphFsFind,
+        Self::GraphFsGrep,
+        Self::GraphFsCat,
+        Self::GraphFsHead,
+        Self::GraphFsWc,
         Self::VaultCodeDiff,
         Self::VaultCodeBlame,
         Self::VaultCodeProposalView,
@@ -1534,6 +1621,12 @@ impl AgentVerb {
         Self::VaultArtifactsReviewSlides,
         Self::VaultArtifactsAsk,
         Self::VaultCriticReview,
+        Self::VaultArtifactsProposeOutline,
+        Self::VaultArtifactsOutline,
+        Self::VaultArtifactsKeepOutline,
+        Self::VaultArtifactsDeclineOutline,
+        Self::VaultArtifactsDesignDeck,
+        Self::VaultArtifactsCreateDeck,
         Self::VaultArtifactsInspectDeck,
         Self::VaultArtifactsProposeDeck,
         Self::VaultArtifactsProposeOutput,
@@ -1607,6 +1700,19 @@ impl AgentVerb {
         Self::AiVoiceEnd,
         Self::AiVoiceClose,
         Self::AiAnonymousChat,
+        Self::VaultModelsCatalogRefresh,
+        Self::VaultModelsCatalogGet,
+        Self::VaultModelsCatalogDiff,
+        Self::VaultModelsTrialsNominate,
+        Self::VaultModelsTrialsGet,
+        Self::VaultModelsTrialsApprove,
+        Self::VaultModelsTrialsRun,
+        Self::VaultModelsTrialsComplete,
+        Self::VaultModelsBindingsPropose,
+        Self::VaultModelsBindingsGet,
+        Self::VaultModelsBindingsRead,
+        Self::VaultModelsBindingsAccept,
+        Self::VaultModelsBindingsDeny,
         Self::AiOptions,
         Self::AiImage,
         Self::AiSpeech,
@@ -1706,11 +1812,17 @@ impl AgentVerb {
         Self::VaultClaimsReadFiltered,
         Self::VaultClaimsHistory,
         Self::VaultDelete,
+        Self::VaultWritesCriticalConfirmPending,
+        Self::VaultWritesCriticalConfirmClear,
+        Self::VaultWritesCriticalConfirmDecline,
+        Self::VaultWritesCriticalConfirmReceipt,
         Self::VaultWritesPending,
         Self::VaultHydrate,
         Self::VaultGet,
         Self::VaultRefsResolve,
         Self::VaultRefsLinks,
+        Self::VaultSearchVectorConfig,
+        Self::VaultVectorsPut,
         Self::VaultSearchHybrid,
         Self::VaultSearchTemporal,
         Self::VaultSearchBm25,
@@ -1763,6 +1875,8 @@ impl AgentVerb {
         Self::VaultConsolidationStatus,
         Self::VaultRunsStep,
         Self::VaultRunsCheckpoint,
+        Self::VaultConsolidationHomeGet,
+        Self::VaultConsolidationLineage,
         Self::VaultConsolidationPromote,
         Self::VaultConsolidationEvidence,
         Self::VaultSieveEvidence,
@@ -1912,6 +2026,7 @@ impl AgentVerb {
             Self::SelfFocusRefresh => "self.focus.refresh",
             Self::SelfFocusSubscribe => "self.focus.subscribe",
             Self::SelfFocusUnsubscribe => "self.focus.unsubscribe",
+            Self::SelfFocusWakes => "self.focus.wakes",
             Self::SelfFocusScratchpadRecall => "self.focus.scratchpad.recall",
             Self::SelfFocusScratchpadAppend => "self.focus.scratchpad.append",
             Self::SelfFocusScratchpadSeal => "self.focus.scratchpad.seal",
@@ -1959,6 +2074,7 @@ impl AgentVerb {
             Self::VaultBudgetsHold => "vault.budgets.hold",
             Self::VaultBudgetsHoldResume => "vault.budgets.hold.resume",
             Self::VaultBudgetsLocal => "vault.budgets.local",
+            Self::VaultBudgetsReservations => "vault.budgets.reservations",
             Self::VaultBudgetsSettlements => "vault.budgets.settlements",
             Self::VaultBudgetsRsiConfigure => "vault.budgets.rsi.configure",
             Self::VaultBudgetsRsi => "vault.budgets.rsi",
@@ -2153,6 +2269,11 @@ impl AgentVerb {
             Self::VaultSharedReceipt => "vault.shared.receipt",
             Self::VaultSharedOutcomes => "vault.shared.outcomes",
             Self::VaultSharedDeletion => "vault.shared.deletion",
+            Self::VaultOrgAdminConfigure => "vault.org_admin.configure",
+            Self::VaultOrgAdminPowers => "vault.org_admin.powers",
+            Self::VaultMembersResetProjectAccess => "vault.members.reset_project_access",
+            Self::VaultMembersDelegate => "vault.members.delegate",
+            Self::VaultMembersProjection => "vault.members.projection",
             Self::VaultMembersAdd => "vault.members.add",
             Self::VaultMembersInvitationSlip => "vault.members.invitation_slip",
             Self::VaultMembersChange => "vault.members.change",
@@ -2222,6 +2343,15 @@ impl AgentVerb {
             Self::VaultOffRecordNotesCreate => "vault.off_record.notes.create",
             Self::VaultOffRecordClaimsUpsert => "vault.off_record.claims.upsert",
             Self::SelfOffRecordExecute => "self.off_record.execute",
+            Self::VaultOffRecordRoomsStatus => "vault.off_record.rooms.status",
+            Self::VaultOffRecordRoomsStart => "vault.off_record.rooms.start",
+            Self::VaultOffRecordRoomsWitness => "vault.off_record.rooms.witness",
+            Self::VaultOffRecordRoomsSave => "vault.off_record.rooms.save",
+            Self::VaultOffRecordRoomsSaveFromHere => "vault.off_record.rooms.save_from_here",
+            Self::VaultOffRecordRoomsExport => "vault.off_record.rooms.export",
+            Self::VaultOffRecordRoomsSuggestSave => "vault.off_record.rooms.suggest_save",
+            Self::VaultOffRecordRoomsConfirmSave => "vault.off_record.rooms.confirm_save",
+            Self::VaultOffRecordRoomsDeclineSave => "vault.off_record.rooms.decline_save",
             Self::VaultRecordsErasePreview => "vault.records.erase_preview",
             Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
             Self::VaultRecordsEraseSweep => "vault.records.erase_sweep",
@@ -2320,6 +2450,10 @@ impl AgentVerb {
             Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
             Self::VaultConsentRegistry => "vault.consent.registry",
             Self::VaultConsentRevoke => "vault.consent.revoke",
+            Self::VaultConsentBypassGrantWarning => "vault.consent.bypass_grant_warning",
+            Self::VaultConsentCreateBypassGrant => "vault.consent.create_bypass_grant",
+            Self::VaultConsentActiveBypassGrants => "vault.consent.active_bypass_grants",
+            Self::VaultConsentBypassedEffectReceipts => "vault.consent.bypassed_effect_receipts",
             Self::VaultConsentGraduationPolicy => "vault.consent.graduation.policy",
             Self::VaultConsentGraduationPolicySet => "vault.consent.graduation.policy.set",
             Self::VaultConsentGraduationPolicyClear => "vault.consent.graduation.policy.clear",
@@ -2413,6 +2547,16 @@ impl AgentVerb {
             Self::VaultArtifactsThreadsList => "vault.artifacts.threads.list",
             Self::VaultArtifactsThreadsAssign => "vault.artifacts.threads.assign",
             Self::VaultArtifactsThreadsState => "vault.artifacts.threads.state",
+            Self::Mount => "mount",
+            Self::GraphFsReaddir => "graph_fs.readdir",
+            Self::GraphFsReadFile => "graph_fs.read_file",
+            Self::GraphFsReadLink => "graph_fs.read_link",
+            Self::GraphFsLs => "graph_fs.ls",
+            Self::GraphFsFind => "graph_fs.find",
+            Self::GraphFsGrep => "graph_fs.grep",
+            Self::GraphFsCat => "graph_fs.cat",
+            Self::GraphFsHead => "graph_fs.head",
+            Self::GraphFsWc => "graph_fs.wc",
             Self::VaultCodeDiff => "vault.code.diff",
             Self::VaultCodeBlame => "vault.code.blame",
             Self::VaultCodeProposalView => "vault.code.proposal_view",
@@ -2500,6 +2644,12 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
             Self::VaultArtifactsAsk => "vault.artifacts.ask",
             Self::VaultCriticReview => "vault.critic.review",
+            Self::VaultArtifactsProposeOutline => "vault.artifacts.propose_outline",
+            Self::VaultArtifactsOutline => "vault.artifacts.outline",
+            Self::VaultArtifactsKeepOutline => "vault.artifacts.keep_outline",
+            Self::VaultArtifactsDeclineOutline => "vault.artifacts.decline_outline",
+            Self::VaultArtifactsDesignDeck => "vault.artifacts.design_deck",
+            Self::VaultArtifactsCreateDeck => "vault.artifacts.create_deck",
             Self::VaultArtifactsInspectDeck => "vault.artifacts.inspect_deck",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
             Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
@@ -2573,6 +2723,19 @@ impl AgentVerb {
             Self::AiVoiceEnd => "ai.voice.end",
             Self::AiVoiceClose => "ai.voice.close",
             Self::AiAnonymousChat => "ai.anonymous_chat",
+            Self::VaultModelsCatalogRefresh => "vault.models.catalog.refresh",
+            Self::VaultModelsCatalogGet => "vault.models.catalog.get",
+            Self::VaultModelsCatalogDiff => "vault.models.catalog.diff",
+            Self::VaultModelsTrialsNominate => "vault.models.trials.nominate",
+            Self::VaultModelsTrialsGet => "vault.models.trials.get",
+            Self::VaultModelsTrialsApprove => "vault.models.trials.approve",
+            Self::VaultModelsTrialsRun => "vault.models.trials.run",
+            Self::VaultModelsTrialsComplete => "vault.models.trials.complete",
+            Self::VaultModelsBindingsPropose => "vault.models.bindings.propose",
+            Self::VaultModelsBindingsGet => "vault.models.bindings.get",
+            Self::VaultModelsBindingsRead => "vault.models.bindings.read",
+            Self::VaultModelsBindingsAccept => "vault.models.bindings.accept",
+            Self::VaultModelsBindingsDeny => "vault.models.bindings.deny",
             Self::AiOptions => "ai.options",
             Self::AiImage => "ai.image",
             Self::AiSpeech => "ai.speech",
@@ -2672,11 +2835,17 @@ impl AgentVerb {
             Self::VaultClaimsReadFiltered => "vault.claims.read_filtered",
             Self::VaultClaimsHistory => "vault.claims.history",
             Self::VaultDelete => "vault.delete",
+            Self::VaultWritesCriticalConfirmPending => "vault.writes.critical_confirm.pending",
+            Self::VaultWritesCriticalConfirmClear => "vault.writes.critical_confirm.clear",
+            Self::VaultWritesCriticalConfirmDecline => "vault.writes.critical_confirm.decline",
+            Self::VaultWritesCriticalConfirmReceipt => "vault.writes.critical_confirm.receipt",
             Self::VaultWritesPending => "vault.writes.pending",
             Self::VaultHydrate => "vault.hydrate",
             Self::VaultGet => "vault.get",
             Self::VaultRefsResolve => "vault.refs.resolve",
             Self::VaultRefsLinks => "vault.refs.links",
+            Self::VaultSearchVectorConfig => "vault.search.vector.config",
+            Self::VaultVectorsPut => "vault.vectors.put",
             Self::VaultSearchHybrid => "vault.search.hybrid",
             Self::VaultSearchTemporal => "vault.search.temporal",
             Self::VaultSearchBm25 => "vault.search.bm25",
@@ -2729,6 +2898,8 @@ impl AgentVerb {
             Self::VaultConsolidationStatus => "vault.consolidation.status",
             Self::VaultRunsStep => "vault.runs.step",
             Self::VaultRunsCheckpoint => "vault.runs.checkpoint",
+            Self::VaultConsolidationHomeGet => "vault.consolidation.home.get",
+            Self::VaultConsolidationLineage => "vault.consolidation.lineage",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
             Self::VaultConsolidationEvidence => "vault.consolidation.evidence",
             Self::VaultSieveEvidence => "vault.sieve.evidence",
@@ -2878,6 +3049,10 @@ impl AgentVerb {
                 | Self::VaultReportsDisclosure
                 | Self::VaultReportsRoute
                 | Self::VaultReportsOutbound
+                | Self::SelfFocusRefresh
+                | Self::SelfFocusSubscribe
+                | Self::SelfFocusUnsubscribe
+                | Self::SelfFocusWakes
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
@@ -2925,6 +3100,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsHold
                 | Self::VaultBudgetsHoldResume
                 | Self::VaultBudgetsLocal
+                | Self::VaultBudgetsReservations
                 | Self::VaultBudgetsSettlements
                 | Self::VaultBudgetsRsiConfigure
                 | Self::VaultBudgetsRsi
@@ -3119,6 +3295,11 @@ impl AgentVerb {
                 | Self::VaultSharedReceipt
                 | Self::VaultSharedOutcomes
                 | Self::VaultSharedDeletion
+                | Self::VaultOrgAdminConfigure
+                | Self::VaultOrgAdminPowers
+                | Self::VaultMembersResetProjectAccess
+                | Self::VaultMembersDelegate
+                | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
@@ -3184,6 +3365,15 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::VaultOffRecordRoomsStatus
+                | Self::VaultOffRecordRoomsStart
+                | Self::VaultOffRecordRoomsWitness
+                | Self::VaultOffRecordRoomsSave
+                | Self::VaultOffRecordRoomsSaveFromHere
+                | Self::VaultOffRecordRoomsExport
+                | Self::VaultOffRecordRoomsSuggestSave
+                | Self::VaultOffRecordRoomsConfirmSave
+                | Self::VaultOffRecordRoomsDeclineSave
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultRecordsEraseSweep
@@ -3274,6 +3464,10 @@ impl AgentVerb {
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentBypassGrantWarning
+                | Self::VaultConsentCreateBypassGrant
+                | Self::VaultConsentActiveBypassGrants
+                | Self::VaultConsentBypassedEffectReceipts
                 | Self::VaultConsentGraduationPolicy
                 | Self::VaultConsentGraduationPolicySet
                 | Self::VaultConsentGraduationPolicyClear
@@ -3361,6 +3555,16 @@ impl AgentVerb {
                 | Self::VaultArtifactsThreadsList
                 | Self::VaultArtifactsThreadsAssign
                 | Self::VaultArtifactsThreadsState
+                | Self::Mount
+                | Self::GraphFsReaddir
+                | Self::GraphFsReadFile
+                | Self::GraphFsReadLink
+                | Self::GraphFsLs
+                | Self::GraphFsFind
+                | Self::GraphFsGrep
+                | Self::GraphFsCat
+                | Self::GraphFsHead
+                | Self::GraphFsWc
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
@@ -3448,6 +3652,12 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsProposeOutline
+                | Self::VaultArtifactsOutline
+                | Self::VaultArtifactsKeepOutline
+                | Self::VaultArtifactsDeclineOutline
+                | Self::VaultArtifactsDesignDeck
+                | Self::VaultArtifactsCreateDeck
                 | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
@@ -3521,6 +3731,19 @@ impl AgentVerb {
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
                 | Self::AiAnonymousChat
+                | Self::VaultModelsCatalogRefresh
+                | Self::VaultModelsCatalogGet
+                | Self::VaultModelsCatalogDiff
+                | Self::VaultModelsTrialsNominate
+                | Self::VaultModelsTrialsGet
+                | Self::VaultModelsTrialsApprove
+                | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsComplete
+                | Self::VaultModelsBindingsPropose
+                | Self::VaultModelsBindingsGet
+                | Self::VaultModelsBindingsRead
+                | Self::VaultModelsBindingsAccept
+                | Self::VaultModelsBindingsDeny
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -3600,11 +3823,17 @@ impl AgentVerb {
                 | Self::VaultClaimsReadFiltered
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
+                | Self::VaultWritesCriticalConfirmPending
+                | Self::VaultWritesCriticalConfirmClear
+                | Self::VaultWritesCriticalConfirmDecline
+                | Self::VaultWritesCriticalConfirmReceipt
                 | Self::VaultWritesPending
                 | Self::VaultHydrate
                 | Self::VaultGet
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
+                | Self::VaultSearchVectorConfig
+                | Self::VaultVectorsPut
                 | Self::VaultSearchHybrid
                 | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
@@ -3657,6 +3886,8 @@ impl AgentVerb {
                 | Self::VaultConsolidationStatus
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
+                | Self::VaultConsolidationHomeGet
+                | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultSieveEvidence
@@ -3850,6 +4081,7 @@ impl AgentVerb {
                 | Self::SelfFocusRefresh
                 | Self::SelfFocusSubscribe
                 | Self::SelfFocusUnsubscribe
+                | Self::SelfFocusWakes
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
@@ -3897,6 +4129,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsHold
                 | Self::VaultBudgetsHoldResume
                 | Self::VaultBudgetsLocal
+                | Self::VaultBudgetsReservations
                 | Self::VaultBudgetsSettlements
                 | Self::VaultBudgetsRsiConfigure
                 | Self::VaultBudgetsRsi
@@ -4091,6 +4324,11 @@ impl AgentVerb {
                 | Self::VaultSharedReceipt
                 | Self::VaultSharedOutcomes
                 | Self::VaultSharedDeletion
+                | Self::VaultOrgAdminConfigure
+                | Self::VaultOrgAdminPowers
+                | Self::VaultMembersResetProjectAccess
+                | Self::VaultMembersDelegate
+                | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
@@ -4156,6 +4394,15 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::VaultOffRecordRoomsStatus
+                | Self::VaultOffRecordRoomsStart
+                | Self::VaultOffRecordRoomsWitness
+                | Self::VaultOffRecordRoomsSave
+                | Self::VaultOffRecordRoomsSaveFromHere
+                | Self::VaultOffRecordRoomsExport
+                | Self::VaultOffRecordRoomsSuggestSave
+                | Self::VaultOffRecordRoomsConfirmSave
+                | Self::VaultOffRecordRoomsDeclineSave
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultRecordsEraseSweep
@@ -4246,6 +4493,10 @@ impl AgentVerb {
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentBypassGrantWarning
+                | Self::VaultConsentCreateBypassGrant
+                | Self::VaultConsentActiveBypassGrants
+                | Self::VaultConsentBypassedEffectReceipts
                 | Self::VaultConsentGraduationPolicy
                 | Self::VaultConsentGraduationPolicySet
                 | Self::VaultConsentGraduationPolicyClear
@@ -4333,6 +4584,16 @@ impl AgentVerb {
                 | Self::VaultArtifactsThreadsList
                 | Self::VaultArtifactsThreadsAssign
                 | Self::VaultArtifactsThreadsState
+                | Self::Mount
+                | Self::GraphFsReaddir
+                | Self::GraphFsReadFile
+                | Self::GraphFsReadLink
+                | Self::GraphFsLs
+                | Self::GraphFsFind
+                | Self::GraphFsGrep
+                | Self::GraphFsCat
+                | Self::GraphFsHead
+                | Self::GraphFsWc
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
@@ -4420,6 +4681,12 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsProposeOutline
+                | Self::VaultArtifactsOutline
+                | Self::VaultArtifactsKeepOutline
+                | Self::VaultArtifactsDeclineOutline
+                | Self::VaultArtifactsDesignDeck
+                | Self::VaultArtifactsCreateDeck
                 | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
@@ -4493,6 +4760,19 @@ impl AgentVerb {
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
                 | Self::AiAnonymousChat
+                | Self::VaultModelsCatalogRefresh
+                | Self::VaultModelsCatalogGet
+                | Self::VaultModelsCatalogDiff
+                | Self::VaultModelsTrialsNominate
+                | Self::VaultModelsTrialsGet
+                | Self::VaultModelsTrialsApprove
+                | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsComplete
+                | Self::VaultModelsBindingsPropose
+                | Self::VaultModelsBindingsGet
+                | Self::VaultModelsBindingsRead
+                | Self::VaultModelsBindingsAccept
+                | Self::VaultModelsBindingsDeny
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -4572,11 +4852,17 @@ impl AgentVerb {
                 | Self::VaultClaimsReadFiltered
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
+                | Self::VaultWritesCriticalConfirmPending
+                | Self::VaultWritesCriticalConfirmClear
+                | Self::VaultWritesCriticalConfirmDecline
+                | Self::VaultWritesCriticalConfirmReceipt
                 | Self::VaultWritesPending
                 | Self::VaultHydrate
                 | Self::VaultGet
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
+                | Self::VaultSearchVectorConfig
+                | Self::VaultVectorsPut
                 | Self::VaultSearchHybrid
                 | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
@@ -4629,6 +4915,8 @@ impl AgentVerb {
                 | Self::VaultConsolidationStatus
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
+                | Self::VaultConsolidationHomeGet
+                | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultSieveEvidence
@@ -4816,6 +5104,9 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsLog
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
+                | Self::VaultConsentCreateBypassGrant
+                | Self::VaultConsentActiveBypassGrants
+                | Self::VaultConsentBypassedEffectReceipts
                 | Self::VaultConsentGraduationOffers
                 | Self::VaultConsentGraduationTrustTable
                 | Self::VaultSealPending
@@ -4876,6 +5167,17 @@ impl AgentVerb {
                 | Self::VaultAssetsResolve
                 | Self::VaultSearchVector
                 | Self::AiChatCompletions
+                | Self::VaultOffRecordRoomsSuggestSave
+                | Self::Mount
+                | Self::GraphFsReaddir
+                | Self::GraphFsReadFile
+                | Self::GraphFsReadLink
+                | Self::GraphFsLs
+                | Self::GraphFsFind
+                | Self::GraphFsGrep
+                | Self::GraphFsCat
+                | Self::GraphFsHead
+                | Self::GraphFsWc
                 | Self::ExecuteCode
                 | Self::VaultCommit
                 | Self::VaultCalendarPassportsRead
@@ -4894,6 +5196,7 @@ impl AgentVerb {
                 | Self::VaultGet
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
+                | Self::VaultSearchVectorConfig
                 | Self::VaultSearchHybrid
                 | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
@@ -4928,6 +5231,7 @@ impl AgentVerb {
                 | Self::VaultReportsDisclosure
                 | Self::VaultReportsRoute
                 | Self::VaultReportsOutbound
+                | Self::SelfFocusWakes
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
@@ -4967,6 +5271,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsHold
                 | Self::VaultBudgetsHoldResume
                 | Self::VaultBudgetsLocal
+                | Self::VaultBudgetsReservations
                 | Self::VaultBudgetsSettlements
                 | Self::VaultBudgetsRsiConfigure
                 | Self::VaultBudgetsRsi
@@ -5147,6 +5452,11 @@ impl AgentVerb {
                 | Self::VaultSharedReceipt
                 | Self::VaultSharedOutcomes
                 | Self::VaultSharedDeletion
+                | Self::VaultOrgAdminConfigure
+                | Self::VaultOrgAdminPowers
+                | Self::VaultMembersResetProjectAccess
+                | Self::VaultMembersDelegate
+                | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
@@ -5212,6 +5522,14 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::VaultOffRecordRoomsStatus
+                | Self::VaultOffRecordRoomsStart
+                | Self::VaultOffRecordRoomsWitness
+                | Self::VaultOffRecordRoomsSave
+                | Self::VaultOffRecordRoomsSaveFromHere
+                | Self::VaultOffRecordRoomsExport
+                | Self::VaultOffRecordRoomsConfirmSave
+                | Self::VaultOffRecordRoomsDeclineSave
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultRecordsEraseSweep
@@ -5302,6 +5620,10 @@ impl AgentVerb {
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentBypassGrantWarning
+                | Self::VaultConsentCreateBypassGrant
+                | Self::VaultConsentActiveBypassGrants
+                | Self::VaultConsentBypassedEffectReceipts
                 | Self::VaultConsentGraduationPolicy
                 | Self::VaultConsentGraduationPolicySet
                 | Self::VaultConsentGraduationPolicyClear
@@ -5475,6 +5797,12 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsProposeOutline
+                | Self::VaultArtifactsOutline
+                | Self::VaultArtifactsKeepOutline
+                | Self::VaultArtifactsDeclineOutline
+                | Self::VaultArtifactsDesignDeck
+                | Self::VaultArtifactsCreateDeck
                 | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
@@ -5548,6 +5876,19 @@ impl AgentVerb {
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
                 | Self::AiAnonymousChat
+                | Self::VaultModelsCatalogRefresh
+                | Self::VaultModelsCatalogGet
+                | Self::VaultModelsCatalogDiff
+                | Self::VaultModelsTrialsNominate
+                | Self::VaultModelsTrialsGet
+                | Self::VaultModelsTrialsApprove
+                | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsComplete
+                | Self::VaultModelsBindingsPropose
+                | Self::VaultModelsBindingsGet
+                | Self::VaultModelsBindingsRead
+                | Self::VaultModelsBindingsAccept
+                | Self::VaultModelsBindingsDeny
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -5634,7 +5975,12 @@ impl AgentVerb {
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsDemote
                 | Self::VaultDelete
+                | Self::VaultWritesCriticalConfirmPending
+                | Self::VaultWritesCriticalConfirmClear
+                | Self::VaultWritesCriticalConfirmDecline
+                | Self::VaultWritesCriticalConfirmReceipt
                 | Self::VaultWritesPending
+                | Self::VaultVectorsPut
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
@@ -5682,6 +6028,8 @@ impl AgentVerb {
                 | Self::VaultConsolidationStatus
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
+                | Self::VaultConsolidationHomeGet
+                | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultSieveEvidence
@@ -5950,6 +6298,9 @@ impl AgentVerb {
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
                 | Self::VaultSharedExecute
+                | Self::VaultOrgAdminConfigure
+                | Self::VaultMembersResetProjectAccess
+                | Self::VaultMembersDelegate
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
@@ -5997,6 +6348,13 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::VaultOffRecordRoomsStart
+                | Self::VaultOffRecordRoomsWitness
+                | Self::VaultOffRecordRoomsSave
+                | Self::VaultOffRecordRoomsSaveFromHere
+                | Self::VaultOffRecordRoomsSuggestSave
+                | Self::VaultOffRecordRoomsConfirmSave
+                | Self::VaultOffRecordRoomsDeclineSave
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchCreateChild
@@ -6059,6 +6417,7 @@ impl AgentVerb {
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentCreateBypassGrant
                 | Self::VaultConsentGraduationPolicySet
                 | Self::VaultConsentGraduationPolicyClear
                 | Self::VaultConsentGraduationOutcome
@@ -6159,6 +6518,11 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsProposeOutline
+                | Self::VaultArtifactsKeepOutline
+                | Self::VaultArtifactsDeclineOutline
+                | Self::VaultArtifactsDesignDeck
+                | Self::VaultArtifactsCreateDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -6200,6 +6564,14 @@ impl AgentVerb {
                 | Self::AiVoiceTool
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
+                | Self::VaultModelsCatalogRefresh
+                | Self::VaultModelsTrialsNominate
+                | Self::VaultModelsTrialsApprove
+                | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsComplete
+                | Self::VaultModelsBindingsPropose
+                | Self::VaultModelsBindingsAccept
+                | Self::VaultModelsBindingsDeny
                 | Self::AiImage
                 | Self::AiSpeech
                 | Self::VaultVoicesPacksPut
@@ -6254,6 +6626,9 @@ impl AgentVerb {
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsDemote
                 | Self::VaultDelete
+                | Self::VaultWritesCriticalConfirmClear
+                | Self::VaultWritesCriticalConfirmDecline
+                | Self::VaultVectorsPut
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
@@ -6368,6 +6743,7 @@ impl AgentVerb {
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultClusterPropose
                 | Self::AiChatCompletions
+                | Self::VaultOffRecordRoomsSuggestSave
                 | Self::VaultGatePolicyPropose
                 | Self::VaultLensesPropose
                 | Self::VaultDisclosureOffer
@@ -6402,6 +6778,7 @@ impl AgentVerb {
             Self::SelfFocusRefresh => &["frame_epoch"],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
+            Self::SelfFocusWakes => &["spec"],
             Self::SelfFocusScratchpadRecall => &["spec"],
             Self::SelfFocusScratchpadAppend => &["spec"],
             Self::SelfFocusScratchpadSeal => &["spec"],
@@ -6466,6 +6843,7 @@ impl AgentVerb {
             Self::VaultBudgetsHold => &["spec"],
             Self::VaultBudgetsHoldResume => &["spec"],
             Self::VaultBudgetsLocal => &["spec"],
+            Self::VaultBudgetsReservations => &["spec"],
             Self::VaultBudgetsSettlements => &["spec"],
             Self::VaultBudgetsRsiConfigure => &["spec"],
             Self::VaultBudgetsRsi => &["spec"],
@@ -6660,6 +7038,11 @@ impl AgentVerb {
             Self::VaultSharedReceipt => &["spec"],
             Self::VaultSharedOutcomes => &["spec"],
             Self::VaultSharedDeletion => &[],
+            Self::VaultOrgAdminConfigure => &["spec"],
+            Self::VaultOrgAdminPowers => &["spec"],
+            Self::VaultMembersResetProjectAccess => &["spec"],
+            Self::VaultMembersDelegate => &["spec"],
+            Self::VaultMembersProjection => &["spec"],
             Self::VaultMembersAdd => &["spec"],
             Self::VaultMembersInvitationSlip => &["spec"],
             Self::VaultMembersChange => &["spec"],
@@ -6725,6 +7108,15 @@ impl AgentVerb {
             Self::VaultOffRecordNotesCreate => &["spec"],
             Self::VaultOffRecordClaimsUpsert => &["spec"],
             Self::SelfOffRecordExecute => &["spec"],
+            Self::VaultOffRecordRoomsStatus => &["spec"],
+            Self::VaultOffRecordRoomsStart => &["spec"],
+            Self::VaultOffRecordRoomsWitness => &["spec"],
+            Self::VaultOffRecordRoomsSave => &["spec"],
+            Self::VaultOffRecordRoomsSaveFromHere => &["spec"],
+            Self::VaultOffRecordRoomsExport => &["spec"],
+            Self::VaultOffRecordRoomsSuggestSave => &["spec"],
+            Self::VaultOffRecordRoomsConfirmSave => &["spec"],
+            Self::VaultOffRecordRoomsDeclineSave => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultRecordsEraseSweep => &["spec"],
@@ -6815,6 +7207,10 @@ impl AgentVerb {
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
+            Self::VaultConsentBypassGrantWarning => &["spec"],
+            Self::VaultConsentCreateBypassGrant => &["spec"],
+            Self::VaultConsentActiveBypassGrants => &["spec"],
+            Self::VaultConsentBypassedEffectReceipts => &["spec"],
             Self::VaultConsentGraduationPolicy => &["spec"],
             Self::VaultConsentGraduationPolicySet => &["spec"],
             Self::VaultConsentGraduationPolicyClear => &["spec"],
@@ -6902,6 +7298,16 @@ impl AgentVerb {
             Self::VaultArtifactsThreadsList => &["spec"],
             Self::VaultArtifactsThreadsAssign => &["spec"],
             Self::VaultArtifactsThreadsState => &["spec"],
+            Self::Mount => &["spec"],
+            Self::GraphFsReaddir => &["spec"],
+            Self::GraphFsReadFile => &["spec"],
+            Self::GraphFsReadLink => &["spec"],
+            Self::GraphFsLs => &["spec"],
+            Self::GraphFsFind => &["spec"],
+            Self::GraphFsGrep => &["spec"],
+            Self::GraphFsCat => &["spec"],
+            Self::GraphFsHead => &["spec"],
+            Self::GraphFsWc => &["spec"],
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
@@ -6989,6 +7395,12 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
             Self::VaultCriticReview => &["spec"],
+            Self::VaultArtifactsProposeOutline => &["spec"],
+            Self::VaultArtifactsOutline => &["spec"],
+            Self::VaultArtifactsKeepOutline => &["spec"],
+            Self::VaultArtifactsDeclineOutline => &["spec"],
+            Self::VaultArtifactsDesignDeck => &["spec"],
+            Self::VaultArtifactsCreateDeck => &["spec"],
             Self::VaultArtifactsInspectDeck => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
@@ -7062,6 +7474,19 @@ impl AgentVerb {
             Self::AiVoiceEnd => &["spec"],
             Self::AiVoiceClose => &["spec"],
             Self::AiAnonymousChat => &["spec"],
+            Self::VaultModelsCatalogRefresh => &["spec"],
+            Self::VaultModelsCatalogGet => &["spec"],
+            Self::VaultModelsCatalogDiff => &["spec"],
+            Self::VaultModelsTrialsNominate => &["spec"],
+            Self::VaultModelsTrialsGet => &["spec"],
+            Self::VaultModelsTrialsApprove => &["spec"],
+            Self::VaultModelsTrialsRun => &["spec"],
+            Self::VaultModelsTrialsComplete => &["spec"],
+            Self::VaultModelsBindingsPropose => &["spec"],
+            Self::VaultModelsBindingsGet => &["spec"],
+            Self::VaultModelsBindingsRead => &["spec"],
+            Self::VaultModelsBindingsAccept => &["spec"],
+            Self::VaultModelsBindingsDeny => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -7161,11 +7586,17 @@ impl AgentVerb {
             Self::VaultClaimsReadFiltered => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
+            Self::VaultWritesCriticalConfirmPending => &["spec"],
+            Self::VaultWritesCriticalConfirmClear => &["spec"],
+            Self::VaultWritesCriticalConfirmDecline => &["spec"],
+            Self::VaultWritesCriticalConfirmReceipt => &["spec"],
             Self::VaultWritesPending => &["spec"],
             Self::VaultHydrate => &["spec"],
             Self::VaultGet => &["spec"],
             Self::VaultRefsResolve => &["spec"],
             Self::VaultRefsLinks => &["spec"],
+            Self::VaultSearchVectorConfig => &[],
+            Self::VaultVectorsPut => &["spec"],
             Self::VaultSearchHybrid => &["spec"],
             Self::VaultSearchTemporal => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
@@ -7218,6 +7649,8 @@ impl AgentVerb {
             Self::VaultConsolidationStatus => &["spec"],
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
+            Self::VaultConsolidationHomeGet => &["spec"],
+            Self::VaultConsolidationLineage => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultSieveEvidence => &["spec"],
@@ -7365,6 +7798,7 @@ impl AgentVerb {
             Self::SelfFocusRefresh => &[],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
+            Self::SelfFocusWakes => &["spec"],
             Self::SelfFocusScratchpadRecall => &["spec"],
             Self::SelfFocusScratchpadAppend => &["spec"],
             Self::SelfFocusScratchpadSeal => &["spec"],
@@ -7412,6 +7846,7 @@ impl AgentVerb {
             Self::VaultBudgetsHold => &["spec"],
             Self::VaultBudgetsHoldResume => &["spec"],
             Self::VaultBudgetsLocal => &["spec"],
+            Self::VaultBudgetsReservations => &["spec"],
             Self::VaultBudgetsSettlements => &["spec"],
             Self::VaultBudgetsRsiConfigure => &["spec"],
             Self::VaultBudgetsRsi => &["spec"],
@@ -7606,6 +8041,11 @@ impl AgentVerb {
             Self::VaultSharedReceipt => &["spec"],
             Self::VaultSharedOutcomes => &["spec"],
             Self::VaultSharedDeletion => &[],
+            Self::VaultOrgAdminConfigure => &["spec"],
+            Self::VaultOrgAdminPowers => &["spec"],
+            Self::VaultMembersResetProjectAccess => &["spec"],
+            Self::VaultMembersDelegate => &["spec"],
+            Self::VaultMembersProjection => &["spec"],
             Self::VaultMembersAdd => &["spec"],
             Self::VaultMembersInvitationSlip => &["spec"],
             Self::VaultMembersChange => &["spec"],
@@ -7671,6 +8111,15 @@ impl AgentVerb {
             Self::VaultOffRecordNotesCreate => &["spec"],
             Self::VaultOffRecordClaimsUpsert => &["spec"],
             Self::SelfOffRecordExecute => &["spec"],
+            Self::VaultOffRecordRoomsStatus => &["spec"],
+            Self::VaultOffRecordRoomsStart => &["spec"],
+            Self::VaultOffRecordRoomsWitness => &["spec"],
+            Self::VaultOffRecordRoomsSave => &["spec"],
+            Self::VaultOffRecordRoomsSaveFromHere => &["spec"],
+            Self::VaultOffRecordRoomsExport => &["spec"],
+            Self::VaultOffRecordRoomsSuggestSave => &["spec"],
+            Self::VaultOffRecordRoomsConfirmSave => &["spec"],
+            Self::VaultOffRecordRoomsDeclineSave => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultRecordsEraseSweep => &["spec"],
@@ -7761,6 +8210,10 @@ impl AgentVerb {
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
+            Self::VaultConsentBypassGrantWarning => &["spec"],
+            Self::VaultConsentCreateBypassGrant => &["spec"],
+            Self::VaultConsentActiveBypassGrants => &["spec"],
+            Self::VaultConsentBypassedEffectReceipts => &["spec"],
             Self::VaultConsentGraduationPolicy => &["spec"],
             Self::VaultConsentGraduationPolicySet => &["spec"],
             Self::VaultConsentGraduationPolicyClear => &["spec"],
@@ -7848,6 +8301,16 @@ impl AgentVerb {
             Self::VaultArtifactsThreadsList => &["spec"],
             Self::VaultArtifactsThreadsAssign => &["spec"],
             Self::VaultArtifactsThreadsState => &["spec"],
+            Self::Mount => &["spec"],
+            Self::GraphFsReaddir => &["spec"],
+            Self::GraphFsReadFile => &["spec"],
+            Self::GraphFsReadLink => &["spec"],
+            Self::GraphFsLs => &["spec"],
+            Self::GraphFsFind => &["spec"],
+            Self::GraphFsGrep => &["spec"],
+            Self::GraphFsCat => &["spec"],
+            Self::GraphFsHead => &["spec"],
+            Self::GraphFsWc => &["spec"],
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
@@ -7935,6 +8398,12 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
             Self::VaultCriticReview => &["spec"],
+            Self::VaultArtifactsProposeOutline => &["spec"],
+            Self::VaultArtifactsOutline => &["spec"],
+            Self::VaultArtifactsKeepOutline => &["spec"],
+            Self::VaultArtifactsDeclineOutline => &["spec"],
+            Self::VaultArtifactsDesignDeck => &["spec"],
+            Self::VaultArtifactsCreateDeck => &["spec"],
             Self::VaultArtifactsInspectDeck => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
@@ -8008,6 +8477,19 @@ impl AgentVerb {
             Self::AiVoiceEnd => &["spec"],
             Self::AiVoiceClose => &["spec"],
             Self::AiAnonymousChat => &["spec"],
+            Self::VaultModelsCatalogRefresh => &["spec"],
+            Self::VaultModelsCatalogGet => &["spec"],
+            Self::VaultModelsCatalogDiff => &["spec"],
+            Self::VaultModelsTrialsNominate => &["spec"],
+            Self::VaultModelsTrialsGet => &["spec"],
+            Self::VaultModelsTrialsApprove => &["spec"],
+            Self::VaultModelsTrialsRun => &["spec"],
+            Self::VaultModelsTrialsComplete => &["spec"],
+            Self::VaultModelsBindingsPropose => &["spec"],
+            Self::VaultModelsBindingsGet => &["spec"],
+            Self::VaultModelsBindingsRead => &["spec"],
+            Self::VaultModelsBindingsAccept => &["spec"],
+            Self::VaultModelsBindingsDeny => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -8107,11 +8589,17 @@ impl AgentVerb {
             Self::VaultClaimsReadFiltered => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
+            Self::VaultWritesCriticalConfirmPending => &["spec"],
+            Self::VaultWritesCriticalConfirmClear => &["spec"],
+            Self::VaultWritesCriticalConfirmDecline => &["spec"],
+            Self::VaultWritesCriticalConfirmReceipt => &["spec"],
             Self::VaultWritesPending => &["spec"],
             Self::VaultHydrate => &["spec"],
             Self::VaultGet => &["spec"],
             Self::VaultRefsResolve => &["spec"],
             Self::VaultRefsLinks => &["spec"],
+            Self::VaultSearchVectorConfig => &[],
+            Self::VaultVectorsPut => &["spec"],
             Self::VaultSearchHybrid => &["spec"],
             Self::VaultSearchTemporal => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
@@ -8164,6 +8652,8 @@ impl AgentVerb {
             Self::VaultConsolidationStatus => &["spec"],
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
+            Self::VaultConsolidationHomeGet => &["spec"],
+            Self::VaultConsolidationLineage => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultSieveEvidence => &["spec"],
@@ -8346,6 +8836,9 @@ impl AgentVerb {
             Self::SelfFocusUnsubscribe => {
                 "Unsubscribes the run's board stream from the named scopes."
             }
+            Self::SelfFocusWakes => {
+                "Takes every wake queued for the attached run's board STREAM connection, each re-read under this credential at delivery."
+            }
             Self::SelfFocusScratchpadRecall => {
                 "Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full."
             }
@@ -8476,6 +8969,9 @@ impl AgentVerb {
             }
             Self::VaultBudgetsLocal => {
                 "The owner observes a device-local runner budget counter without creating it, including absence after an owner restore."
+            }
+            Self::VaultBudgetsReservations => {
+                "The owner reads a device-local runner budget counter and one page of the child reservations held against it, without creating or refilling it."
             }
             Self::VaultBudgetsSettlements => {
                 "The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced."
@@ -8697,7 +9193,7 @@ impl AgentVerb {
                 "Serves an admitted ASSET in the reader's declared image, audio or text form, with a handle and committed served-form receipt refs."
             }
             Self::VaultSearchVector => {
-                "Searches the text index or one declared embedding space through its query tower, with per-kind raw match evidence and the caller's read receipt."
+                "Searches the text index or a declared embedding space with per-kind matches and revision pins; text-index MRL reads report refinement, and explicit voice_hot skips rescore at the reduced voice limit."
             }
             Self::VaultImagesView => {
                 "The full pixels behind an image's handle (the whole image, a crop or a zoom), recorded as a pull."
@@ -9051,6 +9547,21 @@ impl AgentVerb {
             }
             Self::VaultSharedOutcomes => "The reader's own outcome notices for a shared vault.",
             Self::VaultSharedDeletion => "The executed delete-the-vault act, if any.",
+            Self::VaultOrgAdminConfigure => {
+                "The owner fixes an organization's Admin identities and closed named-power set once; no root or private-vault power can be configured."
+            }
+            Self::VaultOrgAdminPowers => {
+                "The caller reads only the organization's fixed named Admin powers that their own credential carries."
+            }
+            Self::VaultMembersResetProjectAccess => {
+                "An Admin resets only a non-root shared project's signed access roster through the existing project-proof gate; it never changes a personal root or grants an unsigned override."
+            }
+            Self::VaultMembersDelegate => {
+                "A live parent Admin or Owner mints one explicit scope narrowing for a holder, bounded by policy and a server-clock expiry of at most 90 days; the Delegate cannot delegate onward."
+            }
+            Self::VaultMembersProjection => {
+                "Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."
+            }
             Self::VaultMembersAdd => {
                 "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."
             }
@@ -9241,6 +9752,33 @@ impl AgentVerb {
             }
             Self::SelfOffRecordExecute => {
                 "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."
+            }
+            Self::VaultOffRecordRoomsStatus => {
+                "Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk."
+            }
+            Self::VaultOffRecordRoomsStart => {
+                "A person starts an off-record stretch in a room they belong to, on their own credential."
+            }
+            Self::VaultOffRecordRoomsWitness => {
+                "Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant."
+            }
+            Self::VaultOffRecordRoomsSave => {
+                "A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential."
+            }
+            Self::VaultOffRecordRoomsSaveFromHere => {
+                "A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."
+            }
+            Self::VaultOffRecordRoomsExport => {
+                "A person exports only their visible room talk as a JSON attachment, posts a content-free notice and writes no vault."
+            }
+            Self::VaultOffRecordRoomsSuggestSave => {
+                "An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."
+            }
+            Self::VaultOffRecordRoomsConfirmSave => {
+                "A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits."
+            }
+            Self::VaultOffRecordRoomsDeclineSave => {
+                "A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits."
             }
             Self::VaultRecordsErasePreview => {
                 "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."
@@ -9502,6 +10040,18 @@ impl AgentVerb {
             Self::VaultConsentRevoke => {
                 "The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."
             }
+            Self::VaultConsentBypassGrantWarning => {
+                "The owner previews the exact actor, classes, envelope and project or thread of a scoped bypass; this warning grants nothing."
+            }
+            Self::VaultConsentCreateBypassGrant => {
+                "The owner explicitly acknowledges a scoped bypass warning and atomically creates one receipted standing bypass per class."
+            }
+            Self::VaultConsentActiveBypassGrants => {
+                "The owner reads live scoped bypass states and their complete bounds, newest first; vault.consent.revoke ends each grant."
+            }
+            Self::VaultConsentBypassedEffectReceipts => {
+                "The owner reads the existing Gate receipts for effects covered by one bypass grant, including after its revocation."
+            }
             Self::VaultConsentGraduationPolicy => {
                 "Reads runtime consent-graduation policy rows and the effective row for an optional exact scope."
             }
@@ -9758,6 +10308,36 @@ impl AgentVerb {
             }
             Self::VaultArtifactsThreadsState => {
                 "Opens or resolves a thread through its existing claim gate, preserving its anchor, comments and drift."
+            }
+            Self::Mount => {
+                "Open the caller-scoped live graph or a retained repository snapshot, resolving a snapshot id to its exact fork hash."
+            }
+            Self::GraphFsReaddir => {
+                "List one directory at the mounted reference under the caller read gate, with a sealed continuation."
+            }
+            Self::GraphFsReadFile => {
+                "Read a bounded page of file bytes at the mounted reference, with its encoding and sealed continuation."
+            }
+            Self::GraphFsReadLink => {
+                "Resolve a visible graph link at the mounted reference without following a host filesystem link."
+            }
+            Self::GraphFsLs => {
+                "List names at the mounted reference, using the live temporal index when requested."
+            }
+            Self::GraphFsFind => {
+                "Walk visible paths at the mounted reference, or push a live newer-than query into the temporal index."
+            }
+            Self::GraphFsGrep => {
+                "Search visible mounted file bytes, using the live claim text index for supported recursive patterns."
+            }
+            Self::GraphFsCat => {
+                "Read a bounded page of mounted file bytes as UTF-8 or base64 without changing its reference."
+            }
+            Self::GraphFsHead => {
+                "Read the first requested lines at the mounted reference with bounded output and a sealed continuation."
+            }
+            Self::GraphFsWc => {
+                "Count lines, words and bytes of a visible file at the mounted reference."
             }
             Self::VaultCodeDiff => {
                 "The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort."
@@ -10018,6 +10598,24 @@ impl AgentVerb {
             Self::VaultCriticReview => {
                 "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target."
             }
+            Self::VaultArtifactsProposeOutline => {
+                "Proposes a closed typed deck outline as a brief NOTE for the person to keep or decline."
+            }
+            Self::VaultArtifactsOutline => {
+                "Reads a typed deck outline, its current NOTE frontier, its keep and its freshness."
+            }
+            Self::VaultArtifactsKeepOutline => {
+                "The owner keeps the exact outline frontier, freezing its version and content hash."
+            }
+            Self::VaultArtifactsDeclineOutline => {
+                "The owner declines the exact outline frontier, clearing its keep and design directions."
+            }
+            Self::VaultArtifactsDesignDeck => {
+                "Compiles one to three template directions from the exact fresh keep into validated plans or typed design decisions."
+            }
+            Self::VaultArtifactsCreateDeck => {
+                "Emits one checked deck from a fresh kept outline and a planned template, retaining born-from and unverified fit."
+            }
             Self::VaultArtifactsInspectDeck => {
                 "Inspects one PPTX version for native edit targets and comment identities without minting ids."
             }
@@ -10224,6 +10822,45 @@ impl AgentVerb {
             }
             Self::AiAnonymousChat => {
                 "One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call."
+            }
+            Self::VaultModelsCatalogRefresh => {
+                "Refreshes priced model catalog rows and external-score diffs under an immutable revision; changes no role binding."
+            }
+            Self::VaultModelsCatalogGet => {
+                "Reads a pinned model catalog revision with its prices, backend offers and score evidence."
+            }
+            Self::VaultModelsCatalogDiff => {
+                "Diffs two immutable model catalog revisions, including prices, scores and retired offers."
+            }
+            Self::VaultModelsTrialsNominate => {
+                "Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority."
+            }
+            Self::VaultModelsTrialsGet => {
+                "Reads a retained held-out trial, its catalog revision, independent labels and measured cost."
+            }
+            Self::VaultModelsTrialsApprove => {
+                "Approves exploration for a held-out model trial only; leaves its role binding unchanged."
+            }
+            Self::VaultModelsTrialsRun => {
+                "Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost."
+            }
+            Self::VaultModelsTrialsComplete => {
+                "Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."
+            }
+            Self::VaultModelsBindingsPropose => {
+                "Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it."
+            }
+            Self::VaultModelsBindingsGet => {
+                "Reads an owner-reviewed model role-binding proposal and its pinned trial evidence."
+            }
+            Self::VaultModelsBindingsRead => {
+                "Reads the currently active manifest binding for a model role."
+            }
+            Self::VaultModelsBindingsAccept => {
+                "Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks."
+            }
+            Self::VaultModelsBindingsDeny => {
+                "Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding."
             }
             Self::AiOptions => {
                 "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."
@@ -10484,6 +11121,18 @@ impl AgentVerb {
             Self::VaultDelete => {
                 "Deletes one entity under a named reason; an owner verb that only a verified human may call."
             }
+            Self::VaultWritesCriticalConfirmPending => {
+                "The owner reads a candidate's exact critical confirmation, with its nonce, effect digest, policy frontier and deadline."
+            }
+            Self::VaultWritesCriticalConfirmClear => {
+                "The owner clears exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt."
+            }
+            Self::VaultWritesCriticalConfirmDecline => {
+                "The owner declines exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt."
+            }
+            Self::VaultWritesCriticalConfirmReceipt => {
+                "The owner reads a critical confirmation's existing signed authority receipt without settling or rewriting the claim."
+            }
             Self::VaultWritesPending => "Gated writes parked for consent, newest first.",
             Self::VaultHydrate => {
                 "Hydrates short refs or hex ids to full entity views, with the read's receipt."
@@ -10496,6 +11145,12 @@ impl AgentVerb {
             }
             Self::VaultRefsLinks => {
                 "A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."
+            }
+            Self::VaultSearchVectorConfig => {
+                "Reads this vault open's persisted dimensions and optional MRL fast_dims prefix; graph shape is configured before open, never changed by a search."
+            }
+            Self::VaultVectorsPut => {
+                "Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically."
             }
             Self::VaultSearchHybrid => {
                 "Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."
@@ -10648,6 +11303,12 @@ impl AgentVerb {
             }
             Self::VaultRunsCheckpoint => {
                 "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."
+            }
+            Self::VaultConsolidationHomeGet => {
+                "The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything."
+            }
+            Self::VaultConsolidationLineage => {
+                "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."
             }
             Self::VaultConsolidationPromote => {
                 "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."

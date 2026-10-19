@@ -30,6 +30,12 @@ mod artifact_hosting_doors;
 mod asset_doors;
 mod asset_resolve;
 mod authorship;
+mod critical_confirm;
+pub use critical_confirm::{
+    CriticalWriteConfirmAnswer, CriticalWriteConfirmPending, CriticalWriteConfirmPendingRequest,
+    CriticalWriteConfirmReceipt, CriticalWriteConfirmReceiptRequest, CriticalWriteConfirmRequest,
+    CriticalWriteConfirmSettlement,
+};
 mod birth_position;
 mod booking;
 mod claim_admission;
@@ -49,6 +55,7 @@ mod skill_authoring;
 pub mod wellness_doors;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
+pub(crate) use outbound::parse_job_ref;
 pub(crate) mod booking_publication;
 mod campaign;
 mod campaign_actions;
@@ -73,6 +80,7 @@ mod expression_preference;
 pub mod extraction;
 pub mod foreign_code;
 pub mod hook_regen_doors;
+pub mod graph_fs_doors;
 mod inspection;
 mod key_value;
 mod lifted_view;
@@ -192,7 +200,6 @@ pub use people_verbs::{
     GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
     PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
 };
-pub use search_vector::{VectorSearchHit, VectorSearchRequest};
 pub use signal_extraction::{
     ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest,
     SignalExtractionResult, SignalExtractionResultRequest, SignalExtractionSource,
@@ -240,6 +247,10 @@ pub use search_hybrid::{
 };
 pub use search_temporal::{
     TemporalSearchHit, TemporalSearchRange, TemporalSearchRequest, TemporalSearchResult,
+};
+pub use search_vector::{
+    VectorPutReceipt, VectorPutRequest, VectorSearchConfig, VectorSearchHit,
+    VectorSearchLane, VectorSearchRequest, VectorSearchResult,
 };
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};

@@ -5,7 +5,9 @@
 //! (`EmbeddedVault.bound`) holds its own caller, its principal and session,
 //! and writes as that caller (OF-063): its puts, deletes, edges and vectors
 //! run the core's raw caller doors (`Memory::raw_*`). Every other vault
-//! writes as the host. Reads are the same on every vault.
+//! writes as the host. Reads are the same on every vault: the context pack,
+//! text search and graph reads (`reads`) lower to the core reads the C ABI
+//! runs.
 use jni::{
     JNIEnv,
     objects::{JByteArray, JFloatArray, JObject, JString, JValue},
@@ -24,6 +26,8 @@ const MAX_SEARCH_LIMIT: usize = 1_000;
 // Public so its JNI exports are reachable items, as this file's are.
 #[cfg(feature = "engine")]
 pub mod engine;
+// Public for the same reason.
+pub mod reads;
 
 struct NativeVault {
     vault: Arc<Vault>,

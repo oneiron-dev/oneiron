@@ -49,7 +49,10 @@ use crate::server::{MediaRefusal, SyncServer};
 
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::artifact_hosting_doors::*;
+pub(crate) use super::deck_creation_doors::*;
 pub(crate) use super::authority_history_doors::*;
+// The run-bound board STREAM doors (DOOR-121), likewise.
+pub(crate) use super::board_stream_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::browser_doors::*;
 pub(crate) use super::calendar_doors::*;
@@ -61,6 +64,7 @@ pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::agent_definition_doors::*;
 pub(crate) use super::shared_act_doors::*;
+pub(crate) use super::shared_admin_doors::*;
 // The shared-vault invitation doors (OF-531) too.
 pub(crate) use super::shared_member_doors::*;
 // The shared-act policy doors (DOOR-129) too.
@@ -79,6 +83,7 @@ pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
+pub(crate) use super::model_catalog_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 pub(crate) use super::run_review_doors::*;
@@ -104,6 +109,7 @@ pub(crate) use super::fold_doors::*;
 pub(crate) use super::foreign_code_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::off_record_doors::*;
+pub(crate) use super::off_record_room_doors::*;
 pub(crate) use super::persona_doors::*;
 pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
@@ -179,10 +185,12 @@ pub(crate) use super::eval_doors::*;
 pub(crate) use super::hyde_doors::*;
 pub(crate) use super::research_doors::*;
 pub(crate) use super::retrieval_doors::*;
+pub(crate) use super::vector_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
+pub(crate) use super::critical_confirm_doors::*;
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;
 // The owner's sieve interest-queue, policy and lease doors (DOOR-130), likewise.
@@ -1116,6 +1124,19 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
             .map_err(|error| super::FacadeApiError::from(error).into_memory_error()),
         "ai.steps.submit"
         | "ai.steps.receipt"
+        | "vault.models.catalog.refresh"
+        | "vault.models.catalog.get"
+        | "vault.models.catalog.diff"
+        | "vault.models.trials.nominate"
+        | "vault.models.trials.get"
+        | "vault.models.trials.approve"
+        | "vault.models.trials.run"
+        | "vault.models.trials.complete"
+        | "vault.models.bindings.propose"
+        | "vault.models.bindings.get"
+        | "vault.models.bindings.read"
+        | "vault.models.bindings.accept"
+        | "vault.models.bindings.deny"
         | "vault.runs.step"
         | "vault.runs.checkpoint"
         | "vault.runs.review"
@@ -1282,6 +1303,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.slim.drop_heavy"
         | "vault.slim.resume"
         | "vault.retrieval.recall"
+        | "vault.vectors.put"
         | "vault.retrieval.runs"
         | "vault.retrieval.run"
         | "vault.retrieval.turn"
@@ -1319,6 +1341,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.reports.disclosure"
         | "vault.reports.route"
         | "vault.reports.outbound"
+        | "vault.writes.critical_confirm.pending"
+        | "vault.writes.critical_confirm.clear"
+        | "vault.writes.critical_confirm.decline"
+        | "vault.writes.critical_confirm.receipt"
         | "vault.claims.review"
         | "vault.claims.settle"
         | "vault.claims.vet"
@@ -1361,6 +1387,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.tasks.cancel_force"
         | "vault.runs.branches.get"
         | "vault.consults.get"
+        | "vault.consolidation.home.get"
+        | "vault.consolidation.lineage"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"
@@ -1379,6 +1407,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.consent.create_standing_grant"
         | "vault.consent.registry"
         | "vault.consent.revoke"
+        | "vault.consent.bypass_grant_warning"
+        | "vault.consent.create_bypass_grant"
+        | "vault.consent.active_bypass_grants"
+        | "vault.consent.bypassed_effect_receipts"
         | "vault.consent.graduation.policy"
         | "vault.consent.graduation.policy.set"
         | "vault.consent.graduation.policy.clear"
@@ -1446,6 +1478,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.budgets.hold"
         | "vault.budgets.hold.resume"
         | "vault.budgets.local"
+        | "vault.budgets.reservations"
         | "vault.budgets.settlements"
         | "vault.budgets.rsi.configure"
         | "vault.budgets.rsi"
@@ -1502,6 +1535,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
         | "vault.code.checkout.bind"
+        | "vault.artifacts.keep_outline"
+        | "vault.artifacts.decline_outline"
         | "vault.artifacts.publish_approval"
         | "vault.artifacts.publish"
         | "vault.artifacts.repoint"
@@ -1538,6 +1573,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.trusted_contacts.concern.asks"
         | "vault.trusted_contacts.concern.authorize"
         | "vault.trusted_contacts.concern.propose"
+        | "vault.org_admin.configure"
         | "vault.shared.policy.get"
         | "vault.shared.policy.change"
         | "vault.notes.history_purge"
@@ -1566,6 +1602,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.execute"
         | "vault.shared.receipt"
         | "vault.shared.outcomes"
+        | "vault.members.delegate"
         | "vault.members.add"
         | "vault.members.change"
         | "vault.members.remove"
@@ -1605,6 +1642,17 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.off_record.claims.upsert"
         | "self.off_record.execute" => {
             super::off_record_doors::off_record_admits(server, auth, verb)
+        }
+        "vault.off_record.rooms.start"
+        | "vault.off_record.rooms.status"
+        | "vault.off_record.rooms.witness"
+        | "vault.off_record.rooms.save"
+        | "vault.off_record.rooms.save_from_here"
+        | "vault.off_record.rooms.suggest_save"
+        | "vault.off_record.rooms.confirm_save"
+        | "vault.off_record.rooms.decline_save"
+        | "vault.off_record.rooms.export" => {
+            super::off_record_room_doors::off_record_room_admits(auth, verb)
         }
         "vault.guests.export_envelope" => {
             super::guest_document_doors::guest_document_reader(server, auth).map(drop)
