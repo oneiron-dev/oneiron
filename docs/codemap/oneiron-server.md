@@ -170,9 +170,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/artifact_hosting_doors.rs` | src | s | 13 crate-vis | — | Typed publication and private preview doors under each caller's own proof |
 | `src/api/facade/asr_doors.rs` | src | m | 5 crate-vis | — | The owner's host-enriched ASR door |
 | `src/api/facade/authority_history_doors.rs` | src | s | 2 crate-vis | — | Owner-authenticated signed authority history transfer |
+| `src/api/facade/board_stream_doors.rs` | src | s | 4 crate-vis | — | Public run-bound board STREAM doors: `self.focus.refresh`, `self.focus.subscribe`, `self.focus.unsubscribe`… |
 | `src/api/facade/booking_doors.rs` | src | s | 6 crate-vis | — | Typed booking-page discovery, published lifecycle and constraint front |
 | `src/api/facade/browser_doors.rs` | src | m | 20 crate-vis | — | Typed browser calls on the caller's own attached run and existing guest door |
-| `src/api/facade/budget_doors.rs` | src | s | 12 crate-vis | — | Credential-backed budget controls, beside the owner's held-run routes |
+| `src/api/facade/budget_doors.rs` | src | s | 13 crate-vis | — | Credential-backed budget controls, beside the owner's held-run routes |
 | `src/api/facade/calendar_doors.rs` | src | m | 16 crate-vis | — | Owner-authorized calendar file imports through the credential's own handle |
 | `src/api/facade/call_context.rs` | src | m | 22 crate-vis | — | One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is… |
 | `src/api/facade/campaign_doors.rs` | src | s | 1 crate-vis | — | The stage-evidence host door binds an owner attestation to the request's verified owner proof |
@@ -195,7 +196,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/consent_doors.rs` | src | s | 5 crate-vis | — | Consent lifecycle host doors, on the same owner proof as Gate policy |
 | `src/api/facade/consolidation_doors.rs` | src | s | 4 crate-vis | — | Owner-bound generated-claim promotion, vetting and evidence reads |
 | `src/api/facade/content_policy_doors.rs` | src | s | 5 crate-vis | — | Content-policy doors beside the Gate policy doors, on each caller's own credential |
-| `src/api/facade/coordination_doors.rs` | src | m | 7 crate-vis | — | The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open… |
+| `src/api/facade/coordination_doors.rs` | src | m | 9 crate-vis | — | The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open… |
 | `src/api/facade/core_write_doors.rs` | src | s | 6 crate-vis | — | The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`… |
 | `src/api/facade/coreference_doors.rs` | src | s | 4 crate-vis | — | Owner coreference doors: every transport reaches the engine's typed operations |
 | `src/api/facade/courtesy_delete_doors.rs` | src | s | 4 crate-vis | — | The host doors of the owner's courtesy delete rows (OF-273): `vault.courtesy_delete.send`, `.sent`… |
@@ -221,7 +222,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/guest_document_doors.rs` | src | s | 4 crate-vis | — | Guest document envelopes under the owner's or the recipient's own proof |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
 | `src/api/facade/hook_regen_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
-| `src/api/facade/host_doors.rs` | src | XL | 152 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | XL | 155 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_trigger_doors.rs` | src | s | 3 crate-vis | — | The owner's typed host triggers |
 | `src/api/facade/hub_doors.rs` | src | m | 19 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/hyde_doors.rs` | src | s | 6 crate-vis | — | Typed host configuration, work and completion receipts for HydeExpander |
@@ -237,6 +238,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/model_step_doors.rs` | src | s | 2 crate-vis | — | Owner-proof model steps; HTTP, SDK and MCP reach the same typed door |
 | `src/api/facade/note_doors.rs` | src | s | 5 crate-vis | — | Host-held NOTE editor bindings beside the ordinary scoped NOTE reads |
 | `src/api/facade/off_record_doors.rs` | src | m | 9 crate-vis | — | The host doors of the off-record session rows (DOOR-127, e2e PRIVACY-06) |
+| `src/api/facade/off_record_room_doors.rs` | src | s | 10 crate-vis | — | Typed room off-record verbs over the existing participant handlers |
 | `src/api/facade/origin_doors.rs` | src | s | 5 crate-vis | — | Credential-bound host projections of the typed origin and checkout doors (DOOR-139) |
 | `src/api/facade/owner_binding.rs` | src | s | 3 crate-vis | — | WILL-PLAN L13 row 01: one revalidated binding for a managed vault's attested owner, shared by the policy… |
 | `src/api/facade/persona_doors.rs` | src | s | 4 crate-vis | — | Profile request answers and mode-A copy edits under the owner's own proof |
@@ -259,6 +261,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/setting_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's learned-setting rows: `vault.settings.learning`, `.put` and `.clear` |
 | `src/api/facade/share_doors.rs` | src | s | 3 crate-vis | — | The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens… |
 | `src/api/facade/shared_act_doors.rs` | src | m | 17 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
+| `src/api/facade/shared_admin_doors.rs` | src | s | 3 crate-vis | — | Typed named Admin policy/powers and the one-hop scoped Delegate mint |
 | `src/api/facade/shared_member_doors.rs` | src | m | 16 crate-vis | — | The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee… |
 | `src/api/facade/shared_policy_doors.rs` | src | s | 4 crate-vis | — | The host doors of the shared-act policy rows (DOOR-129), beside `shared_act_doors`: a live Owner reads every… |
 | `src/api/facade/sieve_doors.rs` | src | s | 9 crate-vis | — | The owner's sieve doors: the interest queue and its retained spans, consumed-span receipts, the sieve and… |
@@ -330,7 +333,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/memory_reason/render.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/message_result.rs` | src | s | 2 crate-vis | — | `POST /v1/core/messages/{message}/result`: the result a MESSAGE carries in place of an answer too large to… |
 | `src/api/mod.rs` | src | m | 43 crate-vis | — | HTTP query routes for web dashboard access |
-| `src/api/off_record_rooms.rs` | src | m | 1 crate-vis | — | Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10) |
+| `src/api/off_record_rooms.rs` | src | m | 11 crate-vis | — | Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10) |
 | `src/api/openai_proxy/mod.rs` | src | m | 2 crate-vis | — | OF-445: the OpenAI-compatible memory-injection proxy, the integration lane for already-shipped apps… |
 | `src/api/openai_proxy/wire.rs` | src | s | 6 crate-vis | — | OpenAI memory-proxy response conversion and refusal mapping (OF-445) |
 | `src/api/openapi/anonymous_chat_paths.rs` | src | s | 1 crate-vis | — | The standalone anonymous-chat routes: their schemas are the verb table's real request and reply/block types… |
@@ -612,8 +615,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/device_sync.rs` | src | m | 4 crate-vis | — | The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its… |
 | `src/device_sync/enrolment.rs` | src | s | 5 crate-vis | — | A device's enrolment with its home (ARCH-0023b: "a device connects the moment it is enrolled") |
 | `src/device_sync/renewal.rs` | src | m | 4 crate-vis | — | FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`… |
-| `src/embedded.rs` | src | m | 1 fn · 2 re-export · 6 crate-vis | — | The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened… |
-| `src/embedded/engine.rs` | src | m | 6 struct · 28 fn · 1 const | BlockingConnection, BlockingEngine, EmbeddedConnection, EmbeddedEngine, EmbeddedReply, EmbeddedRequest | The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding |
+| `src/embedded.rs` | src | m | 1 fn · 5 re-export · 6 crate-vis | — | The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened… |
+| `src/embedded/blocking.rs` | src | m | 4 struct · 15 fn | BlockingBody, BlockingConnection, BlockingEngine, BlockingReply | The embedded engine for a binding whose callers are app threads (OF-237): [`BlockingEngine`] runs an… |
+| `src/embedded/engine.rs` | src | m | 6 struct · 20 fn · 1 const | EmbeddedBody, EmbeddedConnection, EmbeddedEngine, EmbeddedReply, EmbeddedReplyStream, EmbeddedRequest | The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding |
+| `src/embedded/failure.rs` | src | s | 1 struct · 1 enum · 5 fn · 2 crate-vis | EngineErrorKind, EngineFailure | Why an embedded engine call failed, by cause (OF-237): the one projection every binding raises, a stable… |
+| `src/embedded/process_host.rs` | src | s | 1 struct · 1 fn | ProcessHost | The app host of a binding whose app is a plain process (OF-237): the Python and Node served clients, which… |
 | `src/embedder/admitted.rs` | src | s | 6 crate-vis | — | An endpoint embedder's requests under run admission (ARCH-0053 `#run-admission`): the primary endpoint's and… |
 | `src/embedder/endpoint.rs` | src | L | 16 crate-vis | — | The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server |
 | `src/embedder/local/attention.rs` | src | s | 4 crate-vis | — | Attention: the fused Metal kernel where it applies, eager matmul elsewhere |

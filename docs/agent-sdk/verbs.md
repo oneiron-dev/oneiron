@@ -21,6 +21,7 @@ both bindings and their export-census tests in one change.
 - `vault.reports.disclosure`
 - `vault.reports.route`
 - `vault.reports.outbound`
+- `self.focus.wakes`
 - `self.focus.scratchpad.recall`
 - `self.focus.scratchpad.append`
 - `self.focus.scratchpad.seal`
@@ -68,6 +69,7 @@ both bindings and their export-census tests in one change.
 - `vault.budgets.hold`
 - `vault.budgets.hold.resume`
 - `vault.budgets.local`
+- `vault.budgets.reservations`
 - `vault.budgets.settlements`
 - `vault.budgets.rsi.configure`
 - `vault.budgets.rsi`
@@ -256,6 +258,11 @@ both bindings and their export-census tests in one change.
 - `vault.shared.receipt`
 - `vault.shared.outcomes`
 - `vault.shared.deletion`
+- `vault.org_admin.configure`
+- `vault.org_admin.powers`
+- `vault.members.reset_project_access`
+- `vault.members.delegate`
+- `vault.members.projection`
 - `vault.members.add`
 - `vault.members.invitation_slip`
 - `vault.members.change`
@@ -321,6 +328,15 @@ both bindings and their export-census tests in one change.
 - `vault.off_record.notes.create`
 - `vault.off_record.claims.upsert`
 - `self.off_record.execute`
+- `vault.off_record.rooms.status`
+- `vault.off_record.rooms.start`
+- `vault.off_record.rooms.witness`
+- `vault.off_record.rooms.save`
+- `vault.off_record.rooms.save_from_here`
+- `vault.off_record.rooms.export`
+- `vault.off_record.rooms.suggest_save`
+- `vault.off_record.rooms.confirm_save`
+- `vault.off_record.rooms.decline_save`
 - `vault.records.erase_preview`
 - `vault.records.erase_confirm`
 - `vault.records.erase_sweep`
@@ -819,6 +835,8 @@ both bindings and their export-census tests in one change.
 - `vault.consolidation.status`
 - `vault.runs.step`
 - `vault.runs.checkpoint`
+- `vault.consolidation.home.get`
+- `vault.consolidation.lineage`
 - `vault.consolidation.promote`
 - `vault.consolidation.evidence`
 - `vault.sieve.evidence`

@@ -17,7 +17,7 @@
  */
 
 import { OneironError, translateNativeError } from "./error.js"
-import { NativeClient } from "./native.js"
+import { NativeClient, NativeEngine } from "./native.js"
 import type * as Facade from "./facade-types.js"
 import type { CalibrationPair, TaskAskAnswer, TaskAskDefault, TaskAskHandle, TaskAskPersonEvidence, TaskAskPreflight, TaskAskQuestion, TaskAskReceipt, TaskAskShort, TaskAskSpec, TaskAskWait, TaskAskWho, TaskAskWord, TaskCancelReceipt, TaskCanAskRequest, TaskDescription } from "./agent-verbs.js"
 
@@ -34,6 +34,7 @@ import type {
   KeyValueNamespaces,
   ClaimInput,
   CommitReceipt,
+  EngineOptions,
   FacadeReceipt,
   MemoryPack,
   MemoryExport,
@@ -78,6 +79,31 @@ export interface Paired {
   readonly memory: Oneiron
   readonly credential: string
   readonly pin: CheckpointPin | null
+}
+
+/**
+ * The full Oneiron server inside this process, from {@link Oneiron.startEngine} (OF-237).
+ * Every call blocks. An engine failure throws `OneironError` with its stable code:
+ * `ENGINE_STOPPED`, `ENGINE_CLOSED`, `ENGINE_RELAY_REFUSED`, `ENGINE_WRONG_THREAD`,
+ * `ENGINE_CONFIG`, `ENGINE_VAULT_OPEN`, `ENGINE_START_FAILED`, `ENGINE_CONNECTION_ENDED`,
+ * `ENGINE_REPLY_TOO_LARGE`, `ENGINE_BAD_REQUEST`, or `INTERNAL_SERVER_ERROR` when no cause is
+ * named.
+ */
+export interface EmbeddedEngine {
+  /**
+   * A NEW handle served by this engine's server under `key`, the caller's own credential,
+   * passed verbatim: the credential `pair` returned, or the host secret as a bare bearer.
+   * Every verb is the request a connected handle sends, carried through the server in
+   * process, so host doors answer as on any server; `asActor` refuses on it. It makes no
+   * request and keeps the engine alive.
+   */
+  client(key: string): Oneiron
+  /** Runs what is due; a stopped engine serves again first. */
+  wake(): void
+  /** Drains, stops every worker, and keeps the vault open for `wake`. */
+  stop(): void
+  /** Stops the engine in order; every handle it served throws `ENGINE_CLOSED` after. */
+  close(): void
 }
 
 /** A handle on one Oneiron memory, embedded or remote. */
@@ -145,6 +171,41 @@ export class Oneiron {
       memory: Oneiron.connect(paired.url, paired.credential),
       credential: paired.credential,
       pin: paired.pin ?? null,
+    }
+  }
+
+  /**
+   * Opens the vault at `path` and serves it in this process with the full server
+   * `oneiron serve` runs (OF-237), once; {@link EmbeddedEngine.client} then binds handles
+   * served by it under the caller's own credential, never a second vault open. The config is
+   * the one `oneiron serve --config <configFile>` resolves for this path. Opt-in: the addon
+   * carries it only when built with the `engine` cargo feature, and otherwise this throws
+   * `ENGINE_UNAVAILABLE`.
+   */
+  static startEngine(path: string, opts: EngineOptions = {}): EmbeddedEngine {
+    if (NativeEngine === undefined) {
+      throw new OneironError("ENGINE_UNAVAILABLE", "this oneiron build has no embedded engine", [
+        "Build the native addon with the `engine` cargo feature, or use Oneiron.connect(url, key).",
+      ])
+    }
+    let native: NativeEngine
+    try {
+      native = NativeEngine.start(path, opts)
+    } catch (error) {
+      throw translateNativeError(error)
+    }
+    const call = <T>(operation: () => T): T => {
+      try {
+        return operation()
+      } catch (error) {
+        throw translateNativeError(error)
+      }
+    }
+    return {
+      client: (key) => new Oneiron(call(() => native.client(key))),
+      wake: () => call(() => native.wake()),
+      stop: () => call(() => native.stop()),
+      close: () => call(() => native.close()),
     }
   }
 
@@ -366,6 +427,8 @@ export class Oneiron {
       }),
       /** The owner observes a device-local runner budget counter without creating it, including absence after an owner restore. */
       local: (input: Facade.LocalRunnerBudgetRequest): Facade.LocalRunnerBudgetView => this.#call(() => this.#client.vaultBudgetsLocal(input) as Facade.LocalRunnerBudgetView),
+      /** The owner reads a device-local runner budget counter and one page of the child reservations held against it, without creating or refilling it. */
+      reservations: (input: Facade.RunnerBudgetReservationsRequest): Facade.RunnerBudgetReservationsView => this.#call(() => this.#client.vaultBudgetsReservations(input) as Facade.RunnerBudgetReservationsView),
       /** The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced. */
       settlements: (input: Facade.RunSettlementsRequest): Facade.RunSettlementsView => this.#call(() => this.#client.vaultBudgetsSettlements(input) as Facade.RunSettlementsView),
       /** The owner reads both RSI lines, every soft and pinned share, and whether new loop work is held. A hold reads as suspended, never as a terminal failure. */
@@ -973,7 +1036,19 @@ export class Oneiron {
         change: (input: Facade.SharedActPolicyChangeRequest): Facade.SharedActPolicyChange => this.#call(() => this.#client.vaultSharedPolicyChange(input) as Facade.SharedActPolicyChange),
       },
     },
+    org_admin: {
+      /** The owner fixes an organization's Admin identities and closed named-power set once; no root or private-vault power can be configured. */
+      configure: (input: Facade.OrgAdminConfigureRequest): Facade.OrgAdminConfigured => this.#call(() => this.#client.vaultOrgAdminConfigure(input) as Facade.OrgAdminConfigured),
+      /** The caller reads only the organization's fixed named Admin powers that their own credential carries. */
+      powers: (input: Facade.OrgAdminPowersRequest): Facade.OrgAdminPowers => this.#call(() => this.#client.vaultOrgAdminPowers(input) as Facade.OrgAdminPowers),
+    },
     members: {
+      /** An Admin resets only a non-root shared project's signed access roster through the existing project-proof gate; it never changes a personal root or grants an unsigned override. */
+      reset_project_access: (input: Facade.SharedProjectAccessResetRequest): Facade.SharedProjectAccessReset => this.#call(() => this.#client.vaultMembersResetProjectAccess(input) as Facade.SharedProjectAccessReset),
+      /** A live parent Admin or Owner mints one explicit scope narrowing for a holder, bounded by policy and a server-clock expiry of at most 90 days; the Delegate cannot delegate onward. */
+      delegate: (input: Facade.FederationDelegateRequest): Facade.FederationMemberGrant => this.#call(() => this.#client.vaultMembersDelegate(input) as Facade.FederationMemberGrant),
+      /** Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority. */
+      projection: (input: Facade.SharedMemberRequest): Facade.MemberProjection => this.#call(() => this.#client.vaultMembersProjection(input) as Facade.MemberProjection),
       /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending. */
       add: (input: Facade.SharedMemberAddRequest): Facade.SharedMemberInvited => this.#call(() => this.#client.vaultMembersAdd(input) as Facade.SharedMemberInvited),
       /** An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost. */
@@ -1108,6 +1183,26 @@ export class Oneiron {
       claims: {
         /** The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
         upsert: (input: Facade.OffRecordClaimRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultOffRecordClaimsUpsert(input) as Facade.CommitReceipt),
+      },
+      rooms: {
+        /** Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk. */
+        status: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsStatus(input) as Facade.OffRecordRoomView),
+        /** A person starts an off-record stretch in a room they belong to, on their own credential. */
+        start: (input: Facade.OffRecordRoomStartRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsStart(input) as Facade.OffRecordRoomView),
+        /** Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant. */
+        witness: (input: Facade.OffRecordRoomWitnessRequest): Facade.WitnessReceipt => this.#call(() => this.#client.vaultOffRecordRoomsWitness(input) as Facade.WitnessReceipt),
+        /** A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential. */
+        save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomSaved => this.#call(() => this.#client.vaultOffRecordRoomsSave(input) as Facade.OffRecordRoomSaved),
+        /** A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live. */
+        save_from_here: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSaveFromHere(input) as Facade.OffRecordRoomView),
+        /** A person exports only their visible room talk as a JSON attachment, posts a content-free notice and writes no vault. */
+        export: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomExport => this.#call(() => this.#client.vaultOffRecordRoomsExport(input) as Facade.OffRecordRoomExport),
+        /** An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms. */
+        suggest_save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSuggestSave(input) as Facade.OffRecordRoomView),
+        /** A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits. */
+        confirm_save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomSaved => this.#call(() => this.#client.vaultOffRecordRoomsConfirmSave(input) as Facade.OffRecordRoomSaved),
+        /** A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits. */
+        decline_save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsDeclineSave(input) as Facade.OffRecordRoomView),
       },
     },
     records: {
@@ -2092,6 +2187,12 @@ export class Oneiron {
       enqueue: (input: Facade.ConsolidationEnqueueRequest): Facade.DreamerAttemptRef => this.#call(() => this.#client.vaultConsolidationEnqueue(input) as Facade.DreamerAttemptRef),
       /** Reads the status of one consolidation attempt by its durable job reference. */
       status: (input: Facade.ConsolidationStatusRequest): Facade.DreamerAttemptView | null => this.#call(() => this.#client.vaultConsolidationStatus(input) as Facade.DreamerAttemptView | null),
+      home: {
+        /** The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything. */
+        get: (input: Facade.EmptyRequest = {}): Facade.ConsolidationHomeView => this.#call(() => this.#client.vaultConsolidationHomeGet(input) as Facade.ConsolidationHomeView),
+      },
+      /** The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model. */
+      lineage: (input: Facade.ConsolidationLineageRequest): Facade.ConsolidationLineageView | null => this.#call(() => this.#client.vaultConsolidationLineage(input) as Facade.ConsolidationLineageView | null),
       /** Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals. */
       promote: (input: Facade.ConsolidationPromoteRequest): Facade.ConsolidationPromotion => this.#call(() => this.#client.vaultConsolidationPromote(input) as Facade.ConsolidationPromotion),
       /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */
@@ -2310,6 +2411,8 @@ export class Oneiron {
   }
   readonly self = {
     focus: {
+      /** Takes every wake queued for the attached run's board STREAM connection, each re-read under this credential at delivery. */
+      wakes: (input: Facade.LiveRunRequest<Facade.BoardWakeRequest>): Facade.BoardWakeReply => this.#call(() => this.#client.selfFocusWakes(input) as Facade.BoardWakeReply),
       scratchpad: {
         /** Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full. */
         recall: (input: Facade.ScratchpadRecallRequest): Facade.ScratchpadRecallReply => this.#call(() => this.#client.selfFocusScratchpadRecall(input) as Facade.ScratchpadRecallReply),
@@ -2318,6 +2421,12 @@ export class Oneiron {
         /** Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad. */
         seal: (input: Facade.ScratchpadSealRequest): Facade.ScratchpadWriteReply => this.#call(() => this.#client.selfFocusScratchpadSeal(input) as Facade.ScratchpadWriteReply),
       },
+      /** Re-renders the attached run's context board as one STREAM frame, at the frame epoch the caller last saw. */
+      refresh: (input: Facade.LiveRunRequest<Facade.BoardRefreshRequest>): Facade.BoardFrameReply => this.#call(() => this.#client.selfFocusRefresh(input) as Facade.BoardFrameReply),
+      /** Subscribes the attached run's board STREAM connection to the named scopes, inside its credential ceiling. */
+      subscribe: (input: Facade.LiveRunRequest<Facade.BoardSubscriptionRequest>): Facade.BoardSubscriptionReply => this.#call(() => this.#client.selfFocusSubscribe(input) as Facade.BoardSubscriptionReply),
+      /** Unsubscribes the attached run's board STREAM connection from the named scopes. */
+      unsubscribe: (input: Facade.LiveRunRequest<Facade.BoardSubscriptionRequest>): Facade.BoardSubscriptionReply => this.#call(() => this.#client.selfFocusUnsubscribe(input) as Facade.BoardSubscriptionReply),
     },
     memory: {
       /** Writes one private entry in the bound actor's own diary, as an actor-private NOTE. */

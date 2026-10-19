@@ -17,6 +17,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.reports.disclosure", post(facade_route))
         .route("/vault.reports.route", post(facade_route))
         .route("/vault.reports.outbound", post(facade_route))
+        .route("/self.focus.wakes", post(facade_route))
         .route("/self.focus.scratchpad.recall", post(facade_route))
         .route("/self.focus.scratchpad.append", post(facade_route))
         .route("/self.focus.scratchpad.seal", post(facade_route))
@@ -67,6 +68,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.budgets.hold", post(facade_route))
         .route("/vault.budgets.hold.resume", post(facade_route))
         .route("/vault.budgets.local", post(facade_route))
+        .route("/vault.budgets.reservations", post(facade_route))
         .route("/vault.budgets.settlements", post(facade_route))
         .route("/vault.budgets.rsi.configure", post(facade_route))
         .route("/vault.budgets.rsi", post(facade_route))
@@ -261,6 +263,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shared.receipt", post(facade_route))
         .route("/vault.shared.outcomes", post(facade_route))
         .route("/vault.shared.deletion", post(facade_route))
+        .route("/vault.org_admin.configure", post(facade_route))
+        .route("/vault.org_admin.powers", post(facade_route))
+        .route("/vault.members.reset_project_access", post(facade_route))
+        .route("/vault.members.delegate", post(facade_route))
+        .route("/vault.members.projection", post(facade_route))
         .route("/vault.members.add", post(facade_route))
         .route("/vault.members.invitation_slip", post(facade_route))
         .route("/vault.members.change", post(facade_route))
@@ -344,6 +351,18 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.off_record.notes.create", post(facade_route))
         .route("/vault.off_record.claims.upsert", post(facade_route))
         .route("/self.off_record.execute", post(facade_route))
+        .route("/vault.off_record.rooms.status", post(facade_route))
+        .route("/vault.off_record.rooms.start", post(facade_route))
+        .route("/vault.off_record.rooms.witness", post(facade_route))
+        .route("/vault.off_record.rooms.save", post(facade_route))
+        .route("/vault.off_record.rooms.save_from_here", post(facade_route))
+        .route(
+            "/vault.off_record.rooms.export",
+            post(vault_off_record_rooms_export_attachment),
+        )
+        .route("/vault.off_record.rooms.suggest_save", post(facade_route))
+        .route("/vault.off_record.rooms.confirm_save", post(facade_route))
+        .route("/vault.off_record.rooms.decline_save", post(facade_route))
         .route("/vault.records.erase_preview", post(facade_route))
         .route("/vault.records.erase_confirm", post(facade_route))
         .route("/vault.records.erase_sweep", post(facade_route))
@@ -874,6 +893,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.consolidation.status", post(facade_route))
         .route("/vault.runs.step", post(facade_route))
         .route("/vault.runs.checkpoint", post(facade_route))
+        .route("/vault.consolidation.home.get", post(facade_route))
+        .route("/vault.consolidation.lineage", post(facade_route))
         .route("/vault.consolidation.promote", post(facade_route))
         .route("/vault.consolidation.evidence", post(facade_route))
         .route("/vault.sieve.evidence", post(facade_route))
@@ -1014,6 +1035,25 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.agents.spawn", post(facade_route))
         .route("/self.leader.split", post(facade_route))
         .route("/self.skills.call", post(facade_route))
+        .route("/self.focus.refresh", post(facade_route))
+        .route("/self.focus.subscribe", post(facade_route))
+        .route("/self.focus.unsubscribe", post(facade_route))
+}
+async fn vault_off_record_rooms_export_attachment(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    uri: axum::http::Uri,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<impl IntoResponse, FacadeApiError> {
+    let answer = facade_route(auth, State(server), uri, headers, payload).await?;
+    Ok((
+        [(
+            axum::http::header::CONTENT_DISPOSITION,
+            "attachment; filename=\"off-record-talk.json\"",
+        )],
+        answer,
+    ))
 }
 pub(super) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> {
     Router::new().route(

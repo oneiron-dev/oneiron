@@ -14,8 +14,11 @@ class VaultEdge(
     val vad: FloatArray?,
 )
 
-/** One vector search hit ([EmbeddedVault.searchVector]): the hex entity [id] and its [score]. */
+/** One search hit ([EmbeddedVault.searchVector], [EmbeddedVault.searchText]): the hex entity [id] and its [score]. */
 class ScoredEntity(val id: String, val score: Float)
+
+/** One [EmbeddedVault.subtree] entry: a descendant's hex [id] and its [depth] below the root. */
+class SubtreeEntry(val id: String, val depth: Int)
 
 /**
  * One embedded core vault. Each instance owns its native environment, or a share of an engine's.
@@ -107,6 +110,57 @@ class EmbeddedVault private constructor() : AutoCloseable {
         return searchVectorNative(query, limit)
     }
 
+    /**
+     * A context pack over [text] and [vector] as UTF-8 in [format] (`json` when null or unknown;
+     * `yaml`, `toon`, `markdown`, `plaintext`), at most [limit] (at most 1000) items, as the C
+     * ABI's `oneiron_vault_context_pack` packs it.
+     */
+    @Synchronized
+    fun contextPack(
+        text: String? = null,
+        vector: FloatArray? = null,
+        limit: Int = 10,
+        format: String? = null,
+    ): String {
+        check(!closed) { "vault is closed" }
+        return contextPackNative(text, vector, limit, format)
+    }
+
+    /** The [limit] (at most 1000) best BM25 text matches for [query], best first. */
+    @Synchronized
+    fun searchText(query: String, limit: Int = 10): Array<ScoredEntity> {
+        check(!closed) { "vault is closed" }
+        return searchTextNative(query, limit)
+    }
+
+    /** The hex ids [src]'s wire [kind] edges point to, only of entity type [targetType] when given. */
+    @Synchronized
+    fun targets(src: String, kind: Int, targetType: Int? = null): Array<String> {
+        check(!closed) { "vault is closed" }
+        return targetsNative(src, kind, targetType != null, targetType ?: 0)
+    }
+
+    /** The hex ids whose wire [kind] edges point to [target], only of entity type [sourceType] when given. */
+    @Synchronized
+    fun sources(target: String, kind: Int, sourceType: Int? = null): Array<String> {
+        check(!closed) { "vault is closed" }
+        return sourcesNative(target, kind, sourceType != null, sourceType ?: 0)
+    }
+
+    /** [root]'s `ChildOf` descendants, at most [maxDepth] levels down, each with its depth. */
+    @Synchronized
+    fun subtree(root: String, maxDepth: Int): Array<SubtreeEntry> {
+        check(!closed) { "vault is closed" }
+        return subtreeNative(root, maxDepth)
+    }
+
+    /** [node]'s `ChildOf` ancestors, as hex ids. */
+    @Synchronized
+    fun ancestors(node: String): Array<String> {
+        check(!closed) { "vault is closed" }
+        return ancestorsNative(node)
+    }
+
     @Synchronized
     override fun close() {
         if (!closed) { closeNative(); closed = true }
@@ -122,6 +176,12 @@ class EmbeddedVault private constructor() : AutoCloseable {
     private external fun edgesNative(id: String, inbound: Boolean): Array<VaultEdge>
     private external fun putVectorNative(id: String, vector: FloatArray)
     private external fun searchVectorNative(query: FloatArray, limit: Int): Array<ScoredEntity>
+    private external fun contextPackNative(text: String?, vector: FloatArray?, limit: Int, format: String?): String
+    private external fun searchTextNative(query: String, limit: Int): Array<ScoredEntity>
+    private external fun targetsNative(src: String, kind: Int, hasType: Boolean, targetType: Int): Array<String>
+    private external fun sourcesNative(target: String, kind: Int, hasType: Boolean, sourceType: Int): Array<String>
+    private external fun subtreeNative(root: String, maxDepth: Int): Array<SubtreeEntry>
+    private external fun ancestorsNative(node: String): Array<String>
     private external fun closeNative()
 
     companion object {

@@ -726,16 +726,19 @@
       "RunRungSettlement",
       "RunSettlementsRequest",
       "RunSettlementsView",
+      "RunnerBudgetReservation",
+      "RunnerBudgetReservationsRequest",
+      "RunnerBudgetReservationsView",
       "SelfBudgetRequest",
       "SpendLeaseView",
       "SpendScopeRequest",
       "TopUpSpendLeaseRequest"
      ],
      "path": "src/agent_dispatch/budget_doors.rs",
-     "purpose": "Typed doors over launch spend leases, budget holds and the local runner counter",
+     "purpose": "Typed doors over launch spend leases, budget holds and the local runner counter with its reservations",
      "surface": {
-      "fn": 8,
-      "struct": 14
+      "fn": 9,
+      "struct": 17
      }
     },
     {
@@ -20154,7 +20157,7 @@
      "path": "src/dreamer_runner/admission/mod.rs",
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 22
      }
     },
@@ -20934,7 +20937,7 @@
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
       "mod": 4,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -20952,6 +20955,25 @@
      "surface": {
       "fn": 2,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConsolidationHomeNode",
+      "ConsolidationHomeView",
+      "ConsolidationLineageRequest",
+      "ConsolidationLineageView",
+      "ConsolidationStepRef",
+      "ConsolidationTryView"
+     ],
+     "path": "src/dreamer_runner/owner_doors.rs",
+     "purpose": "The owner's reads of the private Dreamer runner (DOOR-101): which node this runner holds as the elected…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 6
      }
     },
     {
@@ -24465,7 +24487,7 @@
      "purpose": "Vault-resident default capability rows for member-grant minting",
      "surface": {
       "crate-vis": 9,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -24541,7 +24563,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "mod": 2,
       "re-export": 18
      }
@@ -24558,7 +24580,7 @@
      "purpose": "Closed organization-administration powers",
      "surface": {
       "enum": 2,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -24701,6 +24723,7 @@
      "purpose": "Member-to-person binding, label trust classes, and relationship claim doors",
      "surface": {
       "const": 3,
+      "crate-vis": 1,
       "enum": 2,
       "fn": 6,
       "struct": 1
@@ -31651,7 +31674,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 1,
       "re-export": 5
      }
@@ -31734,6 +31757,7 @@
      "path": "src/llm/step/settled.rs",
      "purpose": "Settled-step point read (DOOR-141 A): one committed model step of a Dreamer attempt, as its terminal…",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 2
      }
@@ -33345,7 +33369,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 23,
       "re-export": 50
      }
@@ -52389,8 +52413,12 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "BoardFrameReply",
       "BoardRefreshRequest",
+      "BoardSubscriptionReply",
       "BoardSubscriptionRequest",
+      "BoardWakeReply",
+      "BoardWakeRequest",
       "CompanionSharingRequest",
       "CompanionSharingSetRequest",
       "DescribeRequest",
@@ -52432,8 +52460,8 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 63,
-      "struct": 36
+      "re-export": 65,
+      "struct": 40
      }
     },
     {
@@ -52869,7 +52897,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 969
+      "fn": 988
      }
     },
     {
@@ -53220,6 +53248,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "OffRecordRoomExport",
+      "OffRecordRoomExportTurn",
+      "OffRecordRoomNotice",
+      "OffRecordRoomRequest",
+      "OffRecordRoomSaved",
+      "OffRecordRoomSavedTurn",
+      "OffRecordRoomShortIdPair",
+      "OffRecordRoomStartRequest",
+      "OffRecordRoomSuggestion",
+      "OffRecordRoomView",
+      "OffRecordRoomWitnessRequest"
+     ],
+     "path": "src/task_verb/sdk_off_record_rooms.rs",
+     "purpose": "The typed room off-record doors (ARCH-0052 D5, PRIVACY-07)",
+     "surface": {
+      "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CompanionAccessRequestAnswer",
       "CompanionAccessRequestAnswerRequest",
       "CompanionAccessRequestAnswered",
@@ -53545,6 +53595,27 @@
       "crate-vis": 1,
       "fn": 14,
       "struct": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FederationDelegateRequest",
+      "FederationMemberGrant",
+      "MemberProjection",
+      "OrgAdminConfigureRequest",
+      "OrgAdminConfigured",
+      "OrgAdminPowers",
+      "OrgAdminPowersRequest",
+      "SharedProjectAccessReset",
+      "SharedProjectAccessResetRequest"
+     ],
+     "path": "src/task_verb/sdk_shared_admin.rs",
+     "purpose": "Named organization administration, one-hop Delegate grants and scoped member projections",
+     "surface": {
+      "fn": 5,
+      "struct": 9
      }
     },
     {
@@ -57098,7 +57169,7 @@
      "path": "src/workspace_roster/project/roster.rs",
      "purpose": "The authenticated roster-update door (OF-417 slice 2)",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -59513,7 +59584,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60360,7 +60431,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 180,
+     "files": 182,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60530,7 +60601,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3692,
+   "source_files": 3695,
    "test_files": 902
   },
   "oneiron-android": {
@@ -60542,7 +60613,7 @@
      "path": "src/engine.rs",
      "purpose": "The embedded engine (OF-237) behind the Kotlin `EmbeddedEngine`: the full server `oneiron serve` runs, in…",
      "surface": {
-      "fn": 10
+      "fn": 11
      }
     },
     {
@@ -60553,7 +60624,17 @@
      "purpose": "Minimal JNI/Kotlin ownership adapter",
      "surface": {
       "fn": 10,
-      "mod": 1
+      "mod": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/reads.rs",
+     "purpose": "The Kotlin `EmbeddedVault`'s context pack, text search and graph reads, lowered to the same core reads the C…",
+     "surface": {
+      "fn": 6
      }
     }
    ],
@@ -60564,11 +60645,18 @@
      "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The embedded engine (OF-237) behind the Kotlin `EmbeddedEngine`: the full server `oneiron serve` runs, in…"
+    },
+    "reads": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The Kotlin `EmbeddedVault`'s context pack, text search and graph reads, lowered to the same core reads the C…"
     }
    },
    "over_bar": 0,
    "purpose": "Minimal JNI/Kotlin ownership adapter",
-   "source_files": 2,
+   "source_files": 3,
    "test_files": 0
   },
   "oneiron-authority": {
@@ -66751,8 +66839,22 @@
      "path": "src/lib/engine.rs",
      "purpose": "The embedded engine (OF-237): the full server `oneiron serve` runs, in the app's own process, over the vault…",
      "surface": {
-      "fn": 13,
+      "fn": 15,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OneironEngineErrorCode"
+     ],
+     "path": "src/lib/engine_error.rs",
+     "purpose": "Why an embedded engine call failed (OF-237): each call that fails `EngineError` leaves its cause on the…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -66793,7 +66895,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -66851,7 +66953,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -66860,7 +66962,7 @@
    },
    "over_bar": 0,
    "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
-   "source_files": 10,
+   "source_files": 11,
    "test_files": 1
   },
   "oneiron-guest": {
@@ -69121,7 +69223,21 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 938
+      "fn": 959
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NapiEngineOptions",
+      "NativeEngine"
+     ],
+     "path": "src/facade/client/embedded_engine.rs",
+     "purpose": "The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron…",
+     "surface": {
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -69380,7 +69496,7 @@
      "purpose": "JS bindings for the typed `companion.expression.*` doors"
     },
     "facade": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69403,7 +69519,7 @@
    },
    "over_bar": 2,
    "purpose": "—",
-   "source_files": 21,
+   "source_files": 22,
    "test_files": 1
   },
   "oneiron-organ-host": {
@@ -70135,6 +70251,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedded_engine.rs",
+     "purpose": "The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
@@ -70154,6 +70280,13 @@
     }
    ],
    "modules": {
+    "embedded_engine": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron…"
+    },
     "pairing": {
      "files": 1,
      "impl_vault": false,
@@ -70164,7 +70297,7 @@
    },
    "over_bar": 1,
    "purpose": "`oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1)",
-   "source_files": 3,
+   "source_files": 4,
    "test_files": 0
   },
   "oneiron-remote": {
@@ -70184,7 +70317,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 939
+      "fn": 960
      }
     },
     {
@@ -70224,13 +70357,14 @@
      "notable": [
       "InProcessReply",
       "InProcessRequest",
+      "InProcessStream",
       "InProcessTransport"
      ],
      "path": "src/in_process.rs",
      "purpose": "A served client (OF-237): the remote backend over an `oneiron-server` this process runs, with no socket…",
      "surface": {
       "fn": 1,
-      "struct": 2,
+      "struct": 3,
       "trait": 1
      }
     },
@@ -73174,6 +73308,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/board_stream_doors.rs",
+     "purpose": "Public run-bound board STREAM doors: `self.focus.refresh`, `self.focus.subscribe`, `self.focus.unsubscribe`…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/booking_doors.rs",
      "purpose": "Typed booking-page discovery, published lifecycle and constraint front",
      "surface": {
@@ -73197,7 +73341,7 @@
      "path": "src/api/facade/budget_doors.rs",
      "purpose": "Credential-backed budget controls, beside the owner's held-run routes",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -73427,7 +73571,7 @@
      "path": "src/api/facade/coordination_doors.rs",
      "purpose": "The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -73687,7 +73831,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 152
+      "crate-vis": 155
      }
     },
     {
@@ -73838,6 +73982,16 @@
      "purpose": "The host doors of the off-record session rows (DOOR-127, e2e PRIVACY-06)",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/off_record_room_doors.rs",
+     "purpose": "Typed room off-record verbs over the existing participant handlers",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -74058,6 +74212,16 @@
      "purpose": "The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)…",
      "surface": {
       "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/shared_admin_doors.rs",
+     "purpose": "Typed named Admin policy/powers and the one-hop scoped Delegate mint",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -74767,7 +74931,7 @@
      "path": "src/api/off_record_rooms.rs",
      "purpose": "Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 11
      }
     },
     {
@@ -77835,26 +77999,71 @@
      "surface": {
       "crate-vis": 6,
       "fn": 1,
-      "re-export": 2
+      "re-export": 5
      }
     },
     {
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "BlockingBody",
       "BlockingConnection",
       "BlockingEngine",
+      "BlockingReply"
+     ],
+     "path": "src/embedded/blocking.rs",
+     "purpose": "The embedded engine for a binding whose callers are app threads (OF-237): [`BlockingEngine`] runs an…",
+     "surface": {
+      "fn": 15,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EmbeddedBody",
       "EmbeddedConnection",
       "EmbeddedEngine",
       "EmbeddedReply",
+      "EmbeddedReplyStream",
       "EmbeddedRequest"
      ],
      "path": "src/embedded/engine.rs",
      "purpose": "The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding",
      "surface": {
       "const": 1,
-      "fn": 28,
+      "fn": 20,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EngineErrorKind",
+      "EngineFailure"
+     ],
+     "path": "src/embedded/failure.rs",
+     "purpose": "Why an embedded engine call failed, by cause (OF-237): the one projection every binding raises, a stable…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProcessHost"
+     ],
+     "path": "src/embedded/process_host.rs",
+     "purpose": "The app host of a binding whose app is a plain process (OF-237): the Python and Node served clients, which…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -81690,7 +81899,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 417,
+     "files": 420,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81858,7 +82067,7 @@
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…"
     },
     "embedded": {
-     "files": 2,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -82119,7 +82328,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 768,
+   "source_files": 774,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82284,7 +82493,7 @@
      "path": "src/embedded_engine.rs",
      "purpose": "The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the…",
      "surface": {
-      "fn": 11,
+      "fn": 13,
       "struct": 6,
       "trait": 1
      }
@@ -82533,6 +82742,13 @@
       "BlockChange",
       "BlockedCategory",
       "BlockedReportView",
+      "BoardFrameReply",
+      "BoardRefreshRequest",
+      "BoardStreamFrame",
+      "BoardSubscriptionReply",
+      "BoardSubscriptionRequest",
+      "BoardWakeReply",
+      "BoardWakeRequest",
       "BodyBlockKind",
       "BodyCell",
       "BodyConflict",
@@ -83047,10 +83263,16 @@
       "ConsolidationEvidenceLocator",
       "ConsolidationEvidenceRequest",
       "ConsolidationEvidenceSource",
+      "ConsolidationHomeNode",
+      "ConsolidationHomeView",
+      "ConsolidationLineageRequest",
+      "ConsolidationLineageView",
       "ConsolidationMessageEvidence",
       "ConsolidationPromoteRequest",
       "ConsolidationPromotion",
       "ConsolidationRejection",
+      "ConsolidationStepRef",
+      "ConsolidationTryView",
       "ConstraintContinuation",
       "ConstraintObject",
       "ConstraintTimeRangeWire",
@@ -83221,6 +83443,7 @@
       "DeliveryWindowRule",
       "DeliveryWindowTimeWindow",
       "DeliveryWindowVerbClass",
+      "DeltaRow",
       "DenyConsentRequest",
       "DerivationEnvelopeView",
       "DerivationKind",
@@ -83403,9 +83626,11 @@
       "FanoutSlotTerminal",
       "FanoutStatement",
       "FatalLlmError",
+      "FederationDelegateRequest",
       "FederationDirectionScope",
       "FederationGrantRole",
       "FederationGrantScope",
+      "FederationMemberGrant",
       "FederationPactScope",
       "FederationPactStatus",
       "FeedbackCategory",
@@ -83460,6 +83685,7 @@
       "ForkRecord",
       "ForkState",
       "ForkStatus",
+      "FrameKind",
       "FrozenTrialCase",
       "GateCheckerReceipt",
       "GateCheckerSet",
@@ -83855,6 +84081,9 @@
       "LinkedText",
       "LiveRunRequestAgentSpawnInput",
       "LiveRunRequestBatchInput",
+      "LiveRunRequestBoardRefreshRequest",
+      "LiveRunRequestBoardSubscriptionRequest",
+      "LiveRunRequestBoardWakeRequest",
       "LiveRunRequestClickInput",
       "LiveRunRequestCropInput",
       "LiveRunRequestExpectInput",
@@ -83932,6 +84161,9 @@
       "MediaUsage",
       "MemberAnswer",
       "MemberOnboardingOutcome",
+      "MemberProjection",
+      "MemberRelationship",
+      "MemberRelationshipContext",
       "MemberVerdict",
       "MembershipConsent",
       "MemoryExport",
@@ -83972,6 +84204,8 @@
       "MessageReactionExternal",
       "MessageReactionReceipt",
       "MessageReactionRequest",
+      "MessageResultAttachment",
+      "MessageResultSource",
       "MessageStreamHandle",
       "MessageStreamMode",
       "MessageStreamOptions",
@@ -84117,11 +84351,24 @@
       "OffRecordExecuted",
       "OffRecordMode",
       "OffRecordNoteRequest",
+      "OffRecordNoticeAct",
       "OffRecordRecallRequest",
+      "OffRecordRoomExport",
+      "OffRecordRoomExportTurn",
+      "OffRecordRoomNotice",
+      "OffRecordRoomRequest",
+      "OffRecordRoomSaved",
+      "OffRecordRoomSavedTurn",
+      "OffRecordRoomShortIdPair",
+      "OffRecordRoomStartRequest",
+      "OffRecordRoomSuggestion",
+      "OffRecordRoomView",
+      "OffRecordRoomWitnessRequest",
       "OffRecordRunStatus",
       "OffRecordSessionRequest",
       "OffRecordSessionView",
       "OffRecordStartRequest",
+      "OffRecordTalkMessage",
       "OffRecordWitnessRequest",
       "Offer",
       "OfferAnswer",
@@ -84195,6 +84442,12 @@
       "OpenInput",
       "OpenSpendLeaseRequest",
       "OracleReceipt",
+      "OrgAdminConfigureRequest",
+      "OrgAdminConfigured",
+      "OrgAdminPolicy",
+      "OrgAdminPower",
+      "OrgAdminPowers",
+      "OrgAdminPowersRequest",
       "OrganWaitView",
       "OriginAuthority",
       "OriginAuthoritySetRequest",
@@ -84469,6 +84722,7 @@
       "RefusalOutcome",
       "RelationshipChange",
       "RelationshipContext",
+      "RelationshipTrustClass",
       "RelayBoundaryDegrade",
       "RelayClassifierMode",
       "RelayResolution",
@@ -84726,6 +84980,9 @@
       "RunTreeRepair",
       "RunTreeStatus",
       "RunTreeTimestamps",
+      "RunnerBudgetReservation",
+      "RunnerBudgetReservationsRequest",
+      "RunnerBudgetReservationsView",
       "SavedIntentState",
       "SavedResumeStep",
       "ScheduledBackfill",
@@ -84933,6 +85190,8 @@
       "SharedMemberInvited",
       "SharedMemberRequest",
       "SharedMemberRoleRequest",
+      "SharedProjectAccessReset",
+      "SharedProjectAccessResetRequest",
       "SharedReceiptRequest",
       "SharedRemoveOwnerRequest",
       "SharedTransferRequest",
@@ -85126,6 +85385,7 @@
       "StreamFinalityReason",
       "StreamSyncVisibility",
       "SubgoalStatus",
+      "SubscriptionScope",
       "SufficiencyCard",
       "SufficiencyInput",
       "SufficiencyVerdict",
@@ -85376,6 +85636,7 @@
       "WaitForOutput",
       "WakeCadenceReceipt",
       "WakeCadenceView",
+      "WakeEnvelope",
       "WakeIdleState",
       "WakePolicyDecision",
       "WakePolicySetRequest",
@@ -85492,8 +85753,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 777,
-      "struct": 2398
+      "enum": 783,
+      "struct": 2444
      }
     },
     {

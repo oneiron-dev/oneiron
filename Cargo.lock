@@ -8351,6 +8351,7 @@ dependencies = [
  "napi-derive",
  "oneiron",
  "oneiron-remote",
+ "oneiron-server",
  "serde_json",
 ]
 
@@ -8404,6 +8405,7 @@ version = "1.0.0"
 dependencies = [
  "oneiron",
  "oneiron-remote",
+ "oneiron-server",
  "pyo3",
  "pyo3-build-config",
  "serde",
