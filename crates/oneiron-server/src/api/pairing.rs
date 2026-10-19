@@ -455,6 +455,24 @@ pub(super) fn with_issuer<T>(
     operation(&issuer).map_err(refusal)
 }
 
+/// Runs `operation` with the host's own slip issuer as [`with_issuer`] finds
+/// it, or with `None` when the host holds no signing key: for a caller that
+/// goes on without one (FIX 3875).
+pub(super) fn with_host_issuer<T>(
+    server: &SyncServer,
+    operation: impl FnOnce(Option<&HostSlipIssuer>) -> T,
+) -> T {
+    if let Some(issuer) = server.managed_issuer.as_ref() {
+        return operation(Some(issuer));
+    }
+    let issuer = server
+        .config
+        .auth_secret
+        .as_deref()
+        .and_then(|secret| HostSlipIssuer::from_secret(secret.as_bytes()).ok());
+    operation(issuer.as_ref())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RevokeSlip {

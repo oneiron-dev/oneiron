@@ -97,12 +97,19 @@ impl Memory<'_> {
             reverify(txn)?;
             recheck(txn)
         };
+        // The owner deleting in person on a host that bound its slip issuer
+        // withdraws a Connect guest PERSON's grants with it (FIX 3875).
+        let guest_revoke = self
+            .owner_authorship()
+            .zip(self.host_slip_issuer)
+            .map(|(owner, issuer)| crate::deletion::GuestRevokeAuthority { owner, issuer });
         let gated = if stop_check_after_soft_scrub {
             crate::deletion::GatedDeletion::with_pre_scrub_check(gate, &reverify, &recheck)
         } else {
             crate::deletion::GatedDeletion::new(gate, &both)
         }
-        .with_claim(claim);
+        .with_claim(claim)
+        .with_guest_revoke(guest_revoke);
         let outcome = self
             .vault
             .delete_entity_with_reason_gated(&id, reason.delete_reason(), gated)
