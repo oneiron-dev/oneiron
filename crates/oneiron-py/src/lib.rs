@@ -4110,6 +4110,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_roots_requests_cancel(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.roots.requests.cancel")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.roots.requests.cancel", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_cleanup_run(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.cleanup.run")?;
         let output = py

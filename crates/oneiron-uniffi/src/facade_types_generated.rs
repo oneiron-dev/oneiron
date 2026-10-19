@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1054 facade rows, 3538 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1006.
+// UniFFI census: 1055 facade rows, 3549 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1007.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -23994,6 +23994,189 @@ pub struct AuthorityHandoffAlarm {
 pub struct HandoffAlarmRequest {
     #[serde(rename = "signer")]
     pub signer: String,
+}
+
+/// `oneiron::task_verb::sdk_root_requests::RootRequestCancelRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RootRequestCancelRequest {
+    #[serde(rename = "request")]
+    pub request: String,
+}
+
+/// `oneiron_authority::authority::owner_work::OwnerWorkKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OwnerWorkKind {
+    #[serde(rename = "world_key")]
+    WorldKey,
+    #[serde(rename = "root")]
+    Root,
+    #[serde(rename = "publish_bundle")]
+    PublishBundle,
+    #[serde(rename = "custody")]
+    Custody,
+}
+
+/// `oneiron_authority::authority::owner_work::result::OwnerWorkRefusal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OwnerWorkRefusal {
+    #[serde(rename = "stale_revision")]
+    StaleRevision,
+    #[serde(rename = "owner_not_live")]
+    OwnerNotLive,
+    #[serde(rename = "world_not_live")]
+    WorldNotLive,
+    #[serde(rename = "executor_not_reader")]
+    ExecutorNotReader,
+    #[serde(rename = "home_not_linked")]
+    HomeNotLinked,
+    #[serde(rename = "secret_not_portable")]
+    SecretNotPortable,
+    #[serde(rename = "secret_not_active")]
+    SecretNotActive,
+    #[serde(rename = "recipient_changed")]
+    RecipientChanged,
+    #[serde(rename = "invalid_input")]
+    InvalidInput,
+    #[serde(rename = "custody_conflict")]
+    CustodyConflict,
+    #[serde(rename = "wider_than_floor")]
+    WiderThanFloor,
+    #[serde(rename = "root_revision_mismatch")]
+    RootRevisionMismatch,
+}
+
+/// `oneiron::world_keys::owner_work::OwnerWorkStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum OwnerWorkStatus {
+    #[serde(rename = "recorded_awaiting_holder")]
+    RecordedAwaitingHolder,
+    #[serde(rename = "enacted")]
+    Enacted,
+    #[serde(rename = "refused")]
+    Refused {
+        #[serde(rename = "reason")]
+        reason: OwnerWorkRefusal,
+    },
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "superseded")]
+    Superseded,
+}
+
+/// `oneiron::world_keys::owner_work::OwnerWorkUnassigned`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OwnerWorkUnassigned {
+    #[serde(rename = "no_eligible_reader")]
+    NoEligibleReader,
+    #[serde(rename = "target_is_recorder")]
+    TargetIsRecorder,
+    #[serde(rename = "target_not_linked")]
+    TargetNotLinked,
+    #[serde(rename = "no_bundle_holder")]
+    NoBundleHolder,
+    #[serde(rename = "no_custody_holder")]
+    NoCustodyHolder,
+}
+
+/// `oneiron_authority::authority::owner_work::result::CustodyUncheckedReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CustodyUncheckedReason {
+    #[serde(rename = "none_named")]
+    NoneNamed,
+    #[serde(rename = "none_published")]
+    NonePublished,
+    #[serde(rename = "unread")]
+    Unread,
+    #[serde(rename = "other_manifest")]
+    OtherManifest,
+    #[serde(rename = "disagrees")]
+    Disagrees,
+}
+
+/// `oneiron_authority::authority::owner_work::result::CustodyRegisterCheck`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum CustodyRegisterCheck {
+    #[serde(rename = "checked")]
+    Checked {
+        #[serde(rename = "manifest_ref")]
+        manifest_ref: String,
+    },
+    #[serde(rename = "unchecked")]
+    Unchecked {
+        #[serde(rename = "reason")]
+        reason: CustodyUncheckedReason,
+        #[serde(rename = "refs")]
+        refs: Vec<String>,
+    },
+}
+
+/// `oneiron::world_keys::owner_work::diagnostics::BundleHomeWarning`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BundleHomeWarning {
+    #[serde(rename = "home_does_not_keep_sealed_bundles")]
+    HomeDoesNotKeepSealedBundles,
+    #[serde(rename = "home_profile_unknown")]
+    HomeProfileUnknown,
+}
+
+/// `oneiron::world_keys::owner_work::OwnerWorkCancelState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OwnerWorkCancelState {
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "already_enacted")]
+    AlreadyEnacted,
+    #[serde(rename = "already_refused")]
+    AlreadyRefused,
+}
+
+/// `oneiron::world_keys::owner_work::OwnerWorkCancelNote`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerWorkCancelNote {
+    #[serde(rename = "entries")]
+    pub entries: Vec<String>,
+    #[serde(rename = "state")]
+    pub state: OwnerWorkCancelState,
+}
+
+/// `oneiron::world_keys::owner_work::OwnerWorkReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerWorkReceipt {
+    #[serde(rename = "request", default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<String>,
+    #[serde(rename = "kind")]
+    pub kind: OwnerWorkKind,
+    #[serde(rename = "target")]
+    pub target: String,
+    #[serde(rename = "executor", default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
+    #[serde(rename = "status")]
+    pub status: OwnerWorkStatus,
+    #[serde(
+        rename = "unassigned",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub unassigned: Option<OwnerWorkUnassigned>,
+    #[serde(
+        rename = "manifest_check",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub manifest_check: Option<CustodyRegisterCheck>,
+    #[serde(
+        rename = "home_warning",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub home_warning: Option<BundleHomeWarning>,
+    #[serde(rename = "cancel", default, skip_serializing_if = "Option::is_none")]
+    pub cancel: Option<OwnerWorkCancelNote>,
 }
 
 /// `oneiron::vault_cleanup::cleanup_types::CleanupPosture`.
