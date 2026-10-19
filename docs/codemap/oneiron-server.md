@@ -63,6 +63,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/training_pack.rs` | src | s | 3 crate-vis | — | An owner-authorized training run on the host (OF-577, OF-552) |
 | `src/ai_host/turn_actions.rs` | src | m | 1 crate-vis | — | The turn-action worker: runs each queued Continue and Retry (`vault.conversations.turn.continue` / `.retry`)… |
 | `src/ai_host/turn_program.rs` | src | s | 1 crate-vis | — | The host's half of DOOR-141: the wakes a landed turn's own commit owed its actor's armed programs, typed… |
+| `src/ai_host/turn_program_host.rs` | src | s | 2 crate-vis | — | What this server lends one entry of a Dreamer turn program (DOOR-141 PR2): the engine-native code host's own… |
 | `src/ai_host/turns.rs` | src | s | 9 crate-vis | — | Chat turns in flight |
 | `src/ai_host/waves.rs` | src | m | 4 crate-vis | — | Live, model-backed wave planning on the server's durable workflow pump |
 | `src/ai_host/weave_lens.rs` | src | m | 4 crate-vis | — | The live weave lens's generate step (OF-499, ARCH-0063 §6): `vault.weave.lens` and `POST… |
@@ -549,7 +550,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/builtin_host/slack_app.rs` | src | m | 12 crate-vis | — | The served Slack app and the provider URLs of the built-in channels (OF-519): the manifest the owner creates… |
 | `src/builtin_host/webhooks.rs` | src | m | 5 crate-vis | — | The provider webhooks of the served built-in channels (OF-519) |
 | `src/byte_line.rs` | src | m | 11 crate-vis | — | Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers… |
-| `src/calendar_host.rs` | src | s | 6 crate-vis | — | The calendar host's real CalDAV wire and iMIP submission transport |
+| `src/calendar_host.rs` | src | s | 8 crate-vis | — | The calendar host's real CalDAV wire and iMIP submission transport |
 | `src/calendar_host/caldav.rs` | src | m | 2 crate-vis | — | Real CalDAV discovery, sync-collection and conditional resource writes |
 | `src/calendar_host/ics.rs` | src | s | 2 crate-vis | — | Conditional ICS GET at the secret-custody door |
 | `src/calendar_host/xml.rs` | src | s | 8 crate-vis | — | Namespace-aware DAV multistatus decoding |
@@ -926,7 +927,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/artifact_previews.rs` | src | s | 1 fn · 6 crate-vis | — | Host-authenticated process declarations and their existing private preview leases |
 | `src/server/board_publisher.rs` | src | s | 4 crate-vis | — | The board publisher: committed TASK writes reach STREAM subscribers |
 | `src/server/browser_seats.rs` | src | s | 2 crate-vis | — | The run browsers live on this host (CUA-001), each in its run's seat as the run desktops do… |
-| `src/server/connector_events.rs` | src | s | 1 crate-vis | — | The served surface-event drain (OF-218): the one thing that hands each queued inbound event to its actor's… |
+| `src/server/connector_events.rs` | src | s | 2 crate-vis | — | The served surface-event drain (OF-218): the one thing that hands each queued inbound event to its actor's… |
 | `src/server/connector_sends.rs` | src | s | 1 crate-vis | — | The served connector-send drain (OF-187): the one consumer of the `bridge.outbound.schedule` queue that… |
 | `src/server/consult_settle.rs` | src | s | 1 crate-vis | — | Consult settlement on every housekeeping pass (DOOR-063), on every substrate |
 | `src/server/cooperative_deletion.rs` | src | s | 1 crate-vis | — | Delivers queued courtesy deletion asks and answers (OF-273) |
