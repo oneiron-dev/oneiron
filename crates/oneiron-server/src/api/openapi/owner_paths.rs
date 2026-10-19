@@ -1231,7 +1231,7 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "post",
         path: "/recovery-kit/pad-access",
-        summary: "The owner's kit, for this call alone, grants a machine (this install when none is named) every pad object the home keeps, over this install's home connection: the generations offered, usable here and pending with the home.",
+        summary: "The owner's kit, in the named target's own call and for it alone, grants a machine (this install when none is named) every pad object the home keeps, over this install's home connection: the generations offered, usable here and pending with the home.",
         row: None,
     },
     OwnerRoute {
@@ -1267,7 +1267,7 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "post",
         path: "/roots/requests/run",
-        summary: "The target's own call: runs a root request pending here with the kit material its change needs, for this call alone; answers the target's report and its words to this caller only.",
+        summary: "The named target's own call: runs a root request pending here with the kit material its change needs, for this call alone, once the target proves to be this install and a machine the worlds' privacy lets hold their keys; answers the target's report and its words to this caller only.",
         row: None,
     },
     OwnerRoute {

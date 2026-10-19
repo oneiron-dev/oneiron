@@ -21,6 +21,16 @@
 //! A kit is always its pieces (recovery codes) and the passphrase where one
 //! point is the passphrase: the engine rebuilds the seed and checks it, and
 //! no bare seed bytes are taken.
+//!
+//! The recipient rule (Engine 10-19 09:3x, CALLS "owneract kit transport"):
+//! each call names its `target`, and kit material goes only in the body of
+//! that target's own call. The target must be this install, its machine
+//! identity standing here under its own key, and a machine the worlds'
+//! privacy lets hold their keys: one of the owner's own machines (marked
+//! mine) for one-machine and my-machines worlds, the host too on a hosted
+//! vault, and any proven machine where no world keeps its keys off it. An
+//! unproved or disallowed target gets a named refusal before any kit is
+//! parsed ([`kit_target`]).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -30,7 +40,7 @@ use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
-use oneiron::authority::{OwnerWorkRefusal, RequestCode};
+use oneiron::authority::{Destination, OwnerWorkRefusal, RequestCode};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::recovery::{
     KitCoverage, KitIssue, KitPassphrase, KitPiece, KitSecretKind, PassphraseCost, PieceHome,
@@ -41,7 +51,7 @@ use oneiron::world_keys::{
     PadAdmissionTarget, RecoveryRootSeed, RepinReport, RootMaterial, RootRestore, RootSecret,
     RootWorkDone, SealedBundleGeneration, Withheld, WorldKeyId,
 };
-use oneiron::{EntityId, Vault};
+use oneiron::{EntityId, HostingPrivacyPosture, Vault};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -50,6 +60,7 @@ use super::{OwnerReply, blocking, owner};
 use crate::api::json_payload;
 use crate::api::pairing::MachineEnrolment;
 use crate::auth::CoreAuth;
+use crate::error::{ApiError, ApiErrorDetails};
 use crate::owner::recovery_kit::kit_id;
 use crate::owner::vault_key::{WrapView, hex};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
@@ -104,6 +115,8 @@ enum Material {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RunRootRequest {
+    /// The install this call's material is for, 32 hex: this one.
+    target: String,
     /// The pending request, 64 hex: its receipt's `request`.
     request: String,
     material: Material,
@@ -112,6 +125,8 @@ struct RunRootRequest {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PadAccess {
+    /// The install this call's kit is for, 32 hex: this one.
+    target: String,
     /// The kit's pieces, as recovery codes.
     pieces: Vec<String>,
     #[serde(default)]
@@ -119,6 +134,81 @@ struct PadAccess {
     /// The machine to grant, 32 hex; none grants this install.
     #[serde(default)]
     machine: Option<String>,
+}
+
+/// The named refusals of the recipient rule ([`kit_target`]).
+const KIT_TARGET_ELSEWHERE: &str = "kit_target_elsewhere";
+const KIT_TARGET_UNPROVED: &str = "kit_target_unproved";
+const KIT_TARGET_NOT_ALLOWED: &str = "kit_target_not_allowed";
+
+fn kit_target_refused(state: &str, message: &str, suggestion: &str) -> ApiError {
+    ApiError::new(
+        message,
+        ApiErrorDetails::InvalidState {
+            state: Some(state.to_owned()),
+        },
+        [suggestion],
+    )
+}
+
+/// The recipient rule for kit material (CALLS "owneract kit transport"):
+/// `named` must be this install, which must stand here under its own
+/// machine key (its profile names that key), and the worlds' privacy must
+/// let it hold their keys. One of the owner's own machines (its trusted
+/// identity names this install's key) may, for every one-machine and
+/// my-machines world; so may the host of a hosted vault, which this
+/// install is when the vault is hosted; any other proven machine only where
+/// no world's read keeps its key off it. Each refusal is named, and comes
+/// before any kit is read. A policy hook: the verified-destination judge
+/// replaces the world test when it lands (FIX-LIST).
+fn kit_target(server: &SyncServer, named: &str) -> Result<EntityId, ApiError> {
+    let named = EntityId::from_hex(named)
+        .map_err(|_| ApiError::bad_request("target must be a 32-hex machine id", Some("target")))?;
+    let vault = server.vault();
+    let local = vault
+        .local_machine()
+        .map_err(|error| super::owner_error(error.into()))?;
+    let local = match local {
+        Some(local) if local.id == named => local,
+        Some(_) => {
+            return Err(kit_target_refused(
+                KIT_TARGET_ELSEWHERE,
+                "the kit names another install as its target; this install takes no kit for it",
+                "Send the kit to the named install's own call.",
+            ));
+        }
+        None => {
+            return Err(kit_target_refused(
+                KIT_TARGET_UNPROVED,
+                "this install has no machine identity, so it takes no kit",
+                "Enrol this install as one of the vault's machines first.",
+            ));
+        }
+    };
+    if local.profile.is_none() {
+        return Err(kit_target_refused(
+            KIT_TARGET_UNPROVED,
+            "this install's machine identity does not stand here under its own key, so it takes \
+             no kit",
+            "Wait for this install's profile to sync, or enrol it again.",
+        ));
+    }
+    if local.mine || vault.privacy_posture() == HostingPrivacyPosture::Hosted {
+        return Ok(named);
+    }
+    let withheld = vault
+        .authority_fold()
+        .and_then(|fold| fold.worlds_withheld_from(Destination::Machine(named)))
+        .map_err(|error| super::owner_error(error.into()))?;
+    if withheld.is_empty() {
+        return Ok(named);
+    }
+    Err(kit_target_refused(
+        KIT_TARGET_NOT_ALLOWED,
+        "the worlds' privacy keeps their keys on the owner's own machines; this install is not \
+         marked mine",
+        "Send the kit to one of your machines, or mark this machine yours first.",
+    ))
 }
 
 /// A kit as its caller gave it: the pieces, and the passphrase. Wiped on
@@ -206,6 +296,7 @@ async fn run(
 ) -> OwnerReply<RootWorkAnswer> {
     let owner = owner(&auth, &server)?;
     let body = json_payload(payload)?;
+    kit_target(&server, &body.target)?;
     // The enrolment request reads as pairing reads it, before any work.
     let enrolment = match &body.material {
         Material::Anchor { enrolment, .. } => Some(enrolment.request()?),
@@ -546,6 +637,7 @@ async fn pad_access(
 ) -> OwnerReply<PadAccessAnswer> {
     let owner = owner(&auth, &server)?;
     let body = json_payload(payload)?;
+    kit_target(&server, &body.target)?;
     let vault = Arc::clone(&server.vault);
     let (seed, recipient, me) = blocking(
         move || -> OwnerResult<(RecoveryRootSeed, PadAdmissionTarget, EntityId)> {
