@@ -19,7 +19,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/facade/client/agent_verbs.rs` | src | XL | 988 fn | — | — |
 | `src/facade/client/embedded_engine.rs` | src | s | 2 struct · 5 fn | NapiEngineOptions, NativeEngine | The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron… |
 | `src/facade/convert.rs` | src | m | 20 crate-vis | — | DTO to/from engine converters plus the forget paging helper |
-| `src/facade/dtos.rs` | src | L | 61 struct | NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead, NapiCalendarEventView, NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval +53 | All napi(object) DTO structs for the actor-scoped surface |
+| `src/facade/dtos.rs` | src | L | 63 struct | NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead, NapiCalendarEventView, NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval +55 | All napi(object) DTO structs for the actor-scoped surface |
 | `src/facade/input_error.rs` | src | s | 1 crate-vis | — | Typed input refusals for the scoped SDK client, not the legacy bridge |
 | `src/facade/mod.rs` | src | s | 1 re-export · 4 crate-vis | — | BRIDGE-01 (ONE-1454): napi lift of the engine memory facade |
 | `src/facade/numeric.rs` | src | s | 3 crate-vis | — | JavaScript numbers must be validated before N-API can narrow them |
