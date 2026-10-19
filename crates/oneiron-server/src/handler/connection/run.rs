@@ -12,6 +12,7 @@ use super::super::app_tier::{
 };
 use super::super::conn_state::ConnState;
 use super::super::ephemeral::late_join_presence;
+use super::super::protocol_close::internal_fault_close;
 use super::super::socket_stop::StoppingTransport;
 use super::super::transport::GuardedTransport;
 use super::{
@@ -97,6 +98,10 @@ pub(super) async fn handle_connection(
                 reason = "root_snapshot_export_failed",
                 "failed to export root snapshot"
             );
+            // FIX 5849: the server's own fault: closed 1011, no receipt.
+            if protocol::ROOT_EXPORT_FAULT_CLOSES {
+                internal_fault_close(&mut transport, close_codes::EXPORT_FAULT_REASON).await;
+            }
             return;
         }
     }
@@ -695,14 +700,23 @@ pub(super) async fn handle_connection(
                                 reason = "server_export_failed",
                                 "server export failure — closing"
                             );
-                            transport
-                                .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
-                                    code: close_codes::INTERNAL_ERROR,
-                                    reason: Utf8Bytes::from_static(
-                                        close_codes::EXPORT_FAULT_REASON,
-                                    ),
-                                })))
+                            internal_fault_close(&mut transport, close_codes::EXPORT_FAULT_REASON)
                                 .await;
+                            break;
+                        }
+                        // FIX 5850: nor is its own fault reading the state a
+                        // window update's admission judges it by.
+                        ProtocolError::AdmissionReadFailed(_) => {
+                            tracing::error!(
+                                conn_id,
+                                reason = "admission_read_failed",
+                                "server admission read failure — closing"
+                            );
+                            internal_fault_close(
+                                &mut transport,
+                                close_codes::ADMISSION_FAULT_REASON,
+                            )
+                            .await;
                             break;
                         }
                         ProtocolError::Persistence(_) => {
