@@ -201,12 +201,22 @@ names the field and never its value:
 
 - the supervisor's bindings (`SupervisorOwned`): `vault_path`, `host`, `port`,
   `artifact_port`, `auth_secret`, the `oauth_*` fields,
-  `allow_unauthenticated`, `allowed_origins`, `artifact_domains`,
-  `artifact_vault_name`, `trusted_proxies`, `lease_vault_id`,
-  `privacy_posture`, `hosted_kms_key_ref`, `device_class`, every
-  `[models.broker]` key, `[models.voice] socket` and `[keystore] dir`. The
-  supervisor passes the voice loop's socket as `--voice-socket` and the key
-  directory as `--keystore-dir`.
+  `kit_bundle_public_urls`, `allow_unauthenticated`, `allowed_origins`,
+  `artifact_domains`, `artifact_vault_name`, `trusted_proxies`,
+  `lease_vault_id`, `privacy_posture`, `hosted_kms_key_ref`, `device_class`,
+  every `[models.broker]` key, `[models.voice] socket` and `[keystore] dir`.
+  The supervisor passes the voice loop's socket as `--voice-socket`, the key
+  directory as `--keystore-dir`, the host's public https origin as
+  `--oauth-resource-indicator <url>` and the URLs a recovery kit dials as
+  `--kit-bundle-public-urls <url>,<url>` (comma-separated; without it a kit
+  fetch is checked against the origin alone). A vault VM reads those two from
+  the one-line files `/config/oauth-resource-indicator` and
+  `/config/kit-bundle-public-urls` on its config drive. Neither builds an
+  auth layer: `--oauth-issuer` and `--oauth-jwks-uri` stay refused. The
+  tables of these leaves and of the `EnvironmentSecret` ones below, and the
+  rule that matches a field against them (`*` is any one key), are
+  `SUPERVISOR_OWNED`, `ENVIRONMENT_KEYS` and `matches_any` in
+  `oneiron_vault_contract::settings_policy`, which the supervisor reads too.
 - a key named by an environment variable (`EnvironmentSecret`): a provider's
   or System One's `key_env`, both embedder `api_key_env` keys, `[gpu]
   api_key_env`, `[runtime] byo_key_env`, and a `byo_cloud_key` runtime mode,
@@ -1390,16 +1400,21 @@ A call opens with one JSON line:
   slip:
   `{"op":"hello","managed_owner":{"holder_ref":"..","mac":".."},"issued_at":..,"sample_rate":16000,"channels":1}`.
   `managed_owner` is the supervisor's `ManagedOwnerAction` for the vault's
-  owner, signed with `ManagedOwnerRequest::voice(room, roster, issued_at)`:
-  method `VOICE`, path `/voice`, the hello's `room` and `roster` (empty when
-  absent) as the first two bound values, and `issued_at` (Unix seconds) as
-  eight big-endian body bytes. The vault takes each attestation once, within
-  60 seconds of its `issued_at`. The call then runs as that person off-device,
-  while the owner door still names them the vault's live owner (checked again
-  every five seconds). Each call is admitted like a served write, so a frozen
-  vault takes no call, and a call in flight keeps a reap from finding the
-  vault quiescent. A slip hello on a managed vault, or a managed hello on a
-  plain one, is refused.
+  owner, signed with `ManagedOwnerRequest::voice(room, roster, issued_at)`.
+  The transcript is v2: a keyed BLAKE3 under a key derived from the spawn
+  token with the domain `oneiron/managed-account-owner/v2`, over the vault
+  name, `holder_ref`, the method, the path, the raw query (right after the
+  path), the three bound values and the body, each prefixed with its length
+  as eight big-endian bytes. A voice hello signs method `VOICE`, path
+  `/voice`, an empty query, the hello's `room` and `roster` (empty when
+  absent) as the first two bound values with the third empty, and
+  `issued_at` (Unix seconds) as eight big-endian body bytes. The vault takes
+  each attestation once, within 60 seconds of its `issued_at`. The call then
+  runs as that person off-device, while the owner door still names them the
+  vault's live owner (checked again every five seconds). Each call is
+  admitted like a served write, so a frozen vault takes no call, and a call
+  in flight keeps a reap from finding the vault quiescent. A slip hello on a
+  managed vault, or a managed hello on a plain one, is refused.
 
 After that the stream carries:
 - **the transcript ops** (`open`, `partial`, `final`, `close`);

@@ -70,6 +70,27 @@ pub const MANAGED_OWNER_BOUND_HEADERS: [&str; 3] = [
     "x-oneiron-session",
 ];
 
+/// The derived-id domain of the embedded owner, the person a personal vault
+/// holds from its first open. It must stay the same text as the engine's
+/// `EMBEDDED_OWNER_ACTOR` (oneiron-contracts `entity_id::derived_domains`):
+/// managed boot refuses to start when the two ids disagree.
+const EMBEDDED_OWNER_DOMAIN: &str = "oneiron 2026-08 embedded-owner-actor v1";
+
+/// The embedded owner's holder id as 32 lowercase hex characters: the
+/// `holder_ref` a supervisor names a personal vault's owner by in a
+/// [`ManagedOwnerAction`]. Computed as the engine's derived-id rule computes
+/// it: a BLAKE3 key derivation over the owner's domain with no parts, its
+/// first 16 bytes, then the id's version and variant bits.
+#[must_use]
+pub fn embedded_owner_holder_hex() -> String {
+    let digest = blake3::Hasher::new_derive_key(EMBEDDED_OWNER_DOMAIN).finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest.as_bytes()[..16]);
+    bytes[6] = (bytes[6] & 0x0F) | 0x80;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+    super::hex(&bytes)
+}
+
 /// The one request a [`ManagedOwnerAction`] covers.
 #[derive(Debug, Clone, Copy)]
 pub struct ManagedOwnerRequest<'a> {

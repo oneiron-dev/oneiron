@@ -70,6 +70,13 @@ if [ "$config" = "1" ]; then
   if [ -f /config/seal/signing-url ]; then
     set -- "$@" --seal-signing-url "$(head -n 1 /config/seal/signing-url)"
   fi
+  # The host's public addresses, which the supervisor owns: its https origin,
+  # and the comma-separated URLs a recovery kit dials.
+  for flag in oauth-resource-indicator kit-bundle-public-urls; do
+    if [ -f "/config/$flag" ]; then
+      set -- "$@" "--$flag" "$(head -n 1 "/config/$flag")"
+    fi
+  done
 fi
 
 # The credential frame and the ready byte ride the vsock boot port; the host

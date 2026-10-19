@@ -4,62 +4,23 @@
 //! The file is the one layer a managed vault reads settings from, and it is
 //! read once, before anything uses the configuration. Before any file it
 //! names is read, it is refused leaf by leaf: a leaf the supervisor owns, a
-//! key named by an environment variable and a key the schema does not have
-//! are refused by presence alone, and every owner path must lie in this
-//! vault's own storage. The rest is settled over the configuration argv
-//! built, through the config file's own apply and validators
-//! ([`crate::config::merge::settle_managed_settings`]). Nothing here reads
-//! the environment, HOME or a default config path.
+//! key named by an environment variable (the contract's tables in
+//! [`oneiron_vault_contract::settings_policy`], which the supervisor reads
+//! too) and a key the schema does not have are refused by presence alone,
+//! and every owner path must lie in this vault's own storage. The rest is
+//! settled over the configuration argv built, through the config file's own
+//! apply and validators ([`crate::config::merge::settle_managed_settings`]).
+//! Nothing here reads the environment, HOME or a default config path.
 
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context as _;
+use oneiron_vault_contract::settings_policy::{ENVIRONMENT_KEYS, SUPERVISOR_OWNED, matches_any};
 
 use crate::config::merge::{settings_schema_keys, settle_managed_settings};
 use crate::config::{EmbedderProvider, KeystoreBackend, ServeArgs, ServeConfig};
 
 use super::args::{ManagedArgs, ManagedError, SettingsRefusal};
-
-/// The leaves the supervisor owns, as dotted fields (`*` is any one key): the
-/// listener, ingress and auth, the tenant's identity, posture and custody,
-/// the machine's declared class, the credential broker's process and roots,
-/// the voice loop's socket and the key directory.
-const SUPERVISOR_OWNED: &[&str] = &[
-    "vault_path",
-    "host",
-    "port",
-    "artifact_port",
-    "auth_secret",
-    "oauth_issuer",
-    "oauth_jwks_uri",
-    "oauth_resource_indicator",
-    "kit_bundle_public_urls",
-    "allow_unauthenticated",
-    "allowed_origins",
-    "artifact_domains",
-    "artifact_vault_name",
-    "trusted_proxies",
-    "lease_vault_id",
-    "privacy_posture",
-    "hosted_kms_key_ref",
-    "device_class",
-    "models.broker.socket",
-    "models.broker.uid",
-    "models.broker.program",
-    "models.broker.extra_roots",
-    "models.voice.socket",
-    "keystore.dir",
-];
-
-/// The leaves that name a key by the environment variable holding it.
-const ENVIRONMENT_KEYS: &[&str] = &[
-    "runtime.byo_key_env",
-    "embedder.api_key_env",
-    "embedder.remote.api_key_env",
-    "gpu.api_key_env",
-    "models.providers.*.key_env",
-    "models.decisions.system_one.key_env",
-];
 
 /// The leaves that name a file or directory the server reads or writes. An
 /// array's items are its own leaf's.
@@ -273,17 +234,6 @@ fn visit_value(
             .try_for_each(|item| visit_value(item, field, check)),
         _ => Ok(()),
     }
-}
-
-/// Whether `field` is one of `patterns`, dotted fields where `*` is any key.
-fn matches_any(field: &[String], patterns: &[&str]) -> bool {
-    patterns.iter().any(|pattern| {
-        pattern.split('.').count() == field.len()
-            && pattern
-                .split('.')
-                .zip(field)
-                .all(|(segment, key)| segment == "*" || segment == key.as_str())
-    })
 }
 
 /// The vault's data directory and the settings file's own directory, links

@@ -1079,7 +1079,7 @@ impl PartialServeConfig {
             resolved.failure_signal_export = Some(value);
         }
         if let Some(value) = self.failure_signal_training {
-            resolved.failure_signal_training = value;
+            resolved.failure_signal_training = Some(value);
         }
         if let Some(value) = self.privacy_posture {
             resolved.privacy_posture = value;
@@ -1116,7 +1116,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             oauth_issuer: value.oauth_issuer.clone(),
             oauth_jwks_uri: value.oauth_jwks_uri.clone(),
             oauth_resource_indicator: value.oauth_resource_indicator.clone(),
-            kit_bundle_public_urls: None,
+            kit_bundle_public_urls: value.kit_bundle_public_urls.clone(),
             allow_unauthenticated: value.insecure_allow_unauthenticated,
             allowed_origins: value.allowed_origins.clone(),
             artifact_domains: value.artifact_domains.clone(),

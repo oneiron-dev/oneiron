@@ -39,7 +39,9 @@ pub const COMM_PROJECTED_CLAIM: &[u8] = b"oneiron.comm.projected_claim.v1\0";
 pub const CONNECTOR_ACTOR: &[u8] = b"oneiron.connector_actor.v0\0";
 
 /// The embedded default owner actor (`vault::embedded_owner_actor_id`, ONE-1441
-/// WIRE-P1). No parts.
+/// WIRE-P1). No parts. It must stay the same text as the domain behind
+/// `oneiron_vault_contract::embedded_owner_holder_hex`, the supervisor's copy
+/// of this id: managed boot refuses to start when the two ids disagree.
 pub const EMBEDDED_OWNER_ACTOR: &[u8] = b"oneiron 2026-08 embedded-owner-actor v1";
 
 /// A named agent principal the owner mints a credential for
