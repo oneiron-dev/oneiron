@@ -39,6 +39,25 @@ pub(super) fn authorization(value: &[u8]) -> oneiron::Result<HeaderValue> {
     Ok(header)
 }
 
+/// The two blocking HTTPS clients a connector-send worker keeps across its
+/// passes, so a pass builds none: the served sink's and the calendar
+/// submission's, each with its own timeouts. Build them on a blocking thread.
+pub(crate) struct CalendarSendClients {
+    ordinary: reqwest::blocking::Client,
+    calendar: reqwest::blocking::Client,
+}
+
+impl CalendarSendClients {
+    pub(crate) fn new() -> oneiron::Result<Self> {
+        Ok(Self {
+            ordinary: ServedChannelSink::client()?,
+            calendar: client().map_err(|_| {
+                oneiron::Error::InvalidConfig("calendar send client unavailable".into())
+            })?,
+        })
+    }
+}
+
 /// Extends the existing served sink, rather than running a second executor.
 pub(crate) struct CalendarChannelSink<'a> {
     vault: &'a Vault,
@@ -47,14 +66,18 @@ pub(crate) struct CalendarChannelSink<'a> {
 }
 
 impl<'a> CalendarChannelSink<'a> {
-    pub(crate) fn new(vault: &'a Vault, line_push_allowance: u32) -> oneiron::Result<Self> {
-        Ok(Self {
+    /// One pass's sink, sending on clones of the worker's kept clients.
+    pub(crate) fn new(
+        vault: &'a Vault,
+        line_push_allowance: u32,
+        clients: &CalendarSendClients,
+    ) -> Self {
+        Self {
             vault,
-            ordinary: ServedChannelSink::new(vault)?.with_line_push_allowance(line_push_allowance),
-            client: client().map_err(|_| {
-                oneiron::Error::InvalidConfig("calendar send client unavailable".into())
-            })?,
-        })
+            ordinary: ServedChannelSink::with_client(vault, clients.ordinary.clone())
+                .with_line_push_allowance(line_push_allowance),
+            client: clients.calendar.clone(),
+        }
     }
 
     fn invite(&self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
