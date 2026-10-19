@@ -63,8 +63,11 @@ enum CustodyCarrierPendingFloor {
     /// takes, which judges signature, request, permits, revoke, local, name
     /// and floor again in the committing transaction. A value this machine
     /// cannot open yet leaves it pending; a later carrier supersedes it; an
-    /// admitted revoke drops it. No queue is kept: the kept carriers and
-    /// the record held decide what is pending.
+    /// admitted revoke drops it. One whose name another record here holds
+    /// stays pending too, but its value is not opened while the name is
+    /// held: each pass judges the name again first, by the rule the apply
+    /// binds it by (FIX 5408). No queue is kept: the kept carriers and the
+    /// record held decide what is pending.
     ApplyWhenFloorAdmits,
 }
 
@@ -165,7 +168,8 @@ pub(super) fn rebind_held_in_txn(
 /// record pending here that the live floor now admits (CALLS
 /// CUSTODY_CARRIER_PENDING_FLOOR): live, standing on `fold`, sealed to
 /// `this` machine, of a portable record this vault does not hold or holds
-/// live at an earlier generation and status. Reads no value.
+/// live at an earlier generation and status, under a name the apply would
+/// bind to it (FIX 5408). Reads no value.
 #[cfg(feature = "sync")]
 fn pending_carrier_in_txn(
     vault: &Vault,
@@ -202,7 +206,14 @@ fn pending_carrier_in_txn(
         CustodyCarrierPendingFloor::ApplyWhenFloorAdmits => Ok(
             super::super::refuse_bindings_wider_than_live_floor(&vault.store, txn, &carried)
                 .is_ok()
-                && transition.verify(fold).is_ok(),
+                && transition.verify(fold).is_ok()
+                && super::super::doors::can_bind_synced_name_in_txn(
+                    &vault.store,
+                    txn,
+                    &carried.name,
+                    &transition.id,
+                    transition.generation,
+                )?,
         ),
     }
 }
@@ -249,9 +260,11 @@ impl Vault {
     /// this vault keeps and its fold, then again in one writer transaction
     /// through the same path a carrier's arrival takes, a rebind's request
     /// kept as taken in that commit. A carrier's value is opened before that
-    /// transaction, and the keystore is read only when one waits on it. The
-    /// custody pass after an authority catch-up and on the served tick runs
-    /// it. Returns how many records it wrote.
+    /// transaction, and the keystore is read only when one waits on it: a
+    /// carrier whose name another record here holds stays pending unopened,
+    /// and is judged again on the next pass (FIX 5408). The custody pass
+    /// after an authority catch-up and on the served tick runs it. Returns
+    /// how many records it wrote.
     #[cfg(feature = "sync")]
     pub(crate) fn apply_pending_rebinds(&self) -> Result<usize> {
         let (rebinds, carriers, vault_id) = {

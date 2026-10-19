@@ -37,9 +37,12 @@ use crate::error::ApiError;
 use crate::owner::{OwnerError, OwnerResult, entity_id, secrets};
 use crate::server::SyncServer;
 
-/// The largest sealed change body read: a 4 MiB input envelope, the most
-/// the engine takes, in base64, with its binding fields.
-const SEALED_BODY_LIMIT: usize = 6 << 20;
+/// The largest sealed change body read: one input envelope at its codec's
+/// own bound (16 MiB of plaintext with its header and tag), in base64, with
+/// its binding fields. The engine carries an input past one row's bound in
+/// numbered parts and refuses none for its length (FIX 5445), so only the
+/// envelope codec bounds what a surface sends.
+const SEALED_BODY_LIMIT: usize = 24 << 20;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
