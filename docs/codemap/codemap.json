@@ -16590,7 +16590,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 15,
+      "fn": 16,
       "struct": 4
      }
     },
@@ -19074,8 +19074,27 @@
      "path": "src/disclosure/mod.rs",
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)",
      "surface": {
-      "crate-vis": 5,
-      "re-export": 7
+      "crate-vis": 6,
+      "re-export": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DisclosureBand",
+      "DisclosureCeilingRequest",
+      "DisclosureCeilingSet",
+      "DisclosureCeilingView",
+      "DisclosureDataClass"
+     ],
+     "path": "src/disclosure/model_channel.rs",
+     "purpose": "The model connection is a disclosure audience, not a read grant",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 2,
+      "fn": 5,
+      "struct": 3
      }
     },
     {
@@ -43953,7 +43972,7 @@
      "purpose": "A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection)",
      "surface": {
       "const": 7,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 5,
       "fn": 3,
       "re-export": 1,
@@ -43975,7 +43994,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/reveal/agent.rs",
@@ -44002,6 +44021,16 @@
      "purpose": "The owner's doors: the asks and receipts, the answer to one ask, and the owner's own read of a value",
      "surface": {
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/reveal/person.rs",
+     "purpose": "PERSON handles use the reveal consent machine, not custody or a T1 lease",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -53240,13 +53269,19 @@
      "kind": "src",
      "notable": [
       "DisclosureOfferRequest",
-      "DisclosureOffered"
+      "DisclosureOffered",
+      "RevealAnswerRequest",
+      "RevealAnsweredView",
+      "RevealAskView",
+      "RevealAsksRequest",
+      "RevealOutcome"
      ],
      "path": "src/task_verb/sdk_disclosure.rs",
      "purpose": "`vault.disclosure.offer`: an agent OFFERS the owner a contact clearance (OF-365, the ILDF2 consent channel)",
      "surface": {
-      "fn": 1,
-      "struct": 2
+      "enum": 1,
+      "fn": 3,
+      "struct": 6
      }
     },
     {
@@ -53389,7 +53424,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1041
+      "fn": 1046
      }
     },
     {
@@ -53997,9 +54032,9 @@
       "RevealWaitRequest"
      ],
      "path": "src/task_verb/sdk_secret.rs",
-     "purpose": "`reveal`, `reveal.wait` and `reveal.describe`: an agent asks for a secret's value by its handle (OF-560…",
+     "purpose": "`reveal`, `reveal.wait` and `reveal.describe`: an agent asks for a secret or person's value by its handle…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 7,
       "struct": 8
@@ -60132,7 +60167,7 @@
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
     "disclosure": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -60818,7 +60853,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61198,7 +61233,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3727,
+   "source_files": 3729,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69856,7 +69891,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1012
+      "fn": 1017
      }
     },
     {
@@ -70952,7 +70987,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1013
+      "fn": 1018
      }
     },
     {
@@ -74340,6 +74375,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/disclosure_doors.rs",
+     "purpose": "Owner registry and reveal-settlement doors, shared by HTTP and MCP",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
@@ -74506,7 +74551,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 164
+      "crate-vis": 165
      }
     },
     {
@@ -82654,7 +82699,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 429,
+     "files": 430,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -83083,7 +83128,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 786,
+   "source_files": 787,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -84310,7 +84355,12 @@
       "DirectionOutcome",
       "DirectionSlide",
       "DiscardedProposal",
+      "DisclosureBand",
       "DisclosureBoundRequest",
+      "DisclosureCeilingRequest",
+      "DisclosureCeilingSet",
+      "DisclosureCeilingView",
+      "DisclosureDataClass",
       "DisclosureEnvelopeRequest",
       "DisclosureOfferRequest",
       "DisclosureOffered",
@@ -85821,9 +85871,14 @@
       "RetrievalWeightsReceipt",
       "RetrievalWeightsView",
       "RetryableLlmError",
+      "RevealAnswerRequest",
+      "RevealAnsweredView",
+      "RevealAskView",
+      "RevealAsksRequest",
       "RevealDecision",
       "RevealDescribeRequest",
       "RevealHandleCard",
+      "RevealOutcome",
       "RevealPending",
       "RevealProvenance",
       "RevealReceipt",
@@ -86700,8 +86755,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 816,
-      "struct": 2600
+      "enum": 819,
+      "struct": 2607
      }
     },
     {
