@@ -5868,6 +5868,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.workflows.dispatch_bound",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WorkflowBoundDispatchRequest,
+                >(),
+            ),
+            (
                 "self.leader.advice",
                 crate::code_run::vault_read::request_schema::<crate::code_run::LeaderAdviceInput>(),
             ),

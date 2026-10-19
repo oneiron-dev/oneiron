@@ -9,9 +9,11 @@ use crate::compaction::output::OutputRef;
 use crate::context_projection::ContextSpec;
 use crate::context_projection::WorkflowOutputContextRef;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
+use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
+use crate::write_envelope::WriteActor;
 use serde::{Deserialize, Serialize};
 
 /// Durable saved-composition record for one inert multi-step workflow wrapper
@@ -94,35 +96,41 @@ pub(super) struct WorkflowIntent {
     /// it against the real parent; a retry naming another is another intent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comm: Option<super::CommReach>,
-    /// The TASK this run realizes and the owner who bound it (FIX 4391).
-    /// Only the wrapper carries the backlink; a retry naming another TASK,
-    /// or none, is another intent.
+    /// The TASK this run realizes and the actor who bound it (FIX 4391,
+    /// FIX 5316). Only the wrapper carries the backlink; a retry naming
+    /// another TASK, or none, is another intent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<WorkflowTaskBinding>,
 }
 
-/// A run's binding to the TASK it realizes: the TASK and the owner whose
-/// Owner standing admitted it, as hex.
+/// A run's binding to the TASK it realizes: the TASK and the actor whose
+/// Owner standing admitted it, as hex, and that actor's class byte, which
+/// the wrapper's take, fence, settlement and report run under: an owner's
+/// Human, an agent's Agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct WorkflowTaskBinding {
     pub task_ref: String,
     pub bound_by: String,
+    pub bound_class: u8,
 }
 
 impl WorkflowTaskBinding {
-    pub(super) fn new(task: crate::EntityId, bound_by: crate::EntityId) -> Self {
+    pub(super) fn new(task: crate::EntityId, bound_by: WriteActor) -> Self {
         Self {
             task_ref: task.to_hex(),
-            bound_by: bound_by.to_hex(),
+            bound_by: bound_by.entity_ref().to_hex(),
+            bound_class: bound_by.actor_class() as u8,
         }
     }
 
-    /// The TASK and the owner who bound it.
-    pub(super) fn ids(&self) -> Result<(crate::EntityId, crate::EntityId)> {
+    /// The TASK and the actor who bound it, under its class.
+    pub(super) fn ids(&self) -> Result<(crate::EntityId, WriteActor)> {
+        let class = EdgeActorClass::try_from_u8(self.bound_class)
+            .ok_or_else(|| invalid("workflow TASK binding names no actor class"))?;
         Ok((
             crate::EntityId::from_hex(&self.task_ref)?,
-            crate::EntityId::from_hex(&self.bound_by)?,
+            WriteActor::new(crate::EntityId::from_hex(&self.bound_by)?, class),
         ))
     }
 }
