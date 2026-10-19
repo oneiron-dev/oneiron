@@ -1,9 +1,12 @@
 //! Fail-closed Linux fscrypt and root-owned UID allocation probes.
+//!
+//! The supervisor provisions the root-owned one-to-one UID allocation table;
+//! its path, file shape and row codec are the contract's
+//! [`oneiron_vault_contract::vault_uids`], which the supervisor writes with.
 use std::path::Path;
-/// The supervisor provisions this root-owned one-to-one allocation table.
-/// Rows are `uid<TAB>vault-name<TAB>canonical-data-directory`.
-#[cfg(target_os = "linux")]
-const UID_REGISTRY: &str = "/etc/oneiron/vault-uids";
+
+#[cfg(any(target_os = "linux", test))]
+use oneiron_vault_contract::vault_uids;
 /// What the probe proved, about the one directory object it holds open.
 #[derive(Debug)]
 pub(super) struct IsolationEvidence {
@@ -93,15 +96,21 @@ pub(super) fn probe(path: &Path, name: &str) -> IsolationEvidence {
         let registry = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW)
-            .open(UID_REGISTRY)
+            .open(vault_uids::PATH)
             .ok()?;
         let meta = registry.metadata().ok()?;
-        if !meta.is_file() || meta.uid() != 0 || meta.mode() & 0o022 != 0 || meta.len() > 1_048_576
+        if !meta.is_file()
+            || meta.uid() != vault_uids::OWNER_UID
+            || meta.mode() & vault_uids::REFUSED_MODE_BITS != 0
+            || meta.len() > vault_uids::MAX_BYTES
         {
             return None;
         }
         let mut text = String::new();
-        registry.take(1_048_577).read_to_string(&mut text).ok()?;
+        registry
+            .take(vault_uids::MAX_BYTES + 1)
+            .read_to_string(&mut text)
+            .ok()?;
         Some(uid_binding_matches(&text, uid, name, &canonical))
     };
     IsolationEvidence {
@@ -121,28 +130,12 @@ pub(super) fn probe(_path: &Path, _name: &str) -> IsolationEvidence {
         directory: None,
     }
 }
+/// Whether `table`, the UID table's text, allocates `uid` to `name` at
+/// `path` one to one ([`vault_uids::binding_matches`]). A table that does
+/// not parse allocates nothing.
 #[cfg(any(target_os = "linux", test))]
 fn uid_binding_matches(table: &str, uid: u32, name: &str, path: &Path) -> bool {
-    let mut matched = 0;
-    for line in table
-        .lines()
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-    {
-        let parts: Vec<_> = line.split('\t').collect();
-        if parts.len() != 3 {
-            return false;
-        }
-        let Ok(row_uid) = parts[0].parse::<u32>() else {
-            return false;
-        };
-        if row_uid == uid || parts[1] == name || Path::new(parts[2]) == path {
-            if row_uid != uid || parts[1] != name || Path::new(parts[2]) != path {
-                return false;
-            }
-            matched += 1;
-        }
-    }
-    matched == 1
+    vault_uids::parse(table).is_ok_and(|rows| vault_uids::binding_matches(&rows, uid, name, path))
 }
 #[cfg(test)]
 mod tests {
