@@ -1,10 +1,10 @@
-//! Shared, bounded PDF revision discovery from the actual xref /Prev chain.
-//! Marker-looking bytes in streams never create extra revisions.
-use crate::api::SealResourceLimits;
+//! Shared PDF revision discovery from the actual xref /Prev chain.
+//! Marker-looking bytes in streams never create extra revisions. A chain of
+//! any length is followed whole; its length, the prefix bytes it parsed and
+//! each classic section's tokens go to the invocation's counts (Rule 5).
+use crate::api::{Counter, STREAM_DECODE_BYTES, SealResourceLimits};
 use lopdf::{Document, LoadOptions, Object};
 
-const MAX_REVISIONS: usize = 32;
-const MAX_PREFIX_WORK: usize = 2 * 1024 * 1024 * 1024;
 fn eol(b: u8) -> bool {
     matches!(b, b'\r' | b'\n')
 }
@@ -58,16 +58,19 @@ pub(crate) fn file_tail_covered(bytes: &[u8], covers_to: u64) -> bool {
         .is_some_and(|s| s.len() <= 4 && s.iter().all(|b| eol(*b)))
 }
 
+/// A strict snapshot, each stream decoded under the per-stream codec bound,
+/// and refused only past the ISO object bound.
 pub(crate) fn load_snapshot(bytes: &[u8], limits: &SealResourceLimits) -> Option<Document> {
     let doc = Document::load_mem_with_options(
         bytes,
         LoadOptions {
             strict: true,
-            max_decompressed_size: Some(limits.max_input_bytes),
+            max_decompressed_size: Some(STREAM_DECODE_BYTES),
             ..LoadOptions::default()
         },
     )
     .ok()?;
+    limits.observed.note(Counter::PdfObjects, doc.objects.len());
     (doc.objects.len() <= limits.max_pdf_objects).then_some(doc)
 }
 
@@ -132,13 +135,26 @@ fn find_end(
 }
 
 /// Bind a classic xref's decoded trailer name to the shared PDF lexer.
-fn table_prev(bytes: &[u8], xref: usize, marker: usize) -> Option<Option<usize>> {
-    super::lex::table_prev(bytes.get(xref..marker)?).ok()
+fn table_prev(
+    bytes: &[u8],
+    xref: usize,
+    marker: usize,
+    limits: &SealResourceLimits,
+) -> Option<Option<usize>> {
+    let (prev, work) = super::lex::table_prev_work(bytes.get(xref..marker)?).ok()?;
+    limits.observed.note(Counter::StructuralWork, work);
+    Some(prev)
 }
 
-fn section_prev(doc: &Document, bytes: &[u8], xref: usize, marker: usize) -> Option<Option<usize>> {
+fn section_prev(
+    doc: &Document,
+    bytes: &[u8],
+    xref: usize,
+    marker: usize,
+    limits: &SealResourceLimits,
+) -> Option<Option<usize>> {
     if bytes.get(xref..xref + 4) == Some(b"xref".as_slice()) {
-        return table_prev(bytes, xref, marker);
+        return table_prev(bytes, xref, marker, limits);
     }
     // For an xref stream the /Prev is in that stream object's parsed dict.
     let stream = doc
@@ -176,16 +192,12 @@ pub(crate) fn revision_ends(
     let mut final_section = true;
     let mut work = 0usize;
     loop {
-        if ends.len() >= MAX_REVISIONS {
-            return None;
-        }
         let (end, marker, parsed) = find_end(bytes, xref, stop, limits, final_section)?;
-        work = work.checked_add(end)?;
-        if work > MAX_PREFIX_WORK {
-            return None;
-        }
+        work = work.saturating_add(end);
         ends.push(end);
-        let Some(prev) = section_prev(&parsed, bytes, xref, marker)? else {
+        limits.observed.note(Counter::Revisions, ends.len());
+        limits.observed.note(Counter::PrefixBytes, work);
+        let Some(prev) = section_prev(&parsed, bytes, xref, marker, limits)? else {
             break;
         };
         if prev >= xref || end <= prev {

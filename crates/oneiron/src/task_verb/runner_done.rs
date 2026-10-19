@@ -114,7 +114,20 @@ pub fn runner_done_question(
     if vault.get_entity_type_in_txn(&txn, &result_ref)?.is_none() {
         return Ok(None);
     }
-    let Some(body) = task_verb_body_in(vault, &txn, task_ref)? else {
+    done_question_in(vault, &txn, task_ref, result_ref)
+}
+
+/// The question a Done on `task_ref` with the durable `result_ref` asks, in
+/// `txn`: a leased runner's, or an ended workflow run's over its report NOTE
+/// (FIX 4391). `None` when it asks none: no brief, or an ask already holds
+/// the TASK.
+pub(super) fn done_question_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+    result_ref: EntityId,
+) -> Result<Option<RunnerDoneQuestion>> {
+    let Some(body) = task_verb_body_in(vault, txn, task_ref)? else {
         return Ok(None);
     };
     if matches!(&body.state, Some(TaskExecutionState::Blocked { on, .. }) if !on.is_empty()) {
@@ -125,7 +138,7 @@ pub fn runner_done_question(
     };
     // The principal the report asks for; a TASK with no authority row asks
     // up in the report.
-    let Some(authority) = vault.task_authority_state_in(&txn, task_ref)? else {
+    let Some(authority) = vault.task_authority_state_in(txn, task_ref)? else {
         return Ok(None);
     };
     let (evidence, state) = done_question_inputs(task_ref, result_ref, &brief);

@@ -194,6 +194,7 @@ pack_script_output_rows = 16      # inbound events, verbs or connector events on
 attempt_manifest_entries = 65536  # entries in one attempt's pack manifest; past it the row asks and every entry is kept
 attempt_cancel_receipts = 4096    # receipts in one attempt's cancel protocol history; past it the row asks and every receipt is kept
 attempt_retry_tip_rows = 16384    # attempt rows one retry-tip walk visits along a retry lineage; past it the row asks and the whole lineage is still read
+workflow_steps = 1024             # steps in one saved workflow, at its save, update and dispatch; past it the row asks and every step is kept
 judge_rubric_bytes = 8192         # bytes of the judge rubric (the judge skill's text) one judgment or label re-check reads; past it the rubric is read whole and the row asks
 judge_instructions_bytes = 8192   # bytes of skill instructions one held-out replay judgment reads; past it they are read whole and the row asks
 judge_replay_text_bytes = 40000   # bytes of replay text (runs' tasks and responses) one replay judgment's state carries; past it the replays ride whole and the row asks
@@ -223,6 +224,16 @@ esign_signature_input_bytes = 2097152 # bytes of one uploaded signature image; p
 esign_signature_png_bytes = 2097152 # bytes of one signature image's canonical PNG; past it the image is stored and bound and the envelope's sender is asked
 esign_signature_document_bytes = 67108864 # canonical signature image bytes one signing document holds; past it the image is stored and bound and the envelope's sender is asked
 esign_signature_recipient_images = 16 # signature images one recipient holds; past it the image is stored and bound and the envelope's sender is asked
+seal_output_bytes = 100663296     # bytes of one sealed PDF the seal host accepted; past it the sealed PDF is kept whole and the row asks
+seal_growth_bytes = 33554432      # bytes one seal adds to its prepared PDF (signature, validation material, timestamps); past it the sealed PDF is kept whole and the row asks
+seal_pdf_objects = 1000000        # objects of one PDF snapshot the seal parses; past it the PDF is sealed whole and the row asks (ISO 32000-1's 8,388,607 still refuses)
+seal_raw_definitions = 1000000    # raw object definitions in one revision the seal analyzes; past it every definition is accounted for and the row asks
+seal_call_frame_bytes = 67108864  # bytes of the largest frame the seal host sends its organ in one call, as encoded; past it the frame is sent whole and the row asks
+seal_reply_frame_bytes = 101711872 # bytes of the largest frame the seal organ sends back in one call (97 MiB on macOS, where the sealed PDF rides inline; 64 MiB, 67108864, elsewhere); past it the frame is read whole and the row asks
+seal_structural_work = 8000000    # tokens one structural pass of the seal lexes (a revision analysis or a classic xref section); past it the pass runs to its end and the row asks
+seal_revisions = 32               # revisions in the xref chain of a PDF the seal reads; past it every revision is followed and the row asks
+seal_prefix_bytes = 2147483648    # prefix bytes one seal pass over a revision chain parses, summed over its revisions; past it every prefix is parsed and the row asks
+seal_dss_decode_bytes = 268435456 # bytes one extraction of a PDF's DSS material decodes in all; past it the material is read whole and the row asks (one stream still decodes to at most 256 MiB)
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

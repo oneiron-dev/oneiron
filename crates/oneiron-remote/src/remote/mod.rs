@@ -275,6 +275,18 @@ impl RemoteClient {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = receipt_ref;
     }
 
+    /// Notes the receipt a reply's header states: its `call:<32hex>` ref, or
+    /// none for a reply that states none or the no-record exception.
+    fn note_reply_receipt(&self, headers: &HeaderMap) {
+        self.note_receipt_ref(
+            headers
+                .get(RECEIPT_REF_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .filter(|value| value.starts_with(RECEIPT_REF_PREFIX))
+                .map(str::to_owned),
+        );
+    }
+
     /// POSTs one facade verb as a new logical call, under a fresh invocation
     /// id, and decodes its typed response.
     pub(crate) fn call<Q: Serialize, R: DeserializeOwned>(
@@ -338,18 +350,22 @@ impl RemoteClient {
     /// `POST /v1/core/lens-frames/{card_id}/events` (OF-181): one event on a
     /// card this server rendered, under this handle's credential and room
     /// turn. A deterministic tool the event validates to dispatches its verb
-    /// under the same headers.
+    /// under the same headers, and the reply's receipt is that verb's call
+    /// receipt (FIX 2887), noted for `last_receipt_ref` on success and
+    /// refusal alike.
     pub(crate) fn lens_frame_event(
         &self,
         card_id: &str,
         request: &crate::LensFrameEventRequest,
     ) -> Result<crate::LensFrameEventReply, MemoryError> {
+        self.note_receipt_ref(None);
         let url = self.lens_frame_url(card_id, true)?;
         let body = serialize_request(request)?;
         let mut headers = self.turn_headers()?;
         accept_json(&mut headers);
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         let reply = self.send(Method::POST, url, headers, Some(body), false)?;
+        self.note_reply_receipt(&reply.headers);
         let status = reply.status;
         // A model round trip answers 202 with its queued callback. Any other
         // 202 is a refusal as on a verb: a verb hook the dispatched tool met
@@ -384,10 +400,12 @@ impl RemoteClient {
         &self,
         card_id: &str,
     ) -> Result<crate::CloseLensFrameReply, MemoryError> {
+        self.note_receipt_ref(None);
         let url = self.lens_frame_url(card_id, false)?;
         let mut headers = self.turn_headers()?;
         accept_json(&mut headers);
         let reply = self.send(Method::DELETE, url, headers, None, false)?;
+        self.note_reply_receipt(&reply.headers);
         let status = reply.status;
         if !status.is_success() {
             return Err(read_error_envelope(reply.body, status));

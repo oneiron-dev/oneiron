@@ -52,6 +52,12 @@ import type {
 export interface LensFrameEventRequest {
   readonly event: Facade.GeneratedUiActionEvent
   readonly idempotencyKey: string
+  /**
+   * Selections this handle made on the card, each the `selectionRef`
+   * `vault.lenses.select` answered (FIX 3268): context for a model round
+   * trip, never approval or action authority; any other action ignores it.
+   */
+  readonly selectedContext?: readonly string[]
 }
 
 /**
@@ -2223,8 +2229,8 @@ export class Oneiron {
       backfill: (input: Facade.QuestionBackfillRequest): Facade.ScheduledBackfill => this.#call(() => this.#client.vaultQuestionsBackfill(input) as Facade.ScheduledBackfill),
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
       answers: (input: Facade.QuestionAnswersRequest): Facade.QuestionAnswer[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.QuestionAnswer[]),
-      /** Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it. */
-      refresh: (input: Facade.QuestionRefreshRequest): Facade.AnswerRecord[] => this.#call(() => this.#client.vaultQuestionsRefresh(input) as Facade.AnswerRecord[]),
+      /** Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it. */
+      refresh: (input: Facade.QuestionRefreshRequest): Facade.QuestionAnswer[] => this.#call(() => this.#client.vaultQuestionsRefresh(input) as Facade.QuestionAnswer[]),
       /** Reads the caller's standing question outcome labels and calibration pairs, each pairing an answer prediction and probability with its mapped label. */
       outcomes: Object.assign((input: Facade.QuestionOutcomesRequest): Facade.QuestionOutcomes => this.#call(() => this.#client.vaultQuestionsOutcomes(input) as Facade.QuestionOutcomes), {
         /** Projects the caller's standing question bound outcomes over current facts, idempotently binding each admissible fact in an answer horizon as its label. */
@@ -2396,6 +2402,10 @@ export class Oneiron {
       enqueue: (input: Facade.ConsolidationEnqueueRequest): Facade.DreamerAttemptRef => this.#call(() => this.#client.vaultConsolidationEnqueue(input) as Facade.DreamerAttemptRef),
       /** Reads the status of one consolidation attempt by its durable job reference. */
       status: (input: Facade.ConsolidationStatusRequest): Facade.DreamerAttemptView | null => this.#call(() => this.#client.vaultConsolidationStatus(input) as Facade.DreamerAttemptView | null),
+      wake: {
+        /** Reads one page of a consolidation wake pass observation by attempt or wake reference: its clock and ceiling, admitted attempts, each model call with its lease, the Checkpoint parks it cut and the pass as it runs now. */
+        status: (input: Facade.ConsolidationWakeStatusRequest): Facade.DreamerWakeView | null => this.#call(() => this.#client.vaultConsolidationWakeStatus(input) as Facade.DreamerWakeView | null),
+      },
       home: {
         /** The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything. */
         get: (input: Facade.EmptyRequest = {}): Facade.ConsolidationHomeView => this.#call(() => this.#client.vaultConsolidationHomeGet(input) as Facade.ConsolidationHomeView),
