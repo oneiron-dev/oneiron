@@ -13,10 +13,11 @@
 //! ([`owner_answers`], mesh PR1b). Inside the roster's chain the approved
 //! revisions, those a key the owner holds signed and the admitted answers,
 //! form a chain of their own, so a custodian's later demote, removal or
-//! conflicting revision never reaches it. An admitted answer that saw a
-//! chain's head supersedes it causally, an anchor's included. Which chains
-//! this install trusts is local: the accepted roster revisions, plus the
-//! pinned anchor's chain (world privacy P6b, contract §4).
+//! conflicting revision never reaches it. An owner say-so that saw a chain's
+//! head supersedes it causally: an admitted answer an anchor's head, and an
+//! anchor's mark an answer (FIX 4610). Which chains this install trusts is
+//! local: the accepted roster revisions, plus the pinned anchor's chain
+//! (world privacy P6b, contract §4).
 //! Poison applies within one admitter's chains for admission, and across the
 //! trusted chains for trust; an untrusted admitter's poison never touches a
 //! trusted chain, and its keys never speak for the machine.
@@ -102,6 +103,13 @@ pub struct MachineRevision {
     /// here ([`owner_answers::act_stands`]); `None` for a roster or anchor
     /// revision, and for an answer whose carrier lost the removal race.
     pub(in crate::authority) act: Option<Arc<ActProof>>,
+    /// What this revision saw as the owner's say-so (FIX 4610): an admitted
+    /// answer and an anchor's mark carry every revision of the machine
+    /// their entry's parents held, and supersede those while they stand
+    /// ([`Self::supersedes`]). `None` for a roster revision (a custodial or
+    /// bootstrap write says nothing for the owner), and for an answer whose
+    /// carrier lost the removal race.
+    pub(in crate::authority) say_so: Option<Arc<SaySo>>,
 }
 
 /// One machine's folded standing: a chain per admitter.
@@ -199,6 +207,21 @@ impl MachineRevision {
         self.is_live() && self.profile.says_mine()
     }
 
+    /// What this revision supersedes as the owner's say-so here (FIX 4610):
+    /// an admitted answer's past while its act stands, as before, and an
+    /// anchor's mark's while the mark is live here. A held, stale or
+    /// unsettled mark gains no power over another chain from what it saw.
+    fn supersedes(&self) -> Option<&BTreeSet<AuthorityEntryHash>> {
+        let stands = match self.signer_class {
+            SignerClass::Carrier => self.act.is_some(),
+            SignerClass::OwnerHeld | SignerClass::Custodial => self.is_live(),
+        };
+        self.say_so
+            .as_ref()
+            .filter(|_| stands)
+            .map(|say_so| &say_so.saw)
+    }
+
     /// Live but for this install's hold: its keys count against every other
     /// trusted chain's, so a held rotation never leaves the old key standing
     /// through another chain. A stale chain never vetoes (Sol code-R3 S3-F3).
@@ -256,11 +279,13 @@ impl FoldedMachine {
     /// and keys still block. Pin-free; the install view's holds are in the
     /// chains.
     ///
-    /// An admitted owner answer that saw another chain's head supersedes it,
-    /// an older anchor-era "yours" included, under any pin and in any
-    /// arrival order; an answer and a head it never saw that say otherwise
-    /// conflict (mesh PR1b C5). Shared-key poison and a terminal removal
-    /// still veto every chain.
+    /// An owner say-so still standing that saw another chain's head
+    /// supersedes it: an admitted answer an older anchor-era "yours", and a
+    /// live anchor mark an earlier answer (FIX 4610), under any pin and in
+    /// any arrival order; an answer and a head it never saw that say
+    /// otherwise conflict (mesh PR1b C5). Shared-key poison and a terminal
+    /// removal still veto every chain, so superseding never brings a removed
+    /// machine back.
     #[must_use]
     pub fn trusted_under(&self, admitter: &MachineAdmitter) -> Option<TrustedMachine<'_>> {
         let chains = self.trust_chains(admitter);
@@ -476,5 +501,5 @@ pub(super) use apply::{
 };
 pub(super) use merge::{merge_machine, merge_machine_chain, merge_machine_maps};
 pub(super) use owner_answers::{
-    ActProof, MarkProof, act_stands, answer_contested, apply_owner_answer, live_answers_by,
+    ActProof, MarkProof, SaySo, act_stands, apply_owner_answer, live_answers_by, say_so_contested,
 };

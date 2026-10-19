@@ -129,6 +129,26 @@ impl Vault {
         self.leave_notice_handoff_in_txn(&txn, &fold, signer, &BTreeSet::new())
     }
 
+    /// Whether `fold`'s settled handoffs hand this vault's root on from
+    /// `from` to `to`: `from` signed a ReRoot row on the chain
+    /// [`Self::root_handoff_to`] walks back from `to`, in `txn`'s snapshot
+    /// (FIX 5088: only `from`'s successor re-signs a courtesy try `from`
+    /// signed).
+    pub(crate) fn root_handed_on_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        from: &AuthorityKey,
+        to: &AuthorityKey,
+    ) -> Result<bool> {
+        for row in self.leave_notice_handoff_in_txn(txn, fold, to, &BTreeSet::new())? {
+            if decode_authority_log_entry_body(&row)?.signer_key() == from {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// The heads this vault's authority fold stands at: what a removed
     /// member's leave-notice request names, so its home sends only the
     /// handoff past them (FIX 2053).

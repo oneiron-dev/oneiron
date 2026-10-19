@@ -84,7 +84,8 @@ impl Vault {
             )?,
             // An anchor's mark is its own proof arm (C4): no install carries
             // it, and no owner act rides it. A later owner answer that saw
-            // it supersedes it.
+            // it supersedes it, and it supersedes every answer its parents
+            // held, each replica reading that from the parents (FIX 4610).
             carrier: None,
             act: None,
         };
@@ -98,7 +99,10 @@ impl Vault {
 /// The postcondition of every anchoring (Wonder R1-F6, R1b-F7): `mark` heads
 /// `anchor_key`'s chain of `machine`, and under that anchor that chain is the
 /// machine's trusted identity with `request`'s keys. A roster chain that
-/// already makes the machine mine does not satisfy it.
+/// already makes the machine mine does not satisfy it. An owner answer the
+/// mark's parents held that says otherwise no longer stands against it: the
+/// mark saw it (FIX 4610), so no re-answer follows an anchoring. One it never
+/// saw still conflicts, and another key or a removal still refuses.
 pub(crate) fn anchor_mark_stands(
     fold: &AuthorityFold,
     anchor_key: [u8; 32],

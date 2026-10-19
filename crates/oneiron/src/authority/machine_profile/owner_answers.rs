@@ -13,7 +13,8 @@
 //!
 //! Precedence is causal (C5): an act that saw a target's heads, an older
 //! anchor-era head included, supersedes them, in every arrival order and
-//! under any pin. Concurrent different answers conflict; no timestamp,
+//! under any pin, and so does an anchor's mark that saw an answer (FIX
+//! 4610, [`SaySo`]). Concurrent different answers conflict; no timestamp,
 //! numeric or lexicographic winner ever grants "yours".
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,17 +28,42 @@ use super::*;
 use crate::authority::machine_standing::{InstallCounted, Mark, Standing, StandingView};
 
 /// What makes an act-backed revision the owner's: its admitted act's
-/// carrier, the install key that signed it, the carrier's live signing
-/// chains at the act's parents (its removal race, FIX 2998), and every
-/// revision of the target the act's parents held (what it supersedes).
-/// Typed provenance beside custody: it never relabels the signer's custody,
-/// and the custody graph never reads it.
+/// carrier, the install key that signed it, and the carrier's live signing
+/// chains at the act's parents (its removal race, FIX 2998). What the answer
+/// supersedes is its [`SaySo`], beside it. Typed provenance beside custody:
+/// it never relabels the signer's custody, and the custody graph never reads
+/// it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(in crate::authority) struct ActProof {
     pub(in crate::authority) carrier: EntityId,
     pub(in crate::authority) key: [u8; 32],
     pub(in crate::authority) marks: BTreeMap<MachineAdmitter, Mark>,
-    pub(in crate::authority) saw: Arc<BTreeSet<AuthorityEntryHash>>,
+}
+
+/// What an owner say-so saw (FIX 4610, mesh PR1b C5): every revision of its
+/// target, in every chain, that its entry's merged parent state held. An
+/// admitted answer and an anchor's mark carry it alike, each replica
+/// deriving it from the entry's parents, never from a surface's `seen` and
+/// never from the final state: no install key, second signature or act field
+/// vouches for it. A custodial or bootstrap roster write carries none.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(in crate::authority) struct SaySo {
+    pub(in crate::authority) saw: BTreeSet<AuthorityEntryHash>,
+}
+
+impl SaySo {
+    /// The say-so of a revision of `machine` folding on `state`, its entry's
+    /// merged parent state, before the revision joins it.
+    pub(in crate::authority) fn at(state: &FoldState, machine: EntityId) -> Arc<Self> {
+        let saw = state
+            .machines
+            .get(&machine)
+            .into_iter()
+            .flat_map(BTreeMap::values)
+            .flat_map(|chain| chain.revisions.keys().copied())
+            .collect();
+        Arc::new(Self { saw })
+    }
 }
 
 impl FoldedMachine {
@@ -115,19 +141,12 @@ pub(in crate::authority) fn apply_owner_answer(
     if !super::super::owner_act::owner_live_at(state, act.owner) {
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
-    let target = state.machines.get(&profile.machine);
     // Key possession: a machine carrying its own answer signs with the key
     // the answer names; it never proves a new key for itself.
     if carrier == profile.machine && profile.machine_key != key {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
-    let saw: Arc<BTreeSet<_>> = Arc::new(
-        target
-            .into_iter()
-            .flat_map(BTreeMap::values)
-            .flat_map(|chain| chain.revisions.keys().copied())
-            .collect(),
-    );
+    let say_so = SaySo::at(state, profile.machine);
     let chain = roster_chain(state, profile.machine);
     let head = chain.map(|chain| &chain.head);
     if refused_revision(state, profile, head) {
@@ -147,8 +166,8 @@ pub(in crate::authority) fn apply_owner_answer(
             carrier,
             key,
             marks,
-            saw,
         })),
+        say_so: Some(say_so),
     };
     let revisions = crate::authority::machine_standing::with_revision(
         chain,
@@ -245,18 +264,21 @@ pub(in crate::authority) fn act_stands(
     reasons
 }
 
-/// The heads of `T(X)` that count for the owner's answer: each chain an
-/// admitted answer among them saw is superseded (C5), in every arrival order
-/// and under any pin. `None` when an admitted answer and another head still
-/// standing say different things: concurrent different answers conflict,
-/// and nothing picks a winner that grants "yours".
+/// The heads of `T(X)` that count for the owner's say-so: each head another
+/// owner say-so still standing among them saw is superseded (C5, FIX 4610),
+/// whether an admitted answer or a live anchor mark saw it, in every arrival
+/// order and under any pin. `None` when an admitted answer and another head
+/// still standing say different things: concurrent different say-sos
+/// conflict, and no revision number, hash order or timestamp picks a winner
+/// that grants "yours".
 pub(in crate::authority) fn effective_chains<'a>(
     chains: Vec<(MachineAdmitter, &'a MachineRevision)>,
 ) -> Option<Vec<(MachineAdmitter, &'a MachineRevision)>> {
     let superseded: BTreeSet<AuthorityEntryHash> = chains
         .iter()
-        .filter_map(|(_, chain)| chain.act.as_ref())
-        .flat_map(|proof| proof.saw.iter().copied())
+        .filter_map(|(_, chain)| chain.supersedes())
+        .flatten()
+        .copied()
         .collect();
     let standing: Vec<_> = chains
         .into_iter()
@@ -269,15 +291,16 @@ pub(in crate::authority) fn effective_chains<'a>(
     (!(answered && disagree)).then_some(standing)
 }
 
-/// Whether a chain's merged head is an owner answer that another answer in
-/// the chain contests: one that says otherwise and that neither saw. The
-/// merge marks such a head conflicted whatever the numeric revisions say,
-/// until a later answer that saw both settles it.
-pub(in crate::authority) fn answer_contested(
+/// Whether a chain's merged head is an owner say-so (an answer, an anchor's
+/// mark) that another say-so in the chain contests: one that says otherwise
+/// and that neither saw. The merge marks such a head conflicted whatever the
+/// numeric revisions say, until a later say-so that saw both settles it
+/// (FIX 4610: two concurrent marks of one anchor as two answers do).
+pub(in crate::authority) fn say_so_contested(
     head: &MachineRevision,
     revisions: &BTreeMap<AuthorityEntryHash, Arc<crate::authority::machine_standing::Revision>>,
 ) -> bool {
-    if head.act.is_none() {
+    if head.say_so.is_none() {
         return false;
     }
     let Some(own) = revisions.get(&head.entry) else {
@@ -285,7 +308,7 @@ pub(in crate::authority) fn answer_contested(
     };
     revisions.iter().any(|(hash, other)| {
         *hash != head.entry
-            && other.profile().act.is_some()
+            && other.said()
             && other.profile().role != head.profile.role
             && !own.past().contains(hash)
             && !other.past().contains(&head.entry)

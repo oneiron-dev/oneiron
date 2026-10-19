@@ -6,7 +6,7 @@ use crate::attempt_queue::encoding::{
     DedupeIndexKeys, decode_record, legacy_dedupe_index_key, ready_at, ready_key,
     validate_dedupe_record,
 };
-use crate::attempt_queue::types::{AttemptId, AttemptRecord, attempt_record_order};
+use crate::attempt_queue::types::{AttemptId, AttemptRecord, AttemptState, attempt_record_order};
 use crate::attempt_queue::validate::validate_optional_run_id;
 use crate::dreamer_runner::{
     DREAMER_RUNNER_ATTEMPT_KIND, DreamerAttemptPayload, decode_dreamer_attempt_payload,
@@ -46,6 +46,24 @@ impl AttemptQueue<'_> {
             return Ok(None);
         };
         decode_record(&raw, id).map(Some)
+    }
+
+    /// Whether `lease_owner` still holds `id`'s lease at `attempt_count`: the
+    /// row is leased, to that owner, at that lease generation, and no
+    /// cleanup or redirect took it since. A caller that writes on a claimed
+    /// try's behalf checks it in its own writer first (FIX 5088).
+    pub(crate) fn holds_lease_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: AttemptId,
+        lease_owner: &str,
+        attempt_count: u32,
+    ) -> Result<bool> {
+        Ok(self.get_in_txn(txn, id)?.is_some_and(|record| {
+            record.state == AttemptState::Leased
+                && record.lease_owner.as_deref() == Some(lease_owner)
+                && record.attempt_count == attempt_count
+        }))
     }
 
     /// Point-reads the pending realizing attempt for a typed TASK route.
