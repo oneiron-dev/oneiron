@@ -35730,7 +35730,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "HostWriteOrigin",
@@ -35739,8 +35739,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 51,
-      "fn": 35,
+      "crate-vis": 53,
+      "fn": 36,
       "struct": 2,
       "type": 1
      }
@@ -37281,7 +37281,7 @@
      "path": "src/off_record/lifecycle/session_hooks.rs",
      "purpose": "The one session-only store of runtime-hook records (WILL L11-01 S01-2c; Engine 10-19): where a verb hook…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -44557,7 +44557,17 @@
      "purpose": "A pre-hook's Ask (ARCH-0080 §3 Ask)",
      "surface": {
       "const": 1,
-      "crate-vis": 26
+      "crate-vis": 27
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/ask/session.rs",
+     "purpose": "A session-only call's hook ask (L13 PR-D, FIX 4283, FIX 5383; Engine 10-19 16:1x ruling (a), 17:3x)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -44577,7 +44587,7 @@
      "path": "src/runtime_hooks/verb/chain/session.rs",
      "purpose": "A chain of a session-only call (WILL L11-01 S01-2c): the lanes its hooks read through, over a room's view…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -44587,7 +44597,7 @@
      "path": "src/runtime_hooks/verb/chain/storage.rs",
      "purpose": "A chain's records (ARCH-0080 §6): the one vault write that commits its receipts, saved runs, blocks and…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -44712,7 +44722,7 @@
      "path": "src/runtime_hooks/verb/storage.rs",
      "purpose": "Where one verb hook chain reads content and keeps its records (WILL L11-01 S01-2c): the vault, or a…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 32
      }
     },
     {
@@ -56506,14 +56516,18 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "HookSession"
+     ],
      "path": "src/task_verb/verb_hook_boundary.rs",
      "purpose": "The verb-hook boundary of one SDK row (ARCH-0080 §3, attach point 1)",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
-      "fn": 8
+      "fn": 12,
+      "struct": 1
      }
     },
     {
@@ -62352,7 +62366,7 @@
     "memory": {
      "files": 222,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
@@ -62623,7 +62637,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63031,7 +63045,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3870,
+   "source_files": 3871,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76046,7 +76060,7 @@
      "path": "src/api/facade/call_context.rs",
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 26
      }
     },
     {
@@ -76547,6 +76561,16 @@
      "purpose": "Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/hook_session.rs",
+     "purpose": "Which facade row call keeps its verb hooks' records and ask pauses for its live session only (FIX 4283…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -77542,6 +77566,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/call_meta.rs",
+     "purpose": "What a `tools/call` names in its `_meta` beside its arguments: the logical verb it runs (ARCH-0080 §3), and…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -77588,7 +77622,7 @@
      "path": "src/api/mcp_gateway/envelope.rs",
      "purpose": "JSON-RPC envelope types and request dispatch",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 16
      }
     },
     {
@@ -85062,7 +85096,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 448,
+     "files": 450,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -85505,7 +85539,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 829,
+   "source_files": 831,
    "test_files": 182
   },
   "oneiron-spawn": {
