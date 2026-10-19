@@ -363,6 +363,25 @@ pub enum OwnerWorkRefusal {
     /// The home a bundle publication names is no longer a linked install of
     /// the vault.
     HomeNotLinked,
+    /// The custody record its holder holds may not leave its device:
+    /// device bound, cross-vault or "this device only".
+    SecretNotPortable,
+    /// The custody record its holder holds is not in a state the change
+    /// takes: a rotate needs it active, a rewrap not revoked.
+    SecretNotActive,
+    /// A recipient the owner permitted is no longer a live linked install
+    /// with the encryption key he permitted: a changed key needs a fresh
+    /// permit.
+    RecipientChanged,
+    /// The encrypted input does not open on the holder under the request's
+    /// binding, or opens to something the change cannot take.
+    InvalidInput,
+    /// The holder already holds another record under the secret's id, or a
+    /// live record under its name.
+    CustodyConflict,
+    /// The live custody floor on the holder no longer admits the secret's
+    /// bindings.
+    WiderThanFloor,
 }
 
 impl OwnerWorkRefusal {
@@ -375,6 +394,12 @@ impl OwnerWorkRefusal {
             Self::WorldNotLive => "world_not_live",
             Self::ExecutorNotReader => "executor_not_reader",
             Self::HomeNotLinked => "home_not_linked",
+            Self::SecretNotPortable => "secret_not_portable",
+            Self::SecretNotActive => "secret_not_active",
+            Self::RecipientChanged => "recipient_changed",
+            Self::InvalidInput => "invalid_input",
+            Self::CustodyConflict => "custody_conflict",
+            Self::WiderThanFloor => "wider_than_floor",
         }
     }
 
@@ -387,6 +412,12 @@ impl OwnerWorkRefusal {
             "world_not_live" => Self::WorldNotLive,
             "executor_not_reader" => Self::ExecutorNotReader,
             "home_not_linked" => Self::HomeNotLinked,
+            "secret_not_portable" => Self::SecretNotPortable,
+            "secret_not_active" => Self::SecretNotActive,
+            "recipient_changed" => Self::RecipientChanged,
+            "invalid_input" => Self::InvalidInput,
+            "custody_conflict" => Self::CustodyConflict,
+            "wider_than_floor" => Self::WiderThanFloor,
             _ => return None,
         })
     }

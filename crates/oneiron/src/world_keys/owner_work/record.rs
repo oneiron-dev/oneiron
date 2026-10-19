@@ -156,6 +156,21 @@ impl Vault {
         work: OwnerWorkBody,
     ) -> Result<OwnerWorkReceipt> {
         let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        self.record_owner_work_for_in_txn(txn, actor, surface, target, seen, work)
+    }
+
+    /// [`Self::record_owner_work_in_txn`] for `actor`, the owner PERSON the
+    /// act is by, whom the caller revalidated, or checked a live vault owner,
+    /// in this same transaction.
+    pub(crate) fn record_owner_work_for_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: EntityId,
+        surface: ActSurface,
+        target: EntityId,
+        seen: [u8; 32],
+        work: OwnerWorkBody,
+    ) -> Result<OwnerWorkReceipt> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         // Key possession: this install carries the act with its own install
         // key, under a live profile of any role (mesh contract §3).

@@ -1,0 +1,317 @@
+//! `/v1/owner/secrets/*`: the owner's custody doors over HTTP (OF-422, WILL
+//! L04 row 04).
+//!
+//! Register, rotate and revoke read their bodies after the owner door, as
+//! before. A portable secret's change is a custody request on the shared
+//! owner-work log: the body may name the holder that does it and the
+//! installs he permits to hold its bytes, and every reply carries the
+//! request's receipt, why a change stayed on this install, and that delivery
+//! to his other machines is unknown. `POST /secrets/rewrap` seals a secret
+//! again to the installs he names now. `GET /secrets/custody` is the
+//! value-free view a surface reads to ask a change, and `POST
+//! /secrets/custody` takes a register or rotate whose protected input the
+//! surface sealed to the holder itself, so this install never sees the
+//! plaintext. Each act's surface is audit only: no route here refuses on
+//! where the owner said yes.
+
+use std::sync::Arc;
+
+use axum::Router;
+use axum::body::Body;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::http::HeaderMap;
+use axum::response::Json;
+use axum::routing::{get, post};
+use base64::Engine as _;
+use oneiron::authority::{CustodyChange, CustodyRecipientPermit};
+use oneiron::secret_custody::{SealedCustodyChange, SecretCustodyStatus, SecretCustodyView};
+use oneiron::world_keys::OwnerWorkReceipt;
+use serde::{Deserialize, Serialize};
+
+use super::machine_routes::{act_surface, parse_revision, revision_hex};
+use super::{OwnerReply, blocking, owner, owner_error};
+use crate::api::{has_json_content_type, json_payload, query_params};
+use crate::auth::CoreAuth;
+use crate::error::ApiError;
+use crate::owner::{OwnerError, OwnerResult, entity_id, secrets};
+use crate::server::SyncServer;
+
+/// The largest sealed change body read: a 4 MiB input envelope, the most
+/// the engine takes, in base64, with its binding fields.
+const SEALED_BODY_LIMIT: usize = 6 << 20;
+
+pub(super) fn routes() -> Router<Arc<SyncServer>> {
+    Router::new()
+        .route("/secrets/register", post(register_secret))
+        .route("/secrets/rotate", post(rotate_secret))
+        .route("/secrets/revoke", post(revoke_secret))
+        .route("/secrets/rewrap", post(rewrap_secret))
+        .route(
+            "/secrets/custody",
+            get(custody_view)
+                .post(sealed_change)
+                .layer(DefaultBodyLimit::max(SEALED_BODY_LIMIT)),
+        )
+}
+
+/// The body is read by `RegisterSecret::read`, as rotation's is: the owner
+/// door runs first, so a refused caller's body is never read.
+async fn register_secret(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    body: Body,
+) -> OwnerReply<secrets::Registered> {
+    let owner = owner(&auth, &server)?;
+    if !has_json_content_type(&headers) {
+        return Err(ApiError::bad_request("invalid JSON request body", None).into());
+    }
+    let surface = act_surface(&server, &auth, &headers);
+    let request = secrets::RegisterSecret::read(body)
+        .await
+        .map_err(owner_error)?;
+    let registered =
+        blocking(move || secrets::register(server.vault(), &owner, surface, &request)).await?;
+    Ok(Json(registered))
+}
+
+/// The body is read by `RotateSecret::read`, not `Json`: the extractor's
+/// body copy and parser scratch would outlive the request unwiped.
+async fn rotate_secret(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    body: Body,
+) -> OwnerReply<secrets::CustodyRotated> {
+    let owner = owner(&auth, &server)?;
+    if !has_json_content_type(&headers) {
+        return Err(ApiError::bad_request("invalid JSON request body", None).into());
+    }
+    let surface = act_surface(&server, &auth, &headers);
+    let request = secrets::RotateSecret::read(body)
+        .await
+        .map_err(owner_error)?;
+    let rotated =
+        blocking(move || secrets::rotate(server.vault(), &owner, surface, &request)).await?;
+    Ok(Json(rotated))
+}
+
+/// `POST /v1/owner/secrets/revoke` with `{"name"}`: the record goes terminal
+/// and every lease over it is revoked (OF-422), and a portable one's revoke
+/// is carried to the owner's other machines from this request's surface.
+/// The body is read by `secrets::read_revoke`, after the owner door, as
+/// rotation's is.
+async fn revoke_secret(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    body: Body,
+) -> OwnerReply<secrets::CustodyRotated> {
+    let owner = owner(&auth, &server)?;
+    if !has_json_content_type(&headers) {
+        return Err(ApiError::bad_request("invalid JSON request body", None).into());
+    }
+    let surface = act_surface(&server, &auth, &headers);
+    let name = secrets::read_revoke(body).await.map_err(owner_error)?;
+    let revoked = blocking(move || secrets::revoke(server.vault(), &owner, surface, &name)).await?;
+    Ok(Json(revoked))
+}
+
+/// `POST /v1/owner/secrets/rewrap`: the installs the owner permits now.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RewrapBody {
+    name: String,
+    /// The install that holds the secret, as 32 hex; this install when
+    /// absent.
+    #[serde(default)]
+    holder: Option<String>,
+    /// The installs permitted to hold it, as 32 hex each.
+    recipients: Vec<String>,
+}
+
+/// `POST /v1/owner/secrets/rewrap`: seals a portable secret again, same
+/// generation and status, to the installs the body names, by its holder.
+async fn rewrap_secret(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<RewrapBody>, JsonRejection>,
+) -> OwnerReply<secrets::CustodyReply> {
+    let owner = owner(&auth, &server)?;
+    let surface = act_surface(&server, &auth, &headers);
+    let request = json_payload(payload)?;
+    let reply = blocking(move || {
+        let plan = secrets::custody_plan(request.holder, request.recipients)?;
+        secrets::rewrap(server.vault(), &owner, surface, &request.name, &plan)
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+#[derive(Deserialize)]
+struct ViewQuery {
+    name: String,
+}
+
+/// One install a surface may offer as holder or recipient.
+#[derive(Debug, Serialize)]
+struct CandidateReply {
+    machine: String,
+    /// The profile entry a permit binds, as 64 hex.
+    profile: String,
+    /// The encryption key digest a permit binds, as 64 hex.
+    encryption_key_digest: String,
+    /// The key a surface seals an input to: its suite and public bytes.
+    suite: u16,
+    encryption_key_base64: String,
+    this_install: bool,
+}
+
+/// What a surface reads to ask a custody change, value-free.
+#[derive(Debug, Serialize)]
+struct ViewReply {
+    vault_id: String,
+    secret_id: String,
+    name: String,
+    known: bool,
+    held_here: bool,
+    portable: bool,
+    status: Option<&'static str>,
+    generation: u32,
+    seen: String,
+    live: Vec<OwnerWorkReceipt>,
+    candidates: Vec<CandidateReply>,
+    delivery: &'static str,
+}
+
+impl From<SecretCustodyView> for ViewReply {
+    fn from(view: SecretCustodyView) -> Self {
+        Self {
+            vault_id: revision_hex(&view.vault_id),
+            secret_id: view.secret_id.to_hex(),
+            name: view.name,
+            known: view.known,
+            held_here: view.held_here,
+            portable: view.portable,
+            status: view.status.map(SecretCustodyStatus::as_str),
+            generation: view.generation,
+            seen: revision_hex(&view.seen),
+            live: view.live,
+            candidates: view
+                .candidates
+                .into_iter()
+                .map(|candidate| CandidateReply {
+                    machine: candidate.permit.machine.to_hex(),
+                    profile: revision_hex(&candidate.permit.profile),
+                    encryption_key_digest: revision_hex(&candidate.permit.encryption_key),
+                    suite: candidate.suite,
+                    encryption_key_base64: base64::engine::general_purpose::STANDARD
+                        .encode(&candidate.encryption_key),
+                    this_install: candidate.this_install,
+                })
+                .collect(),
+            delivery: view.delivery.as_str(),
+        }
+    }
+}
+
+/// `GET /v1/owner/secrets/custody?name=NAME`: the secret's id, generation
+/// and custody revision, its live requests, and the live linked installs a
+/// surface may offer. Offering one is not the owner's consent.
+async fn custody_view(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<ViewQuery>, QueryRejection>,
+) -> OwnerReply<ViewReply> {
+    let owner = owner(&auth, &server)?;
+    let query = query_params(query)?;
+    let view = blocking(move || -> OwnerResult<ViewReply> {
+        Ok(server
+            .vault()
+            .secret_custody_view(&owner, &query.name)?
+            .into())
+    })
+    .await?;
+    Ok(Json(view))
+}
+
+/// One exact permit a sealed input binds.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PermitBody {
+    machine: String,
+    profile: String,
+    encryption_key_digest: String,
+}
+
+/// A register or rotate whose protected input the surface sealed itself.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SealedBody {
+    /// `register` or `rotate`.
+    change: String,
+    secret_id: String,
+    generation: u32,
+    /// The custody revision the surface read, as 64 hex.
+    seen: String,
+    holder: String,
+    recipients: Vec<PermitBody>,
+    /// The envelope sealed to the holder's key, as standard base64.
+    input_base64: String,
+}
+
+/// `POST /v1/owner/secrets/custody`: records a register or rotate whose
+/// protected input the surface sealed to the holder under the binding `GET
+/// /secrets/custody` gave it. This install sees only ciphertext.
+async fn sealed_change(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    payload: Result<Json<SealedBody>, JsonRejection>,
+) -> OwnerReply<secrets::CustodyReply> {
+    let owner = owner(&auth, &server)?;
+    let surface = act_surface(&server, &auth, &headers);
+    let request = json_payload(payload)?;
+    let reply = blocking(move || -> OwnerResult<secrets::CustodyReply> {
+        let change = CustodyChange::from_name(&request.change)
+            .filter(|change| matches!(change, CustodyChange::Register | CustodyChange::Rotate))
+            .ok_or_else(|| OwnerError::Invalid("change must be register or rotate".into()))?;
+        let recipients = request
+            .recipients
+            .iter()
+            .map(|permit| {
+                Ok(CustodyRecipientPermit {
+                    machine: entity_id("recipients.machine", &permit.machine)?,
+                    profile: parse_revision("recipients.profile", &permit.profile)?,
+                    encryption_key: parse_revision(
+                        "recipients.encryption_key_digest",
+                        &permit.encryption_key_digest,
+                    )?,
+                })
+            })
+            .collect::<OwnerResult<Vec<_>>>()?;
+        let input = base64::engine::general_purpose::STANDARD
+            .decode(&request.input_base64)
+            .map_err(|_| OwnerError::Invalid("input_base64 must be standard base64".into()))?;
+        let vault = server.vault();
+        let custody = vault.seal_custody_change_as_owner(
+            &owner,
+            surface,
+            &SealedCustodyChange {
+                change,
+                secret_id: entity_id("secret_id", &request.secret_id)?,
+                generation: request.generation,
+                seen: parse_revision("seen", &request.seen)?,
+                holder: entity_id("holder", &request.holder)?,
+                recipients: &recipients,
+                input: &input,
+            },
+            vault.now_recorded_at(),
+        )?;
+        Ok(custody.into())
+    })
+    .await?;
+    Ok(Json(reply))
+}

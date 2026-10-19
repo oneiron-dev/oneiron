@@ -40,9 +40,19 @@ side_tables! {
     SCOPE_SUMMARY_PURPOSE: VaultMeta b"scope_summary:purpose:v1:" Named;
     /// Atomic summary/landing result of one queued declaration. Key: AttemptId.
     SCOPE_SUMMARY_RESULT: VaultMeta b"scope_summary:result:v1:" Named;
+    /// The encrypted input of one active custody change (WILL L04 row 04): the metadata and value
+    /// sealed to the change's holder, with the second it was sealed at and the request it is for,
+    /// kept to relay until its holder answers. Holds no plaintext. Key: hash32 (the ciphertext
+    /// digest the request names).
+    SECRET_CUSTODY_INPUT: VaultMeta b"secret_custody:input:v1:" Raw Ciphertext;
     /// Name index mapping a live secret-custody record's name to its EntityId. Key: string (secret
     /// name).
     SECRET_CUSTODY_NAME_INDEX: VaultMeta b"secret_custody:name:v1:" Raw Custody;
+    /// What one custody request's executor committed (WILL L04 row 04): the digest of the custody
+    /// transition it signed and the rotation receipt it wrote, immutable once written, beside the
+    /// latest transition by id. A retry finds it and changes nothing. Key: hash32 (the request's
+    /// entry hash).
+    SECRET_CUSTODY_OUTPUT: VaultMeta b"secret_custody:output:v1:" Raw Engine;
     /// The latest owner-signed custody transition this vault signed of one portable credential
     /// (OF-422): the record without its value, the value sealed to each machine mine here. Key:
     /// hex32(entity id).
