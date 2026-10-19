@@ -1544,6 +1544,12 @@ class Oneiron:
         @property
         def schedules(self) -> "Oneiron._VaultWeaveSchedulesVerbs":
             return Oneiron._VaultWeaveSchedulesVerbs(self._client)
+        @property
+        def setting_changes(self) -> "Oneiron._VaultWeaveSettingChangesVerbs":
+            return Oneiron._VaultWeaveSettingChangesVerbs(self._client)
+        @property
+        def digest_feedback(self) -> "Oneiron._VaultWeaveDigestFeedbackVerbs":
+            return Oneiron._VaultWeaveDigestFeedbackVerbs(self._client)
     class _VaultWeaveDigestVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1610,6 +1616,24 @@ class Oneiron:
         def clear(self, spec):
             """Stops one reader's digest schedule under the owner's proof, keeping its saved periods."""
             return json.loads(_translate(lambda: self._client.vault_weave_schedules_clear(json.dumps(spec))))
+    class _VaultWeaveSettingChangesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec=None):
+            """Lists the Coach's proposed and applied changes to the owner's own digest rhythm and section order, newest first, under the owner's proof."""
+            return json.loads(_translate(lambda: self._client.vault_weave_setting_changes_list(json.dumps({} if spec is None else spec))))
+        def answer(self, spec):
+            """Accepts, as the owner's own act, or declines one proposed change to the owner's digest settings; a stale accept applies nothing."""
+            return json.loads(_translate(lambda: self._client.vault_weave_setting_changes_answer(json.dumps(spec))))
+        def undo(self, spec):
+            """Undoes one applied or accepted change to the owner's digest settings, restoring the rhythm and section order before it while the settings are unchanged since."""
+            return json.loads(_translate(lambda: self._client.vault_weave_setting_changes_undo(json.dumps(spec))))
+    class _VaultWeaveDigestFeedbackVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def put(self, spec):
+            """Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are."""
+            return json.loads(_translate(lambda: self._client.vault_weave_digest_feedback_put(json.dumps(spec))))
     class _VaultInboxVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5045,31 +5069,31 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def open(self, spec):
-            """Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."""
+            """Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor."""
             return json.loads(_translate(lambda: self._client.self_browser_open(json.dumps(spec))))
         def observe(self, spec):
-            """Observes the current page of the attached run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched."""
+            """Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with observe and next; acts follow new tabs and name the move as switched."""
             return json.loads(_translate(lambda: self._client.self_browser_observe(json.dumps(spec))))
         def find(self, spec):
-            """Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."""
+            """Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page."""
             return json.loads(_translate(lambda: self._client.self_browser_find(json.dumps(spec))))
         def click(self, spec):
-            """Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."""
+            """Clicks one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next."""
             return json.loads(_translate(lambda: self._client.self_browser_click(json.dumps(spec))))
         def click_at(self, spec):
-            """Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor."""
+            """Clicks a point of a held screenshot, mapped onto the viewport, and observes the result as an ordered edit of the caller's base; a long page's observation comes in pages, read on with observe and its next cursor."""
             return json.loads(_translate(lambda: self._client.self_browser_click_at(json.dumps(spec))))
         def type(self, spec):
-            """Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."""
+            """Types text into one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next."""
             return json.loads(_translate(lambda: self._client.self_browser_type(json.dumps(spec))))
         def select(self, spec):
-            """Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor."""
+            """Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor."""
             return json.loads(_translate(lambda: self._client.self_browser_select(json.dumps(spec))))
         def wait_for(self, spec):
-            """Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor."""
+            """Waits until a page row its live refs or locators name, or else a row matching a role and name, is there; a ref whose node is gone matches its locator's row, listed in rebindings; many rows come in pages, read on with find and next."""
             return json.loads(_translate(lambda: self._client.self_browser_wait_for(json.dumps(spec))))
         def expect(self, spec):
-            """Checks that a page row is present or absent, and holds a given value."""
+            """Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings."""
             return json.loads(_translate(lambda: self._client.self_browser_expect(json.dumps(spec))))
         def screenshot(self, spec):
             """Takes a screenshot the session holds, by image ref and never captioned."""
@@ -5084,7 +5108,7 @@ class Oneiron:
             """Zooms into a rectangle of a held image."""
             return json.loads(_translate(lambda: self._client.self_browser_zoom(json.dumps(spec))))
         def batch(self, spec):
-            """Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."""
+            """Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one."""
             return json.loads(_translate(lambda: self._client.self_browser_batch(json.dumps(spec))))
         @property
         def library(self) -> "Oneiron._SelfBrowserLibraryVerbs":
@@ -5099,7 +5123,7 @@ class Oneiron:
             """The replay library's programs for a site, or for the attached run's open page's site."""
             return json.loads(_translate(lambda: self._client.self_browser_library_find(json.dumps(spec))))
         def propose(self, spec):
-            """Offers a solved run's program to the replay library of the attached run's browser session; it joins only once a no-model replay meets its postcondition."""
+            """Offers a solved run's program to the replay library of the attached run's browser session, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition."""
             return json.loads(_translate(lambda: self._client.self_browser_library_propose(json.dumps(spec))))
         def retire(self, spec):
             """Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had."""
@@ -5108,7 +5132,7 @@ class Oneiron:
             """The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why."""
             return json.loads(_translate(lambda: self._client.self_browser_library_retired(json.dumps(spec))))
         def run(self, spec):
-            """Runs a replay library program live with its arguments in the attached run's browser session; a missed postcondition goes back to the planner."""
+            """Runs a replay library program live with its arguments in the attached run's browser session, resolving locators step by step; its last observation edits the caller's base, and a missed postcondition goes back to the planner."""
             return json.loads(_translate(lambda: self._client.self_browser_library_run(json.dumps(spec))))
     class _SelfAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:

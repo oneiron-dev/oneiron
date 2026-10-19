@@ -1065,6 +1065,10 @@ fn mcp_agent_verb_input(
         "vault.weave.schedules.list" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.schedules.put" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.schedules.clear" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.setting_changes.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.setting_changes.answer" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.setting_changes.undo" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.digest_feedback.put" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.owner.digest.render" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.concerns.review" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.lens" => a.spec.clone().ok_or_else(invalid),
@@ -2678,6 +2682,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.weave.schedules.clear" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.setting_changes.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.setting_changes.answer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.setting_changes.undo" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.digest_feedback.put" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.weave.owner.digest.render" => {
@@ -8401,6 +8417,117 @@ async fn execute_agent_verb_row(
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(
                     &memory,
                     "vault.weave.schedules.clear",
+                ),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.setting_changes.list" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.setting_changes.list", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_weave_setting_changes_list(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.weave.setting_changes.list",
+                    ),
+                    input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.setting_changes.answer" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.setting_changes.answer", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::claim::WeaveDigestSettingAnswer =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_weave_setting_changes_answer(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.weave.setting_changes.answer",
+                    ),
+                    input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.setting_changes.undo" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.setting_changes.undo", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::claim::WeaveDigestSettingUndo =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_weave_setting_changes_undo(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.weave.setting_changes.undo",
+                    ),
+                    input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.digest_feedback.put" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.digest_feedback.put", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::claim::WeaveDigestFeedback =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_weave_digest_feedback_put(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.weave.digest_feedback.put",
                 ),
                 input,
             )

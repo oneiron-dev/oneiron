@@ -36,8 +36,10 @@ mod versions;
 mod weave_digest;
 pub(crate) use weave_digest::invalidate_weave_digest_source_in_txn;
 pub use weave_digest::{
-    StoredWeaveDigest, WEAVE_DIGEST_NOTIFICATION_PRODUCER, WeaveDigestCadence, WeaveDigestReader,
-    WeaveDigestSchedule, WeaveScheduleHold,
+    StoredWeaveDigest, WEAVE_DIGEST_NOTIFICATION_PRODUCER,
+    WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveDigestCadence, WeaveDigestFeedback,
+    WeaveDigestReader, WeaveDigestSchedule, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
+    WeaveDigestSettingChangeStatus, WeaveDigestSettingUndo, WeaveDigestSettings, WeaveScheduleHold,
 };
 mod weave_correction;
 mod weave_lens;

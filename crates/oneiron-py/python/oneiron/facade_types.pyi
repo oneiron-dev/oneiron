@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1057 facade rows, 3580 declarations.
-Inputs: 992 of 1057 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 947 of 1057 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1061 facade rows, 3590 declarations.
+Inputs: 996 of 1061 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 951 of 1061 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
@@ -387,7 +387,7 @@ IdentityActNow = IdentityActNowSettled | IdentityActNowUnknown | IdentityActNowD
 class InboxListRequest(TypedDict):
     after: NotRequired[str | None]
     limit: NotRequired[int | None]
-NotificationKind = Literal["job_completed", "job_failed", "job_cancelled", "job_abandoned", "finding", "event_received", "import_finished", "digest", "ask", "world_privacy_changed", "world_privacy_proposed"]
+NotificationKind = Literal["job_completed", "job_failed", "job_cancelled", "job_abandoned", "finding", "event_received", "import_finished", "digest", "ask", "world_privacy_changed", "world_privacy_proposed", "weave_digest_settings_changed"]
 class NotificationSource(TypedDict):
     producer: str
     event: str
@@ -4154,6 +4154,32 @@ class WeaveScheduleView(TypedDict):
     held: NotRequired[WeaveScheduleHold | None]
 class WeaveScheduleCleared(TypedDict):
     cleared: bool
+WeaveDigestSettingChangeStatus = Literal["pending", "applied", "accepted", "declined", "superseded", "undone"]
+class WeaveDigestSettings(TypedDict):
+    cadence: WeaveDigestCadence
+    sections: list[WeaveSectionKind]
+class WeaveDigestSettingChange(TypedDict):
+    change_ref: str
+    status: WeaveDigestSettingChangeStatus
+    before: WeaveDigestSettings
+    after: WeaveDigestSettings
+    reason: str
+    coach_ref: str
+    grant_ref: NotRequired[str | None]
+    base_generation: int
+    after_generation: NotRequired[int | None]
+    undone_generation: NotRequired[int | None]
+    created_at: int
+    settled_at: NotRequired[int | None]
+class WeaveDigestSettingAnswer(TypedDict):
+    change_ref: str
+    accept: bool
+class WeaveDigestSettingUndo(TypedDict):
+    change_ref: str
+class WeaveDigestFeedback(TypedDict):
+    preferred_cadence: NotRequired[WeaveDigestCadence | None]
+    lead_section: NotRequired[WeaveSectionKind | None]
+    keep_current: NotRequired[bool]
 class WeaveDigestRendered(TypedDict):
     scheduled_for: int
     rendered_at: int
@@ -17711,13 +17737,25 @@ class IdentityPairProposals(TypedDict):
     distinct_claims: list[EntityId]
 class OpenInput(TypedDict):
     url: str
+class RowSplice(TypedDict):
+    start: int
+    delete_count: int
 class Row(TypedDict):
     ref: str
+    locator: str
     role: str
     name: str
     value: NotRequired[str | None]
     states: NotRequired[list[str]]
     depth: int
+class Rebound(TypedDict):
+    old: str
+    new: str
+    old_scope: NotRequired[str | None]
+    new_scope: str
+    locator: str
+    ambiguous: NotRequired[bool]
+    candidates: NotRequired[list[str]]
 class ReceiptEvidenceKept(TypedDict):
     state: Literal["kept"]
     artifact_ref: str
@@ -17734,6 +17772,8 @@ class EffectReceipt(TypedDict):
     title: str
     target: NotRequired[str | None]
     target_name: NotRequired[str | None]
+    target_locator: NotRequired[str | None]
+    rebound: NotRequired[Rebound | None]
     effect_class: NotRequired[str | None]
     press: str
     screenshot: NotRequired[str | None]
@@ -17752,19 +17792,28 @@ class PartialTree(TypedDict):
     walk_ms: int
 class Observation2(TypedDict):
     seq: int
+    scope: str
+    base_seq: NotRequired[int | None]
     url: str
     title: str
     full: bool
+    splice: NotRequired[RowSplice | None]
     rows: list[Row]
-    removed: NotRequired[list[str]]
+    offset: NotRequired[int | None]
     receipt: NotRequired[EffectReceipt | None]
     library: NotRequired[list[LibraryCard]]
     no_tree: NotRequired[bool]
     partial: NotRequired[PartialTree | None]
+    walk_next: NotRequired[str | None]
+    rebound: NotRequired[Rebound | None]
 class ObservationPage(Observation2):
     next: NotRequired[str | None]
+class ObservationBase(TypedDict):
+    scope: str
+    seq: int
 class ObserveInput(TypedDict):
-    since: NotRequired[int | None]
+    base: NotRequired[ObservationBase | None]
+    full: NotRequired[bool]
     cursor: NotRequired[str | None]
 class FindInput(TypedDict):
     role: NotRequired[str | None]
@@ -17776,17 +17825,21 @@ class FindOutput(TypedDict):
     partial: NotRequired[PartialTree | None]
 class ClickInput(TypedDict):
     ref: str
+    base: NotRequired[ObservationBase | None]
 class PointInput(TypedDict):
     image: str
     x: float
     y: float
+    base: NotRequired[ObservationBase | None]
 class TypeInput(TypedDict):
     ref: str
     text: str
     clear: NotRequired[bool]
+    base: NotRequired[ObservationBase | None]
 class SelectInput(TypedDict):
     ref: str
     option: str
+    base: NotRequired[ObservationBase | None]
 class WaitForInput(TypedDict):
     targets: NotRequired[list[str]]
     role: NotRequired[str | None]
@@ -17799,6 +17852,7 @@ class WaitForOutput(TypedDict):
     waited_ms: int
     next: NotRequired[str | None]
     partial: NotRequired[PartialTree | None]
+    rebindings: NotRequired[list[Rebound]]
 class ExpectInput(TypedDict):
     ref: NotRequired[str | None]
     role: NotRequired[str | None]
@@ -17809,6 +17863,7 @@ class ExpectOutput(TypedDict):
     met: bool
     row: NotRequired[Row | None]
     partial: NotRequired[PartialTree | None]
+    rebindings: NotRequired[list[Rebound]]
 ScreenshotTrigger = Literal["outline_thin", "no_postcondition", "decider_reobserve", "no_accessibility_tree", "effect_receipt"]
 class ScreenshotInput(TypedDict):
     trigger: ScreenshotTrigger
@@ -17903,9 +17958,13 @@ BatchStep = BatchStepOpen | BatchStepClick | BatchStepType | BatchStepSelect | B
 class BatchInput(TypedDict):
     subgoal: NotRequired[str | None]
     steps: list[BatchStep]
+    base: NotRequired[ObservationBase | None]
     until_ms: NotRequired[int | None]
     no_model: NotRequired[bool]
 SubgoalStatus = Literal["done", "NEEDS_AGENT", "NEEDS_YOU"]
+class StepRebound(TypedDict):
+    step: int
+    rebound: Rebound
 class BatchOutput(TypedDict):
     status: SubgoalStatus
     completed: int
@@ -17916,6 +17975,7 @@ class BatchOutput(TypedDict):
     decisions: NotRequired[list[Any]]
     until_ms: NotRequired[int | None]
     next: NotRequired[str | None]
+    rebindings: NotRequired[list[StepRebound]]
 class LibraryFindInput(TypedDict):
     site: NotRequired[str | None]
     subgoal: NotRequired[str | None]
@@ -17952,6 +18012,7 @@ class LibraryRetiredOutput(TypedDict):
 class LibraryRunInput(TypedDict):
     workflow: str
     args: NotRequired[dict[str, str]]
+    base: NotRequired[ObservationBase | None]
 class LibraryRunOutput(TypedDict):
     workflow: str
     status: SubgoalStatus

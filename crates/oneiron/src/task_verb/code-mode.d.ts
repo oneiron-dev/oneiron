@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1092 code-mode rows (1067 host rows, 25 run rows), 3630 declarations.
-// Replies: 975 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1096 code-mode rows (1071 host rows, 25 run rows), 3640 declarations.
+// Replies: 979 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -101,7 +101,7 @@ declare namespace Sdk {
   type IdentityActNowRequest = { name: string; conversation?: string | null; effect: IdentityEffect; prompt: string; someone_new: string };
   type IdentityActNow = { state: "settled"; entity: string } | { state: "unknown" } | { state: "deciding"; ask: string } | { state: "needs_person"; ask: string; card: unknown };
   type InboxListRequest = { after?: string | null; limit?: number | null };
-  type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask" | "world_privacy_changed" | "world_privacy_proposed";
+  type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask" | "world_privacy_changed" | "world_privacy_proposed" | "weave_digest_settings_changed";
   type NotificationSource = { producer: string; event: string; job_kind?: string | null; attempt?: string | null; run?: string | null; result?: string | null; detail?: string | null };
   type NotificationRow = { id: string; learned_at: number; kind: NotificationKind; source: NotificationSource; subject_refs: string[]; created_at: number; origin_conversation?: string | null; seen: boolean; acked: boolean };
   type NotificationPage = { rows: NotificationRow[]; next_after?: string | null };
@@ -856,6 +856,12 @@ declare namespace Sdk {
   type WeaveScheduleHold = { until: number; because?: string | null };
   type WeaveScheduleView = { reader: WeaveReaderRef; cadence: WeaveDigestCadence; next_due_at: number; sections: WeaveSectionInput[]; held?: WeaveScheduleHold | null };
   type WeaveScheduleCleared = { cleared: boolean };
+  type WeaveDigestSettingChangeStatus = "pending" | "applied" | "accepted" | "declined" | "superseded" | "undone";
+  type WeaveDigestSettings = { cadence: WeaveDigestCadence; sections: WeaveSectionKind[] };
+  type WeaveDigestSettingChange = { change_ref: string; status: WeaveDigestSettingChangeStatus; before: WeaveDigestSettings; after: WeaveDigestSettings; reason: string; coach_ref: string; grant_ref?: string | null; base_generation: number; after_generation?: number | null; undone_generation?: number | null; created_at: number; settled_at?: number | null };
+  type WeaveDigestSettingAnswer = { change_ref: string; accept: boolean };
+  type WeaveDigestSettingUndo = { change_ref: string };
+  type WeaveDigestFeedback = { preferred_cadence?: WeaveDigestCadence | null; lead_section?: WeaveSectionKind | null; keep_current?: boolean };
   type WeaveDigestRendered = { scheduled_for: number; rendered_at: number; narrowing: ScopedReadReceipt };
   type InboxLensRequest = { identity?: string | null; agent?: string | null; limit?: number | null; before_impact?: number | null; before_at?: number | null; before_id?: string | null };
   type InboxLensKind = "conversation" | "waiting_on_you" | "coordination_update" | "concern";
@@ -2872,28 +2878,31 @@ declare namespace Sdk {
   type ConnectorCallStatusRequest = { call_ref: string };
   type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[] } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply };
   type OpenInput = { url: string };
-  type Row = { ref: string; role: string; name: string; value?: string | null; states?: string[]; depth: number };
+  type RowSplice = { start: number; delete_count: number };
+  type Row = { ref: string; locator: string; role: string; name: string; value?: string | null; states?: string[]; depth: number };
+  type Rebound = { old: string; new: string; old_scope?: string | null; new_scope: string; locator: string; ambiguous?: boolean; candidates?: string[] };
   type ReceiptEvidence = { state: "kept"; artifact_ref: string; version: number; content_hash: string } | { state: "not_kept"; code: string };
-  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; effect_class?: string | null; press: string; screenshot?: string | null; screenshot_evidence?: ReceiptEvidence | null };
+  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; screenshot_evidence?: ReceiptEvidence | null };
   type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number };
   type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
-  type Observation2 = { seq: number; url: string; title: string; full: boolean; rows: Row[]; removed?: string[]; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null };
+  type Observation2 = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null };
   type ObservationPage = Observation2 & { next?: string | null };
-  type ObserveInput = { since?: number | null; cursor?: string | null };
+  type ObservationBase = { scope: string; seq: number };
+  type ObserveInput = { base?: ObservationBase | null; full?: boolean; cursor?: string | null };
   type FindInput = { role?: string | null; name?: string | null; cursor?: string | null };
   type FindOutput = { rows: Row[]; next?: string | null; partial?: PartialTree | null };
-  type ClickInput = { ref: string };
-  type PointInput = { image: string; x: number; y: number };
-  type TypeInput = { ref: string; text: string; clear?: boolean };
-  type SelectInput = { ref: string; option: string };
-  type KeyInput = { key: string; modifiers?: string[]; ref?: string | null };
-  type HotkeyInput = { keys: string[] };
+  type ClickInput = { ref: string; base?: ObservationBase | null };
+  type PointInput = { image: string; x: number; y: number; base?: ObservationBase | null };
+  type TypeInput = { ref: string; text: string; clear?: boolean; base?: ObservationBase | null };
+  type SelectInput = { ref: string; option: string; base?: ObservationBase | null };
+  type KeyInput = { key: string; modifiers?: string[]; ref?: string | null; base?: ObservationBase | null };
+  type HotkeyInput = { keys: string[]; base?: ObservationBase | null };
   type ScrollDirection = "up" | "down" | "left" | "right";
-  type ScrollInput = { direction: ScrollDirection; amount?: number | null; ref?: string | null };
+  type ScrollInput = { direction: ScrollDirection; amount?: number | null; ref?: string | null; base?: ObservationBase | null };
   type WaitForInput = { targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null; cursor?: string | null };
-  type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number; next?: string | null; partial?: PartialTree | null };
+  type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number; next?: string | null; partial?: PartialTree | null; rebindings?: Rebound[] };
   type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
-  type ExpectOutput = { met: boolean; row?: Row | null; partial?: PartialTree | null };
+  type ExpectOutput = { met: boolean; row?: Row | null; partial?: PartialTree | null; rebindings?: Rebound[] };
   type ScreenshotTrigger = "outline_thin" | "no_postcondition" | "decider_reobserve" | "no_accessibility_tree" | "effect_receipt";
   type ScreenshotInput = { trigger: ScreenshotTrigger };
   type ScreenshotOutput = { image: string; media_type: string; width: number; height: number; bytes: number; trigger: ScreenshotTrigger; url: string; title: string };
@@ -2903,9 +2912,10 @@ declare namespace Sdk {
   type ZoomInput = { image: string; x: number; y: number; width: number; height: number; scale?: number | null };
   type DecideStep = { question: string; targets?: string[]; role?: string | null; name?: string | null; locate?: boolean; text?: string | null; clear?: boolean; option?: string | null };
   type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text: string; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" });
-  type BatchInput = { subgoal?: string | null; steps: BatchStep[]; until_ms?: number | null; no_model?: boolean };
+  type BatchInput = { subgoal?: string | null; steps: BatchStep[]; base?: ObservationBase | null; until_ms?: number | null; no_model?: boolean };
   type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
-  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; observation?: Observation2 | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null };
+  type StepRebound = { step: number; rebound: Rebound };
+  type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; observation?: Observation2 | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null; rebindings?: StepRebound[] };
   type WindowsInput = { app?: string | null };
   type DesktopWindow = { window: string; app: string; title: string; current: boolean; front: boolean };
   type WindowsOutput = { windows: DesktopWindow[] };
@@ -3564,7 +3574,7 @@ declare namespace Sdk {
   type LibraryRetiredInput = { site?: string | null };
   type RetiredCard = { card: LibraryCard; retired_at: number; reason?: string | null };
   type LibraryRetiredOutput = { site: string; retired: RetiredCard[] };
-  type LibraryRunInput = { workflow: string; args?: Record<string, string> };
+  type LibraryRunInput = { workflow: string; args?: Record<string, string>; base?: ObservationBase | null };
   type LibraryRunOutput = { workflow: string; status: SubgoalStatus; unmet?: number[]; batch: BatchOutput };
   type BoardRefreshRequest = { frame_epoch?: number | null };
   type BoardVerbOutput = unknown;
@@ -3847,45 +3857,45 @@ declare namespace self {
     spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.AgentSpawnOutput | StoredResult>;
   };
   const browser: {
-    /** Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor. */
+    /** Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one. */
     batch(input: Sdk.BatchInput): Promise<Sdk.BatchOutput | StoredResult>;
-    /** Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor. */
+    /** Clicks one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next. */
     click(input: Sdk.ClickInput): Promise<Sdk.ObservationPage | StoredResult>;
-    /** Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor. */
+    /** Clicks a point of a held screenshot, mapped onto the viewport, and observes the result as an ordered edit of the caller's base; a long page's observation comes in pages, read on with observe and its next cursor. */
     click_at(input: Sdk.PointInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Crops a held image to a rectangle. */
     crop(input: Sdk.CropInput): Promise<Sdk.ImageOutput | StoredResult>;
-    /** Checks that a page row is present or absent, and holds a given value. */
+    /** Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings. */
     expect(input: Sdk.ExpectInput): Promise<Sdk.ExpectOutput | StoredResult>;
-    /** Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page. */
+    /** Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page. */
     find(input: Sdk.FindInput): Promise<Sdk.FindOutput | StoredResult>;
     /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
     handover(input: Sdk.HandoverInput): Promise<Sdk.HandoverOutput | StoredResult>;
     library: {
       /** The replay library's programs for a site, or for the open page's site. */
       find(input: Sdk.LibraryFindInput): Promise<Sdk.LibraryFindOutput | StoredResult>;
-      /** Offers a solved run's program to the replay library; it joins only once a no-model replay meets its postcondition. */
+      /** Offers a solved run's program to the replay library, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition. */
       propose(input: Sdk.ProposeInput): Promise<Sdk.ProposeOutput | StoredResult>;
       /** Takes a program out of the replay library for every later run, and returns the card it had. */
       retire(input: Sdk.LibraryRetireInput): Promise<Sdk.LibraryRetireOutput | StoredResult>;
       /** The programs retires took out of the replay library for a site, or for the open page's site, the newest first, each with when and why. */
       retired(input: Sdk.LibraryRetiredInput): Promise<Sdk.LibraryRetiredOutput | StoredResult>;
-      /** Runs a replay library program live with its arguments; a missed postcondition goes back to the planner. */
+      /** Runs a replay library program live with its arguments, resolving its locators as each step runs; its last observation edits the caller's base, and a missed postcondition goes back to the planner. */
       run(input: Sdk.LibraryRunInput): Promise<Sdk.LibraryRunOutput | StoredResult>;
     };
-    /** Observes the current page of the run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched. */
+    /** Observes the run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with observe and next; acts follow new tabs and name the move as switched. */
     observe(input: Sdk.ObserveInput): Promise<Sdk.ObservationPage | StoredResult>;
-    /** Opens a URL in the run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor. */
+    /** Opens a URL in the run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor. */
     open(input: Sdk.OpenInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Takes a screenshot the session holds, by image ref and never captioned. */
     screenshot(input: Sdk.ScreenshotInput): Promise<Sdk.ScreenshotOutput | StoredResult>;
-    /** Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor. */
+    /** Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor. */
     select(input: Sdk.SelectInput): Promise<Sdk.ObservationPage | StoredResult>;
-    /** Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor. */
+    /** Types text into one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next. */
     type(input: Sdk.TypeInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Reads back a held image by its ref. */
     view(input: Sdk.ViewInput): Promise<Sdk.ImageOutput | StoredResult>;
-    /** Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor. */
+    /** Waits until a page row its live refs or locators name, or else a row matching a role and name, is there; a ref whose node is gone matches its locator's row, listed in rebindings; many rows come in pages, read on with find and next. */
     wait_for(input: Sdk.WaitForInput): Promise<Sdk.WaitForOutput | StoredResult>;
     /** Zooms into a rectangle of a held image. */
     zoom(input: Sdk.ZoomInput): Promise<Sdk.ImageOutput | StoredResult>;
@@ -3910,11 +3920,11 @@ declare namespace self {
     asks(input: Sdk.EmptyRequest): Promise<Sdk.DecisionAsk[] | StoredResult>;
   };
   const desktop: {
-    /** Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor. */
+    /** Runs one batched program of one or more desktop steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, and a long one comes in pages, read on with observe and the batch's next cursor. */
     batch(input: Sdk.BatchInput): Promise<Sdk.BatchOutput | StoredResult>;
-    /** Clicks one window target and observes the result; a long window's observation comes in pages, read on with observe and its next cursor. */
+    /** Clicks one window target and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor. */
     click(input: Sdk.ClickInput): Promise<Sdk.ObservationPage | StoredResult>;
-    /** Clicks a point of a held screenshot, mapped onto the window; a long window's observation comes in pages, read on with observe and its next cursor. */
+    /** Clicks a point of a held screenshot, mapped onto the window, and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor. */
     click_at(input: Sdk.PointInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Crops a held image to a rectangle. */
     crop(input: Sdk.CropInput): Promise<Sdk.ImageOutput | StoredResult>;
@@ -3924,21 +3934,21 @@ declare namespace self {
     find(input: Sdk.FindInput): Promise<Sdk.FindOutput | StoredResult>;
     /** Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record. */
     handover(input: Sdk.HandoverInput): Promise<Sdk.HandoverOutput | StoredResult>;
-    /** Presses a key combination in the current window; a long window's observation comes in pages, read on with observe and its next cursor. */
+    /** Presses a key combination in the current window and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor. */
     hotkey(input: Sdk.HotkeyInput): Promise<Sdk.ObservationPage | StoredResult>;
-    /** Presses one key, with modifiers, on a window target or the window's focus; a long window's observation comes in pages, read on with observe and its next cursor. */
+    /** Presses one key, with modifiers, on a window target or the window's focus, and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor. */
     key(input: Sdk.KeyInput): Promise<Sdk.ObservationPage | StoredResult>;
-    /** Observes the current window of the run's desktop guest, in pages read on with observe and an answer's next cursor; a tree walk cut short answers partial, and its last page's next walks the window again. */
+    /** Observes the desktop guest's window as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with next; a cut tree walk answers partial, and walk_next walks it longer. */
     observe(input: Sdk.ObserveInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Opens an app of the run's own desktop guest by app:name and observes its window; a long window's observation comes in pages, read on with observe and its next cursor. */
     open(input: Sdk.OpenInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Takes a screenshot of the window the session holds, by image ref and never captioned. */
     screenshot(input: Sdk.ScreenshotInput): Promise<Sdk.ScreenshotOutput | StoredResult>;
-    /** Scrolls a window target, or the window, by steps; a long window's observation comes in pages, read on with observe and its next cursor. */
+    /** Scrolls a window target, or the window, by steps, and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor. */
     scroll(input: Sdk.ScrollInput): Promise<Sdk.ObservationPage | StoredResult>;
-    /** Sets the value of a combo box or list target by its option label; a long window's observation comes in pages, read on with observe and its next cursor. */
+    /** Sets the value of a combo box or list target by its option label and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor. */
     select(input: Sdk.SelectInput): Promise<Sdk.ObservationPage | StoredResult>;
-    /** Types text into one window target and observes the result; a long window's observation comes in pages, read on with observe and its next cursor. */
+    /** Types text into one window target and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor. */
     type(input: Sdk.TypeInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Reads back a held image by its ref. */
     view(input: Sdk.ViewInput): Promise<Sdk.ImageOutput | StoredResult>;
@@ -6293,6 +6303,10 @@ declare const vault: Sdk.VaultHost & {
       /** Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due. */
       render(input: Sdk.EmptyRequest): Promise<Sdk.WeaveDigestRendered | null | StoredResult>;
     };
+    digest_feedback: {
+      /** Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are. */
+      put(input: Sdk.WeaveDigestFeedback): Promise<Sdk.WeaveDigestFeedback | StoredResult>;
+    };
     /** Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion. */
     enqueue(input: Sdk.WeaveEnqueueRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
     item: {
@@ -6330,6 +6344,14 @@ declare const vault: Sdk.VaultHost & {
       list(input: Sdk.EmptyRequest): Promise<Sdk.WeaveScheduleView[] | StoredResult>;
       /** Sets one reader's daily or weekly digest schedule and section recipe under the owner's proof. */
       put(input: Sdk.WeaveScheduleView): Promise<Sdk.WeaveScheduleView | StoredResult>;
+    };
+    setting_changes: {
+      /** Accepts, as the owner's own act, or declines one proposed change to the owner's digest settings; a stale accept applies nothing. */
+      answer(input: Sdk.WeaveDigestSettingAnswer): Promise<Sdk.WeaveDigestSettingChange | StoredResult>;
+      /** Lists the Coach's proposed and applied changes to the owner's own digest rhythm and section order, newest first, under the owner's proof. */
+      list(input: Sdk.EmptyRequest): Promise<Sdk.WeaveDigestSettingChange[] | StoredResult>;
+      /** Undoes one applied or accepted change to the owner's digest settings, restoring the rhythm and section order before it while the settings are unchanged since. */
+      undo(input: Sdk.WeaveDigestSettingUndo): Promise<Sdk.WeaveDigestSettingChange | StoredResult>;
     };
   };
   /** The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined. */

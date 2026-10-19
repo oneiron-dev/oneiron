@@ -1644,6 +1644,10 @@ class Oneiron:
             """Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion."""
         @property
         def schedules(self) -> "Oneiron._VaultWeaveSchedulesVerbs": ...
+        @property
+        def setting_changes(self) -> "Oneiron._VaultWeaveSettingChangesVerbs": ...
+        @property
+        def digest_feedback(self) -> "Oneiron._VaultWeaveDigestFeedbackVerbs": ...
     class _VaultWeaveDigestVerbs:
         def __call__(self, spec: Facade.WeaveDigestRequest) -> Facade.WeaveDigestView | None:
             """One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none."""
@@ -1680,6 +1684,16 @@ class Oneiron:
             """Sets one reader's daily or weekly digest schedule and section recipe under the owner's proof."""
         def clear(self, spec: Facade.WeaveReaderRef) -> Facade.WeaveScheduleCleared:
             """Stops one reader's digest schedule under the owner's proof, keeping its saved periods."""
+    class _VaultWeaveSettingChangesVerbs:
+        def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.WeaveDigestSettingChange]:
+            """Lists the Coach's proposed and applied changes to the owner's own digest rhythm and section order, newest first, under the owner's proof."""
+        def answer(self, spec: Facade.WeaveDigestSettingAnswer) -> Facade.WeaveDigestSettingChange:
+            """Accepts, as the owner's own act, or declines one proposed change to the owner's digest settings; a stale accept applies nothing."""
+        def undo(self, spec: Facade.WeaveDigestSettingUndo) -> Facade.WeaveDigestSettingChange:
+            """Undoes one applied or accepted change to the owner's digest settings, restoring the rhythm and section order before it while the settings are unchanged since."""
+    class _VaultWeaveDigestFeedbackVerbs:
+        def put(self, spec: Facade.WeaveDigestFeedback) -> Facade.WeaveDigestFeedback:
+            """Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are."""
     class _VaultInboxVerbs:
         @property
         def concerns(self) -> "Oneiron._VaultInboxConcernsVerbs": ...
@@ -3689,23 +3703,23 @@ class Oneiron:
             """Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."""
     class _SelfBrowserVerbs:
         def open(self, spec: Facade.LiveRunRequest[Facade.OpenInput]) -> Facade.ObservationPage:
-            """Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."""
+            """Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor."""
         def observe(self, spec: Facade.LiveRunRequest[Facade.ObserveInput]) -> Facade.ObservationPage:
-            """Observes the current page of the attached run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched."""
+            """Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with observe and next; acts follow new tabs and name the move as switched."""
         def find(self, spec: Facade.LiveRunRequest[Facade.FindInput]) -> Facade.FindOutput:
-            """Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."""
+            """Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page."""
         def click(self, spec: Facade.LiveRunRequest[Facade.ClickInput]) -> Facade.ObservationPage:
-            """Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."""
+            """Clicks one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next."""
         def click_at(self, spec: Facade.LiveRunRequest[Facade.PointInput]) -> Facade.ObservationPage:
-            """Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor."""
+            """Clicks a point of a held screenshot, mapped onto the viewport, and observes the result as an ordered edit of the caller's base; a long page's observation comes in pages, read on with observe and its next cursor."""
         def type(self, spec: Facade.LiveRunRequest[Facade.TypeInput]) -> Facade.ObservationPage:
-            """Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."""
+            """Types text into one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next."""
         def select(self, spec: Facade.LiveRunRequest[Facade.SelectInput]) -> Facade.ObservationPage:
-            """Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor."""
+            """Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor."""
         def wait_for(self, spec: Facade.LiveRunRequest[Facade.WaitForInput]) -> Facade.WaitForOutput:
-            """Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor."""
+            """Waits until a page row its live refs or locators name, or else a row matching a role and name, is there; a ref whose node is gone matches its locator's row, listed in rebindings; many rows come in pages, read on with find and next."""
         def expect(self, spec: Facade.LiveRunRequest[Facade.ExpectInput]) -> Facade.ExpectOutput:
-            """Checks that a page row is present or absent, and holds a given value."""
+            """Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings."""
         def screenshot(self, spec: Facade.LiveRunRequest[Facade.ScreenshotInput]) -> Facade.ScreenshotOutput:
             """Takes a screenshot the session holds, by image ref and never captioned."""
         def view(self, spec: Facade.LiveRunRequest[Facade.ViewInput]) -> Facade.ImageOutput:
@@ -3715,7 +3729,7 @@ class Oneiron:
         def zoom(self, spec: Facade.LiveRunRequest[Facade.ZoomInput]) -> Facade.ImageOutput:
             """Zooms into a rectangle of a held image."""
         def batch(self, spec: Facade.LiveRunRequest[Facade.BatchInput]) -> Facade.BatchOutput:
-            """Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."""
+            """Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one."""
         @property
         def library(self) -> "Oneiron._SelfBrowserLibraryVerbs": ...
         def handover(self, spec: Facade.LiveRunRequest[Facade.HandoverInput]) -> Facade.HandoverOutput:
@@ -3724,13 +3738,13 @@ class Oneiron:
         def find(self, spec: Facade.LiveRunRequest[Facade.LibraryFindInput]) -> Facade.LibraryFindOutput:
             """The replay library's programs for a site, or for the attached run's open page's site."""
         def propose(self, spec: Facade.LiveRunRequest[Facade.ProposeInput]) -> Facade.ProposeOutput:
-            """Offers a solved run's program to the replay library of the attached run's browser session; it joins only once a no-model replay meets its postcondition."""
+            """Offers a solved run's program to the replay library of the attached run's browser session, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition."""
         def retire(self, spec: Facade.LiveRunRequest[Facade.LibraryRetireInput]) -> Facade.LibraryRetireOutput:
             """Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had."""
         def retired(self, spec: Facade.LiveRunRequest[Facade.LibraryRetiredInput]) -> Facade.LibraryRetiredOutput:
             """The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why."""
         def run(self, spec: Facade.LiveRunRequest[Facade.LibraryRunInput]) -> Facade.LibraryRunOutput:
-            """Runs a replay library program live with its arguments in the attached run's browser session; a missed postcondition goes back to the planner."""
+            """Runs a replay library program live with its arguments in the attached run's browser session, resolving locators step by step; its last observation edits the caller's base, and a missed postcondition goes back to the planner."""
     class _SelfAgentsVerbs:
         def spawn(self, spec: Facade.LiveRunRequest[Facade.AgentSpawnInput]) -> Facade.AgentSpawnOutput:
             """Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."""
