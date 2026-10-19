@@ -1,5 +1,5 @@
 //! Per-vault usage facts. Wallet and limit policy routes belong to the host.
-use super::check_api_auth;
+use super::scoped_auth::check_request_auth;
 use crate::{
     config::SyncServerConfig,
     error::{ApiError, ApiErrorDetails},
@@ -8,18 +8,18 @@ use crate::{
 };
 use axum::{
     extract::{Path, State},
-    http::HeaderMap,
+    http::request::Parts,
     response::Json,
 };
 use std::sync::Arc;
 #[utoipa::path(post, path = "/v1/usage/events", request_body = UsageEvent,
     responses((status = 200, body = UsageRecordResult), (status = 400, body = ApiError), (status = 401, body = ApiError), (status = 409, body = ApiError)))]
 pub(crate) async fn record_usage_event(
-    headers: HeaderMap,
+    parts: Parts,
     State(server): State<Arc<SyncServer>>,
     Json(event): Json<UsageEvent>,
 ) -> Result<Json<UsageRecordResult>, ApiError> {
-    check_api_auth(&headers, &server)?;
+    check_request_auth(&parts, &server)?;
     let mode = usage_mode_for_event(&server.config, &event)?;
     server
         .usage_ledger
@@ -31,11 +31,11 @@ pub(crate) async fn record_usage_event(
     params(("owner" = String, Path), ("vault_id" = String, Path)),
     responses((status = 200, body = UsageRollup), (status = 400, body = ApiError), (status = 401, body = ApiError), (status = 404, body = ApiError)))]
 pub(crate) async fn get_usage_rollup(
-    headers: HeaderMap,
+    parts: Parts,
     State(server): State<Arc<SyncServer>>,
     Path((owner, vault_id)): Path<(String, String)>,
 ) -> Result<Json<UsageRollup>, ApiError> {
-    check_api_auth(&headers, &server)?;
+    check_request_auth(&parts, &server)?;
     server
         .usage_ledger
         .vault_rollup(&owner, &vault_id)
