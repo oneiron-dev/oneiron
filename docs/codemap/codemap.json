@@ -20533,13 +20533,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/resident_for_human.rs",
      "purpose": "An agent's free time for its human (FIX 4453, `autonomy.for_human`)",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resident_health.rs",
+     "purpose": "A resident's own health cards as its dreaming's input (OF-490, FIX 1145/1146): the cards whose subject is…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -21441,6 +21451,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/free_time/erase.rs",
+     "purpose": "An erased agent's free time (FIX 5664): the erase of an actor takes its free-time rows with it, in the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -21449,7 +21469,7 @@
      "path": "src/dreamer_runner/free_time/items.rs",
      "purpose": "A free-time cycle's items (FIX 4453): the binding each item's attempt runs under, what it lands, and how it…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1,
       "struct": 1
      }
@@ -21463,7 +21483,7 @@
      "path": "src/dreamer_runner/free_time/mod.rs",
      "purpose": "An agent's free time (FIX 4453, ARCH-0005b #free-time)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 1,
       "re-export": 5
@@ -21825,7 +21845,7 @@
      "path": "src/dreamer_runner/maintenance/curator.rs",
      "purpose": "Curator grading data and minimum-force findings",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -22050,7 +22070,7 @@
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly…",
      "surface": {
       "const": 3,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1,
       "mod": 18,
       "re-export": 8
@@ -22913,7 +22933,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WakeCadenceReceipt",
@@ -34360,7 +34380,7 @@
      "path": "src/memory/claims/lifecycle.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 6
      }
     },
@@ -63319,7 +63339,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 72,
+     "files": 73,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63347,7 +63367,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 94,
+     "files": 95,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -64364,7 +64384,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3975,
+   "source_files": 3977,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76268,7 +76288,7 @@
      "path": "src/ai_host/resident_craft.rs",
      "purpose": "A resident's craft on the surfaces it speaks on besides its pumped runs (OF-490): a workflow leaf and a wave…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
