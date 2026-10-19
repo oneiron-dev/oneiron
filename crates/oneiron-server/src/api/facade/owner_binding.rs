@@ -21,6 +21,7 @@
 use oneiron::authority::ActSurface;
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::FacadeApiError;
@@ -77,6 +78,57 @@ pub(super) fn managed_owner_binding(
         key,
         owner,
     }))
+}
+
+/// A hosted operator's root, refused typed before a facade door judges its
+/// caller (FIX 4371): `HOST_ACTION_REQUIRES_SUPPORT_GRANT` with its
+/// suggestion, never the door's generic refusal. A self-hosted root, the dev
+/// mode and every other credential pass on to the door's own check, which
+/// keeps its own wording.
+pub(super) fn host_preflight(server: &SyncServer, auth: &CoreAuth) -> MemoryResult<()> {
+    crate::api::host_action::facade_host_action(server, auth)
+        .map(drop)
+        .map_err(FacadeApiError::into_memory_error)
+}
+
+/// The owner's own in-request proof for a facade owner door, as
+/// `/v1/owner` takes it, after [`host_preflight`]. Any other caller gets
+/// `refused`, the door's own owner refusal.
+pub(super) fn facade_owner_or(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    refused: impl FnOnce() -> MemoryError,
+) -> MemoryResult<AuthenticatedOwner> {
+    host_preflight(server, auth)?;
+    crate::api::owner_routes::owner(auth, server).map_err(|_| refused())
+}
+
+/// [`facade_owner_or`] with the owner doors' common refusal: `verb` is the
+/// vault owner's.
+pub(super) fn facade_owner(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> MemoryResult<AuthenticatedOwner> {
+    facade_owner_or(server, auth, || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{verb} is the vault owner's"),
+            &["Present the owner's own verified, unattenuated credential."],
+        )
+    })
+}
+
+/// The credential's own actor for a facade door, as the facade binds a
+/// write to one, after [`host_preflight`]. A credential that binds none
+/// gets `refused`, the door's own refusal.
+pub(super) fn facade_caller_or(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    refused: impl FnOnce() -> MemoryError,
+) -> MemoryResult<(EntityId, EdgeActorClass)> {
+    host_preflight(server, auth)?;
+    super::facade_actor(server, auth).map_err(|_| refused())
 }
 
 /// Where an owner's say-so on `auth` reached this install, for the act's

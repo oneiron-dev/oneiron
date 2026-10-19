@@ -31,6 +31,9 @@ pub(crate) async fn vault_critic_review(
     auth: &CoreAuth,
     input: CriticReviewSubmit,
 ) -> Listed<CriticReviewOutcome> {
+    if let Err(refusal) = super::owner_binding::host_preflight(server, auth) {
+        return refused(refusal);
+    }
     let (actor, class) = match super::facade_actor(server, auth) {
         Ok(caller) => caller,
         Err(_) => {

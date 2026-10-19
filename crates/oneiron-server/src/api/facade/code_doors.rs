@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::code_doors::*;
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use oneiron::memory::{Memory, MemoryError, MemoryResult};
 
 use super::FacadeApiError;
 use super::host_doors::{Listed, credential_listing};
@@ -18,13 +18,7 @@ fn owner_proof(
     auth: &CoreAuth,
     verb: &str,
 ) -> MemoryResult<AuthenticatedOwner> {
-    crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{verb} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })
+    super::owner_binding::facade_owner(server, auth, verb)
 }
 
 async fn as_owner<T: Send + 'static>(

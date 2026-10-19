@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use oneiron::autoreason_campaign::CampaignSplitReport;
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{CampaignSplitWire, evaluate_campaign_split};
 
 use super::host_doors::{Listed, internal};
@@ -39,13 +39,7 @@ async fn vault_research_evaluate_split_answer(
     auth: &CoreAuth,
     input: CampaignSplitWire,
 ) -> MemoryResult<CampaignSplitReport> {
-    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{VERB} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })?;
+    let owner = super::owner_binding::facade_owner(server, auth, VERB)?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
         let vault = server.vault();

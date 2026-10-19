@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use oneiron::EntityId;
 use oneiron::booking::agent_api::{BookingOperationRequest, BookingOperationResponse};
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     BookingAvailabilityRequest, BookingBookRequest, BookingCancelRequest,
     BookingConstraintTurnRequest, BookingConstraintTurnResponse, BookingPageTokenRequest,
@@ -29,12 +29,8 @@ pub(crate) async fn vault_booking_page_token(
     input: BookingPageTokenRequest,
 ) -> Listed<BookingPageTokenResponse> {
     const VERB: &str = "vault.booking.page_token";
-    if crate::api::owner_routes::owner(auth, server).is_err() {
-        return refused(MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{VERB} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        ));
+    if let Err(refusal) = super::owner_binding::facade_owner(server, auth, VERB) {
+        return refused(refusal);
     }
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {

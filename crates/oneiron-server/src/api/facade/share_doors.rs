@@ -85,7 +85,7 @@ fn principal(
     auth: &CoreAuth,
     verb: &str,
 ) -> MemoryResult<(EntityId, EdgeActorClass)> {
-    super::facade_actor(server, auth).map_err(|_| {
+    super::owner_binding::facade_caller_or(server, auth, || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             format!("{verb} acts as the credential's own principal"),

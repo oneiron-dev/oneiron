@@ -237,7 +237,7 @@ pub(crate) async fn vault_packs_connector_prepare(
                 &input.source,
             )?;
             owner.revalidate(vault)?;
-            let slate_id = catalog::with_slate_drafter(server, |drafter| {
+            let slate_id = catalog::with_slate_drafter(server, owner, |drafter| {
                 vault.draft_connector_admission_slate(&manifest, drafter)
             })?;
             let now = unix_seconds_now();
@@ -335,7 +335,7 @@ pub(crate) async fn vault_packs_connector_update(
                     dropped: Vec::new(),
                 });
             }
-            let delta = catalog::with_slate_drafter(server, |drafter| {
+            let delta = catalog::with_slate_drafter(server, owner, |drafter| {
                 vault
                     .draft_connector_delta_slate(id(&input.prior.slate_ref)?, &manifest, drafter)
                     .map_err(MemoryError::from)

@@ -57,6 +57,7 @@ pub(super) fn person(
     auth: &CoreAuth,
     verb: &str,
 ) -> MemoryResult<AuthenticatedOwner> {
+    super::owner_binding::host_preflight(server, auth)?;
     if let Ok(owner) = crate::api::owner_routes::owner(auth, server) {
         return Ok(owner);
     }
@@ -94,13 +95,7 @@ fn owner_proof(
     auth: &CoreAuth,
     verb: &str,
 ) -> MemoryResult<AuthenticatedOwner> {
-    crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{verb} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })
+    super::owner_binding::facade_owner(server, auth, verb)
 }
 
 /// `act` under the host's slip issuer, the one `api/pairing.rs` builds for

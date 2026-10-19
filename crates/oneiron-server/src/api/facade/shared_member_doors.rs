@@ -381,13 +381,7 @@ pub(crate) async fn vault_guests_mint_slip(
     input: GuestSlipMintRequest,
 ) -> MaybeListed<GuestSlipMinted> {
     const VERB: &str = "vault.guests.mint_slip";
-    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{VERB} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    });
+    let owner = super::owner_binding::facade_owner(server, auth, VERB);
     let grant = input.grant_ref;
     as_person_naming(
         server,

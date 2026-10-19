@@ -5,7 +5,7 @@ use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::code_view_doors::*;
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use oneiron::memory::{Memory, MemoryError, MemoryResult};
 use std::sync::Arc;
 
 async fn as_owner<T: Send + 'static>(
@@ -15,13 +15,7 @@ async fn as_owner<T: Send + 'static>(
     act: impl FnOnce(&Memory<'_>, &AuthenticatedOwner) -> MemoryResult<T> + Send + 'static,
 ) -> Listed<T> {
     let admitted = || {
-        let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
-            MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                format!("{verb} is the vault owner's"),
-                &["Present the owner's own verified, unattenuated credential."],
-            )
-        })?;
+        let owner = super::owner_binding::facade_owner(server, auth, verb)?;
         let caller =
             super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok::<_, MemoryError>((owner, caller))

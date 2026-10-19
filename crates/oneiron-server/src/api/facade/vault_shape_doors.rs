@@ -45,6 +45,9 @@ async fn vault_shape_apply_answer(
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
     let server = Arc::clone(server);
+    // A hosted operator's root gets the typed refusal, never a fallback
+    // caller (FIX 4371).
+    super::owner_binding::host_preflight(&server, auth)?;
     if let Ok(owner) = crate::api::owner_routes::owner(auth, &server) {
         return tokio::task::spawn_blocking(move || -> MemoryResult<ShapeApplyListing> {
             // Each attempt lists into a set of its own.

@@ -427,7 +427,7 @@ pub(crate) async fn idempotency_middleware(
 /// returns is sent in the cached one's place, and the cached entry stays.
 async fn idempotent(
     state: IdempotencyLayerState,
-    request: Request,
+    mut request: Request,
     next: Next,
     release: impl FnOnce(&SyncServer, Option<&CoreAuth>, &Replay<'_>) -> Option<Response>,
 ) -> Response {
@@ -438,11 +438,12 @@ async fn idempotent(
     let peer = crate::auth::proved_peer(request.headers(), request.extensions());
     let revoked = state.server.vault().as_ref();
     let core_auth = if is_core_auth_route {
-        Some(
-            CoreAuth::for_server_async(request.headers(), &state.server)
-                .await
-                .map(|auth| auth.at(locality)),
-        )
+        // The route's own caller (FIX 5201): on a managed vault, the owner
+        // its supervisor attested reads and replays under his own partition.
+        let (parts, body) = request.into_parts();
+        let auth = CoreAuth::for_request(&parts, &state.server).await;
+        request = Request::from_parts(parts, body);
+        Some(auth.map(|auth| auth.at(locality)))
     } else {
         None
     };

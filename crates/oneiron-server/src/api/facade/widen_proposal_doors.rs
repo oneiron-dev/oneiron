@@ -15,7 +15,7 @@ use oneiron::agent_dispatch::widen_doors::{
     self, WidenProposalAnswer, WidenProposalView, WidenProposalsRequest, WidenProposalsView,
 };
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::memory::{MemoryError, MemoryResult};
 
 use super::host_doors::{Listed, internal};
 use crate::auth::CoreAuth;
@@ -29,13 +29,7 @@ async fn as_owner<T: Send + 'static>(
     verb: &'static str,
     act: impl FnOnce(&SyncServer, &AuthenticatedOwner) -> oneiron::Result<T> + Send + 'static,
 ) -> MemoryResult<T> {
-    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{verb} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })?;
+    let owner = super::owner_binding::facade_owner(server, auth, verb)?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || act(&*server, &owner).map_err(MemoryError::from))
         .await

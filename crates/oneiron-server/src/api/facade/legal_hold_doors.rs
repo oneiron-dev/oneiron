@@ -11,7 +11,7 @@ use std::sync::Arc;
 use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{LegalHold, LegalHoldEvent, LegalHoldTarget};
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult, ProducerRows};
+use oneiron::memory::{MemoryResult, ProducerRows};
 use oneiron::task_verb::sdk::{
     self, EmptyRequest, LegalHoldLiftAndEraseRequest, LegalHoldLiftAndErased,
     LegalHoldPlaceRequest, LegalHoldWidenRequest,
@@ -27,13 +27,7 @@ fn owner_proof(
     auth: &CoreAuth,
     verb: &str,
 ) -> MemoryResult<AuthenticatedOwner> {
-    crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{verb} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })
+    super::owner_binding::facade_owner(server, auth, verb)
 }
 
 /// `act` off the runtime, as the vault owner: every legal-hold door reads or
