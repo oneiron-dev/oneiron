@@ -52,6 +52,7 @@ use crate::EntityId;
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal,
 };
+use oneiron_authority::authority::CustodyRegisterCheck;
 
 pub use self::pickup::OwnerWorkDrain;
 
@@ -141,6 +142,13 @@ pub struct OwnerWorkReceipt {
     /// Why no install was named; `None` once a request is recorded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unassigned: Option<OwnerWorkUnassigned>,
+    /// For a custody register whose owner's surface stated no
+    /// `manifest_ref`, what its holder checked the record against, as its
+    /// signed result says (FIX 5334): the manifest it checked, or why it
+    /// registered without a manifest check, by manifest refs alone. `None`
+    /// before the result, and for any other work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_check: Option<CustodyRegisterCheck>,
 }
 
 impl OwnerWorkReceipt {
@@ -154,20 +162,24 @@ impl OwnerWorkReceipt {
             executor: None,
             status: OwnerWorkStatus::RecordedAwaitingHolder,
             unassigned: Some(why),
+            manifest_check: None,
         }
     }
 
     /// The receipt of the request signed as entry `request`, as `fold`
-    /// stands; `None` unless the fold admitted that request.
+    /// stands, with the manifest judgment its holder's result carries;
+    /// `None` unless the fold admitted that request.
     pub(crate) fn of(fold: &AuthorityFold, request: AuthorityEntryHash) -> Option<Self> {
         let recorded = fold.owner_work_request(&request)?;
-        let status = match fold
+        let outcome = fold
             .owner_work_result(&request)
-            .map(|answer| answer.outcome)
-        {
+            .map(|answer| &answer.outcome);
+        let status = match outcome {
             None => OwnerWorkStatus::RecordedAwaitingHolder,
-            Some(OwnerWorkOutcome::Enacted) => OwnerWorkStatus::Enacted,
-            Some(OwnerWorkOutcome::Refused { reason }) => OwnerWorkStatus::Refused { reason },
+            Some(OwnerWorkOutcome::Enacted { .. }) => OwnerWorkStatus::Enacted,
+            Some(OwnerWorkOutcome::Refused { reason }) => {
+                OwnerWorkStatus::Refused { reason: *reason }
+            }
         };
         Some(Self {
             request: Some(entry_hex(&request)),
@@ -176,6 +188,7 @@ impl OwnerWorkReceipt {
             executor: Some(recorded.executor),
             status,
             unassigned: None,
+            manifest_check: outcome.and_then(OwnerWorkOutcome::register_check).cloned(),
         })
     }
 

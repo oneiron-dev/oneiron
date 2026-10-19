@@ -1,5 +1,10 @@
+mod session_hooks;
 mod session_write;
 
+pub use self::session_hooks::{
+    SessionHookDisposition, SessionHookNotKept, SessionHookPhase, SessionHookReceipt,
+    SessionHookState,
+};
 pub use self::session_write::{SessionWriteAdmission, SessionWriteCeiling};
 
 // Referenced only by an intra-doc link on `SelfCall::MemoryWriteFixture`;
@@ -864,6 +869,9 @@ pub struct SelfContextResult {
 pub struct SelfMemorySearchResult {
     pub query: String,
     pub results: Vec<ScoredEntity>,
+    /// What each verb hook bound to the search did, in a room (WILL L11-01
+    /// S01-2c); empty outside one.
+    pub hooks: Vec<SessionHookDisposition>,
 }
 
 /// Result of an internal fixture memory write.

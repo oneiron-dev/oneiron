@@ -12836,7 +12836,17 @@
      "path": "src/code_run/dispatcher/session_verbs.rs",
      "purpose": "The reads a run bound to an off-record session serves through the room's view (WILL L11-01, S01-1)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/session_verbs/hooks.rs",
+     "purpose": "The verb hooks of a read a run serves in its room (WILL L11-01 S01-2c): each of the four forwarded reads…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -12887,6 +12897,16 @@
      "purpose": "Attach point 2 (ARCH-0080 §3): the verb hooks of each call a run serves itself",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/verb_hooks/session.rs",
+     "purpose": "The run's own `vault.search` in an off-record room takes its verb hooks in the room (WILL L11-01 S01-2c)…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -12973,6 +12993,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/payload/session_hooks.rs",
+     "purpose": "The replay codec of a `vault.search` outcome and what each verb hook bound to it did in a room (WILL L11-01…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -13469,9 +13499,26 @@
       "const": 2,
       "enum": 7,
       "fn": 20,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 30,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SessionHookDisposition",
+      "SessionHookNotKept",
+      "SessionHookPhase",
+      "SessionHookReceipt",
+      "SessionHookState"
+     ],
+     "path": "src/code_run/types/session_hooks.rs",
+     "purpose": "What each verb hook bound to a read did in an off-record room, as the read's answer says it (WILL L11-01…",
+     "surface": {
+      "enum": 4,
+      "struct": 1
      }
     },
     {
@@ -14211,6 +14258,16 @@
      "purpose": "How code mode routes a raw `describe` before any typed row: a result the run holds, a secret's handle…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/wasmtime_runtime/wire/search.rs",
+     "purpose": "`vault.search`'s reply body (WILL L11-01 S01-2c): the hits, framed as the row's output, and, in an…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -37041,6 +37098,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/off_record/lifecycle/session_hooks.rs",
+     "purpose": "The one session-only store of runtime-hook records (WILL L11-01 S01-2c; Engine 10-19): where a verb hook…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/off_record/lifecycle/telemetry.rs",
      "purpose": "Retrieval-run registration door (register/finalize/discard, staged/published arms)",
      "surface": {
@@ -44280,6 +44347,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/chain/session.rs",
+     "purpose": "A chain of a session-only call (WILL L11-01 S01-2c): the lanes its hooks read through, over a room's view…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/chain/storage.rs",
+     "purpose": "A chain's records (ARCH-0080 §6): the one vault write that commits its receipts, saved runs, blocks and…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -44317,7 +44404,7 @@
      "path": "src/runtime_hooks/verb/mod.rs",
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 13,
       "re-export": 4,
@@ -44392,6 +44479,16 @@
       "enum": 1,
       "fn": 7,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/storage.rs",
+     "purpose": "Where one verb hook chain reads content and keeps its records (WILL L11-01 S01-2c): the vault, or a…",
+     "surface": {
+      "crate-vis": 23
      }
     },
     {
@@ -44879,7 +44976,7 @@
      "path": "src/secret_custody/control/execute.rs",
      "purpose": "The holder's arm for an active custody change (WILL L04 row 04): the install a register, rotate or rewrap…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -44889,7 +44986,17 @@
      "path": "src/secret_custody/control/input.rs",
      "purpose": "The protected input of an active custody change (WILL L04 row 04): what a register, rotate or bind hands its…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/control/input/attached.rs",
+     "purpose": "What a sealed register's recorder attaches beside the envelope its owner's surface sealed, under the digest…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -44899,9 +45006,9 @@
       "CustodyManifestCheck"
      ],
      "path": "src/secret_custody/control/manifest.rs",
-     "purpose": "A sealed register whose surface stated no `manifest_ref` (CALLS CUSTODY_MANIFEST_UNSTATED)",
+     "purpose": "A sealed register whose surface stated no `manifest_ref` (CALLS CUSTODY_MANIFEST_UNSTATED…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 2
      }
@@ -45033,7 +45140,7 @@
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
       "crate-vis": 21,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -56104,7 +56211,18 @@
      "path": "src/task_verb/verb_hook_boundary.rs",
      "purpose": "The verb-hook boundary of one SDK row (ARCH-0080 §3, attach point 1)",
      "surface": {
+      "crate-vis": 1,
       "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/verb_hook_boundary/session.rs",
+     "purpose": "The row boundary of a read a run serves in an off-record room (WILL L11-01 S01-2c): the sibling of…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -61319,14 +61437,14 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 93,
+     "files": 97,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61949,7 +62067,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62194,7 +62312,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 29,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62222,7 +62340,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62432,7 +62550,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 192,
+     "files": 193,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62602,7 +62720,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3832,
+   "source_files": 3843,
    "test_files": 902
   },
   "oneiron-android": {
@@ -62923,10 +63041,7 @@
      "notable": [
       "OwnerWorkBody",
       "OwnerWorkKind",
-      "OwnerWorkOutcome",
-      "OwnerWorkRefusal",
       "OwnerWorkRequest",
-      "OwnerWorkResult",
       "RootChange",
       "WorldKeyMode",
       "WorldPrivacyWorkBasis"
@@ -62935,11 +63050,11 @@
      "purpose": "The owner's work requests and their results, and their wire codec: the key, custody or root work an owner…",
      "surface": {
       "const": 4,
-      "crate-vis": 6,
-      "enum": 6,
-      "fn": 16,
-      "re-export": 1,
-      "struct": 3
+      "crate-vis": 4,
+      "enum": 4,
+      "fn": 12,
+      "re-export": 2,
+      "struct": 2
      }
     },
     {
@@ -62956,6 +63071,25 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CustodyRegisterCheck",
+      "CustodyUncheckedReason",
+      "OwnerWorkOutcome",
+      "OwnerWorkRefusal",
+      "OwnerWorkResult"
+     ],
+     "path": "src/authority/owner_work/result.rs",
+     "purpose": "An executor's result for one owner work request, and its wire codec: the work was enacted, or refused for a…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 4,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -63222,7 +63356,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 27,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -63252,7 +63386,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 36,
+   "source_files": 37,
    "test_files": 1
   },
   "oneiron-bench": {

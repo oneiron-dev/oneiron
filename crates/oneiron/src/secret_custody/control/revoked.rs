@@ -96,7 +96,7 @@ impl Vault {
         let (Some(request), Some(executor)) = (receipt.request_entry(), receipt.executor) else {
             return Ok(Some(SecretCustodyWork::recorded(receipt)));
         };
-        self.append_owner_work_result_in_txn(txn, request, executor, enacted())?;
+        self.append_owner_work_result_in_txn(txn, request, executor, enacted(None))?;
         let enactment = Enactment {
             request,
             input: None,
