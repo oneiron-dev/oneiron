@@ -425,12 +425,17 @@ fn settle_tail(
     // the frontier's kept states seeding it.
     let (consent_arm, _) = super::fold_engine::own_log_inputs(log.posture, None);
     let no_handoff_line = BTreeSet::new();
+    let summaries = super::fold_engine::ImagePast {
+        image,
+        judged: &judged,
+    };
+    let causal = super::fold_engine::CausalPast::new(&summaries);
     let context = FoldContext {
         sequence_floors: Some(&log.observations.sequence_floors),
         floor_vouched: (!log.observations.unvouched).then_some(&log.observations.vouched),
         install_held: None,
         entry_ancestors: None,
-        causal_past: None,
+        causal_past: Some(&causal),
         peer_consent_roots: log.peer_consent_roots,
         consent_arm,
         hosted: log.posture == crate::HostingPrivacyPosture::Hosted,
@@ -446,6 +451,11 @@ fn settle_tail(
         .collect();
     let mut states =
         super::fold_schedule::fold_entry_states_seeded(&judged, &seed, context, &mut issues);
+    // A key record's request walk that met a row the image shows nothing of
+    // judged nothing here (FIX 5464): only the whole history does.
+    if causal.incomplete() {
+        return Ok(None);
+    }
     // A world key record, or a restrictive main-log choice (a world edit,
     // grant travel, checkpoint policy, home pick or training choice), on a
     // row with no state here (a frontier row the image holds rejected, a

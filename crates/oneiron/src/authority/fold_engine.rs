@@ -15,7 +15,7 @@ use super::*;
 mod causal;
 mod entry_points;
 
-pub(super) use causal::{CausalPast, ParentSummaries, named_beneath};
+pub(super) use causal::{CausalPast, ImagePast, ParentSummaries, named_beneath};
 pub use entry_points::*;
 
 #[derive(Clone, Copy)]

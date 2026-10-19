@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::*;
+use crate::authority::fold_engine::{CausalPast, ParentSummaries};
 use crate::authority::world_privacy::side_world;
 
 /// A frontier row a tail row may name: its fold state (a summary is no fold
@@ -161,7 +162,14 @@ pub(super) fn fold_tail(
         }
     }
     // Each new row folds on its actual parents' states as the scheduler
-    // folds it, the frontier's kept states seeding it.
+    // folds it, the frontier's kept states seeding it. A key record's request
+    // is judged beneath its parents over the rows the walk above reads (FIX
+    // 5464): exactly the whole log's ancestry, so a "no" there is an absence.
+    let causal = CausalPast::new(&past);
+    let context = FoldContext {
+        causal_past: Some(&causal),
+        ..context
+    };
     let mut states = BTreeMap::new();
     for parent in order.iter().flat_map(|hash| &new_rows[hash].parent_hashes) {
         if let Some(point) = once.frontier.get(parent) {
@@ -306,6 +314,14 @@ impl<'a> Past<'a> {
             Some(row) if self.judged.contains(hash) => &row.parents,
             _ => &[],
         }
+    }
+}
+
+/// The base and the tail together are the whole stored log, so every row's
+/// parents read here are what its ancestor index reads.
+impl ParentSummaries for Past<'_> {
+    fn parents_of(&self, hash: &AuthorityEntryHash) -> Option<&[AuthorityEntryHash]> {
+        Some(self.parents(hash))
     }
 }
 

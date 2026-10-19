@@ -18,7 +18,7 @@
 //! An unknown walk never counts as present.
 
 use std::cell::Cell;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use super::*;
 
@@ -29,6 +29,30 @@ pub(in crate::authority) trait ParentSummaries {
     /// it names but never walks through (one no fold judges), and `None`
     /// where this fold holds no summary to tell.
     fn parents_of(&self, hash: &AuthorityEntryHash) -> Option<&[AuthorityEntryHash]>;
+}
+
+/// A fold past an adopted image reads a row's parents from the judged tail
+/// and the image's row summaries. A tail record folds only on rows with a
+/// state, so its walk reaches covered rows only beneath a frontier row the
+/// image kept a state at, all of which the image's fold judged; a frontier
+/// row the image holds no state at shows nothing, and the walk is then
+/// incomplete (the image's history guard decides it). Any row neither judged
+/// in the tail nor covered shows nothing either.
+pub(in crate::authority) struct ImagePast<'a> {
+    pub(in crate::authority) image: &'a AuthorityCheckpointV2,
+    pub(in crate::authority) judged: &'a BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+}
+
+impl ParentSummaries for ImagePast<'_> {
+    fn parents_of(&self, hash: &AuthorityEntryHash) -> Option<&[AuthorityEntryHash]> {
+        if let Some(entry) = self.judged.get(hash) {
+            return Some(entry.parent_hashes.as_slice());
+        }
+        if matches!(self.image.per_parent.get(hash), Some(None)) {
+            return None;
+        }
+        self.image.rows.get(hash).map(|row| row.parents.as_slice())
+    }
 }
 
 /// A continuation fold's row summaries, and whether some walk over them met
