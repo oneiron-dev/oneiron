@@ -43,6 +43,7 @@ use crate::ai_host::AiHandle;
 use crate::mcp::McpCodeModeProvider;
 use crate::server::core::pattern_workflow::{
     decode_launch_spec, fault, launch_members, launch_request, launch_spec_schema, stop,
+    warn_launch_input,
 };
 
 const LEASE_LOST: &str = "the spawning agent's run no longer holds its lease, so its pattern run \
@@ -189,6 +190,7 @@ impl PatternLaunchRunner for AgentPatternLaunchRunner {
         {
             request.envelope.response_format = ResponseFormat::Text;
         }
+        warn_launch_input(&self.vault, &request);
         let response = self.capture(request)?;
         decode_launch_spec(&response, &schema)
     }

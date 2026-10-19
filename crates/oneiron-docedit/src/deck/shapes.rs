@@ -240,6 +240,25 @@ fn paragraph(
     }
 }
 
+/// The soft breaks (`a:br`) of the paragraph element at `at`, each as the
+/// number of its runs and fields (the runs `paragraph` reads, which leave
+/// breaks out) before it. The text mapping counts each break as one U+000B
+/// in the paragraph's text; a reader that carries breaks places them by
+/// this.
+pub(crate) fn soft_breaks(tree: &XmlTree, at: usize) -> Vec<usize> {
+    let mut runs = 0;
+    let mut breaks = Vec::new();
+    for &child in &tree.nodes[at].children {
+        let node = &tree.nodes[child];
+        if node.is(A, "r") || node.is(A, "fld") {
+            runs += 1;
+        } else if node.is(A, "br") {
+            breaks.push(runs);
+        }
+    }
+    breaks
+}
+
 fn run_view(
     context: &SlideContext<'_>,
     tree: &XmlTree,
