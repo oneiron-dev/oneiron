@@ -1,6 +1,8 @@
 //! Which rows a device-local world keeps from a caller (DEC-0005): every
-//! judge a door asks, built on [`device_local_worlds_at`], the one reader of
-//! the flag set.
+//! judge a door asks, built on [`device_local_worlds_for`], the one reader of
+//! the flag set. Each `_for` judge reads the world settings for the machine
+//! a read's rows go to ([`ReadDestination`], mesh PR2b); the others ask for
+//! a destination nobody proved, as every door did before.
 
 use heed::RoTxn;
 
@@ -9,7 +11,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::device_only::device_only_withholds;
-use super::device_only_worlds_in;
+use super::{ReadDestination, device_only_worlds_in};
 
 impl Vault {
     /// Whether every row of `rows` may leave this device now: none is one a
@@ -51,8 +53,21 @@ impl Vault {
     /// may carry any world's text, so it goes only while no world stays on
     /// this device.
     pub fn model_call_may_leave_device(&self, world: Option<EntityId>) -> Result<bool> {
+        self.model_call_may_leave_for(world, &crate::claim::CallerLocality::OffDevice.into())
+    }
+
+    /// [`Self::model_call_may_leave_device`] for a model at `endpoint`: a
+    /// linked machine's endpoint its connection proved is judged by that
+    /// machine's own world read settings; a third-party or unproved endpoint
+    /// is a destination nobody proved (mesh PR2b). Never the requester's
+    /// proof: the model is a recipient of its own.
+    pub fn model_call_may_leave_for(
+        &self,
+        world: Option<EntityId>,
+        endpoint: &ReadDestination,
+    ) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        let flagged = device_local_worlds_at(self, &rtxn, crate::claim::CallerLocality::OffDevice)?;
+        let flagged = device_local_worlds_for(self, &rtxn, endpoint)?;
         let Some(world) = world else {
             return Ok(flagged.is_empty());
         };
@@ -78,12 +93,39 @@ impl Vault {
         device_local_keeps_in(self, &rtxn, id)
     }
 
+    /// [`Self::device_local_keeps`] for a read toward `destination`: whether
+    /// the world settings keep `id` from one of the machines its rows go to.
+    /// Nothing is kept from a caller on this device.
+    pub fn device_local_keeps_for(
+        &self,
+        id: &EntityId,
+        destination: &ReadDestination,
+    ) -> Result<bool> {
+        if !destination.is_off_device() {
+            return Ok(false);
+        }
+        let rtxn = self.store.env.read_txn()?;
+        let flagged = device_local_worlds_for(self, &rtxn, destination)?;
+        device_local_keeps_among(&self.store, &rtxn, &flagged, id)
+    }
+
     /// The rows of `ids` a caller off this device may count or name: each one
     /// no device-local world keeps ([`Self::device_local_keeps`]), judged in
     /// one read.
     pub fn off_device_readable(&self, ids: Vec<EntityId>) -> Result<Vec<EntityId>> {
+        self.off_device_readable_for(ids, &crate::claim::CallerLocality::OffDevice.into())
+    }
+
+    /// [`Self::off_device_readable`] for a read toward `destination`, judged
+    /// in one read: each row no world withheld from one of its machines
+    /// keeps. Every row on this device.
+    pub fn off_device_readable_for(
+        &self,
+        ids: Vec<EntityId>,
+        destination: &ReadDestination,
+    ) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        let flagged = device_local_worlds_at(self, &rtxn, crate::claim::CallerLocality::OffDevice)?;
+        let flagged = device_local_worlds_for(self, &rtxn, destination)?;
         let mut readable = Vec::with_capacity(ids.len());
         for id in ids {
             if !device_local_keeps_among(&self.store, &rtxn, &flagged, &id)? {
@@ -101,17 +143,26 @@ pub(crate) fn device_local_keeps_in(vault: &Vault, txn: &RoTxn<'_>, id: &EntityI
 }
 
 /// The device-local worlds whose rows a caller at `locality` reads nothing
-/// of: every world the world settings withhold from another machine, off
-/// this device; none on it.
+/// of: every world the world settings withhold from a machine nobody proved,
+/// off this device; none on it. A door that knows the machine at the other
+/// end asks [`device_local_worlds_for`].
 pub(crate) fn device_local_worlds_at(
     vault: &Vault,
     txn: &RoTxn<'_>,
     locality: crate::claim::CallerLocality,
 ) -> Result<std::collections::BTreeSet<EntityId>> {
-    match locality {
-        crate::claim::CallerLocality::OffDevice => device_only_worlds_in(vault, txn),
-        crate::claim::CallerLocality::OnDevice => Ok(std::collections::BTreeSet::new()),
-    }
+    device_local_worlds_for(vault, txn, &locality.into())
+}
+
+/// The worlds whose rows a read toward `destination` reads nothing of: every
+/// world the world settings withhold from one of the machines its rows go
+/// to, each proof judged in `txn`; none on this device (mesh PR2b).
+pub(crate) fn device_local_worlds_for(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    destination: &ReadDestination,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    device_only_worlds_in(vault, txn, destination)
 }
 
 /// [`device_local_keeps_in`] against `flagged`, the flag set read once in

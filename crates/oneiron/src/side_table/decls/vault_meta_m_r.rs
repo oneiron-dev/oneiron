@@ -535,6 +535,8 @@ side_tables! {
     /// strict-msgpack decode does not run; `RawValue` delegates to the
     /// module's own `encode_retrieval_outcome`/`decode_retrieval_outcome`.
     RETRIEVAL_OUTCOME: VaultMeta b"retr_out:v0:" Raw;
+    /// Owner-pinned retrieval blend weights no learned update may move. Key: ().
+    RETRIEVAL_POLICY_PINS: VaultMeta b"retr_policy_pins:v1:" Named;
     /// Account-local contextual retrieval posterior, updated by the Coach at sleep. Key: ().
     RETRIEVAL_POLICY_POSTERIOR: VaultMeta b"retr_policy_posterior:v1:" Named;
     /// Retrieval run telemetry record. Key: id16.

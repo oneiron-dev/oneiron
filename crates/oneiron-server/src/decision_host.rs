@@ -428,11 +428,16 @@ impl DecisionHost {
         backend: &oneiron::llm::registry::ModelBackendPin,
         usage: Arc<std::sync::Mutex<Vec<oneiron::LlmUsage>>>,
     ) -> anyhow::Result<HeldLadder> {
-        let big = self.big_model.as_ref()
+        let big = self
+            .big_model
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("no [models.decisions.big] fills the Big rung"))?;
         let exact = big.for_trial(backend, usage)?;
         let provider = ModelDecisionProvider::new(exact.pin(), Arc::new(exact))?;
-        Ok(HeldLadder { big: Some(Arc::new(provider)), ..HeldLadder::unstaffed() })
+        Ok(HeldLadder {
+            big: Some(Arc::new(provider)),
+            ..HeldLadder::unstaffed()
+        })
     }
 
     /// A ladder whose one rung is `role`'s seat on the Big rung (OF-568):

@@ -127,6 +127,12 @@ pub enum AgentVerb {
     VaultRetrievalTrace,
     VaultRetrievalExport,
     VaultRetrievalReplay,
+    VaultRetrievalPolicyGet,
+    VaultRetrievalPolicyPin,
+    VaultRetrievalPolicyTrain,
+    VaultRetrievalPolicyEvaluate,
+    VaultRetrievalPolicyAdmit,
+    VaultRetrievalPolicyUpdate,
     VaultExport,
     SelfCredentialAttenuate,
     VaultScopePosition,
@@ -229,6 +235,13 @@ pub enum AgentVerb {
     VaultPacksConnectorGrantsGet,
     VaultPacksConnectorGrantsPut,
     VaultPacksRemove,
+    VaultPacksSectionsPropose,
+    VaultPacksSectionsList,
+    VaultPacksSectionsGrant,
+    VaultPacksSectionsRevoke,
+    VaultPacksSectionsSuggest,
+    VaultPacksSectionsSuggestionsGet,
+    VaultPacksSectionsSuggestionsSet,
     AiChatCompletions,
     VaultConnectorsProxyAdmit,
     VaultConnectorsProxyRevokeWrite,
@@ -242,6 +255,8 @@ pub enum AgentVerb {
     VaultAuthorityAudit,
     VaultAuthorityHistoryExport,
     VaultAuthorityHistoryImport,
+    VaultWireHealthThresholdsGet,
+    VaultWireHealthThresholdsSet,
     VaultSlimPolicy,
     VaultSlimState,
     VaultSlimResumeStep,
@@ -425,6 +440,10 @@ pub enum AgentVerb {
     VaultConsentCreateStandingGrant,
     VaultConsentRegistry,
     VaultConsentRevoke,
+    VaultConsentBypassGrantWarning,
+    VaultConsentCreateBypassGrant,
+    VaultConsentActiveBypassGrants,
+    VaultConsentBypassedEffectReceipts,
     VaultConsentGraduationPolicy,
     VaultConsentGraduationPolicySet,
     VaultConsentGraduationPolicyClear,
@@ -609,6 +628,12 @@ pub enum AgentVerb {
     VaultArtifactsReviewSlides,
     VaultArtifactsAsk,
     VaultCriticReview,
+    VaultArtifactsProposeOutline,
+    VaultArtifactsOutline,
+    VaultArtifactsKeepOutline,
+    VaultArtifactsDeclineOutline,
+    VaultArtifactsDesignDeck,
+    VaultArtifactsCreateDeck,
     VaultArtifactsInspectDeck,
     VaultArtifactsProposeDeck,
     VaultArtifactsProposeOutput,
@@ -665,6 +690,13 @@ pub enum AgentVerb {
     VaultSkillsPackReceipt,
     VaultSkillsOutcomesProject,
     VaultSkillsOutcomesGet,
+    VaultSkillsAttributionSettle,
+    VaultSkillsAttributionRead,
+    VaultSkillsAttributionEvidenceRecord,
+    VaultSkillsAttributionProject,
+    VaultSkillsAttributionJudgments,
+    VaultSkillsAttributionProposals,
+    VaultSkillsAttributionPositiveRetire,
     AiStepsSubmit,
     AiStepsReceipt,
     AiReply,
@@ -1113,6 +1145,12 @@ impl AgentVerb {
         Self::VaultRetrievalTrace,
         Self::VaultRetrievalExport,
         Self::VaultRetrievalReplay,
+        Self::VaultRetrievalPolicyGet,
+        Self::VaultRetrievalPolicyPin,
+        Self::VaultRetrievalPolicyTrain,
+        Self::VaultRetrievalPolicyEvaluate,
+        Self::VaultRetrievalPolicyAdmit,
+        Self::VaultRetrievalPolicyUpdate,
         Self::VaultExport,
         Self::SelfCredentialAttenuate,
         Self::VaultScopePosition,
@@ -1215,6 +1253,13 @@ impl AgentVerb {
         Self::VaultPacksConnectorGrantsGet,
         Self::VaultPacksConnectorGrantsPut,
         Self::VaultPacksRemove,
+        Self::VaultPacksSectionsPropose,
+        Self::VaultPacksSectionsList,
+        Self::VaultPacksSectionsGrant,
+        Self::VaultPacksSectionsRevoke,
+        Self::VaultPacksSectionsSuggest,
+        Self::VaultPacksSectionsSuggestionsGet,
+        Self::VaultPacksSectionsSuggestionsSet,
         Self::AiChatCompletions,
         Self::VaultConnectorsProxyAdmit,
         Self::VaultConnectorsProxyRevokeWrite,
@@ -1228,6 +1273,8 @@ impl AgentVerb {
         Self::VaultAuthorityAudit,
         Self::VaultAuthorityHistoryExport,
         Self::VaultAuthorityHistoryImport,
+        Self::VaultWireHealthThresholdsGet,
+        Self::VaultWireHealthThresholdsSet,
         Self::VaultSlimPolicy,
         Self::VaultSlimState,
         Self::VaultSlimResumeStep,
@@ -1411,6 +1458,10 @@ impl AgentVerb {
         Self::VaultConsentCreateStandingGrant,
         Self::VaultConsentRegistry,
         Self::VaultConsentRevoke,
+        Self::VaultConsentBypassGrantWarning,
+        Self::VaultConsentCreateBypassGrant,
+        Self::VaultConsentActiveBypassGrants,
+        Self::VaultConsentBypassedEffectReceipts,
         Self::VaultConsentGraduationPolicy,
         Self::VaultConsentGraduationPolicySet,
         Self::VaultConsentGraduationPolicyClear,
@@ -1595,6 +1646,12 @@ impl AgentVerb {
         Self::VaultArtifactsReviewSlides,
         Self::VaultArtifactsAsk,
         Self::VaultCriticReview,
+        Self::VaultArtifactsProposeOutline,
+        Self::VaultArtifactsOutline,
+        Self::VaultArtifactsKeepOutline,
+        Self::VaultArtifactsDeclineOutline,
+        Self::VaultArtifactsDesignDeck,
+        Self::VaultArtifactsCreateDeck,
         Self::VaultArtifactsInspectDeck,
         Self::VaultArtifactsProposeDeck,
         Self::VaultArtifactsProposeOutput,
@@ -1651,6 +1708,13 @@ impl AgentVerb {
         Self::VaultSkillsPackReceipt,
         Self::VaultSkillsOutcomesProject,
         Self::VaultSkillsOutcomesGet,
+        Self::VaultSkillsAttributionSettle,
+        Self::VaultSkillsAttributionRead,
+        Self::VaultSkillsAttributionEvidenceRecord,
+        Self::VaultSkillsAttributionProject,
+        Self::VaultSkillsAttributionJudgments,
+        Self::VaultSkillsAttributionProposals,
+        Self::VaultSkillsAttributionPositiveRetire,
         Self::AiStepsSubmit,
         Self::AiStepsReceipt,
         Self::AiReply,
@@ -2102,6 +2166,12 @@ impl AgentVerb {
             Self::VaultRetrievalTrace => "vault.retrieval.trace",
             Self::VaultRetrievalExport => "vault.retrieval.export",
             Self::VaultRetrievalReplay => "vault.retrieval.replay",
+            Self::VaultRetrievalPolicyGet => "vault.retrieval.policy.get",
+            Self::VaultRetrievalPolicyPin => "vault.retrieval.policy.pin",
+            Self::VaultRetrievalPolicyTrain => "vault.retrieval.policy.train",
+            Self::VaultRetrievalPolicyEvaluate => "vault.retrieval.policy.evaluate",
+            Self::VaultRetrievalPolicyAdmit => "vault.retrieval.policy.admit",
+            Self::VaultRetrievalPolicyUpdate => "vault.retrieval.policy.update",
             Self::VaultExport => "vault.export",
             Self::SelfCredentialAttenuate => "self.credential.attenuate",
             Self::VaultScopePosition => "vault.scope.position",
@@ -2204,6 +2274,13 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => "vault.packs.connector.grants.get",
             Self::VaultPacksConnectorGrantsPut => "vault.packs.connector.grants.put",
             Self::VaultPacksRemove => "vault.packs.remove",
+            Self::VaultPacksSectionsPropose => "vault.packs.sections.propose",
+            Self::VaultPacksSectionsList => "vault.packs.sections.list",
+            Self::VaultPacksSectionsGrant => "vault.packs.sections.grant",
+            Self::VaultPacksSectionsRevoke => "vault.packs.sections.revoke",
+            Self::VaultPacksSectionsSuggest => "vault.packs.sections.suggest",
+            Self::VaultPacksSectionsSuggestionsGet => "vault.packs.sections.suggestions.get",
+            Self::VaultPacksSectionsSuggestionsSet => "vault.packs.sections.suggestions.set",
             Self::AiChatCompletions => "ai.chat.completions",
             Self::VaultConnectorsProxyAdmit => "vault.connectors.proxy.admit",
             Self::VaultConnectorsProxyRevokeWrite => "vault.connectors.proxy.revoke_write",
@@ -2217,6 +2294,8 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => "vault.authority.audit",
             Self::VaultAuthorityHistoryExport => "vault.authority.history.export",
             Self::VaultAuthorityHistoryImport => "vault.authority.history.import",
+            Self::VaultWireHealthThresholdsGet => "vault.wire_health.thresholds.get",
+            Self::VaultWireHealthThresholdsSet => "vault.wire_health.thresholds.set",
             Self::VaultSlimPolicy => "vault.slim.policy",
             Self::VaultSlimState => "vault.slim.state",
             Self::VaultSlimResumeStep => "vault.slim.resume_step",
@@ -2412,6 +2491,10 @@ impl AgentVerb {
             Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
             Self::VaultConsentRegistry => "vault.consent.registry",
             Self::VaultConsentRevoke => "vault.consent.revoke",
+            Self::VaultConsentBypassGrantWarning => "vault.consent.bypass_grant_warning",
+            Self::VaultConsentCreateBypassGrant => "vault.consent.create_bypass_grant",
+            Self::VaultConsentActiveBypassGrants => "vault.consent.active_bypass_grants",
+            Self::VaultConsentBypassedEffectReceipts => "vault.consent.bypassed_effect_receipts",
             Self::VaultConsentGraduationPolicy => "vault.consent.graduation.policy",
             Self::VaultConsentGraduationPolicySet => "vault.consent.graduation.policy.set",
             Self::VaultConsentGraduationPolicyClear => "vault.consent.graduation.policy.clear",
@@ -2602,6 +2685,12 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
             Self::VaultArtifactsAsk => "vault.artifacts.ask",
             Self::VaultCriticReview => "vault.critic.review",
+            Self::VaultArtifactsProposeOutline => "vault.artifacts.propose_outline",
+            Self::VaultArtifactsOutline => "vault.artifacts.outline",
+            Self::VaultArtifactsKeepOutline => "vault.artifacts.keep_outline",
+            Self::VaultArtifactsDeclineOutline => "vault.artifacts.decline_outline",
+            Self::VaultArtifactsDesignDeck => "vault.artifacts.design_deck",
+            Self::VaultArtifactsCreateDeck => "vault.artifacts.create_deck",
             Self::VaultArtifactsInspectDeck => "vault.artifacts.inspect_deck",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
             Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
@@ -2658,6 +2747,17 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => "vault.skills.pack_receipt",
             Self::VaultSkillsOutcomesProject => "vault.skills.outcomes.project",
             Self::VaultSkillsOutcomesGet => "vault.skills.outcomes.get",
+            Self::VaultSkillsAttributionSettle => "vault.skills.attribution.settle",
+            Self::VaultSkillsAttributionRead => "vault.skills.attribution.read",
+            Self::VaultSkillsAttributionEvidenceRecord => {
+                "vault.skills.attribution.evidence.record"
+            }
+            Self::VaultSkillsAttributionProject => "vault.skills.attribution.project",
+            Self::VaultSkillsAttributionJudgments => "vault.skills.attribution.judgments",
+            Self::VaultSkillsAttributionProposals => "vault.skills.attribution.proposals",
+            Self::VaultSkillsAttributionPositiveRetire => {
+                "vault.skills.attribution.positive.retire"
+            }
             Self::AiStepsSubmit => "ai.steps.submit",
             Self::AiStepsReceipt => "ai.steps.receipt",
             Self::AiReply => "ai.reply",
@@ -3112,6 +3212,12 @@ impl AgentVerb {
                 | Self::VaultRetrievalTrace
                 | Self::VaultRetrievalExport
                 | Self::VaultRetrievalReplay
+                | Self::VaultRetrievalPolicyGet
+                | Self::VaultRetrievalPolicyPin
+                | Self::VaultRetrievalPolicyTrain
+                | Self::VaultRetrievalPolicyEvaluate
+                | Self::VaultRetrievalPolicyAdmit
+                | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
                 | Self::VaultScopePosition
@@ -3214,6 +3320,13 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsList
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsGet
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::AiChatCompletions
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
@@ -3227,6 +3340,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultWireHealthThresholdsGet
+                | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimPolicy
                 | Self::VaultSlimState
                 | Self::VaultSlimResumeStep
@@ -3410,6 +3525,10 @@ impl AgentVerb {
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentBypassGrantWarning
+                | Self::VaultConsentCreateBypassGrant
+                | Self::VaultConsentActiveBypassGrants
+                | Self::VaultConsentBypassedEffectReceipts
                 | Self::VaultConsentGraduationPolicy
                 | Self::VaultConsentGraduationPolicySet
                 | Self::VaultConsentGraduationPolicyClear
@@ -3594,6 +3713,12 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsProposeOutline
+                | Self::VaultArtifactsOutline
+                | Self::VaultArtifactsKeepOutline
+                | Self::VaultArtifactsDeclineOutline
+                | Self::VaultArtifactsDesignDeck
+                | Self::VaultArtifactsCreateDeck
                 | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
@@ -3650,6 +3775,13 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultSkillsAttributionSettle
+                | Self::VaultSkillsAttributionRead
+                | Self::VaultSkillsAttributionEvidenceRecord
+                | Self::VaultSkillsAttributionProject
+                | Self::VaultSkillsAttributionJudgments
+                | Self::VaultSkillsAttributionProposals
+                | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
                 | Self::AiReply
@@ -4125,6 +4257,12 @@ impl AgentVerb {
                 | Self::VaultRetrievalTrace
                 | Self::VaultRetrievalExport
                 | Self::VaultRetrievalReplay
+                | Self::VaultRetrievalPolicyGet
+                | Self::VaultRetrievalPolicyPin
+                | Self::VaultRetrievalPolicyTrain
+                | Self::VaultRetrievalPolicyEvaluate
+                | Self::VaultRetrievalPolicyAdmit
+                | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
                 | Self::VaultScopePosition
@@ -4227,6 +4365,13 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsList
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsGet
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::AiChatCompletions
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
@@ -4240,6 +4385,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultWireHealthThresholdsGet
+                | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimPolicy
                 | Self::VaultSlimState
                 | Self::VaultSlimResumeStep
@@ -4423,6 +4570,10 @@ impl AgentVerb {
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentBypassGrantWarning
+                | Self::VaultConsentCreateBypassGrant
+                | Self::VaultConsentActiveBypassGrants
+                | Self::VaultConsentBypassedEffectReceipts
                 | Self::VaultConsentGraduationPolicy
                 | Self::VaultConsentGraduationPolicySet
                 | Self::VaultConsentGraduationPolicyClear
@@ -4607,6 +4758,12 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsProposeOutline
+                | Self::VaultArtifactsOutline
+                | Self::VaultArtifactsKeepOutline
+                | Self::VaultArtifactsDeclineOutline
+                | Self::VaultArtifactsDesignDeck
+                | Self::VaultArtifactsCreateDeck
                 | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
@@ -4663,6 +4820,13 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultSkillsAttributionSettle
+                | Self::VaultSkillsAttributionRead
+                | Self::VaultSkillsAttributionEvidenceRecord
+                | Self::VaultSkillsAttributionProject
+                | Self::VaultSkillsAttributionJudgments
+                | Self::VaultSkillsAttributionProposals
+                | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
                 | Self::AiReply
@@ -5024,6 +5188,9 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsLog
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
+                | Self::VaultConsentCreateBypassGrant
+                | Self::VaultConsentActiveBypassGrants
+                | Self::VaultConsentBypassedEffectReceipts
                 | Self::VaultConsentGraduationOffers
                 | Self::VaultConsentGraduationTrustTable
                 | Self::VaultSealPending
@@ -5241,6 +5408,12 @@ impl AgentVerb {
                 | Self::VaultRetrievalTrace
                 | Self::VaultRetrievalExport
                 | Self::VaultRetrievalReplay
+                | Self::VaultRetrievalPolicyGet
+                | Self::VaultRetrievalPolicyPin
+                | Self::VaultRetrievalPolicyTrain
+                | Self::VaultRetrievalPolicyEvaluate
+                | Self::VaultRetrievalPolicyAdmit
+                | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
                 | Self::VaultReceipts
                 | Self::VaultAssetsIngest
@@ -5337,6 +5510,13 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsList
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsGet
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
                 | Self::VaultConnectorsSubscriptionsPut
@@ -5349,6 +5529,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultWireHealthThresholdsGet
+                | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimPolicy
                 | Self::VaultSlimState
                 | Self::VaultSlimResumeStep
@@ -5531,6 +5713,10 @@ impl AgentVerb {
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentBypassGrantWarning
+                | Self::VaultConsentCreateBypassGrant
+                | Self::VaultConsentActiveBypassGrants
+                | Self::VaultConsentBypassedEffectReceipts
                 | Self::VaultConsentGraduationPolicy
                 | Self::VaultConsentGraduationPolicySet
                 | Self::VaultConsentGraduationPolicyClear
@@ -5704,6 +5890,12 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsProposeOutline
+                | Self::VaultArtifactsOutline
+                | Self::VaultArtifactsKeepOutline
+                | Self::VaultArtifactsDeclineOutline
+                | Self::VaultArtifactsDesignDeck
+                | Self::VaultArtifactsCreateDeck
                 | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
@@ -5760,6 +5952,13 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultSkillsAttributionSettle
+                | Self::VaultSkillsAttributionRead
+                | Self::VaultSkillsAttributionEvidenceRecord
+                | Self::VaultSkillsAttributionProject
+                | Self::VaultSkillsAttributionJudgments
+                | Self::VaultSkillsAttributionProposals
+                | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
                 | Self::AiReply
@@ -6121,6 +6320,10 @@ impl AgentVerb {
                 | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalOutcomesPut
                 | Self::VaultRetrievalOutcomesEnd
+                | Self::VaultRetrievalPolicyPin
+                | Self::VaultRetrievalPolicyTrain
+                | Self::VaultRetrievalPolicyAdmit
+                | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultAssetsIngest
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
@@ -6180,6 +6383,11 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorUpdate
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::AiChatCompletions
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
@@ -6189,6 +6397,7 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
                 | Self::VaultSharedProposeDelete
@@ -6314,6 +6523,7 @@ impl AgentVerb {
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentCreateBypassGrant
                 | Self::VaultConsentGraduationPolicySet
                 | Self::VaultConsentGraduationPolicyClear
                 | Self::VaultConsentGraduationOutcome
@@ -6414,6 +6624,11 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsProposeOutline
+                | Self::VaultArtifactsKeepOutline
+                | Self::VaultArtifactsDeclineOutline
+                | Self::VaultArtifactsDesignDeck
+                | Self::VaultArtifactsCreateDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -6447,6 +6662,10 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::VaultSkillsOutcomesProject
+                | Self::VaultSkillsAttributionSettle
+                | Self::VaultSkillsAttributionEvidenceRecord
+                | Self::VaultSkillsAttributionProject
+                | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiReply
                 | Self::AiVoiceStart
@@ -6794,6 +7013,12 @@ impl AgentVerb {
             Self::VaultRetrievalTrace => &["spec"],
             Self::VaultRetrievalExport => &["spec"],
             Self::VaultRetrievalReplay => &["spec"],
+            Self::VaultRetrievalPolicyGet => &["spec"],
+            Self::VaultRetrievalPolicyPin => &["spec"],
+            Self::VaultRetrievalPolicyTrain => &["spec"],
+            Self::VaultRetrievalPolicyEvaluate => &["spec"],
+            Self::VaultRetrievalPolicyAdmit => &["spec"],
+            Self::VaultRetrievalPolicyUpdate => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopePosition => &["spec"],
@@ -6896,6 +7121,13 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => &["spec"],
             Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
+            Self::VaultPacksSectionsPropose => &["spec"],
+            Self::VaultPacksSectionsList => &["spec"],
+            Self::VaultPacksSectionsGrant => &["spec"],
+            Self::VaultPacksSectionsRevoke => &["spec"],
+            Self::VaultPacksSectionsSuggest => &["spec"],
+            Self::VaultPacksSectionsSuggestionsGet => &["spec"],
+            Self::VaultPacksSectionsSuggestionsSet => &["spec"],
             Self::AiChatCompletions => &["spec"],
             Self::VaultConnectorsProxyAdmit => &["spec"],
             Self::VaultConnectorsProxyRevokeWrite => &["spec"],
@@ -6909,6 +7141,8 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultWireHealthThresholdsGet => &["spec"],
+            Self::VaultWireHealthThresholdsSet => &["spec"],
             Self::VaultSlimPolicy => &["spec"],
             Self::VaultSlimState => &["spec"],
             Self::VaultSlimResumeStep => &["spec"],
@@ -7092,6 +7326,10 @@ impl AgentVerb {
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
+            Self::VaultConsentBypassGrantWarning => &["spec"],
+            Self::VaultConsentCreateBypassGrant => &["spec"],
+            Self::VaultConsentActiveBypassGrants => &["spec"],
+            Self::VaultConsentBypassedEffectReceipts => &["spec"],
             Self::VaultConsentGraduationPolicy => &["spec"],
             Self::VaultConsentGraduationPolicySet => &["spec"],
             Self::VaultConsentGraduationPolicyClear => &["spec"],
@@ -7276,6 +7514,12 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
             Self::VaultCriticReview => &["spec"],
+            Self::VaultArtifactsProposeOutline => &["spec"],
+            Self::VaultArtifactsOutline => &["spec"],
+            Self::VaultArtifactsKeepOutline => &["spec"],
+            Self::VaultArtifactsDeclineOutline => &["spec"],
+            Self::VaultArtifactsDesignDeck => &["spec"],
+            Self::VaultArtifactsCreateDeck => &["spec"],
             Self::VaultArtifactsInspectDeck => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
@@ -7332,6 +7576,13 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
+            Self::VaultSkillsAttributionSettle => &["spec"],
+            Self::VaultSkillsAttributionRead => &["spec"],
+            Self::VaultSkillsAttributionEvidenceRecord => &["spec"],
+            Self::VaultSkillsAttributionProject => &["spec"],
+            Self::VaultSkillsAttributionJudgments => &["spec"],
+            Self::VaultSkillsAttributionProposals => &["spec"],
+            Self::VaultSkillsAttributionPositiveRetire => &["spec"],
             Self::AiStepsSubmit => &["spec"],
             Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
@@ -7781,6 +8032,12 @@ impl AgentVerb {
             Self::VaultRetrievalTrace => &["spec"],
             Self::VaultRetrievalExport => &["spec"],
             Self::VaultRetrievalReplay => &["spec"],
+            Self::VaultRetrievalPolicyGet => &["spec"],
+            Self::VaultRetrievalPolicyPin => &["spec"],
+            Self::VaultRetrievalPolicyTrain => &["spec"],
+            Self::VaultRetrievalPolicyEvaluate => &["spec"],
+            Self::VaultRetrievalPolicyAdmit => &["spec"],
+            Self::VaultRetrievalPolicyUpdate => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopePosition => &["spec"],
@@ -7883,6 +8140,13 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => &["spec"],
             Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
+            Self::VaultPacksSectionsPropose => &["spec"],
+            Self::VaultPacksSectionsList => &["spec"],
+            Self::VaultPacksSectionsGrant => &["spec"],
+            Self::VaultPacksSectionsRevoke => &["spec"],
+            Self::VaultPacksSectionsSuggest => &["spec"],
+            Self::VaultPacksSectionsSuggestionsGet => &["spec"],
+            Self::VaultPacksSectionsSuggestionsSet => &["spec"],
             Self::AiChatCompletions => &["spec"],
             Self::VaultConnectorsProxyAdmit => &["spec"],
             Self::VaultConnectorsProxyRevokeWrite => &["spec"],
@@ -7896,6 +8160,8 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultWireHealthThresholdsGet => &["spec"],
+            Self::VaultWireHealthThresholdsSet => &["spec"],
             Self::VaultSlimPolicy => &["spec"],
             Self::VaultSlimState => &["spec"],
             Self::VaultSlimResumeStep => &["spec"],
@@ -8079,6 +8345,10 @@ impl AgentVerb {
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
+            Self::VaultConsentBypassGrantWarning => &["spec"],
+            Self::VaultConsentCreateBypassGrant => &["spec"],
+            Self::VaultConsentActiveBypassGrants => &["spec"],
+            Self::VaultConsentBypassedEffectReceipts => &["spec"],
             Self::VaultConsentGraduationPolicy => &["spec"],
             Self::VaultConsentGraduationPolicySet => &["spec"],
             Self::VaultConsentGraduationPolicyClear => &["spec"],
@@ -8263,6 +8533,12 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
             Self::VaultCriticReview => &["spec"],
+            Self::VaultArtifactsProposeOutline => &["spec"],
+            Self::VaultArtifactsOutline => &["spec"],
+            Self::VaultArtifactsKeepOutline => &["spec"],
+            Self::VaultArtifactsDeclineOutline => &["spec"],
+            Self::VaultArtifactsDesignDeck => &["spec"],
+            Self::VaultArtifactsCreateDeck => &["spec"],
             Self::VaultArtifactsInspectDeck => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
@@ -8319,6 +8595,13 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
+            Self::VaultSkillsAttributionSettle => &["spec"],
+            Self::VaultSkillsAttributionRead => &["spec"],
+            Self::VaultSkillsAttributionEvidenceRecord => &["spec"],
+            Self::VaultSkillsAttributionProject => &["spec"],
+            Self::VaultSkillsAttributionJudgments => &["spec"],
+            Self::VaultSkillsAttributionProposals => &["spec"],
+            Self::VaultSkillsAttributionPositiveRetire => &["spec"],
             Self::AiStepsSubmit => &["spec"],
             Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
@@ -9009,6 +9292,24 @@ impl AgentVerb {
             Self::VaultRetrievalReplay => {
                 "The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."
             }
+            Self::VaultRetrievalPolicyGet => {
+                "The owner reads the served retrieval policy: active blend weights with their origins, owner pins, the learned posterior and model routing pins."
+            }
+            Self::VaultRetrievalPolicyPin => {
+                "The owner pins one retrieval blend weight at a declared share, or clears its pin; learned updates may move only the unpinned remainder."
+            }
+            Self::VaultRetrievalPolicyTrain => {
+                "The owner trains a retrieval-policy candidate from gate-attributed outcomes, judged on held-out runs, without serving it."
+            }
+            Self::VaultRetrievalPolicyEvaluate => {
+                "The owner judges candidate blend weights against the active weights on the same held-out runs the tuner never trains on."
+            }
+            Self::VaultRetrievalPolicyAdmit => {
+                "The owner admits candidate blend weights judged on the named evidence manifest; owner pins and held-out regressions refuse admission."
+            }
+            Self::VaultRetrievalPolicyUpdate => {
+                "The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior."
+            }
             Self::VaultExport => {
                 "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only."
             }
@@ -9313,6 +9614,27 @@ impl AgentVerb {
             Self::VaultPacksRemove => {
                 "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."
             }
+            Self::VaultPacksSectionsPropose => {
+                "The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing."
+            }
+            Self::VaultPacksSectionsList => {
+                "Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project."
+            }
+            Self::VaultPacksSectionsGrant => {
+                "The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent."
+            }
+            Self::VaultPacksSectionsRevoke => {
+                "The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild."
+            }
+            Self::VaultPacksSectionsSuggest => {
+                "Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal."
+            }
+            Self::VaultPacksSectionsSuggestionsGet => {
+                "The owner's plugin suggestion knob: whether workflow-pattern suggestion passes may run at all."
+            }
+            Self::VaultPacksSectionsSuggestionsSet => {
+                "The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted."
+            }
             Self::AiChatCompletions => {
                 "Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling."
             }
@@ -9349,6 +9671,12 @@ impl AgentVerb {
             }
             Self::VaultAuthorityHistoryImport => {
                 "Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."
+            }
+            Self::VaultWireHealthThresholdsGet => {
+                "The owner reads the serving host's per-verb and per-actor wire detection thresholds and their window; crossings ask a health question, never refuse for rate."
+            }
+            Self::VaultWireHealthThresholdsSet => {
+                "The owner replaces the serving host's positive wire detection thresholds and window, receiving the previous and installed policy without adding a rate refusal."
             }
             Self::VaultSlimPolicy => {
                 "Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild."
@@ -9880,6 +10208,18 @@ impl AgentVerb {
             }
             Self::VaultConsentRevoke => {
                 "The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."
+            }
+            Self::VaultConsentBypassGrantWarning => {
+                "The owner previews the exact actor, classes, envelope and project or thread of a scoped bypass; this warning grants nothing."
+            }
+            Self::VaultConsentCreateBypassGrant => {
+                "The owner explicitly acknowledges a scoped bypass warning and atomically creates one receipted standing bypass per class."
+            }
+            Self::VaultConsentActiveBypassGrants => {
+                "The owner reads live scoped bypass states and their complete bounds, newest first; vault.consent.revoke ends each grant."
+            }
+            Self::VaultConsentBypassedEffectReceipts => {
+                "The owner reads the existing Gate receipts for effects covered by one bypass grant, including after its revocation."
             }
             Self::VaultConsentGraduationPolicy => {
                 "Reads runtime consent-graduation policy rows and the effective row for an optional exact scope."
@@ -10427,6 +10767,24 @@ impl AgentVerb {
             Self::VaultCriticReview => {
                 "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target."
             }
+            Self::VaultArtifactsProposeOutline => {
+                "Proposes a closed typed deck outline as a brief NOTE for the person to keep or decline."
+            }
+            Self::VaultArtifactsOutline => {
+                "Reads a typed deck outline, its current NOTE frontier, its keep and its freshness."
+            }
+            Self::VaultArtifactsKeepOutline => {
+                "The owner keeps the exact outline frontier, freezing its version and content hash."
+            }
+            Self::VaultArtifactsDeclineOutline => {
+                "The owner declines the exact outline frontier, clearing its keep and design directions."
+            }
+            Self::VaultArtifactsDesignDeck => {
+                "Compiles one to three template directions from the exact fresh keep into validated plans or typed design decisions."
+            }
+            Self::VaultArtifactsCreateDeck => {
+                "Emits one checked deck from a fresh kept outline and a planned template, retaining born-from and unverified fit."
+            }
             Self::VaultArtifactsInspectDeck => {
                 "Inspects one PPTX version for native edit targets and comment identities without minting ids."
             }
@@ -10582,6 +10940,27 @@ impl AgentVerb {
             }
             Self::VaultSkillsOutcomesGet => {
                 "Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."
+            }
+            Self::VaultSkillsAttributionSettle => {
+                "The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer."
+            }
+            Self::VaultSkillsAttributionRead => {
+                "The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows."
+            }
+            Self::VaultSkillsAttributionEvidenceRecord => {
+                "The owner records one attempt outcome as attribution evidence, grounded against its stamped pack receipt; recording never classifies it."
+            }
+            Self::VaultSkillsAttributionProject => {
+                "The owner runs one attribution pass over recorded evidence, plus the positive lane, returning the judgments and positive proposals it minted."
+            }
+            Self::VaultSkillsAttributionJudgments => {
+                "The owner reads every persisted attribution judgment in both lanes, the projector cursor and the unclear ledger."
+            }
+            Self::VaultSkillsAttributionProposals => {
+                "The owner reads the pending skill edit proposals, preference proposals and positive skill proposals attribution has minted."
+            }
+            Self::VaultSkillsAttributionPositiveRetire => {
+                "The owner retires one positive skill proposal once the optimizer has drafted from it or declined it."
             }
             Self::AiStepsSubmit => {
                 "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."

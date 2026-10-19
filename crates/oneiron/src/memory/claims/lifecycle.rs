@@ -94,23 +94,34 @@ impl Memory<'_> {
     /// The proxy's independent Proposed exchange, under its still-live
     /// read and remember rows, checked in the claim's committing writer.
     pub fn claim_propose_for_proxy(&self, input: &ClaimInput) -> MemoryResult<CommitReceipt> {
-        if input.predicate != "integration.exchange" || input.subject_ref != self.actor.to_hex()
+        if input.predicate != "integration.exchange"
+            || input.subject_ref != self.actor.to_hex()
             || input.source != "tool_output"
         {
-            return Err(MemoryError::bad_request("the proxy proposes its own tool-output exchange"));
+            return Err(MemoryError::bad_request(
+                "the proxy proposes its own tool-output exchange",
+            ));
         }
         self.claim_propose_carried_guarded(input, &|txn| {
-            let registered = self.vault.live_connector_registration_in_txn(
-                txn, crate::connector_key::PROXY_CONNECTOR, &self.actor,
-            )?.is_some_and(|registration| {
-                ["vault.recall", "vault.remember"].iter().all(|tool| {
-                    registration.slate.tool_setting(tool) != crate::connector_key::SlateDisposition::NeverAllow
-                })
-            });
+            let registered = self
+                .vault
+                .live_connector_registration_in_txn(
+                    txn,
+                    crate::connector_key::PROXY_CONNECTOR,
+                    &self.actor,
+                )?
+                .is_some_and(|registration| {
+                    ["vault.recall", "vault.remember"].iter().all(|tool| {
+                        registration.slate.tool_setting(tool)
+                            != crate::connector_key::SlateDisposition::NeverAllow
+                    })
+                });
             if !registered {
-                return Err(Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority {
-                    reason: "the proxy's read or write grant is revoked",
-                }));
+                return Err(Error::Claim(
+                    crate::error::ClaimError::ActorLacksClaimAuthority {
+                        reason: "the proxy's read or write grant is revoked",
+                    },
+                ));
             }
             Ok(())
         })

@@ -50,6 +50,7 @@ mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
 mod people_verbs;
+mod plugin_sections;
 pub mod run_review;
 mod skill_authoring;
 pub mod wellness_doors;
@@ -79,8 +80,8 @@ mod export;
 mod expression_preference;
 pub mod extraction;
 pub mod foreign_code;
-pub mod hook_regen_doors;
 pub mod graph_fs_doors;
+pub mod hook_regen_doors;
 mod inspection;
 mod key_value;
 mod lifted_view;
@@ -196,6 +197,14 @@ pub use oneiron_contracts::memory::{
     MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult,
     MemoryWrongRoot,
 };
+pub use plugin_sections::{
+    PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest,
+    PluginSectionGrantState, PluginSectionListRequest, PluginSectionPackRow,
+    PluginSectionPendingRow, PluginSectionProposal, PluginSectionProposeRequest,
+    PluginSectionRevokeRequest, PluginSectionRevoked, PluginSectionSuggestRequest,
+    PluginSectionSuggestion, PluginSectionSuggestionState, PluginSectionTargetInput,
+    PluginSectionsView, PluginSuggestionsSetRequest, PluginSuggestionsView,
+};
 pub use people_verbs::{
     GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
     PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
@@ -228,11 +237,15 @@ pub use read_selection::RecallWorlds;
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
 pub(crate) use recall::check_recall_request;
 pub use recall::{
-    CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, MEMORY_PACK_VERSION,
-    MemoryItem, MemoryPack, MemoryProvenance, MemoryStaleStamp, RecallEffort, RecallRerank,
-    RecallRerankHost, RecallScope, RerankDocument, RerankEgress, RerankReport, RerankScores,
-    RerankSkip, RetrievalMeta, ScopeHonesty, resolve_recall_dial,
+    CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, HOME_RECALL_MERGE_ORDER,
+    HomeRecallCaller, HomeRecallMergeOrder, MEMORY_PACK_VERSION, MemoryItem, MemoryPack,
+    MemoryProvenance, MemoryStaleStamp, RecallEffort, RecallRerank, RecallRerankHost,
+    RecallResidence, RecallResidenceHit, RecallResidenceSource, RecallScope, RerankDocument,
+    RerankEgress, RerankReport, RerankScores, RerankSkip, RetrievalMeta, ScopeHonesty,
+    resolve_recall_dial,
 };
+#[cfg(feature = "sync")]
+pub use recall::{HomeRecallAsk, complete_with_home};
 pub use result_attachment::{
     MESSAGE_RESULT_METADATA_KEY, MessageResultAttachment, MessageResultSource,
 };
@@ -249,8 +262,8 @@ pub use search_temporal::{
     TemporalSearchHit, TemporalSearchRange, TemporalSearchRequest, TemporalSearchResult,
 };
 pub use search_vector::{
-    VectorPutReceipt, VectorPutRequest, VectorSearchConfig, VectorSearchHit,
-    VectorSearchLane, VectorSearchRequest, VectorSearchResult,
+    VectorPutReceipt, VectorPutRequest, VectorSearchConfig, VectorSearchHit, VectorSearchLane,
+    VectorSearchRequest, VectorSearchResult,
 };
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};
