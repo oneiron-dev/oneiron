@@ -85,6 +85,7 @@ impl EnvConfig {
         values.oauth_issuer = lookup("ONEIRON_OAUTH_ISSUER");
         values.oauth_jwks_uri = lookup("ONEIRON_OAUTH_JWKS_URI");
         values.oauth_resource_indicator = lookup("ONEIRON_OAUTH_RESOURCE_INDICATOR");
+        values.kit_bundle_public_urls = lookup_list(&mut lookup, "ONEIRON_KIT_BUNDLE_PUBLIC_URLS");
         values.allow_unauthenticated =
             lookup_bool(&mut lookup, "ONEIRON_INSECURE_ALLOW_UNAUTHENTICATED")?;
         values.allowed_origins = lookup_list(&mut lookup, "ONEIRON_ALLOWED_ORIGINS");
@@ -601,6 +602,7 @@ struct FileServeConfig {
     oauth_issuer: Option<String>,
     oauth_jwks_uri: Option<String>,
     oauth_resource_indicator: Option<String>,
+    kit_bundle_public_urls: Option<Vec<String>>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
     artifact_domains: Option<Vec<String>>,
@@ -667,6 +669,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             oauth_issuer: value.oauth_issuer,
             oauth_jwks_uri: value.oauth_jwks_uri,
             oauth_resource_indicator: value.oauth_resource_indicator,
+            kit_bundle_public_urls: value.kit_bundle_public_urls,
             allow_unauthenticated: value.allow_unauthenticated,
             allowed_origins: value.allowed_origins,
             artifact_domains: value.artifact_domains,
@@ -734,6 +737,7 @@ struct PartialServeConfig {
     oauth_issuer: Option<String>,
     oauth_jwks_uri: Option<String>,
     oauth_resource_indicator: Option<String>,
+    kit_bundle_public_urls: Option<Vec<String>>,
     allow_unauthenticated: Option<bool>,
     allowed_origins: Option<Vec<String>>,
     artifact_domains: Option<Vec<String>>,
@@ -811,6 +815,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("oauth_issuer", &self.oauth_issuer)
             .field("oauth_jwks_uri", &self.oauth_jwks_uri)
             .field("oauth_resource_indicator", &self.oauth_resource_indicator)
+            .field("kit_bundle_public_urls", &self.kit_bundle_public_urls)
             .field("allow_unauthenticated", &self.allow_unauthenticated)
             .field("allowed_origins", &self.allowed_origins)
             .field("artifact_domains", &self.artifact_domains)
@@ -906,6 +911,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.oauth_resource_indicator {
             resolved.oauth_resource_indicator = Some(value);
+        }
+        if let Some(value) = self.kit_bundle_public_urls {
+            resolved.kit_bundle_public_urls = normalize_list(value);
         }
         if let Some(value) = self.allow_unauthenticated {
             resolved.allow_unauthenticated = value;
@@ -1100,6 +1108,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             oauth_issuer: value.oauth_issuer.clone(),
             oauth_jwks_uri: value.oauth_jwks_uri.clone(),
             oauth_resource_indicator: value.oauth_resource_indicator.clone(),
+            kit_bundle_public_urls: None,
             allow_unauthenticated: value.insecure_allow_unauthenticated,
             allowed_origins: value.allowed_origins.clone(),
             artifact_domains: value.artifact_domains.clone(),
