@@ -8,8 +8,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::federation::{Ceiling, FederationDirectionScope, Position, ScopeAxis, ScopeId};
 use crate::sync::federation_burst::FederationPeer;
 use crate::sync::{
-    FederationAdmissionRole, SyncClient, SyncClientConfig, SyncSelector,
-    SyncSelectorWorld, WindowManager,
+    FederationAdmissionRole, SyncClient, SyncClientConfig, SyncSelector, SyncSelectorWorld,
+    WindowManager,
 };
 use crate::task_verb::sdk::{
     ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined, ConnectWindow,
@@ -113,7 +113,9 @@ impl SyncClient {
     ) -> Result<ConnectRejoined> {
         let (joined, burst) = Self::rejoin_connect_with_burst_as(manager, owner, delivery)?;
         if burst.state == crate::sync::federation_burst::FederationBurstWorkState::Rejected {
-            return Err(Error::InvalidConfig("the owner rejected this federation batch".into()));
+            return Err(Error::InvalidConfig(
+                "the owner rejected this federation batch".into(),
+            ));
         }
         Ok(joined)
     }
@@ -123,7 +125,10 @@ impl SyncClient {
         manager: &Arc<WindowManager>,
         owner: &AuthenticatedOwner,
         delivery: ConnectDelivery,
-    ) -> Result<(ConnectRejoined, crate::sync::federation_burst::FederationBurstReceipt)> {
+    ) -> Result<(
+        ConnectRejoined,
+        crate::sync::federation_burst::FederationBurstReceipt,
+    )> {
         let vault = manager.vault();
         let body = delivery.body;
         let pact_id = id(&body.pact)?;
@@ -183,9 +188,11 @@ impl SyncClient {
         let peer = FederationPeer::authorize(vault, grant.member_ref, grant.scope, &selector)?
             .with_owner(vault, owner)?;
         // Constructing this one call must not drain another pending delivery.
-        let (mut client, _events) = SyncClient::new(Arc::clone(manager), SyncClientConfig::default())?;
+        let (mut client, _events) =
+            SyncClient::new(Arc::clone(manager), SyncClientConfig::default())?;
         client.config.federation_peer = Some(peer);
-        let burst = client.import_federated_window_update_with_disposition(
+        let burst = client
+            .import_federated_window_update_with_disposition(
                 &body.window_key,
                 &body.update,
                 FederationAdmissionRole::Guest,
@@ -204,7 +211,8 @@ impl SyncClient {
                 }
                 other => Error::InvalidConfig(other.to_string()),
             })?;
-        let request = (burst.state == crate::sync::federation_burst::FederationBurstWorkState::Pending)
+        let request = (burst.state
+            == crate::sync::federation_burst::FederationBurstWorkState::Pending)
             .then(|| burst.batch_ref.clone());
         let foreign = crate::federation::pact_foreign_world(
             &vault.authority_fold()?,
@@ -213,16 +221,19 @@ impl SyncClient {
         )?
         .ok_or_else(refused)?
         .entity_id();
-        Ok((ConnectRejoined {
-            pact: body.pact,
-            epoch: body.epoch,
-            world_ref: foreign,
-            status: if request.is_some() {
-                ConnectRejoinStatus::Deferred
-            } else {
-                ConnectRejoinStatus::Imported
+        Ok((
+            ConnectRejoined {
+                pact: body.pact,
+                epoch: body.epoch,
+                world_ref: foreign,
+                status: if request.is_some() {
+                    ConnectRejoinStatus::Deferred
+                } else {
+                    ConnectRejoinStatus::Imported
+                },
+                request,
             },
-            request,
-        }, burst))
+            burst,
+        ))
     }
 }

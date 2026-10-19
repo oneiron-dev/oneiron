@@ -6361,6 +6361,7 @@ class GuestRevokeResponse(TypedDict):
     pact_standing: GuestPactStanding
     disclosure: GuestRevokeDisclosure
     courtesy_targets: NotRequired[list[GuestRevokeCourtesyTargetView]]
+    courtesy_skipped: NotRequired[str | None]
 class GuestSlipMintRequest(TypedDict):
     grant_ref: EntityId
     holder_key: str
@@ -10878,7 +10879,7 @@ class SpawnIntentReply(TypedDict):
 class CancelForceRequest(TypedDict):
     task_ref: EntityId
     reason: NotRequired[str | None]
-AgentRunStatus = Literal["spawned", "working", "needs_input", "delivered", "archived", "failed", "abandoned"]
+AgentRunStatus = Literal["spawned", "working", "needs_input", "delivered", "archived", "failed", "abandoned", "cancelled"]
 class RunAskQuestion(TypedDict):
     who: str
     prompt: str

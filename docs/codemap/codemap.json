@@ -12650,7 +12650,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 19,
-      "fn": 9,
+      "fn": 10,
       "re-export": 2,
       "struct": 1,
       "type": 1
@@ -50428,7 +50428,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FederationBurstDecision",
@@ -53870,7 +53870,7 @@
      "path": "src/task_verb/sdk_guest_revoke.rs",
      "purpose": "The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -81613,7 +81613,7 @@
      "path": "src/owner/guest_revoke.rs",
      "purpose": "The courtesy deletes a guest revoke queues (OF-232, FIX 1634)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {

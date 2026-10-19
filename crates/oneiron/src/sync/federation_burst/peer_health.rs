@@ -1,7 +1,7 @@
 //! Relative signals for one peer; policy compares ratios, never write counts.
 
-use crate::llm::NormalizedBurstInputs;
 use super::{FederationBurstBaselineState, FederationBurstOutcome, FederationBurstPolicy};
+use crate::llm::NormalizedBurstInputs;
 
 pub(super) struct PeerHealth {
     pub(super) inputs: NormalizedBurstInputs,
