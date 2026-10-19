@@ -3046,6 +3046,36 @@ export_facade! {
     let output = client.vault_critic_review(&input)?;
     crate::codec::lift_record("vault.critic.review", &output)
 };
+"vault.artifacts.propose_outline" => fn vault_artifacts_propose_outline(&self, input: DeckOutlineProposeRequest) -> DeckOutlineView = |client| {
+    let input: oneiron::blob_artifact::deck_creation::DeckOutlineProposeRequest = crate::codec::lower_record("vault.artifacts.propose_outline", input)?;
+    let output = client.vault_artifacts_propose_outline(&input)?;
+    crate::codec::lift_record("vault.artifacts.propose_outline", &output)
+};
+"vault.artifacts.outline" => fn vault_artifacts_outline(&self, input: DeckOutlineRefRequest) -> DeckOutlineView = |client| {
+    let input: oneiron::blob_artifact::deck_creation::DeckOutlineRefRequest = crate::codec::lower_record("vault.artifacts.outline", input)?;
+    let output = client.vault_artifacts_outline(&input)?;
+    crate::codec::lift_record("vault.artifacts.outline", &output)
+};
+"vault.artifacts.keep_outline" => fn vault_artifacts_keep_outline(&self, input: DeckOutlineSettleRequest) -> KeptOutline = |client| {
+    let input: oneiron::blob_artifact::deck_creation::DeckOutlineSettleRequest = crate::codec::lower_record("vault.artifacts.keep_outline", input)?;
+    let output = client.vault_artifacts_keep_outline(&input)?;
+    crate::codec::lift_record("vault.artifacts.keep_outline", &output)
+};
+"vault.artifacts.decline_outline" => fn vault_artifacts_decline_outline(&self, input: DeckOutlineSettleRequest) -> DeckOutlineDeclined = |client| {
+    let input: oneiron::blob_artifact::deck_creation::DeckOutlineSettleRequest = crate::codec::lower_record("vault.artifacts.decline_outline", input)?;
+    let output = client.vault_artifacts_decline_outline(&input)?;
+    crate::codec::lift_record("vault.artifacts.decline_outline", &output)
+};
+"vault.artifacts.design_deck" => fn vault_artifacts_design_deck(&self, input: DeckDesignRequest) -> DeckDesignView = |client| {
+    let input: oneiron::blob_artifact::deck_creation::DeckDesignRequest = crate::codec::lower_record("vault.artifacts.design_deck", input)?;
+    let output = client.vault_artifacts_design_deck(&input)?;
+    crate::codec::lift_record("vault.artifacts.design_deck", &output)
+};
+"vault.artifacts.create_deck" => fn vault_artifacts_create_deck(&self, input: DeckEmissionRequest) -> DeckEmissionOutcome = |client| {
+    let input: oneiron::blob_artifact::deck_creation::DeckEmissionRequest = crate::codec::lower_record("vault.artifacts.create_deck", input)?;
+    let output = client.vault_artifacts_create_deck(&input)?;
+    crate::codec::lift_record("vault.artifacts.create_deck", &output)
+};
 "vault.artifacts.inspect_deck" => fn vault_artifacts_inspect_deck(&self, input: DeckInspectRequest) -> DeckInspectionView = |client| {
     let input: oneiron::blob_artifact::DeckInspectRequest = crate::codec::lower_record("vault.artifacts.inspect_deck", input)?;
     let output = client.vault_artifacts_inspect_deck(&input)?;

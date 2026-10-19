@@ -615,6 +615,12 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.review_slides`
 - `vault.artifacts.ask`
 - `vault.critic.review`
+- `vault.artifacts.propose_outline`
+- `vault.artifacts.outline`
+- `vault.artifacts.keep_outline`
+- `vault.artifacts.decline_outline`
+- `vault.artifacts.design_deck`
+- `vault.artifacts.create_deck`
 - `vault.artifacts.inspect_deck`
 - `vault.artifacts.propose_deck`
 - `vault.artifacts.propose_output`

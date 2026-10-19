@@ -1901,6 +1901,18 @@ class Oneiron:
         def review_slides(self, request: Facade.SlideReviewSubmit) -> Facade.SlideReviewOutcome: ...
         def ask(self, spec: Facade.ArtifactAskSubmit) -> Facade.ArtifactAskOutcome:
             """Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard."""
+        def propose_outline(self, spec: Facade.DeckOutlineProposeRequest) -> Facade.DeckOutlineView:
+            """Proposes a closed typed deck outline as a brief NOTE for the person to keep or decline."""
+        def outline(self, spec: Facade.DeckOutlineRefRequest) -> Facade.DeckOutlineView:
+            """Reads a typed deck outline, its current NOTE frontier, its keep and its freshness."""
+        def keep_outline(self, spec: Facade.DeckOutlineSettleRequest) -> Facade.KeptOutline:
+            """The owner keeps the exact outline frontier, freezing its version and content hash."""
+        def decline_outline(self, spec: Facade.DeckOutlineSettleRequest) -> Facade.DeckOutlineDeclined:
+            """The owner declines the exact outline frontier, clearing its keep and design directions."""
+        def design_deck(self, spec: Facade.DeckDesignRequest) -> Facade.DeckDesignView:
+            """Compiles one to three template directions from the exact fresh keep into validated plans or typed design decisions."""
+        def create_deck(self, spec: Facade.DeckEmissionRequest) -> Facade.DeckEmissionOutcome:
+            """Emits one checked deck from a fresh kept outline and a planned template, retaining born-from and unverified fit."""
         def inspect_deck(self, spec: Facade.DeckInspectRequest) -> Facade.DeckInspectionView:
             """Inspects one PPTX version for native edit targets and comment identities without minting ids."""
         def propose_deck(self, request: Facade.DeckProposeRequest) -> Facade.DeckProposeOutcome: ...

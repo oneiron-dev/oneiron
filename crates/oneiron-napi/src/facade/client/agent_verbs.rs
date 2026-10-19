@@ -5374,6 +5374,60 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_artifacts_propose_outline(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.propose_outline", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_outline(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.outline", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_keep_outline(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.keep_outline", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_decline_outline(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.decline_outline", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_design_deck(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.design_deck", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_create_deck(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.create_deck", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_artifacts_inspect_deck(
         &self,
         input: serde_json::Value,

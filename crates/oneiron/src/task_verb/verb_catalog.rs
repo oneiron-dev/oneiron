@@ -613,6 +613,12 @@ pub enum AgentVerb {
     VaultArtifactsReviewSlides,
     VaultArtifactsAsk,
     VaultCriticReview,
+    VaultArtifactsProposeOutline,
+    VaultArtifactsOutline,
+    VaultArtifactsKeepOutline,
+    VaultArtifactsDeclineOutline,
+    VaultArtifactsDesignDeck,
+    VaultArtifactsCreateDeck,
     VaultArtifactsInspectDeck,
     VaultArtifactsProposeDeck,
     VaultArtifactsProposeOutput,
@@ -1603,6 +1609,12 @@ impl AgentVerb {
         Self::VaultArtifactsReviewSlides,
         Self::VaultArtifactsAsk,
         Self::VaultCriticReview,
+        Self::VaultArtifactsProposeOutline,
+        Self::VaultArtifactsOutline,
+        Self::VaultArtifactsKeepOutline,
+        Self::VaultArtifactsDeclineOutline,
+        Self::VaultArtifactsDesignDeck,
+        Self::VaultArtifactsCreateDeck,
         Self::VaultArtifactsInspectDeck,
         Self::VaultArtifactsProposeDeck,
         Self::VaultArtifactsProposeOutput,
@@ -2614,6 +2626,12 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
             Self::VaultArtifactsAsk => "vault.artifacts.ask",
             Self::VaultCriticReview => "vault.critic.review",
+            Self::VaultArtifactsProposeOutline => "vault.artifacts.propose_outline",
+            Self::VaultArtifactsOutline => "vault.artifacts.outline",
+            Self::VaultArtifactsKeepOutline => "vault.artifacts.keep_outline",
+            Self::VaultArtifactsDeclineOutline => "vault.artifacts.decline_outline",
+            Self::VaultArtifactsDesignDeck => "vault.artifacts.design_deck",
+            Self::VaultArtifactsCreateDeck => "vault.artifacts.create_deck",
             Self::VaultArtifactsInspectDeck => "vault.artifacts.inspect_deck",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
             Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
@@ -3610,6 +3628,12 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsProposeOutline
+                | Self::VaultArtifactsOutline
+                | Self::VaultArtifactsKeepOutline
+                | Self::VaultArtifactsDeclineOutline
+                | Self::VaultArtifactsDesignDeck
+                | Self::VaultArtifactsCreateDeck
                 | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
@@ -4627,6 +4651,12 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsProposeOutline
+                | Self::VaultArtifactsOutline
+                | Self::VaultArtifactsKeepOutline
+                | Self::VaultArtifactsDeclineOutline
+                | Self::VaultArtifactsDesignDeck
+                | Self::VaultArtifactsCreateDeck
                 | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
@@ -5731,6 +5761,12 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsProposeOutline
+                | Self::VaultArtifactsOutline
+                | Self::VaultArtifactsKeepOutline
+                | Self::VaultArtifactsDeclineOutline
+                | Self::VaultArtifactsDesignDeck
+                | Self::VaultArtifactsCreateDeck
                 | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
@@ -6442,6 +6478,11 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsProposeOutline
+                | Self::VaultArtifactsKeepOutline
+                | Self::VaultArtifactsDeclineOutline
+                | Self::VaultArtifactsDesignDeck
+                | Self::VaultArtifactsCreateDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -7308,6 +7349,12 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
             Self::VaultCriticReview => &["spec"],
+            Self::VaultArtifactsProposeOutline => &["spec"],
+            Self::VaultArtifactsOutline => &["spec"],
+            Self::VaultArtifactsKeepOutline => &["spec"],
+            Self::VaultArtifactsDeclineOutline => &["spec"],
+            Self::VaultArtifactsDesignDeck => &["spec"],
+            Self::VaultArtifactsCreateDeck => &["spec"],
             Self::VaultArtifactsInspectDeck => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
@@ -8299,6 +8346,12 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
             Self::VaultCriticReview => &["spec"],
+            Self::VaultArtifactsProposeOutline => &["spec"],
+            Self::VaultArtifactsOutline => &["spec"],
+            Self::VaultArtifactsKeepOutline => &["spec"],
+            Self::VaultArtifactsDeclineOutline => &["spec"],
+            Self::VaultArtifactsDesignDeck => &["spec"],
+            Self::VaultArtifactsCreateDeck => &["spec"],
             Self::VaultArtifactsInspectDeck => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
@@ -10474,6 +10527,24 @@ impl AgentVerb {
             }
             Self::VaultCriticReview => {
                 "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target."
+            }
+            Self::VaultArtifactsProposeOutline => {
+                "Proposes a closed typed deck outline as a brief NOTE for the person to keep or decline."
+            }
+            Self::VaultArtifactsOutline => {
+                "Reads a typed deck outline, its current NOTE frontier, its keep and its freshness."
+            }
+            Self::VaultArtifactsKeepOutline => {
+                "The owner keeps the exact outline frontier, freezing its version and content hash."
+            }
+            Self::VaultArtifactsDeclineOutline => {
+                "The owner declines the exact outline frontier, clearing its keep and design directions."
+            }
+            Self::VaultArtifactsDesignDeck => {
+                "Compiles one to three template directions from the exact fresh keep into validated plans or typed design decisions."
+            }
+            Self::VaultArtifactsCreateDeck => {
+                "Emits one checked deck from a fresh kept outline and a planned template, retaining born-from and unverified fit."
             }
             Self::VaultArtifactsInspectDeck => {
                 "Inspects one PPTX version for native edit targets and comment identities without minting ids."

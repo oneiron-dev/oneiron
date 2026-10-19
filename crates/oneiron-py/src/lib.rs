@@ -5605,6 +5605,62 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_artifacts_propose_outline(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.artifacts.propose_outline")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.artifacts.propose_outline", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_outline(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.artifacts.outline")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.outline", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_keep_outline(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.artifacts.keep_outline")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.keep_outline", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_decline_outline(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.artifacts.decline_outline")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.artifacts.decline_outline", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_design_deck(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.artifacts.design_deck")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.design_deck", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_artifacts_create_deck(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.artifacts.create_deck")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.create_deck", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_artifacts_inspect_deck(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.artifacts.inspect_deck")?;
         let output = py

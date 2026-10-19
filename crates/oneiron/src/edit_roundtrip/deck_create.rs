@@ -21,10 +21,13 @@
 
 use std::collections::BTreeMap;
 
+mod store;
+pub(crate) use store::outline_pins;
+
 use oneiron_docedit::design_plan::{
     AssetBinding, Brief, CompileError, Fallback, KeptBrief, MediaType, Outcome, compile_with_fonts,
 };
-use oneiron_docedit::emit::{EmitError, EmitInputs, Names, StoredAsset, emit};
+use oneiron_docedit::emit::{EmitError, EmitInputs, Names, StoredAsset, check_template, emit};
 use oneiron_docedit::fonts::{FontBook, FontError};
 use oneiron_docedit::graphic::{AssetRecord, GraphicLimits, Origin};
 use oneiron_docedit::retained_opc::Package;
@@ -48,6 +51,12 @@ const PPTX_MEDIA_TYPE: &str =
 /// Design directions in one spec.
 pub const MAX_DIRECTIONS: usize = 3;
 
+pub(crate) type CompiledDirections = (
+    DesignSpec,
+    Vec<Option<oneiron_docedit::design_plan::DesignPlan>>,
+    Vec<Vec<oneiron_docedit::design_plan::Decision>>,
+);
+
 const OUTLINE_KEEPS: SideTable<EntityId, KeptOutline, Named> =
     SideTable::new(&side_table::DECK_OUTLINE_KEEP);
 const DESIGN_SPECS: SideTable<EntityId, DesignSpec, Named> =
@@ -70,7 +79,7 @@ pub(crate) fn erase_in_txn(
 }
 
 /// One blob artifact version.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ArtifactVersionRef {
     pub artifact: EntityId,
     pub version: u64,
@@ -78,7 +87,7 @@ pub struct ArtifactVersionRef {
 
 /// A person's keep of an outline: the frontier, the exact outline bytes with
 /// drift mapped at keep, and their hash.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct KeptOutline {
     pub note: EntityId,
     pub frontier: Vec<u8>,
@@ -91,7 +100,7 @@ pub struct KeptOutline {
 }
 
 /// Whether a keep still describes its outline.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OutlineFreshness {
     Fresh,
@@ -105,7 +114,7 @@ pub enum OutlineFreshness {
 }
 
 /// One design direction: a template and what the kept outline becomes on it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DesignDirection {
     pub template: ArtifactVersionRef,
     /// BLAKE3 of the template version's bytes.
@@ -113,7 +122,7 @@ pub struct DesignDirection {
     pub outcome: DirectionOutcome,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DirectionOutcome {
     Plan {
@@ -128,7 +137,7 @@ pub enum DirectionOutcome {
     Ask { pages: Vec<String> },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DirectionSlide {
     pub page: String,
     pub layout: String,
@@ -137,7 +146,7 @@ pub struct DirectionSlide {
 }
 
 /// The design spec linked to one kept outline.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DesignSpec {
     pub note: EntityId,
     /// The keep the directions were compiled from.
@@ -146,7 +155,7 @@ pub struct DesignSpec {
 }
 
 /// The receipt of one created deck.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeckCreationRecord {
     pub artifact: EntityId,
     pub version: u64,
@@ -168,7 +177,7 @@ pub struct DeckCreationRecord {
     pub created_at: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CreatedSlide {
     pub part: String,
     pub sld_id: u32,
@@ -176,7 +185,7 @@ pub struct CreatedSlide {
     pub layout: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CreatedEstimate {
     pub block: String,
     pub need: i64,
@@ -239,10 +248,19 @@ impl crate::Vault {
         note: EntityId,
         actor: WriteActor,
     ) -> std::result::Result<KeptOutline, DeckCreateError> {
-        let document = self.note_document(note)?;
+        self.try_with_write_txn_grouped(|txn| self.keep_deck_outline_in_txn(txn, note, actor))
+    }
+
+    pub(crate) fn keep_deck_outline_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        note: EntityId,
+        actor: WriteActor,
+    ) -> std::result::Result<KeptOutline, DeckCreateError> {
+        let document = crate::note::deck_outline_document_in_txn(self, txn, note)?;
         let mut outline: Value = serde_json::from_str(outline_text(&document.markdown))
             .map_err(|_| invalid("the brief holds no outline JSON"))?;
-        self.map_evidence(&mut outline)?;
+        self.map_evidence_in_txn(txn, &mut outline)?;
         let bytes = serde_json::to_vec(&outline).map_err(|_| invalid("outline encoding"))?;
         Brief::parse(&bytes).map_err(CompileError::from)?;
         let kept = KeptOutline {
@@ -254,7 +272,8 @@ impl crate::Vault {
             kept_by: actor.entity_ref(),
             kept_at: self.now_recorded_at(),
         };
-        self.with_write_txn_grouped(|wtxn| OUTLINE_KEEPS.put(&self.store, wtxn, &note, &kept))?;
+        OUTLINE_KEEPS.put(&self.store, txn, &note, &kept)?;
+        DESIGN_SPECS.delete(&self.store, txn, &note)?;
         Ok(kept)
     }
 
@@ -264,21 +283,38 @@ impl crate::Vault {
         OUTLINE_KEEPS.get(&self.store, &txn, &note)
     }
 
+    pub(crate) fn kept_deck_outline_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        note: EntityId,
+    ) -> Result<Option<KeptOutline>> {
+        OUTLINE_KEEPS.get(&self.store, txn, &note)
+    }
+
     /// Whether the keep still describes the outline and its evidence.
     pub fn deck_outline_freshness(
         &self,
         note: EntityId,
     ) -> std::result::Result<OutlineFreshness, DeckCreateError> {
-        let Some(kept) = self.kept_deck_outline(note)? else {
+        let txn = self.store.env.read_txn().map_err(Error::from)?;
+        self.deck_outline_freshness_in_txn(&txn, note)
+    }
+
+    pub(crate) fn deck_outline_freshness_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        note: EntityId,
+    ) -> std::result::Result<OutlineFreshness, DeckCreateError> {
+        let Some(kept) = OUTLINE_KEEPS.get(&self.store, txn, &note)? else {
             return Ok(OutlineFreshness::NotKept);
         };
-        if self.note_document(note)?.frontier != kept.frontier {
+        if crate::note::deck_outline_document_in_txn(self, txn, note)?.frontier != kept.frontier {
             return Ok(OutlineFreshness::Edited);
         }
         let held: Value =
             serde_json::from_slice(&kept.bytes).map_err(|_| invalid("kept outline encoding"))?;
         let mut remapped = held.clone();
-        self.map_evidence(&mut remapped)?;
+        self.map_evidence_in_txn(txn, &mut remapped)?;
         let (mut before, mut after) = (Vec::new(), Vec::new());
         pins(&held, &mut |pin| before.push(pin.get("drift").cloned()));
         pins(&remapped, &mut |pin| after.push(pin.get("drift").cloned()));
@@ -305,18 +341,46 @@ impl crate::Vault {
         assets: &BTreeMap<String, ArtifactVersionRef>,
         fonts: &[ArtifactVersionRef],
     ) -> std::result::Result<DesignSpec, DeckCreateError> {
+        self.try_with_write_txn_grouped(|txn| {
+            self.design_deck_directions_in_txn(txn, note, templates, assets, fonts)
+                .map(|(spec, _, _)| spec)
+        })
+    }
+
+    pub(crate) fn design_deck_directions_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        note: EntityId,
+        templates: &[ArtifactVersionRef],
+        assets: &BTreeMap<String, ArtifactVersionRef>,
+        fonts: &[ArtifactVersionRef],
+    ) -> std::result::Result<CompiledDirections, DeckCreateError> {
         if templates.is_empty() || templates.len() > MAX_DIRECTIONS {
             return Err(invalid("one to three design directions"));
         }
-        let kept = self.fresh_outline(note)?;
-        let limits = self.docedit_package_limits()?;
-        let book = self.font_book(fonts)?;
-        let bindings = self.asset_bindings(assets)?;
+        let kept = self.fresh_outline_in_txn(txn, note)?;
+        let limits = self.docedit_package_limits_in_txn(txn)?;
+        let book = self.font_book_in_txn(txn, fonts)?;
+        let bindings = self.asset_bindings_in_txn(txn, assets)?;
         let mut directions = Vec::new();
+        let mut plans = Vec::new();
+        let mut questions = Vec::new();
         for template in templates {
-            let bytes = self.version_bytes(template)?;
+            let bytes = self.version_bytes_in_txn(txn, template)?;
             let package = Package::open(&bytes, limits).map_err(|_| invalid("template package"))?;
+            check_template(&package)?;
             let outcome = compile_with_fonts(&kept_brief(&kept), &package, &bindings, &book)?;
+            questions.push(match &outcome {
+                Outcome::Ask(decisions) => decisions.clone(),
+                Outcome::Plan(_) => Vec::new(),
+            });
+            plans.push(match &outcome {
+                Outcome::Plan(plan) => {
+                    plan.check(&kept_brief(&kept), &package)?;
+                    Some((**plan).clone())
+                }
+                Outcome::Ask(_) => None,
+            });
             directions.push(DesignDirection {
                 template: *template,
                 template_hash: *blake3::hash(&bytes).as_bytes(),
@@ -361,8 +425,8 @@ impl crate::Vault {
             content_hash: kept.content_hash,
             directions,
         };
-        self.with_write_txn_grouped(|wtxn| DESIGN_SPECS.put(&self.store, wtxn, &note, &spec))?;
-        Ok(spec)
+        DESIGN_SPECS.put(&self.store, txn, &note, &spec)?;
+        Ok((spec, plans, questions))
     }
 
     /// The design spec linked to an outline, if any.
@@ -377,11 +441,25 @@ impl crate::Vault {
         &self,
         request: &DeckCreateRequest<'_>,
     ) -> std::result::Result<DeckCreateOutcome, DeckCreateError> {
-        let kept = self.fresh_outline(request.outline)?;
-        let limits = self.docedit_package_limits()?;
-        let book = self.font_book(request.fonts)?;
-        let bindings = self.asset_bindings(request.assets)?;
-        let template_bytes = self.version_bytes(&request.template)?;
+        self.try_with_write_txn_grouped(|txn| self.create_deck_from_outline_in_txn(txn, request))
+    }
+
+    pub(crate) fn create_deck_from_outline_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        request: &DeckCreateRequest<'_>,
+    ) -> std::result::Result<DeckCreateOutcome, DeckCreateError> {
+        for (_, record) in CREATIONS.scan_from(&self.store, wtxn, b"")? {
+            if record.run_ref == request.run_ref && record.made_by == request.made_by {
+                return Err(invalid("this deck creation run was already consumed"));
+            }
+        }
+        let txn = &*wtxn;
+        let kept = self.fresh_outline_in_txn(txn, request.outline)?;
+        let limits = self.docedit_package_limits_in_txn(txn)?;
+        let book = self.font_book_in_txn(txn, request.fonts)?;
+        let bindings = self.asset_bindings_in_txn(txn, request.assets)?;
+        let template_bytes = self.version_bytes_in_txn(txn, &request.template)?;
         let template =
             Package::open(&template_bytes, limits).map_err(|_| invalid("template package"))?;
         let brief = kept_brief(&kept);
@@ -396,7 +474,7 @@ impl crate::Vault {
             }
             Outcome::Plan(plan) => plan,
         };
-        let records = self.asset_records(request.assets, &kept)?;
+        let records = self.asset_records_in_txn(txn, request.assets, &kept)?;
         let stored: BTreeMap<String, StoredAsset<'_>> = records
             .iter()
             .map(|(asset, (record, bytes))| {
@@ -457,7 +535,7 @@ impl crate::Vault {
         };
         // The artifact, its first version and the creation record land in
         // one transaction, or none of them does.
-        let record = self.with_write_txn_grouped(|wtxn| {
+        let record = {
             crate::ports::EntityStore::port_entity_put(
                 self,
                 wtxn,
@@ -526,150 +604,33 @@ impl crate::Vault {
                 created_at: now,
             };
             CREATIONS.put(&self.store, wtxn, &artifact, &record)?;
-            Ok(record)
-        })?;
+            record
+        };
         Ok(DeckCreateOutcome::Created(Box::new(record)))
+    }
+
+    pub(crate) fn decline_deck_outline_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        note: EntityId,
+    ) -> Result<()> {
+        OUTLINE_KEEPS.delete(&self.store, txn, &note)?;
+        DESIGN_SPECS.delete(&self.store, txn, &note)?;
+        Ok(())
+    }
+
+    pub(crate) fn deck_design_spec_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        note: EntityId,
+    ) -> Result<Option<DesignSpec>> {
+        DESIGN_SPECS.get(&self.store, txn, &note)
     }
 
     /// The creation record of a deck this engine created, if any.
     pub fn deck_creation_record(&self, artifact: EntityId) -> Result<Option<DeckCreationRecord>> {
         let txn = self.store.env.read_txn()?;
         CREATIONS.get(&self.store, &txn, &artifact)
-    }
-
-    fn fresh_outline(&self, note: EntityId) -> std::result::Result<KeptOutline, DeckCreateError> {
-        match self.deck_outline_freshness(note)? {
-            OutlineFreshness::Fresh => {}
-            OutlineFreshness::NotKept => return Err(invalid("the outline is not kept")),
-            OutlineFreshness::Edited => {
-                return Err(invalid("the outline changed after its keep; keep it again"));
-            }
-            OutlineFreshness::EvidenceMoved { .. } => {
-                return Err(invalid(
-                    "cited evidence moved after the keep; keep it again",
-                ));
-            }
-        }
-        self.kept_deck_outline(note)?
-            .ok_or_else(|| invalid("the outline is not kept"))
-    }
-
-    /// Set each evidence pin's `drift` from its note cursors. A pin without
-    /// a cited CLAIM, or whose ids and cursors are not this engine's, keeps
-    /// the caller's flag.
-    fn map_evidence(&self, outline: &mut Value) -> std::result::Result<(), DeckCreateError> {
-        let mut result = Ok(());
-        pins_mut(outline, &mut |pin| {
-            if result.is_err() {
-                return;
-            }
-            let Some(note_pin) = note_pin(pin) else {
-                return;
-            };
-            let drifted = !matches!(
-                self.resolve_note_pin(&note_pin),
-                Ok(NoteSpanResolution::Mapped { .. })
-            );
-            if let Some(object) = pin.as_object_mut() {
-                object.insert("drift".to_owned(), Value::Bool(drifted));
-            } else {
-                result = Err(invalid("evidence pin is not an object"));
-            }
-        });
-        result
-    }
-
-    fn version_bytes(&self, at: &ArtifactVersionRef) -> Result<Vec<u8>> {
-        self.read_blob_artifact_version(&at.artifact, at.version)?
-            .ok_or(Error::EntityNotFound)
-    }
-
-    fn font_book(
-        &self,
-        fonts: &[ArtifactVersionRef],
-    ) -> std::result::Result<FontBook, DeckCreateError> {
-        let mut book = FontBook::new();
-        for font in fonts {
-            book.add(self.version_bytes(font)?)?;
-        }
-        Ok(book)
-    }
-
-    fn asset_bindings(
-        &self,
-        assets: &BTreeMap<String, ArtifactVersionRef>,
-    ) -> std::result::Result<BTreeMap<String, AssetBinding>, DeckCreateError> {
-        assets
-            .iter()
-            .map(|(asset, at)| {
-                Ok((
-                    asset.clone(),
-                    AssetBinding {
-                        handle: at.artifact.to_hex(),
-                        media: self.asset_media(at)?,
-                    },
-                ))
-            })
-            .collect()
-    }
-
-    fn asset_media(
-        &self,
-        at: &ArtifactVersionRef,
-    ) -> std::result::Result<MediaType, DeckCreateError> {
-        let body = self
-            .get_blob_artifact(&at.artifact)?
-            .ok_or(Error::EntityNotFound)?;
-        match body.media_type.as_str() {
-            "image/png" => Ok(MediaType::Png),
-            "image/jpeg" => Ok(MediaType::Jpeg),
-            "image/svg+xml" => Ok(MediaType::Svg),
-            _ => Err(invalid("an asset must be PNG, JPEG or SVG")),
-        }
-    }
-
-    /// Held assets as admitted records with their bytes; the description is
-    /// the brief's intended content for the asset.
-    fn asset_records(
-        &self,
-        assets: &BTreeMap<String, ArtifactVersionRef>,
-        kept: &KeptOutline,
-    ) -> std::result::Result<BTreeMap<String, (AssetRecord, Vec<u8>)>, DeckCreateError> {
-        let brief = Brief::parse(&kept.bytes).map_err(CompileError::from)?;
-        let mut out = BTreeMap::new();
-        for (asset, at) in assets {
-            let metadata = self
-                .blob_artifact_version_metadata(&at.artifact, at.version)?
-                .ok_or(Error::EntityNotFound)?;
-            let description = brief
-                .assets
-                .iter()
-                .find(|held| held.id == *asset)
-                .map(|held| held.content.clone())
-                .ok_or_else(|| invalid("a bound asset is not in the outline"))?;
-            out.insert(
-                asset.clone(),
-                (
-                    AssetRecord {
-                        artifact: at.artifact.to_hex(),
-                        version: at.version,
-                        content_hash: metadata.content_hash,
-                        media: self.asset_media(at)?,
-                        origin: Origin::Held,
-                        provenance: vec![format!(
-                            "blob:{}@{}:{}",
-                            at.artifact.to_hex(),
-                            at.version,
-                            metadata.provenance.as_str()
-                        )],
-                        rights: Vec::new(),
-                        description,
-                    },
-                    self.version_bytes(at)?,
-                ),
-            );
-        }
-        Ok(out)
     }
 }
 
