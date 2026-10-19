@@ -585,6 +585,29 @@ pub(super) fn materialize_edges_from_delta(
                         }
                         continue;
                     }
+                    // So is a kept audience edit's link to its live root
+                    // (FIX 5639). A tombstone on either end takes the edit
+                    // with its root, so that echo is dropped.
+                    if let Some(refusal) = crate::workspace_roster::audience_edit_unlink_refusal(
+                        &vault.store,
+                        &*wtxn,
+                        &src,
+                        kind,
+                        &tgt,
+                    )? {
+                        if !tombstones.contains(&src) && !tombstones.contains(&tgt) {
+                            quarantine_rejected_op_in_txn(
+                                vault,
+                                wtxn,
+                                window_key,
+                                QuarantineContainer::Edges,
+                                key,
+                                &refusal,
+                                &[],
+                            )?;
+                        }
+                        continue;
+                    }
                     if let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
                         && (kind == EdgeKind::Blocks
                             || (kind == EdgeKind::AddressedTo

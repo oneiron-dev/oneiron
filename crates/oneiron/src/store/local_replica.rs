@@ -353,6 +353,10 @@ impl<'a> Census<'a> {
             KeepReason::NotCarried
         } else if self.pending(txn, id)? {
             KeepReason::Pending
+        } else if crate::workspace_roster::reject_audience_edit_delete(self.store, txn, id).is_err()
+        {
+            // A kept audience edit stays whatever the caller keeps (FIX 5639).
+            KeepReason::Guarded
         } else if self.keep.guarded_rows && guarded(self.store, txn, id) {
             KeepReason::Guarded
         } else {
