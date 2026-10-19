@@ -1301,6 +1301,9 @@ install:
   runs a request it holds cancelled or replaced, and the receipt says "cancelled by the owner" or
   "superseded by a newer request on its target". If the target ran the request before it had your
   cancel, that result stands and the cancel says "already enacted". Nothing is undone.
+- The same cancel is the verb `vault.roots.requests.cancel` with `request`, on the facade, MCP,
+  code mode and every SDK, under the same owner proof. It answers the request's receipt without the
+  route's `*_text` lines, and an embedded handle records it as its own owner on this install.
 
 Kit material travels only in the body of the named target's own call:
 `POST /v1/owner/roots/requests/run` and `POST /v1/owner/recovery-kit/pad-access`. That means the

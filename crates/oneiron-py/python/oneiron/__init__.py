@@ -606,6 +606,9 @@ class Oneiron:
         def evals(self) -> "Oneiron._VaultEvalsVerbs":
             return Oneiron._VaultEvalsVerbs(self._client)
         @property
+        def roots(self) -> "Oneiron._VaultRootsVerbs":
+            return Oneiron._VaultRootsVerbs(self._client)
+        @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs":
             return Oneiron._VaultCleanupVerbs(self._client)
         @property
@@ -2728,6 +2731,18 @@ class Oneiron:
         def pick(self, spec):
             """Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses."""
             return json.loads(_translate(lambda: self._client.vault_evals_labels_pick(json.dumps(spec))))
+    class _VaultRootsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def requests(self) -> "Oneiron._VaultRootsRequestsVerbs":
+            return Oneiron._VaultRootsRequestsVerbs(self._client)
+    class _VaultRootsRequestsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def cancel(self, spec):
+            """The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands."""
+            return json.loads(_translate(lambda: self._client.vault_roots_requests_cancel(json.dumps(spec))))
     class _VaultCleanupVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
