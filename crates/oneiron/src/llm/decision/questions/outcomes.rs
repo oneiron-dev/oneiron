@@ -79,13 +79,23 @@ pub fn calibration_pairs(
     locality: crate::claim::CallerLocality,
 ) -> Result<Vec<CalibrationPair>> {
     let txn = vault.store.env.read_txn()?;
-    let kept = crate::settings::device_local_worlds_at(vault, &txn, locality)?;
-    let Some(head) = QUESTION_HEAD.get(&vault.store, &txn, &HeadKey(question))? else {
+    calibration_pairs_in_txn(vault, &txn, principal, question, locality)
+}
+
+pub(crate) fn calibration_pairs_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    question: EntityId,
+    locality: crate::claim::CallerLocality,
+) -> Result<Vec<CalibrationPair>> {
+    let kept = crate::settings::device_local_worlds_at(vault, txn, locality)?;
+    let Some(head) = QUESTION_HEAD.get(&vault.store, txn, &HeadKey(question))? else {
         return Ok(Vec::new());
     };
     let Some(current) = QUESTION_VERSION.get(
         &vault.store,
-        &txn,
+        txn,
         &VersionKey {
             id: question,
             version: head.version,
@@ -98,16 +108,16 @@ pub fn calibration_pairs(
         return Ok(Vec::new());
     }
     let answers: Vec<AnswerRecord> = QUESTION_ANSWER
-        .scan_from(&vault.store, &txn, &family_prefix(question, b"answer"))?
+        .scan_from(&vault.store, txn, &family_prefix(question, b"answer"))?
         .into_iter()
         .map(|(_, answer)| answer)
         .collect();
     let labels: Vec<OutcomeLabel> = QUESTION_LABEL
-        .scan_from(&vault.store, &txn, &family_prefix(question, b"label"))?
+        .scan_from(&vault.store, txn, &family_prefix(question, b"label"))?
         .into_iter()
         .map(|(_, label)| label)
         .collect();
-    let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     let mut pairs = Vec::new();
     for outcome in labels {
         let Some(answer) = answers.iter().find(|a| a.claim == outcome.answer) else {
@@ -115,7 +125,7 @@ pub fn calibration_pairs(
         };
         let Some(record) = QUESTION_VERSION.get(
             &vault.store,
-            &txn,
+            txn,
             &VersionKey {
                 id: question,
                 version: answer.decision.receipt.question_version,
@@ -128,7 +138,7 @@ pub fn calibration_pairs(
             continue;
         }
         let Some(raw) =
-            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &outcome.fact)?
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &outcome.fact)?
         else {
             continue;
         };
@@ -145,7 +155,7 @@ pub fn calibration_pairs(
         )?;
         let mut derived_from = derived_rows(question, answer, outcome.fact, &body);
         derived_from.extend(crate::reaction::outcome_sources(&body)?);
-        if !kept.is_empty() && kept_any(vault, &txn, &kept, &derived_from)? {
+        if !kept.is_empty() && kept_any(vault, txn, &kept, &derived_from)? {
             continue;
         }
         let fact = super::arrival::Fact {
@@ -153,7 +163,7 @@ pub fn calibration_pairs(
             body: &body,
             occurred_at: header.occurred_start,
         };
-        if super::arrival::evaluate_fact(&vault.store, &txn, &policy, &record, answer, &fact)?
+        if super::arrival::evaluate_fact(&vault.store, txn, &policy, &record, answer, &fact)?
             .as_ref()
             != Some(&outcome)
         {
@@ -173,7 +183,7 @@ pub fn calibration_pairs(
     // silence label, unless a fact in the window has labelled it since.
     for (_, close) in super::windows::QUESTION_WINDOW.scan_from(
         &vault.store,
-        &txn,
+        txn,
         &family_prefix(question, b"window"),
     )? {
         let WindowOutcome::Silence(label) = close.outcome else {
@@ -184,7 +194,7 @@ pub fn calibration_pairs(
         };
         let Some(record) = QUESTION_VERSION.get(
             &vault.store,
-            &txn,
+            txn,
             &VersionKey {
                 id: question,
                 version: close.question_version,
@@ -201,9 +211,9 @@ pub fn calibration_pairs(
         };
         let derived_from = vec![question, answer.claim, answer.unit];
         if record.principal != principal
-            || (!kept.is_empty() && kept_any(vault, &txn, &kept, &derived_from)?)
-            || !super::windows::silence_stands(&vault.store, &txn, &policy, &record, answer)?
-            || super::windows::fact_labelled(&vault.store, &txn, &policy, &record, answer)?
+            || (!kept.is_empty() && kept_any(vault, txn, &kept, &derived_from)?)
+            || !super::windows::silence_stands(&vault.store, txn, &policy, &record, answer)?
+            || super::windows::fact_labelled(&vault.store, txn, &policy, &record, answer)?
         {
             continue;
         }

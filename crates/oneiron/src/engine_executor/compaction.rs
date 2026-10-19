@@ -141,6 +141,10 @@ pub struct CompactionReport {
     pub last_self_pass: Option<crate::compaction::CompactionExecution>,
     /// Why the last flight could not be written as its agent, typed.
     pub self_unavailable: Option<crate::compaction::SelfCompactionUnavailable>,
+    /// Every self-written summary the run landed, with the durable receipt
+    /// its run's rows keep, read back on its route when the call ends (FIX
+    /// 4465 B). Unlike `last_self_pass`, only what landed.
+    pub landed_self: Vec<crate::compaction::CompactionLandingReceipt>,
 }
 
 /// Why a run parked at its window budget.
@@ -304,7 +308,10 @@ impl RunCompaction {
         self.report.in_flight = false;
         self.report.self_unavailable = outcome.unavailable;
         if outcome.epoch_execution.is_some() {
-            self.report.last_self_pass = outcome.epoch_execution.clone();
+            self.report.last_self_pass = outcome
+                .epoch_execution
+                .clone()
+                .map(crate::compaction::CompactionExecution::without_calls);
         }
         let epoch_execution = outcome.epoch_execution;
         let epoch = outcome.epoch.map(|outcome| match outcome {
@@ -523,7 +530,8 @@ impl RunCompaction {
 /// A backend writing as its agent (FIX 4465) answers what ran each try: the
 /// answering try's record comes back, stamped with the accepted summary's
 /// snapshot, and each try the gate refused before it keeps its own usage
-/// line, so no try is counted twice.
+/// line, so no try is counted twice. The record also holds every paid call
+/// of the pass, the refused ones first, for its host to file (FIX 4465 B).
 fn run_pass(
     backend: &dyn CompactionBackend,
     request: &CompactionRequest,
@@ -533,21 +541,28 @@ fn run_pass(
     let mut last = None;
     let mut spent: Option<crate::compaction::CompactionExecution> = None;
     let mut rejected = Vec::new();
+    let mut calls = Vec::new();
     for _ in 0..policy.tries.max(1) {
-        let (product, execution) = match backend.compact_as_writer(request, retry) {
+        let (product, mut execution) = match backend.compact_as_writer(request, retry) {
             Ok(answer) => answer,
             Err(refusal) => {
-                let spent = spent.map(|spent| spent.with_rejected(rejected));
+                let spent = spent.map(|spent| spent.with_rejected(rejected).with_calls(calls));
                 return (PassOutcome::Refused(refusal), spent);
             }
         };
+        if let Some(execution) = execution.as_mut() {
+            calls.append(&mut execution.calls);
+        }
         match gate_compaction(request, &product, policy) {
             Ok(gated) => {
                 if let Some(prior) = spent.take() {
                     rejected.push(prior.usage);
                 }
-                let execution =
-                    execution.map(|execution| execution.accepted(gated.summary_text(), rejected));
+                let execution = execution.map(|execution| {
+                    execution
+                        .accepted(gated.summary_text(), rejected)
+                        .with_calls(calls)
+                });
                 return (PassOutcome::Accepted(Box::new(gated)), execution);
             }
             Err(failure) => {
@@ -561,7 +576,7 @@ fn run_pass(
             }
         }
     }
-    let spent = spent.map(|spent| spent.with_rejected(rejected));
+    let spent = spent.map(|spent| spent.with_rejected(rejected).with_calls(calls));
     match last {
         Some(failure) => (PassOutcome::Rejected(failure), spent),
         None => (

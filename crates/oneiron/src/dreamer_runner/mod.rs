@@ -9,6 +9,7 @@ mod claim_authoring;
 mod codec;
 mod constants;
 mod milestone;
+pub mod observation;
 #[cfg(feature = "sync")]
 mod progress;
 mod recipe;

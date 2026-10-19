@@ -121,9 +121,10 @@ impl Vault {
         secret_ref: &str,
         effector: &str,
     ) -> Result<()> {
-        let (_, rec) = read_record_for_ref_in_txn(&self.store, txn, secret_ref)?;
+        let (id, rec) = read_record_for_ref_in_txn(&self.store, txn, secret_ref)?;
         let floor = SecretCustodyFloor::resolve(&self.store, txn)?;
         admit_record_use(&rec, effector, CustodyTier::T0Doored, &floor)?;
+        crate::secret_custody::refuse_revoked_use_in_txn(self, txn, &id, rec.class, &rec.name)?;
         crate::credential_door::admit_materialization_in_txn(&self.store, txn, effector, None)?;
         if rec
             .binding_for(effector)

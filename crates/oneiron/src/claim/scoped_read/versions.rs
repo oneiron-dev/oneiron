@@ -12,6 +12,9 @@ pub(super) struct AdmittedRevision {
 }
 
 pub(crate) struct RevisionedHits {
+    pub(crate) vector_refinement: Option<crate::pipeline::VectorRefinement>,
+    pub(crate) embedding_matches:
+        std::collections::HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
     pub(crate) hits: Vec<ScoredEntity>,
     pub(crate) receipt: ScopedReadReceipt,
     pub(crate) revisions: std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
@@ -28,6 +31,7 @@ enum DenseChannel<'q> {
         space_id: &'q str,
         query_kind: crate::embed::InputKind,
         query: &'q [f32],
+        kinds: &'q [crate::embed::InputKind],
     },
 }
 
@@ -38,7 +42,18 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<RevisionedHits> {
-        self.search_dense_revisioned(DenseChannel::TextIndex(query), limit, requested)
+        self.search_vector_revisioned_with_rescore(query, limit, requested, false)
+    }
+
+    /// Voice hot reads share the ordinary dense lane and every one of its gates.
+    pub(crate) fn search_vector_revisioned_with_rescore(
+        &self,
+        query: &[f32],
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+        skip_rescore: bool,
+    ) -> Result<RevisionedHits> {
+        self.search_dense_revisioned(DenseChannel::TextIndex(query), limit, requested, skip_rescore)
     }
 
     /// [`Self::search_vector_revisioned`] over declared space `space_id`
@@ -53,12 +68,26 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<RevisionedHits> {
+        self.search_space_kinds_revisioned(space_id, query_kind, query, &[], limit, requested)
+    }
+
+    /// The same scoped space search narrowed to its stored input kinds.
+    pub(crate) fn search_space_kinds_revisioned(
+        &self,
+        space_id: &str,
+        query_kind: crate::embed::InputKind,
+        query: &[f32],
+        kinds: &[crate::embed::InputKind],
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<RevisionedHits> {
         let channel = DenseChannel::Space {
             space_id,
             query_kind,
             query,
+            kinds,
         };
-        self.search_dense_revisioned(channel, limit, requested)
+        self.search_dense_revisioned(channel, limit, requested, false)
     }
 
     /// One dense read over `channel`: the same gates, exclusions and receipt
@@ -68,10 +97,13 @@ impl ScopedRead<'_> {
         channel: DenseChannel<'_>,
         limit: usize,
         requested: Option<&RetrievalFilter>,
+        skip_rescore: bool,
     ) -> Result<RevisionedHits> {
         let (filter, policy) = self.resolve_retrieval_filter(requested)?;
         if filter.deny_all {
             return Ok(RevisionedHits {
+                vector_refinement: None,
+                embedding_matches: Default::default(),
                 hits: Vec::new(),
                 revisions: Default::default(),
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
@@ -87,15 +119,28 @@ impl ScopedRead<'_> {
             .scoped_note_reader(self.actor_key.clone())
             .filter_candidates(&admitted);
         let results = match channel {
-            DenseChannel::TextIndex(query) => pipeline.search_vector(query, limit),
+            DenseChannel::TextIndex(query) => pipeline
+                .search_vector(query, limit)
+                .skip_vector_rescore(skip_rescore),
             DenseChannel::Space {
                 space_id,
                 query_kind,
                 query,
-            } => pipeline.search_media(space_id, query_kind, query, &[], limit),
+                kinds,
+            } => pipeline.search_media(space_id, query_kind, query, kinds, limit),
         }
         .limit(limit)
         .run_for_pack()?;
+        let vector_refinement = match channel {
+            DenseChannel::TextIndex(query) if results.vector_completed => {
+                Some(crate::pipeline::VectorRefinement::for_query(
+                    &self.vault.config,
+                    query.len(),
+                    skip_rescore,
+                ))
+            }
+            _ => None,
+        };
         let filtered = self.filter_search_results(
             results.scores,
             limit,
@@ -108,7 +153,11 @@ impl ScopedRead<'_> {
         let mut revisions = results.revisions;
         let ids: HashSet<_> = filtered.value.iter().map(|hit| hit.id).collect();
         revisions.retain(|id, _| ids.contains(id));
+        let mut embedding_matches = results.embedding_matches;
+        embedding_matches.retain(|id, _| ids.contains(id));
         Ok(RevisionedHits {
+            vector_refinement,
+            embedding_matches,
             hits: filtered.value,
             receipt: filtered.receipt,
             revisions,
@@ -134,6 +183,8 @@ impl ScopedRead<'_> {
         let (filter, policy) = self.resolve_retrieval_filter(requested)?;
         if filter.deny_all {
             return Ok(RevisionedHits {
+                vector_refinement: None,
+                embedding_matches: Default::default(),
                 hits: Vec::new(),
                 revisions: Default::default(),
                 receipt: self.receipt_for(requested, &policy, &filter, 0),
@@ -167,6 +218,8 @@ impl ScopedRead<'_> {
         let ids: HashSet<_> = filtered.value.iter().map(|hit| hit.id).collect();
         revisions.retain(|id, _| ids.contains(id));
         Ok(RevisionedHits {
+            vector_refinement: None,
+            embedding_matches: Default::default(),
             hits: filtered.value,
             receipt: filtered.receipt,
             revisions,

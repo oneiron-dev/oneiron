@@ -10,7 +10,7 @@
 //! holds it; the machine whose turn lapsed holds the next slot first
 //! ([`SEALED_BUNDLE_PUBLISH_FALLBACK_SECS`]).
 
-use super::bundle::{entries_in, owner_machine};
+use super::bundle::{Asked, asked_of, entries_in, owner_machine};
 use crate::Vault;
 use crate::authority::PeerMachine;
 use crate::entity_id::EntityId;
@@ -132,7 +132,8 @@ fn store_in(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, turns: &Turns) -> Result<
 }
 
 /// The queue as it stands at `now`: without the machines no longer trusted as
-/// the owner's here, with the machine whose turn lapsed last slot first, and
+/// the owner's here nor asked by him to publish here (WILL L04 row 03), with
+/// the machine whose turn lapsed last slot first, and
 /// without a holder whose turn lapsed in a slot that has no generation yet. A
 /// machine that comes to hold the turn holds it from `now`; the one carried
 /// to the front from its first ask, and from
@@ -140,11 +141,15 @@ fn store_in(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, turns: &Turns) -> Result<
 fn settle_in(vault: &Vault, wtxn: &heed::RwTxn<'_>, now: u64) -> Result<Turns> {
     let mut turns = load_in(vault, wtxn)?;
     let fold = vault.authority_fold_readonly_in_txn(wtxn)?;
+    let home = crate::identity::read_machine_id_in_txn(vault, wtxn)?;
+    let stands = |machine: EntityId| {
+        fold.trusted_machine(machine).is_some() || asked_of(&fold, home, machine, Asked::Any)
+    };
     let now_slot = sealed_bundle_slot(now);
     let start = now_slot.saturating_mul(SEALED_BUNDLE_UPLOAD_INTERVAL_SECS);
     turns.carried = turns
         .carried
-        .filter(|(machine, slot)| *slot >= now_slot && fold.trusted_machine(*machine).is_some());
+        .filter(|(machine, slot)| *slot >= now_slot && stands(*machine));
     // The carried machine goes first at the slot's first settle, before any
     // turn ran from inside it.
     if let Some((machine, slot)) = turns.carried
@@ -156,9 +161,7 @@ fn settle_in(vault: &Vault, wtxn: &heed::RwTxn<'_>, now: u64) -> Result<Turns> {
         turns.since = start.saturating_add(SEALED_BUNDLE_PUBLISH_FALLBACK_SECS);
     }
     let holder = turns.holder();
-    turns
-        .queue
-        .retain(|machine| fold.trusted_machine(*machine).is_some());
+    turns.queue.retain(|machine| stands(*machine));
     let open = entries_in(vault, wtxn)?
         .last()
         .is_none_or(|latest| latest.generation.slot < now_slot);
@@ -191,7 +194,7 @@ fn settle_in(vault: &Vault, wtxn: &heed::RwTxn<'_>, now: u64) -> Result<Turns> {
 ///
 /// A refused peer; storage errors.
 pub fn ask_sealed_bundle_turn(vault: &Vault, peer: PeerMachine, leave: bool) -> Result<bool> {
-    let machine = owner_machine(vault, peer, true)?;
+    let machine = owner_machine(vault, peer, true, Asked::Any)?;
     vault.with_write_txn_grouped(|wtxn| {
         let now = vault.instant_in_txn(wtxn)?.secs();
         let mut turns = settle_in(vault, wtxn, now)?;

@@ -21,7 +21,10 @@ use std::sync::Arc;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
+mod door;
 mod ladder;
+
+pub use door::{WebCrawlRequest, WebFetchRequest};
 mod render;
 
 use self::ladder::{CrawlWalk, FetchResultWire, crawl_failure_reason, require_renderer_slot};
@@ -81,7 +84,19 @@ const ALL_RENDERERS_FAILED_REASON_PREFIX: &str = "all web fetch renderers failed
 const FIRECRAWL_UNREPORTED_STATUS: u16 = 200;
 
 /// Which rung of the fixed ladder produced a result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RendererKind {
     Readability,
@@ -116,7 +131,7 @@ impl RendererKind {
 /// wire form that repeats the field closure and re-derives `content_hash` from
 /// the `markdown` beside it, so a decoded value carries the identity documented
 /// below rather than whichever identity the payload asserted.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, try_from = "FetchResultWire")]
 pub struct FetchResult {
     markdown: String,
@@ -321,7 +336,7 @@ impl Default for MinExtractedContentBytes {
 
 /// Explicit number of page fetches one crawl may attempt. There is deliberately
 /// no default: a hidden crawl multiplier is the design bug this type removes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "usize")]
 pub struct CrawlPageBudget(usize);
 
@@ -349,9 +364,11 @@ impl TryFrom<usize> for CrawlPageBudget {
     }
 }
 
-/// Same-site containment is the default; leaving the seed's host is an
+/// Same-site containment is the default; leaving the seed's origin is an
 /// affirmative caller choice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CrawlScope {
     #[default]
@@ -359,7 +376,7 @@ pub enum CrawlScope {
     CrossSite,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CrawlRequest {
     pub seed_url: String,
     pub fetched_at: u64,
@@ -392,7 +409,7 @@ impl CrawlRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CrawlCompletion {
     Complete,
@@ -403,7 +420,7 @@ pub enum CrawlCompletion {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CrawlPageFailure {
     pub url: String,
     /// `AllRenderersFailed` renders as `"all web fetch renderers failed: "` plus
@@ -415,7 +432,7 @@ pub struct CrawlPageFailure {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CrawlResult {
     /// Successful fetches in breadth-first attempt order, beginning with the seed page.
     pub pages: Vec<FetchResult>,
@@ -756,7 +773,7 @@ impl WebFetcher {
             walk.remaining_budget -= 1;
             walk.visited.insert(requested.clone());
 
-            let is_seed = walk.pinned_host.is_none();
+            let is_seed = walk.pinned_origin.is_none();
             match self.fetch_page(&current, request.fetched_at, true) {
                 Ok((page, links, final_url)) => {
                     // A URL reached through a redirect is skipped when it is

@@ -18,11 +18,16 @@ impl ScopedRead<'_> {
     /// write authority and keeps nothing but the receipts and the id and
     /// clock floors they take. Nothing served writes nothing.
     pub fn commit_served_forms(&self, served: &[ServedForm]) -> Result<()> {
+        self.commit_served_forms_listing(served).map(|_| ())
+    }
+
+    /// Records the same forms and returns their durable receipt refs.
+    pub fn commit_served_forms_listing(&self, served: &[ServedForm]) -> Result<Vec<String>> {
         let mut served = served.to_vec();
         served.sort_unstable();
         served.dedup();
         if served.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         let vault = self.vault;
         vault.store.write_in_group(|txn| {
@@ -33,6 +38,10 @@ impl ScopedRead<'_> {
                 .map(|_| vault.store.clock.entity_id())
                 .collect::<Result<Vec<_>>>()?;
             let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+            let refs = ids
+                .iter()
+                .map(|id| format!("served_form:{}", id.to_hex()))
+                .collect();
             for (id, served) in ids.into_iter().zip(&served) {
                 crate::receipt::put_served_form_in_txn(
                     vault,
@@ -43,7 +52,7 @@ impl ScopedRead<'_> {
                     at,
                 )?;
             }
-            Ok(())
+            Ok(refs)
         })
     }
 

@@ -97,27 +97,13 @@ pub unsafe extern "C" fn oneiron_vault_open(
             |status| status,
             |_| {
                 let result = (|| {
-                    let path = string_from_required(path_ptr, path_len)?;
-                    let mut config = VaultConfig::device();
-                    if dimensions != 0 {
-                        config.dimensions = dimensions;
-                    }
-                    validate_dimensions(config.dimensions)?;
-                    config.dict_search_paths =
-                        with_optional_slice(dict_search_paths, dict_search_paths_len, |paths| {
-                            paths.map_or_else(
-                                || Ok(Vec::new()),
-                                |values| {
-                                    values
-                                        .iter()
-                                        .map(|value| {
-                                            string_from_required(value.ptr, value.len)
-                                                .map(PathBuf::from)
-                                        })
-                                        .collect()
-                                },
-                            )
-                        })?;
+                    let (path, config) = device_open_config(
+                        path_ptr,
+                        path_len,
+                        dimensions,
+                        dict_search_paths,
+                        dict_search_paths_len,
+                    )?;
                     let dimensions = config.dimensions;
                     // Crash output never carries world text: the engine's hook goes in before
                     // any vault opens (owner ruling 2026-10-14, fix 6).
@@ -134,6 +120,37 @@ pub unsafe extern "C" fn oneiron_vault_open(
             },
         )
     })
+}
+
+/// The path and `VaultConfig::device()` config an open names, checked: the
+/// path is UTF-8, `dimensions == 0` keeps the preset's, and every dictionary
+/// search path is UTF-8.
+pub(super) fn device_open_config(
+    path_ptr: *const u8,
+    path_len: usize,
+    dimensions: usize,
+    dict_search_paths: *const OneironByteSlice,
+    dict_search_paths_len: usize,
+) -> Result<(String, VaultConfig), OneironStatus> {
+    let path = string_from_required(path_ptr, path_len)?;
+    let mut config = VaultConfig::device();
+    if dimensions != 0 {
+        config.dimensions = dimensions;
+    }
+    validate_dimensions(config.dimensions)?;
+    config.dict_search_paths =
+        with_optional_slice(dict_search_paths, dict_search_paths_len, |paths| {
+            paths.map_or_else(
+                || Ok(Vec::new()),
+                |values| {
+                    values
+                        .iter()
+                        .map(|value| string_from_required(value.ptr, value.len).map(PathBuf::from))
+                        .collect()
+                },
+            )
+        })?;
+    Ok((path, config))
 }
 
 /// Open a NEW handle over `vault`'s same open vault whose writes run as one
