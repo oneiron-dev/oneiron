@@ -198,7 +198,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/consent_doors.rs` | src | s | 9 crate-vis | — | Consent lifecycle host doors, on the same owner proof as Gate policy |
 | `src/api/facade/consolidation_doors.rs` | src | s | 7 crate-vis | — | Owner-bound generated-claim promotion, vetting and evidence reads |
 | `src/api/facade/content_policy_doors.rs` | src | s | 5 crate-vis | — | Content-policy doors beside the Gate policy doors, on each caller's own credential |
-| `src/api/facade/coordination_doors.rs` | src | m | 9 crate-vis | — | The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open… |
+| `src/api/facade/coordination_doors.rs` | src | m | 10 crate-vis | — | The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open… |
 | `src/api/facade/core_write_doors.rs` | src | s | 6 crate-vis | — | The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`… |
 | `src/api/facade/coreference_doors.rs` | src | s | 4 crate-vis | — | Owner coreference doors: every transport reaches the engine's typed operations |
 | `src/api/facade/courtesy_delete_doors.rs` | src | s | 4 crate-vis | — | The host doors of the owner's courtesy delete rows (OF-273): `vault.courtesy_delete.send`, `.sent`… |
@@ -210,6 +210,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/decision_band_doors.rs` | src | s | 3 crate-vis | — | The owner's live decision-band policy through the typed verb table |
 | `src/api/facade/decision_role_asks.rs` | src | s | 1 crate-vis | — | OF-516: a role holder's door to the ladder's person asks (Q3 by role) |
 | `src/api/facade/deck_creation_doors.rs` | src | s | 2 crate-vis | — | The person's outline Keep and Decline use the same proof as other owner doors |
+| `src/api/facade/disclosure_doors.rs` | src | s | 5 crate-vis | — | Owner registry and reveal-settlement doors, shared by HTTP and MCP |
 | `src/api/facade/dispatch.rs` | src | XL | 1 crate-vis | — | The facade's one admission and typed call per verb-table row (OF-489) |
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
 | `src/api/facade/eval_doors.rs` | src | s | 12 crate-vis | — | Typed eval doors under the caller's own verified owner credential |
@@ -222,14 +223,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/gate_policy_doors.rs` | src | s | 4 crate-vis | — | Owner policy and checker host doors |
 | `src/api/facade/goal_optimize_doors.rs` | src | s | 12 crate-vis | — | Witnessed goal intake and goal-vector optimizer doors under the caller's owner proof |
 | `src/api/facade/graduation_doors.rs` | src | s | 10 crate-vis | — | Consent-graduation host doors, under the consent lifecycle's owner proof |
-| `src/api/facade/graph_ask_doors.rs` | src | m | 11 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
+| `src/api/facade/graph_ask_doors.rs` | src | m | 12 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_document_doors.rs` | src | s | 4 crate-vis | — | Guest document envelopes under the owner's or the recipient's own proof |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
 | `src/api/facade/hook_regen_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
-| `src/api/facade/host_doors.rs` | src | XL | 160 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | XL | 165 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_trigger_doors.rs` | src | s | 3 crate-vis | — | The owner's typed host triggers |
 | `src/api/facade/hub_doors.rs` | src | m | 19 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/hyde_doors.rs` | src | s | 6 crate-vis | — | Typed host configuration, work and completion receipts for HydeExpander |
+| `src/api/facade/identity_doors.rs` | src | s | 4 crate-vis | — | PERSON identity setup, look-before-mint and saved-mention provenance |
 | `src/api/facade/identity_topology_doors.rs` | src | s | 10 crate-vis | — | Typed identity-topology host doors under the caller's own owner proof |
 | `src/api/facade/learning_doors.rs` | src | s | 2 crate-vis | — | Read-only measured-learning doors under the vault owner's existing proof |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 8 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
@@ -238,6 +240,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/live_run_doors.rs` | src | s | 7 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
 | `src/api/facade/live_voice_doors.rs` | src | s | 8 crate-vis | — | Typed public live media doors |
 | `src/api/facade/merge_queue_doors.rs` | src | s | 7 crate-vis | — | Credential-bound host projections of the typed speculative merge queue doors (DOOR-132) |
+| `src/api/facade/mesh_doors.rs` | src | s | 5 crate-vis | — | Owner-bound mesh setup and a real admission-only dial |
 | `src/api/facade/model_catalog_doors.rs` | src | m | 13 crate-vis | — | The model catalog is evidence |
 | `src/api/facade/model_step_doors.rs` | src | s | 2 crate-vis | — | Owner-proof model steps; HTTP, SDK and MCP reach the same typed door |
 | `src/api/facade/note_doors.rs` | src | s | 5 crate-vis | — | Host-held NOTE editor bindings beside the ordinary scoped NOTE reads |
@@ -272,6 +275,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/sieve_doors.rs` | src | s | 9 crate-vis | — | The owner's sieve doors: the interest queue and its retained spans, consumed-span receipts, the sieve and… |
 | `src/api/facade/sieve_observation_doors.rs` | src | s | 5 crate-vis | — | The owner's evidence replay and recorded shared-scheduler observations |
 | `src/api/facade/skill_attribution_doors.rs` | src | s | 7 crate-vis | — | Proposal-delta settlement and skill attribution evidence, owner-only |
+| `src/api/facade/skill_default_doors.rs` | src | s | 4 crate-vis | — | The owner's first-hub and bootstrap reads and explicit defaults re-import |
 | `src/api/facade/skill_doors.rs` | src | m | 12 crate-vis | — | Selected-message conversion and the owner's skill library, through the same facade and MCP doors |
 | `src/api/facade/skill_execution_doors.rs` | src | m | 4 crate-vis | — | Skill calls on the caller's attached run and owner-anchored pack outcomes |
 | `src/api/facade/slim_doors.rs` | src | s | 5 crate-vis | — | Owner-bound lifecycle doors; each transport reaches the same engine transaction |

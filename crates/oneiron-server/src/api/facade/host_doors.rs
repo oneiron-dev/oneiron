@@ -77,11 +77,13 @@ pub(crate) use super::voice_bank_doors::*;
 pub(crate) use super::asr_doors::*;
 pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::clustering_doors::*;
+pub(crate) use super::identity_doors::*;
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
+pub(crate) use super::mesh_doors::*;
 pub(crate) use super::model_catalog_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
@@ -101,6 +103,7 @@ pub(crate) use super::goal_optimize_doors::*;
 pub(crate) use super::guest_document_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
+pub(crate) use super::skill_default_doors::*;
 pub(crate) use super::identity_topology_doors::*;
 pub(crate) use super::skill_doors::*;
 // The owner's support grant doors (OF-606), as the guest ones are.
@@ -124,6 +127,7 @@ pub(crate) use super::share_doors::*;
 // The role-holder decision-ask doors (OF-493), likewise.
 pub(crate) use super::decision_ask_doors::*;
 pub(crate) use super::decision_band_doors::*;
+pub(crate) use super::disclosure_doors::*;
 // The vault shape's apply door (ARCH-0070), likewise.
 pub(crate) use super::vault_shape_doors::*;
 // The owner's embedding-space doors (OF-370), likewise.
@@ -484,6 +488,40 @@ fn artifact_asker(
             &["Present a slip paired from a link created with --principal-ref."],
         )
     })
+}
+
+/// `vault.artifacts.admit`: the caller's own provider measurements for an
+/// artifact ask's units, admitted as the bound actor in place of the host
+/// ladder's, under the host's starting dial and bands, and held as one
+/// proposal for Keep or Discard. The engine validates each submitted
+/// decision — its provider-bound paired and person readings included —
+/// before the proposal is held, so an invalid measurement mints nothing.
+/// It runs on a blocking thread, one call per unit, as
+/// `vault.artifacts.ask` does. Beside it, the rows its reads listed and
+/// the artifact it asks over.
+pub(crate) async fn vault_artifacts_admit(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::blob_artifact::ArtifactAdmitSubmit,
+) -> Listed<oneiron::blob_artifact::ArtifactAskOutcome> {
+    const VERB: &str = "vault.artifacts.admit";
+    let caller = match artifact_asker(server, auth) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
+    let beside = read_beside([input.ask.artifact_ref.as_str()]);
+    let (answer, mut listed) =
+        credential_listing(server, auth, caller, VERB, move |server, _, memory| {
+            let host = server.decision_host();
+            memory.artifacts_admit_through(
+                &input,
+                host.dial(oneiron::llm::decision::DecisionRung::Big),
+                &host.bands(),
+            )
+        })
+        .await;
+    listed.extend(beside);
+    (answer, listed)
 }
 
 /// `vault.artifacts.body.deck.preview`: the asked slides of a deck's head,
@@ -1169,6 +1207,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.campaign.compliance.reject"
         | "vault.campaign.compliance.verify"
         | "vault.companions.access_requests.answer"
+        | "vault.disclosure.ceiling.get"
+        | "vault.disclosure.ceiling.set"
+        | "vault.disclosure.ceiling.clear"
+        | "vault.disclosure.reveals"
+        | "vault.disclosure.reveals.answer"
         | "vault.commitments.create"
         | "vault.commitments.get"
         | "vault.commitments.instances"
@@ -1200,6 +1243,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.packs.remove"
         | "vault.skill_hubs.put"
         | "vault.skill_hubs.get"
+        | "vault.skill_hubs.default.get"
         | "vault.skill_hubs.publishers.admit"
         | "vault.skill_hubs.publishers.revoke"
         | "vault.skill_hubs.refs.get"
@@ -1207,6 +1251,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.packs.install"
         | "vault.packs.sync"
         | "vault.packs.get"
+        | "vault.skills.bootstrap"
+        | "vault.skills.restoreDefaults"
         | "vault.skills.import"
         | "vault.skills.sync"
         | "vault.skills.receipts"
@@ -1259,6 +1305,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.authority.history.export"
         | "vault.authority.history.import"
         | "vault.mesh.path_receipts"
+        | "vault.mesh.identity"
+        | "vault.mesh.bind_machine"
+        | "vault.mesh.set_alpn_grant"
+        | "vault.mesh.revoke_machine"
+        | "vault.mesh.dial"
         | "host.compact"
         | "host.wake"
         | "host.budget.hit"
@@ -1277,6 +1328,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.records.erase_sweep"
         | "vault.cleanup.run"
         | "vault.entities.mention"
+        | "vault.people.create"
+        | "vault.entities.look_before_mint"
+        | "vault.identity.mention"
+        | "self.identity.answer"
         | "vault.legal_holds.place"
         | "vault.legal_holds.widen"
         | "vault.legal_holds.list"
@@ -1408,6 +1463,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.runs.branches.get"
         | "vault.consults.get"
         | "vault.consolidation.home.get"
+        | "vault.consolidation.home.pick"
         | "vault.consolidation.lineage"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
@@ -1680,7 +1736,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         "execute_code" => super::foreign_code_doors::foreign_code_admits(server, auth),
         "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
-        "vault.artifacts.ask" => artifact_asker(server, auth).map(drop),
+        "vault.artifacts.ask" | "vault.artifacts.admit" => {
+            artifact_asker(server, auth).map(drop)
+        }
         "self.memory.diary.query" => diary_reader(server, auth).map(drop),
         "vault.decisions.asks.answer"
         | "vault.decisions.asks.climb"

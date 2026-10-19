@@ -40,6 +40,7 @@ impl Handles {
                 continue;
             }
             let name = names.get(entity.id.as_bytes()).map_or("", String::as_str);
+            let name = if name == entity.short_id { "" } else { name };
             let handle = (
                 entity.short_id.clone(),
                 name.to_owned(),

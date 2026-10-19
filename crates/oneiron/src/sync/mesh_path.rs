@@ -31,7 +31,7 @@ const PRUNE_PER_WRITE: usize = 64;
 pub const MESH_PATH_RECEIPTS_READ_MAX: usize = 1024;
 
 /// Which side dialed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MeshPathDirection {
     /// A peer dialed this machine.
@@ -41,7 +41,7 @@ pub enum MeshPathDirection {
 }
 
 /// How the attempt ended at admission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MeshPathOutcome {
     /// The handshake and the paired-machine grant admitted it.
@@ -54,7 +54,7 @@ pub enum MeshPathOutcome {
 
 /// The network paths a connection had open: direct IP, a relay, both, or
 /// none.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MeshPathKind {
     Direct,
@@ -64,7 +64,7 @@ pub enum MeshPathKind {
 }
 
 /// One mesh connection's path receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MeshPathReceipt {
     /// The receipt's id; empty until its first write mints one.

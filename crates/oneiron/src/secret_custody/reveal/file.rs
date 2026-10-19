@@ -102,6 +102,7 @@ impl Vault {
                 connection: Some(asker.connection()),
                 provider: asker.provider.clone(),
                 secret: first,
+                person: None,
                 handle: handle.clone(),
                 class: class.as_str().to_owned(),
                 why: why.clone(),

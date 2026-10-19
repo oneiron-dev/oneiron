@@ -84,6 +84,7 @@ pub mod foreign_code;
 pub mod graph_fs_doors;
 pub mod hook_regen_doors;
 mod inspection;
+pub mod identity_doors;
 mod key_value;
 mod lifted_view;
 mod locality;
@@ -236,6 +237,8 @@ pub use outbound::{
 };
 pub use read_selection::RecallWorlds;
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
+#[cfg(feature = "sync")]
+pub(crate) use recall::RecallKinds;
 pub(crate) use recall::check_recall_request;
 pub use recall::{
     CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, HOME_RECALL_MERGE_ORDER,

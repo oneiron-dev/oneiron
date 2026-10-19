@@ -73,6 +73,8 @@ mod actor_key;
 pub use actor_key::{CallerLocality, ScopedReadActorKey};
 #[cfg(feature = "sync")]
 mod residence;
+#[cfg(feature = "sync")]
+mod selected_search;
 pub(crate) use actor_key::{RoomTerms, RoomTurnCeiling, TurnTerms, meet_clearance};
 #[cfg(feature = "sync")]
 pub use residence::ResidenceReadContext;
