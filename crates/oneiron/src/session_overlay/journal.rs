@@ -50,7 +50,19 @@ pub(crate) struct JournalEntry {
 }
 
 impl JournalEntry {
+    /// The bytes this entry spends of the room's budget. A `FacetOf` edge, a
+    /// NOTE's birth facet, is the room's bookkeeping and spends none
+    /// (`keyspace::unbudgeted_row`).
     pub(super) fn byte_size(&self) -> usize {
+        if matches!(
+            self.op,
+            BatchOp::Edge {
+                kind: crate::edge::EdgeKind::FacetOf,
+                ..
+            }
+        ) {
+            return 0;
+        }
         std::mem::size_of::<Self>().saturating_add(batch_op_payload_bytes(&self.op))
     }
 }

@@ -488,6 +488,16 @@ pub(crate) fn apply_ops_session(
                     entry.occurred,
                     entry.learned_at,
                 )?;
+                // Its position, staged beside it as the room's content
+                // metadata (WILL L11-01), which a narrowed read places it by.
+                // Base keeps every birth and all authority.
+                crate::federation::record_scope::stage_session_position(
+                    view,
+                    wtxn,
+                    *id,
+                    *entity_type,
+                    data,
+                )?;
             }
             BatchOp::Edge {
                 src,
