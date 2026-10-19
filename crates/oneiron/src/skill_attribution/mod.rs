@@ -51,7 +51,7 @@ pub(crate) use judge_supersession::{
 mod contribution;
 pub use contribution::{
     ContributionCandidate, ContributionCheckRecord, ContributionFork, ContributionPair,
-    contributed, contribution_check_candidates, record_contribution_pair,
+    contributed, contribution_check_candidates_after, record_contribution_pair,
 };
 mod late_credit;
 mod pack_learning;

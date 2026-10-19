@@ -4,25 +4,36 @@
 //! context with and without the skill and scores both forks against the
 //! run's anchor; this recipe records each finished pair as the run's check
 //! ([`crate::skill_attribution::record_contribution_pair`]). A run the host
-//! cannot replay stays unchecked, and the next pass reads it again. A check
-//! is never inferred from a load, a citation or a success.
+//! cannot replay stays unchecked. Each pass resumes after the last candidate
+//! the pass before it examined, and a pass that reaches the end of the credit
+//! table starts the next sweep at the head, so every unchecked run is read
+//! again. A check is never inferred from a load, a citation or a success.
 use std::time::{Duration, Instant};
 
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
+use crate::entity_id::EntityId;
 use crate::retrieval_depth::RetrievalDeadline;
+use crate::side_table::{self, Named, SideTable};
 use crate::skill_attribution::{
-    ContributionCandidate, ContributionFork, ContributionPair, contribution_check_candidates,
+    ContributionCandidate, ContributionFork, ContributionPair, contribution_check_candidates_after,
     record_contribution_pair,
 };
 use crate::{Result, Vault};
 
-/// Pairs one pass runs. Each is two regenerated steps and their scoring,
-/// which the host meters.
+/// Pairs one pass runs, a pace: each is two regenerated steps and their
+/// scoring, which the host meters.
 const PAIRS_PER_PASS: usize = 4;
-/// Candidates one pass reads. A run the host cannot replay is passed over,
-/// so the window reaches past the runs captured before the capsule was.
+/// Candidates one pass reads, a pace: the next pass reads on from the last
+/// one this pass examined. A run the host cannot replay is passed over, so
+/// the window reaches past the runs captured before the capsule was.
 const CANDIDATES_PER_PASS: usize = 64;
+
+/// The credit key and skill of the last candidate a pass put to the host.
+/// Absent at the head of a sweep, and cleared when a pass reaches the end of
+/// the credit table.
+const CURSOR: SideTable<(), (String, EntityId), Named> =
+    SideTable::new(&side_table::COACH_CONTRIBUTION_CURSOR);
 
 /// Both forks of one candidate's matched pair, each scored against the
 /// candidate's anchor on its axis.
@@ -69,8 +80,17 @@ pub(super) fn execute(
             cause: DreamerParkCause::Checkpoint,
         });
     }
-    let candidates = contribution_check_candidates(ctx.vault, CANDIDATES_PER_PASS)?;
+    let vault = ctx.vault;
+    // A row that no longer decodes starts the sweep at the head.
+    let after = CURSOR.get_lenient(&vault.store, &vault.store.env.read_txn()?, &())?;
+    let candidates =
+        contribution_check_candidates_after(vault, after.as_ref(), CANDIDATES_PER_PASS)?;
     if candidates.is_empty() {
+        // The sweep is past the end of the credit table: the next starts at
+        // the head.
+        if after.is_some() {
+            vault.with_write_txn_grouped(|txn| CURSOR.delete(&vault.store, txn, &()))?;
+        }
         return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
     }
     // The forks' model calls block on the host's runtime, which a thread
@@ -80,13 +100,26 @@ pub(super) fn execute(
         Instant::now(),
         Duration::from_millis(ctx.deadline.remaining_ms()),
     );
-    let (vault, now) = (ctx.vault, ctx.now_ms / 1000);
-    let spent = std::thread::scope(|scope| {
+    let now = ctx.now_ms / 1000;
+    let (spent, examined) = std::thread::scope(|scope| {
         scope
             .spawn(|| measure(vault, host, &candidates, &clock, now))
             .join()
     })
     .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    // A short window examined whole reached the end of the credit table.
+    // Otherwise the next pass resumes after the last candidate examined, not
+    // after the window: a guard that stopped early leaves the rest for it.
+    let reached_end = examined == candidates.len() && candidates.len() < CANDIDATES_PER_PASS;
+    let last = examined
+        .checked_sub(1)
+        .and_then(|index| candidates.get(index));
+    if reached_end {
+        vault.with_write_txn_grouped(|txn| CURSOR.delete(&vault.store, txn, &()))?;
+    } else if let Some((key, skill, _)) = last {
+        let at = (key.clone(), *skill);
+        vault.with_write_txn_grouped(|txn| CURSOR.put(&vault.store, txn, &(), &at))?;
+    }
     Ok(DreamerAttemptExecution::Completed {
         // The host meters fork calls separately. The wake counter charges
         // its admitted reservation, never reports paid maintenance as free.
@@ -99,19 +132,22 @@ pub(super) fn execute(
 }
 
 /// Runs up to [`PAIRS_PER_PASS`] pairs and records each finished one,
-/// a tie or a loss as much as a win. Whether any fork ran.
+/// a tie or a loss as much as a win. Whether any fork ran, and how many
+/// candidates, in order, were put to the host before a guard stopped.
 fn measure(
     vault: &Vault,
     host: &(dyn ContributionReplayHost + Send + Sync),
-    candidates: &[ContributionCandidate],
+    candidates: &[(String, EntityId, ContributionCandidate)],
     clock: &RetrievalDeadline,
     now: u64,
-) -> bool {
+) -> (bool, usize) {
     let mut tried = 0;
-    for candidate in candidates {
+    let mut examined = 0;
+    for (_, _, candidate) in candidates {
         if tried >= PAIRS_PER_PASS || !clock.decision_may_start() {
             break;
         }
+        examined += 1;
         let forks = match host.run_pair(vault, candidate, clock) {
             Ok(Some(forks)) => forks,
             Ok(None) => continue,
@@ -136,5 +172,5 @@ fn measure(
             tracing::warn!(kind = ?error.kind(), "contribution check was not recorded");
         }
     }
-    tried > 0
+    (tried > 0, examined)
 }

@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use oneiron::checkout::{CheckoutId, CheckoutLeaseAct};
@@ -20,16 +20,17 @@ use oneiron::code_sandbox::SandboxBoundaryContract;
 use oneiron::code_sandbox::SandboxCredentialHandle;
 use oneiron::code_sandbox::microvm::ExecutionBudget;
 use oneiron::dispatch_byoa::{
-    BYOA_MAX_EXHAUST_STREAM_BYTES, ByoEndpointBackendFactory, ByoaCliExecutor, ByoaConnectorSpec,
-    ByoaDispatcher, ByoaEgressLease, ByoaEgressPort, ByoaError, ByoaExhaust, ByoaResult,
-    CaptureByoaExhaust, ClaudeCodeRunner, CliSandboxSpec, CodexRunner, DispatchOfficialSeat,
-    DreamerProviderAdapter, DrySeatDecision, DrySeatFallback, OfficialDreamerSeat,
-    OfficialSeatAdapter, OfficialSeatDispatchOutcome, OfficialSeatRegistry, OfficialSeatRoute,
-    OfficialSeatSpec, OnSeatSpent, OpenCodeRunner, ProviderAdapterRegistry, RunnerSeat,
-    RunnerSeatPolicy, RunnerWork, SeatAuth, SeatPlacementApproval, SeatPlanWindow, SeatRoute,
-    SeatSpent, SiwcAuthorizeRequest, check_seat_placement, decide_dry_seat, pkce_s256_challenge,
+    ByoEndpointBackendFactory, ByoaCliExecutor, ByoaConnectorSpec, ByoaDispatcher, ByoaEgressLease,
+    ByoaEgressPort, ByoaError, ByoaExhaust, ByoaResult, ByoaStream, CaptureByoaExhaust,
+    ClaudeCodeRunner, CliSandboxSpec, CodexRunner, DispatchOfficialSeat, DreamerProviderAdapter,
+    DrySeatDecision, DrySeatFallback, OfficialDreamerSeat, OfficialSeatAdapter,
+    OfficialSeatDispatchOutcome, OfficialSeatRegistry, OfficialSeatRoute, OfficialSeatSpec,
+    OnSeatSpent, OpenCodeRunner, ProviderAdapterRegistry, RunnerSeat, RunnerSeatPolicy, RunnerWork,
+    SeatAuth, SeatPlacementApproval, SeatPlanWindow, SeatRoute, SeatSpent, SiwcAuthorizeRequest,
+    check_seat_placement, decide_dry_seat, pkce_s256_challenge,
     register_official_dreamer_providers, seat_login_plan, validate_official_seat,
 };
+use oneiron::origin::smart_http::SpillFloor;
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor, DreamerParkCause,
     HostingPrivacyPosture, WakeAttemptContext,
@@ -275,13 +276,13 @@ const SEAT_ENV_REMOVED: [&str; 5] = [
 ///
 /// This is the own-runtime executor: the person's machine, the person's
 /// network, the person's login inside the unmodified binary. It enforces the
-/// wall-clock budget and the exhaust caps, but it is NOT a sandbox: guest
+/// wall-clock budget and captures its output whole, but it is NOT a sandbox: guest
 /// network reaches are not routed through `authorize`, because a local
 /// process cannot be mediated that way. A hosted deployment must run the
 /// seat behind the microVM executor instead; placement rules already keep
 /// every login but the hosted-permitted Claude binary off hosted nodes, and
 /// this executor must not be the one serving that case.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct OfficialCliSeatExecutor {
     /// Directory the host resolved the live checkout into.
     pub workdir: PathBuf,
@@ -290,23 +291,70 @@ pub struct OfficialCliSeatExecutor {
     /// the process's environment, and the variables the seat removes stay
     /// removed. `None` for a run with none.
     pub secret_destinations: Option<RunSecretDestinations>,
+    /// The free disk the host keeps under the output this executor spools
+    /// past memory (the server's `DiskFloor`): a write that would go below it
+    /// stops the run with [`ByoaError::SpoolAtDiskFloor`]. `None` keeps none.
+    pub floor: Option<Arc<dyn SpillFloor>>,
 }
 
-fn drain_capped(mut reader: impl Read + Send + 'static) -> std::thread::JoinHandle<Vec<u8>> {
+impl std::fmt::Debug for OfficialCliSeatExecutor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OfficialCliSeatExecutor")
+            .field("workdir", &self.workdir)
+            .field("secret_destinations", &self.secret_destinations)
+            .field("floor", &self.floor.is_some())
+            .finish()
+    }
+}
+
+/// Drains every byte `reader` yields into a spooled stream on its own thread.
+/// The disk floor and the run's deadline are its only stops; a read failure
+/// is an error, never an early end of the stream.
+fn drain_spooled(
+    mut reader: impl Read + Send + 'static,
+    floor: Option<Arc<dyn SpillFloor>>,
+    deadline: Instant,
+) -> mpsc::Receiver<ByoaResult<ByoaStream>> {
+    let (done, drain) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
-        let mut kept = Vec::new();
+        let mut stream = ByoaStream::writer(floor, Some(deadline));
         let mut chunk = [0_u8; 8192];
-        loop {
+        let spooled = loop {
             match reader.read(&mut chunk) {
-                Ok(0) | Err(_) => break,
+                Ok(0) => break stream.finish(),
                 Ok(read) => {
-                    let room = BYOA_MAX_EXHAUST_STREAM_BYTES.saturating_sub(kept.len());
-                    kept.extend_from_slice(&chunk[..read.min(room)]);
+                    if let Err(error) = stream.append(&chunk[..read]) {
+                        break Err(error);
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => {
+                    break Err(ByoaError::Backend(
+                        "official seat output read failed".to_owned(),
+                    ));
                 }
             }
-        }
-        kept
-    })
+        };
+        let _ = done.send(spooled);
+    });
+    drain
+}
+
+/// A drain's stream, waited for no later than the run's deadline.
+fn drained(
+    drain: &mpsc::Receiver<ByoaResult<ByoaStream>>,
+    deadline: Instant,
+) -> ByoaResult<ByoaStream> {
+    drain
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .unwrap_or_else(|error| {
+            Err(match error {
+                mpsc::RecvTimeoutError::Timeout => ByoaError::SpoolDeadline,
+                mpsc::RecvTimeoutError::Disconnected => {
+                    ByoaError::Backend("official seat output drain stopped".to_owned())
+                }
+            })
+        })
 }
 
 impl ByoaCliExecutor for OfficialCliSeatExecutor {
@@ -353,17 +401,18 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
         let mut child = command
             .spawn()
             .map_err(|_| ByoaError::Backend("official seat spawn failed".to_owned()))?;
+        // One deadline bounds the run, its drains and the wait for them.
+        let deadline = Instant::now() + Duration::from_secs(budget.wall_clock_secs.max(1));
         let stdout = child
             .stdout
             .take()
-            .map(drain_capped)
+            .map(|pipe| drain_spooled(pipe, self.floor.clone(), deadline))
             .ok_or_else(|| ByoaError::Backend("official seat stdout unavailable".to_owned()))?;
         let stderr = child
             .stderr
             .take()
-            .map(drain_capped)
+            .map(|pipe| drain_spooled(pipe, self.floor.clone(), deadline))
             .ok_or_else(|| ByoaError::Backend("official seat stderr unavailable".to_owned()))?;
-        let deadline = Instant::now() + Duration::from_secs(budget.wall_clock_secs.max(1));
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
@@ -373,9 +422,7 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
                 Ok(None) => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(ByoaError::Backend(
-                        "official seat exceeded its wall-clock budget".to_owned(),
-                    ));
+                    return Err(ByoaError::SpoolDeadline);
                 }
                 Err(_) => {
                     return Err(ByoaError::Backend("official seat wait failed".to_owned()));
@@ -383,12 +430,14 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
             }
         };
         let mut exhaust = ByoaExhaust {
-            stdout: stdout.join().unwrap_or_default(),
-            stderr: stderr.join().unwrap_or_default(),
+            stdout: drained(&stdout, deadline)?,
+            stderr: drained(&stderr, deadline)?,
             ..ByoaExhaust::default()
         };
         if !status.success() && exhaust.stderr.is_empty() {
-            exhaust.stderr = format!("official seat exited with {status}").into_bytes();
+            exhaust.stderr = format!("official seat exited with {status}")
+                .into_bytes()
+                .into();
         }
         Ok(exhaust)
     }

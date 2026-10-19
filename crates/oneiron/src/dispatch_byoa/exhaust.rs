@@ -5,30 +5,33 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptResultRef, AttemptState};
 use crate::blob_artifact::{
-    BlobArtifactBody, BlobVersionProvenance, read_blob_artifact_head_in_txn,
+    BlobArtifactBody, BlobArtifactVersion, BlobVersionProvenance, read_blob_artifact_head_in_txn,
 };
 use crate::codebase::entity_id_from_hash_material;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 use crate::git_wire::{GitRefName, GitWire, GitWireRepo};
+use crate::limit_ask::EngineLimit;
 use crate::secret_lease::SecretTaintRef;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 use super::connector::{
     BYOA_ATTEMPT_KIND, BYOA_CONNECTOR_SCHEMA_VERSION, BYOA_EXHAUST_ARTIFACT_ID_DOMAIN,
-    BYOA_RESULT_REF_PREFIX, BYOA_RUNTIME_ACTOR_DOMAIN, ByoaAttemptPayload,
-    MAX_EXHAUST_ENCODED_BYTES, MAX_STOP_REASON_LEN, decode_byoa_attempt_payload,
+    BYOA_RESULT_REF_PREFIX, BYOA_RUNTIME_ACTOR_DOMAIN, ByoaAttemptPayload, MAX_STOP_REASON_LEN,
+    decode_byoa_attempt_payload,
 };
 use super::error::{
     ByoaError, ByoaResult, ERR_ARTIFACT_COLLISION, ERR_ATTEMPT_KIND, ERR_CAPTURE_CONFLICT,
-    ERR_DISPOSITION, ERR_EXHAUST_ENCODE, ERR_EXHAUST_TOO_LARGE, ERR_PAYLOAD_SCHEMA,
-    ERR_RESULT_REF_SHAPE, ERR_RUNTIME_ACTOR_COLLISION, ERR_STOP_REASON_EMPTY,
-    ERR_STOP_REASON_TOO_LONG, invalid,
+    ERR_DISPOSITION, ERR_EXHAUST_ENCODE, ERR_PAYLOAD_SCHEMA, ERR_RESULT_REF_SHAPE,
+    ERR_RUNTIME_ACTOR_COLLISION, ERR_STOP_REASON_EMPTY, ERR_STOP_REASON_TOO_LONG, invalid,
 };
 use super::validate::validate_exhaust;
 use crate::error::ArtifactError;
+
+use super::stream::{ByoaStream, ByoaStreamWire};
+
 /// The proof that one network reach crossed the injected egress port.
 ///
 /// Scope, expiry, and audit reference all live on the lease so the guarantee
@@ -94,23 +97,18 @@ pub trait ByoaEgressPort {
 /// Every field is optional-or-empty because a foreign agent cooperates only as
 /// much as it chooses to; what is NOT optional is that SOMETHING durable was
 /// captured — an entirely empty exhaust is refused at the capture door, because
-/// an abandonment pointing at nothing is not auditable.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// an abandonment pointing at nothing is not auditable. Each stream is held
+/// whole ([`ByoaStream`]) and is never refused for its size.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ByoaExhaust {
-    #[serde(default)]
-    pub transcript: Option<Vec<u8>>,
-    #[serde(default)]
-    pub stdout: Vec<u8>,
-    #[serde(default)]
-    pub stderr: Vec<u8>,
-    #[serde(default)]
-    pub diff_bundle: Option<Vec<u8>>,
+    pub transcript: Option<ByoaStream>,
+    pub stdout: ByoaStream,
+    pub stderr: ByoaStream,
+    pub diff_bundle: Option<ByoaStream>,
     /// Checkpoint refs as `name@oid`, read through the git seam.
-    #[serde(default)]
     pub checkpoint_frontier: Vec<String>,
     /// The secrets injected while this output was produced. Empty is
-    /// untainted and is not serialized, so untainted exhaust keeps its bytes.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// untainted.
     pub secret_taint_refs: Vec<SecretTaintRef>,
 }
 
@@ -118,11 +116,42 @@ impl ByoaExhaust {
     /// True when nothing durable was captured.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.transcript.as_ref().is_none_or(Vec::is_empty)
-            && self.stdout.is_empty()
-            && self.stderr.is_empty()
-            && self.diff_bundle.as_ref().is_none_or(Vec::is_empty)
-            && self.checkpoint_frontier.is_empty()
+        self.streams().all(ByoaStream::is_empty) && self.checkpoint_frontier.is_empty()
+    }
+
+    /// The streams this exhaust carries.
+    fn streams(&self) -> impl Iterator<Item = &ByoaStream> {
+        [
+            self.transcript.as_ref(),
+            Some(&self.stdout),
+            Some(&self.stderr),
+            self.diff_bundle.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+    }
+
+    /// This exhaust's envelope form, its longer streams stored by `append`.
+    fn to_wire(
+        &self,
+        append: &mut impl FnMut(&[u8]) -> ByoaResult<u64>,
+    ) -> ByoaResult<ByoaExhaustWire> {
+        Ok(ByoaExhaustWire {
+            transcript: self
+                .transcript
+                .as_ref()
+                .map(|stream| stream.to_wire(append))
+                .transpose()?,
+            stdout: self.stdout.to_wire(append)?,
+            stderr: self.stderr.to_wire(append)?,
+            diff_bundle: self
+                .diff_bundle
+                .as_ref()
+                .map(|stream| stream.to_wire(append))
+                .transpose()?,
+            checkpoint_frontier: self.checkpoint_frontier.clone(),
+            secret_taint_refs: self.secret_taint_refs.clone(),
+        })
     }
 }
 
@@ -198,9 +227,10 @@ pub struct ByoaTerminalReceipt {
     pub result_ref: AttemptResultRef,
 }
 
-/// The canonical body one exhaust artifact version holds.
+/// The canonical body an exhaust artifact's head version holds. A capture
+/// builds it over the runtime exhaust; the stored form carries the wire one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct ByoaExhaustEnvelope {
+pub(super) struct ByoaExhaustEnvelope<E = ByoaExhaustWire> {
     pub(super) schema_version: u8,
     pub(super) attempt_id: [u8; 16],
     // Retained after settlement clears the row's live owner. Terminal retries
@@ -211,7 +241,67 @@ pub(super) struct ByoaExhaustEnvelope {
     #[serde(default)]
     pub(super) attempt_count: u32,
     pub(super) disposition: ByoaTerminalDisposition,
-    pub(super) exhaust: ByoaExhaust,
+    pub(super) exhaust: E,
+}
+
+/// How an exhaust rides its envelope: each stream within the inline budget
+/// whole, a longer one as the manifest of its chunk versions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct ByoaExhaustWire {
+    #[serde(default)]
+    transcript: Option<ByoaStreamWire>,
+    stdout: ByoaStreamWire,
+    stderr: ByoaStreamWire,
+    #[serde(default)]
+    diff_bundle: Option<ByoaStreamWire>,
+    #[serde(default)]
+    checkpoint_frontier: Vec<String>,
+    /// Empty is untainted and is not serialized.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    secret_taint_refs: Vec<SecretTaintRef>,
+}
+
+impl ByoaExhaustWire {
+    /// Whether `exhaust` is the exhaust this form names, its chunked streams
+    /// read back in `rtxn` and checked against their manifests.
+    fn matches(
+        &self,
+        vault: &Vault,
+        rtxn: &heed::RoTxn<'_>,
+        artifact_id: &EntityId,
+        exhaust: &ByoaExhaust,
+    ) -> ByoaResult<bool> {
+        let matches =
+            |wire: Option<&ByoaStreamWire>, stream: Option<&ByoaStream>| match (wire, stream) {
+                (None, None) => Ok(true),
+                (Some(wire), Some(stream)) => wire.matches(vault, rtxn, artifact_id, stream),
+                _ => Ok(false),
+            };
+        Ok(self.checkpoint_frontier == exhaust.checkpoint_frontier
+            && self.secret_taint_refs == exhaust.secret_taint_refs
+            && matches(self.transcript.as_ref(), exhaust.transcript.as_ref())?
+            && matches(Some(&self.stdout), Some(&exhaust.stdout))?
+            && matches(Some(&self.stderr), Some(&exhaust.stderr))?
+            && matches(self.diff_bundle.as_ref(), exhaust.diff_bundle.as_ref())?)
+    }
+
+    /// The exhaust this form names, its chunked streams read back in `rtxn`.
+    fn resolve(
+        self,
+        vault: &Vault,
+        rtxn: &heed::RoTxn<'_>,
+        artifact_id: &EntityId,
+    ) -> ByoaResult<ByoaExhaust> {
+        let resolve = |stream: ByoaStreamWire| stream.resolve(vault, rtxn, artifact_id);
+        Ok(ByoaExhaust {
+            transcript: self.transcript.map(resolve).transpose()?,
+            stdout: resolve(self.stdout)?,
+            stderr: resolve(self.stderr)?,
+            diff_bundle: self.diff_bundle.map(resolve).transpose()?,
+            checkpoint_frontier: self.checkpoint_frontier,
+            secret_taint_refs: self.secret_taint_refs,
+        })
+    }
 }
 
 /// Stamped on a failure whose caller supplied no reason.
@@ -300,6 +390,17 @@ pub fn parse_byoa_result_ref(result_ref: &AttemptResultRef) -> ByoaResult<(Entit
     let artifact_id = EntityId::from_hex(id_hex).map_err(|_| shape())?;
     let version: u64 = version.parse().map_err(|_| shape())?;
     Ok((artifact_id, version))
+}
+
+/// The head version a canonical capture's result ref names: `None` unless
+/// `result_ref` is `artifact_id`'s, spelled as [`byoa_result_ref`] spells it.
+pub(super) fn canonical_result_version(
+    result_ref: &AttemptResultRef,
+    artifact_id: &EntityId,
+) -> Option<u64> {
+    let (named, version) = parse_byoa_result_ref(result_ref).ok()?;
+    (named == *artifact_id && byoa_result_ref(artifact_id, version).ok()? == *result_ref)
+        .then_some(version)
 }
 
 /// Reads a checkpoint frontier for one checkout through the typed git seam.
@@ -401,20 +502,21 @@ pub(super) fn validate_canonical_capture(
     vault: &Vault,
     wtxn: &heed::RwTxn<'_>,
     artifact_id: &EntityId,
+    version: u64,
     body: &BlobArtifactBody,
     provenance: &BlobVersionProvenance,
-    requested: &ByoaExhaustEnvelope,
+    requested: &ByoaExhaustEnvelope<ByoaExhaust>,
 ) -> ByoaResult<()> {
     let stored_body = vault
         .get_blob_artifact_in_txn(wtxn, artifact_id)?
         .ok_or_else(|| invalid(ERR_ARTIFACT_COLLISION))?;
     let head = read_blob_artifact_head_in_txn(&vault.store, wtxn, artifact_id)?
         .ok_or_else(|| invalid(ERR_ARTIFACT_COLLISION))?;
-    if head.version != 1 || &head.provenance != provenance {
+    if head.version != version || &head.provenance != provenance {
         return Err(invalid(ERR_ARTIFACT_COLLISION));
     }
     let bytes = vault
-        .read_blob_artifact_version_in_txn(wtxn, artifact_id, 1)?
+        .read_blob_artifact_version_in_txn(wtxn, artifact_id, version)?
         .ok_or_else(|| invalid(ERR_ARTIFACT_COLLISION))?;
     if blake3::hash(&bytes).as_bytes() != &head.content_hash {
         return Err(invalid(ERR_ARTIFACT_COLLISION));
@@ -437,7 +539,9 @@ pub(super) fn validate_canonical_capture(
         || stored.attempt_count != requested.attempt_count
         || stored.disposition != requested.disposition
         || (stored.disposition != ByoaTerminalDisposition::Abandoned
-            && stored.exhaust != requested.exhaust)
+            && !stored
+                .exhaust
+                .matches(vault, wtxn, artifact_id, &requested.exhaust)?)
     {
         return Err(invalid(ERR_CAPTURE_CONFLICT));
     }
@@ -464,8 +568,64 @@ pub(super) fn union_taint_refs(into: &mut Vec<SecretTaintRef>, refs: &[SecretTai
     into.sort_by(|a, b| a.secret_ref.cmp(&b.secret_ref));
 }
 
+/// Stores one capture in its artifact: each stream past the inline budget as
+/// budget-sized chunk versions, in order, then the envelope naming them, whose
+/// version is the head the result ref names. The longest stream is measured
+/// against the engine's text row; no stream is refused for its length.
+pub(super) fn append_exhaust_envelope(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    artifact_id: &EntityId,
+    envelope: &ByoaExhaustEnvelope<ByoaExhaust>,
+    provenance: &BlobVersionProvenance,
+    actor: WriteActor,
+    now: u64,
+) -> ByoaResult<BlobArtifactVersion> {
+    let longest = envelope
+        .exhaust
+        .streams()
+        .map(ByoaStream::len)
+        .max()
+        .unwrap_or_default();
+    let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest);
+    let occurred = TimeRange {
+        start: now,
+        end: now,
+    };
+    let mut append = |bytes: &[u8]| -> ByoaResult<u64> {
+        Ok(vault
+            .append_blob_artifact_version_in_txn(
+                wtxn,
+                artifact_id,
+                bytes,
+                provenance,
+                actor,
+                occurred,
+                now,
+            )?
+            .version)
+    };
+    let exhaust = envelope.exhaust.to_wire(&mut append)?;
+    let bytes = encode_exhaust_envelope(&ByoaExhaustEnvelope {
+        schema_version: envelope.schema_version,
+        attempt_id: envelope.attempt_id,
+        lease_owner: envelope.lease_owner.clone(),
+        attempt_count: envelope.attempt_count,
+        disposition: envelope.disposition,
+        exhaust,
+    })?;
+    Ok(vault.append_blob_artifact_version_in_txn(
+        wtxn,
+        artifact_id,
+        &bytes,
+        provenance,
+        actor,
+        occurred,
+        now,
+    )?)
+}
+
 pub(super) fn encode_exhaust_envelope(envelope: &ByoaExhaustEnvelope) -> ByoaResult<Vec<u8>> {
-    validate_exhaust(&envelope.exhaust)?;
     rmp_serde::to_vec_named(envelope).map_err(|_| {
         ByoaError::Store(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
             ERR_EXHAUST_ENCODE,
@@ -473,24 +633,38 @@ pub(super) fn encode_exhaust_envelope(envelope: &ByoaExhaustEnvelope) -> ByoaRes
     })
 }
 
-/// Decodes one exhaust artifact version body.
+/// Decodes the capture an exhaust artifact's head version holds, reading back
+/// the chunk versions its longer streams were stored in. A read: no stream is
+/// measured or refused for its length.
 ///
 /// # Errors
 ///
-/// Returns [`ByoaError::Store`] when the bytes are not an exhaust envelope of
-/// a schema version this build understands.
+/// Returns [`ByoaError::Store`] when `version` is not the artifact's head,
+/// when its bytes are not an exhaust envelope of a schema version this build
+/// understands, or when a stream's chunks do not hold the bytes it names.
 pub fn decode_byoa_exhaust(
-    bytes: &[u8],
+    vault: &Vault,
+    artifact_id: &EntityId,
+    version: u64,
 ) -> ByoaResult<(AttemptId, ByoaTerminalDisposition, ByoaExhaust)> {
-    let envelope = decode_exhaust_envelope(bytes)?;
+    let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+    // Only the head holds an envelope; every version before it is a chunk.
+    if read_blob_artifact_head_in_txn(&vault.store, &rtxn, artifact_id)?
+        .is_none_or(|head| head.version != version)
+    {
+        return Err(invalid(ERR_CAPTURE_CONFLICT));
+    }
+    let bytes = vault
+        .read_blob_artifact_version_in_txn(&rtxn, artifact_id, version)?
+        .ok_or_else(|| invalid(ERR_CAPTURE_CONFLICT))?;
+    let envelope = decode_exhaust_envelope(&bytes)?;
     let attempt_id = AttemptId::from_bytes(&envelope.attempt_id)?;
-    Ok((attempt_id, envelope.disposition, envelope.exhaust))
+    let exhaust = envelope.exhaust.resolve(vault, &rtxn, artifact_id)?;
+    validate_exhaust(&exhaust)?;
+    Ok((attempt_id, envelope.disposition, exhaust))
 }
 
 fn decode_exhaust_envelope(bytes: &[u8]) -> ByoaResult<ByoaExhaustEnvelope> {
-    if bytes.len() > MAX_EXHAUST_ENCODED_BYTES {
-        return Err(invalid(ERR_EXHAUST_TOO_LARGE));
-    }
     let envelope: ByoaExhaustEnvelope = rmp_serde::from_slice(bytes).map_err(|_| {
         ByoaError::Store(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
             ERR_EXHAUST_ENCODE,
@@ -501,6 +675,5 @@ fn decode_exhaust_envelope(bytes: &[u8]) -> ByoaResult<ByoaExhaustEnvelope> {
             ArtifactError::InvalidAgentDispatchInput(ERR_PAYLOAD_SCHEMA),
         )));
     }
-    validate_exhaust(&envelope.exhaust)?;
     Ok(envelope)
 }
