@@ -1,11 +1,12 @@
 //! The `[failure_signals]` section: the publisher this deployment's failure
 //! signals go to (OF-380, DEC-0005 #world-privacy-p8-tier2). Whether it sends
-//! at all is the participation switch, `failure_signal_export`: automatic in
-//! the hosted posture, off on self-host until the owner opts in. This names
-//! where the tier-1 counts and the sealed code-fix records go. A hosted
-//! deployment sends to our own collector unless told otherwise; elsewhere,
-//! with no endpoint, nothing leaves and sealed records wait in the vault. The
-//! destination's credential never sits in the file: `serve` reads it from
+//! at all is the "Help improve Oneiron" switch, `failure_signal_export`: on by
+//! default in the hosted posture, where the owner can turn it off, and off on
+//! self-host until the owner opts in. This names where the tier-1 counts and
+//! the sealed code-fix records go. A hosted deployment sends to our own
+//! collector unless told otherwise; elsewhere, with no endpoint, nothing
+//! leaves and sealed records wait in the vault. The destination's credential
+//! never sits in the file: `serve` reads it from
 //! `ONEIRON_FAILURE_SIGNALS_TOKEN`.
 //!
 //! `[failure_signals.candidates.<id>]` names the publisher's candidate fixes

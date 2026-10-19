@@ -30,6 +30,12 @@ mod artifact_hosting_doors;
 mod asset_doors;
 mod asset_resolve;
 mod authorship;
+mod critical_confirm;
+pub use critical_confirm::{
+    CriticalWriteConfirmAnswer, CriticalWriteConfirmPending, CriticalWriteConfirmPendingRequest,
+    CriticalWriteConfirmReceipt, CriticalWriteConfirmReceiptRequest, CriticalWriteConfirmRequest,
+    CriticalWriteConfirmSettlement,
+};
 mod birth_position;
 mod booking;
 mod claim_admission;
@@ -49,6 +55,7 @@ mod skill_authoring;
 pub mod wellness_doors;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
+pub(crate) use outbound::parse_job_ref;
 pub(crate) mod booking_publication;
 mod campaign;
 mod campaign_actions;

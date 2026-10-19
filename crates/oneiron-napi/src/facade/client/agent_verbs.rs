@@ -466,6 +466,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_budgets_reservations(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.reservations", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_budgets_settlements(
         &self,
         input: serde_json::Value,
@@ -6749,6 +6758,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_writes_critical_confirm_pending(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.writes.critical_confirm.pending", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_writes_critical_confirm_clear(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.writes.critical_confirm.clear", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_writes_critical_confirm_decline(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.writes.critical_confirm.decline", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_writes_critical_confirm_receipt(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.writes.critical_confirm.receipt", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_writes_pending(
         &self,
         input: serde_json::Value,
@@ -7492,6 +7537,24 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.runs.checkpoint", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_home_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.home.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_lineage(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.lineage", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
