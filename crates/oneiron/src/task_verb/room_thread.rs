@@ -169,7 +169,9 @@ pub(crate) fn thread_tasks(
         )?);
     }
     // Each thread's members: the room's, or a private thread's (FIX 2951)
-    // audience among them, which its tasks read under.
+    // audience among them now, which its tasks read under. Through a
+    // personal projection they stand in the thread under CURRENT, through a
+    // held turn turn by turn (FIX 5655).
     let mut audiences = BTreeMap::<EntityId, Vec<EntityId>>::new();
     let mut candidates = Vec::new();
     for id in owned {

@@ -317,8 +317,11 @@ pub(crate) fn stamp_attempt(
     record: &AttemptRecord,
     facet: &str,
 ) -> Result<()> {
-    // A resident's own dreaming runs under the resident's stamp.
-    if record.kind == super::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND {
+    // A resident's own dreaming runs under the resident's stamp, and so does
+    // its free time for its human (FIX 4453).
+    if record.kind == super::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
+        || record.kind == super::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND
+    {
         return stamp_resident_attempt(vault, txn, record);
     }
     // A turn-woken program runs as the actor whose turn woke it, under the
@@ -394,13 +397,19 @@ pub(crate) fn stamp_attempt(
 }
 /// Binds a resident dreaming attempt to its resident: an enabled agent
 /// definition whose dreaming is not off. The row id is the resident's actor.
+/// A free-time item for its human (FIX 4453) binds the same way to an
+/// enabled definition: the owner's free-time policy, not its dreaming,
+/// decides whether it runs. Its cycle binding is checked where it runs.
 fn stamp_resident_attempt(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     record: &AttemptRecord,
 ) -> Result<()> {
     let payload = super::decode_dreamer_attempt_payload(&record.payload)?;
-    if payload.attempt_type != super::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND {
+    let for_human = payload.attempt_type == super::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND;
+    if payload.attempt_type != record.kind
+        || !(for_human || payload.attempt_type == super::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND)
+    {
         return Err(invalid());
     }
     let resident = crate::dreamer_consolidation::resident_of_dream_input(&payload.input)?;
@@ -411,7 +420,9 @@ fn stamp_resident_attempt(
         return Ok(());
     }
     let definition = vault.read_agent_definition_in_txn(txn, &resident)?;
-    if !definition.enabled || definition.dreaming_mode() == crate::agent_def::DreamingMode::Off {
+    if !definition.enabled
+        || (!for_human && definition.dreaming_mode() == crate::agent_def::DreamingMode::Off)
+    {
         return Err(Error::InvalidConfig(
             "a resident whose dreaming is off does not dream".into(),
         ));
@@ -422,7 +433,14 @@ fn stamp_resident_attempt(
         decision_id: receipt_id,
         created_at: record.created_at,
         outcome: "allow".into(),
-        reason_codes: vec!["gate.dreamer.resident_admitted".into()],
+        reason_codes: vec![
+            if for_human {
+                "gate.dreamer.free_time_admitted"
+            } else {
+                "gate.dreamer.resident_admitted"
+            }
+            .into(),
+        ],
         receipt_reasons: Vec::new(),
         system_notices: Vec::new(),
         actor_class: EdgeActorClass::Agent.gate_actor_class().into(),

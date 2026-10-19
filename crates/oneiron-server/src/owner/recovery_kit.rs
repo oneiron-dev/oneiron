@@ -1,7 +1,8 @@
 //! The world kit's public side, shared by `oneiron recovery-kit` and
 //! `GET /v1/owner/recovery-kit` (OF-173): the kits a vault issued, which one
-//! is current, and what each private world's key is wrapped to here. No
-//! piece, passphrase or seed passes through here.
+//! is current, and what each private world's key is wrapped to here. A
+//! data-key kit is listed beside the world kits, with no root (FIX 5614). No
+//! piece, passphrase, seed or key passes through here.
 
 use oneiron::recovery::{KitCoverage, KitId, KitSecretKind, PieceHome};
 use oneiron::world_keys::{StoredCost, StoredKit, WorldRecoveryState};
@@ -21,10 +22,12 @@ pub(crate) struct KitView {
     pub(crate) passphrase_cost: Option<StoredCost>,
     /// What losing one machine leaves.
     pub(crate) coverage: KitCoverage,
-    /// The root's fingerprint, hex.
-    pub(crate) root: String,
+    /// The root's fingerprint, hex; none for a data-key kit, which carries
+    /// the vault data key and no root.
+    pub(crate) root: Option<String>,
     pub(crate) created: String,
-    /// When the owner re-entered its pieces; none while it is pending.
+    /// When the owner re-entered its pieces; none while it is pending, and
+    /// always for a data-key kit, which is issued with no confirm.
     pub(crate) confirmed: Option<String>,
     pub(crate) replaced_by: Option<String>,
 }
@@ -37,7 +40,7 @@ impl From<StoredKit> for KitView {
             homes: kit.homes,
             passphrase_cost: kit.cost,
             coverage: kit.coverage,
-            root: hex(&kit.root),
+            root: kit.root.map(|root| hex(&root)),
             created: rfc3339_secs(kit.created_at),
             confirmed: kit.confirmed_at.map(rfc3339_secs),
             replaced_by: kit.replaced_by.map(kit_id),

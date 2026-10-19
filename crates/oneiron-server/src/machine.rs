@@ -179,6 +179,38 @@ impl DiskFloor {
         true
     }
 
+    /// Whether `path` lies on the disk this floor measures: one filesystem.
+    /// A side that cannot be read is taken as another disk, so work landing
+    /// there is floored there as well.
+    pub(crate) fn measures(&self, path: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            match (std::fs::metadata(&self.dir), std::fs::metadata(path)) {
+                (Ok(ours), Ok(theirs)) => ours.dev() == theirs.dev(),
+                _ => false,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            true
+        }
+    }
+
+    /// A floor of this one's reserve on the disk `dir` lies on, with no claim
+    /// yet: what work that lands there, off this floor's disk, claims on
+    /// (FIX 5612). Uploads never claim on it.
+    pub(crate) fn on_disk_of(&self, dir: PathBuf) -> Self {
+        Self {
+            dir,
+            reserve: self.reserve,
+            claimed: Arc::default(),
+            #[cfg(test)]
+            shown_free: Arc::clone(&self.shown_free),
+        }
+    }
+
     /// A disk that cannot be read is taken as full: a floor that cannot be
     /// checked holds.
     fn room(&self, claimed: u64, bytes: u64) -> bool {
@@ -212,6 +244,13 @@ impl oneiron::origin::smart_http::SpillFloor for DiskFloor {
         std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
         builder.create(&dir).ok()?;
         Some(dir)
+    }
+}
+
+impl DiskClaim {
+    /// The bytes this claim holds now.
+    pub(crate) fn bytes(&self) -> u64 {
+        self.bytes.load(Ordering::Relaxed)
     }
 }
 
