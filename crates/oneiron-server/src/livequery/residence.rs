@@ -754,10 +754,20 @@ fn promote(
     )
     .map_err(|_| AppError::internal_server_error("window promotion unavailable"))?
     .ok_or_else(|| AppError::not_found("window promotion", None))?;
+    // Every pad of the window's world rides with it (FIX 3789).
+    let pads = admission
+        .promoted_pads(&window)
+        .map_err(|_| AppError::internal_server_error("window promotion unavailable"))?;
+    rows.extend(pads.iter().map(|pad| pad.id));
     Ok((
         json!({
             "window": window.as_str(),
             "snapshot": base64::engine::general_purpose::STANDARD.encode(snapshot),
+            "pads": pads.iter().map(|pad| json!({
+                "id": pad.id.to_hex(),
+                "window": pad.window,
+                "raw": base64::engine::general_purpose::STANDARD.encode(&pad.row[..]),
+            })).collect::<Vec<_>>(),
         }),
         Some(rows),
     ))

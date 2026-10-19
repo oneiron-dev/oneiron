@@ -62,7 +62,7 @@ use oneiron_crypto::{
 };
 use zeroize::Zeroizing;
 
-use super::pads::{WorldKeyPad, pad_in_txn, world_keys_destroyed_in_txn};
+use super::pads::{WorldKeyPad, pad_in_txn, pad_row_in_txn, world_keys_destroyed_in_txn};
 use super::{
     MachineSecret, RecoveryRootId, RecoveryRootSeed, WORLD_KEY_EPOCH, WorldKey, WorldKeyId,
     WrapRecipient, base_world, open_counted, os_fill, recipients, refused,
@@ -101,7 +101,7 @@ const SLOT_LABEL: &[u8] = b"oneiron/sealed-vault-slot/v1\0";
 const PART_LABEL: &[u8] = b"oneiron/sealed-vault-part/v1\0";
 const BUNDLE_LABEL: &[u8] = b"oneiron/sealed-vault-bundle/v1\0";
 const SECTION_LABEL: &[u8] = b"oneiron/sealed-vault-section/v1\0";
-const PADS_LABEL: &[u8] = b"oneiron/sealed-key-pads/v1\0";
+const PADS_LABEL: &[u8] = b"oneiron/sealed-key-pads/v2\0";
 const SIGNATURE_CONTEXT: &str = "oneiron/sealed-vault-bundle-signature/v1";
 const SECTION_KEY_CONTEXT: &str = "oneiron/sealed-vault-section-key/v1";
 const SECTION_TAG_CONTEXT: &str = "oneiron/sealed-vault-section-tag/v1";
@@ -652,7 +652,8 @@ pub struct OpenedKeyPads {
     /// The capsules, which a rewrite keeps.
     slots: Vec<Envelope>,
     outer: Zeroizing<[u8; 32]>,
-    entries: Vec<(WorldKeyId, Zeroizing<[u8; 32]>)>,
+    /// Each pad, with the time its row was learned (FIX 3790).
+    entries: Vec<(WorldKeyId, Zeroizing<[u8; 32]>, u64)>,
     /// Each section's tag, by the key it is sealed under (FIX 3359).
     index: Vec<(WorldKeyId, [u8; 32])>,
 }
@@ -674,7 +675,7 @@ impl OpenedKeyPads {
 
     /// The keys whose pads this object holds.
     pub fn keys(&self) -> impl Iterator<Item = &WorldKeyId> {
-        self.entries.iter().map(|(key, _)| key)
+        self.entries.iter().map(|(key, _, _)| key)
     }
 
     /// Erase's rewrite of one object: the same generation, capsules, outer key and
@@ -706,8 +707,8 @@ impl OpenedKeyPads {
     fn pad(&self, key: &WorldKeyId) -> Option<WorldKeyPad> {
         self.entries
             .iter()
-            .find(|(id, _)| id == key)
-            .map(|(_, pad)| WorldKeyPad::from_bytes(Zeroizing::new(**pad)))
+            .find(|(id, _, _)| id == key)
+            .map(|(_, pad, _)| WorldKeyPad::from_bytes(Zeroizing::new(**pad)))
     }
 }
 
@@ -734,7 +735,8 @@ struct SealPlan {
     /// the world, and the root.
     authority_readers: Vec<(EntityId, Vec<HybridPublicKey>)>,
     kit_root: Option<RecoveryRootId>,
-    pads: Vec<(WorldKeyId, Zeroizing<[u8; 32]>)>,
+    /// Each pad, with the time its row was learned (FIX 3790).
+    pads: Vec<(WorldKeyId, Zeroizing<[u8; 32]>, u64)>,
 }
 
 impl Vault {
@@ -905,9 +907,9 @@ impl Vault {
         for key in fold.all_world_keys() {
             if bundle_carries(&fold, key.id.world, holder)
                 && new_pads_hold(&self.store, &txn, key.id.world)?
-                && let Some(pad) = pad_in_txn(&self.store, &txn, &key.id)?
+                && let Some((pad, learned_at)) = pad_row_in_txn(&self.store, &txn, &key.id)?
             {
-                pads.push((key.id, Zeroizing::new(*pad.bytes())));
+                pads.push((key.id, Zeroizing::new(*pad.bytes()), learned_at));
             }
         }
         // A carried section's key keeps the pad the latest generation held for
@@ -915,13 +917,13 @@ impl Vault {
         // the world was deleted or its keys destroyed here. A world whose
         // settings are not folded here yet rides blind with its section and
         // capsule: unknown is not ineligible (FIX 4211).
-        for (key, pad) in carry.latest.map_or(&[][..], |latest| &latest.entries[..]) {
+        for (key, pad, learned_at) in carry.latest.map_or(&[][..], |latest| &latest.entries[..]) {
             if (!fold.worlds.contains_key(&key.world) || bundle_carries(&fold, key.world, holder))
-                && !pads.iter().any(|(held, _)| held == key)
+                && !pads.iter().any(|(held, _, _)| held == key)
                 && !world_keys_destroyed_in_txn(&self.store, &txn, key.world)?
                 && new_pads_hold(&self.store, &txn, key.world)?
             {
-                pads.push((*key, Zeroizing::new(**pad)));
+                pads.push((*key, Zeroizing::new(**pad), *learned_at));
             }
         }
         Ok(SealPlan {
@@ -978,15 +980,16 @@ impl Vault {
 
     /// Kit restore: stores each pad of `pads` whose key this vault's authority
     /// names and whose row is not here, so the root's wraps open again (the
-    /// base section carries no pad row). A world whose keys were destroyed here
-    /// gets none. Returns how many it stored.
+    /// base section carries no pad row). Each row keeps the time it was first
+    /// learned, so it rides the same month's window as on every other replica
+    /// (FIX 3790). A world whose keys were destroyed here gets none. Returns
+    /// how many it stored.
     #[cfg(feature = "sync")]
     pub(crate) fn restore_key_pads(&self, pads: &OpenedKeyPads) -> Result<usize> {
         self.with_write_txn(|txn| {
             let fold = self.authority_view_readonly_in_txn(txn)?;
-            let now = self.instant_in_txn(txn)?.secs();
             let mut stored = 0;
-            for (key, pad) in &pads.entries {
+            for (key, pad, learned_at) in &pads.entries {
                 if fold.world_key(key).is_none()
                     || pad_in_txn(&self.store, txn, key)?.is_some()
                     || world_keys_destroyed_in_txn(&self.store, txn, key.world)?
@@ -994,7 +997,7 @@ impl Vault {
                     continue;
                 }
                 let pad = WorldKeyPad::from_bytes(Zeroizing::new(**pad));
-                self.put_pad_in_txn(txn, key, &pad, now)?;
+                self.put_pad_in_txn(txn, key, &pad, *learned_at)?;
                 stored += 1;
             }
             Ok(stored)
@@ -1791,18 +1794,18 @@ fn decode_section_body(
 }
 
 /// label ‖ vault (32) ‖ generation (24) ‖ count (4) ‖ each key id (40) ‖ pad (32)
-/// ‖ index count (4) ‖ each key id (40) ‖ the tag of the section sealed under it
-/// (32), leaving out `without`'s keys.
+/// ‖ learned at (8, big-endian) ‖ index count (4) ‖ each key id (40) ‖ the tag of
+/// the section sealed under it (32), leaving out `without`'s keys.
 fn encode_pads_body(
     vault_id: &[u8; 32],
     generation: SealedBundleGeneration,
-    entries: &[(WorldKeyId, Zeroizing<[u8; 32]>)],
+    entries: &[(WorldKeyId, Zeroizing<[u8; 32]>, u64)],
     index: &[(WorldKeyId, [u8; 32])],
     without: Option<EntityId>,
 ) -> Result<Zeroizing<Vec<u8>>> {
     let kept: Vec<_> = entries
         .iter()
-        .filter(|(key, _)| Some(key.world) != without)
+        .filter(|(key, _, _)| Some(key.world) != without)
         .collect();
     let indexed: Vec<_> = index
         .iter()
@@ -1816,15 +1819,17 @@ fn encode_pads_body(
             + 32
             + GENERATION_LEN
             + 8
-            + (kept.len() + indexed.len()) * (KEY_ID_LEN + 32),
+            + kept.len() * (KEY_ID_LEN + 32 + 8)
+            + indexed.len() * (KEY_ID_LEN + 32),
     ));
     body.extend_from_slice(PADS_LABEL);
     body.extend_from_slice(vault_id);
     body.extend_from_slice(&generation.to_bytes());
     body.extend_from_slice(&count.to_be_bytes());
-    for (key, pad) in kept {
+    for (key, pad, learned_at) in kept {
         body.extend_from_slice(&key.envelope_key_id());
         body.extend_from_slice(&pad[..]);
+        body.extend_from_slice(&learned_at.to_be_bytes());
     }
     body.extend_from_slice(&indexed_count.to_be_bytes());
     for (key, tag) in indexed {
@@ -1836,7 +1841,7 @@ fn encode_pads_body(
 
 /// A pad object's body, opened.
 struct PadsBody {
-    pads: Vec<(WorldKeyId, Zeroizing<[u8; 32]>)>,
+    pads: Vec<(WorldKeyId, Zeroizing<[u8; 32]>, u64)>,
     index: Vec<(WorldKeyId, [u8; 32])>,
 }
 
@@ -1858,7 +1863,8 @@ fn decode_pads_body(
     for _ in 0..count {
         let key = cursor.key_id().ok_or_else(malformed)?;
         let pad = Zeroizing::new(cursor.array().ok_or_else(malformed)?);
-        pads.push((key, pad));
+        let learned_at = u64::from_be_bytes(cursor.array().ok_or_else(malformed)?);
+        pads.push((key, pad, learned_at));
     }
     let indexed = u32::from_be_bytes(cursor.array().ok_or_else(malformed)?);
     let mut index = Vec::new();

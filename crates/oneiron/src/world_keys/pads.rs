@@ -7,8 +7,11 @@
 //! `WORLD_KEY_PAD`, one immutable row per key. That row replicates in its
 //! world's window of the month it was learned (`ITEM11_LIVE_PAD_CARRIER`), so
 //! it goes only where the world's rows go; a kit restore on a new machine takes
-//! the pads from the sealed cloud bundle's pad object (`bundle`). A pad alone is
-//! noise, and so is an opened wrap without it.
+//! the pads from the sealed cloud bundle's pad object (`bundle`), each with the
+//! time its row was learned, so it rides the same window there. A machine that
+//! syncs what it opened takes every pad of a world with a promotion of any of
+//! the world's windows (`PROMOTED_WORLD_PAD_SET`). A pad alone is noise, and
+//! so is an opened wrap without it.
 //!
 //! Erasing a world (a hard purge, a batch delete, or a peer's hard tombstone)
 //! purges every pad of the world on each replica that applies the erase, and
@@ -283,6 +286,16 @@ pub(crate) fn pad_in_txn(
     txn: &heed::RoTxn<'_>,
     key: &WorldKeyId,
 ) -> Result<Option<WorldKeyPad>> {
+    Ok(pad_row_in_txn(store, txn, key)?.map(|(pad, _)| pad))
+}
+
+/// [`pad_in_txn`] with the time its row was learned, which files it in its
+/// world's window of that month: a sealed pad object carries it (FIX 3790).
+pub(super) fn pad_row_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &WorldKeyId,
+) -> Result<Option<(WorldKeyPad, u64)>> {
     let id = pad_row_id(key)?;
     let Some(raw) = store.port_entity_raw(txn, &id)?.map(Zeroizing::new) else {
         return Ok(None);
@@ -296,7 +309,7 @@ pub(crate) fn pad_in_txn(
     if named != *key {
         return Err(Error::CorruptedIndex("world key pad names another key"));
     }
-    Ok(Some(pad))
+    Ok(Some((pad, header.learned_at)))
 }
 
 /// `key`'s pad, or the typed refusal: destroyed with its world, or not here yet.
@@ -549,24 +562,98 @@ pub(crate) fn destroy_world_keys_in_txn(
     Ok(Some(receipt))
 }
 
+/// Which of a world's pads a home serves with a promotion of one of the
+/// world's windows (CALLS: `PROMOTED_WORLD_PAD_SET`, FIX 3789).
+#[cfg(feature = "sync")]
+enum PromotedWorldPads {
+    /// Every pad row of the world the home holds, of every key generation: an
+    /// old month's rows may name an old key. Never another world's pad, and
+    /// never the content of the month a key was minted in.
+    AllHeldKeyGenerationsOfThatWorld,
+}
+
+#[cfg(feature = "sync")]
+const PROMOTED_WORLD_PAD_SET: PromotedWorldPads =
+    PromotedWorldPads::AllHeldKeyGenerationsOfThatWorld;
+
+/// One pad row a home serves with a promotion (FIX 3789).
+#[cfg(feature = "sync")]
+pub struct PromotedWorldPad {
+    pub id: EntityId,
+    /// The window the row rides: its world's window of the month it was
+    /// learned.
+    pub window: String,
+    /// The row, header and body, as the home holds it.
+    pub row: Zeroizing<Vec<u8>>,
+}
+
+#[cfg(feature = "sync")]
 impl Vault {
-    /// Stages `key`'s fresh pad row in the caller's transaction, beside the
-    /// key's first wraps.
+    /// The pad rows a home serves with a promotion of one of `world`'s
+    /// windows ([`PROMOTED_WORLD_PAD_SET`]): a machine that syncs what it
+    /// opened holds a pad only once it promoted the window of the month the
+    /// pad was learned, and a key opens only with its pad. None once the
+    /// world's keys were destroyed here.
+    pub fn promoted_world_pads(&self, world: EntityId) -> Result<Vec<PromotedWorldPad>> {
+        let txn = self.store.env.read_txn()?;
+        if world_keys_destroyed_in_txn(&self.store, &txn, world)? {
+            return Ok(Vec::new());
+        }
+        let rows = match PROMOTED_WORLD_PAD_SET {
+            PromotedWorldPads::AllHeldKeyGenerationsOfThatWorld => {
+                world_pad_rows_in_txn(&self.store, &txn, world)?
+            }
+        };
+        let mut pads = Vec::with_capacity(rows.len());
+        for (id, _, learned_at) in rows {
+            if let Some(row) = self.store.port_entity_raw(&txn, &id)?.map(Zeroizing::new) {
+                pads.push(PromotedWorldPad {
+                    id,
+                    window: pad_window(world, learned_at),
+                    row,
+                });
+            }
+        }
+        Ok(pads)
+    }
+
+    /// Whether a key of `world` this vault's authority names has no pad here
+    /// while the world's keys stand: a window of the world promoted here asks
+    /// the home for its pads again (FIX 3789).
+    pub(crate) fn world_pads_missing(&self, world: EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        if world_keys_destroyed_in_txn(&self.store, &txn, world)? {
+            return Ok(false);
+        }
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        for key in fold.all_world_keys().filter(|key| key.id.world == world) {
+            if pad_in_txn(&self.store, &txn, &key.id)?.is_none() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+impl Vault {
+    /// Stages `key`'s pad row, learned at `learned_at`, in the caller's
+    /// transaction: a fresh pad beside the key's first wraps, or a kit-restored
+    /// one at the time its row was first learned (FIX 3790).
     pub(super) fn put_pad_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         key: &WorldKeyId,
         pad: &WorldKeyPad,
-        now: u64,
+        learned_at: u64,
     ) -> Result<()> {
         let ops = vec![BatchOp::Put {
             id: pad_row_id(key)?,
             entity_type: ENTITY_TYPE_WORLD_KEY_PAD,
             occurred: TimeRange {
-                start: now,
-                end: now,
+                start: learned_at,
+                end: learned_at,
             },
-            learned_at: now,
+            learned_at,
             data: encode_pad_body(key, pad),
             allow_maintenance: true,
             allow_reserved_predicate: false,

@@ -7,6 +7,7 @@ mod checkpoint_roots;
 mod index;
 mod kit_fetch;
 mod machine_history;
+mod promoted_pads;
 pub(crate) use authority::{catch_up_authority, pinned_checkpoint_pending};
 pub(crate) use bundle::relay_sealed_bundle;
 pub use bundle::{PadAdmissionReport, SealedBundleRelay};
@@ -137,6 +138,8 @@ struct SearchReply {
 struct PromotionReply {
     window: String,
     snapshot: String,
+    /// Every pad of the window's world the home holds (FIX 3789).
+    pads: Vec<promoted_pads::PromotedPad>,
 }
 
 /// The home's version vector for one window (OF-534 demotion).
@@ -441,6 +444,7 @@ impl SyncClient {
                 .map_err(|e| TransportError::Storage(e.to_string()))?
                 .is_some()
             {
+                self.catch_up_promoted_pads(window, Some(item)).await;
                 Ok(())
             } else {
                 Err(TransportError::InvalidPayload(
@@ -606,6 +610,7 @@ impl SyncClient {
         if reply.window != window.as_str() {
             return Err(refused());
         }
+        let pads = promoted_pads::checked_pads(window, &reply.pads)?;
         let snapshot = base64::engine::general_purpose::STANDARD
             .decode(reply.snapshot)
             .map_err(|_| refused())?;
@@ -614,7 +619,11 @@ impl SyncClient {
         }
         // Do not merge a canonical frontier into an independently authored
         // sparse window. Its prior ops would not be a causal continuation.
-        let loaded = self.ensure_window(window.as_str())?;
+        // A key pad held here is not mirrored into it: the snapshot carries
+        // the window's pads (FIX 3789).
+        let loaded = crate::sync::ingest::with_first_promotion_open(&self.vault, || {
+            self.ensure_window(window.as_str())
+        })?;
         if !loaded.doc.oplog_vv().is_empty() {
             return Err(TransportError::InvalidPayload(
                 "unpromoted window has local CRDT history",
@@ -664,6 +673,7 @@ impl SyncClient {
                 Ok(())
             })
             .map_err(|e| TransportError::Storage(e.to_string()))?;
+        promoted_pads::land_pads(&self.vault, window, &pads);
         self.materialize_sealed_mirror(window);
         self.manager.notify_promotion(window);
         Ok(())
@@ -700,6 +710,7 @@ impl SyncClient {
             .map_err(|e| TransportError::Storage(e.to_string()))?
             .is_some()
         {
+            self.catch_up_promoted_pads(window, None).await;
             return Ok(true);
         }
         let budgets = residence_budgets(&self.vault)?;
@@ -727,6 +738,13 @@ impl SyncClient {
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
             return Err(TransportError::Storage("home node offline".into()));
         };
+        // A home that may not read the window's world is not told its name or
+        // the selector (FIX 3872): the window stays on disk, marked for the
+        // residence upkeep to ask again, as when the home refuses it.
+        if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
+            self.mark_retain_refused(window)?;
+            return Ok(false);
+        }
         let reply = match rpc
             .request(
                 "residence.promote",
@@ -747,6 +765,7 @@ impl SyncClient {
         if reply.window != window.as_str() {
             return Err(refused());
         }
+        let pads = promoted_pads::checked_pads(window, &reply.pads)?;
         let snapshot = base64::engine::general_purpose::STANDARD
             .decode(reply.snapshot)
             .map_err(|_| refused())?;
@@ -771,6 +790,7 @@ impl SyncClient {
                     .put(txn, &format!("rp:w:{window}"), &[1])
             })
             .map_err(|e| TransportError::Storage(e.to_string()))?;
+        promoted_pads::land_pads(&self.vault, window, &pads);
         self.materialize_sealed_mirror(window);
         self.manager.notify_promotion(window);
         Ok(true)
@@ -823,6 +843,13 @@ impl SyncClient {
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
             return Err(TransportError::Storage("home node offline".into()));
         };
+        // A home that may not read the window's world is not told its name or
+        // the selector (FIX 3872): the window stays promoted here.
+        if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
+            return Err(TransportError::Storage(
+                "home may not read this world".into(),
+            ));
+        }
         let reply: WindowVvReply = serde_json::from_value(
             rpc.request(
                 "residence.window.vv",

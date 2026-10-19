@@ -62,6 +62,8 @@ pub use self::machine::{machine_encryption_key, machine_secret};
 pub use self::owner_work::{
     OwnerWorkDrain, OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned,
 };
+#[cfg(feature = "sync")]
+pub use self::pads::PromotedWorldPad;
 pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
 pub(crate) use self::pads::{
     destroy_world_keys_in_txn, held_pad_world_in_txn, late_pad_in_txn, note_world_deleted_in_txn,

@@ -14,7 +14,9 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::FederationGrantScope;
 use crate::sync::SyncSelector;
+use crate::sync::types::WindowKey;
 use crate::sync::window::Withhold;
+use crate::world_keys::PromotedWorldPad;
 
 /// A residence read admitted for one credential, selector and destination.
 /// Load it once per request, and again at each release; never keep it on a
@@ -87,6 +89,31 @@ impl<'v> ResidenceAdmission<'v> {
     pub fn rows_may_leave(&self, rows: &[EntityId]) -> Result<bool> {
         let txn = self.vault.store.env.read_txn()?;
         self.context.rows_may_leave(&txn, rows)
+    }
+
+    /// The pads of `window`'s world a promotion of it carries (FIX 3789):
+    /// every pad row of the world held here
+    /// ([`Vault::promoted_world_pads`]), for a proved machine they may reach.
+    /// None for a base window or any other destination. Ask it only once the
+    /// promotion was admitted.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn promoted_pads(&self, window: &WindowKey) -> Result<Vec<PromotedWorldPad>> {
+        let Some(world) = window.world() else {
+            return Ok(Vec::new());
+        };
+        if !matches!(self.destination(), Destination::Machine(_)) {
+            return Ok(Vec::new());
+        }
+        let pads = self.vault.promoted_world_pads(world)?;
+        let ids: Vec<EntityId> = pads.iter().map(|pad| pad.id).collect();
+        Ok(if self.rows_may_leave(&ids)? {
+            pads
+        } else {
+            Vec::new()
+        })
     }
 }
 
