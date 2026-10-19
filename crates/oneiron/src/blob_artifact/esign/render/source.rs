@@ -346,17 +346,22 @@ fn glyph_content(doc: &Document, value: &Object, bytes: &mut Vec<u8>, depth: usi
     Ok(())
 }
 
-/// The page contents admitted so far, each by the streams it names in order:
-/// content that many pages share is decoded and checked once.
+/// The page contents admitted so far, each by the streams it names in order,
+/// and every content stream decoded so far, by its id: content that many
+/// pages share is checked once, and a stream named many times, on one page or
+/// across pages, decodes once for the whole preparation.
 #[derive(Default)]
-pub(super) struct PageContents(BTreeSet<Vec<ObjectId>>);
+pub(super) struct PageContents {
+    checked: BTreeSet<Vec<ObjectId>>,
+    decoded: BTreeMap<ObjectId, Vec<u8>>,
+}
 impl PageContents {
     /// Admits a page's `/Contents` (a stream or an array of streams, ISO
-    /// 32000-1 section 7.7.3.3, Table 30) and returns its streams, in order.
-    /// Each stream decodes under its own bound, and the page's streams are
-    /// checked as the one stream a reader concatenates them into. A page
-    /// that names one stream twice is refused: it is not content a writer
-    /// emits, and it would decode that stream again for each naming.
+    /// 32000-1 section 7.7.3.3, Table 30) and returns its streams, in order,
+    /// a stream the page names twice included twice. Each distinct stream
+    /// decodes once under its own bound, and the page's streams are checked
+    /// as the one program a reader concatenates them into, in naming order,
+    /// repeats included: a fragment is never checked for balance alone.
     pub(super) fn admit(&mut self, doc: &Document, value: &Object) -> Result<Vec<ObjectId>> {
         let stream = |value: &Object| -> Result<ObjectId> {
             match doc.dereference(value)? {
@@ -369,20 +374,22 @@ impl PageContents {
             (_, Object::Array(values)) => values.iter().map(stream).collect::<Result<Vec<_>>>()?,
             _ => vec![stream(value)?],
         };
-        if self.0.contains(&streams) {
+        if self.checked.contains(&streams) {
             return Ok(streams);
-        }
-        let mut named = BTreeSet::new();
-        if !streams.iter().all(|id| named.insert(*id)) {
-            return Err(PdfPreparationError::UnsupportedPdf);
         }
         let mut content = Vec::new();
         for id in &streams {
-            content.extend(decoded(doc.get_object(*id)?.as_stream()?)?);
+            let bytes = match self.decoded.entry(*id) {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert(decoded(doc.get_object(*id)?.as_stream()?)?)
+                }
+            };
+            content.extend_from_slice(bytes);
             content.push(b'\n');
         }
         check_content(&content)?;
-        self.0.insert(streams.clone());
+        self.checked.insert(streams.clone());
         Ok(streams)
     }
 }
