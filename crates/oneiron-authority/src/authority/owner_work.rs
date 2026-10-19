@@ -7,10 +7,10 @@
 //! records an [`OwnerWorkRequest`] signed with its install key, the carrier,
 //! naming the one install that is to do the work, the executor. The
 //! executor, and only it, signs the [`OwnerWorkResult`] with its own install
-//! key, naming the request's entry among its parents: the work was enacted,
-//! or refused for a closed, value-free reason. Both are main-log metadata, so
-//! every linked machine folds them; neither names a person or a world's text,
-//! nor carries a secret byte.
+//! key, naming the request's entry, which its parents' fold carries: the work
+//! was enacted, or refused for a closed, value-free reason. Both are main-log
+//! metadata, so every linked machine folds them; neither names a person or a
+//! world's text, nor carries a secret byte.
 //!
 //! Key, custody and root acts are the owner's own: every work kind refuses
 //! an agent's act until a Grant line names it (Engine 10-19 02:2x). The one
@@ -296,7 +296,8 @@ impl OwnerWorkBody {
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
 pub struct WorldPrivacyWorkBasis {
-    /// The settings edit's signed entry, one of the request's parents.
+    /// The settings edit's signed entry, in the request's causal past (the
+    /// fold of its parents).
     pub edit: AuthorityEntryHash,
     /// The world's `PolicyRevision` right after the edit: the revision the
     /// key work is for.
