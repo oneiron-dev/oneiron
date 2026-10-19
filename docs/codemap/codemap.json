@@ -31446,8 +31446,34 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "crate-vis": 9,
-      "mod": 10,
+      "mod": 11,
       "re-export": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ModelStreamAbort",
+      "ModelStreamDetach",
+      "ModelStreamDetached",
+      "ModelStreamEvents",
+      "ModelStreamEventsRequest",
+      "ModelStreamOpen",
+      "ModelStreamOpened",
+      "ModelStreamSink",
+      "ModelStreamStatus",
+      "ModelStreamSubscribe",
+      "ModelStreamSubscribed",
+      "ModelStreamTerminal",
+      "ModelStreamTerminalRequest"
+     ],
+     "path": "src/llm/model_stream.rs",
+     "purpose": "Owner-submitted shared model streams over the engine's one-producer `LlmEventBus`: many subscribers attach…",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "struct": 12
      }
     },
     {
@@ -53536,7 +53562,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1052
+      "fn": 1058
      }
     },
     {
@@ -60643,7 +60669,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 108,
+     "files": 109,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61345,7 +61371,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3736,
+   "source_files": 3737,
    "test_files": 902
   },
   "oneiron-android": {
@@ -70003,7 +70029,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1023
+      "fn": 1029
      }
     },
     {
@@ -71099,7 +71125,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1024
+      "fn": 1030
      }
     },
     {
@@ -74003,7 +74029,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
@@ -74663,7 +74689,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 166
+      "crate-vis": 167
      }
     },
     {
@@ -74814,6 +74840,16 @@
      "purpose": "Owner-proof model steps; HTTP, SDK and MCP reach the same typed door",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/model_stream_doors.rs",
+     "purpose": "Owner-proof shared model streams: subscriptions can attach before one admitted producer opens",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -82843,7 +82879,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 432,
+     "files": 433,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -83272,7 +83308,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 790,
+   "source_files": 791,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -85193,6 +85229,7 @@
       "LlmOutputUsage",
       "LlmRequest",
       "LlmResponse",
+      "LlmStreamEvent",
       "LlmToolSpec",
       "LlmUsage",
       "LocalMinuteWindow",
@@ -85311,6 +85348,18 @@
       "ModelStepResult",
       "ModelStepRetryPolicy",
       "ModelStepSubmit",
+      "ModelStreamAbort",
+      "ModelStreamDetach",
+      "ModelStreamDetached",
+      "ModelStreamEvents",
+      "ModelStreamEventsRequest",
+      "ModelStreamOpen",
+      "ModelStreamOpened",
+      "ModelStreamStatus",
+      "ModelStreamSubscribe",
+      "ModelStreamSubscribed",
+      "ModelStreamTerminal",
+      "ModelStreamTerminalRequest",
       "ModelTrialAction",
       "ModelTrialComplete",
       "ModelTrialEvidence",
@@ -86921,8 +86970,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 823,
-      "struct": 2625
+      "enum": 825,
+      "struct": 2636
      }
     },
     {
