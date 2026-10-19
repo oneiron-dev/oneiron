@@ -233,18 +233,14 @@ impl AgentVerbDoor for SkillCredentialDoor {
         &self,
         rows: Option<&[oneiron::EntityId]>,
     ) -> Result<bool, AgentVerbRefusal> {
-        if self.auth.locality() == oneiron::claim::CallerLocality::OnDevice {
+        let destination = self.auth.destination();
+        if !destination.is_off_device() {
             return Ok(false);
         }
         let Some(rows) = rows else {
             return Ok(true);
         };
-        crate::device_local::withholds_retained(
-            self.server.vault(),
-            self.auth.locality(),
-            rows,
-            &[],
-        )
+        crate::device_local::withholds_retained(self.server.vault(), destination, rows, &[])
         .map_err(|_| AgentVerbRefusal {
             code: oneiron::memory::MEMORY_CODE_INTERNAL.to_owned(),
         })

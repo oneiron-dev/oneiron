@@ -7,11 +7,11 @@
 //! owner did not see. A handed copy is a copy: revoking means not issuing
 //! another.
 
-use oneiron::claim::CallerLocality;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::persona_snapshot::{
     PersonaSnapshotCompile, PersonaSnapshotCompileOptions, PersonaSnapshotCopyRequest,
 };
+use oneiron::settings::ReadDestination;
 use oneiron::{ErrorKind, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -79,9 +79,9 @@ pub(crate) struct Exported {
 pub(crate) fn preview(
     vault: &Vault,
     subject: &str,
-    locality: CallerLocality,
+    destination: impl Into<ReadDestination>,
 ) -> OwnerResult<Preview> {
-    let compile = compile(vault, subject, locality)?;
+    let compile = compile(vault, subject, destination.into())?;
     Ok(Preview {
         subject: compile.subject_ref.to_hex(),
         stamp: compile.stamp.identity(),
@@ -107,7 +107,7 @@ pub(crate) fn export(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     request: &ExportRequest,
-    locality: CallerLocality,
+    destination: impl Into<ReadDestination>,
 ) -> OwnerResult<Exported> {
     let copy = PersonaSnapshotCopyRequest {
         subject: entity_id("subject", &request.subject)?,
@@ -116,7 +116,7 @@ pub(crate) fn export(
         unstrike: request.unstrike.iter().cloned().collect(),
     };
     let artifact = vault
-        .export_persona_snapshot_copy_as(owner, &copy, locality)
+        .export_persona_snapshot_copy_as(owner, &copy, destination)
         .map_err(|error| match error.kind() {
             ErrorKind::PersonaSnapshotConsentStale => OwnerError::Changed(
                 "the card changed since its preview; preview it again".to_owned(),
@@ -140,15 +140,16 @@ pub(crate) fn export(
 }
 
 /// The owner's own compile: no audience clamp beyond Tier A, agent takes off.
-/// Off this device no claim a device-local world keeps enters it.
+/// Off this device no claim a world withheld from `destination` keeps enters
+/// it (FIX 4937).
 fn compile(
     vault: &Vault,
     subject: &str,
-    locality: CallerLocality,
+    destination: ReadDestination,
 ) -> OwnerResult<PersonaSnapshotCompile> {
     let subject_id = entity_id("subject", subject)?;
     let options = PersonaSnapshotCompileOptions {
-        destination: locality.into(),
+        destination,
         ..PersonaSnapshotCompileOptions::default()
     };
     vault
