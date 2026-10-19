@@ -178,6 +178,17 @@ pub struct RunSettlementsView {
     pub settlements: Vec<RunRungSettlement>,
 }
 
+/// Which path wrote a settled call's usage record (FIX 5724). Neither
+/// changes whether or how the call counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageEventOrigin {
+    /// The serving engine recorded the call it admitted and settled.
+    Engine,
+    /// An accepted usage post recorded it, with the poster's own stamps.
+    Posted,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunRungSettlement {
     pub instance: String,
@@ -191,8 +202,12 @@ pub struct RunRungSettlement {
     /// The label the call carried (FIX 4453): its envelope purpose, or a
     /// paid connector call's bound item's.
     pub purpose: Option<String>,
+    /// The path that first wrote the call's record: `engine` or `posted`.
+    /// A replay never relabels it.
+    pub source: UsageEventOrigin,
     /// The agent, free-time cycle, item and spend scope a bound run's call
-    /// served, as the engine stamped them before the run began (FIX 4453);
+    /// served (FIX 4453): on an `engine` record as the engine stamped them
+    /// before the run began, on a `posted` one as the poster stamped them;
     /// `None` on every unbound run.
     pub agent: Option<String>,
     pub cycle: Option<String>,

@@ -17,7 +17,7 @@ use security_framework::passwords::{
     PasswordOptions, delete_generic_password_options, generic_password,
 };
 use security_framework_sys::item::kSecValueData;
-use security_framework_sys::keychain_item::SecItemAdd;
+use security_framework_sys::keychain_item::{SecItemAdd, SecItemUpdate};
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
@@ -102,6 +102,35 @@ impl AppleKeychain {
             other => Err(platform(other)),
         }
     }
+
+    /// Update-only, in one `SecItemUpdate` over the slot's lookup: the item
+    /// keeps its protection and attributes and only its data changes, so a
+    /// reader sees the old bytes or the new ones. An absent item is
+    /// `Ok(false)` and nothing is created.
+    pub(crate) fn update_item(&self, slot: &KeystoreSlot, data: &[u8]) -> Result<bool> {
+        let lookup = self.lookup(slot);
+        #[expect(
+            deprecated,
+            reason = "PasswordOptions has no update call; its query is the item"
+        )]
+        let query = lookup.query.clone();
+        let query = CFDictionary::from_CFType_pairs(&query);
+        // SAFETY: `kSecValueData` is an immutable CFString the Security framework
+        // exports for the life of the process; the get rule retains it.
+        let value_key = unsafe { CFString::wrap_under_get_rule(kSecValueData) };
+        let update = CFDictionary::from_CFType_pairs(&[(
+            value_key,
+            CFData::from_buffer(data).into_CFType(),
+        )]);
+        // SAFETY: `query` and `update` are valid dictionaries that outlive the call.
+        let status =
+            unsafe { SecItemUpdate(query.as_concrete_TypeRef(), update.as_concrete_TypeRef()) };
+        match status {
+            ERR_SEC_SUCCESS => Ok(true),
+            ERR_SEC_ITEM_NOT_FOUND => Ok(false),
+            other => Err(platform(other)),
+        }
+    }
 }
 
 impl DeviceKeystore for AppleKeychain {
@@ -126,6 +155,10 @@ impl DeviceKeystore for AppleKeychain {
             Err(e) if e.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
             Err(e) => Err(platform(e.code())),
         }
+    }
+
+    fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool> {
+        self.update_item(slot, secret)
     }
 
     fn locality(&self) -> KeystoreLocality {

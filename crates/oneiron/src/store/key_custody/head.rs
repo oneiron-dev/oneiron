@@ -70,7 +70,9 @@ impl CompartmentScope {
         match kind {
             // A body instance's key is one the host engine reads in its own
             // process, as a claim key is (KS-2A).
-            CustodyKind::ClaimDecision | CustodyKind::BodyInstance => Self::HostReadable,
+            CustodyKind::ClaimDecision
+            | CustodyKind::BodyInstance
+            | CustodyKind::CheckpointPayload => Self::HostReadable,
         }
     }
 

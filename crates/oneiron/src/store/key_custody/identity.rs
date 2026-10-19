@@ -62,7 +62,7 @@ impl CustodyVaultId {
 /// | `0x04` | `KnownValueEntry`   | reserved: KS-3 known-value holder entries |
 /// | `0x05` | `WorldPad`          | reserved: KS-5 world pads                |
 /// | `0x06` | `CredentialValue`   | reserved: KS-6 credential values         |
-/// | `0x07` | `CheckpointPayload` | reserved: KS-7 checkpoint payloads       |
+/// | `0x07` | `CheckpointPayload` | KS-7 checkpoint payload compartments     |
 ///
 /// A later client adds its variant with its reserved tag, its item width and
 /// secret width, and its corruption label; custody itself stays the same.
@@ -76,6 +76,10 @@ pub(crate) enum CustodyKind {
     /// of the same bytes never shares a retired instance's lifetime; secret =
     /// the body file's data key (32 bytes).
     BodyInstance,
+    /// One owner's compartment of a checkpoint's ordinary payload (KS-7):
+    /// item = subtype (1) | canonical owner (32) | incarnation (16), secret
+    /// = the compartment's sealing key (32 bytes).
+    CheckpointPayload,
 }
 
 impl CustodyKind {
@@ -83,6 +87,7 @@ impl CustodyKind {
         match self {
             Self::ClaimDecision => 0x01,
             Self::BodyInstance => 0x02,
+            Self::CheckpointPayload => 0x07,
         }
     }
 
@@ -90,6 +95,7 @@ impl CustodyKind {
         match tag {
             0x01 => Some(Self::ClaimDecision),
             0x02 => Some(Self::BodyInstance),
+            0x07 => Some(Self::CheckpointPayload),
             _ => None,
         }
     }
@@ -99,6 +105,7 @@ impl CustodyKind {
         match self {
             Self::ClaimDecision => 16,
             Self::BodyInstance => 17,
+            Self::CheckpointPayload => 49,
         }
     }
 
@@ -106,7 +113,7 @@ impl CustodyKind {
     /// is damaged, never replaced.
     pub(crate) const fn secret_len(self) -> usize {
         match self {
-            Self::ClaimDecision | Self::BodyInstance => 32,
+            Self::ClaimDecision | Self::BodyInstance | Self::CheckpointPayload => 32,
         }
     }
 
@@ -116,6 +123,7 @@ impl CustodyKind {
         match self {
             Self::ClaimDecision => Error::CorruptedIndex("gate decision ORCB"),
             Self::BodyInstance => Error::CorruptedIndex("body file key custody"),
+            Self::CheckpointPayload => Error::CorruptedIndex("checkpoint payload custody"),
         }
     }
 }

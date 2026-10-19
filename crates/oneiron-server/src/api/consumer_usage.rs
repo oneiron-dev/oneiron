@@ -11,6 +11,7 @@ use axum::{
     http::request::Parts,
     response::Json,
 };
+use oneiron::agent_dispatch::budget_doors::UsageEventOrigin;
 use std::sync::Arc;
 #[utoipa::path(post, path = "/v1/usage/events", request_body = UsageEvent,
     responses((status = 200, body = UsageRecordResult), (status = 400, body = ApiError), (status = 401, body = ApiError), (status = 409, body = ApiError)))]
@@ -21,9 +22,10 @@ pub(crate) async fn record_usage_event(
 ) -> Result<Json<UsageRecordResult>, ApiError> {
     check_request_auth(&parts, &server)?;
     let mode = usage_mode_for_event(&server.config, &event)?;
+    // A posted event counts as it always has; its record says it was posted.
     server
         .usage_ledger
-        .record_event(event, mode)
+        .record_event(event, mode, UsageEventOrigin::Posted)
         .map(Json)
         .map_err(usage_error)
 }
