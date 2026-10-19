@@ -47,6 +47,7 @@ pub use import::ImportConfig;
 pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig};
 pub use limits::LimitsConfig;
 pub use line::LineConfig;
+pub(crate) use lookup::normalize_list;
 pub(crate) use merge::layer_serve_config;
 pub use merge::{
     EnvConfig, default_config_path, resolve_backup_config, resolve_serve_config,

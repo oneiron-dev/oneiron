@@ -236,8 +236,22 @@ pub struct ServeArgs {
     pub oauth_issuer: Option<String>,
     #[arg(long)]
     pub oauth_jwks_uri: Option<String>,
+    /// The host's public https origin: the resource OAuth relay tokens are
+    /// checked against, and the origin the host's app URLs, sign pages and
+    /// kit fetches name. In managed mode the supervisor passes it, as it
+    /// owns the vault's public addresses, and it builds no auth layer there:
+    /// the relay also needs `--oauth-issuer` and `--oauth-jwks-uri`, which
+    /// managed mode refuses.
     #[arg(long)]
     pub oauth_resource_indicator: Option<String>,
+
+    /// Comma-separated public URLs a recovery kit may dial and sign its
+    /// fetches for, one per address the home answers on
+    /// (`ONEIRON_KIT_BUNDLE_PUBLIC_URLS`). Empty: `--oauth-resource-indicator`.
+    /// In managed mode the supervisor passes them, as it owns the vault's
+    /// public addresses.
+    #[arg(long = "kit-bundle-public-urls", value_delimiter = ',', num_args = 1..)]
+    pub kit_bundle_public_urls: Option<Vec<String>>,
 
     /// Insecure local/dev escape hatch: allow requests without auth_secret.
     /// Serve refuses it unless the listener is loopback.
@@ -404,7 +418,9 @@ pub struct ServeArgs {
     /// turn it off; off on self-host until set true.
     #[arg(long, action = clap::ArgAction::Set)]
     pub failure_signal_export: Option<bool>,
-    /// Separate, explicit training consent (default off in every tier).
+    /// Training on what "Help improve Oneiron" sends, as its own yes or no.
+    /// Unset, it takes the switch's default: on for a hosted vault, which
+    /// can turn it off; off on self-host until set true.
     #[arg(long, action = clap::ArgAction::Set)]
     pub failure_signal_training: Option<bool>,
 
@@ -459,6 +475,7 @@ impl fmt::Debug for ServeArgs {
             .field("artifact_port", &self.artifact_port)
             .field("artifact_domains", &self.artifact_domains)
             .field("artifact_vault_name", &self.artifact_vault_name)
+            .field("kit_bundle_public_urls", &self.kit_bundle_public_urls)
             .field("auth_secret", &redacted_secret(&self.auth_secret))
             .field(
                 "insecure_allow_unauthenticated",

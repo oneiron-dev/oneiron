@@ -11,6 +11,10 @@
 //! not-fixed results ([`Vault::pending_code_fix_records`](crate::Vault::pending_code_fix_records)).
 //! Neither carries real chat text, and a failure that touched a private world
 //! sends counts only.
+//!
+//! Training on what the switch sends is its own yes or no, and when the owner
+//! has not chosen it takes the switch's default (owner ruling 2026-10-19, FIX
+//! 5188). Real conversations stay under each person's own choice (FIX 4489).
 
 use serde::{Deserialize, Serialize};
 
@@ -31,13 +35,17 @@ pub struct FailureSignalConfig {
     /// both code-fix exports, in every tier: `Some` is an explicit yes or
     /// no and stands as given; `None` takes [`default_exports`].
     pub export_opt_in: Option<bool>,
-    /// Explicit, independent permission. Export never grants training rights.
-    pub training_opt_in: bool,
+    /// The owner's training choice on what the switch sends, in every tier:
+    /// `Some` is an explicit yes or no and stands as given, whatever the
+    /// switch says; `None` takes [`default_exports`], on for a vault our
+    /// cloud hosts and off on self-host and OSS.
+    pub training_opt_in: Option<bool>,
 }
 
-/// Whether a deployment exports when its owner has not chosen (owner ruling
-/// 2026-10-19, FIX 4488): on for a vault our cloud hosts, which its owner can
-/// turn off; off on self-host and OSS until the owner turns it on.
+/// Whether a deployment exports, and permits training on what it sends,
+/// when its owner has not chosen (owner rulings 2026-10-19, FIX 4488 and
+/// FIX 5188): on for a vault our cloud hosts, which its owner can turn off;
+/// off on self-host and OSS until the owner turns it on.
 pub const fn default_exports(deployment: DeploymentTier) -> bool {
     match deployment {
         DeploymentTier::Managed => true,
@@ -52,5 +60,6 @@ impl FailureSignalConfig {
     }
     pub fn permits_training(self) -> bool {
         self.training_opt_in
+            .unwrap_or(default_exports(self.deployment))
     }
 }

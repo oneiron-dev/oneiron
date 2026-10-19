@@ -420,9 +420,11 @@ impl ManagedArgs {
     /// fields read here: dimensions, the MRL prefix, map size, dictionary
     /// roots, log level, `--no-hooks`, the maximum tier and the owner's
     /// failure-signal export and training choices. Each of them, given,
-    /// stands over the settings file's own value. Everything else on
-    /// `ServeArgs` is refused before this runs, so nothing reaches here to be
-    /// quietly dropped.
+    /// stands over the settings file's own value. The supervisor's own
+    /// bindings read here too (browser origins, the host's public origin and
+    /// the kit fetch URLs) are ones the settings file never sets. Everything
+    /// else on `ServeArgs` is refused before this runs, so nothing reaches
+    /// here to be quietly dropped.
     ///
     /// `auth_secret` stays `None` and unauthenticated requests are allowed:
     /// bearer auth terminates at the supervisor, which owns the listening
@@ -437,6 +439,14 @@ impl ManagedArgs {
             allow_unauthenticated: true,
             // Browser origins are argv policy too, for the external shared UI.
             allowed_origins: args.allowed_origins.clone().unwrap_or_default(),
+            // The host's public https origin and the URLs a kit dials, as
+            // the supervisor, which owns them, passes them. Neither builds an
+            // auth layer: the OAuth relay also needs the issuer and JWKS
+            // flags, which managed mode refuses.
+            oauth_resource_indicator: nonempty(args.oauth_resource_indicator.as_deref()),
+            kit_bundle_public_urls: crate::config::normalize_list(
+                args.kit_bundle_public_urls.clone().unwrap_or_default(),
+            ),
             dimensions: args.dimensions.unwrap_or(defaults.dimensions),
             fast_dims: args.fast_dims,
             map_size: args.map_size.unwrap_or(defaults.map_size),
@@ -466,8 +476,10 @@ impl ManagedArgs {
             // passes it, either way; unset, the settings file's, then the
             // managed default.
             failure_signal_export: args.failure_signal_export,
-            // Training is its own explicit yes, off unless passed or set.
-            failure_signal_training: args.failure_signal_training.unwrap_or(false),
+            // Training on what it sends, by the same rule: unset, the
+            // settings file's, then the switch's managed default, on (FIX
+            // 5188).
+            failure_signal_training: args.failure_signal_training,
             ..defaults
         };
         if let Some(log_level) = args.log_level.clone() {
@@ -748,11 +760,6 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
     ),
     (
-        "oauth-resource-indicator",
-        |args| args.oauth_resource_indicator.is_some(),
-        ArgvUse::Refused(NO_AUTH_LAYER_REASON),
-    ),
-    (
         "insecure-allow-unauthenticated",
         |args| args.insecure_allow_unauthenticated.is_some(),
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
@@ -766,6 +773,19 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         "trusted-proxies",
         |args| args.trusted_proxies.is_some(),
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
+    ),
+    // The host's public addresses, which the supervisor owns and passes on:
+    // its https origin and the URLs a kit dials. The settings file never
+    // sets them, and no auth layer is built from them.
+    (
+        "oauth-resource-indicator",
+        |args| args.oauth_resource_indicator.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "kit-bundle-public-urls",
+        |args| args.kit_bundle_public_urls.is_some(),
+        ArgvUse::Read,
     ),
     // The owner's own choices, which the supervisor passes on (FIX 4488).
     (
