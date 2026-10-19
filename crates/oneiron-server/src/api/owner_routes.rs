@@ -388,14 +388,15 @@ struct OwnerStatus {
 
 /// The admission of a ROOT ADMIN command here (FIX 2222): status, backups,
 /// a restore rehearsal and plain upkeep. The host's own live root runs it on
-/// any vault, self-hosted or hosted, as no person: `None`, no owner proof is
-/// made up for it. Any other caller runs it as the owner, through
-/// [`owner`].
+/// any vault no supervisor manages, self-hosted or hosted, as no person:
+/// `None`, no owner proof is made up for it. Any other caller runs it as the
+/// owner, through [`owner`], and so does every caller on a managed vault,
+/// whose host's root acts as nobody (FIX 2222, FIX 5255).
 fn root_admin(
     auth: &CoreAuth,
     server: &SyncServer,
 ) -> Result<Option<AuthenticatedOwner>, ApiError> {
-    if auth.host_root().is_some() {
+    if server.managed_issuer.is_none() && auth.host_root().is_some() {
         if !auth.credential_is_live(server.vault()) {
             return Err(ApiError::forbidden_scope("owner"));
         }

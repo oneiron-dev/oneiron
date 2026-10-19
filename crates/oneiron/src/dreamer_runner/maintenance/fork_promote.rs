@@ -30,7 +30,7 @@ use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::error::ArtifactError;
 use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::skill_hub::{HubFile, HubPackage, SharedSkillMergeDisposition, UsefulUpstreamDecisions};
-use crate::skill_optimize::{HeldOutReplayCase, HeldOutReplayNotes};
+use crate::skill_optimize::{HeldOutReplayCase, HeldOutReplayNotes, held_out_receipts};
 use crate::task_type::{TaskTypeTree, TreeScope};
 use crate::team::run_binding::team_run_tasks;
 use crate::team::{TeamReceipt, team_receipts};
@@ -300,11 +300,18 @@ fn fork_project(
         report.unscored += 1;
         return Ok(());
     }
-    // The fork's counts are the project's fit runs alone: its held-out teams
-    // leave before any decision is read, and no held-out count is carried.
+    // The fork's counts are the project's fit runs alone: every team of a
+    // leader whose pack receipt the head's reserve holds leaves before any
+    // decision is read, whether or not this pass recorded it, and no
+    // held-out count is carried.
+    let reserved: BTreeSet<String> = held_out_receipts(vault, &pass.head)?.into_iter().collect();
     let fit: Vec<TeamReceipt> = teams
         .iter()
-        .filter(|team| !reserve.held_out_teams.contains(&team.team_ref))
+        .filter(|team| {
+            !team_leader(&team.team_ref).is_some_and(|leader| {
+                reserved.contains(&crate::receipt::attempt_pack_receipt_id(&leader))
+            })
+        })
         .cloned()
         .collect();
     let fit = type_evidence(fit, &pass.tasks);
