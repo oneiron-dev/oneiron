@@ -4111,9 +4111,9 @@
      "path": "src/authority/world_privacy_door.rs",
      "purpose": "The signed half of the owner's world-settings door, and the one judge every egress door asks: may a world be…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 7,
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -11207,9 +11207,9 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 39,
       "enum": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -24877,7 +24877,7 @@
      "path": "src/federation/record_scope/export.rs",
      "purpose": "The scoped export door",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -33483,8 +33483,8 @@
      "path": "src/memory/locality.rs",
      "purpose": "Where a [`Memory`] caller sits, and the rows its reads derive an answer from, for a host that judges that…",
      "surface": {
-      "crate-vis": 4,
-      "fn": 3,
+      "crate-vis": 5,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -45045,12 +45045,31 @@
      "purpose": "Persisted customization settings and client-visible change events",
      "surface": {
       "const": 3,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 13,
       "mod": 1,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ReadDestination",
+      "RecipientChoice",
+      "RecipientLimit",
+      "RecipientWhy",
+      "ReleaseHold"
+     ],
+     "path": "src/settings/destination.rs",
+     "purpose": "Where an off-device read's rows go, and the one verdict every door asks about them (mesh PR2b, CALLS `mesh…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 14,
+      "struct": 2
      }
     },
     {
@@ -45060,8 +45079,8 @@
      "path": "src/settings/device_local.rs",
      "purpose": "Which rows a device-local world keeps from a caller (DEC-0005): every judge a door asks, built on…",
      "surface": {
-      "crate-vis": 3,
-      "fn": 5
+      "crate-vis": 4,
+      "fn": 8
      }
     },
     {
@@ -49289,7 +49308,7 @@
       "const": 3,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 6,
+      "fn": 8,
       "re-export": 1,
       "struct": 1
      }
@@ -52379,7 +52398,7 @@
      "path": "src/task_verb/presence_pages.rs",
      "purpose": "The TASK type index in bounded pages, as the board's presence scan reads it",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -60496,7 +60515,7 @@
      "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)"
     },
     "settings": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -60813,7 +60832,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3707,
+   "source_files": 3708,
    "test_files": 902
   },
   "oneiron-android": {
@@ -74945,7 +74964,7 @@
      "path": "src/api/mcp_gateway/actor_dispatch.rs",
      "purpose": "Tool execution dispatch across actors",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -76639,7 +76658,7 @@
      "path": "src/auth/locality.rs",
      "purpose": "Where the caller of a request sits (DEC-0005): on this device or off it",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 6
      }
     },
     {
@@ -78219,7 +78238,7 @@
      "path": "src/device_local.rs",
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -79515,7 +79534,7 @@
      "path": "src/mcp/actors.rs",
      "purpose": "MCP connector actor types: credentials, scopes, records, and resolution",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 3,
       "fn": 18,
       "struct": 5
