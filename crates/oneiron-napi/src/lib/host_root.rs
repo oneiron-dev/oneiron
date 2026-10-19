@@ -47,10 +47,13 @@ impl HostRootOpenOptions {
 
 impl HostRootRequest<'_> {
     /// Profiles the vault this open returned, refusing with the engine's
-    /// reason when its install cannot be profiled.
-    pub(crate) fn profile(&self, vault: &Vault) -> Result<(), oneiron::Error> {
+    /// reason when its install cannot be profiled. `true` is the wrong-root
+    /// fact: the secret is not this vault's settled root and went unused,
+    /// since the install already carried its profile, and the open stands
+    /// under the settled root as before (reported, never refused).
+    pub(crate) fn profile(&self, vault: &Vault) -> Result<bool, oneiron::Error> {
         vault
             .profile_local_open(Some(self.secret), self.may_root)
-            .map(drop)
+            .map(oneiron::authority::LocalOpenProfile::wrong_root)
     }
 }

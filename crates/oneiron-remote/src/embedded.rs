@@ -19,6 +19,9 @@ use crate::OpenOptions;
 use crate::caps::check_dimensions;
 use crate::error::{bad_request, sdk_error, transport_error, vault_locked};
 
+// FIX 4730: the rooted-only host-root open.
+mod host_root;
+
 /// One native vault and the options it was opened with. The engine Vault
 /// itself owns the lease, so server and embedded Arc holders obey one lifetime.
 /// It is shared by `Arc`, so an embedded server and the SDK handles over it
