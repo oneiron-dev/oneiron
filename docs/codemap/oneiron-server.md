@@ -236,7 +236,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
 | `src/api/facade/hook_regen_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
 | `src/api/facade/hook_session.rs` | src | s | 1 crate-vis | — | Which facade row call keeps its verb hooks' records and ask pauses for its live session only (FIX 4283… |
-| `src/api/facade/host_doors.rs` | src | XL | 169 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | XL | 170 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_trigger_doors.rs` | src | s | 3 crate-vis | — | The owner's typed host triggers |
 | `src/api/facade/hub_doors.rs` | src | m | 19 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/hyde_doors.rs` | src | s | 6 crate-vis | — | Typed host configuration, work and completion receipts for HydeExpander |
@@ -259,6 +259,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/off_record_room_doors.rs` | src | s | 10 crate-vis | — | Typed room off-record verbs over the existing participant handlers |
 | `src/api/facade/origin_doors.rs` | src | s | 10 crate-vis | — | Credential-bound host projections of the typed origin and checkout doors (DOOR-139) |
 | `src/api/facade/owner_binding.rs` | src | s | 7 crate-vis | — | WILL-PLAN L13 row 01: one revalidated binding for a managed vault's attested owner, shared by the policy… |
+| `src/api/facade/pack_preview_doors.rs` | src | s | 1 crate-vis | — | `vault.packs.preview` (FIX 5493): the owner's look at a pack folder before he puts it, under the proof… |
 | `src/api/facade/persona_doors.rs` | src | s | 4 crate-vis | — | Profile request answers and mode-A copy edits under the owner's own proof |
 | `src/api/facade/plugin_section_doors.rs` | src | s | 7 crate-vis | — | The host doors of the plugin Context Board sections (DOOR-112)… |
 | `src/api/facade/policy_doors.rs` | src | s | 3 crate-vis | — | The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`… |
@@ -409,7 +410,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/machine_routes.rs` | src | s | 4 crate-vis | — | `/v1/owner/machines`: the owner's answer for each of his linked machines (mesh PR1b) |
 | `src/api/owner_routes/model_setting_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/settings/models`: the owner's model settings |
 | `src/api/owner_routes/owner_work_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/owner-work/{request}`: where one owner work request stands (FIX 4632, 4682, 4736) |
-| `src/api/owner_routes/pack_routes.rs` | src | L | 1 crate-vis | — | `/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1) |
+| `src/api/owner_routes/pack_preview_routes.rs` | src | s | 1 crate-vis | — | `POST /v1/owner/packs/preview` (FIX 5493): the owner's look at a pack folder before `POST /v1/owner/packs`… |
+| `src/api/owner_routes/pack_routes.rs` | src | L | 2 crate-vis | — | `/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1) |
 | `src/api/owner_routes/pad_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/pads/read`: the owner reads an agent's sealed scratchpads, stating a reason the agent sees in its… |
 | `src/api/owner_routes/peer_confidence_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/federation/peer-confidence`: how far this vault believes each federation peer (OF-149) |
 | `src/api/owner_routes/proactivity_routes.rs` | src | L | 1 crate-vis | — | `/v1/owner/proactivity`, `/v1/owner/stewardship` and `/v1/owner/representation` (OF-194): the owner's read… |
