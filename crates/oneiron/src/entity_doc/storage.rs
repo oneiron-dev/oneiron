@@ -498,7 +498,8 @@ pub(crate) fn guard_record_put(
 
 /// Destructive deletion hook; archive never calls it. Removes every content
 /// carrier for the entity, including pending updates, retained forks, quotes
-/// and the citation floors that held its history.
+/// and the citation floors that held its history, and the pins it made as a
+/// citing record.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     if let Some(h) = ENTITY_DOC_HEAD.get(store, txn, &HexId(*entity))? {
         for doc in [entity.to_hex(), h.document] {
@@ -511,6 +512,12 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId
         txn,
         format!("{}:", entity.to_hex()).as_bytes(),
     )?;
+    // An erased reply no longer floors the history of what it quoted (FIX 3463).
+    for key in super::pins::ENTITY_DOC_PIN.scan_keys(store, txn, &[])? {
+        if key.1.0 == *entity {
+            super::pins::ENTITY_DOC_PIN.delete(store, txn, &key)?;
+        }
+    }
     super::citation_floor::erase_in_txn(store, txn, entity)?;
     ENTITY_DOC_HEAD.delete(store, txn, &HexId(*entity))?;
     Ok(())

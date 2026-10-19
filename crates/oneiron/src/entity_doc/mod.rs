@@ -42,7 +42,7 @@ pub(crate) use recovery::{
 mod verbs;
 
 #[cfg(feature = "sync")]
-pub(crate) use carried::{CarriedDocument, DocumentMerge};
+pub(crate) use carried::{CarriedDocument, DocumentMerge, moved_pointer_row_in_txn};
 pub use doc_actor::DocActor;
 pub use document::{Birth, EntityDoc, TextChange};
 pub use forks::{

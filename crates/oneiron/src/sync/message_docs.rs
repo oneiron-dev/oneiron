@@ -25,6 +25,11 @@
 //!   head whose history floor is newer, an owner purge on another machine,
 //!   drops the history here to that floor where a purge here could reach
 //!   it, and otherwise waits in the window (FIX 3552).
+//! - A Switch moves a MESSAGE to its fork's document. Its head names the
+//!   document it left, and replaces that one's head in the window; a machine
+//!   holding the old document moves with it, pointer and all. The moved
+//!   MESSAGE row waits for that head, never replayed over the pointer held
+//!   here (FIX 3554).
 //! - Every export, and the erase sweep, drop the document of a message this
 //!   vault erased or the window does not carry, with every part no head
 //!   lists.
@@ -124,10 +129,12 @@ pub(crate) fn admit_message_doc_map(key: Option<&WindowKey>, map: &LoroMap) -> R
 }
 
 /// Writes into `doc` the document MESSAGE `message` holds here, when it holds
-/// more than the window's head: operations the head lacks, or a purge. The
-/// window's head stands where it holds as much, where it holds operations
-/// this machine lacks (they merge here first), where it names another
-/// document, or where another machine purged history this one keeps. The
+/// more than the window's head: operations the head lacks, a purge, or a
+/// Switch off the head's document (FIX 3554). The window's head stands where
+/// it holds as much, where it holds operations this machine lacks (they
+/// merge here first), where it names another document, or where its history
+/// starts at a newer floor than this machine's, from an empty one or an
+/// older one: another machine purged history this one keeps (FIX 3800). The
 /// head and each part commit on their own. Returns whether it wrote.
 pub(crate) fn mirror_message_document(
     vault: &Vault,
@@ -148,15 +155,22 @@ pub(crate) fn mirror_message_document(
         .and_then(|bytes| decode(&bytes).ok())
         .map(|(held, _)| held);
     if held.as_ref().is_some_and(|held| {
-        !local.holds(&held.head)
+        !(local.holds(&held.head) || local.replaces(&held.head))
             || held.head.covers(&local)
-            || (local.shallow.is_empty() && !held.head.shallow.is_empty())
+            || held.head.purges(&local)
     }) {
         return Ok(false);
     }
-    let Some((head, snapshot)) = vault.export_message_document(message)? else {
+    let Some((mut head, snapshot)) = vault.export_message_document(message)? else {
         return Ok(false);
     };
+    // A head this machine took from another's Switch keeps that Switch.
+    if let Some(held) = &held
+        && head.switched.is_none()
+        && held.head.document == head.document
+    {
+        head.switched.clone_from(&held.head.switched);
+    }
     let (parts, pieces) = split_parts(&snapshot)?;
     let carried = CarriedHead {
         head,
@@ -164,8 +178,10 @@ pub(crate) fn mirror_message_document(
     };
     if let Some(held) = &held
         && !carried.head.covers(&held.head)
+        && (!carried.head.replaces(&held.head) || carried.head.purges(&held.head))
     {
         // An owner purge here: the old snapshot holds the history it dropped.
+        // A Switch's document keeps all of its old one's.
         super::window::require_history_free_window(vault, window)?;
     }
     map_insert_bytes(&map, &key, &encode(&carried)?)?;

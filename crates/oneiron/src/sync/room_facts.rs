@@ -28,14 +28,17 @@
 //!   door that changes a row mirrors it into the live window after commit. A
 //!   cell, join or card changed while no open window carried it is marked,
 //!   and its carrier's window is faulted in for it by the live mirror (FIX
-//!   3095), or mirrors it as that window next opens.
+//!   3095), or mirrors it as that window next opens. So is a room or thread
+//!   root a turn door or DAG append wrote facts for (FIX 3786, `turn_marks`).
 //! - Forward rematerialization and Observer B merge each row into this
 //!   vault's (`workspace_roster::rooms::replica`).
 //! - Every export, and the erase sweep, drops each row of a room this vault
 //!   deleted or of a thread it erased.
 
 mod erased;
+mod turn_marks;
 pub(crate) use erased::erase_carried_actors;
+pub(crate) use turn_marks::{clear_turn_marks, mark_cold_turn_carriers};
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -440,7 +443,8 @@ fn carrier_marked(
 
 /// The base windows a flush faults in (FIX 3095): the window of each of
 /// `carriers` queued by its own id among `rows` that holds marked side
-/// rows, by the carrier's learned month, where `loaded` holds none of it.
+/// rows, or marked for its turn facts (FIX 3786), by the carrier's learned
+/// month, where `loaded` holds none of it.
 pub(crate) fn cold_flush_windows(
     vault: &Vault,
     rows: &BTreeSet<EntityId>,
@@ -452,15 +456,12 @@ pub(crate) fn cold_flush_windows(
     };
     let mut keys = Vec::new();
     for (id, entity_type) in carriers {
-        if !rows.contains(id) || !carrier_marked(vault, &rtxn, *id, *entity_type).unwrap_or(false) {
+        let marked =
+            rows.contains(id) && carrier_marked(vault, &rtxn, *id, *entity_type).unwrap_or(false);
+        if !marked && !turn_marks::marked(vault, &rtxn, *id) {
             continue;
         }
-        let Some(key) = vault
-            .get_raw_in(&rtxn, id)
-            .ok()
-            .flatten()
-            .and_then(|raw| super::residence::residence_window_for_blob(&raw).ok())
-        else {
+        let Some(key) = turn_marks::carrier_window(vault, &rtxn, *id) else {
             continue;
         };
         if key.world().is_none() && !loaded.contains(&key) && !keys.contains(&key) {
@@ -757,8 +758,9 @@ impl Vault {
 
     /// Mirrors the claim, response and participation facts a door wrote for
     /// room turn `turn` into the live windows that carry them: its room's,
-    /// its own, its parent's and its thread root's (FIX 1794). Best effort: a
-    /// window opened later mirrors them as it opens.
+    /// its own, its parent's and its thread root's (FIX 1794). A carrier no
+    /// live window takes is marked, and queued for a flush into its window
+    /// (FIX 3786).
     pub(crate) fn refresh_room_turn_facts_in_live_windows(&self, turn: EntityId) {
         let carriers = self
             .store
@@ -767,9 +769,7 @@ impl Vault {
             .map_err(Error::from)
             .and_then(|rtxn| replicated_side_carriers_in(self, &rtxn, turn));
         match carriers {
-            Ok(carriers) if !carriers.is_empty() => {
-                self.mirror_carriers_in_live_windows(&carriers, &[]);
-            }
+            Ok(carriers) if !carriers.is_empty() => turn_marks::mirror_or_mark(self, &carriers),
             Ok(_) => {}
             Err(error) => {
                 tracing::warn!(turn = %turn.to_hex(), error = %error, "room side rows not mirrored");

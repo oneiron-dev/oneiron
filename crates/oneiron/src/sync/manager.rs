@@ -217,31 +217,27 @@ impl WindowManager {
     /// cleared only after it succeeds. Any recovery error aborts the open
     /// with nothing registered and the marker still set (fail-closed).
     pub fn open_window(self: &Arc<Self>, key: &WindowKey) -> Result<Arc<LoadedWindow>> {
-        self.open_window_with(key, false).map(|(window, _)| window)
+        self.open_window_with(key).map(|(window, _)| window)
     }
 
-    /// [`Self::open_window`] for a flush of a room's marked side rows that no
-    /// loaded window took (FIX 3095). A cold open's recovery commits on the
-    /// bare doc before Observer A attaches, so what its reverse pass mirrors
-    /// would reach peers only at the next full exchange. This open persists
-    /// and routes that recovered delta as Observer A would, before the
-    /// forward pass clears the marks it mirrored. Returns the window, and
-    /// whether this call opened it.
+    /// [`Self::open_window`] for a flush of side rows no loaded window took
+    /// (FIX 3095): a room's marked rows, or a cold message's quote pins (FIX
+    /// 3462). Returns the window, and whether this call opened it.
     pub(crate) fn open_window_for_room_fact_flush(
         self: &Arc<Self>,
         key: &WindowKey,
     ) -> Result<(Arc<LoadedWindow>, bool)> {
-        self.open_window_with(key, true)
+        self.open_window_with(key)
     }
 
-    /// [`Self::open_window`], persisting and routing a cold open's recovered
-    /// delta when `route_recovery`. Returns the window, and whether this call
-    /// opened it.
-    fn open_window_with(
-        self: &Arc<Self>,
-        key: &WindowKey,
-        route_recovery: bool,
-    ) -> Result<(Arc<LoadedWindow>, bool)> {
+    /// [`Self::open_window`]. A cold open's recovery commits on the bare doc
+    /// before Observer A attaches, so what its reverse pass mirrors would
+    /// reach peers only at the next full exchange, and leave the window if
+    /// the process stopped first. Every cold open persists and routes that
+    /// recovered delta as Observer A would, before the forward pass clears
+    /// the marks it mirrored (FIX 3787). Returns the window, and whether this
+    /// call opened it.
+    fn open_window_with(self: &Arc<Self>, key: &WindowKey) -> Result<(Arc<LoadedWindow>, bool)> {
         // ONE-1135 production wiring: every open (re-)attaches this manager
         // as the vault's delete router. Idempotent; takes only the vault's
         // attach mutex, never the registry lock.
@@ -287,7 +283,7 @@ impl WindowManager {
             }
             Err(err) => return Err(err),
         };
-        let recovered_from = route_recovery.then(|| doc.oplog_vv());
+        let recovered_from = doc.oplog_vv();
 
         let rm_flagged = self.sync_state_marker_present(key)?;
         if rm_flagged {
@@ -306,11 +302,9 @@ impl WindowManager {
         let pending_tombstones = replay_pending_tombstones(&self.vault, &doc, key)?;
         let replayed = replay_pending_mirrors(&self.vault, &doc, key)?;
         let mirrored = reverse_rematerialize(&self.vault, &doc, key)?;
-        // FIX 3095: a flush open makes what recovery mirrored durable, and
-        // sends it, before the forward pass clears the marks it mirrored.
-        if let Some(before) = &recovered_from {
-            self.route_recovered_delta(&doc, key, before)?;
-        }
+        // FIX 3095, 3787: what recovery mirrored is made durable, and sent,
+        // before the forward pass clears the marks it mirrored.
+        self.route_recovered_delta(&doc, key, &recovered_from)?;
         let materialized = forward_rematerialize(&self.vault, &doc, &self.materializer, key)?;
         tracing::debug!(
             window = %key,
