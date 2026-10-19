@@ -157,14 +157,17 @@ impl Vault {
             }
             None => return Err(MemoryError::not_found("conversation not found")),
         }
-        // A thread binding is its room door's to stamp (FIX 2951).
-        if input
-            .body
-            .get(crate::workspace_roster::ROOM_THREAD_KEY)
-            .is_some()
+        // A thread binding is its room door's to stamp (FIX 2951), and an
+        // audience edit its thread's audience door's (FIX 5545).
+        if [
+            crate::workspace_roster::ROOM_THREAD_KEY,
+            crate::workspace_roster::ROOM_THREAD_AUDIENCE_KEY,
+        ]
+        .iter()
+        .any(|key| input.body.get(*key).is_some())
         {
             return Err(MemoryError::bad_request(
-                "a TURN's room_thread is stamped by its room's thread door",
+                "a TURN's room_thread and room_thread_audience are stamped by its room's thread doors",
             ));
         }
         let id = write_id(input.id.as_deref())?;

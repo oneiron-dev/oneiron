@@ -45,6 +45,23 @@ pub(crate) fn retained_hold(
     vault.release_hold_for(&named, destination)
 }
 
+/// Where a prompt's rows go for a model call (FIX 4937): to `caller`, who
+/// reads the answer, and to the model at `model`, a recipient of its own. A
+/// model on this device adds nothing; one off it adds a destination nobody
+/// proved, never the caller's proof.
+pub(crate) fn prompt_destination(
+    caller: ReadDestination,
+    model: oneiron::ModelLocality,
+) -> ReadDestination {
+    let mut destination = caller;
+    if model != oneiron::ModelLocality::OnDevice {
+        destination.meet(&ReadDestination::toward(
+            oneiron::authority::PeerMachine::Unknown,
+        ));
+    }
+    destination
+}
+
 /// An act's answer for a caller toward `destination` (FIX 3414): the act ran
 /// as its caller's authority asked, wherever it asked from, and only its
 /// answer is judged. A reply that names, or lists, a row a world withheld

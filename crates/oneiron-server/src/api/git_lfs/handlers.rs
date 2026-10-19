@@ -60,10 +60,11 @@ pub(crate) async fn lfs_batch(
     }
 
     let base = href_base(&parts.headers);
+    let at = (base.as_str(), repo.as_str());
     let objects = request
         .objects
         .iter()
-        .map(|object| batch_entry(&server, &base, &repo, request.operation, object))
+        .map(|object| batch_entry(&server, &auth, at, request.operation, object))
         .collect::<Result<Vec<_>, ApiError>>()?;
     lfs_json_response(
         StatusCode::OK,
@@ -78,11 +79,12 @@ pub(crate) async fn lfs_batch(
 ///
 /// A download of an object this vault does not hold produces a per-object error
 /// entry and NEVER a fabricated href: handing a client a link to bytes that do
-/// not exist turns a clean 404 into a mid-transfer failure.
+/// not exist turns a clean 404 into a mid-transfer failure. An object is
+/// offered as the machine `auth`'s request proved may read it (FIX 4937).
 fn batch_entry(
     server: &SyncServer,
-    base: &str,
-    repo: &str,
+    auth: &crate::auth::CoreAuth,
+    (base, repo): (&str, &str),
     operation: LfsBatchOperation,
     object: &LfsBatchObject,
 ) -> Result<LfsBatchResponseObject, ApiError> {
@@ -104,9 +106,11 @@ fn batch_entry(
         .vault
         .has_lfs_object(oid, object.size)
         .map_err(|error| lfs_engine_error("lfs object lookup failed", &error))?;
-    // An object a device-only world keeps is offered as absent.
-    let offered =
-        stored && !oneiron::sync::chunks::lfs_object_withheld(&server.vault, oid).unwrap_or(true);
+    // An object a world withheld from the requesting machine keeps is
+    // offered as absent.
+    let offered = stored
+        && !oneiron::sync::chunks::lfs_object_withheld_for(&server.vault, oid, auth.peer())
+            .unwrap_or(true);
     let href = format!("{base}/git/{repo}/info/lfs/objects/{}", oid.to_hex());
     match operation {
         LfsBatchOperation::Download if offered => {
@@ -246,7 +250,10 @@ pub(crate) async fn lfs_download(
     else {
         return Err(ApiError::not_found("lfs object", Some(&oid.to_hex())).into());
     };
-    if oneiron::sync::chunks::lfs_object_withheld(&server.vault, oid).unwrap_or(true) {
+    // The machine the request's connection proved: the preflight and every
+    // piece are judged for it (FIX 4937).
+    let peer = auth.peer();
+    if oneiron::sync::chunks::lfs_object_withheld_for(&server.vault, oid, peer).unwrap_or(true) {
         return Err(ApiError::not_found("lfs object", Some(&oid.to_hex())).into());
     }
     // Preflight in the blocking pool preserves the old fail-before-200 contract
@@ -280,9 +287,13 @@ pub(crate) async fn lfs_download(
     if !verified {
         return Err(ApiError::not_found("lfs object", Some(&oid.to_hex())).into());
     }
-    let mut response =
-        super::streaming::download(Arc::clone(&server.vault), oid, hold, server.transfers.idle)
-            .into_response();
+    let mut response = super::streaming::download(
+        Arc::clone(&server.vault),
+        (oid, peer),
+        hold,
+        server.transfers.idle,
+    )
+    .into_response();
     response.headers_mut().insert(
         CONTENT_TYPE,
         LFS_OBJECT_MEDIA_TYPE.parse().expect("static media type"),

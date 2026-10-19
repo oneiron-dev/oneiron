@@ -18,7 +18,7 @@ use oneiron_mesh_transport::{MachineId, MeshTransport};
 
 use super::ladder::{LadderRung, SeatScope, Wire};
 use super::router::{MESH_ORIGIN, Routes};
-use super::{ModelRouter, OfferCooldowns, OfferLadder, ServedOffer};
+use super::{ModelRouter, OfferCooldowns, OfferEndpoint, OfferLadder, ServedOffer};
 
 /// The adapter a discovered model's offer names: the own-server wire, over
 /// the owner's mesh.
@@ -81,8 +81,12 @@ impl MeshRoutes {
         }
         let mut routes = Routes::new();
         for (peer, entries) in peers {
+            let transport = self.transport.peer(peer);
+            // Its calls are judged for the machine the node's own mesh
+            // handshake proved (FIX 4938); its ladder stays ungated.
+            let endpoint = OfferEndpoint::Mesh(transport.proof());
             let backend: Arc<dyn SingleRouteBackend> = Arc::new(OwnServerBackend::serving(
-                self.transport.peer(peer),
+                transport,
                 entries.iter().cloned(),
             ));
             for entry in entries {
@@ -100,6 +104,7 @@ impl MeshRoutes {
                     offer: ServedOffer {
                         binding,
                         backend: Arc::clone(&backend),
+                        endpoint: endpoint.clone(),
                     },
                     media: None,
                 };
