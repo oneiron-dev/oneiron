@@ -81,6 +81,7 @@ impl LadderRung {
                     }],
                 },
             );
+            oneiron::code_run::shift_cache_boundaries(&mut request);
         }
         request
     }

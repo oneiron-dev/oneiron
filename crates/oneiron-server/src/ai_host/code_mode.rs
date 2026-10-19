@@ -13,8 +13,8 @@ use oneiron::engine_executor::{
 use oneiron::llm::BudgetDenied;
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::{
-    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError,
-    LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelTierRef, Vault,
+    BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError, LlmGenerateFuture, LlmRequest,
+    LlmStreamResult, ModelTierRef, Vault,
 };
 use oneiron_code_check::{
     BackendKind, CheckFailure, CheckMode, CodeCheck, Fallback, MicrosoftTsc, ShadowCheck,
@@ -31,14 +31,17 @@ use crate::server::SyncServer;
 
 /// Binds `execute_code` on `server` when `models` asks for it and the
 /// checked-in component passes its pin and readiness probe. Any failure
-/// leaves the server as it was, with `execute_code` unlisted.
+/// leaves the server as it was, with `execute_code` unlisted. `shared` is
+/// the compaction writer factory the host settled and the code-mode meter
+/// it spends on (FIX 4465 D).
 pub(super) async fn bind(
     server: SyncServer,
     runtime: &Arc<ModelRuntime>,
     models: Option<&ModelsConfig>,
     status: &StatusCell,
+    shared: Option<(CodeModeCompaction, BudgetGuard)>,
 ) -> SyncServer {
-    let Some(models) = models else {
+    let (Some(models), Some((compaction, guard))) = (models, shared) else {
         return server;
     };
     let Some(prompt_package) = models.code_mode.prompt_package.clone() else {
@@ -71,11 +74,6 @@ pub(super) async fn bind(
             return server;
         }
     };
-    let guard = BudgetGuard::new(
-        "code-mode",
-        models.code_mode.budget_units,
-        BudgetExhaustionPolicy::Suspend,
-    );
     // The executor hands this lease to every call; the backend below admits
     // and settles each call on the meter instead, so the lease carries no
     // spend and its reservation is released at once.
@@ -89,15 +87,6 @@ pub(super) async fn bind(
             return server;
         }
     };
-    let compaction = CodeModeCompaction::resolve(
-        server.vault(),
-        runtime,
-        models,
-        &prompt_package,
-        guard.clone(),
-        Arc::clone(server.wire_telemetry.limit_questions()),
-        server.config.limits.queue_wait(),
-    );
     let backend = Arc::new(CodeModeBackend {
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),

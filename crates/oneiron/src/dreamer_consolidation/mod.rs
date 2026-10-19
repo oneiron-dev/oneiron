@@ -53,10 +53,10 @@ mod provenance;
 pub(crate) mod redirty;
 mod resident_dream;
 pub(crate) mod resources;
-pub(crate) mod root_evidence;
 mod revert;
 pub(crate) mod reviewed;
 mod roles;
+pub(crate) mod root_evidence;
 pub mod routing;
 mod scope_summary_attempt;
 pub mod selection;
@@ -122,6 +122,7 @@ pub(crate) use settle::{
 pub use support::*;
 pub use task_realize::{TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, run_task_realize};
 pub(crate) use task_realize::{seal_task_realize_confession_in_txn, task_realize_confession};
+pub(crate) use turn_text::compaction_span::{ConversationSpanRead, conversation_span_text};
 pub(crate) use turn_text::{
     TurnText, cited_evidence_bytes, dreamer_may_read_messages_in, dreamer_may_read_turns_in,
     live_turn_text_in, projected_turn_text_in,

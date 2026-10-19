@@ -59,6 +59,7 @@ pub(crate) use super::calendar_doors::*;
 pub(crate) use super::campaign_doors::*;
 pub(crate) use super::compliance_doors::*;
 pub(crate) use super::credential_doors::*;
+pub(crate) use super::saved_query_doors::*;
 pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 
 // The shared-vault doors live beside these; the generated callers name them here.
@@ -77,8 +78,8 @@ pub(crate) use super::voice_bank_doors::*;
 pub(crate) use super::asr_doors::*;
 pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::clustering_doors::*;
-pub(crate) use super::identity_doors::*;
 pub(crate) use super::extraction_doors::*;
+pub(crate) use super::identity_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
@@ -86,6 +87,7 @@ pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::mesh_doors::*;
 pub(crate) use super::model_catalog_doors::*;
 pub(crate) use super::model_step_doors::*;
+pub(crate) use super::model_stream_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 pub(crate) use super::run_review_doors::*;
@@ -98,13 +100,14 @@ pub(crate) use super::courtesy_delete_doors::*;
 pub(crate) use super::coreference_doors::*;
 // The owner's subject-bound feedback and report doors, likewise.
 pub(crate) use super::federation_connect_doors::*;
+pub(crate) use super::federation_burst_doors::*;
 pub(crate) use super::feedback_doors::*;
 pub(crate) use super::goal_optimize_doors::*;
 pub(crate) use super::guest_document_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
-pub(crate) use super::skill_default_doors::*;
 pub(crate) use super::identity_topology_doors::*;
+pub(crate) use super::skill_default_doors::*;
 pub(crate) use super::skill_doors::*;
 // The owner's support grant doors (OF-606), as the guest ones are.
 pub(crate) use super::support_grant_doors::*;
@@ -197,10 +200,10 @@ pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
 // The plugin Context Board section doors (DOOR-112), likewise.
-pub(crate) use super::plugin_section_doors::*;
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;
 pub(crate) use super::critical_confirm_doors::*;
+pub(crate) use super::plugin_section_doors::*;
 // The owner's sieve interest-queue, policy and lease doors (DOOR-130), likewise.
 pub(crate) use super::sieve_doors::*;
 // The owner's standing-block and dreaming-choice doors (DOOR-134), likewise.
@@ -1166,6 +1169,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
             .map_err(|error| super::FacadeApiError::from(error).into_memory_error()),
         "ai.steps.submit"
         | "ai.steps.receipt"
+        | "ai.streams.open"
+        | "ai.streams.subscribe"
+        | "ai.streams.events"
+        | "ai.streams.detach"
+        | "ai.streams.abort"
+        | "ai.streams.terminal"
         | "vault.models.catalog.refresh"
         | "vault.models.catalog.get"
         | "vault.models.catalog.diff"
@@ -1520,6 +1529,15 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.federation.coreference.confirm"
         | "vault.federation.coreference.share_consent"
         | "vault.federation.coreference.unlink"
+        | "vault.federation.burst.ingress"
+        | "vault.federation.burst.disposition"
+        | "vault.federation.burst.replay"
+        | "vault.federation.burst.baseline"
+        | "vault.federation.burst.policy"
+        | "vault.federation.burst.policy.set"
+        | "vault.federation.burst.review"
+        | "vault.federation.burst.review.release"
+        | "vault.federation.burst.review.reject"
         | "vault.federation.connect.identity"
         | "vault.federation.connect.grants.mint"
         | "vault.federation.connect.offer"
@@ -1607,6 +1625,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.waits.resolve"
         | "vault.code.waits.receipt"
         | "vault.code.export"
+        | "vault.code.origin.register"
+        | "vault.code.origin.mirror.get"
+        | "vault.code.origin.mirror.set"
+        | "vault.code.origin.mirror.clear"
+        | "vault.code.origin.mirror.push"
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
@@ -1734,11 +1757,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
             super::guest_document_doors::guest_document_reader(server, auth).map(drop)
         }
         "execute_code" => super::foreign_code_doors::foreign_code_admits(server, auth),
+        "self.saved_query.evaluate" => super::saved_query_doors::admits(server, auth),
         "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
-        "vault.artifacts.ask" | "vault.artifacts.admit" => {
-            artifact_asker(server, auth).map(drop)
-        }
+        "vault.artifacts.ask" | "vault.artifacts.admit" => artifact_asker(server, auth).map(drop),
         "self.memory.diary.query" => diary_reader(server, auth).map(drop),
         "vault.decisions.asks.answer"
         | "vault.decisions.asks.climb"

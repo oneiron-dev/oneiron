@@ -556,7 +556,8 @@ fn mcp_board_sections(
             read.is_entity_readable(&person)
         })
         .map_err(|error| mcp_engine_error("board people failed", error))?;
-        people.disclose_names(&server.vault, read.actor_key())
+        people
+            .disclose_names(&server.vault, read.actor_key())
             .map_err(|error| mcp_engine_error("board people disclosure failed", error))?;
         people
     };
@@ -1192,7 +1193,8 @@ pub(crate) async fn execute_mcp_setup(
 /// room turn, so it renders no SCRATCHPAD and no ROOM (FIX 2340, 1051). Its rows are read under the agent's
 /// own lane on this device, its epoch and STREAM state are keyed on the
 /// run's own connection, and nothing is narrowed: the agent reads its board
-/// as a vault-wide connector of its own would. Its hook rows are those of
+/// as a vault-wide connector of its own would: MEMORIES pins the policy
+/// manifest's rows its lane reads (FIX 2646). Its hook rows are those of
 /// the blocks [`run_hook_pins`] keeps.
 pub(crate) async fn run_current_board(
     server: &Arc<SyncServer>,
@@ -1320,7 +1322,8 @@ fn run_lane_reads(
 }
 
 /// [`mcp_board_sections`] for a pumped run's agent: VERBS, WORLDS, the
-/// MEMORIES its hook `pins` reach, TASKS with its people and children, PACKS
+/// MEMORIES the policy manifest and its hook `pins` reach, TASKS with its
+/// people and children, PACKS
 /// and the packs' own sections. `pins` tag the TASKS rows they name and pin
 /// their other rows into MEMORIES, as on a connector's board.
 fn run_board_sections(
@@ -1359,7 +1362,8 @@ fn run_board_sections(
             read.is_entity_readable(&person)
         })
         .map_err(|error| mcp_engine_error("board people failed", error))?;
-        people.disclose_names(&server.vault, read.actor_key())
+        people
+            .disclose_names(&server.vault, read.actor_key())
             .map_err(|error| mcp_engine_error("board people disclosure failed", error))?;
         people
     };
@@ -1419,8 +1423,8 @@ fn run_board_sections(
     )
     .map_err(mcp_board_frame_error)?;
     let mut sections = vec![verb_section, worlds_section];
-    if let Some(memories) = crate::api::context_board::lane_hook_pins_projection(read, pins)
-        .map_err(super::mcp_api_error)?
+    if let Some(memories) =
+        crate::api::context_board::lane_pins_projection(read, pins).map_err(super::mcp_api_error)?
     {
         hooks.memories = memories.section.hook_shares(pins);
         served.extend_from_slice(memories.receipt.delivered());

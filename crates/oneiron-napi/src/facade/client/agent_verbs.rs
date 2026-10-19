@@ -1450,6 +1450,60 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_saved_query_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.create", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_saved_query_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_saved_query_update(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.update", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_saved_query_archive(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.archive", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_saved_query_members(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.members", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_saved_query_evaluate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.evaluate", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_weave_report(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.weave.report", js_json(input))
@@ -2647,6 +2701,87 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.federation.coreference.unlink", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_baseline(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.baseline", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_policy(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.policy", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_policy_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.policy.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_ingress(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.ingress", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_disposition(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.disposition", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_review(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.review", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_review_release(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.review.release", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_review_reject(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.review.reject", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_burst_replay(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.burst.replay", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -5010,6 +5145,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_origin_register(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.register", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_mirror_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.mirror.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_mirror_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.mirror.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_mirror_clear(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.mirror.clear", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_mirror_push(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.mirror.push", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_origin_authority_get(
         &self,
         input: serde_json::Value,
@@ -6308,6 +6488,45 @@ impl NativeClient {
     pub fn ai_steps_receipt(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.steps.receipt", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_streams_open(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.streams.open", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_streams_subscribe(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.streams.subscribe", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_streams_events(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.streams.events", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_streams_detach(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.streams.detach", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_streams_abort(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.streams.abort", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_streams_terminal(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.streams.terminal", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

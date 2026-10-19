@@ -2011,6 +2011,8 @@ class Oneiron:
         @property
         def coreference(self) -> "Oneiron._VaultFederationCoreferenceVerbs": ...
         @property
+        def burst(self) -> "Oneiron._VaultFederationBurstVerbs": ...
+        @property
         def connect(self) -> "Oneiron._VaultFederationConnectVerbs": ...
     class _VaultFederationCoreferenceVerbs:
         def link(self, spec: Facade.CoreferenceLinkRequest) -> Facade.CoreferenceLinkReceipt:
@@ -2021,6 +2023,31 @@ class Oneiron:
             """The owner consents to exporting an existing identity link into exactly one named federation pact."""
         def unlink(self, spec: Facade.CoreferencePairRequest) -> Facade.CoreferenceUnlinkReceipt:
             """The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims."""
+    class _VaultFederationBurstVerbs:
+        def baseline(self, spec: Facade.FederationBurstPeerRequest) -> Facade.FederationBurstBaselineState:
+            """The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context."""
+        @property
+        def policy(self) -> "Oneiron._VaultFederationBurstPolicyVerbs": ...
+        def ingress(self, spec: Facade.ConnectDelivery) -> Facade.FederationBurstReceipt:
+            """The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt."""
+        def disposition(self, spec: Facade.FederationBurstReplayRequest) -> Facade.FederationBurstReceipt:
+            """The owner reads an authenticated batch original disposition, named baseline context and current durable replay state."""
+        @property
+        def review(self) -> "Oneiron._VaultFederationBurstReviewVerbs": ...
+        def replay(self, spec: Facade.FederationBurstReplayRequest) -> Facade.FederationBurstReceipt:
+            """The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit."""
+    class _VaultFederationBurstPolicyVerbs:
+        def __call__(self, spec: Facade.FederationBurstPeerRequest) -> Facade.FederationBurstPolicy:
+            """The owner reads one grant-bound peer's relative-burst outcome policy."""
+        def set(self, spec: Facade.FederationBurstPolicySetRequest) -> Facade.FederationBurstPolicy:
+            """The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant."""
+    class _VaultFederationBurstReviewVerbs:
+        def __call__(self, spec: Facade.EmptyRequest) -> list[Facade.FederationBurstReviewBundle]:
+            """The owner reads retained peer review bundles, coalesced once per peer and kept after replay or rejection."""
+        def release(self, spec: Facade.FederationBurstReviewRequest) -> Facade.FederationBurstReviewReceipt:
+            """The owner releases a bundle's burst hold for current-grant replay without importing evidence or widening authority."""
+        def reject(self, spec: Facade.FederationBurstReviewRequest) -> Facade.FederationBurstReviewReceipt:
+            """The owner rejects a bundle's pending batches while retaining its review evidence and terminal dispositions."""
     class _VaultFederationConnectVerbs:
         def identity(self, spec: Facade.EmptyRequest) -> Facade.ConnectIdentity:
             """The owner reads this vault identity and the host key used for reciprocal Connect consent."""
@@ -2685,10 +2712,23 @@ class Oneiron:
         def receipt(self, spec: Facade.CodeWaitReceiptRequest) -> Facade.CodeWaitReceiptView | None:
             """Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."""
     class _VaultCodeOriginVerbs:
+        def register(self, spec: Facade.OriginRegisterRequest) -> Facade.OriginRegistered:
+            """Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused."""
+        @property
+        def mirror(self) -> "Oneiron._VaultCodeOriginMirrorVerbs": ...
         @property
         def authority(self) -> "Oneiron._VaultCodeOriginAuthorityVerbs": ...
         def publications(self, spec: Facade.OriginPublicationsRequest) -> Facade.OriginPublicationsView:
             """Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."""
+    class _VaultCodeOriginMirrorVerbs:
+        def get(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorView:
+            """Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential."""
+        def set(self, spec: Facade.OriginMirrorSetRequest) -> Facade.OriginMirrorTarget:
+            """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write."""
+        def clear(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorCleared:
+            """Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."""
+        def push(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorRun:
+            """Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client."""
     class _VaultCodeOriginAuthorityVerbs:
         def get(self, spec: Facade.OriginRepoRequest) -> Facade.OriginAuthorityView:
             """Read one served origin authority and this host identity under the owner credential."""
@@ -3172,9 +3212,9 @@ class Oneiron:
             """Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."""
     class _VaultConsolidationHomeVerbs:
         def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.ConsolidationHomeView:
-            """The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything."""
+            """The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything."""
         def pick(self, spec: Facade.ConsolidationHomePickRequest) -> Facade.ConsolidationHomePickReceipt:
-            """The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget."""
+            """The owner picks or clears the node that runs his vault's MACRO consolidation: a signed act every linked machine folds, recorded even for a node unknown here; a stale seen revision refuses. It re-elects this home and moves no job or lease."""
     class _VaultSieveVerbs:
         @property
         def evidence(self) -> "Oneiron._VaultSieveEvidenceVerbs": ...
@@ -3381,6 +3421,8 @@ class Oneiron:
         @property
         def admission(self) -> "Oneiron._SelfAdmissionVerbs": ...
         @property
+        def saved_query(self) -> "Oneiron._SelfSavedQueryVerbs": ...
+        @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs": ...
         @property
         def consent(self) -> "Oneiron._SelfConsentVerbs": ...
@@ -3483,6 +3525,19 @@ class Oneiron:
             """Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work."""
         def receipts(self, spec: Facade.AdmissionReceiptsRequest) -> list[Facade.AdmissionReceipt]:
             """Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay."""
+    class _SelfSavedQueryVerbs:
+        def create(self, spec: Facade.SavedQueryCreateRequest) -> Facade.SavedQueryRecordView:
+            """Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller."""
+        def read(self, spec: Facade.SavedQueryReadRequest) -> Facade.SavedQueryReadResult:
+            """One saved query the caller owns; a query absent or not the caller's reads as not found."""
+        def update(self, spec: Facade.SavedQueryUpdateRequest) -> Facade.SavedQueryRecordView:
+            """Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check."""
+        def archive(self, spec: Facade.SavedQueryArchiveRequest) -> Facade.SavedQueryRecordView:
+            """Archives a saved query under a definition-version check: it stays readable and is never evaluated again."""
+        def members(self, spec: Facade.SavedQueryMembersRequest) -> Facade.SavedQueryMembershipPageView:
+            """One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved."""
+        def evaluate(self, spec: Facade.SavedQueryEvaluateRequest) -> Facade.SavedQueryEvaluationReceipt:
+            """Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity."""
     class _SelfOffRecordVerbs:
         def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
             """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
@@ -3590,6 +3645,8 @@ class Oneiron:
         def chat(self) -> "Oneiron._AiChatVerbs": ...
         @property
         def steps(self) -> "Oneiron._AiStepsVerbs": ...
+        @property
+        def streams(self) -> "Oneiron._AiStreamsVerbs": ...
         def reply(self, spec: Facade.AiReplyRequest) -> Facade.AiReply:
             """Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."""
         @property
@@ -3618,6 +3675,19 @@ class Oneiron:
             """Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."""
         def receipt(self, spec: Facade.ModelStepReceiptRequest) -> Facade.ModelStepReceipt:
             """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."""
+    class _AiStreamsVerbs:
+        def open(self, spec: Facade.ModelStreamOpen) -> Facade.ModelStreamOpened:
+            """Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one."""
+        def subscribe(self, spec: Facade.ModelStreamSubscribe) -> Facade.ModelStreamSubscribed:
+            """Attach before or after open to the caller's shared model stream, without starting a producer; replay every typed part event from the first under an independently detachable handle."""
+        def events(self, spec: Facade.ModelStreamEventsRequest) -> Facade.ModelStreamEvents:
+            """Drain one subscription's queued typed LlmStreamEvents (part-correlated text, reasoning, tool and image deltas, then Done) without blocking; closed once the producer ended and the queue is empty."""
+        def detach(self, spec: Facade.ModelStreamDetach) -> Facade.ModelStreamDetached:
+            """Detach only this subscription from the shared model stream; the producer and every other subscriber continue."""
+        def abort(self, spec: Facade.ModelStreamAbort) -> Facade.ModelStreamTerminal:
+            """Abort the caller's shared model stream with actual usage: subscribers receive the cancelled Done of the parts completed so far, recorded as the one durable terminal."""
+        def terminal(self, spec: Facade.ModelStreamTerminalRequest) -> Facade.ModelStreamTerminal:
+            """Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model."""
     class _AiVoiceVerbs:
         @property
         def asr(self) -> "Oneiron._AiVoiceAsrVerbs": ...

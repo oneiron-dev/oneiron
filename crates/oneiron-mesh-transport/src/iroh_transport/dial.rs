@@ -18,10 +18,18 @@ impl IrohTransport {
         if alpn.is_empty() || alpn.len() > 255 {
             return Err(MeshError::Refused);
         }
-        let connection = self.endpoint.connect(address, alpn).await
+        let connection = self
+            .endpoint
+            .connect(address, alpn)
+            .await
             .map_err(|error| MeshError::Io(error.to_string()))?;
-        let mut accepted = connection.accept_uni().await.map_err(|_| MeshError::Refused)?;
-        let acknowledgement = accepted.read_to_end(ADMISSION.len()).await
+        let mut accepted = connection
+            .accept_uni()
+            .await
+            .map_err(|_| MeshError::Refused)?;
+        let acknowledgement = accepted
+            .read_to_end(ADMISSION.len())
+            .await
             .map_err(|_| MeshError::Refused)?;
         if acknowledgement != ADMISSION {
             connection.close(0u32.into(), b"admission refused");
@@ -43,11 +51,15 @@ impl IrohTransport {
         if address.direct_addrs.len() > 32 || alpn.is_empty() || alpn.len() > 255 {
             return Err(MeshError::InvalidRoster);
         }
-        let key = EndpointId::from_bytes(&address.endpoint_key)
-            .map_err(|_| MeshError::InvalidRoster)?;
+        let key =
+            EndpointId::from_bytes(&address.endpoint_key).map_err(|_| MeshError::InvalidRoster)?;
         let mut target = EndpointAddr::from_parts(
             key,
-            address.direct_addrs.iter().copied().map(iroh::TransportAddr::Ip),
+            address
+                .direct_addrs
+                .iter()
+                .copied()
+                .map(iroh::TransportAddr::Ip),
         );
         if let Some(raw) = &address.relay_url {
             let relay: iroh::RelayUrl = raw.parse().map_err(|_| MeshError::InvalidRoster)?;
@@ -59,7 +71,9 @@ impl IrohTransport {
         let mut receipt = match self.connect_endpoint(target, alpn).await {
             Ok(connection) => {
                 let mut receipt = MeshPathReceipt::new(
-                    MeshPathDirection::Outbound, MeshPathOutcome::Admitted, alpn,
+                    MeshPathDirection::Outbound,
+                    MeshPathOutcome::Admitted,
+                    alpn,
                 );
                 note_open_paths(&mut receipt, &connection);
                 connection.close(0u32.into(), b"dial complete");
@@ -71,15 +85,24 @@ impl IrohTransport {
                     MeshError::Refused => MeshPathOutcome::Refused,
                     _ => MeshPathOutcome::Failed,
                 };
-                attempt(MeshPathDirection::Outbound, outcome, alpn,
-                    Some(address.endpoint_key), &error)
+                attempt(
+                    MeshPathDirection::Outbound,
+                    outcome,
+                    alpn,
+                    Some(address.endpoint_key),
+                    &error,
+                )
             }
         };
         receipt.endpoint_key = Some(key_hex(address.endpoint_key));
-        receipt.machine = self.policy.roster.by_endpoint(address.endpoint_key)?
+        receipt.machine = self
+            .policy
+            .roster
+            .by_endpoint(address.endpoint_key)?
             .map(|(machine, _)| machine.to_hex());
         let recorder = self.receipts.as_ref().ok_or(MeshError::Unavailable)?;
-        receipt.id = write_receipt(&recorder.sink, &receipt).await
+        receipt.id = write_receipt(&recorder.sink, &receipt)
+            .await
             .ok_or_else(|| MeshError::Io("mesh path receipt could not be retained".into()))?;
         Ok(receipt)
     }
@@ -190,4 +213,3 @@ impl MeshTransport for IrohTransport {
         })
     }
 }
-

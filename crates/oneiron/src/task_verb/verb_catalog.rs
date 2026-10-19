@@ -169,6 +169,12 @@ pub enum AgentVerb {
     VaultCampaignProgramRead,
     VaultCampaignProgramUpdate,
     VaultCampaignProgramArchive,
+    SelfSavedQueryCreate,
+    SelfSavedQueryRead,
+    SelfSavedQueryUpdate,
+    SelfSavedQueryArchive,
+    SelfSavedQueryMembers,
+    SelfSavedQueryEvaluate,
     VaultWeaveReport,
     VaultWeaveDigest,
     VaultWeaveLens,
@@ -311,6 +317,15 @@ pub enum AgentVerb {
     VaultFederationCoreferenceConfirm,
     VaultFederationCoreferenceShareConsent,
     VaultFederationCoreferenceUnlink,
+    VaultFederationBurstBaseline,
+    VaultFederationBurstPolicy,
+    VaultFederationBurstPolicySet,
+    VaultFederationBurstIngress,
+    VaultFederationBurstDisposition,
+    VaultFederationBurstReview,
+    VaultFederationBurstReviewRelease,
+    VaultFederationBurstReviewReject,
+    VaultFederationBurstReplay,
     VaultFederationConnectIdentity,
     VaultFederationConnectGrantsMint,
     VaultFederationConnectOffer,
@@ -581,6 +596,11 @@ pub enum AgentVerb {
     VaultResultsSlice,
     VaultCodeRepoDiff,
     VaultCodeExport,
+    VaultCodeOriginRegister,
+    VaultCodeOriginMirrorGet,
+    VaultCodeOriginMirrorSet,
+    VaultCodeOriginMirrorClear,
+    VaultCodeOriginMirrorPush,
     VaultCodeOriginAuthorityGet,
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
@@ -716,6 +736,12 @@ pub enum AgentVerb {
     VaultSkillsAttributionPositiveRetire,
     AiStepsSubmit,
     AiStepsReceipt,
+    AiStreamsOpen,
+    AiStreamsSubscribe,
+    AiStreamsEvents,
+    AiStreamsDetach,
+    AiStreamsAbort,
+    AiStreamsTerminal,
     AiReply,
     VaultReceiptsContext,
     AiVoiceAsrOpen,
@@ -1209,6 +1235,12 @@ impl AgentVerb {
         Self::VaultCampaignProgramRead,
         Self::VaultCampaignProgramUpdate,
         Self::VaultCampaignProgramArchive,
+        Self::SelfSavedQueryCreate,
+        Self::SelfSavedQueryRead,
+        Self::SelfSavedQueryUpdate,
+        Self::SelfSavedQueryArchive,
+        Self::SelfSavedQueryMembers,
+        Self::SelfSavedQueryEvaluate,
         Self::VaultWeaveReport,
         Self::VaultWeaveDigest,
         Self::VaultWeaveLens,
@@ -1351,6 +1383,15 @@ impl AgentVerb {
         Self::VaultFederationCoreferenceConfirm,
         Self::VaultFederationCoreferenceShareConsent,
         Self::VaultFederationCoreferenceUnlink,
+        Self::VaultFederationBurstBaseline,
+        Self::VaultFederationBurstPolicy,
+        Self::VaultFederationBurstPolicySet,
+        Self::VaultFederationBurstIngress,
+        Self::VaultFederationBurstDisposition,
+        Self::VaultFederationBurstReview,
+        Self::VaultFederationBurstReviewRelease,
+        Self::VaultFederationBurstReviewReject,
+        Self::VaultFederationBurstReplay,
         Self::VaultFederationConnectIdentity,
         Self::VaultFederationConnectGrantsMint,
         Self::VaultFederationConnectOffer,
@@ -1621,6 +1662,11 @@ impl AgentVerb {
         Self::VaultResultsSlice,
         Self::VaultCodeRepoDiff,
         Self::VaultCodeExport,
+        Self::VaultCodeOriginRegister,
+        Self::VaultCodeOriginMirrorGet,
+        Self::VaultCodeOriginMirrorSet,
+        Self::VaultCodeOriginMirrorClear,
+        Self::VaultCodeOriginMirrorPush,
         Self::VaultCodeOriginAuthorityGet,
         Self::VaultCodeOriginAuthoritySet,
         Self::VaultCodeOriginPublications,
@@ -1756,6 +1802,12 @@ impl AgentVerb {
         Self::VaultSkillsAttributionPositiveRetire,
         Self::AiStepsSubmit,
         Self::AiStepsReceipt,
+        Self::AiStreamsOpen,
+        Self::AiStreamsSubscribe,
+        Self::AiStreamsEvents,
+        Self::AiStreamsDetach,
+        Self::AiStreamsAbort,
+        Self::AiStreamsTerminal,
         Self::AiReply,
         Self::VaultReceiptsContext,
         Self::AiVoiceAsrOpen,
@@ -2252,6 +2304,12 @@ impl AgentVerb {
             Self::VaultCampaignProgramRead => "vault.campaign.program.read",
             Self::VaultCampaignProgramUpdate => "vault.campaign.program.update",
             Self::VaultCampaignProgramArchive => "vault.campaign.program.archive",
+            Self::SelfSavedQueryCreate => "self.saved_query.create",
+            Self::SelfSavedQueryRead => "self.saved_query.read",
+            Self::SelfSavedQueryUpdate => "self.saved_query.update",
+            Self::SelfSavedQueryArchive => "self.saved_query.archive",
+            Self::SelfSavedQueryMembers => "self.saved_query.members",
+            Self::SelfSavedQueryEvaluate => "self.saved_query.evaluate",
             Self::VaultWeaveReport => "vault.weave.report",
             Self::VaultWeaveDigest => "vault.weave.digest",
             Self::VaultWeaveLens => "vault.weave.lens",
@@ -2396,6 +2454,15 @@ impl AgentVerb {
                 "vault.federation.coreference.share_consent"
             }
             Self::VaultFederationCoreferenceUnlink => "vault.federation.coreference.unlink",
+            Self::VaultFederationBurstBaseline => "vault.federation.burst.baseline",
+            Self::VaultFederationBurstPolicy => "vault.federation.burst.policy",
+            Self::VaultFederationBurstPolicySet => "vault.federation.burst.policy.set",
+            Self::VaultFederationBurstIngress => "vault.federation.burst.ingress",
+            Self::VaultFederationBurstDisposition => "vault.federation.burst.disposition",
+            Self::VaultFederationBurstReview => "vault.federation.burst.review",
+            Self::VaultFederationBurstReviewRelease => "vault.federation.burst.review.release",
+            Self::VaultFederationBurstReviewReject => "vault.federation.burst.review.reject",
+            Self::VaultFederationBurstReplay => "vault.federation.burst.replay",
             Self::VaultFederationConnectIdentity => "vault.federation.connect.identity",
             Self::VaultFederationConnectGrantsMint => "vault.federation.connect.grants.mint",
             Self::VaultFederationConnectOffer => "vault.federation.connect.offer",
@@ -2682,6 +2749,11 @@ impl AgentVerb {
             Self::VaultResultsSlice => "vault.results.slice",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultCodeExport => "vault.code.export",
+            Self::VaultCodeOriginRegister => "vault.code.origin.register",
+            Self::VaultCodeOriginMirrorGet => "vault.code.origin.mirror.get",
+            Self::VaultCodeOriginMirrorSet => "vault.code.origin.mirror.set",
+            Self::VaultCodeOriginMirrorClear => "vault.code.origin.mirror.clear",
+            Self::VaultCodeOriginMirrorPush => "vault.code.origin.mirror.push",
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
             Self::VaultCodeOriginAuthoritySet => "vault.code.origin.authority.set",
             Self::VaultCodeOriginPublications => "vault.code.origin.publications",
@@ -2821,6 +2893,12 @@ impl AgentVerb {
             }
             Self::AiStepsSubmit => "ai.steps.submit",
             Self::AiStepsReceipt => "ai.steps.receipt",
+            Self::AiStreamsOpen => "ai.streams.open",
+            Self::AiStreamsSubscribe => "ai.streams.subscribe",
+            Self::AiStreamsEvents => "ai.streams.events",
+            Self::AiStreamsDetach => "ai.streams.detach",
+            Self::AiStreamsAbort => "ai.streams.abort",
+            Self::AiStreamsTerminal => "ai.streams.terminal",
             Self::AiReply => "ai.reply",
             Self::VaultReceiptsContext => "vault.receipts.context",
             Self::AiVoiceAsrOpen => "ai.voice.asr.open",
@@ -3320,6 +3398,12 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::SelfSavedQueryCreate
+                | Self::SelfSavedQueryRead
+                | Self::SelfSavedQueryUpdate
+                | Self::SelfSavedQueryArchive
+                | Self::SelfSavedQueryMembers
+                | Self::SelfSavedQueryEvaluate
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
@@ -3462,6 +3546,15 @@ impl AgentVerb {
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
                 | Self::VaultFederationCoreferenceUnlink
+                | Self::VaultFederationBurstBaseline
+                | Self::VaultFederationBurstPolicy
+                | Self::VaultFederationBurstPolicySet
+                | Self::VaultFederationBurstIngress
+                | Self::VaultFederationBurstDisposition
+                | Self::VaultFederationBurstReview
+                | Self::VaultFederationBurstReviewRelease
+                | Self::VaultFederationBurstReviewReject
+                | Self::VaultFederationBurstReplay
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -3732,6 +3825,11 @@ impl AgentVerb {
                 | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
+                | Self::VaultCodeOriginRegister
+                | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorClear
+                | Self::VaultCodeOriginMirrorPush
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -3867,6 +3965,12 @@ impl AgentVerb {
                 | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
+                | Self::AiStreamsOpen
+                | Self::AiStreamsSubscribe
+                | Self::AiStreamsEvents
+                | Self::AiStreamsDetach
+                | Self::AiStreamsAbort
+                | Self::AiStreamsTerminal
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::AiVoiceAsrOpen
@@ -4387,6 +4491,12 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::SelfSavedQueryCreate
+                | Self::SelfSavedQueryRead
+                | Self::SelfSavedQueryUpdate
+                | Self::SelfSavedQueryArchive
+                | Self::SelfSavedQueryMembers
+                | Self::SelfSavedQueryEvaluate
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
@@ -4529,6 +4639,15 @@ impl AgentVerb {
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
                 | Self::VaultFederationCoreferenceUnlink
+                | Self::VaultFederationBurstBaseline
+                | Self::VaultFederationBurstPolicy
+                | Self::VaultFederationBurstPolicySet
+                | Self::VaultFederationBurstIngress
+                | Self::VaultFederationBurstDisposition
+                | Self::VaultFederationBurstReview
+                | Self::VaultFederationBurstReviewRelease
+                | Self::VaultFederationBurstReviewReject
+                | Self::VaultFederationBurstReplay
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -4799,6 +4918,11 @@ impl AgentVerb {
                 | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
+                | Self::VaultCodeOriginRegister
+                | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorClear
+                | Self::VaultCodeOriginMirrorPush
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -4934,6 +5058,12 @@ impl AgentVerb {
                 | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
+                | Self::AiStreamsOpen
+                | Self::AiStreamsSubscribe
+                | Self::AiStreamsEvents
+                | Self::AiStreamsDetach
+                | Self::AiStreamsAbort
+                | Self::AiStreamsTerminal
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::AiVoiceAsrOpen
@@ -5286,6 +5416,7 @@ impl AgentVerb {
                 | Self::VaultSharedStarted
                 | Self::VaultSharedMatured
                 | Self::VaultSharedEraseAsks
+                | Self::VaultFederationBurstReview
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConcernAsks
                 | Self::VaultResidenceDirectives
@@ -5557,6 +5688,12 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::SelfSavedQueryCreate
+                | Self::SelfSavedQueryRead
+                | Self::SelfSavedQueryUpdate
+                | Self::SelfSavedQueryArchive
+                | Self::SelfSavedQueryMembers
+                | Self::SelfSavedQueryEvaluate
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
@@ -5698,6 +5835,15 @@ impl AgentVerb {
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
                 | Self::VaultFederationCoreferenceUnlink
+                | Self::VaultFederationBurstBaseline
+                | Self::VaultFederationBurstPolicy
+                | Self::VaultFederationBurstPolicySet
+                | Self::VaultFederationBurstIngress
+                | Self::VaultFederationBurstDisposition
+                | Self::VaultFederationBurstReview
+                | Self::VaultFederationBurstReviewRelease
+                | Self::VaultFederationBurstReviewReject
+                | Self::VaultFederationBurstReplay
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -5956,6 +6102,11 @@ impl AgentVerb {
                 | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
+                | Self::VaultCodeOriginRegister
+                | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorClear
+                | Self::VaultCodeOriginMirrorPush
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -6091,6 +6242,12 @@ impl AgentVerb {
                 | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
+                | Self::AiStreamsOpen
+                | Self::AiStreamsSubscribe
+                | Self::AiStreamsEvents
+                | Self::AiStreamsDetach
+                | Self::AiStreamsAbort
+                | Self::AiStreamsTerminal
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::AiVoiceAsrOpen
@@ -6474,6 +6631,10 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::SelfSavedQueryCreate
+                | Self::SelfSavedQueryUpdate
+                | Self::SelfSavedQueryArchive
+                | Self::SelfSavedQueryEvaluate
                 | Self::VaultWeaveLinkWrong
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
@@ -6566,6 +6727,11 @@ impl AgentVerb {
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
                 | Self::VaultFederationCoreferenceUnlink
+                | Self::VaultFederationBurstPolicySet
+                | Self::VaultFederationBurstIngress
+                | Self::VaultFederationBurstReviewRelease
+                | Self::VaultFederationBurstReviewReject
+                | Self::VaultFederationBurstReplay
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
                 | Self::VaultFederationConnectAccept
@@ -6732,6 +6898,10 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
+                | Self::VaultCodeOriginRegister
+                | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorClear
+                | Self::VaultCodeOriginMirrorPush
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
@@ -6812,6 +6982,8 @@ impl AgentVerb {
                 | Self::VaultSkillsAttributionProject
                 | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
+                | Self::AiStreamsOpen
+                | Self::AiStreamsAbort
                 | Self::AiReply
                 | Self::AiVoiceStart
                 | Self::AiVoiceAudio
@@ -7205,6 +7377,12 @@ impl AgentVerb {
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
             Self::VaultCampaignProgramArchive => &["spec"],
+            Self::SelfSavedQueryCreate => &["spec"],
+            Self::SelfSavedQueryRead => &["spec"],
+            Self::SelfSavedQueryUpdate => &["spec"],
+            Self::SelfSavedQueryArchive => &["spec"],
+            Self::SelfSavedQueryMembers => &["spec"],
+            Self::SelfSavedQueryEvaluate => &["spec"],
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultWeaveLens => &["spec"],
@@ -7347,6 +7525,15 @@ impl AgentVerb {
             Self::VaultFederationCoreferenceConfirm => &["spec"],
             Self::VaultFederationCoreferenceShareConsent => &["spec"],
             Self::VaultFederationCoreferenceUnlink => &["spec"],
+            Self::VaultFederationBurstBaseline => &["spec"],
+            Self::VaultFederationBurstPolicy => &["spec"],
+            Self::VaultFederationBurstPolicySet => &["spec"],
+            Self::VaultFederationBurstIngress => &["spec"],
+            Self::VaultFederationBurstDisposition => &["spec"],
+            Self::VaultFederationBurstReview => &[],
+            Self::VaultFederationBurstReviewRelease => &["spec"],
+            Self::VaultFederationBurstReviewReject => &["spec"],
+            Self::VaultFederationBurstReplay => &["spec"],
             Self::VaultFederationConnectIdentity => &[],
             Self::VaultFederationConnectGrantsMint => &["spec"],
             Self::VaultFederationConnectOffer => &["spec"],
@@ -7617,6 +7804,11 @@ impl AgentVerb {
             Self::VaultResultsSlice => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
+            Self::VaultCodeOriginRegister => &["spec"],
+            Self::VaultCodeOriginMirrorGet => &["spec"],
+            Self::VaultCodeOriginMirrorSet => &["spec"],
+            Self::VaultCodeOriginMirrorClear => &["spec"],
+            Self::VaultCodeOriginMirrorPush => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
@@ -7752,6 +7944,12 @@ impl AgentVerb {
             Self::VaultSkillsAttributionPositiveRetire => &["spec"],
             Self::AiStepsSubmit => &["spec"],
             Self::AiStepsReceipt => &["spec"],
+            Self::AiStreamsOpen => &["spec"],
+            Self::AiStreamsSubscribe => &["spec"],
+            Self::AiStreamsEvents => &["spec"],
+            Self::AiStreamsDetach => &["spec"],
+            Self::AiStreamsAbort => &["spec"],
+            Self::AiStreamsTerminal => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
             Self::AiVoiceAsrOpen => &["spec"],
@@ -8246,6 +8444,12 @@ impl AgentVerb {
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
             Self::VaultCampaignProgramArchive => &["spec"],
+            Self::SelfSavedQueryCreate => &["spec"],
+            Self::SelfSavedQueryRead => &["spec"],
+            Self::SelfSavedQueryUpdate => &["spec"],
+            Self::SelfSavedQueryArchive => &["spec"],
+            Self::SelfSavedQueryMembers => &["spec"],
+            Self::SelfSavedQueryEvaluate => &["spec"],
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultWeaveLens => &["spec"],
@@ -8388,6 +8592,15 @@ impl AgentVerb {
             Self::VaultFederationCoreferenceConfirm => &["spec"],
             Self::VaultFederationCoreferenceShareConsent => &["spec"],
             Self::VaultFederationCoreferenceUnlink => &["spec"],
+            Self::VaultFederationBurstBaseline => &["spec"],
+            Self::VaultFederationBurstPolicy => &["spec"],
+            Self::VaultFederationBurstPolicySet => &["spec"],
+            Self::VaultFederationBurstIngress => &["spec"],
+            Self::VaultFederationBurstDisposition => &["spec"],
+            Self::VaultFederationBurstReview => &[],
+            Self::VaultFederationBurstReviewRelease => &["spec"],
+            Self::VaultFederationBurstReviewReject => &["spec"],
+            Self::VaultFederationBurstReplay => &["spec"],
             Self::VaultFederationConnectIdentity => &[],
             Self::VaultFederationConnectGrantsMint => &["spec"],
             Self::VaultFederationConnectOffer => &["spec"],
@@ -8658,6 +8871,11 @@ impl AgentVerb {
             Self::VaultResultsSlice => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
+            Self::VaultCodeOriginRegister => &["spec"],
+            Self::VaultCodeOriginMirrorGet => &["spec"],
+            Self::VaultCodeOriginMirrorSet => &["spec"],
+            Self::VaultCodeOriginMirrorClear => &["spec"],
+            Self::VaultCodeOriginMirrorPush => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
@@ -8793,6 +9011,12 @@ impl AgentVerb {
             Self::VaultSkillsAttributionPositiveRetire => &["spec"],
             Self::AiStepsSubmit => &["spec"],
             Self::AiStepsReceipt => &["spec"],
+            Self::AiStreamsOpen => &["spec"],
+            Self::AiStreamsSubscribe => &["spec"],
+            Self::AiStreamsEvents => &["spec"],
+            Self::AiStreamsDetach => &["spec"],
+            Self::AiStreamsAbort => &["spec"],
+            Self::AiStreamsTerminal => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
             Self::AiVoiceAsrOpen => &["spec"],
@@ -9612,6 +9836,24 @@ impl AgentVerb {
             Self::VaultCampaignProgramArchive => {
                 "Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops."
             }
+            Self::SelfSavedQueryCreate => {
+                "Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller."
+            }
+            Self::SelfSavedQueryRead => {
+                "One saved query the caller owns; a query absent or not the caller's reads as not found."
+            }
+            Self::SelfSavedQueryUpdate => {
+                "Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check."
+            }
+            Self::SelfSavedQueryArchive => {
+                "Archives a saved query under a definition-version check: it stays readable and is never evaluated again."
+            }
+            Self::SelfSavedQueryMembers => {
+                "One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved."
+            }
+            Self::SelfSavedQueryEvaluate => {
+                "Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity."
+            }
             Self::VaultWeaveReport => {
                 "The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."
             }
@@ -10027,6 +10269,33 @@ impl AgentVerb {
             }
             Self::VaultFederationCoreferenceUnlink => {
                 "The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims."
+            }
+            Self::VaultFederationBurstBaseline => {
+                "The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context."
+            }
+            Self::VaultFederationBurstPolicy => {
+                "The owner reads one grant-bound peer's relative-burst outcome policy."
+            }
+            Self::VaultFederationBurstPolicySet => {
+                "The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant."
+            }
+            Self::VaultFederationBurstIngress => {
+                "The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt."
+            }
+            Self::VaultFederationBurstDisposition => {
+                "The owner reads an authenticated batch original disposition, named baseline context and current durable replay state."
+            }
+            Self::VaultFederationBurstReview => {
+                "The owner reads retained peer review bundles, coalesced once per peer and kept after replay or rejection."
+            }
+            Self::VaultFederationBurstReviewRelease => {
+                "The owner releases a bundle's burst hold for current-grant replay without importing evidence or widening authority."
+            }
+            Self::VaultFederationBurstReviewReject => {
+                "The owner rejects a bundle's pending batches while retaining its review evidence and terminal dispositions."
+            }
+            Self::VaultFederationBurstReplay => {
+                "The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit."
             }
             Self::VaultFederationConnectIdentity => {
                 "The owner reads this vault identity and the host key used for reciprocal Connect consent."
@@ -10822,6 +11091,21 @@ impl AgentVerb {
             Self::VaultCodeExport => {
                 "Export one already-finalized and reviewed document revision through the existing origin publication protocol."
             }
+            Self::VaultCodeOriginRegister => {
+                "Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused."
+            }
+            Self::VaultCodeOriginMirrorGet => {
+                "Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential."
+            }
+            Self::VaultCodeOriginMirrorSet => {
+                "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write."
+            }
+            Self::VaultCodeOriginMirrorClear => {
+                "Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."
+            }
+            Self::VaultCodeOriginMirrorPush => {
+                "Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client."
+            }
             Self::VaultCodeOriginAuthorityGet => {
                 "Read one served origin authority and this host identity under the owner credential."
             }
@@ -11212,6 +11496,24 @@ impl AgentVerb {
             }
             Self::AiStepsReceipt => {
                 "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."
+            }
+            Self::AiStreamsOpen => {
+                "Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one."
+            }
+            Self::AiStreamsSubscribe => {
+                "Attach before or after open to the caller's shared model stream, without starting a producer; replay every typed part event from the first under an independently detachable handle."
+            }
+            Self::AiStreamsEvents => {
+                "Drain one subscription's queued typed LlmStreamEvents (part-correlated text, reasoning, tool and image deltas, then Done) without blocking; closed once the producer ended and the queue is empty."
+            }
+            Self::AiStreamsDetach => {
+                "Detach only this subscription from the shared model stream; the producer and every other subscriber continue."
+            }
+            Self::AiStreamsAbort => {
+                "Abort the caller's shared model stream with actual usage: subscribers receive the cancelled Done of the parts completed so far, recorded as the one durable terminal."
+            }
+            Self::AiStreamsTerminal => {
+                "Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model."
             }
             Self::AiReply => {
                 "Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."
@@ -11743,10 +12045,10 @@ impl AgentVerb {
                 "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."
             }
             Self::VaultConsolidationHomeGet => {
-                "The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything."
+                "The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything."
             }
             Self::VaultConsolidationHomePick => {
-                "The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget."
+                "The owner picks or clears the node that runs his vault's MACRO consolidation: a signed act every linked machine folds, recorded even for a node unknown here; a stale seen revision refuses. It re-elects this home and moves no job or lease."
             }
             Self::VaultConsolidationLineage => {
                 "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."

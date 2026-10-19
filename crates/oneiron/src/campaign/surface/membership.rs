@@ -1,7 +1,7 @@
 //! Read-only membership projection over CA-01 heads and CA-02 event history.
 
 use crate::campaign::claims::{PREDICATE_CAMPAIGN_MEMBER, decode_campaign_member_value};
-use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
+use crate::claim::{ClaimLifecycleStatus, ClaimSubject, ScopedReadActorKey};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::saved_query::{MembershipEvent, MembershipTransition, membership_events};
@@ -74,7 +74,7 @@ pub struct MembershipPage {
 /// Storage and decode errors propagate; a malformed cursor is
 /// [`Error::InvalidKey`].
 pub fn read_campaign_members(vault: &Vault, req: &MembershipReadRequest) -> Result<MembershipPage> {
-    membership_page(vault, req, MembershipOwner::Campaign)
+    membership_page(vault, req, MembershipOwner::Campaign, None)
 }
 
 /// Pages the membership one saved query derived.
@@ -90,7 +90,17 @@ pub fn read_saved_query_members(
     vault: &Vault,
     req: &MembershipReadRequest,
 ) -> Result<MembershipPage> {
-    membership_page(vault, req, MembershipOwner::SavedQuery)
+    membership_page(vault, req, MembershipOwner::SavedQuery, None)
+}
+
+/// The saved-query page under its owner's current read. Filtering precedes
+/// pagination, so neither rows nor a cursor reveal a now-withheld member.
+pub(crate) fn read_saved_query_members_scoped(
+    vault: &Vault,
+    req: &MembershipReadRequest,
+    read: &ScopedReadActorKey,
+) -> Result<MembershipPage> {
+    membership_page(vault, req, MembershipOwner::SavedQuery, Some(read))
 }
 
 /// Which axis of a `campaign.member` head `owner_ref` selects on.
@@ -129,12 +139,24 @@ fn membership_page(
     vault: &Vault,
     req: &MembershipReadRequest,
     owner: MembershipOwner,
+    read: Option<&ScopedReadActorKey>,
 ) -> Result<MembershipPage> {
     let limit = effective_limit(req.limit);
     if let Some(cursor) = req.cursor.as_deref() {
         validate_cursor(cursor)?;
     }
     let mut heads = membership_heads(vault, req.owner_ref, owner)?;
+    if let Some(read) = read {
+        let lane = vault.scoped_read(read.clone());
+        let txn = vault.store.env.read_txn()?;
+        let ids: Vec<_> = heads.iter().map(|head| head.entity_ref).collect();
+        let readable = lane.entities_readable_in_txn(&txn, &ids)?;
+        heads = heads
+            .into_iter()
+            .zip(readable)
+            .filter_map(|(head, admitted)| admitted.then_some(head))
+            .collect();
+    }
     // Sorted on the same triple the cursor encodes, so "everything after the
     // cursor" is a total order and a page boundary is stable across calls.
     heads.sort_unstable_by_key(|head| {

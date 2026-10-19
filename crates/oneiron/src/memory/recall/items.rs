@@ -81,10 +81,18 @@ impl Memory<'_> {
                 None => None,
             };
             let handle = if entity_type == ENTITY_TYPE_CLAIM {
-                body.as_deref().map(|bytes| -> MemoryResult<Option<String>> {
-                    let claim = crate::claim::decode_claim_body(bytes, true)?;
-                    Ok(crate::disclosure::claim_handle_in(self.vault, txn, lane.actor_key(), &claim)?)
-                }).transpose()?.flatten()
+                body.as_deref()
+                    .map(|bytes| -> MemoryResult<Option<String>> {
+                        let claim = crate::claim::decode_claim_body(bytes, true)?;
+                        Ok(crate::disclosure::claim_handle_in(
+                            self.vault,
+                            txn,
+                            lane.actor_key(),
+                            &claim,
+                        )?)
+                    })
+                    .transpose()?
+                    .flatten()
             } else {
                 None
             };

@@ -886,10 +886,12 @@ carries its arrival number `seq`; a sweep keeps the last one it read and passes 
 A participating deployment sends its publisher two things, and nothing else: the content-free
 tier-1 failure counts, and the Coach's sealed code-fix records (an invented example verified in
 the vault, and a candidate fix's fixed or not-fixed result). No world text leaves, and a failure
-that touched a private world sends its counts only. A vault our cloud hosts participates by its
-terms; a self-hosted server participates only once you set `failure_signal_export = true`
-(`ONEIRON_FAILURE_SIGNAL_EXPORT`). Training on what leaves is a separate yes,
-`failure_signal_training` (`ONEIRON_FAILURE_SIGNAL_TRAINING`). Where it goes:
+that touched a private world sends its counts only. A vault our cloud hosts (the managed vault
+Hypnos runs) shares them by default, and you can turn that off: "Help improve Oneiron" off, or
+`failure_signal_export = false` in its settings. A server you run yourself shares nothing until you
+set `failure_signal_export = true` (`ONEIRON_FAILURE_SIGNAL_EXPORT`), whatever privacy posture it
+declares. Training on what leaves is a separate yes, `failure_signal_training`
+(`ONEIRON_FAILURE_SIGNAL_TRAINING`). Where it goes:
 
 ```toml
 [failure_signals]
@@ -1171,7 +1173,8 @@ incarnations, and an open takes the one that opens its vault; once the swap is o
 names the copy's alone. A rehearsal beside a running `serve` reads the vault with its unlocked page
 seal.
 
-A managed vault is plain unless its supervisor passes `--maximum-tier` when the vault is created.
+A managed vault is plain unless, when the vault is created, its supervisor passes `--maximum-tier`
+or its settings file says `maximum_tier = true`.
 Its pages then seal under the data key the supervisor delivers at every start, with a fresh vault
 id and incarnation, and the mirror beside the data directory is written at the first open, before
 any wrap: the next start reopens from its id and incarnation with the delivered key, which must be
@@ -1208,8 +1211,37 @@ slot can hold a piece.
 
 `status` lists every kit, pending ones too, with its homes, coverage and confirmation, and each
 private world's state. `covered` means only that the world's current key has a wrap to the pinned
-root. A running server shows the same at `GET /v1/owner/recovery-kit`; issue, confirm and restore
-run only from the CLI, so no piece crosses HTTP.
+root. A running server shows the same at `GET /v1/owner/recovery-kit`. The commands above run on
+a stopped vault. On a running server, a root change goes through your request and its target
+install:
+
+- Any install you are signed in on records the request with `POST /v1/owner/roots/requests`:
+  `target`, and `change` = `pin`, `activate`, `restore` or `anchor`, with `root` and `machine` as
+  the change names them. The request carries ids only. Its receipt says "recorded, awaiting a
+  holder" until the target acts, or why nothing was recorded (the target is this install, or not
+  a linked one).
+- The target lists what waits for it at `GET /v1/owner/roots/requests`.
+- `GET /v1/owner/owner-work/{request}` reads where any owner work request stands.
+- A pin needs no kit: the target makes it on its own.
+
+Kit material travels only in the body of the named target's own call:
+`POST /v1/owner/roots/requests/run` and `POST /v1/owner/recovery-kit/pad-access`. That means the
+pieces as recovery codes, the passphrase, a confirm's `carry` machines, and an anchoring's
+enrolment request and code.
+
+- Each call names its `target`. The target must be the install that answers, proved by its
+  machine proof: it verifies under the key that machine stands on in the vault.
+- The target must also be a machine the worlds' privacy lets hold their keys, as the
+  verified-destination judge reads each world's recipient choice. For one-machine and
+  my-machines worlds that means one of your own machines (marked mine), and the host too on a
+  hosted vault. Any other proven machine qualifies only where no world keeps its keys off it.
+- A target that is another install, or is unproved, or is disallowed, gets a named refusal
+  (`kit_target_elsewhere`, `kit_target_unproved`, `kit_target_not_allowed`) before any kit is
+  read.
+- An activation's `issue_kit` answers the new kit's pieces in that call's reply alone, and
+  `confirm_kit` reads two back and closes the request.
+- Kit material is never stored, logged or put in a receipt, and no install relays it for
+  another.
 
 `restore` opens the world keys wrapped to the kit's root on this machine. It never changes a
 world's settings. A kit opened with one piece and the passphrase is not verified on its own:

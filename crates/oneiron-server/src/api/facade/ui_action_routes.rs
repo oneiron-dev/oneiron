@@ -251,7 +251,10 @@ async fn dispatch_tool(
         require_action_scope(auth, action.command().as_str())?;
         live = is_live_run_verb(action.command().as_str());
     }
-    let mut bound = action_bound(server, auth)?.ok_or_else(|| {
+    // The owner act records where this request's own headers say he spoke
+    // from (FIX 4625).
+    let surface = crate::api::owner_routes::machine_routes::act_surface(server, auth, &headers);
+    let mut bound = action_bound(server, auth, surface)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",
             ["Present a verified slip paired to this principal."],

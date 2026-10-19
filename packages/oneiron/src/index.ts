@@ -1193,6 +1193,28 @@ export class Oneiron {
         /** The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims. */
         unlink: (input: Facade.CoreferencePairRequest): Facade.CoreferenceUnlinkReceipt => this.#call(() => this.#client.vaultFederationCoreferenceUnlink(input) as Facade.CoreferenceUnlinkReceipt),
       },
+      burst: {
+        /** The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context. */
+        baseline: (input: Facade.FederationBurstPeerRequest): Facade.FederationBurstBaselineState => this.#call(() => this.#client.vaultFederationBurstBaseline(input) as Facade.FederationBurstBaselineState),
+        /** The owner reads one grant-bound peer's relative-burst outcome policy. */
+        policy: Object.assign((input: Facade.FederationBurstPeerRequest): Facade.FederationBurstPolicy => this.#call(() => this.#client.vaultFederationBurstPolicy(input) as Facade.FederationBurstPolicy), {
+          /** The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant. */
+          set: (input: Facade.FederationBurstPolicySetRequest): Facade.FederationBurstPolicy => this.#call(() => this.#client.vaultFederationBurstPolicySet(input) as Facade.FederationBurstPolicy),
+        }),
+        /** The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt. */
+        ingress: (input: Facade.ConnectDelivery): Facade.FederationBurstReceipt => this.#call(() => this.#client.vaultFederationBurstIngress(input) as Facade.FederationBurstReceipt),
+        /** The owner reads an authenticated batch original disposition, named baseline context and current durable replay state. */
+        disposition: (input: Facade.FederationBurstReplayRequest): Facade.FederationBurstReceipt => this.#call(() => this.#client.vaultFederationBurstDisposition(input) as Facade.FederationBurstReceipt),
+        /** The owner reads retained peer review bundles, coalesced once per peer and kept after replay or rejection. */
+        review: Object.assign((input: Facade.EmptyRequest): Facade.FederationBurstReviewBundle[] => this.#call(() => this.#client.vaultFederationBurstReview(input) as Facade.FederationBurstReviewBundle[]), {
+          /** The owner releases a bundle's burst hold for current-grant replay without importing evidence or widening authority. */
+          release: (input: Facade.FederationBurstReviewRequest): Facade.FederationBurstReviewReceipt => this.#call(() => this.#client.vaultFederationBurstReviewRelease(input) as Facade.FederationBurstReviewReceipt),
+          /** The owner rejects a bundle's pending batches while retaining its review evidence and terminal dispositions. */
+          reject: (input: Facade.FederationBurstReviewRequest): Facade.FederationBurstReviewReceipt => this.#call(() => this.#client.vaultFederationBurstReviewReject(input) as Facade.FederationBurstReviewReceipt),
+        }),
+        /** The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit. */
+        replay: (input: Facade.FederationBurstReplayRequest): Facade.FederationBurstReceipt => this.#call(() => this.#client.vaultFederationBurstReplay(input) as Facade.FederationBurstReceipt),
+      },
       connect: {
         /** The owner reads this vault identity and the host key used for reciprocal Connect consent. */
         identity: (input: Facade.EmptyRequest): Facade.ConnectIdentity => this.#call(() => this.#client.vaultFederationConnectIdentity(input) as Facade.ConnectIdentity),
@@ -1859,6 +1881,18 @@ export class Oneiron {
       /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
       export: (input: Facade.CodeExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeExport(input) as Facade.CodeExportResult),
       origin: {
+        /** Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused. */
+        register: (input: Facade.OriginRegisterRequest): Facade.OriginRegistered => this.#call(() => this.#client.vaultCodeOriginRegister(input) as Facade.OriginRegistered),
+        mirror: {
+          /** Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential. */
+          get: (input: Facade.OriginRepoRequest): Facade.OriginMirrorView => this.#call(() => this.#client.vaultCodeOriginMirrorGet(input) as Facade.OriginMirrorView),
+          /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write. */
+          set: (input: Facade.OriginMirrorSetRequest): Facade.OriginMirrorTarget => this.#call(() => this.#client.vaultCodeOriginMirrorSet(input) as Facade.OriginMirrorTarget),
+          /** Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes. */
+          clear: (input: Facade.OriginRepoRequest): Facade.OriginMirrorCleared => this.#call(() => this.#client.vaultCodeOriginMirrorClear(input) as Facade.OriginMirrorCleared),
+          /** Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client. */
+          push: (input: Facade.OriginRepoRequest): Facade.OriginMirrorRun => this.#call(() => this.#client.vaultCodeOriginMirrorPush(input) as Facade.OriginMirrorRun),
+        },
         authority: {
           /** Read one served origin authority and this host identity under the owner credential. */
           get: (input: Facade.OriginRepoRequest): Facade.OriginAuthorityView => this.#call(() => this.#client.vaultCodeOriginAuthorityGet(input) as Facade.OriginAuthorityView),
@@ -2345,9 +2379,9 @@ export class Oneiron {
       /** Reads the status of one consolidation attempt by its durable job reference. */
       status: (input: Facade.ConsolidationStatusRequest): Facade.DreamerAttemptView | null => this.#call(() => this.#client.vaultConsolidationStatus(input) as Facade.DreamerAttemptView | null),
       home: {
-        /** The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything. */
+        /** The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything. */
         get: (input: Facade.EmptyRequest = {}): Facade.ConsolidationHomeView => this.#call(() => this.#client.vaultConsolidationHomeGet(input) as Facade.ConsolidationHomeView),
-        /** The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget. */
+        /** The owner picks or clears the node that runs his vault's MACRO consolidation: a signed act every linked machine folds, recorded even for a node unknown here; a stale seen revision refuses. It re-elects this home and moves no job or lease. */
         pick: (input: Facade.ConsolidationHomePickRequest): Facade.ConsolidationHomePickReceipt => this.#call(() => this.#client.vaultConsolidationHomePick(input) as Facade.ConsolidationHomePickReceipt),
       },
       /** The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model. */
@@ -2625,6 +2659,20 @@ export class Oneiron {
       /** Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay. */
       receipts: (input: Facade.AdmissionReceiptsRequest): Facade.AdmissionReceipt[] => this.#call(() => this.#client.selfAdmissionReceipts(input) as Facade.AdmissionReceipt[]),
     },
+    saved_query: {
+      /** Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller. */
+      create: (input: Facade.SavedQueryCreateRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryCreate(input) as Facade.SavedQueryRecordView),
+      /** One saved query the caller owns; a query absent or not the caller's reads as not found. */
+      read: (input: Facade.SavedQueryReadRequest): Facade.SavedQueryReadResult => this.#call(() => this.#client.selfSavedQueryRead(input) as Facade.SavedQueryReadResult),
+      /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check. */
+      update: (input: Facade.SavedQueryUpdateRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryUpdate(input) as Facade.SavedQueryRecordView),
+      /** Archives a saved query under a definition-version check: it stays readable and is never evaluated again. */
+      archive: (input: Facade.SavedQueryArchiveRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryArchive(input) as Facade.SavedQueryRecordView),
+      /** One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved. */
+      members: (input: Facade.SavedQueryMembersRequest): Facade.SavedQueryMembershipPageView => this.#call(() => this.#client.selfSavedQueryMembers(input) as Facade.SavedQueryMembershipPageView),
+      /** Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity. */
+      evaluate: (input: Facade.SavedQueryEvaluateRequest): Facade.SavedQueryEvaluationReceipt => this.#call(() => this.#client.selfSavedQueryEvaluate(input) as Facade.SavedQueryEvaluationReceipt),
+    },
     off_record: {
       /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
       execute: (input: Facade.OffRecordExecuteRequest): Facade.OffRecordExecuted => this.#call(() => this.#client.selfOffRecordExecute(input) as Facade.OffRecordExecuted),
@@ -2764,6 +2812,20 @@ export class Oneiron {
       submit: (input: Facade.ModelStepSubmit): Facade.ModelStepReceipt => this.#call(() => this.#client.aiStepsSubmit(input) as Facade.ModelStepReceipt),
       /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease. */
       receipt: (input: Facade.ModelStepReceiptRequest): Facade.ModelStepReceipt => this.#call(() => this.#client.aiStepsReceipt(input) as Facade.ModelStepReceipt),
+    },
+    streams: {
+      /** Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one. */
+      open: (input: Facade.ModelStreamOpen): Facade.ModelStreamOpened => this.#call(() => this.#client.aiStreamsOpen(input) as Facade.ModelStreamOpened),
+      /** Attach before or after open to the caller's shared model stream, without starting a producer; replay every typed part event from the first under an independently detachable handle. */
+      subscribe: (input: Facade.ModelStreamSubscribe): Facade.ModelStreamSubscribed => this.#call(() => this.#client.aiStreamsSubscribe(input) as Facade.ModelStreamSubscribed),
+      /** Drain one subscription's queued typed LlmStreamEvents (part-correlated text, reasoning, tool and image deltas, then Done) without blocking; closed once the producer ended and the queue is empty. */
+      events: (input: Facade.ModelStreamEventsRequest): Facade.ModelStreamEvents => this.#call(() => this.#client.aiStreamsEvents(input) as Facade.ModelStreamEvents),
+      /** Detach only this subscription from the shared model stream; the producer and every other subscriber continue. */
+      detach: (input: Facade.ModelStreamDetach): Facade.ModelStreamDetached => this.#call(() => this.#client.aiStreamsDetach(input) as Facade.ModelStreamDetached),
+      /** Abort the caller's shared model stream with actual usage: subscribers receive the cancelled Done of the parts completed so far, recorded as the one durable terminal. */
+      abort: (input: Facade.ModelStreamAbort): Facade.ModelStreamTerminal => this.#call(() => this.#client.aiStreamsAbort(input) as Facade.ModelStreamTerminal),
+      /** Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model. */
+      terminal: (input: Facade.ModelStreamTerminalRequest): Facade.ModelStreamTerminal => this.#call(() => this.#client.aiStreamsTerminal(input) as Facade.ModelStreamTerminal),
     },
     /** Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs. */
     reply: (input: Facade.AiReplyRequest): Facade.AiReply => this.#call(() => this.#client.aiReply(input) as Facade.AiReply),

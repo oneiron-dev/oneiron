@@ -548,6 +548,24 @@ impl OneironClient {
                 "vault.campaign.program.archive" => remote_agent_verb_output::<
                     oneiron::campaign::surface::CampaignProgramRecord,
                 >(client, verb, &input),
+                "self.saved_query.create" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::SavedQueryRecordView,
+                >(client, verb, &input),
+                "self.saved_query.read" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::SavedQueryReadResult,
+                >(client, verb, &input),
+                "self.saved_query.update" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::SavedQueryRecordView,
+                >(client, verb, &input),
+                "self.saved_query.archive" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::SavedQueryRecordView,
+                >(client, verb, &input),
+                "self.saved_query.members" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::SavedQueryMembershipPageView,
+                >(client, verb, &input),
+                "self.saved_query.evaluate" => remote_agent_verb_output::<
+                    oneiron::campaign::surface::SavedQueryEvaluationReceipt,
+                >(client, verb, &input),
                 "vault.weave.report" => {
                     remote_agent_verb_output::<oneiron::claim::WeaveReportView>(
                         client, verb, &input,
@@ -981,6 +999,33 @@ impl OneironClient {
                 }
                 "vault.federation.coreference.unlink" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::CoreferenceUnlinkReceipt,
+                >(client, verb, &input),
+                "vault.federation.burst.baseline" => remote_agent_verb_output::<
+                    oneiron::sync::federation_burst::FederationBurstBaselineState,
+                >(client, verb, &input),
+                "vault.federation.burst.policy" => remote_agent_verb_output::<
+                    oneiron::sync::federation_burst::FederationBurstPolicy,
+                >(client, verb, &input),
+                "vault.federation.burst.policy.set" => remote_agent_verb_output::<
+                    oneiron::sync::federation_burst::FederationBurstPolicy,
+                >(client, verb, &input),
+                "vault.federation.burst.ingress" => remote_agent_verb_output::<
+                    oneiron::sync::federation_burst::FederationBurstReceipt,
+                >(client, verb, &input),
+                "vault.federation.burst.disposition" => remote_agent_verb_output::<
+                    oneiron::sync::federation_burst::FederationBurstReceipt,
+                >(client, verb, &input),
+                "vault.federation.burst.review" => remote_agent_verb_output::<
+                    Vec<oneiron::sync::federation_burst::FederationBurstReviewBundle>,
+                >(client, verb, &input),
+                "vault.federation.burst.review.release" => remote_agent_verb_output::<
+                    oneiron::sync::federation_burst::FederationBurstReviewReceipt,
+                >(client, verb, &input),
+                "vault.federation.burst.review.reject" => remote_agent_verb_output::<
+                    oneiron::sync::federation_burst::FederationBurstReviewReceipt,
+                >(client, verb, &input),
+                "vault.federation.burst.replay" => remote_agent_verb_output::<
+                    oneiron::sync::federation_burst::FederationBurstReceipt,
                 >(client, verb, &input),
                 "vault.federation.connect.identity" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectIdentity,
@@ -1810,6 +1855,21 @@ impl OneironClient {
                 "vault.code.export" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::CodeExportResult,
                 >(client, verb, &input),
+                "vault.code.origin.register" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::OriginRegistered,
+                >(client, verb, &input),
+                "vault.code.origin.mirror.get" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::OriginMirrorView,
+                >(client, verb, &input),
+                "vault.code.origin.mirror.set" => remote_agent_verb_output::<
+                    oneiron::origin::mirror::OriginMirrorTarget,
+                >(client, verb, &input),
+                "vault.code.origin.mirror.clear" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::OriginMirrorCleared,
+                >(client, verb, &input),
+                "vault.code.origin.mirror.push" => remote_agent_verb_output::<
+                    oneiron::origin::mirror::OriginMirrorRun,
+                >(client, verb, &input),
                 "vault.code.origin.authority.get" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::OriginAuthorityView,
                 >(client, verb, &input),
@@ -2222,6 +2282,24 @@ impl OneironClient {
                 >(client, verb, &input),
                 "ai.steps.receipt" => remote_agent_verb_output::<
                     oneiron::llm::model_step::ModelStepReceipt,
+                >(client, verb, &input),
+                "ai.streams.open" => remote_agent_verb_output::<
+                    oneiron::llm::model_stream::ModelStreamOpened,
+                >(client, verb, &input),
+                "ai.streams.subscribe" => remote_agent_verb_output::<
+                    oneiron::llm::model_stream::ModelStreamSubscribed,
+                >(client, verb, &input),
+                "ai.streams.events" => remote_agent_verb_output::<
+                    oneiron::llm::model_stream::ModelStreamEvents,
+                >(client, verb, &input),
+                "ai.streams.detach" => remote_agent_verb_output::<
+                    oneiron::llm::model_stream::ModelStreamDetached,
+                >(client, verb, &input),
+                "ai.streams.abort" => remote_agent_verb_output::<
+                    oneiron::llm::model_stream::ModelStreamTerminal,
+                >(client, verb, &input),
+                "ai.streams.terminal" => remote_agent_verb_output::<
+                    oneiron::llm::model_stream::ModelStreamTerminal,
                 >(client, verb, &input),
                 "ai.reply" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiReply>(
                     client, verb, &input,
@@ -5297,6 +5375,78 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.campaign.program.archive", value)
     }
+    pub fn self_saved_query_create(
+        &self,
+        input: &oneiron::campaign::surface::SavedQueryCreateRequest,
+    ) -> Result<oneiron::campaign::surface::SavedQueryRecordView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.saved_query.create", value)
+    }
+    pub fn self_saved_query_read(
+        &self,
+        input: &oneiron::campaign::surface::SavedQueryReadRequest,
+    ) -> Result<oneiron::campaign::surface::SavedQueryReadResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.saved_query.read", value)
+    }
+    pub fn self_saved_query_update(
+        &self,
+        input: &oneiron::campaign::surface::SavedQueryUpdateRequest,
+    ) -> Result<oneiron::campaign::surface::SavedQueryRecordView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.saved_query.update", value)
+    }
+    pub fn self_saved_query_archive(
+        &self,
+        input: &oneiron::campaign::surface::SavedQueryArchiveRequest,
+    ) -> Result<oneiron::campaign::surface::SavedQueryRecordView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.saved_query.archive", value)
+    }
+    pub fn self_saved_query_members(
+        &self,
+        input: &oneiron::campaign::surface::SavedQueryMembersRequest,
+    ) -> Result<oneiron::campaign::surface::SavedQueryMembershipPageView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.saved_query.members", value)
+    }
+    pub fn self_saved_query_evaluate(
+        &self,
+        input: &oneiron::campaign::surface::SavedQueryEvaluateRequest,
+    ) -> Result<oneiron::campaign::surface::SavedQueryEvaluationReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.saved_query.evaluate", value)
+    }
     pub fn vault_weave_report(
         &self,
         input: &oneiron::claim::WeaveReportRequest,
@@ -7001,6 +7151,115 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.federation.coreference.unlink", value)
+    }
+    pub fn vault_federation_burst_baseline(
+        &self,
+        input: &oneiron::sync::federation_burst::FederationBurstPeerRequest,
+    ) -> Result<oneiron::sync::federation_burst::FederationBurstBaselineState, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.burst.baseline", value)
+    }
+    pub fn vault_federation_burst_policy(
+        &self,
+        input: &oneiron::sync::federation_burst::FederationBurstPeerRequest,
+    ) -> Result<oneiron::sync::federation_burst::FederationBurstPolicy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.burst.policy", value)
+    }
+    pub fn vault_federation_burst_policy_set(
+        &self,
+        input: &oneiron::sync::federation_burst::FederationBurstPolicySetRequest,
+    ) -> Result<oneiron::sync::federation_burst::FederationBurstPolicy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.burst.policy.set", value)
+    }
+    pub fn vault_federation_burst_ingress(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectDelivery,
+    ) -> Result<oneiron::sync::federation_burst::FederationBurstReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.burst.ingress", value)
+    }
+    pub fn vault_federation_burst_disposition(
+        &self,
+        input: &oneiron::sync::federation_burst::FederationBurstReplayRequest,
+    ) -> Result<oneiron::sync::federation_burst::FederationBurstReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.burst.disposition", value)
+    }
+    pub fn vault_federation_burst_review(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::sync::federation_burst::FederationBurstReviewBundle>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.burst.review", value)
+    }
+    pub fn vault_federation_burst_review_release(
+        &self,
+        input: &oneiron::sync::federation_burst::FederationBurstReviewRequest,
+    ) -> Result<oneiron::sync::federation_burst::FederationBurstReviewReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.burst.review.release", value)
+    }
+    pub fn vault_federation_burst_review_reject(
+        &self,
+        input: &oneiron::sync::federation_burst::FederationBurstReviewRequest,
+    ) -> Result<oneiron::sync::federation_burst::FederationBurstReviewReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.burst.review.reject", value)
+    }
+    pub fn vault_federation_burst_replay(
+        &self,
+        input: &oneiron::sync::federation_burst::FederationBurstReplayRequest,
+    ) -> Result<oneiron::sync::federation_burst::FederationBurstReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.burst.replay", value)
     }
     pub fn vault_federation_connect_identity(
         &self,
@@ -10261,6 +10520,66 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.code.export", value)
     }
+    pub fn vault_code_origin_register(
+        &self,
+        input: &oneiron::memory::origin_doors::OriginRegisterRequest,
+    ) -> Result<oneiron::memory::origin_doors::OriginRegistered, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.register", value)
+    }
+    pub fn vault_code_origin_mirror_get(
+        &self,
+        input: &oneiron::memory::origin_doors::OriginRepoRequest,
+    ) -> Result<oneiron::memory::origin_doors::OriginMirrorView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.mirror.get", value)
+    }
+    pub fn vault_code_origin_mirror_set(
+        &self,
+        input: &oneiron::memory::origin_doors::OriginMirrorSetRequest,
+    ) -> Result<oneiron::origin::mirror::OriginMirrorTarget, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.mirror.set", value)
+    }
+    pub fn vault_code_origin_mirror_clear(
+        &self,
+        input: &oneiron::memory::origin_doors::OriginRepoRequest,
+    ) -> Result<oneiron::memory::origin_doors::OriginMirrorCleared, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.mirror.clear", value)
+    }
+    pub fn vault_code_origin_mirror_push(
+        &self,
+        input: &oneiron::memory::origin_doors::OriginRepoRequest,
+    ) -> Result<oneiron::origin::mirror::OriginMirrorRun, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.mirror.push", value)
+    }
     pub fn vault_code_origin_authority_get(
         &self,
         input: &oneiron::memory::origin_doors::OriginRepoRequest,
@@ -11894,6 +12213,78 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("ai.steps.receipt", value)
+    }
+    pub fn ai_streams_open(
+        &self,
+        input: &oneiron::llm::model_stream::ModelStreamOpen,
+    ) -> Result<oneiron::llm::model_stream::ModelStreamOpened, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.streams.open", value)
+    }
+    pub fn ai_streams_subscribe(
+        &self,
+        input: &oneiron::llm::model_stream::ModelStreamSubscribe,
+    ) -> Result<oneiron::llm::model_stream::ModelStreamSubscribed, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.streams.subscribe", value)
+    }
+    pub fn ai_streams_events(
+        &self,
+        input: &oneiron::llm::model_stream::ModelStreamEventsRequest,
+    ) -> Result<oneiron::llm::model_stream::ModelStreamEvents, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.streams.events", value)
+    }
+    pub fn ai_streams_detach(
+        &self,
+        input: &oneiron::llm::model_stream::ModelStreamDetach,
+    ) -> Result<oneiron::llm::model_stream::ModelStreamDetached, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.streams.detach", value)
+    }
+    pub fn ai_streams_abort(
+        &self,
+        input: &oneiron::llm::model_stream::ModelStreamAbort,
+    ) -> Result<oneiron::llm::model_stream::ModelStreamTerminal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.streams.abort", value)
+    }
+    pub fn ai_streams_terminal(
+        &self,
+        input: &oneiron::llm::model_stream::ModelStreamTerminalRequest,
+    ) -> Result<oneiron::llm::model_stream::ModelStreamTerminal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.streams.terminal", value)
     }
     pub fn ai_reply(
         &self,

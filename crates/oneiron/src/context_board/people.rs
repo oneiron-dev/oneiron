@@ -403,11 +403,13 @@ impl<'a> PeopleView<'a> {
     #[must_use]
     pub fn mention(&self, id: EntityId) -> Option<String> {
         let row = self.people.get(id)?;
-        Some(if self.resident.contains(&row.person) || row.name == row.handle {
-            row.handle.clone()
-        } else {
-            format!("{}({})", row.handle, one_line_token(&row.name))
-        })
+        Some(
+            if self.resident.contains(&row.person) || row.name == row.handle {
+                row.handle.clone()
+            } else {
+                format!("{}({})", row.handle, one_line_token(&row.name))
+            },
+        )
     }
 
     /// [`Self::mention`], falling back to the raw id.

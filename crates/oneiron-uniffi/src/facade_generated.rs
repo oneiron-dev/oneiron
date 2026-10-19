@@ -826,6 +826,36 @@ export_facade! {
     let output = client.vault_campaign_program_archive(&input)?;
     crate::codec::lift_record("vault.campaign.program.archive", &output)
 };
+"self.saved_query.create" => fn self_saved_query_create(&self, input: SavedQueryCreateRequest) -> SavedQueryRecordView = |client| {
+    let input: oneiron::campaign::surface::SavedQueryCreateRequest = crate::codec::lower_record("self.saved_query.create", input)?;
+    let output = client.self_saved_query_create(&input)?;
+    crate::codec::lift_record("self.saved_query.create", &output)
+};
+"self.saved_query.read" => fn self_saved_query_read(&self, input: SavedQueryReadRequest) -> SavedQueryReadResult = |client| {
+    let input: oneiron::campaign::surface::SavedQueryReadRequest = crate::codec::lower_record("self.saved_query.read", input)?;
+    let output = client.self_saved_query_read(&input)?;
+    crate::codec::lift_record("self.saved_query.read", &output)
+};
+"self.saved_query.update" => fn self_saved_query_update(&self, input: SavedQueryUpdateRequest) -> SavedQueryRecordView = |client| {
+    let input: oneiron::campaign::surface::SavedQueryUpdateRequest = crate::codec::lower_record("self.saved_query.update", input)?;
+    let output = client.self_saved_query_update(&input)?;
+    crate::codec::lift_record("self.saved_query.update", &output)
+};
+"self.saved_query.archive" => fn self_saved_query_archive(&self, input: SavedQueryArchiveRequest) -> SavedQueryRecordView = |client| {
+    let input: oneiron::campaign::surface::SavedQueryArchiveRequest = crate::codec::lower_record("self.saved_query.archive", input)?;
+    let output = client.self_saved_query_archive(&input)?;
+    crate::codec::lift_record("self.saved_query.archive", &output)
+};
+"self.saved_query.members" => fn self_saved_query_members(&self, input: SavedQueryMembersRequest) -> SavedQueryMembershipPageView = |client| {
+    let input: oneiron::campaign::surface::SavedQueryMembersRequest = crate::codec::lower_record("self.saved_query.members", input)?;
+    let output = client.self_saved_query_members(&input)?;
+    crate::codec::lift_record("self.saved_query.members", &output)
+};
+"self.saved_query.evaluate" => fn self_saved_query_evaluate(&self, input: SavedQueryEvaluateRequest) -> SavedQueryEvaluationReceipt = |client| {
+    let input: oneiron::campaign::surface::SavedQueryEvaluateRequest = crate::codec::lower_record("self.saved_query.evaluate", input)?;
+    let output = client.self_saved_query_evaluate(&input)?;
+    crate::codec::lift_record("self.saved_query.evaluate", &output)
+};
 "vault.weave.report" => fn vault_weave_report(&self, input: WeaveReportRequest) -> WeaveReportView = |client| {
     let input: oneiron::claim::WeaveReportRequest = crate::codec::lower_record("vault.weave.report", input)?;
     let output = client.vault_weave_report(&input)?;
@@ -1535,6 +1565,51 @@ export_facade! {
     let input: oneiron::task_verb::sdk::CoreferencePairRequest = crate::codec::lower_record("vault.federation.coreference.unlink", input)?;
     let output = client.vault_federation_coreference_unlink(&input)?;
     crate::codec::lift_record("vault.federation.coreference.unlink", &output)
+};
+"vault.federation.burst.baseline" => fn vault_federation_burst_baseline(&self, input: FederationBurstPeerRequest) -> FederationBurstBaselineState = |client| {
+    let input: oneiron::sync::federation_burst::FederationBurstPeerRequest = crate::codec::lower_record("vault.federation.burst.baseline", input)?;
+    let output = client.vault_federation_burst_baseline(&input)?;
+    crate::codec::lift_record("vault.federation.burst.baseline", &output)
+};
+"vault.federation.burst.policy" => fn vault_federation_burst_policy(&self, input: FederationBurstPeerRequest) -> FederationBurstPolicy = |client| {
+    let input: oneiron::sync::federation_burst::FederationBurstPeerRequest = crate::codec::lower_record("vault.federation.burst.policy", input)?;
+    let output = client.vault_federation_burst_policy(&input)?;
+    crate::codec::lift_record("vault.federation.burst.policy", &output)
+};
+"vault.federation.burst.policy.set" => fn vault_federation_burst_policy_set(&self, input: FederationBurstPolicySetRequest) -> FederationBurstPolicy = |client| {
+    let input: oneiron::sync::federation_burst::FederationBurstPolicySetRequest = crate::codec::lower_record("vault.federation.burst.policy.set", input)?;
+    let output = client.vault_federation_burst_policy_set(&input)?;
+    crate::codec::lift_record("vault.federation.burst.policy.set", &output)
+};
+"vault.federation.burst.ingress" => fn vault_federation_burst_ingress(&self, input: ConnectDelivery) -> FederationBurstReceipt = |client| {
+    let input: oneiron::task_verb::sdk::ConnectDelivery = crate::codec::lower_record("vault.federation.burst.ingress", input)?;
+    let output = client.vault_federation_burst_ingress(&input)?;
+    crate::codec::lift_record("vault.federation.burst.ingress", &output)
+};
+"vault.federation.burst.disposition" => fn vault_federation_burst_disposition(&self, input: FederationBurstReplayRequest) -> FederationBurstReceipt = |client| {
+    let input: oneiron::sync::federation_burst::FederationBurstReplayRequest = crate::codec::lower_record("vault.federation.burst.disposition", input)?;
+    let output = client.vault_federation_burst_disposition(&input)?;
+    crate::codec::lift_record("vault.federation.burst.disposition", &output)
+};
+"vault.federation.burst.review" => fn vault_federation_burst_review(&self) -> Vec<FederationBurstReviewBundle> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.federation.burst.review")?;
+    let output = client.vault_federation_burst_review(&input)?;
+    crate::codec::lift_record("vault.federation.burst.review", &output)
+};
+"vault.federation.burst.review.release" => fn vault_federation_burst_review_release(&self, input: FederationBurstReviewRequest) -> FederationBurstReviewReceipt = |client| {
+    let input: oneiron::sync::federation_burst::FederationBurstReviewRequest = crate::codec::lower_record("vault.federation.burst.review.release", input)?;
+    let output = client.vault_federation_burst_review_release(&input)?;
+    crate::codec::lift_record("vault.federation.burst.review.release", &output)
+};
+"vault.federation.burst.review.reject" => fn vault_federation_burst_review_reject(&self, input: FederationBurstReviewRequest) -> FederationBurstReviewReceipt = |client| {
+    let input: oneiron::sync::federation_burst::FederationBurstReviewRequest = crate::codec::lower_record("vault.federation.burst.review.reject", input)?;
+    let output = client.vault_federation_burst_review_reject(&input)?;
+    crate::codec::lift_record("vault.federation.burst.review.reject", &output)
+};
+"vault.federation.burst.replay" => fn vault_federation_burst_replay(&self, input: FederationBurstReplayRequest) -> FederationBurstReceipt = |client| {
+    let input: oneiron::sync::federation_burst::FederationBurstReplayRequest = crate::codec::lower_record("vault.federation.burst.replay", input)?;
+    let output = client.vault_federation_burst_replay(&input)?;
+    crate::codec::lift_record("vault.federation.burst.replay", &output)
 };
 "vault.federation.connect.identity" => fn vault_federation_connect_identity(&self) -> ConnectIdentity = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.federation.connect.identity")?;
@@ -2886,6 +2961,31 @@ export_facade! {
     let output = client.vault_code_export(&input)?;
     crate::codec::lift_record("vault.code.export", &output)
 };
+"vault.code.origin.register" => fn vault_code_origin_register(&self, input: OriginRegisterRequest) -> OriginRegistered = |client| {
+    let input: oneiron::memory::origin_doors::OriginRegisterRequest = crate::codec::lower_record("vault.code.origin.register", input)?;
+    let output = client.vault_code_origin_register(&input)?;
+    crate::codec::lift_record("vault.code.origin.register", &output)
+};
+"vault.code.origin.mirror.get" => fn vault_code_origin_mirror_get(&self, input: OriginRepoRequest) -> OriginMirrorView = |client| {
+    let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.mirror.get", input)?;
+    let output = client.vault_code_origin_mirror_get(&input)?;
+    crate::codec::lift_record("vault.code.origin.mirror.get", &output)
+};
+"vault.code.origin.mirror.set" => fn vault_code_origin_mirror_set(&self, input: OriginMirrorSetRequest) -> OriginMirrorTarget = |client| {
+    let input: oneiron::memory::origin_doors::OriginMirrorSetRequest = crate::codec::lower_record("vault.code.origin.mirror.set", input)?;
+    let output = client.vault_code_origin_mirror_set(&input)?;
+    crate::codec::lift_record("vault.code.origin.mirror.set", &output)
+};
+"vault.code.origin.mirror.clear" => fn vault_code_origin_mirror_clear(&self, input: OriginRepoRequest) -> OriginMirrorCleared = |client| {
+    let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.mirror.clear", input)?;
+    let output = client.vault_code_origin_mirror_clear(&input)?;
+    crate::codec::lift_record("vault.code.origin.mirror.clear", &output)
+};
+"vault.code.origin.mirror.push" => fn vault_code_origin_mirror_push(&self, input: OriginRepoRequest) -> OriginMirrorRun = |client| {
+    let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.mirror.push", input)?;
+    let output = client.vault_code_origin_mirror_push(&input)?;
+    crate::codec::lift_record("vault.code.origin.mirror.push", &output)
+};
 "vault.code.origin.authority.get" => fn vault_code_origin_authority_get(&self, input: OriginRepoRequest) -> OriginAuthorityView = |client| {
     let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.authority.get", input)?;
     let output = client.vault_code_origin_authority_get(&input)?;
@@ -3560,6 +3660,36 @@ export_facade! {
     let input: oneiron::llm::model_step::ModelStepReceiptRequest = crate::codec::lower_record("ai.steps.receipt", input)?;
     let output = client.ai_steps_receipt(&input)?;
     crate::codec::lift_record("ai.steps.receipt", &output)
+};
+"ai.streams.open" => fn ai_streams_open(&self, input: ModelStreamOpen) -> ModelStreamOpened = |client| {
+    let input: oneiron::llm::model_stream::ModelStreamOpen = crate::codec::lower_record("ai.streams.open", input)?;
+    let output = client.ai_streams_open(&input)?;
+    crate::codec::lift_record("ai.streams.open", &output)
+};
+"ai.streams.subscribe" => fn ai_streams_subscribe(&self, input: ModelStreamSubscribe) -> ModelStreamSubscribed = |client| {
+    let input: oneiron::llm::model_stream::ModelStreamSubscribe = crate::codec::lower_record("ai.streams.subscribe", input)?;
+    let output = client.ai_streams_subscribe(&input)?;
+    crate::codec::lift_record("ai.streams.subscribe", &output)
+};
+"ai.streams.events" => fn ai_streams_events(&self, input: ModelStreamEventsRequest) -> ModelStreamEvents = |client| {
+    let input: oneiron::llm::model_stream::ModelStreamEventsRequest = crate::codec::lower_record("ai.streams.events", input)?;
+    let output = client.ai_streams_events(&input)?;
+    crate::codec::lift_record("ai.streams.events", &output)
+};
+"ai.streams.detach" => fn ai_streams_detach(&self, input: ModelStreamDetach) -> ModelStreamDetached = |client| {
+    let input: oneiron::llm::model_stream::ModelStreamDetach = crate::codec::lower_record("ai.streams.detach", input)?;
+    let output = client.ai_streams_detach(&input)?;
+    crate::codec::lift_record("ai.streams.detach", &output)
+};
+"ai.streams.abort" => fn ai_streams_abort(&self, input: ModelStreamAbort) -> ModelStreamTerminal = |client| {
+    let input: oneiron::llm::model_stream::ModelStreamAbort = crate::codec::lower_record("ai.streams.abort", input)?;
+    let output = client.ai_streams_abort(&input)?;
+    crate::codec::lift_record("ai.streams.abort", &output)
+};
+"ai.streams.terminal" => fn ai_streams_terminal(&self, input: ModelStreamTerminalRequest) -> ModelStreamTerminal = |client| {
+    let input: oneiron::llm::model_stream::ModelStreamTerminalRequest = crate::codec::lower_record("ai.streams.terminal", input)?;
+    let output = client.ai_streams_terminal(&input)?;
+    crate::codec::lift_record("ai.streams.terminal", &output)
 };
 "ai.reply" => fn ai_reply(&self, input: AiReplyRequest) -> AiReply = |client| {
     let input: oneiron::task_verb::sdk::AiReplyRequest = crate::codec::lower_record("ai.reply", input)?;

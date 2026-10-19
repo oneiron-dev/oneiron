@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1051 code-mode rows (1027 host rows, 24 run rows), 3493 declarations.
-// Replies: 943 fully typed, 104 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1077 code-mode rows (1053 host rows, 24 run rows), 3554 declarations.
+// Replies: 961 fully typed, 112 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -732,6 +732,34 @@ declare namespace Sdk {
   type CampaignProgramReadResult = { found: boolean; record?: CampaignProgramRecord | null };
   type UpdateCampaignProgramRequest = { campaign_ref: string; program_ref: string; expected_definition_version: number; name: string; steps: CampaignProgramStepSpec[]; audience?: CampaignProgramAudienceSpec | null };
   type ArchiveCampaignProgramRequest = { campaign_ref: string; program_ref: string; expected_definition_version: number };
+  type SavedQueryScopeSpec = { worlds?: EntityId[]; facets?: string[] };
+  type ClaimComparison = "exists" | "eq" | "not_eq" | "lt" | "lte" | "gt" | "gte" | "contains";
+  type SavedQueryFilterSpec = { op: "task_owner"; owner: EntityId } | { op: "all"; terms: SavedQueryFilterSpec[] } | { op: "any"; terms: SavedQueryFilterSpec[] } | { op: "not"; term: SavedQueryFilterSpec } | { op: "claim"; predicate: string; cmp: ClaimComparison; value?: unknown } | { op: "edge_exists"; edge_kind: string; target?: EntityId | null };
+  type SavedQueryMatcherSpec = { kind: "hard"; expression: SavedQueryFilterSpec } | { kind: "semantic_threshold"; exemplar_ref: EntityId; minimum_similarity_micros: number } | { kind: "llm_judge"; model_id: string; rubric?: unknown; rubric_version: string };
+  type EvalMode = "reactive" | "wake" | "manual";
+  type SavedQueryEvalSpec = { mode: EvalMode; max_entities_per_wake: number; max_judges_per_wake: number };
+  type SavedQueryCreateRequest = { schema_version?: number; scope?: SavedQueryScopeSpec; filter: SavedQueryFilterSpec; matcher: SavedQueryMatcherSpec; eval: SavedQueryEvalSpec };
+  type SavedQueryLifecycle = { state: "active" } | { state: "paused"; error: string } | { state: "disabled" } | { state: "archived" };
+  type SavedQueryDefinitionView = { schema_version: number; owner_actor: EntityId; scope: SavedQueryScopeSpec; definition_version: number; filter: SavedQueryFilterSpec; matcher: SavedQueryMatcherSpec; eval: SavedQueryEvalSpec; lifecycle: SavedQueryLifecycle };
+  type SavedQueryRecordView = { query_ref: EntityId; definition: SavedQueryDefinitionView; created_at: number; updated_at: number };
+  type SavedQueryReadRequest = { query_ref: EntityId };
+  type SavedQueryReadResult = { found: boolean; record?: SavedQueryRecordView | null };
+  type SavedQueryUpdateRequest = { query_ref: EntityId; expected_definition_version: number; scope?: SavedQueryScopeSpec; filter: SavedQueryFilterSpec; matcher: SavedQueryMatcherSpec; eval: SavedQueryEvalSpec };
+  type SavedQueryArchiveRequest = { query_ref: EntityId; expected_definition_version: number };
+  type SavedQueryMembersRequest = { query_ref: EntityId; cursor?: string | null; limit?: number; at_epoch?: number | null };
+  type SavedQueryMembershipRowView = { entity_ref: EntityId; state: string; entered_valid: number; entered_detected: number; exited_valid?: number | null; exited_detected?: number | null; cause?: string | null };
+  type SavedQueryMembershipPageView = { rows: SavedQueryMembershipRowView[]; next_cursor?: string | null };
+  type SavedQueryEvaluateRequest = { query_ref: EntityId; candidates?: EntityId[]; after?: EntityId | null };
+  type MatchVerdict = "match" | "no_match";
+  type SavedQueryMemoReceipt = { definition_version: number; verdict: MatchVerdict; why: string; content_hash: string; model_id: string; version: string; params_hash: string; evaluated_at: number };
+  type ProviderPin = { rung: DecisionRung; model: string; version: string };
+  type LlmInputUsage = { total: number; cache_read: number; cache_write: number };
+  type LlmOutputUsage = { total: number; text: number; reasoning: number };
+  type LlmUsage = { input: LlmInputUsage; output: LlmOutputUsage; raw_provider: unknown };
+  type SavedQueryGenerationReceipt = { request_hash: string; usage: LlmUsage };
+  type SavedQueryJudgeReceipt = { providers: ProviderPin[]; cost_per_thousand?: number | null; generations: SavedQueryGenerationReceipt[] };
+  type SavedQueryEntityReceipt = { entity_ref: EntityId; verdict: MatchVerdict; why: string; evidence_hash: string; memo_hit: boolean; judge_ran: boolean; memo?: SavedQueryMemoReceipt | null; judge?: SavedQueryJudgeReceipt | null };
+  type SavedQueryEvaluationReceipt = { query_ref: EntityId; owner_actor: EntityId; definition_version: number; evaluated: number; memo_hits: number; judges_run: number; resume_after?: EntityId | null; outcomes: SavedQueryEntityReceipt[] };
   type WeaveSectionKind = "changes" | "projects" | "open_asks" | "links" | "conflicts" | "exceptions" | "admissions" | "budgets" | "sieve_score" | "digest";
   type WeaveSectionInput = { kind: WeaveSectionKind; predicates?: string[]; edge_kinds?: string[] };
   type WeaveReportRequest = { sections: WeaveSectionInput[] };
@@ -944,7 +972,6 @@ declare namespace Sdk {
   type TradeoffRole = { author: EntityId } | { board: { project: EntityId; people: EntityId[] } } | { vault_owner: EntityId[] };
   type GoalAxisScore = { kind: GoalAxisKind; before: number; after: number };
   type SkillTradeoffQuestion = { goal_id: EntityId; goal_revision: string; project?: EntityId | null; roles: TradeoffRole[]; proposal: EntityId; proposal_digest: string; target_digest: string; evidence_digest: string; world_digest: string; axes: Record<string, GoalAxisScore>; gains: string[]; losses: string[] };
-  type ProviderPin = { rung: DecisionRung; model: string; version: string };
   type JevTradeoffVerdict = { question_digest: string; choice: TradeoffChoice; probability: number; pin: ProviderPin };
   type SkillTradeoffAsk = { pending: EntityId; question: SkillTradeoffQuestion; jev?: JevTradeoffVerdict | null; rung: number };
   type SkillOptimizeTradeoffAskView = { question_digest: string; ask: SkillTradeoffAsk };
@@ -1202,6 +1229,24 @@ declare namespace Sdk {
   type CoreferenceShareConsentRequest = { local_person: EntityId; other_person: EntityId; pact: string };
   type CoreferenceShareConsentReceipt = { local_person: EntityId; other_person: EntityId; pact: string; consent_claim: EntityId };
   type CoreferenceUnlinkReceipt = { local_person: EntityId; other_person: EntityId; unlinked: boolean; retracted_claims: EntityId[]; original_claims_retained: boolean };
+  type FederationBurstScope = { kind: "vault"; vault_id: number } | { kind: "connect"; peer_vault_id: string };
+  type FederationBurstWorld = { kind: "all" } | { kind: "base" } | { kind: "world"; world_ref: EntityId };
+  type FederationBurstPeerRequest = { principal: EntityId; grant: EntityId; scope: FederationBurstScope; world: FederationBurstWorld; facets?: EntityId[]; bands?: SelectorRange[] };
+  type FederationBurstBaseline = { name: string; writes_per_sec: number; structural_streak: number };
+  type FederationBurstBaselineState = { baseline: FederationBurstBaseline; learned: boolean; vault_size: number; recent_writes: number; rate_ratio: number; streak: number; streak_ratio: number };
+  type FederationBurstOutcome = "allow" | "isolate-and-propose" | "defer";
+  type FederationBurstPolicy = { baseline?: FederationBurstBaseline | null; unusual_rate: FederationBurstOutcome; unusual_streak: FederationBurstOutcome };
+  type FederationBurstPolicySetRequest = { peer: FederationBurstPeerRequest; policy: FederationBurstPolicy };
+  type ConnectWindow = { pact: string; epoch: number; source_vault: string; recipient_vault: string; world_ref: EntityId; facets: EntityId[]; bands: SelectorRange[]; window_key: string; update: number[] };
+  type ConnectDelivery = { body: ConnectWindow; signature: string };
+  type FederationBurstDisposition = { outcome: "allow" } | { outcome: "isolate-and-propose"; bundle_ref: string; replay_ref: string } | { outcome: "defer"; replay_ref: string };
+  type FederationBurstWorkState = "pending" | "imported" | "rejected";
+  type FederationBurstReceipt = { batch_ref: string; principal: EntityId; grant: EntityId; window_key: string; disposition: FederationBurstDisposition; state: FederationBurstWorkState; baseline: FederationBurstBaselineState };
+  type FederationBurstReplayRequest = { peer: FederationBurstPeerRequest; batch_ref: string };
+  type FederationIsolatedUpdate = { request_ref: string; window: string; admitted_update: number[]; rate_ratio: number; streak_ratio: number };
+  type FederationBurstReviewBundle = { bundle_ref: string; request_refs: string[]; updates: FederationIsolatedUpdate[]; quarantined: boolean; replay_automatic: boolean };
+  type FederationBurstReviewRequest = { bundle_ref: string };
+  type FederationBurstReviewReceipt = { bundle_ref: string; batches: FederationBurstReceipt[] };
   type ConnectIdentity = { vault: string; host_key: string };
   type MintConnectGrant = { peer_vault: string; authority_scope: Scope; expires_at?: number | null };
   type ConnectGrant = { grant: string; guest_actor: string; resolved_scope: Scope; expires_at?: number | null };
@@ -1221,8 +1266,6 @@ declare namespace Sdk {
   type GuestCopyState = "unknown";
   type ConnectDisconnected = { receipt: ConnectPactReceipt; outbound_access: boolean; inbound_access: boolean; sync_stopped: boolean; copied_bytes_recallable: boolean; recipient_copy_state: GuestCopyState };
   type ConnectExportRequest = { pact: string; window_key: string; world_ref: EntityId; facets?: EntityId[]; bands?: SelectorRange[] };
-  type ConnectWindow = { pact: string; epoch: number; source_vault: string; recipient_vault: string; world_ref: EntityId; facets: EntityId[]; bands: SelectorRange[]; window_key: string; update: number[] };
-  type ConnectDelivery = { body: ConnectWindow; signature: string };
   type ConnectRejoinStatus = "imported" | "deferred";
   type ConnectRejoined = { pact: string; epoch: number; world_ref: EntityId; status: ConnectRejoinStatus; request?: string | null };
   type TrustedContactReach = { sender: EntityId; channel: string; verb: string; target: string };
@@ -2081,7 +2124,14 @@ declare namespace Sdk {
   type OriginPublicationState = "prepared" | "published" | "failed" | "conflicted";
   type OriginPublicationView = { receipt: EntityId; repo_id: EntityId; ref_name: string; git_commit: string; provenance_receipt: EntityId; publication_claim?: EntityId | null; actor?: EntityId | null; status: OriginPublicationState; failure?: string | null; created_at: number; finished_at?: number | null };
   type CodeExportResult = { revision: EntityId; git_commit: string; remote_url: string; receipt: EntityId; publication: OriginPublicationView; ref_was_already_applied: boolean; wire_replayed: boolean; wire_rejected: boolean };
+  type OriginRegisterRequest = { repo: string; default_branch: string };
+  type OriginRegistered = { repo: string; repo_id: EntityId; default_branch: string };
   type OriginRepoRequest = { repo: string };
+  type OriginMirrorRun = { at: number; refs: number; deleted: number; failure?: string | null };
+  type OriginMirrorTarget = { repo: string; url: string; secret_ref: string; user: string; every_secs: number; last?: OriginMirrorRun | null; pushed: string[] };
+  type OriginMirrorView = { repo: string; mirror?: OriginMirrorTarget | null };
+  type OriginMirrorSetRequest = { repo: string; url: string; secret_ref: string; user?: string | null; every_secs: number };
+  type OriginMirrorCleared = { repo: string; cleared: boolean };
   type OriginResidence = "local-vault" | "cloud-vault";
   type OriginAuthority = { epoch: number; residence: OriginResidence; writer: string; mirror: boolean };
   type OriginAuthorityView = { repo: string; host?: string | null; authority?: OriginAuthority | null };
@@ -2556,9 +2606,6 @@ declare namespace Sdk {
   type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
   type ModelStepRetryPolicy = { max_attempts: number };
   type ModelStepSubmit = { step_key: string; request: LlmRequest; retry?: ModelStepRetryPolicy };
-  type LlmInputUsage = { total: number; cache_read: number; cache_write: number };
-  type LlmOutputUsage = { total: number; text: number; reasoning: number };
-  type LlmUsage = { input: LlmInputUsage; output: LlmOutputUsage; raw_provider: unknown };
   type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason };
   type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input";
   type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
@@ -2573,6 +2620,19 @@ declare namespace Sdk {
   type ModelStepResult = { status: "finished"; response: LlmResponse; json?: unknown | null; memoized: boolean; fallback_source?: FatalLlmError | null; claim_ref: string } | { status: "failed"; failure: ModelStepFailure } | { status: "budget_denied"; trap_ref: string };
   type ModelStepReceipt = { step_ref: string; step_hash: string; model: ModelId; retry: ModelStepRetryPolicy; progression?: StepProgression | null; result?: ModelStepResult | null };
   type ModelStepReceiptRequest = { step_key: string };
+  type ModelStreamOpen = { stream_key: string; request: LlmRequest };
+  type ModelStreamStatus = "pending" | "live" | "finished" | "failed";
+  type ModelStreamOpened = { stream_ref: string; stream_key: string; model: ModelId; status: ModelStreamStatus };
+  type ModelStreamSubscribe = { stream_key: string };
+  type ModelStreamSubscribed = { stream_ref: string; stream_key: string; handle: string; status: ModelStreamStatus };
+  type ModelStreamEventsRequest = { stream_key: string; handle: string; limit?: number | null };
+  type LlmStreamEvent = { event: "text_start"; part_id: string } | { event: "text_delta"; part_id: string; text: string } | { event: "text_end"; part_id: string } | { event: "reasoning_start"; part_id: string; signature?: string | null } | { event: "reasoning_delta"; part_id: string; text: string } | { event: "reasoning_end"; part_id: string } | { event: "tool_call_start"; part_id: string; call_id: string; name: string } | { event: "tool_call_delta"; part_id: string; input_fragment: string } | { event: "tool_call_end"; part_id: string; call_id: string; name: string; input: unknown } | { event: "tool_result_start"; part_id: string; call_id: string } | { event: "tool_result_delta"; part_id: string; output_fragment: string } | { event: "tool_result_end"; part_id: string; call_id: string; output: unknown; is_error?: boolean } | { event: "image_start"; part_id: string; media_type: string } | { event: "image_delta"; part_id: string; data_fragment: string } | { event: "image_end"; part_id: string; media_type: string; image: ImageContent } | { event: "done"; message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason };
+  type ModelStreamEvents = { stream_ref: string; stream_key: string; handle: string; events: LlmStreamEvent[]; closed: boolean; status: ModelStreamStatus };
+  type ModelStreamDetach = { stream_key: string; handle: string };
+  type ModelStreamDetached = { stream_ref: string; stream_key: string; handle: string; detached: boolean };
+  type ModelStreamAbort = { stream_key: string; usage: LlmUsage };
+  type ModelStreamTerminal = { stream_ref: string; stream_key: string; model: ModelId; status: ModelStreamStatus; response?: LlmResponse | null; failure?: string | null };
+  type ModelStreamTerminalRequest = { stream_key: string };
   type AiReplyReader = { definition: string; task_family?: string | null };
   type ContextPackRetrievalBudgetControls = { claims?: number | null; turns?: number | null; summaries?: number | null; facets?: number | null; other?: number | null; selected_edges?: number | null };
   type ContextPackBudgetControls = { token_budget?: number | null; max_item_tokens?: number | null; max_field_chars?: number | null; retrieval?: ContextPackRetrievalBudgetControls | null };
@@ -3147,9 +3207,10 @@ declare namespace Sdk {
   type CheckpointResumeView = { step: number; wait_ref: string; effect: string; output_handle: string; reply?: unknown | null };
   type CheckpointView = { run_ref: string; completed_steps: number; steps: CheckpointStepView[]; resumed: CheckpointResumeView[]; next_step?: number | null };
   type ConsolidationHomeNode = { node_id: string; class: string; elected_at: number };
+  type ConsolidationHomeCandidate = { node_id: string; class?: string | null; cloud: boolean; attached: boolean; always_on_local: boolean; primary_device: boolean };
   type ConsolidationHomePickHead = { act_ref: string; machine: EntityId; node_id?: string | null; at: number };
-  type ConsolidationHomeView = { home?: ConsolidationHomeNode | null; this_node?: string | null; candidates_available: boolean; pick?: string | null; revision: string; heads: ConsolidationHomePickHead[]; conflict: ConsolidationHomePickHead[] };
-  type ConsolidationHomePickRequest = { node_id?: string | null };
+  type ConsolidationHomeView = { home?: ConsolidationHomeNode | null; this_node?: string | null; candidates_available: boolean; candidates: ConsolidationHomeCandidate[]; pick?: string | null; revision: string; heads: ConsolidationHomePickHead[]; conflict: ConsolidationHomePickHead[] };
+  type ConsolidationHomePickRequest = { node_id?: string | null; seen?: string | null };
   type ConsolidationHomePickReceipt = { pick?: string | null; act_ref: string; revision: string; heads: ConsolidationHomePickHead[]; conflict: ConsolidationHomePickHead[]; home?: ConsolidationHomeNode | null };
   type ConsolidationLineageRequest = { job_ref: string; from_step?: string | null; limit?: number | null };
   type ConsolidationTryView = { job_ref: string; kind: string; state: AttemptState; run_id?: string | null; parent_attempt?: string | null; retry_of?: string | null; folded_retries: number; attempt_count: number; lease_owner?: string | null; result_ref?: string | null; resume_point?: AttemptResumePoint | null; parked?: DreamerParkedAttemptView | null };
@@ -3533,6 +3594,20 @@ declare const ai: {
     /** Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result. */
     submit(input: Sdk.ModelStepSubmit): Promise<Sdk.ModelStepReceipt | StoredResult>;
   };
+  streams: {
+    /** Abort the caller's shared model stream with actual usage: subscribers receive the cancelled Done of the parts completed so far, recorded as the one durable terminal. */
+    abort(input: Sdk.ModelStreamAbort): Promise<Sdk.ModelStreamTerminal | StoredResult>;
+    /** Detach only this subscription from the shared model stream; the producer and every other subscriber continue. */
+    detach(input: Sdk.ModelStreamDetach): Promise<Sdk.ModelStreamDetached | StoredResult>;
+    /** Drain one subscription's queued typed LlmStreamEvents (part-correlated text, reasoning, tool and image deltas, then Done) without blocking; closed once the producer ended and the queue is empty. */
+    events(input: Sdk.ModelStreamEventsRequest): Promise<Sdk.ModelStreamEvents | StoredResult>;
+    /** Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one. */
+    open(input: Sdk.ModelStreamOpen): Promise<Sdk.ModelStreamOpened | StoredResult>;
+    /** Attach before or after open to the caller's shared model stream, without starting a producer; replay every typed part event from the first under an independently detachable handle. */
+    subscribe(input: Sdk.ModelStreamSubscribe): Promise<Sdk.ModelStreamSubscribed | StoredResult>;
+    /** Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model. */
+    terminal(input: Sdk.ModelStreamTerminalRequest): Promise<Sdk.ModelStreamTerminal | StoredResult>;
+  };
   /** Text out of speech audio, from the host's transcription model. */
   transcribe(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt. */
@@ -3872,6 +3947,20 @@ declare namespace self {
   const run: {
     /** Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls. */
     attach(input: Sdk.RunAttachRequest): Promise<Sdk.RunAttached | StoredResult>;
+  };
+  const saved_query: {
+    /** Archives a saved query under a definition-version check: it stays readable and is never evaluated again. */
+    archive(input: Sdk.SavedQueryArchiveRequest): Promise<Sdk.SavedQueryRecordView | StoredResult>;
+    /** Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller. */
+    create(input: Sdk.SavedQueryCreateRequest): Promise<Sdk.SavedQueryRecordView | StoredResult>;
+    /** Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity. */
+    evaluate(input: Sdk.SavedQueryEvaluateRequest): Promise<Sdk.SavedQueryEvaluationReceipt | StoredResult>;
+    /** One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved. */
+    members(input: Sdk.SavedQueryMembersRequest): Promise<Sdk.SavedQueryMembershipPageView | StoredResult>;
+    /** One saved query the caller owns; a query absent or not the caller's reads as not found. */
+    read(input: Sdk.SavedQueryReadRequest): Promise<Sdk.SavedQueryReadResult | StoredResult>;
+    /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check. */
+    update(input: Sdk.SavedQueryUpdateRequest): Promise<Sdk.SavedQueryRecordView | StoredResult>;
   };
   const secrets: {
     /** Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value. */
@@ -4459,8 +4548,20 @@ declare const vault: Sdk.VaultHost & {
         /** Cut over one existing served origin under the owner proof and expected authority epoch. */
         set(input: Sdk.OriginAuthoritySetRequest): Promise<Sdk.OriginAuthorityView | StoredResult>;
       };
+      mirror: {
+        /** Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes. */
+        clear(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorCleared | StoredResult>;
+        /** Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential. */
+        get(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorView | StoredResult>;
+        /** Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client. */
+        push(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorRun | StoredResult>;
+        /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write. */
+        set(input: Sdk.OriginMirrorSetRequest): Promise<Sdk.OriginMirrorTarget | StoredResult>;
+      };
       /** Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement. */
       publications(input: Sdk.OriginPublicationsRequest): Promise<Sdk.OriginPublicationsView | StoredResult>;
+      /** Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused. */
+      register(input: Sdk.OriginRegisterRequest): Promise<Sdk.OriginRegistered | StoredResult>;
     };
     /** Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; nothing lands. */
     proposal_resolve(input: Sdk.CodeProposalResolveRequest): Promise<Sdk.CodeProposalSubmitted | StoredResult>;
@@ -4616,9 +4717,9 @@ declare const vault: Sdk.VaultHost & {
     /** Records immutable child judgements and reference sets against an existing root pin, in any completion order, and accounts source-plus-hash corroboration without merging projects. Does not settle claims. */
     frontier(input: Sdk.ConsolidationFrontierRequest): Promise<Sdk.ConsolidationRootAccounting | StoredResult>;
     home: {
-      /** The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything. */
+      /** The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything. */
       get(input: Sdk.EmptyRequest): Promise<Sdk.ConsolidationHomeView | StoredResult>;
-      /** The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget. */
+      /** The owner picks or clears the node that runs his vault's MACRO consolidation: a signed act every linked machine folds, recorded even for a node unknown here; a stale seen revision refuses. It re-elects this home and moves no job or lease. */
       pick(input: Sdk.ConsolidationHomePickRequest): Promise<Sdk.ConsolidationHomePickReceipt | StoredResult>;
     };
     /** The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model. */
@@ -4854,6 +4955,28 @@ declare const vault: Sdk.VaultHost & {
     spawn(input: Sdk.LiveRunRequest<Sdk.FanoutBatchInput>): Promise<Sdk.FanoutBatchView | StoredResult>;
   };
   federation: {
+    burst: {
+      /** The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context. */
+      baseline(input: Sdk.FederationBurstPeerRequest): Promise<Sdk.FederationBurstBaselineState | StoredResult>;
+      /** The owner reads an authenticated batch original disposition, named baseline context and current durable replay state. */
+      disposition(input: Sdk.FederationBurstReplayRequest): Promise<Sdk.FederationBurstReceipt | StoredResult>;
+      /** The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt. */
+      ingress(input: Sdk.ConnectDelivery): Promise<Sdk.FederationBurstReceipt | StoredResult>;
+      /** The owner reads one grant-bound peer's relative-burst outcome policy. */
+      policy: ((input: Sdk.FederationBurstPeerRequest) => Promise<Sdk.FederationBurstPolicy | StoredResult>) & {
+        /** The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant. */
+        set(input: Sdk.FederationBurstPolicySetRequest): Promise<Sdk.FederationBurstPolicy | StoredResult>;
+      };
+      /** The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit. */
+      replay(input: Sdk.FederationBurstReplayRequest): Promise<Sdk.FederationBurstReceipt | StoredResult>;
+      /** The owner reads retained peer review bundles, coalesced once per peer and kept after replay or rejection. */
+      review: ((input: Sdk.EmptyRequest) => Promise<Sdk.FederationBurstReviewBundle[] | StoredResult>) & {
+        /** The owner rejects a bundle's pending batches while retaining its review evidence and terminal dispositions. */
+        reject(input: Sdk.FederationBurstReviewRequest): Promise<Sdk.FederationBurstReviewReceipt | StoredResult>;
+        /** The owner releases a bundle's burst hold for current-grant replay without importing evidence or widening authority. */
+        release(input: Sdk.FederationBurstReviewRequest): Promise<Sdk.FederationBurstReviewReceipt | StoredResult>;
+      };
+    };
     connect: {
       /** The owner accepts the peer host signed Connect half and receives the matching host counter-half. */
       accept(input: Sdk.AcceptConnect): Promise<Sdk.ConnectAccepted | StoredResult>;
