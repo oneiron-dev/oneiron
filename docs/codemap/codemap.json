@@ -76680,6 +76680,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/conversation_learning_routes.rs",
+     "purpose": "`/v1/owner/conversation-learning`: a person reads and sets their own \"Learn from my conversations\" choice…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/cooperative_deletion_routes.rs",
      "purpose": "`/v1/owner/courtesy-delete`: courtesy unsend (OF-273), behind the same owner door as every other owner route",
      "surface": {
@@ -77103,7 +77113,7 @@
      "path": "src/api/owner_routes/world_privacy_routes.rs",
      "purpose": "`/v1/owner/worlds/privacy`: a holder answers the world-privacy requests agents raised (FIX 4480)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -83518,7 +83528,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 440,
+     "files": 441,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -83947,7 +83957,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 805,
+   "source_files": 806,
    "test_files": 182
   },
   "oneiron-spawn": {
