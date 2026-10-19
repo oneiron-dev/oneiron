@@ -386,7 +386,9 @@ impl Vault {
             {
                 continue;
             }
-            let records = match self.append_world_key_wraps_in_txn(
+            // On the old pin's own rows, never the frontier the new marks
+            // moved on to (CALLS "FIX 5464 partial evidence").
+            let records = match self.append_world_key_wraps_explicit_in_txn(
                 txn,
                 &start.old,
                 door.signing,

@@ -1,6 +1,12 @@
 //! A key record's appends: one machine's wraps of one key, as side entries
 //! of the key's world, split across records within the codec's bounds, and
 //! the sequence and chain each record of one door transaction takes.
+//!
+//! A record names this install's main heads and its world's side leaves in
+//! place of the rows its evidence rests on whenever those carry every such
+//! row ([`KeyFrontier`], FIX 5464), so a resumed fold and a fold past an
+//! adopted image fold it without the whole history; otherwise it names the
+//! rows themselves, as before. The bridge record keeps its own parents.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,7 +17,7 @@ use super::super::pads::require_pad_in_txn;
 use super::super::{PolicyRevision, WorldKey, WorldKeyBinding, WrapRecipient, seal_world_key};
 use super::{FrontierWide, RootRecipient, provenance};
 use crate::authority::{
-    AuthorityEntryHash, AuthorityFold, AuthorityLogEntry, AuthorityOp, MAX_PARENTS,
+    AuthorityEntryHash, AuthorityFold, AuthorityLogEntry, AuthorityOp, KeyFrontier, MAX_PARENTS,
     WORLD_KEY_WRAPS_MAX, invalid_authority, next_sequence, scope_head, sign_side_entry,
     standing_rows,
 };
@@ -27,6 +33,18 @@ type WrapChunk<'a> = (
 /// The parents one key record names beside its signer's previous row of the
 /// world.
 const RECORD_PARENTS: usize = MAX_PARENTS - 1;
+
+/// Which parents an append's records may name.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Parents {
+    /// The frontier candidate when it carries every row the records would
+    /// name, else those rows.
+    Frontier,
+    /// The rows the records' evidence rests on alone: a view the store has
+    /// moved past (repin's old-pin pre-wrap, CALLS "FIX 5464 partial
+    /// evidence").
+    Explicit,
+}
 
 /// One machine's next sequences inside one door transaction, and the last
 /// row it wrote there for each world.
@@ -75,15 +93,20 @@ impl SequenceCounter {
 
 impl Vault {
     /// Appends `machine`'s wraps of `key` to `recipients` in the caller's
-    /// write transaction, as side entries of the key's world. Parents and
-    /// the settings revision come from `fold`: the world's live edits, the
-    /// rows each named machine's standing rests on, the root's record, and
-    /// `request`, the owner work request the records do (`None` for an
-    /// eligible reader's own wraps), counted before any split. Recipients are
-    /// split across records so each stays within the codec's bounds. Returns
-    /// the records' hashes; the caller judges the refold. A world whose rows
-    /// outgrow one record raises its OF-520 question and writes nothing
-    /// ([`FrontierWide`]).
+    /// write transaction, as side entries of the key's world. The settings
+    /// revision comes from `fold`, and the rows the records' evidence rests on:
+    /// the world's live edits, the rows each named machine's standing rests
+    /// on, the root's record, and `request`, the owner work request the
+    /// records do (`None` for an eligible reader's own wraps), counted before
+    /// any split. Recipients are split across records so each stays within
+    /// the codec's bounds. When this install's main heads and the world's side
+    /// leaves carry every one of those rows, the first record names them and
+    /// each later one the record before it ([`KeyFrontier`], FIX 5464);
+    /// otherwise each names the rows themselves and its signer's previous row
+    /// of the world. Returns the records' hashes; the caller judges the
+    /// refold. A world whose rows outgrow one record raises its OF-520
+    /// question and writes nothing ([`FrontierWide`]), whichever parents a
+    /// record would take.
     #[expect(
         clippy::too_many_arguments,
         reason = "one append: the snapshot, the signer, the key, its recipients and its request"
@@ -99,6 +122,66 @@ impl Vault {
         recipients: &[(WrapRecipient, HybridPublicKey)],
         seq: &mut SequenceCounter,
         request: Option<AuthorityEntryHash>,
+    ) -> Result<std::result::Result<Vec<AuthorityEntryHash>, FrontierWide>> {
+        self.append_wraps_in_txn(
+            txn,
+            fold,
+            signing,
+            (machine, key, owner),
+            recipients,
+            seq,
+            request,
+            Parents::Frontier,
+        )
+    }
+
+    /// [`Self::append_world_key_wraps_in_txn`] on the rows the records'
+    /// evidence rests on alone, never the frontier: for `fold`, a view the
+    /// store has moved past since (repin's pre-wrap on the old pin's rows,
+    /// after the new marks and pin are stored).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one append: the snapshot, the signer, the key, its recipients and its request"
+    )]
+    pub(crate) fn append_world_key_wraps_explicit_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        signing: &SigningKey,
+        machine: EntityId,
+        key: &WorldKey,
+        owner: EntityId,
+        recipients: &[(WrapRecipient, HybridPublicKey)],
+        seq: &mut SequenceCounter,
+        request: Option<AuthorityEntryHash>,
+    ) -> Result<std::result::Result<Vec<AuthorityEntryHash>, FrontierWide>> {
+        self.append_wraps_in_txn(
+            txn,
+            fold,
+            signing,
+            (machine, key, owner),
+            recipients,
+            seq,
+            request,
+            Parents::Explicit,
+        )
+    }
+
+    /// One append of `key`'s wraps, its records' parents as `mode` allows.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one append: the snapshot, the signer, the key, its recipients and its parents"
+    )]
+    fn append_wraps_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        signing: &SigningKey,
+        (machine, key, owner): (EntityId, &WorldKey, EntityId),
+        recipients: &[(WrapRecipient, HybridPublicKey)],
+        seq: &mut SequenceCounter,
+        request: Option<AuthorityEntryHash>,
+        mode: Parents,
     ) -> Result<std::result::Result<Vec<AuthorityEntryHash>, FrontierWide>> {
         if recipients.is_empty() {
             return Ok(Ok(Vec::new()));
@@ -185,10 +268,58 @@ impl Vault {
             wraps.push((*recipient, public));
         }
         chunks.push((parents, wraps));
+        let on_frontier = mode == Parents::Frontier
+            && self.frontier_chunks_in_txn(txn, fold, signing, world, &mut chunks, seq)?;
         self.put_wrap_records_in_txn(
-            txn, fold, signing, machine, key, &binding, chunks, seq, request,
+            txn,
+            fold,
+            signing,
+            machine,
+            key,
+            &binding,
+            chunks,
+            seq,
+            request,
+            on_frontier,
         )
         .map(Ok)
+    }
+
+    /// Whether `chunks` go on frontier parents (FIX 5464, CALLS "FIX 5464
+    /// side parents"), decided before any record is signed: when the frontier
+    /// candidate carries every row the chunks name, the first chunk names the
+    /// candidate, which holds its signer's previous row of the world beneath
+    /// it, and each later one only the record before it. Otherwise the chunks
+    /// keep the rows they name, and nothing changes.
+    fn frontier_chunks_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        signing: &SigningKey,
+        world: EntityId,
+        chunks: &mut [WrapChunk<'_>],
+        seq: &SequenceCounter,
+    ) -> Result<bool> {
+        let chain = seq.chain(fold, signing, world);
+        let Some(mut frontier) = KeyFrontier::of_in_txn(&self.store, txn, fold, world, chain)?
+        else {
+            return Ok(false);
+        };
+        let named: BTreeSet<_> = chunks
+            .iter()
+            .flat_map(|(parents, _)| parents.iter().copied())
+            .collect();
+        if !frontier.carries_in_txn(&self.store, txn, fold, &named)? {
+            return Ok(false);
+        }
+        for (index, (parents, _)) in chunks.iter_mut().enumerate() {
+            *parents = if index == 0 {
+                frontier.parents().clone()
+            } else {
+                BTreeSet::new()
+            };
+        }
+        Ok(true)
     }
 
     /// This machine's own record of `key` when no record names the world's
@@ -258,6 +389,7 @@ impl Vault {
             vec![(parents, wraps)],
             seq,
             request,
+            false,
         )?
         .pop()
         .ok_or_else(invalid_authority)
@@ -265,7 +397,10 @@ impl Vault {
 
     /// Seals `key` to each chunk's recipients under `binding` and appends one
     /// signed record per chunk, naming that chunk's parents, which hold
-    /// `request` when the records do an owner work request.
+    /// `request` when the records do an owner work request, or hold it
+    /// beneath them (`frontier`: the first chunk's parents hold its signer's
+    /// previous row of the world beneath them, and each later chunk names the
+    /// record before it alone).
     #[expect(
         clippy::too_many_arguments,
         reason = "one append: the snapshot, the signer, the key, its records and their request"
@@ -281,14 +416,17 @@ impl Vault {
         chunks: Vec<WrapChunk<'_>>,
         seq: &mut SequenceCounter,
         request: Option<AuthorityEntryHash>,
+        frontier: bool,
     ) -> Result<Vec<AuthorityEntryHash>> {
         let now = self.instant_in_txn(txn)?.secs();
         let pad = require_pad_in_txn(&self.store, txn, key.id())?;
         let mut rows: Vec<(AuthorityLogEntry, TimeRange, u64)> = Vec::new();
         let mut hashes = Vec::new();
         let world = key.id().world;
-        for (mut parents, wraps) in chunks {
-            parents.extend(seq.chain(fold, signing, world));
+        for (index, (mut parents, wraps)) in chunks.into_iter().enumerate() {
+            if !frontier || index > 0 {
+                parents.extend(seq.chain(fold, signing, world));
+            }
             let wraps = wraps
                 .into_iter()
                 .map(|(recipient, public)| {

@@ -1,11 +1,16 @@
 //! The authority side of the world-key doors (world privacy P6b): the
 //! sequence and parents a key record takes, signing one, the stored roots
-//! and this machine's own key records, and a fold under another pin.
+//! and this machine's own key records, and a fold under another pin. The
+//! frontier parents a record names in place of its evidence are in
+//! [`frontier`] (FIX 5464).
+
+mod frontier;
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use ed25519_dalek::{Signer, SigningKey};
 
+pub(crate) use self::frontier::KeyFrontier;
 use super::*;
 use crate::EntityId;
 use crate::error::Result;
