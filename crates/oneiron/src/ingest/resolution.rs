@@ -142,9 +142,8 @@ pub(super) fn evaluate_entity_resolution_waterfall_in_txn(
     candidates: &[EntityResolutionCandidate],
     high_collision_mention: bool,
 ) -> crate::Result<EntityResolutionWaterfallDecision> {
-    let decision = score_entity_resolution_waterfall_in_txn(
-        vault, wtxn, candidates, high_collision_mention,
-    )?;
+    let decision =
+        score_entity_resolution_waterfall_in_txn(vault, wtxn, candidates, high_collision_mention)?;
     if let Some(subject) = decision.selected {
         if vault.archive_tombstone_in_txn(wtxn, &subject)?.is_some() {
             vault.restore_archived_in_txn(wtxn, &subject)?;

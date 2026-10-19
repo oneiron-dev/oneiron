@@ -23,6 +23,9 @@ side_tables! {
     MESSAGE_STREAM_RECEIPT: VaultMeta b"message_stream_receipt:v1:" Named;
     /// Owner-submitted model requests and their terminal receipts. Key: id16(step attempt).
     MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored;
+    /// Owner-submitted shared model streams: the frozen request and its one durable terminal.
+    /// Key: id16(stream).
+    MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored;
     /// Named entity secondary index. Key: byte + (u64be|id16) + id16.
     PORTS_NAMED_ENTITY_INDEX: VaultMeta b"named_entity:v1:" Raw;
     /// Saved oplog version-vector floor an authority rebase cannot cross past a scrub. Key:

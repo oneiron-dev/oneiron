@@ -1,7 +1,8 @@
 //! Typed origin and checkout doors (DOOR-139): tested-tree export, the origin
 //! authority epoch, publication records and checkout door binding. Each one
-//! projects an engine path that exists; none creates a repository, mints a
-//! lease, commits a tested tree or forces a publication result.
+//! projects an engine path; registration creates only an empty served
+//! repository. None mints a lease, commits a tested tree or forces a
+//! publication result.
 //!
 //! Authority is the owner's live proof alone (`Memory::origin_owner`).
 //! Export and binding also take a live checkout lease the owner holds on the
@@ -9,6 +10,7 @@
 //! redeems (`credential_door::require_checkout_lease`).
 
 mod operations;
+mod setup;
 mod types;
 
 pub use types::*;
@@ -27,7 +29,16 @@ impl Memory<'_> {
     /// this handle's own human actor; an agent never borrows it, and a
     /// request field never stands in for it.
     fn origin_owner(&self, owner: &AuthenticatedOwner) -> MemoryResult<EntityId> {
-        let actor = owner.revalidate(self.vault)?;
+        let txn = self.vault.store.env.read_txn().map_err(crate::Error::from)?;
+        self.origin_owner_in_txn(owner, &txn)
+    }
+
+    fn origin_owner_in_txn(
+        &self,
+        owner: &AuthenticatedOwner,
+        txn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<EntityId> {
+        let actor = owner.revalidate_in_txn(self.vault, txn)?;
         if actor != self.actor || self.actor_class != crate::EdgeActorClass::Human {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,

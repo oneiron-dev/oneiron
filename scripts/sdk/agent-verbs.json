@@ -2778,6 +2778,86 @@
       "section": false
     },
     {
+      "name": "self.saved_query.create",
+      "description": "Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller.",
+      "input": "crate::campaign::surface::SavedQueryCreateRequest",
+      "output": "crate::campaign::surface::SavedQueryRecordView",
+      "call": "memory.create_saved_query(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.saved_query.read",
+      "description": "One saved query the caller owns; a query absent or not the caller's reads as not found.",
+      "input": "crate::campaign::surface::SavedQueryReadRequest",
+      "output": "crate::campaign::surface::SavedQueryReadResult",
+      "call": "memory.read_saved_query(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.saved_query.update",
+      "description": "Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check.",
+      "input": "crate::campaign::surface::SavedQueryUpdateRequest",
+      "output": "crate::campaign::surface::SavedQueryRecordView",
+      "call": "memory.update_saved_query(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.saved_query.archive",
+      "description": "Archives a saved query under a definition-version check: it stays readable and is never evaluated again.",
+      "input": "crate::campaign::surface::SavedQueryArchiveRequest",
+      "output": "crate::campaign::surface::SavedQueryRecordView",
+      "call": "memory.archive_saved_query(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.saved_query.members",
+      "description": "One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved.",
+      "input": "crate::campaign::surface::SavedQueryMembersRequest",
+      "output": "crate::campaign::surface::SavedQueryMembershipPageView",
+      "call": "memory.saved_query_members_page(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.saved_query.evaluate",
+      "description": "Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity.",
+      "input": "crate::campaign::surface::SavedQueryEvaluateRequest",
+      "output": "crate::campaign::surface::SavedQueryEvaluationReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.saved_query.evaluate\", &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.weave.report",
       "description": "The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role.",
       "input": "crate::claim::WeaveReportRequest",
@@ -7614,6 +7694,7 @@
       "call": "crate::policy_setting_doors::wake_policy_set_embedded(memory, input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -7643,6 +7724,7 @@
       "call": "crate::policy_setting_doors::inference_defaults_replace_embedded(memory, input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -9032,6 +9114,81 @@
       "input": "crate::memory::origin_doors::CodeExportRequest",
       "output": "crate::memory::origin_doors::CodeExportResult",
       "call": "memory.code_export_as(&memory.embedded_owner(\"vault.code.export\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.register",
+      "description": "Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused.",
+      "input": "crate::memory::origin_doors::OriginRegisterRequest",
+      "output": "crate::memory::origin_doors::OriginRegistered",
+      "call": "memory.origin_register_as(&memory.embedded_owner(\"vault.code.origin.register\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.mirror.get",
+      "description": "Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential.",
+      "input": "crate::memory::origin_doors::OriginRepoRequest",
+      "output": "crate::memory::origin_doors::OriginMirrorView",
+      "call": "memory.origin_mirror_get_as(&memory.embedded_owner(\"vault.code.origin.mirror.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.mirror.set",
+      "description": "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write.",
+      "input": "crate::memory::origin_doors::OriginMirrorSetRequest",
+      "output": "crate::origin::mirror::OriginMirrorTarget",
+      "call": "memory.origin_mirror_set_as(&memory.embedded_owner(\"vault.code.origin.mirror.set\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.mirror.clear",
+      "description": "Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes.",
+      "input": "crate::memory::origin_doors::OriginRepoRequest",
+      "output": "crate::memory::origin_doors::OriginMirrorCleared",
+      "call": "memory.origin_mirror_clear_as(&memory.embedded_owner(\"vault.code.origin.mirror.clear\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.mirror.push",
+      "description": "Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client.",
+      "input": "crate::memory::origin_doors::OriginRepoRequest",
+      "output": "crate::origin::mirror::OriginMirrorRun",
+      "call": "memory.origin_mirror_push_as(&memory.embedded_owner(\"vault.code.origin.mirror.push\")?, input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -11352,6 +11509,90 @@
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.steps.receipt\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "ai.streams.open",
+      "description": "Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one.",
+      "input": "crate::llm::model_stream::ModelStreamOpen",
+      "output": "crate::llm::model_stream::ModelStreamOpened",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.streams.open\", &input)?",
+      "host_door": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "ai.streams.subscribe",
+      "description": "Attach before or after open to the caller's shared model stream, without starting a producer; replay every typed part event from the first under an independently detachable handle.",
+      "input": "crate::llm::model_stream::ModelStreamSubscribe",
+      "output": "crate::llm::model_stream::ModelStreamSubscribed",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.streams.subscribe\", &input)?",
+      "host_door": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "ai.streams.events",
+      "description": "Drain one subscription's queued typed LlmStreamEvents (part-correlated text, reasoning, tool and image deltas, then Done) without blocking; closed once the producer ended and the queue is empty.",
+      "input": "crate::llm::model_stream::ModelStreamEventsRequest",
+      "output": "crate::llm::model_stream::ModelStreamEvents",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.streams.events\", &input)?",
+      "host_door": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "ai.streams.detach",
+      "description": "Detach only this subscription from the shared model stream; the producer and every other subscriber continue.",
+      "input": "crate::llm::model_stream::ModelStreamDetach",
+      "output": "crate::llm::model_stream::ModelStreamDetached",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.streams.detach\", &input)?",
+      "host_door": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "ai.streams.abort",
+      "description": "Abort the caller's shared model stream with actual usage: subscribers receive the cancelled Done of the parts completed so far, recorded as the one durable terminal.",
+      "input": "crate::llm::model_stream::ModelStreamAbort",
+      "output": "crate::llm::model_stream::ModelStreamTerminal",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.streams.abort\", &input)?",
+      "host_door": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "ai.streams.terminal",
+      "description": "Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model.",
+      "input": "crate::llm::model_stream::ModelStreamTerminalRequest",
+      "output": "crate::llm::model_stream::ModelStreamTerminal",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.streams.terminal\", &input)?",
+      "host_door": true,
       "openapi": true,
       "scope": "Read",
       "admission": {

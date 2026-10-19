@@ -20,6 +20,7 @@ use crate::retrieval_depth::RetrievalDeadline;
 
 use super::evaluator::{SavedQueryJudgeBinding, evidence_to_json, judge_failure};
 use super::evidence::{MatchDecision, MatchVerdict, RelevantEvidence};
+use super::receipts::{SavedQueryGenerationReceipt, SavedQueryJudgeReceipt};
 use super::support::{MAX_TEXT_BYTES, canonical_json_bytes, invalid};
 
 /// The time one shipped judgment may take.
@@ -82,7 +83,7 @@ pub(super) async fn judge(
     rubric: &Value,
     rubric_version: &str,
     evidence: &RelevantEvidence,
-) -> Result<MatchDecision> {
+) -> Result<(MatchDecision, SavedQueryJudgeReceipt)> {
     let candidate = evidence.entity_ref;
     let decisions = binding.decisions;
     let rubric_hash = blake3::hash(&canonical_json_bytes(rubric)?);
@@ -142,13 +143,22 @@ pub(super) async fn judge(
         )
         .await
         .map_err(|error| judge_failure(error.to_string()))?;
-    let verdict = match decided {
-        GeneratedDecisions::Decided { decisions, .. } => {
-            match decisions.first().map(|decision| &decision.answer) {
-                Some(DecisionAnswer::Noul(true)) => MatchVerdict::Match,
-                Some(DecisionAnswer::Noul(false)) => MatchVerdict::NoMatch,
+    let (verdict, providers, cost_per_thousand, steps) = match decided {
+        GeneratedDecisions::Decided { decisions, steps } => {
+            let decision = decisions
+                .first()
+                .ok_or_else(|| judge_failure("membership read did not decide".to_owned()))?;
+            let verdict = match &decision.answer {
+                DecisionAnswer::Noul(true) => MatchVerdict::Match,
+                DecisionAnswer::Noul(false) => MatchVerdict::NoMatch,
                 _ => return Err(judge_failure("membership read did not decide".to_owned())),
-            }
+            };
+            (
+                verdict,
+                decision.receipt.providers.clone(),
+                decision.receipt.cost_per_thousand,
+                steps,
+            )
         }
         GeneratedDecisions::Unread(GeneratedMiss::Backend(error)) => {
             return Err(judge_failure(error.to_string()));
@@ -157,8 +167,24 @@ pub(super) async fn judge(
             return Err(judge_failure("membership read did not run".to_owned()));
         }
     };
-    let why = membership_why(binding, shell, verdict, &decisions.why_wording).await?;
-    Ok(MatchDecision { verdict, why })
+    let (why, why_generation) =
+        membership_why(binding, shell, verdict, &decisions.why_wording).await?;
+    let mut generations: Vec<_> = steps
+        .into_iter()
+        .map(|(hash, usage)| SavedQueryGenerationReceipt {
+            request_hash: super::support::hex_lower(&hash),
+            usage,
+        })
+        .collect();
+    generations.push(why_generation);
+    Ok((
+        MatchDecision { verdict, why },
+        SavedQueryJudgeReceipt {
+            providers,
+            cost_per_thousand,
+            generations,
+        },
+    ))
 }
 
 /// The note a decided verdict keeps: the judge's backend, on the binding's lease, says why
@@ -169,7 +195,7 @@ async fn membership_why(
     mut request: LlmRequest,
     verdict: MatchVerdict,
     wording: &str,
-) -> Result<String> {
+) -> Result<(String, SavedQueryGenerationReceipt)> {
     request.envelope.response_format = ResponseFormat::Json {
         schema: json!({
             "type": "object",
@@ -184,6 +210,9 @@ async fn membership_why(
             text: json!({"verdict": verdict.as_str(), "ask": wording}).to_string(),
         }],
     });
+    let request_hash = request
+        .canonical_hash_hex()
+        .map_err(|_| invalid("saved query why request cannot be hashed"))?;
     let response = binding
         .backend
         .generate(request, binding.lease)
@@ -200,5 +229,11 @@ async fn membership_why(
         .and_then(|reply| reply.get("why").and_then(Value::as_str).map(str::to_owned))
         .filter(|why| !why.trim().is_empty())
         .ok_or_else(|| judge_failure("response carried no why".to_owned()))?;
-    Ok(why.chars().take(MAX_TEXT_BYTES).collect())
+    Ok((
+        why.chars().take(MAX_TEXT_BYTES).collect(),
+        SavedQueryGenerationReceipt {
+            request_hash,
+            usage: response.usage,
+        },
+    ))
 }

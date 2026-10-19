@@ -26,8 +26,7 @@ pub struct EngineSectionBindings;
 
 impl SectionBindingResolver for EngineSectionBindings {
     fn state_family_exists(&self, state_family: &StateFamilyRef) -> bool {
-        state_family.version == 1
-            && matches!(state_family.family.as_str(), "claim" | "scratchpad")
+        state_family.version == 1 && matches!(state_family.family.as_str(), "claim" | "scratchpad")
     }
 
     fn authority_lane_exists(&self, authority: &AuthorityLaneRef) -> bool {

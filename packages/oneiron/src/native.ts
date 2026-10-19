@@ -195,6 +195,12 @@ vaultCampaignProgramCreate(input: unknown): unknown
 vaultCampaignProgramRead(input: unknown): unknown
 vaultCampaignProgramUpdate(input: unknown): unknown
 vaultCampaignProgramArchive(input: unknown): unknown
+selfSavedQueryCreate(input: unknown): unknown
+selfSavedQueryRead(input: unknown): unknown
+selfSavedQueryUpdate(input: unknown): unknown
+selfSavedQueryArchive(input: unknown): unknown
+selfSavedQueryMembers(input: unknown): unknown
+selfSavedQueryEvaluate(input: unknown): unknown
 vaultWeaveReport(input: unknown): unknown
 vaultWeaveDigest(input: unknown): unknown
 vaultWeaveLens(input: unknown): unknown
@@ -616,6 +622,11 @@ vaultResultsRead(input: unknown): unknown
 vaultResultsSlice(input: unknown): unknown
 vaultCodeRepoDiff(requestJson: string): string
 vaultCodeExport(input: unknown): unknown
+vaultCodeOriginRegister(input: unknown): unknown
+vaultCodeOriginMirrorGet(input: unknown): unknown
+vaultCodeOriginMirrorSet(input: unknown): unknown
+vaultCodeOriginMirrorClear(input: unknown): unknown
+vaultCodeOriginMirrorPush(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown
@@ -751,6 +762,12 @@ vaultSkillsAttributionProposals(input: unknown): unknown
 vaultSkillsAttributionPositiveRetire(input: unknown): unknown
 aiStepsSubmit(input: unknown): unknown
 aiStepsReceipt(input: unknown): unknown
+aiStreamsOpen(input: unknown): unknown
+aiStreamsSubscribe(input: unknown): unknown
+aiStreamsEvents(input: unknown): unknown
+aiStreamsDetach(input: unknown): unknown
+aiStreamsAbort(input: unknown): unknown
+aiStreamsTerminal(input: unknown): unknown
 aiReply(input: unknown): unknown
 vaultReceiptsContext(input: unknown): unknown
 aiVoiceAsrOpen(input: unknown): unknown

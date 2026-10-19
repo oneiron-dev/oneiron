@@ -61,6 +61,7 @@ mod lifecycle;
 mod membership;
 mod memory_watch;
 mod pack_drift;
+mod receipts;
 mod storage;
 mod support;
 mod sweep;
@@ -77,10 +78,9 @@ pub use self::definition::{
     SAVED_QUERY_SHORT_ID_PREFIX, SavedQueryDefinition, SavedQueryLifecycle, SavedQueryRecord,
     UpdateSavedQueryRequest, register_saved_query_kind,
 };
-pub(crate) use self::evaluator::WakeVisit;
 pub use self::evaluator::{
     EvaluationRequest, SAVED_QUERY_WHY_ENTITY_OUTSIDE_SCOPE, SAVED_QUERY_WHY_SCOPE_CLOSED,
-    SavedQueryEvaluator, SavedQueryJudgeBinding,
+    SavedQueryEvaluator, SavedQueryJudgeBinding, WakeVisit,
 };
 pub use self::evidence::{
     EVIDENCE_HASH_LEN, EvaluationOutcome, MatchDecision, MatchVerdict, RelevantEvidence,
@@ -106,6 +106,9 @@ pub use self::pack_drift::{
     pack_drift_repairs, put_pack_migration_map, repair_pack_drift,
 };
 pub(crate) use self::pack_drift::{PackMove, repair_saved_queries_after_pack_move_in_txn};
+pub use self::receipts::{
+    SavedQueryEvaluation, SavedQueryGenerationReceipt, SavedQueryJudgeReceipt,
+};
 pub use self::sweep::{
     PersonChanges, SWEEP_CANDIDATE_TYPE, reactive_saved_queries, saved_query_change_head,
     saved_query_changes_after, sweep_owner_read, sweep_saved_queries,

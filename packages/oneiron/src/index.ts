@@ -1881,6 +1881,18 @@ export class Oneiron {
       /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
       export: (input: Facade.CodeExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeExport(input) as Facade.CodeExportResult),
       origin: {
+        /** Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused. */
+        register: (input: Facade.OriginRegisterRequest): Facade.OriginRegistered => this.#call(() => this.#client.vaultCodeOriginRegister(input) as Facade.OriginRegistered),
+        mirror: {
+          /** Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential. */
+          get: (input: Facade.OriginRepoRequest): Facade.OriginMirrorView => this.#call(() => this.#client.vaultCodeOriginMirrorGet(input) as Facade.OriginMirrorView),
+          /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write. */
+          set: (input: Facade.OriginMirrorSetRequest): Facade.OriginMirrorTarget => this.#call(() => this.#client.vaultCodeOriginMirrorSet(input) as Facade.OriginMirrorTarget),
+          /** Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes. */
+          clear: (input: Facade.OriginRepoRequest): Facade.OriginMirrorCleared => this.#call(() => this.#client.vaultCodeOriginMirrorClear(input) as Facade.OriginMirrorCleared),
+          /** Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client. */
+          push: (input: Facade.OriginRepoRequest): Facade.OriginMirrorRun => this.#call(() => this.#client.vaultCodeOriginMirrorPush(input) as Facade.OriginMirrorRun),
+        },
         authority: {
           /** Read one served origin authority and this host identity under the owner credential. */
           get: (input: Facade.OriginRepoRequest): Facade.OriginAuthorityView => this.#call(() => this.#client.vaultCodeOriginAuthorityGet(input) as Facade.OriginAuthorityView),
@@ -2647,6 +2659,20 @@ export class Oneiron {
       /** Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay. */
       receipts: (input: Facade.AdmissionReceiptsRequest): Facade.AdmissionReceipt[] => this.#call(() => this.#client.selfAdmissionReceipts(input) as Facade.AdmissionReceipt[]),
     },
+    saved_query: {
+      /** Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller. */
+      create: (input: Facade.SavedQueryCreateRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryCreate(input) as Facade.SavedQueryRecordView),
+      /** One saved query the caller owns; a query absent or not the caller's reads as not found. */
+      read: (input: Facade.SavedQueryReadRequest): Facade.SavedQueryReadResult => this.#call(() => this.#client.selfSavedQueryRead(input) as Facade.SavedQueryReadResult),
+      /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check. */
+      update: (input: Facade.SavedQueryUpdateRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryUpdate(input) as Facade.SavedQueryRecordView),
+      /** Archives a saved query under a definition-version check: it stays readable and is never evaluated again. */
+      archive: (input: Facade.SavedQueryArchiveRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryArchive(input) as Facade.SavedQueryRecordView),
+      /** One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved. */
+      members: (input: Facade.SavedQueryMembersRequest): Facade.SavedQueryMembershipPageView => this.#call(() => this.#client.selfSavedQueryMembers(input) as Facade.SavedQueryMembershipPageView),
+      /** Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity. */
+      evaluate: (input: Facade.SavedQueryEvaluateRequest): Facade.SavedQueryEvaluationReceipt => this.#call(() => this.#client.selfSavedQueryEvaluate(input) as Facade.SavedQueryEvaluationReceipt),
+    },
     off_record: {
       /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
       execute: (input: Facade.OffRecordExecuteRequest): Facade.OffRecordExecuted => this.#call(() => this.#client.selfOffRecordExecute(input) as Facade.OffRecordExecuted),
@@ -2786,6 +2812,20 @@ export class Oneiron {
       submit: (input: Facade.ModelStepSubmit): Facade.ModelStepReceipt => this.#call(() => this.#client.aiStepsSubmit(input) as Facade.ModelStepReceipt),
       /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease. */
       receipt: (input: Facade.ModelStepReceiptRequest): Facade.ModelStepReceipt => this.#call(() => this.#client.aiStepsReceipt(input) as Facade.ModelStepReceipt),
+    },
+    streams: {
+      /** Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one. */
+      open: (input: Facade.ModelStreamOpen): Facade.ModelStreamOpened => this.#call(() => this.#client.aiStreamsOpen(input) as Facade.ModelStreamOpened),
+      /** Attach before or after open to the caller's shared model stream, without starting a producer; replay every typed part event from the first under an independently detachable handle. */
+      subscribe: (input: Facade.ModelStreamSubscribe): Facade.ModelStreamSubscribed => this.#call(() => this.#client.aiStreamsSubscribe(input) as Facade.ModelStreamSubscribed),
+      /** Drain one subscription's queued typed LlmStreamEvents (part-correlated text, reasoning, tool and image deltas, then Done) without blocking; closed once the producer ended and the queue is empty. */
+      events: (input: Facade.ModelStreamEventsRequest): Facade.ModelStreamEvents => this.#call(() => this.#client.aiStreamsEvents(input) as Facade.ModelStreamEvents),
+      /** Detach only this subscription from the shared model stream; the producer and every other subscriber continue. */
+      detach: (input: Facade.ModelStreamDetach): Facade.ModelStreamDetached => this.#call(() => this.#client.aiStreamsDetach(input) as Facade.ModelStreamDetached),
+      /** Abort the caller's shared model stream with actual usage: subscribers receive the cancelled Done of the parts completed so far, recorded as the one durable terminal. */
+      abort: (input: Facade.ModelStreamAbort): Facade.ModelStreamTerminal => this.#call(() => this.#client.aiStreamsAbort(input) as Facade.ModelStreamTerminal),
+      /** Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model. */
+      terminal: (input: Facade.ModelStreamTerminalRequest): Facade.ModelStreamTerminal => this.#call(() => this.#client.aiStreamsTerminal(input) as Facade.ModelStreamTerminal),
     },
     /** Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs. */
     reply: (input: Facade.AiReplyRequest): Facade.AiReply => this.#call(() => this.#client.aiReply(input) as Facade.AiReply),

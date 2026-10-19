@@ -984,6 +984,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/owner-work/{request}",
+        summary: "Where one owner work request stands, from this install's fold: the receipt (ids only), recorded and awaiting a holder until its executor's result arrives, then enacted or refused, with the engine's words.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/pack-drift",
         summary: "Pack drift repairs.",
         row: None,
@@ -1223,6 +1229,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/recovery-kit/pad-access",
+        summary: "The owner's kit, in the named target's own call and for it alone, grants a machine (this install when none is named) every pad object the home keeps, over this install's home connection: the generations offered, usable here and pending with the home.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/representation",
         summary: "One drafted follow-up, as approval would send it.",
@@ -1238,6 +1250,24 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/representation/decline",
         summary: "Declines the draft for good.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/roots/requests",
+        summary: "The root requests naming this install with no result yet, each with its change and receipt. Ids only.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/roots/requests",
+        summary: "Records the owner's root change (pin, activate, restore, anchor) for the target install, ids only; the receipt is recorded and awaiting the target, or says why nothing was recorded.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/roots/requests/run",
+        summary: "The named target's own call: runs a root request pending here with the kit material its change needs, for this call alone, once the target proves to be this install and a machine the worlds' privacy lets hold their keys; answers the target's report and its words to this caller only.",
         row: None,
     },
     OwnerRoute {
@@ -1292,6 +1322,18 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/secrets/bind",
         summary: "With {\"handle\"} or {\"name\"}, \"effector\", and optionally \"tier_ceiling\" and \"scopes\".",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/secrets/custody",
+        summary: "A secret's custody record id, generation, custody revision and live requests, and every linked install a surface may offer as holder or recipient, value-free (WILL L04 row 04).",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/secrets/custody",
+        summary: "A register or rotate whose protected input the surface sealed to the holder itself: this install takes only the ciphertext.",
         row: None,
     },
     OwnerRoute {
@@ -1357,7 +1399,13 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "post",
         path: "/secrets/revoke",
-        summary: "The record goes terminal and every lease over it is revoked (OF-422).",
+        summary: "The record goes terminal and every lease over it is revoked (OF-422); a portable one's revoke is carried to the owner's other machines.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/secrets/rewrap",
+        summary: "Seals a portable secret again, same generation, to the installs the owner names, by its holder.",
         row: None,
     },
     OwnerRoute {
@@ -1688,6 +1736,24 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/workspace/finish",
         summary: "\"<ref>\"}: a repeat leaves the root as the first finish signed it.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/reassert",
+        summary: "The owner re-asserts a world's complete settings at its current revision after a pin change: the settings receipt, with its key work done here or its owner work awaiting a holder, and that work's words.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/worlds/privacy/settings",
+        summary: "A world's settings as this install folds them, and the revision a change names as its seen.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/settings",
+        summary: "A holder sets a world's settings as his own act: the settings receipt, with its key work done here or its owner work awaiting a holder, and that work's words.",
         row: None,
     },
 ];

@@ -33,6 +33,7 @@ mod codec_json;
 mod membership;
 mod parse;
 mod program;
+mod saved_query;
 #[cfg(test)]
 mod tests;
 mod verbs;
@@ -50,6 +51,7 @@ pub use self::campaign::{
 };
 pub(crate) use self::campaign::{campaign_type_byte, load_campaign_in_txn, owned_campaign_in_txn};
 pub use self::codec_json::{campaign_record_to_json, saved_query_record_to_json};
+pub(crate) use self::membership::read_saved_query_members_scoped;
 pub use self::membership::{
     MEMBERSHIP_PAGE_DEFAULT_LIMIT, MEMBERSHIP_PAGE_MAX_LIMIT, MembershipPage,
     MembershipReadRequest, MembershipRow, read_campaign_members, read_saved_query_members,
@@ -61,13 +63,22 @@ pub use self::program::{
     CreateCampaignProgramRequest, UpdateCampaignProgramRequest,
 };
 pub(crate) use self::program::{CAMPAIGN_PROGRAM_STEP_REFS, campaign_program_record};
+pub use self::saved_query::{
+    SavedQueryArchiveRequest, SavedQueryCreateRequest, SavedQueryDefinitionView,
+    SavedQueryEntityReceipt, SavedQueryEvalSpec, SavedQueryEvaluateRequest,
+    SavedQueryEvaluationReceipt, SavedQueryFilterSpec, SavedQueryMatcherSpec,
+    SavedQueryMembersRequest, SavedQueryMembershipPageView, SavedQueryMembershipRowView,
+    SavedQueryMemoReceipt, SavedQueryReadRequest, SavedQueryReadResult, SavedQueryRecordView,
+    SavedQueryScopeSpec, SavedQueryUpdateRequest, saved_query_memo_receipt,
+};
+pub(crate) use self::saved_query::{saved_query_membership_page_view, saved_query_record_view};
 pub use self::verbs::{
     CAMPAIGN_PROGRAM_VERBS, CAMPAIGN_SELF_VERBS, CampaignSurfaceVerb, SELF_CAMPAIGN_ARCHIVE,
     SELF_CAMPAIGN_CREATE, SELF_CAMPAIGN_MEMBERS, SELF_CAMPAIGN_READ, SELF_CAMPAIGN_UPDATE,
-    SELF_SAVED_QUERY_ARCHIVE, SELF_SAVED_QUERY_CREATE, SELF_SAVED_QUERY_MEMBERS,
-    SELF_SAVED_QUERY_READ, SELF_SAVED_QUERY_UPDATE, SurfaceCall, SurfaceReply,
-    VAULT_CAMPAIGN_PROGRAM_ARCHIVE, VAULT_CAMPAIGN_PROGRAM_CREATE, VAULT_CAMPAIGN_PROGRAM_READ,
-    VAULT_CAMPAIGN_PROGRAM_UPDATE, invoke_campaign_surface,
+    SELF_SAVED_QUERY_ARCHIVE, SELF_SAVED_QUERY_CREATE, SELF_SAVED_QUERY_EVALUATE,
+    SELF_SAVED_QUERY_MEMBERS, SELF_SAVED_QUERY_READ, SELF_SAVED_QUERY_UPDATE, SurfaceCall,
+    SurfaceReply, VAULT_CAMPAIGN_PROGRAM_ARCHIVE, VAULT_CAMPAIGN_PROGRAM_CREATE,
+    VAULT_CAMPAIGN_PROGRAM_READ, VAULT_CAMPAIGN_PROGRAM_UPDATE, invoke_campaign_surface,
 };
 
 // The flat surface.rs module used to provide these names to the sibling test
