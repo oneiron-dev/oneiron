@@ -7,7 +7,7 @@ use super::policy::BudgetPolicyTable;
 use super::settlement::settle_usage_locked;
 use super::state::BudgetState;
 use super::types::{
-    BudgetAdmission, BudgetExhaustionPolicy, BudgetRead, BudgetSettlement,
+    BudgetAdmission, BudgetExhaustionPolicy, BudgetLeaseState, BudgetRead, BudgetSettlement,
     DEFAULT_BUDGET_RESERVE_UNITS,
 };
 use crate::llm::{BudgetDenied, BudgetLease, LlmRequest, LlmUsage, ModelLocality};
@@ -252,6 +252,26 @@ impl BudgetGuard {
     #[must_use]
     pub fn read(&self) -> BudgetRead {
         self.lock_state().read()
+    }
+
+    /// One lease this guard issued, as its meter holds it now; `None` for an
+    /// id it never issued. Read-only: nothing settles, aborts or fires.
+    #[must_use]
+    pub fn lease_observation(&self, lease_id: &str) -> Option<BudgetLeaseState> {
+        let state = self.lock_state();
+        let record = state.leases.get(lease_id)?;
+        Some(match record.state {
+            LeaseState::Open => BudgetLeaseState::Open {
+                reserve_units: record.reserve_units,
+                dispatched: record.dispatched,
+            },
+            LeaseState::Settled {
+                absolute_used_units,
+            } => BudgetLeaseState::Settled {
+                used_units: absolute_used_units,
+            },
+            LeaseState::Aborted => BudgetLeaseState::Aborted,
+        })
     }
 
     /// The engine-stamped actor a policy-aware guard is bound to, if any.
