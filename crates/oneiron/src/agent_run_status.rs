@@ -13,6 +13,9 @@ pub enum AgentRunStatus {
     Archived,
     Failed,
     Abandoned,
+    /// Stopped by a cancel (an owner's or an operator's force, a lease the
+    /// runtime fenced, or a cancel before it started), not by a fault.
+    Cancelled,
 }
 
 impl AgentRunStatus {
@@ -23,7 +26,7 @@ impl AgentRunStatus {
         Self::Delivered,
         Self::Archived,
     ];
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Spawned,
         Self::Working,
         Self::NeedsInput,
@@ -31,8 +34,14 @@ impl AgentRunStatus {
         Self::Archived,
         Self::Failed,
         Self::Abandoned,
+        Self::Cancelled,
     ];
-    pub const TERMINAL: [Self; 3] = [Self::Archived, Self::Failed, Self::Abandoned];
+    pub const TERMINAL: [Self; 4] = [
+        Self::Archived,
+        Self::Failed,
+        Self::Abandoned,
+        Self::Cancelled,
+    ];
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -43,11 +52,15 @@ impl AgentRunStatus {
             Self::Archived => "archived",
             Self::Failed => "failed",
             Self::Abandoned => "abandoned",
+            Self::Cancelled => "cancelled",
         }
     }
     #[must_use]
     pub const fn is_terminal(self) -> bool {
-        matches!(self, Self::Archived | Self::Failed | Self::Abandoned)
+        matches!(
+            self,
+            Self::Archived | Self::Failed | Self::Abandoned | Self::Cancelled
+        )
     }
     #[must_use]
     pub const fn is_live_presence(self) -> bool {
@@ -64,17 +77,22 @@ impl AgentRunStatus {
                 | (Self::Archived, Self::Archived)
                 | (Self::Failed, Self::Failed)
                 | (Self::Abandoned, Self::Abandoned)
+                | (Self::Cancelled, Self::Cancelled)
                 | (
                     Self::Spawned,
-                    Self::Working | Self::Failed | Self::Abandoned
+                    Self::Working | Self::Failed | Self::Abandoned | Self::Cancelled
                 )
                 | (
                     Self::Working,
-                    Self::NeedsInput | Self::Delivered | Self::Failed | Self::Abandoned
+                    Self::NeedsInput
+                        | Self::Delivered
+                        | Self::Failed
+                        | Self::Abandoned
+                        | Self::Cancelled
                 )
                 | (
                     Self::NeedsInput,
-                    Self::Working | Self::Failed | Self::Abandoned
+                    Self::Working | Self::Failed | Self::Abandoned | Self::Cancelled
                 )
                 | (Self::Delivered, Self::Archived)
         )
@@ -105,7 +123,10 @@ pub const fn project_agent_run_status(status: RunTreeStatus) -> AgentRunStatus {
         RunTreeStatus::Running => AgentRunStatus::Working,
         RunTreeStatus::Paused => AgentRunStatus::NeedsInput,
         RunTreeStatus::Completed => AgentRunStatus::Delivered,
-        RunTreeStatus::Failed | RunTreeStatus::Cancelled => AgentRunStatus::Failed,
+        RunTreeStatus::Failed => AgentRunStatus::Failed,
+        // Not folded onto `Failed` either: a cancel is a stop someone or the
+        // runtime chose, and its cause stays on the attempt's cancel state.
+        RunTreeStatus::Cancelled => AgentRunStatus::Cancelled,
         // Not folded onto `Failed`: this axis already owns a truthful terminal
         // token for a run that stopped without delivering, and reporting a
         // fault nobody observed would be the lie the fold exists to avoid.

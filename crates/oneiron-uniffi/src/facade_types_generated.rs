@@ -33820,6 +33820,8 @@ pub enum AgentRunStatus {
     Failed,
     #[serde(rename = "abandoned")]
     Abandoned,
+    #[serde(rename = "cancelled")]
+    Cancelled,
 }
 
 /// `oneiron::run_tree::signal::RunAskQuestion`.
