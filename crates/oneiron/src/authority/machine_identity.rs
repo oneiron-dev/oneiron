@@ -40,6 +40,12 @@ const SERVING_PROFILE_KEY_MISMATCH: &str =
     "this install's machine profile names other keys; its keys are never replaced";
 const SERVING_PROFILE_NOT_LIVE: &str = "this install's machine profile does not stand here \
      (stale, held or unsettled); nothing is enrolled over it";
+/// FIX 3835: a standing profile whose class its host no longer declares
+/// stands as enrolled; a start never rewrites it on config alone
+/// (MACHINE_CLASS_REVISION).
+const SERVING_PROFILE_CLASS_DIFFERS: &str = "this install's machine profile names another class \
+     than its host declares; it stands as enrolled until the owner approves this install's \
+     class-only revision through the enrolment door";
 const SERVING_ROOT_ABSENT: &str =
     "the vault has no root yet; its first rooted serving start profiles this install";
 const SERVING_ROOT_CONFLICTED: &str =
@@ -205,6 +211,16 @@ impl Vault {
             .is_some_and(|folded| folded.names_key(&key))
             .then_some(machine))
     }
+}
+
+/// Whether a live chain of this install's standing profile names another
+/// class than the one its host declares now (FIX 3835).
+fn serving_class_differs(folded: &FoldedMachine, request: &MachineEnrolmentRequest) -> bool {
+    folded.chains().any(|(_, chain)| {
+        chain.is_live()
+            && chain.profile.machine_key == request.machine_key
+            && chain.profile.device_class != request.device_class
+    })
 }
 
 /// Why a profile under this install's id that does not stand is never
@@ -373,12 +389,14 @@ impl Vault {
     ///
     /// A no-op when a live profile of this install already names both its
     /// keys and the carrier rule admits its install key, in any role: no
-    /// revision moves and the owner's answers stand. Otherwise a profile
-    /// under this install's id refuses, naming why (removed, conflicted,
-    /// other keys, not live here): its keys are never replaced and a removed
-    /// machine never comes back. With none, the bootstrap arm enrols it in
-    /// `role`. The vault must already be rooted under `issuer`; no root is
-    /// minted here.
+    /// revision moves and the owner's answers stand. A class its host no
+    /// longer declares is compared and logged there, never rewritten: the
+    /// owner's enrolment door takes its class-only revision (FIX 3835,
+    /// [`Self::enroll_machine`]). Otherwise a profile under this install's
+    /// id refuses, naming why (removed, conflicted, other keys, not live
+    /// here): its keys are never replaced and a removed machine never comes
+    /// back. With none, the bootstrap arm enrols it in `role`. The vault must
+    /// already be rooted under `issuer`; no root is minted here.
     pub fn ensure_serving_install_profile(
         &self,
         issuer: &HostSlipIssuer,
@@ -411,6 +429,13 @@ impl Vault {
         if let Some(folded) = fold.machine(request.machine) {
             return if serving_profile_stands(&fold, folded, &request) {
                 let issuer_is_root = super::slip_vault::require_host(&fold, issuer).is_ok();
+                if serving_class_differs(folded, &request) {
+                    tracing::warn!(
+                        declared = request.device_class.wire(),
+                        reason = SERVING_PROFILE_CLASS_DIFFERS,
+                        "this install's machine profile stands as enrolled"
+                    );
+                }
                 Ok((folded.clone(), Some(issuer_is_root)))
             } else {
                 Err(authority_refused(serving_profile_refusal(folded, &request)))

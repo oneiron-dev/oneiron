@@ -3,7 +3,8 @@
 use std::{path::PathBuf, ptr, sync::Arc};
 
 use oneiron::{
-    EdgeActorClass, EntityId, RawEntityPut, TimeRange, Vault, VaultConfig, parse_actor_key,
+    EdgeActorClass, EntityId, RawEntityPut, TimeRange, Vault, VaultConfig,
+    authority::MachineDeviceClass, parse_actor_key,
 };
 
 use super::alloc::{buffer_from_vec, free_vec};
@@ -78,6 +79,11 @@ pub unsafe extern "C" fn oneiron_subtree_entry_array_free(
 /// an array of UTF-8 `OneironByteSlice` values. On success `out_vault` receives
 /// an opaque handle that must be released exactly once with `oneiron_vault_free`.
 ///
+/// `device_class` is what kind of machine this install is, as the host
+/// declares it (FIX 3833): 0 a computer, the generic default, 1 a phone; any
+/// other value is `InvalidArg`. It is set before the vault opens, so the
+/// install enrols as it, and it is never read off the operating system.
+///
 /// # Safety
 ///
 /// `path_ptr` covers `path_len` readable bytes. A non-null
@@ -90,6 +96,7 @@ pub unsafe extern "C" fn oneiron_vault_open(
     dimensions: usize,
     dict_search_paths: *const OneironByteSlice,
     dict_search_paths_len: usize,
+    device_class: u8,
     out_vault: *mut *mut OneironVault,
 ) -> OneironStatus {
     ffi_guard(|| {
@@ -103,6 +110,7 @@ pub unsafe extern "C" fn oneiron_vault_open(
                         dimensions,
                         dict_search_paths,
                         dict_search_paths_len,
+                        device_class,
                     )?;
                     let dimensions = config.dimensions;
                     // Crash output never carries world text: the engine's hook goes in before
@@ -123,17 +131,20 @@ pub unsafe extern "C" fn oneiron_vault_open(
 }
 
 /// The path and `VaultConfig::device()` config an open names, checked: the
-/// path is UTF-8, `dimensions == 0` keeps the preset's, and every dictionary
-/// search path is UTF-8.
+/// path is UTF-8, `dimensions == 0` keeps the preset's, every dictionary
+/// search path is UTF-8, and `device_class` is one [`host_device_class`]
+/// reads.
 pub(super) fn device_open_config(
     path_ptr: *const u8,
     path_len: usize,
     dimensions: usize,
     dict_search_paths: *const OneironByteSlice,
     dict_search_paths_len: usize,
+    device_class: u8,
 ) -> Result<(String, VaultConfig), OneironStatus> {
     let path = string_from_required(path_ptr, path_len)?;
     let mut config = VaultConfig::device();
+    config.machine_device_class = host_device_class(device_class)?;
     if dimensions != 0 {
         config.dimensions = dimensions;
     }
@@ -151,6 +162,17 @@ pub(super) fn device_open_config(
             )
         })?;
     Ok((path, config))
+}
+
+/// The class a host declares on a raw open (FIX 3833; CALLS:
+/// HOST_OPEN_DEVICE_CLASS = ExplicitHostInput): 0 a computer, the generic
+/// default, 1 a phone.
+fn host_device_class(device_class: u8) -> Result<MachineDeviceClass, OneironStatus> {
+    match device_class {
+        0 => Ok(MachineDeviceClass::Computer),
+        1 => Ok(MachineDeviceClass::Phone),
+        _ => Err(OneironStatus::InvalidArg),
+    }
 }
 
 /// Open a NEW handle over `vault`'s same open vault whose writes run as one

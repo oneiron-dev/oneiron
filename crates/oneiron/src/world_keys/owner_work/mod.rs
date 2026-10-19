@@ -37,11 +37,16 @@
 //! control); a pickup loads this install's hybrid secret only for the kinds
 //! that read it, so a revoke needs no byte.
 //!
+//! What blocks a pending request is the executor's to observe
+//! ([`diagnostics`]): an owner's read that decides nothing, and that any
+//! other install answers as unavailable.
+//!
 //! No location, origin or hosted-mode rule reads anything here: the carrier
 //! is any live linked machine the carrier rule admits, and `surface` is audit
 //! only. What stays is real: only an eligible reader executes, and only one
 //! that holds the key opens or wraps it.
 
+mod diagnostics;
 mod pickup;
 mod record;
 mod result;
@@ -50,10 +55,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::authority::{
-    AuthorityEntryHash, AuthorityFold, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal,
+    AuthorityEntryHash, AuthorityFold, OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome,
+    OwnerWorkRefusal,
 };
 use oneiron_authority::authority::CustodyRegisterCheck;
 
+pub use self::diagnostics::{
+    BundleHomeWarning, CapsuleRead, ExecutorObservation, LatestRead, OwnerWorkDiagnostics,
+    PublicationDiagnostics, PublishAttemptView, PublishObserved, PublishReach, ReassertDiagnostics,
+    ReassertKey, ReassertKeyState, ReassertUnread, RelayObservation,
+};
 pub use self::pickup::OwnerWorkDrain;
 
 /// Why an act's work names no executor (CALLS OWNER_WORK_NO_EXECUTOR,
@@ -122,6 +133,23 @@ impl OwnerWorkStatus {
             Self::Refused { .. } => "refused by its holder",
         }
     }
+
+    /// What the owner may do next, for a refusal that names a next step: a
+    /// root request whose target computed another revision than the one he
+    /// saw (FIX 4738). `None` for every other status.
+    #[must_use]
+    pub fn advice(self) -> Option<&'static str> {
+        match self {
+            Self::Refused {
+                reason: OwnerWorkRefusal::RootRevisionMismatch,
+            } => Some(
+                "the target computed another revision of the owner roots and its own standing \
+                 than the one you saw; it may not have synced yet. Review where it stands and \
+                 ask again",
+            ),
+            Self::RecordedAwaitingHolder | Self::Enacted | Self::Refused { .. } => None,
+        }
+    }
 }
 
 /// What an owner act recorded for a holder, and where it stands. Ids only.
@@ -149,6 +177,12 @@ pub struct OwnerWorkReceipt {
     /// before the result, and for any other work.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manifest_check: Option<CustodyRegisterCheck>,
+    /// For a bundle publication, why the home it names may keep no sealed
+    /// copy, as its profile stands here (FIX 4786): a phone's, or none known.
+    /// It says why the request may stay pending and decides nothing. `None`
+    /// for a home whose profile keeps sealed copies, and for any other work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_warning: Option<BundleHomeWarning>,
 }
 
 impl OwnerWorkReceipt {
@@ -163,6 +197,7 @@ impl OwnerWorkReceipt {
             status: OwnerWorkStatus::RecordedAwaitingHolder,
             unassigned: Some(why),
             manifest_check: None,
+            home_warning: None,
         }
     }
 
@@ -181,6 +216,12 @@ impl OwnerWorkReceipt {
                 OwnerWorkStatus::Refused { reason: *reason }
             }
         };
+        let home_warning = match recorded.work {
+            OwnerWorkBody::PublishBundle { home } => diagnostics::bundle_home_warning(fold, home),
+            OwnerWorkBody::WorldKey { .. }
+            | OwnerWorkBody::Root { .. }
+            | OwnerWorkBody::Custody { .. } => None,
+        };
         Some(Self {
             request: Some(entry_hex(&request)),
             kind: recorded.kind(),
@@ -189,6 +230,7 @@ impl OwnerWorkReceipt {
             status,
             unassigned: None,
             manifest_check: outcome.and_then(OwnerWorkOutcome::register_check).cloned(),
+            home_warning,
         })
     }
 
