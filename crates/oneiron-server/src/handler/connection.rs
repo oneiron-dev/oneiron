@@ -6,7 +6,7 @@ use axum::Router;
 use axum::extract::State;
 use axum::extract::ws::{CloseFrame, Message as WsMessage, Utf8Bytes, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use oneiron::sync::documents::document_frame_withheld_for;
 use tokio::time::Duration;
@@ -20,7 +20,7 @@ use super::hello::HelloOutcome;
 use super::socket_stop::StoppingTransport;
 use super::transport::{GuardedTransport, WS_MAX_WRITE_BUFFER_SIZE, WS_WRITE_BUFFER_SIZE};
 
-use crate::auth::{RevokedTokenJtis, is_revoked_or_unreadable, require_owner_auth};
+use crate::auth::{CoreAuth, RevokedTokenJtis, is_revoked_or_unreadable, require_owner_auth};
 use crate::broadcast::BroadcastSubscriber;
 use crate::protocol::{self, ProtocolError, SyncMessage, close_codes};
 use crate::server::SyncServer;
@@ -64,18 +64,25 @@ async fn ws_upgrade_handler(
     machine: Option<axum::Extension<oneiron::authority::PeerMachine>>,
     extensions: axum::http::Extensions,
     State(server): State<Arc<SyncServer>>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<Response, Response> {
     // The MCP carrier serves no sync state, so it admits any holder-bound
     // slip rather than only an owner-grade one.
     if super::mcp_socket::requested(&ws) {
-        return super::mcp_socket::upgrade(ws, &headers, &extensions, server);
+        // On a managed vault its calls would ride a held socket past the
+        // reap freeze, which admits each request or upgrade once: a slip
+        // there is refused, named, and each call goes as one `POST /mcp`.
+        if server.managed_issuer.is_some() && crate::auth::carries_caller_slip(&headers) {
+            return Err(managed_mcp_carrier_refused());
+        }
+        return super::mcp_socket::upgrade(ws, &headers, &extensions, server)
+            .map_err(IntoResponse::into_response);
     }
     let auth = require_owner_auth(&headers, &server.config, server.vault().as_ref())
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+        .map_err(|_| sync_upgrade_refused(&headers, &server))?;
     // Full replication reads the whole vault, an owner act: a hosted
     // operator's root is refused before the upgrade (FIX 2222).
     crate::api::host_action::require_host_owner_act(&server, &auth)
-        .map_err(|_| StatusCode::FORBIDDEN)?;
+        .map_err(|_| StatusCode::FORBIDDEN.into_response())?;
     let session_jti = auth.jti().map(str::to_owned);
     // The socket's sync frames count under the actor its upgrade admitted,
     // as an HTTP request counts under its own (OF-520, FIX 1086).
@@ -130,6 +137,39 @@ async fn ws_upgrade_handler(
             .insert(oneiron::sync::home_proof::HOME_PROOF_HEADER, value);
     }
     Ok(response)
+}
+
+/// The refusal of a sync upgrade whose credential is not owner-grade. On a
+/// managed vault a caller's own forwarded slip that verified, but is
+/// narrower than full replication, is told so and never served as the host
+/// (WILL-PLAN L14 row 01); every other refusal is the bare 401 it was.
+fn sync_upgrade_refused(headers: &HeaderMap, server: &SyncServer) -> Response {
+    if server.managed_issuer.is_some()
+        && CoreAuth::from_headers(headers, &server.config, server.vault().as_ref()).is_ok()
+    {
+        return crate::auth::caller_slip_too_narrow("full replication").into_response();
+    }
+    StatusCode::UNAUTHORIZED.into_response()
+}
+
+/// The MCP carrier's refusal on a managed vault (WILL-PLAN L14 row 01). The
+/// reap freeze admits a request or an upgrade once and never sees a call on
+/// a socket it already let through, and the carrier holds nothing a reap
+/// counts, so a reap could read quiescent over a call in flight. The bound
+/// is the service's vault lifecycle allocation; the same calls run on this
+/// vault as one `POST /mcp` each, and the carrier runs on a self-hosted one.
+fn managed_mcp_carrier_refused() -> Response {
+    let body = serde_json::json!({
+        "error": "mcp_carrier_unavailable",
+        "message": "This hosted vault serves MCP as one POST /mcp per call, not on a held \
+            socket: a call on the socket would run past the reap pause of the service's vault \
+            lifecycle allocation. The same calls work here over POST /mcp, and the socket \
+            carrier works on a self-hosted vault.",
+        "bound": {"kind": "capacity", "resource": "vault_lifecycle_allocation"},
+        "alternative": "POST /mcp",
+        "self_hosted": {"supported": true},
+    });
+    (StatusCode::FORBIDDEN, axum::Json(body)).into_response()
 }
 
 /// This install's machine proof answering the upgrade whose slip proof

@@ -15,8 +15,14 @@
 //! `issued_at`; the vault takes it once, near its time, through the
 //! verifier managed serve hands in. The call's auth is the host root
 //! projected onto that person, off-device, and the owner door then admits
-//! it as it admits a managed facade request. A plain host takes no managed
-//! hello, and a managed host no slip.
+//! it as it admits a managed facade request. A managed host also takes the
+//! owner's own enrolled device (FIX 1949 = B): its slip and binding proof,
+//! admitted by the same doors, and `machine`, its install key's claim over
+//! that very proof, for a machine that stands here as the owner's own. That
+//! call reads off this device, toward the machine, and ends once the
+//! machine no longer stands so. An invited person's slip stays refused by
+//! the owner door, and a hello mixing an attestation with a slip is
+//! refused. A plain host takes no managed hello and no machine claim.
 //! The hello may name the `room` the call is heard in and the voice
 //! `roster` its speakers are matched under. A room the caller cannot read
 //! closes the socket. A bound call is live in its room until it ends: each
@@ -34,6 +40,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
+use oneiron::authority::PeerMachine;
 use oneiron::claim::CallerLocality;
 use oneiron::disclosure::RoomParty;
 use oneiron::interlocutor::InterlocutorResolutionInput;
@@ -56,7 +63,7 @@ use super::{
     VoiceWireBindings,
 };
 use crate::ai_host::payer_funding::room_launch_funding;
-use crate::auth::{BindingProof, CoreAuth, CoreScope};
+use crate::auth::{BindingProof, CoreAuth, CoreScope, MachineClaim};
 use crate::config::models::VoiceSettings;
 use crate::managed::{ManagedShutdown, ShutdownSignal};
 use crate::server::{HousekeepingAdmission, SyncServer};
@@ -82,12 +89,18 @@ const MAX_ROOM_CANDIDATES: usize = 32;
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum Hello {
     Hello {
-        /// The owner's capability slip, on a plain host.
+        /// The owner's capability slip, on a plain host or from his own
+        /// enrolled device on a managed one.
         #[serde(default)]
         token: Option<String>,
         /// Its fresh transport binding proof.
         #[serde(default)]
         binding: Option<BindingProof>,
+        /// On a managed host, the owner's enrolled machine: its install
+        /// key's signature over the token and the binding's timestamp and
+        /// nonce, as `x-oneiron-machine` carries one.
+        #[serde(default)]
+        machine: Option<MachineClaim>,
         /// The supervisor's attestation of the vault's owner, on a managed
         /// host.
         #[serde(default)]
@@ -115,7 +128,8 @@ pub(crate) type ManagedVoiceVerifier =
 /// What a call is admitted under, and how its hello is authenticated.
 #[derive(Clone)]
 struct CallDoors {
-    /// `Some` on a managed host: its hellos carry an attestation, not a slip.
+    /// `Some` on a managed host: its hellos carry an attestation, or the
+    /// owner's own enrolled device's slip and machine claim.
     managed: Option<ManagedVoiceVerifier>,
     /// Held for each call's whole length, as a served write is.
     admit: HousekeepingAdmission,
@@ -229,6 +243,7 @@ async fn call(
     let Hello::Hello {
         token,
         binding,
+        machine,
         managed_owner,
         issued_at,
         sample_rate,
@@ -239,20 +254,45 @@ async fn call(
         .await
         .map_err(|_| refused("no hello"))??;
     let vault = server.vault();
-    let auth = match (token, binding, managed_owner, issued_at, &doors.managed) {
+    let (auth, device) = match (
+        token,
+        binding,
+        machine,
+        managed_owner,
+        issued_at,
+        &doors.managed,
+    ) {
         // The same doors as the HTTP API: the slip with a fresh binding
         // proof, admitted once, then the owner door.
-        (Some(token), Some(binding), None, None, None) => {
+        (Some(token), Some(binding), None, None, None, None) => {
             if !token.starts_with("v2.slip.") {
                 return Err(refused("not a capability slip"));
             }
-            CoreAuth::bind_transport_once(&token, &binding, vault)
+            let auth = CoreAuth::bind_transport_once(&token, &binding, vault)
                 .map_err(|_| refused("credential"))?
-                .at(CallerLocality::OnDevice)
+                .at(CallerLocality::OnDevice);
+            (auth, None)
+        }
+        // A managed vault's owner on his own enrolled device (FIX 1949 =
+        // B): the same doors, and the machine his hello names proves itself
+        // over this very proof and stands here as his own. The supervisor
+        // forwarded it, so the call reads off this device, toward it.
+        (Some(token), Some(binding), Some(machine), None, None, Some(_)) => {
+            if server.managed_issuer.is_none() {
+                return Err(refused("credential"));
+            }
+            if !token.starts_with("v2.slip.") {
+                return Err(refused("not a capability slip"));
+            }
+            let auth = CoreAuth::bind_transport_once(&token, &binding, vault)
+                .map_err(|_| refused("credential"))?;
+            let device = crate::auth::owned_machine(&machine, &token, &binding, vault)
+                .ok_or_else(|| refused("not the owner's enrolled device"))?;
+            (auth.toward(device), Some(device))
         }
         // The managed facade's door: the host root projected onto the
         // person the supervisor attests, once the attestation checks out.
-        (None, None, Some(action), Some(issued_at), Some(verify)) => {
+        (None, None, None, Some(action), Some(issued_at), Some(verify)) => {
             if server.managed_issuer.is_none() {
                 return Err(refused("credential"));
             }
@@ -266,9 +306,10 @@ async fn call(
                 issued_at,
             )
             .ok_or_else(|| refused("managed owner"))?;
-            CoreAuth::for_server(&axum::http::HeaderMap::new(), server)
+            let auth = CoreAuth::for_server(&axum::http::HeaderMap::new(), server)
                 .map_err(|_| refused("credential"))?
-                .as_managed_owner(holder)
+                .as_managed_owner(holder);
+            (auth, None)
         }
         _ => return Err(refused("credential")),
     };
@@ -305,7 +346,7 @@ async fn call(
     let stop: ShutdownSignal = Box::pin(async move {
         tokio::select! {
             () = stopping => {}
-            () = revoked(&auth, &server) => {
+            () = call_revoked(&auth, &server, device) => {
                 tracing::info!("voice: the call's credential was revoked; ending the call");
             }
         }
@@ -503,6 +544,25 @@ pub(super) async fn revoked(auth: &CoreAuth, server: &SyncServer) {
         } else {
             auth.credential_is_live(server.vault())
         };
+        if !live {
+            return;
+        }
+    }
+}
+
+/// [`revoked`], for one call: an enrolled device's call (FIX 1949 = B) also
+/// ends once its slip is revoked, its person is no longer the vault's live
+/// owner, or its machine no longer stands here as his own.
+async fn call_revoked(auth: &CoreAuth, server: &SyncServer, device: Option<PeerMachine>) {
+    let Some(device) = device else {
+        return revoked(auth, server).await;
+    };
+    let mut every = tokio::time::interval(LIVENESS_EVERY);
+    loop {
+        every.tick().await;
+        let live = auth.credential_is_live(server.vault())
+            && crate::api::owner(auth, server).is_ok()
+            && crate::auth::owned_machine_stands(server.vault(), device);
         if !live {
             return;
         }
