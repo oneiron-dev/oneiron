@@ -52657,7 +52657,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 65,
+      "re-export": 66,
       "struct": 40
      }
     },
@@ -53094,7 +53094,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1002
+      "fn": 1004
      }
     },
     {
@@ -54017,6 +54017,21 @@
      "purpose": "Typed owner setup for weave work and the inbox's real producers",
      "surface": {
       "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WireThresholds",
+      "WireThresholdsReceipt"
+     ],
+     "path": "src/task_verb/sdk_wire_health.rs",
+     "purpose": "Typed detection policy for the owner's wire-health doors (OF-520)",
+     "surface": {
+      "const": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -60628,7 +60643,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 182,
+     "files": 183,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60798,7 +60813,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3706,
+   "source_files": 3707,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69430,7 +69445,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 973
+      "fn": 975
      }
     },
     {
@@ -70524,7 +70539,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 974
+      "fn": 976
      }
     },
     {
@@ -74068,7 +74083,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 157
+      "crate-vis": 158
      }
     },
     {
@@ -74667,6 +74682,16 @@
      "purpose": "The host doors of the owner's context-widen proposals: `vault.widen_proposals`, `.approve` and `.decline`",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/wire_health_doors.rs",
+     "purpose": "The owner's wire detection policy, under the same proof as `/v1/owner/wire-health`",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -81815,17 +81840,17 @@
       "WireQuestion",
       "WireQuestionKind",
       "WireTelemetry",
-      "WireThresholds",
       "WireWindowReceipt"
      ],
      "path": "src/wire_telemetry.rs",
      "purpose": "RC42 observation-only wire counters",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 12,
-      "struct": 6
+      "re-export": 1,
+      "struct": 5
      }
     },
     {
@@ -82146,7 +82171,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 422,
+     "files": 423,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82575,7 +82600,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 778,
+   "source_files": 779,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -86019,6 +86044,8 @@
       "WireRefusalReason",
       "WireRetrievalDegradation",
       "WireRetrievalQuality",
+      "WireThresholds",
+      "WireThresholdsReceipt",
       "WireWitnessAuthor",
       "WireWitnessMessage",
       "WireWitnessReceipt",
@@ -86076,7 +86103,7 @@
      "purpose": "—",
      "surface": {
       "enum": 804,
-      "struct": 2498
+      "struct": 2500
      }
     },
     {
