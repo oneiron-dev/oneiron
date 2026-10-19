@@ -18,7 +18,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use axum::extract::State;
-use oneiron::{EntityId, TimeRange};
 use oneiron::booking::agent_api::{
     BookingAvailabilityInput, BookingConstraintInput, BookingOperationRequest,
 };
@@ -38,6 +37,7 @@ pub(super) use oneiron::task_verb::sdk::{
     BookingConstraintTurnInput as ConstraintTurnInput,
     BookingConstraintTurnResponse as ConstraintTurnResponse,
 };
+use oneiron::{EntityId, TimeRange};
 
 use super::admission::{admission_facts, admission_short_circuit};
 use super::free_text::{on_parse_seat, parse_seat_settings};
@@ -162,7 +162,10 @@ async fn run_constraint_turn_in(
             let (oracle, mut rows) = if list {
                 booking_oracle_listing(&turn_server, page_ref, None, now, &producers)?
             } else {
-                (booking_oracle(&turn_server, page_ref, None, now)?, Vec::new())
+                (
+                    booking_oracle(&turn_server, page_ref, None, now)?,
+                    Vec::new(),
+                )
             };
             let oracle = PublicSlotOracle(oracle);
             let mut state = session.lock().unwrap_or_else(PoisonError::into_inner);
