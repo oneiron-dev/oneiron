@@ -1,5 +1,6 @@
 //! Remote-backed NativeClient SDK seam with its stamped-turn input.
 
+use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 
 use super::boundary::{boundary_error, facade_error};
@@ -81,6 +82,18 @@ pub struct NapiPaired {
     pub pin: Option<NapiCheckpointPin>,
 }
 
+/// What `openWithHostRoot` did with the host root it was given (FIX 4730).
+#[napi(object)]
+pub struct NapiHostRootProfile {
+    /// This open enrolled this install as an `Unanswered` machine; `false`
+    /// when its live profile already stood, and nothing was written.
+    pub enrolled: bool,
+    /// The given root is not this vault's settled root, so it went unused:
+    /// the handle stands under the settled root as before. Reported, never
+    /// refused. Never with `enrolled`.
+    pub wrong_root: bool,
+}
+
 /// The private native handle behind `packages/oneiron`.
 #[napi]
 pub struct NativeClient {
@@ -103,6 +116,46 @@ impl NativeClient {
         let inner =
             oneiron_remote::OneironClient::open(path.as_deref(), &options).map_err(facade_error)?;
         Ok(Self { inner })
+    }
+
+    /// `open`, then this install's own machine profile from the vault's
+    /// host root secret (FIX 4730): `oneiron_remote`'s rooted-only
+    /// `open_with_host_root`. `hostRootSecret` is the secret's exact bytes,
+    /// borrowed from JavaScript memory for this call only; the caller keeps
+    /// them and clears them. `hostRootProfile` says what it did.
+    #[napi(factory)]
+    pub fn open_with_host_root(
+        path: Option<String>,
+        dimensions: Option<f64>,
+        host_root_secret: Buffer,
+    ) -> napi::Result<Self> {
+        crate::facade::before_vault_open();
+        let options = oneiron_remote::OpenOptions {
+            dimensions: dimensions
+                .map(dimensions_to_engine)
+                .transpose()
+                .map_err(facade_error)?,
+        };
+        let path = path.map(std::path::PathBuf::from);
+        let inner = oneiron_remote::OneironClient::open_with_host_root(
+            path.as_deref(),
+            &options,
+            host_root_secret.as_ref(),
+        )
+        .map_err(facade_error)?;
+        Ok(Self { inner })
+    }
+
+    /// What `openWithHostRoot` did with its root, on the handle it returned;
+    /// `null` on every other handle, one rebound from it included.
+    #[napi]
+    pub fn host_root_profile(&self) -> Option<NapiHostRootProfile> {
+        self.inner
+            .host_root_profile()
+            .map(|profile| NapiHostRootProfile {
+                enrolled: profile.enrolled,
+                wrong_root: profile.wrong_root,
+            })
     }
 
     /// Binds a remote `oneiron-server`. `key` is the credential `pair`

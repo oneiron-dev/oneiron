@@ -249,6 +249,7 @@ you want to act as instead.
 | method | returns |
 |---|---|
 | `Oneiron.open(path?, opts?)` | an embedded handle |
+| `Oneiron.openWithHostRoot(path, hostRootSecret, opts?)` | `{ memory, hostRoot }`: an embedded handle whose install the vault's host root (its exact bytes, a `Uint8Array` you keep and clear) profiled as `Unanswered`, so the owner's acts carry from it, and `hostRoot.{ enrolled, wrongRoot }`: `wrongRoot` says the root is not the vault's settled one and went unused (reported, never refused). Rooted-only; `FORBIDDEN` under a managed or relay posture |
 | `Oneiron.connect(url, key)` | a remote handle |
 | `Oneiron.pair(link)` | `{ memory, credential, pin }`: a remote handle, the credential to store, and the checkpoint pin the link named (`null` when the vault has none) for a local replica to adopt by |
 | `handle.asActor(actorKey)` | a new handle bound to another actor |

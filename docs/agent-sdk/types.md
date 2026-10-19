@@ -23,6 +23,25 @@ export type OpenOptions = {
   dimensions?: number
 }
 
+/**
+ * What {@link Oneiron.openWithHostRoot} did with the host root it was given
+ * (FIX 4730).
+ */
+export type HostRootProfile = {
+  /**
+   * This open enrolled this install in the vault as an `Unanswered` machine;
+   * `false` when its live profile already stood, and nothing was written.
+   */
+  readonly enrolled: boolean
+  /**
+   * The given root is not this vault's settled root, so it went unused: this
+   * install already carried its profile, and the handle stands under the
+   * settled root as before. Reported, never refused, so the host can show it
+   * or re-key. Never `true` with `enrolled`.
+   */
+  readonly wrongRoot: boolean
+}
+
 /** What {@link Oneiron.startEngine} takes besides the path (OF-237). */
 export type EngineOptions = {
   /** Embedding vector dimensions; omitted takes the config's. */

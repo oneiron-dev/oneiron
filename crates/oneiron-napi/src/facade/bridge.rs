@@ -14,6 +14,8 @@ use crate::host_root::HostRootOpenOptions;
 #[napi]
 pub struct VaultBridge {
     vault: Arc<Vault>,
+    /// `openWithHostRoot`'s wrong-root fact (FIX 4730); `false` otherwise.
+    wrong_host_root: bool,
 }
 
 #[napi]
@@ -32,6 +34,7 @@ impl VaultBridge {
         vault.install_default_keystore(std::path::Path::new(&path));
         Ok(Self {
             vault: Arc::new(vault),
+            wrong_host_root: false,
         })
     }
 
@@ -39,7 +42,9 @@ impl VaultBridge {
     /// root secret (FIX 4730), so the owner's acts carry from it. With
     /// `initializeRoot`, a store this open creates is rooted under the
     /// secret first, as a new local-origin vault. A secret that cannot
-    /// profile the install refuses the open with the engine's reason.
+    /// profile the install refuses the open with the engine's reason; a
+    /// secret that is not the vault's settled root, over a profile that
+    /// already stands, opens and says so in `wrongHostRoot`.
     #[napi(factory)]
     pub fn open_with_host_root(
         path: String,
@@ -47,11 +52,20 @@ impl VaultBridge {
         options: HostRootOpenOptions,
     ) -> napi::Result<Self> {
         let request = options.before_open(&path).map_err(boundary_error)?;
-        let opened = Self::open(path, dimensions)?;
-        request
+        let mut opened = Self::open(path, dimensions)?;
+        opened.wrong_host_root = request
             .profile(&opened.vault)
             .map_err(|e| boundary_error(format!("failed to profile this install: {e}")))?;
         Ok(opened)
+    }
+
+    /// Whether the root `openWithHostRoot` was given is not this vault's
+    /// settled root, so it went unused: this install already carried its
+    /// profile, and the vault stands under the settled root as before
+    /// (FIX 4730). Reported, never refused. `false` on every other open.
+    #[napi]
+    pub fn wrong_host_root(&self) -> bool {
+        self.wrong_host_root
     }
 
     /// Binds an actor scope from the pinned key grammar

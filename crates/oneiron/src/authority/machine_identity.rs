@@ -44,7 +44,7 @@ const SERVING_ROOT_ABSENT: &str =
     "the vault has no root yet; its first rooted serving start profiles this install";
 const SERVING_ROOT_CONFLICTED: &str =
     "the vault's root is conflicted; this install is profiled once it settles";
-const SERVING_ROOT_NOT_ISSUER: &str =
+pub(super) const SERVING_ROOT_NOT_ISSUER: &str =
     "this start's host root issuer is not the vault's live root; no root is minted for it";
 const SERVING_NO_OWNER: &str = "the vault names no owner to profile this install for";
 pub(super) const SERVING_NO_ISSUER: &str =
@@ -359,14 +359,17 @@ impl Vault {
             .map(|(folded, _)| folded)
     }
 
-    /// [`Self::ensure_serving_install_profile`], and whether it enrolled the
-    /// install: `false` for the no-op over a profile that already stands,
-    /// which never checks `issuer` (FIX 4730).
+    /// [`Self::ensure_serving_install_profile`], and what it did: `None` when
+    /// it enrolled the install. `Some` is the no-op over a profile that
+    /// already stands, carrying whether `issuer` is this vault's settled live
+    /// root, read by `require_host` in the same snapshot before that return
+    /// (FIX 4730). A `false` there is reported, never refused, and nothing is
+    /// written with that issuer (Engine 10-19 15:3x).
     pub(super) fn ensure_install_profile_reporting(
         &self,
         issuer: &HostSlipIssuer,
         role: MachineRole,
-    ) -> Result<(FoldedMachine, bool)> {
+    ) -> Result<(FoldedMachine, Option<bool>)> {
         let vault_id = self
             .authority_fold()?
             .vault_id
@@ -378,7 +381,8 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         if let Some(folded) = fold.machine(request.machine) {
             return if serving_profile_stands(&fold, folded, &request) {
-                Ok((folded.clone(), false))
+                let issuer_is_root = super::slip_vault::require_host(&fold, issuer).is_ok();
+                Ok((folded.clone(), Some(issuer_is_root)))
             } else {
                 Err(authority_refused(serving_profile_refusal(folded, &request)))
             };
@@ -394,7 +398,7 @@ impl Vault {
             .ok_or_else(|| authority_refused(SERVING_NO_OWNER))?;
         let folded = self.enroll_bootstrap_in_txn(&mut txn, issuer, owner, &request, role)?;
         txn.commit()?;
-        Ok((folded, true))
+        Ok((folded, None))
     }
 
     /// [`Self::ensure_serving_install_profile`] in [`SERVING_INSTALL_ROLE`]

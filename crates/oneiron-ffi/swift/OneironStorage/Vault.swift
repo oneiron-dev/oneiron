@@ -174,6 +174,13 @@ public struct ContextPackMedia: Encodable, Equatable {
 public final class Vault {
     private let handle: OpaquePointer
 
+    /// The wrong-root fact of `open(path:dimensions:hostRootSecret:initializeRoot:)`
+    /// (FIX 4730): true when the secret it was given is not this vault's settled root, so it
+    /// went unused, since this install already carried its profile; the vault stands under
+    /// its settled root, as before. Reported, never refused, so the app can show it or re-key.
+    /// False on every other open and on a bound handle.
+    public private(set) var wrongHostRoot = false
+
     fileprivate init(handle: OpaquePointer) {
         self.handle = handle
     }
@@ -214,7 +221,8 @@ public final class Vault {
     /// does. `initializeRoot` roots the vault under that secret when this open creates its
     /// store and its authority log is empty, a new local-origin vault: never set it for a
     /// replica awaiting its root. A secret that cannot profile the install throws
-    /// `engineError`, and the engine logs why.
+    /// `engineError`, and the engine logs why; a secret that is not the vault's settled root,
+    /// over a profile that already stands, opens and sets `wrongHostRoot`.
     public static func open(
         path: String,
         dimensions: Int = 0,
@@ -225,6 +233,7 @@ public final class Vault {
             throw OneironStorageError.invalidArgument
         }
         var rawHandle: OpaquePointer?
+        var wrongRoot: UInt8 = 0
         var mutablePath = path
         let status: OneironStatus = try mutablePath.withUTF8 { pathBytes in
             guard let pathBase = pathBytes.baseAddress else {
@@ -240,7 +249,8 @@ public final class Vault {
                     secretPtr,
                     secretLen,
                     initializeRoot ? 1 : 0,
-                    &rawHandle
+                    &rawHandle,
+                    &wrongRoot
                 )
             }
         }
@@ -248,7 +258,9 @@ public final class Vault {
         guard let handle = rawHandle else {
             throw OneironStorageError.missingHandle
         }
-        return Vault(handle: handle)
+        let vault = Vault(handle: handle)
+        vault.wrongHostRoot = wrongRoot == 1
+        return vault
     }
 
     /// A NEW handle over this same open vault, from `open` or `Engine.vault()`, whose

@@ -46,6 +46,8 @@ mod dto;
 mod embedded_engine;
 mod error;
 mod facade_types_generated;
+// FIX 4730: the rooted-only host-root open.
+mod host_root;
 mod pairing;
 
 pub use dto::{
@@ -68,6 +70,7 @@ pub use embedded_engine::{
 };
 pub use error::OneironError;
 pub use facade_types_generated::*;
+pub use host_root::HostRootProfile;
 pub use pairing::{
     CheckpointPin, CheckpointPinBinding, CheckpointPinKey, CheckpointPinPolicy,
     CheckpointPinPosture, CheckpointPinRoot, CheckpointPinSignature, CheckpointPinSuite,

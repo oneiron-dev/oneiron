@@ -821,10 +821,17 @@ enum OneironStatus oneiron_vault_entity_exists(struct OneironVault *vault,
  * replica awaiting its root. A secret that cannot profile the install is
  * `EngineError` with `out_vault` left null; the engine logs the reason.
  *
+ * `out_wrong_host_root` is the wrong-root fact: set to 1 when the secret
+ * is not this vault's settled root, so it went unused, since this install
+ * already carried its profile; the vault then opens under its settled
+ * root, as before. It is reported, never refused. It is 0 otherwise,
+ * with no secret too, and left 0 on any failure.
+ *
  * # Safety
  *
  * As `oneiron_vault_open`, and a non-null `host_root_secret_ptr` covers
- * `host_root_secret_len` readable bytes, borrowed for this call only.
+ * `host_root_secret_len` readable bytes, borrowed for this call only;
+ * `out_wrong_host_root` is non-null and writable for the whole call.
  */
 enum OneironStatus oneiron_vault_open_with_host_root(const uint8_t *path_ptr,
                                                      size_t path_len,
@@ -834,7 +841,8 @@ enum OneironStatus oneiron_vault_open_with_host_root(const uint8_t *path_ptr,
                                                      const uint8_t *host_root_secret_ptr,
                                                      size_t host_root_secret_len,
                                                      uint8_t initialize_root,
-                                                     struct OneironVault **out_vault);
+                                                     struct OneironVault **out_vault,
+                                                     uint8_t *out_wrong_host_root);
 
 /**
  * Store a directed edge between two entities. A bound handle stores it as

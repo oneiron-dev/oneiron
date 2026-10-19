@@ -36,6 +36,7 @@ import type {
   CommitReceipt,
   EngineOptions,
   FacadeReceipt,
+  HostRootProfile,
   MemoryPack,
   MemoryExport,
   OpenOptions,
@@ -85,6 +86,15 @@ export interface Paired {
   readonly memory: Oneiron
   readonly credential: string
   readonly pin: CheckpointPin | null
+}
+
+/**
+ * What {@link Oneiron.openWithHostRoot} returns: the embedded handle, and what
+ * the open did with the host root it was given (FIX 4730).
+ */
+export interface HostRootOpened {
+  readonly memory: Oneiron
+  readonly hostRoot: HostRootProfile
 }
 
 /**
@@ -140,6 +150,45 @@ export class Oneiron {
       return new Oneiron(NativeClient.open(path, opts.dimensions))
     } catch (error) {
       throw translateNativeError(error)
+    }
+  }
+
+  /**
+   * {@link Oneiron.open}, then this install's own machine profile from the
+   * vault's host root secret (FIX 4730), so the owner's acts carry from this
+   * install. `hostRootSecret` is the secret's exact bytes (a server's
+   * configured `auth_secret` as its UTF-8, or a retained root), never hex or
+   * base64 of them. It is JavaScript memory and stays yours: the native side
+   * borrows it for this call only and keeps no copy, so clear it
+   * (`hostRootSecret.fill(0)`) when you are done with it.
+   *
+   * Rooted-only: the vault must already be rooted, and nothing here roots it.
+   * An empty secret throws `BAD_REQUEST`; a vault open under the managed or
+   * relay posture, or a root the provider holds, throws `FORBIDDEN`; a secret
+   * that cannot profile this install throws the engine's code and reason, and
+   * `open` stays the rootless door. A secret that is not the vault's settled
+   * root, over a profile that already stands, opens and says so in
+   * `hostRoot.wrongRoot`. The handle binds the local owner actor, as `open`
+   * does, and carries no owner proof.
+   */
+  static openWithHostRoot(
+    path: string | undefined,
+    hostRootSecret: Uint8Array,
+    opts: OpenOptions = {},
+  ): HostRootOpened {
+    let native: NativeClient
+    try {
+      native = NativeClient.openWithHostRoot(path, opts.dimensions, hostRootSecret)
+    } catch (error) {
+      throw translateNativeError(error)
+    }
+    const profile = native.hostRootProfile()
+    return {
+      memory: new Oneiron(native),
+      hostRoot: {
+        enrolled: profile?.enrolled ?? false,
+        wrongRoot: profile?.wrongRoot ?? false,
+      },
     }
   }
 
