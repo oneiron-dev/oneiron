@@ -20,7 +20,10 @@
 //! Per (kind, target) the fold keeps the live requests, as a grant keeps its
 //! travel choices ([`super::grant_travel`]): a request replaces the live
 //! requests its parents carry. A replaced request with no result is still
-//! its executor's to answer.
+//! its executor's to answer, except a root request: a newer one on its
+//! target supersedes it, and the owner may cancel one (`cancel`, FIX 4739).
+//! Either keeps it from running and signs no result; a result signed first
+//! stands.
 //!
 //! A root request's `seen` is [`AuthorityFold::root_work_revision`]: the
 //! owner roots and the target's standing, as the deciding surface saw them.
@@ -38,6 +41,7 @@
 //! a side branch ([`super::world_privacy::side_world`] is `None`), so every
 //! proven linked machine folds both.
 
+mod cancel;
 mod custody;
 mod privacy_basis;
 
@@ -91,6 +95,9 @@ pub(super) struct OwnerWorkState {
     refused: BTreeSet<AuthorityEntryHash>,
     /// Each secret an admitted custody revoke names: terminal for it.
     revoked: BTreeSet<EntityId>,
+    /// Each root request's cancels with effect, by the request's entry
+    /// (`cancel`).
+    cancels: BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
 }
 
 /// One admitted request as this install reads it.
@@ -126,6 +133,8 @@ pub(crate) struct FoldedOwnerWork {
     refused: BTreeSet<AuthorityEntryHash>,
     /// Each secret an admitted custody revoke names.
     revoked: BTreeSet<EntityId>,
+    /// Each root request's cancels with effect, by the request's entry.
+    cancels: BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
 }
 
 impl AuthorityFold {
@@ -163,7 +172,9 @@ impl AuthorityFold {
     }
 
     /// The requests that name `executor`, count here and have no result yet,
-    /// ascending by entry hash: the executor's work.
+    /// ascending by entry hash: the executor's work. A root request the
+    /// owner cancelled, or a newer request on its target superseded, is not
+    /// (CALLS ROOT_WORK_CANCEL, ROOT_WORK_SUPERSESSION).
     pub(crate) fn pending_owner_work_for(
         &self,
         executor: EntityId,
@@ -175,6 +186,7 @@ impl AuthorityFold {
                 folded.counts
                     && folded.request.executor == executor
                     && !self.owner_work.results.contains_key(*hash)
+                    && !cancel::closed(&self.owner_work, hash, &folded.request)
             })
             .map(|(hash, folded)| (*hash, &folded.request))
     }
@@ -242,7 +254,7 @@ impl AuthorityFold {
 /// The owner work transitions, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
 /// check: each is signed by an install key, never a roster key (FIX 2222:
-/// the host root acts as nobody). `None` for any other op.
+/// the host root acts as nobody), a cancel's too. `None` for any other op.
 pub(super) fn apply_owner_work(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -255,6 +267,9 @@ pub(super) fn apply_owner_work(
         }
         AuthorityOp::OwnerWorkResult(result) => {
             Some(apply_result(state, entry, result, hash, view))
+        }
+        AuthorityOp::OwnerWorkCancel(owner_cancel) => {
+            Some(cancel::apply_cancel(state, entry, owner_cancel, hash, view))
         }
         _ => None,
     }
@@ -388,10 +403,11 @@ fn apply_result(
     Ok(())
 }
 
-/// Joins two states: requests, refusals and revoked secrets by union, a
-/// request superseded on either side is superseded, and of two different
-/// results of one request the lesser entry hash stands, the other is without
-/// effect. Two copies of one request that disagree never count here.
+/// Joins two states: requests, refusals, revoked secrets and cancels by
+/// union, a request superseded on either side is superseded, and of two
+/// different results of one request the lesser entry hash stands, the other
+/// is without effect. Two copies of one request that disagree never count
+/// here.
 pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkState) {
     for (hash, request) in &right.requests {
         merged
@@ -408,6 +424,13 @@ pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkSta
     }
     merged.refused.extend(right.refused.iter().copied());
     merged.revoked.extend(right.revoked.iter().copied());
+    for (request, cancels) in &right.cancels {
+        merged
+            .cancels
+            .entry(*request)
+            .or_default()
+            .extend(cancels.iter().copied());
+    }
     for (request, answer) in &right.results {
         match merged.results.get(request) {
             Some(held) if held.entry == answer.entry => {}
@@ -473,6 +496,7 @@ pub(super) fn folded_owner_work(
             .collect(),
         refused: work.refused.clone(),
         revoked: work.revoked.clone(),
+        cancels: work.cancels.clone(),
     }
 }
 

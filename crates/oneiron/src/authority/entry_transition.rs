@@ -599,7 +599,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::OwnerWorkRequest(_)
-        | AuthorityOp::OwnerWorkResult(_) => false,
+        | AuthorityOp::OwnerWorkResult(_)
+        | AuthorityOp::OwnerWorkCancel(_) => false,
     }
 }
 

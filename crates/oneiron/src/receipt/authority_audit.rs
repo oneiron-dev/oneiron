@@ -36,8 +36,8 @@ use crate::Vault;
 use crate::authority::{
     AUTHORITY_HASH_LEN, AuthorityCheckpointRow, AuthorityEntryHash, AuthorityFold,
     AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp, FederationLifecycleKind,
-    VerifiedAuthorityCheckpoint, adopted_authority_checkpoint_in_txn, authority_entry_hash,
-    authority_log_entity_id_from_hash, decode_authority_log_entry_body,
+    OwnerWorkKind, VerifiedAuthorityCheckpoint, adopted_authority_checkpoint_in_txn,
+    authority_entry_hash, authority_log_entity_id_from_hash, decode_authority_log_entry_body,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -698,6 +698,18 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 detail: Some(result.outcome.as_str().to_owned()),
                 holder_ref: Some(result.executor.to_hex()),
                 parent_ref: Some(hex_lower(&result.request)),
+                ..OpFields::default()
+            },
+        ),
+        // The owner's cancel of a root request (FIX 4739): its subject is the
+        // request's target, its parent the request.
+        AuthorityOp::OwnerWorkCancel(cancel) => (
+            Other,
+            "owner_work_cancel",
+            OpFields {
+                detail: Some(OwnerWorkKind::Root.as_str().to_owned()),
+                subject_ref: Some(cancel.act.target.to_hex()),
+                parent_ref: Some(hex_lower(&cancel.request)),
                 ..OpFields::default()
             },
         ),

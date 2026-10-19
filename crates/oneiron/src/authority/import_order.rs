@@ -107,6 +107,12 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
                 entry.signer_key().clone(),
             )]
         }
+        AuthorityOp::OwnerWorkCancel(cancel) => {
+            vec![Grant::InstallKey(
+                cancel.carrier,
+                entry.signer_key().clone(),
+            )]
+        }
         // An owner answer waits for its carrier's install key (mesh PR1b).
         AuthorityOp::MachineProfile(MachineProfile {
             carrier: Some(carrier),

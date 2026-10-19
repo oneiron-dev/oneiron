@@ -96,6 +96,7 @@ pub(super) fn apply_op(
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
+        | AuthorityOp::OwnerWorkCancel(_)
         | AuthorityOp::WorldKeyWraps(_) => {}
         // The signed record of a shared-act change; the change itself is the
         // execution's (`federation::shared_act`).
