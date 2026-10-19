@@ -1100,12 +1100,18 @@ selfFocusUnsubscribe(input: unknown): unknown
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */
 interface NativeClientConstructor {
-  open(path: string | undefined, dimensions: number | undefined): NativeClient
+  /** `deviceClass` is the host's declaration, `"computer"` when omitted (FIX 5560). */
+  open(
+    path: string | undefined,
+    dimensions: number | undefined,
+    deviceClass: string | undefined,
+  ): NativeClient
   /** `open`, then this install's machine profile from the host root's exact bytes (FIX 4730). */
   openWithHostRoot(
     path: string | undefined,
     dimensions: number | undefined,
     hostRootSecret: Uint8Array,
+    deviceClass: string | undefined,
   ): NativeClient
   connect(url: string, key: string): NativeClient
   /** `pin` is absent when the vault has no attested checkpoint. */

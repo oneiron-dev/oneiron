@@ -165,7 +165,10 @@ impl EmbeddedEngine {
             BlockingEngine::start(ForeignHost(host), config, limits).map_err(engine_failure)?;
         Ok(Arc::new(Self {
             engine,
-            options: oneiron_remote::OpenOptions { dimensions },
+            options: oneiron_remote::OpenOptions {
+                dimensions,
+                device_class: None,
+            },
         }))
     }
 

@@ -16,6 +16,7 @@ use super::dtos::{
 use super::input_error::witness_input_error;
 use super::numeric::{claim_input_to_engine, dimensions_to_engine, limit_to_engine};
 use super::pairing::{NapiCheckpointPin, pin_from_engine};
+use crate::vault::host_device_class;
 
 // ── ONE-1441 WIRE-P1: the shared-backend client behind the `oneiron` npm
 //    package ───────────────────────────────────────────────────────────────
@@ -102,16 +103,17 @@ pub struct NativeClient {
 
 #[napi]
 impl NativeClient {
-    /// Opens an embedded vault; `path` omitted ⇒ `~/.oneiron/default`.
+    /// Opens an embedded vault; `path` omitted ⇒ `~/.oneiron/default`. The
+    /// install enrols as the `deviceClass` its host declares (FIX 5560):
+    /// `"computer"`, the default, or `"phone"`.
     #[napi(factory)]
-    pub fn open(path: Option<String>, dimensions: Option<f64>) -> napi::Result<Self> {
+    pub fn open(
+        path: Option<String>,
+        dimensions: Option<f64>,
+        device_class: Option<String>,
+    ) -> napi::Result<Self> {
         crate::facade::before_vault_open();
-        let options = oneiron_remote::OpenOptions {
-            dimensions: dimensions
-                .map(dimensions_to_engine)
-                .transpose()
-                .map_err(facade_error)?,
-        };
+        let options = open_options(dimensions, device_class)?;
         let path = path.map(std::path::PathBuf::from);
         let inner =
             oneiron_remote::OneironClient::open(path.as_deref(), &options).map_err(facade_error)?;
@@ -123,19 +125,16 @@ impl NativeClient {
     /// `open_with_host_root`. `hostRootSecret` is the secret's exact bytes,
     /// borrowed from JavaScript memory for this call only; the caller keeps
     /// them and clears them. `hostRootProfile` says what it did.
+    /// `deviceClass` is `open`'s (FIX 5560).
     #[napi(factory)]
     pub fn open_with_host_root(
         path: Option<String>,
         dimensions: Option<f64>,
         host_root_secret: Buffer,
+        device_class: Option<String>,
     ) -> napi::Result<Self> {
         crate::facade::before_vault_open();
-        let options = oneiron_remote::OpenOptions {
-            dimensions: dimensions
-                .map(dimensions_to_engine)
-                .transpose()
-                .map_err(facade_error)?,
-        };
+        let options = open_options(dimensions, device_class)?;
         let path = path.map(std::path::PathBuf::from);
         let inner = oneiron_remote::OneironClient::open_with_host_root(
             path.as_deref(),
@@ -281,6 +280,33 @@ impl NativeClient {
             .map_err(facade_error)?;
         serde_json::to_value(reply).map_err(lens_frame_unencoded)
     }
+}
+
+/// What an embedded open takes from JavaScript. The device class is the one
+/// its host declares ([`host_device_class`]), `None` when it gave none.
+fn open_options(
+    dimensions: Option<f64>,
+    device_class: Option<String>,
+) -> napi::Result<oneiron_remote::OpenOptions> {
+    let dimensions = dimensions
+        .map(dimensions_to_engine)
+        .transpose()
+        .map_err(facade_error)?;
+    let device_class = device_class
+        .as_deref()
+        .map(|class| host_device_class(Some(class)))
+        .transpose()
+        .map_err(|reason| {
+            facade_error(oneiron::MemoryError::new(
+                oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+                reason,
+                &["Pass deviceClass \"computer\" or \"phone\", or omit it for a computer."],
+            ))
+        })?;
+    Ok(oneiron_remote::OpenOptions {
+        dimensions,
+        device_class,
+    })
 }
 
 /// A lens-frame reply that would not encode back to its wire JSON.

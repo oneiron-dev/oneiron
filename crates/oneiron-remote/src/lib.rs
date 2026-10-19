@@ -51,6 +51,7 @@ mod remote;
 use std::fmt;
 use std::path::Path;
 
+use oneiron::authority::MachineDeviceClass;
 use oneiron::memory::{MemoryError, RecallEffort};
 
 pub use crate::caps::{
@@ -78,6 +79,11 @@ use crate::remote::RemoteClient;
 pub struct OpenOptions {
     /// Embedding vector dimensions; `None` takes the engine default.
     pub dimensions: Option<usize>,
+    /// The class of machine the host declares this install to be, set on the
+    /// vault before it opens (FIX 5560; CALLS: HOST_OPEN_DEVICE_CLASS =
+    /// ExplicitHostInput): `None` is a computer, the generic default. Never
+    /// read off the operating system.
+    pub device_class: Option<MachineDeviceClass>,
 }
 
 /// What [`OneironClient::open_with_host_root`] did with the host root it
