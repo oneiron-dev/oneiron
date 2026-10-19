@@ -1,7 +1,7 @@
 //! A key record's provenance, under its signature (CALLS
 //! WORLD_KEY_WRAP_AUTH): the owner work request it does, if any, which its
-//! entry names among its parents, and the recipients its signer permits,
-//! exactly the ones it seals to.
+//! entry names among its parents or holds beneath them (FIX 5464), and the
+//! recipients its signer permits, exactly the ones it seals to.
 //!
 //! A record with a request is the named executor's work for the owner's act;
 //! one without is an eligible reader wrapping on its own (an ensure, a sweep,

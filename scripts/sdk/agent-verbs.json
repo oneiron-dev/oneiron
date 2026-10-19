@@ -12962,7 +12962,7 @@
     },
     {
       "name": "self.browser.screenshot",
-      "description": "Takes a screenshot the session holds, by image ref and never captioned.",
+      "description": "Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope.",
       "input": "crate::task_verb::sdk::BrowserScreenshotInput",
       "output": "crate::task_verb::sdk::BrowserScreenshotOutput",
       "call": "driver.screenshot(input)?",
@@ -12972,7 +12972,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserScreenshotInput>",
-        "description": "Takes a screenshot the session holds, by image ref and never captioned.",
+        "description": "Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -13281,7 +13281,7 @@
     },
     {
       "name": "self.desktop.screenshot",
-      "description": "Takes a screenshot of the window the session holds, by image ref and never captioned.",
+      "description": "Takes a screenshot of the window the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope.",
       "input": "oneiron_browser::ScreenshotInput",
       "output": "oneiron_browser::ScreenshotOutput",
       "call": "driver.screenshot(input)?",

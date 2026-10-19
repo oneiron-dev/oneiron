@@ -833,6 +833,7 @@ impl FoldBase {
             floor_vouched: (!observations.unvouched).then_some(&observations.vouched),
             install_held: None,
             entry_ancestors: None,
+            causal_past: None,
             peer_consent_roots: &inputs.peers,
             consent_arm,
             hosted: inputs.posture == crate::HostingPrivacyPosture::Hosted,

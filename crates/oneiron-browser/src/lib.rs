@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[cfg(feature = "driver")]
+mod capture;
+#[cfg(feature = "driver")]
 mod cdp;
 #[cfg(feature = "driver")]
 mod desktop;
@@ -204,6 +206,11 @@ pub struct EffectReceipt {
     pub press: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screenshot: Option<String>,
+    /// The capture id of `screenshot`. Each receipt's screenshot is a
+    /// capture of its own, kept as its evidence even when its pixels repeat
+    /// an earlier capture's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screenshot_evidence: Option<ReceiptEvidence>,
 }
@@ -447,10 +454,18 @@ impl ScreenshotTrigger {
     }
 }
 
+/// Takes a screenshot, masked: no secret field's value reaches the image.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ScreenshotInput {
     pub trigger: ScreenshotTrigger,
+    /// An earlier capture's `capture_id` that the caller still holds. The
+    /// screenshot is taken, held and answered whole all the same, and
+    /// `unchanged_from` names that capture when this one is the same masked
+    /// PNG taken in the same scope. A capture no longer held, of another
+    /// scope, or never this session's answers as any screenshot does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since_capture: Option<String>,
 }
 
 /// A screenshot the session holds. It is never captioned: `image` names the
@@ -465,6 +480,18 @@ pub struct ScreenshotOutput {
     pub trigger: ScreenshotTrigger,
     pub url: String,
     pub title: String,
+    /// This capture's id, `c<token>:<n>`: one counter for the whole session,
+    /// never reused. Every screenshot is a capture of its own, even when its
+    /// pixels repeat an earlier one's; a crop or zoom is none.
+    pub capture_id: String,
+    /// The capture `since_capture` named, when this one's masked PNG is that
+    /// one's byte for byte and both were taken in one scope: the same
+    /// documents and URL (or window), viewport (or window rectangle),
+    /// scroll, dimensions and scale, and masking. The same PNG, nothing
+    /// more: not that the page did nothing. A receipt's screenshot never
+    /// takes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unchanged_from: Option<String>,
 }
 
 /// Reads back a held image by its ref: the immutable original, described.
@@ -1299,9 +1326,12 @@ pub trait BrowserDriver: Send {
                             Err(BrowserError::Input("expect_unmet".to_owned()))
                         }
                     }),
-                BatchStep::Screenshot { trigger } => {
-                    self.screenshot(ScreenshotInput { trigger }).map(|_| None)
-                }
+                BatchStep::Screenshot { trigger } => self
+                    .screenshot(ScreenshotInput {
+                        trigger,
+                        since_capture: None,
+                    })
+                    .map(|_| None),
                 BatchStep::Key {
                     key,
                     modifiers,
@@ -1513,7 +1543,10 @@ impl Routine<'_> {
             looks += 1;
             let shot = match look {
                 Some(trigger) => {
-                    let shot = driver.screenshot(ScreenshotInput { trigger })?;
+                    let shot = driver.screenshot(ScreenshotInput {
+                        trigger,
+                        since_capture: None,
+                    })?;
                     let png = driver
                         .image_bytes(&shot.image)
                         .ok_or_else(|| BrowserError::NoImage(shot.image.clone()))?;

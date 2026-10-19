@@ -425,11 +425,17 @@ fn settle_tail(
     // the frontier's kept states seeding it.
     let (consent_arm, _) = super::fold_engine::own_log_inputs(log.posture, None);
     let no_handoff_line = BTreeSet::new();
+    let summaries = super::fold_engine::ImagePast {
+        image,
+        judged: &judged,
+    };
+    let causal = super::fold_engine::CausalPast::new(&summaries);
     let context = FoldContext {
         sequence_floors: Some(&log.observations.sequence_floors),
         floor_vouched: (!log.observations.unvouched).then_some(&log.observations.vouched),
         install_held: None,
         entry_ancestors: None,
+        causal_past: Some(&causal),
         peer_consent_roots: log.peer_consent_roots,
         consent_arm,
         hosted: log.posture == crate::HostingPrivacyPosture::Hosted,
@@ -445,14 +451,24 @@ fn settle_tail(
         .collect();
     let mut states =
         super::fold_schedule::fold_entry_states_seeded(&judged, &seed, context, &mut issues);
+    // A key record's request walk that met a row the image shows nothing of
+    // judged nothing here (FIX 5464): only the whole history does.
+    if causal.incomplete() {
+        return Ok(None);
+    }
     // A world key record, or a restrictive main-log choice (a world edit,
     // grant travel, checkpoint policy, home pick or training choice), on a
     // row with no state here (a frontier row the image holds rejected, a
     // rejected tail row) is folded again with that row crossed
     // (`world_refold`), which only the whole history does (FIX 4881, 5463),
-    // as is a root request or the owner's cancel of one (FIX 5584).
+    // as is a root request, the owner's cancel of one or its result (FIX
+    // 5584, 5649), the request's kind read from the tail or the image.
+    let kind_of = |request: &AuthorityEntryHash| match judged.get(request) {
+        Some(asked) => super::world_refold::request_kind(asked),
+        None => super::world_refold::carried_request_kind(image, request),
+    };
     if judged.iter().any(|(hash, entry)| {
-        super::world_refold::refolds(&entry.op)
+        super::world_refold::refolds(&entry.op, kind_of)
             && !states.contains_key(hash)
             && entry
                 .parent_hashes
