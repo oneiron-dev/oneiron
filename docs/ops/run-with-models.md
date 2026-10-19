@@ -179,6 +179,10 @@ A `key_secret` provider answers whole chat replies only for now: a streamed chat
 call to it is refused before it starts. Its media calls go through the same
 broker (§10).
 
+A self-hosted `serve` takes `--settings-file <path>` too: a TOML file in its
+config file's schema, read as one more config file over `--config` and under
+the environment and the flags, with none of the managed refusals below.
+
 A managed vault (`serve --managed-by-hypnos`) reads no environment and no
 config file of its own. Its supervisor passes the owner's settings as one file,
 `--settings-file <path>`: an absolute path to a TOML file in the same schema as
@@ -245,7 +249,11 @@ needs the supervisor's `--keystore-dir`. Every embedding, tagging and other
 background pass runs under the vault's write admission, so a vault frozen for
 reap fills nothing until it thaws. Without the file a managed vault runs on the
 defaults: no model seats (its ladder is the rule table and the owner's asks),
-no embedder (lexical and graph recall only) and no tagger.
+no embedder (lexical and graph recall only) and no tagger. Its log starts
+before the file is settled, at the level it settles to (`--log-level` over the
+file's `log_level`). A file with `[models.voice]` and no `--voice-socket` runs
+no voice loop, logged once with the reason `voice_socket_missing`; live voice
+sessions still run.
 
 The supervisor gives a vault its publisher training outbox (OF-420, "Learn from
 my conversations") as `--publisher-training-outbox-dir <vault>/training-outbox`,
@@ -1409,6 +1417,10 @@ stock_voice = "alloy"          # or bank_voice = "<voice id>"
 queue_capacity = 64            # media calls queued (default 64)
 call_budget_units = 64000      # each call's line for the host's own calls
 ```
+
+`serve --voice-socket <path>` names the socket over the file's `socket`, checked
+the same way, where `[models.voice]` sets a prompt or a voice; with neither it
+names nothing.
 
 A call opens with one JSON line:
 `{"op":"hello","token":"v2.slip...","binding":{"timestamp":..,"nonce":"..","signature":".."},"sample_rate":16000,"channels":1}`.
