@@ -71,7 +71,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_def/workflow/tests.rs` | test | s | — | — | — |
 | `src/agent_dispatch/agent_run.rs` | src | s | 1 struct · 2 fn | AgentRun | The agent run pump's view (OF-533): every agent-def dispatch no other host runs |
 | `src/agent_dispatch/attenuation.rs` | src | s | 4 crate-vis | — | Live-ceiling attenuation and deterministic attenuated-fork registration |
-| `src/agent_dispatch/budget_doors.rs` | src | m | 14 struct · 8 fn | AgentBudgetView, BudgetHoldRequest, BudgetLandRequest, LocalRunnerBudgetCounter, LocalRunnerBudgetRequest, LocalRunnerBudgetView, OpenSpendLeaseRequest, RunRungSettlement +6 | Typed doors over launch spend leases, budget holds and the local runner counter |
+| `src/agent_dispatch/budget_doors.rs` | src | m | 17 struct · 9 fn | AgentBudgetView, BudgetHoldRequest, BudgetLandRequest, LocalRunnerBudgetCounter, LocalRunnerBudgetRequest, LocalRunnerBudgetView, OpenSpendLeaseRequest, RunRungSettlement +9 | Typed doors over launch spend leases, budget holds and the local runner counter with its reservations |
 | `src/agent_dispatch/budget_hold.rs` | src | m | 4 struct · 1 enum · 9 fn | BudgetHoldLease, BudgetHoldNotice, BudgetHoldState, HeldAttempt, PartialResultHold | The graceful stop (ARCH-0079 #budget, OF-541): a run near the end of its lease gets the wrap-up warning… |
 | `src/agent_dispatch/codec.rs` | src | m | 4 fn · 4 crate-vis | — | Pinned-key MessagePack codec plus payload/status decode helpers |
 | `src/agent_dispatch/comm.rs` | src | m | 1 fn · 1 re-export · 15 crate-vis | — | FIX 1380: the comm dial |
@@ -1569,7 +1569,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_promotion/scoped.rs` | src | m | 1 fn | — | Persisted-head convergence through the existing promotion, claim Gate, semantic-edge and provenance doors |
 | `src/dreamer_promotion/tests.rs` | test | XL | — | — | — |
 | `src/dreamer_runner/admission/buckets.rs` | src | s | 2 fn · 1 crate-vis | — | MACRO admission shares the queue's leases: one attempt per partition |
-| `src/dreamer_runner/admission/mod.rs` | src | L | 22 fn · 6 crate-vis | — | Home-node gate, atomic admission, and the private wake-budget ledger |
+| `src/dreamer_runner/admission/mod.rs` | src | L | 22 fn · 8 crate-vis | — | Home-node gate, atomic admission, and the private wake-budget ledger |
 | `src/dreamer_runner/admission/settlement.rs` | src | s | 4 crate-vis | — | Transaction-composable reservation settlement shared by completion and deferral |
 | `src/dreamer_runner/admission/validation.rs` | src | s | 1 crate-vis | — | — |
 | `src/dreamer_runner/authority.rs` | src | m | 2 struct · 5 fn · 1 re-export · 10 crate-vis | DreamerAuthorityStamp, ResidentAuthorityStamp | Two vault-owned base-agent principals on one runner: the Dreamer and the Coach (ARCH-0026 #base-agents) |
@@ -1623,8 +1623,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/type_tree_gate.rs` | src | m | 3 crate-vis | — | The held-out gate on a team-shape tree revision (ARCH-0079 #task-type, OF-420): "revised by the loop from… |
 | `src/dreamer_runner/maintenance/type_tree_upkeep.rs` | src | m | 3 struct · 1 enum · 1 trait · 3 fn · 4 const | TeamShapeReserve, TreeGateOutcome, TypeEvidence, TypeNamer, TypeTreeUpkeepReport | Type-tree upkeep (ARCH-0079 #task-type, OF-541, OF-420): "Splits, merges and names task types from the… |
 | `src/dreamer_runner/milestone.rs` | src | m | 2 fn · 7 crate-vis | — | Durable Dreamer milestone claims: the index doors, the F4 binding check, and the pinned claim-value shape |
-| `src/dreamer_runner/mod.rs` | src | s | 4 mod · 9 re-export | — | Private Dreamer runner store plus atomic admission |
+| `src/dreamer_runner/mod.rs` | src | s | 4 mod · 10 re-export | — | Private Dreamer runner store plus atomic admission |
 | `src/dreamer_runner/observation.rs` | src | s | 5 struct · 2 fn | WakeRecipeJobView, WakeSettlementRequest, WakeSettlementView, WakeSettlementsPage, WakeSettlementsRequest | Owner reads of recipe receipts and their Dreamer/Coach descendants |
+| `src/dreamer_runner/owner_doors.rs` | src | s | 6 struct · 2 fn · 1 crate-vis | ConsolidationHomeNode, ConsolidationHomeView, ConsolidationLineageRequest, ConsolidationLineageView, ConsolidationStepRef, ConsolidationTryView | The owner's reads of the private Dreamer runner (DOOR-101): which node this runner holds as the elected… |
 | `src/dreamer_runner/progress.rs` | src | m | 4 struct · 1 enum · 12 fn · 4 const · 4 crate-vis | DreamerAttemptProgressProducer, DreamerAttemptProgressSnapshot, DreamerAttemptProgressSource, DreamerAttemptProgressUpdate, DreamerProgressed | The live Dreamer progress lane on the ephemeral sync keyspace |
 | `src/dreamer_runner/recipe.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | WeaveRecipePin | Per-vault, owner-admitted workflow skill binding for the Dreamer weave |
 | `src/dreamer_runner/store.rs` | src | L | 1 struct · 16 fn · 21 crate-vis | DreamerRunnerStore | The Dreamer runner store: queue lifecycle, park/resume, and readers |
@@ -2438,13 +2439,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/step/codec.rs` | src | s | 10 crate-vis | — | Pinned-key MessagePack codec helpers shared by every step-layer decoder |
 | `src/llm/step/compaction_step.rs` | src | m | 1 crate-vis | — | The actor-bound compaction step (FIX 4465 B): each paid call of a self-written compaction pass, the tries… |
 | `src/llm/step/execute.rs` | src | m | 3 fn · 6 crate-vis | — | Durable step execution: memo/admission/deadline orchestration with retry and lease settlement |
-| `src/llm/step/mod.rs` | src | s | 1 mod · 5 re-export · 8 crate-vis | — | LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record… |
+| `src/llm/step/mod.rs` | src | s | 1 mod · 5 re-export · 9 crate-vis | — | LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record… |
 | `src/llm/step/peer_wait.rs` | src | m | 1 struct · 3 fn · 6 crate-vis | PeerResultWaitBinding | Peer-result delegation (ONE-1700): local TASK-to-trap bindings and peer signal reconcile |
 | `src/llm/step/public.rs` | src | m | 6 struct · 2 enum · 2 fn · 1 re-export · 2 crate-vis | ModelStepCheckpoint, ModelStepFailure, ModelStepFailureClass, ModelStepReceipt, ModelStepReceiptRequest, ModelStepResult, ModelStepRetryPolicy, ModelStepSubmit | Owner-submitted durable model steps over the engine's existing step executor |
 | `src/llm/step/schema.rs` | src | s | 1 fn · 2 crate-vis | — | One-shot structured-output policy |
 | `src/llm/step/schema_guard.rs` | src | s | 1 crate-vis | — | Structural input bounds before serialization into the validator compartment |
 | `src/llm/step/schema_runtime.rs` | src | s | 5 crate-vis | — | Import-free, hash-pinned schema validator compartment (base mode) |
-| `src/llm/step/settled.rs` | src | s | 2 struct · 1 fn | SettledStepRequest, SettledStepView | Settled-step point read (DOOR-141 A): one committed model step of a Dreamer attempt, as its terminal… |
+| `src/llm/step/settled.rs` | src | s | 2 struct · 1 fn · 1 crate-vis | SettledStepRequest, SettledStepView | Settled-step point read (DOOR-141 A): one committed model step of a Dreamer attempt, as its terminal… |
 | `src/llm/step/step_claim.rs` | src | m | 22 crate-vis | — | Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance |
 | `src/llm/step/step_only.rs` | src | s | 4 crate-vis | — | Transaction-composable C9 waits that suspend one step, never its attempt |
 | `src/llm/step/step_only_tests.rs` | test | m | — | — | STEP-ONLY waits reuse C9 while leaving the queue and run-tree runnable |
@@ -2557,7 +2558,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/merge_queue_doors/operations.rs` | src | s | 6 fn | — | — |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 9 struct | MergeQueueBatchRequest, MergeQueueBatchView, MergeQueueEnqueueRequest, MergeQueueObservation, MergeQueueObserveRequest, MergeQueuePathView, MergeQueuePointersView, MergeQueueRepoRequest +1 | — |
 | `src/memory/message_result.rs` | src | s | 1 fn · 2 crate-vis | — | The result a MESSAGE carries, read by the bound actor (FIX 365): its card, or a `slice`, `search`, `query`… |
-| `src/memory/mod.rs` | src | m | 23 mod · 50 re-export · 15 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `src/memory/mod.rs` | src | m | 23 mod · 50 re-export · 16 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/note_tombstone.rs` | src | s | 3 fn | — | The owner's NOTE tombstone doors (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed, and… |
 | `src/memory/notes.rs` | src | s | 3 fn | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/origin_doors/mod.rs` | src | s | 1 re-export | — | Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication… |
@@ -4120,7 +4121,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_fanout_launch.rs` | src | s | 5 struct · 1 enum · 7 fn | FanoutAckRequest, FanoutLaunchHold, FanoutLaunchRequest, FanoutLaunchRuling, FanoutLaunchView, FanoutResumeRequest | The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out… |
 | `src/task_verb/sdk_federation.rs` | src | s | 19 struct · 1 enum · 1 fn · 1 crate-vis | AcceptConnect, AcceptRescopeConnect, ConnectAccepted, ConnectDelivery, ConnectDisconnected, ConnectExportRequest, ConnectGrant, ConnectIdentity +12 | Typed Connect, reciprocal re-scope, disconnect and foreign-world delivery |
 | `src/task_verb/sdk_feedback.rs` | src | m | 11 struct · 7 fn | FeedbackPreviewRequest, FeedbackSendSubjectRequest, FeedbackSubjectPreview, FeedbackSubjectSent, ReportDisclosureRequest, ReportOutboundRequest, ReportOutboundView, ReportPayloadView +3 | Subject-bound feedback over one report issue: its publisher disclosure, its content-free outbound payload… |
-| `src/task_verb/sdk_generated.rs` | src | XL | 985 fn · 4 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 988 fn · 4 const | — | — |
 | `src/task_verb/sdk_goal_optimize.rs` | src | m | 15 struct · 12 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +7 | Full witnessed goal intake and explicit optimizer proposal/admission doors |
 | `src/task_verb/sdk_guest_document.rs` | src | s | 3 struct · 1 fn · 1 crate-vis | GuestDocumentContext, GuestDocumentEnvelope, GuestDocumentShareRequest | Typed guest document sharing over live Connect grants (ARCH-0043) |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |
