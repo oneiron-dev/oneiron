@@ -50,7 +50,12 @@ pub(crate) async fn resolve_mcp_gateway_actor(
                 })
         })
         .transpose()?;
-    registered_actor(
+    // A narrower caller's own holder proof, for the home an opened device
+    // asks (FIX 2905): the one this request was admitted on.
+    let forwarded = (!auth.is_owner_grade())
+        .then(|| auth.forwarded_caller_proof(&proof_headers))
+        .flatten();
+    let mut context = registered_actor(
         server,
         &credential,
         auth,
@@ -59,7 +64,9 @@ pub(crate) async fn resolve_mcp_gateway_actor(
         session,
         room_turn,
     )
-    .await
+    .await?;
+    context.forwarded = forwarded;
+    Ok(context)
 }
 
 impl McpCallContext {
@@ -157,6 +164,7 @@ async fn registered_actor(
         off_record_session: session_ref,
         room_turn,
         drain: None,
+        forwarded: None,
     })
 }
 

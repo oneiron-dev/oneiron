@@ -79,10 +79,6 @@ impl Vault {
     /// # Errors
     ///
     /// Storage errors, or a receipt row that cannot be read.
-    #[expect(
-        dead_code,
-        reason = "the nr:e: declaration names this scrub with the scrub registrations (FIX 3879)"
-    )]
     pub(crate) fn erase_note_request_receipt_actor_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
