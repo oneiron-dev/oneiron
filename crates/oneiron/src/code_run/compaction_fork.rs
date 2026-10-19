@@ -100,6 +100,62 @@ pub fn mark_cache_boundary(request: &mut LlmRequest, boundary: CacheBoundary) ->
     Ok(())
 }
 
+/// `main_prefix_boundary` (FIX 4930): marks where `request`, as its builder
+/// finished it, ends, beside every boundary it already names, so a call and
+/// a fork of it name the same block. The provider keeps its own cache
+/// lifetime. A request with no part has nothing to mark.
+pub fn main_prefix_boundary(request: &mut LlmRequest) -> LlmResult<()> {
+    match CacheBoundary::prefix_end(request) {
+        Some(end) => mark_cache_boundary(request, end),
+        None => Ok(()),
+    }
+}
+
+/// Moves every message boundary `request` names one message on, once its
+/// rung put its prompt first (FIX 4465 D, Engine D1): each still names the
+/// block it named before. Tool boundaries stay. A rung that puts no prompt
+/// first moves none, and a descriptor that does not decode stays as it is,
+/// for the wire to refuse.
+pub fn shift_cache_boundaries(request: &mut LlmRequest) {
+    let Some(options) = request
+        .provider_options
+        .get_mut(HOST_PROVIDER_OPTIONS)
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    let Some(Ok(boundaries)) = options
+        .get(CACHE_BOUNDARIES_KEY)
+        .map(|value| serde_json::from_value::<Vec<CacheBoundary>>(value.clone()))
+    else {
+        return;
+    };
+    let shifted: Vec<CacheBoundary> = boundaries
+        .into_iter()
+        .map(|boundary| match boundary {
+            CacheBoundary::Message { message, part } => CacheBoundary::Message {
+                message: message.saturating_add(1),
+                part,
+            },
+            tool @ CacheBoundary::Tool { .. } => tool,
+        })
+        .collect();
+    if let Ok(value) = serde_json::to_value(&shifted) {
+        options.insert(CACHE_BOUNDARIES_KEY.to_owned(), value);
+    }
+}
+
+/// The digest a chat breakpoint keeps for the offer its rung was admitted
+/// under (FIX 4465 D): the hex BLAKE3 of the binding's JSON, a ref to it,
+/// never the credential it names. `None` when the binding does not encode.
+#[must_use]
+pub fn live_fork_offer_digest(offer: &OfferBinding) -> Option<String> {
+    let bytes = serde_json::to_vec(offer).ok()?;
+    Some(crate::entity_id::bytes_to_hex_lower(
+        blake3::hash(&bytes).as_bytes(),
+    ))
+}
+
 /// The rung a live request was admitted on, as its host bound it: its
 /// provider, its place in the configured ladder, the model its wire names
 /// and the offer a run admits its calls under (route, credential binding,

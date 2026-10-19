@@ -315,6 +315,12 @@ side_tables! {
     /// Channel-identity selection rule set. Key: ().
     CHANNEL_IDENTITY_SELECTION_RULES: VaultMeta b"channel_identity_selection:v1:rules" Raw
         => crate::channel_identity_selection::erase_rule_actor_in_txn;
+    /// A self agent's per-reply chat breakpoint (FIX 4465 D): the answering agent, its reader,
+    /// the conversation and branch, the request its rung sent and the digest of its offer, and
+    /// the retained turns and summaries it was read from, by revision. Host-only; read only to
+    /// reuse the prefix for the reply's Continue and Retry. Key: id16(conversation) +
+    /// id16(message) + id16(stream generation).
+    CHAT_BREAKPOINT: VaultMeta b"chat_breakpoint:v1:" Named Authored;
     /// Per-repository environment blueprint. Key: bytes32.
     CHECKOUT_ENV_BLUEPRINT: VaultMeta b"checkout:env_blueprint:v1:" VersionedNamed;
     /// Checkout lease act. Key: hex32.
@@ -557,6 +563,10 @@ side_tables! {
     COMMITMENT_SERIES_INSTANCE: VaultMeta b"commitment_series_instance:v1:" Raw;
     /// Pending Project due row of a series. Key: id16.
     COMMITMENT_SERIES_PROJECT: VaultMeta b"commitment_series_project:v1:" Raw;
+    /// A conversation's landed self-written summary (FIX 4465 D): its epoch, the SESSION's turn
+    /// range and the host's record of what wrote it, conversation evidence included; no words.
+    /// Key: id16(summary).
+    COMPACTION_CONVERSATION_RECEIPT: VaultMeta b"compaction:conversation_receipt:v1:" Named Engine;
     /// The place a removed epoch summary held in its session's count: the highest removed epoch
     /// and the turn it ended at, no words (OF-013). Key: id16(session).
     COMPACTION_EPOCH_FLOOR: VaultMeta b"compaction:epoch_floor:v1:" Named;

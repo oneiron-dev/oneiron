@@ -1,6 +1,7 @@
 //! Room bodies, membership windows, session presence and audience visibility.
 mod attendee;
 mod body;
+mod chat_breakpoint;
 mod deletion;
 mod live_speakers;
 mod membership;
@@ -15,6 +16,11 @@ mod visibility;
 pub use attendee::{ContainerAttendee, ContainerAttendeeEntry, ContainerAttendeeEvent};
 pub use body::{ConversationBody, ConversationKind, RoomRole};
 pub(crate) use body::{body_in, create_in_txn, fresh_id_in_txn, validate_put_in_txn};
+pub(crate) use chat_breakpoint::erase_chat_breakpoints_in_txn;
+pub use chat_breakpoint::{
+    ChatBreakpoint, ChatBreakpointRung, ChatBreakpointStale, chat_breakpoint,
+    chat_breakpoint_stands, keep_chat_breakpoint,
+};
 #[cfg(test)]
 pub(crate) use deletion::ROOM_ERASURES;
 pub(crate) use deletion::{

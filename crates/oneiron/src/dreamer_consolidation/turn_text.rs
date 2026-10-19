@@ -37,6 +37,8 @@ use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, Vault};
 
+pub(super) mod compaction_span;
+
 type SourceRow = (u8, u64, Vec<u8>);
 type BranchRead = (Vec<Option<SourceRow>>, BTreeMap<EntityId, TurnText>);
 
