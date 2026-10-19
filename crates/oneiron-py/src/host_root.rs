@@ -10,6 +10,7 @@
 
 use std::path::PathBuf;
 
+use oneiron::authority::MachineDeviceClass;
 use oneiron_remote::{OneironClient, OpenOptions};
 use pyo3::prelude::*;
 use serde::Serialize;
@@ -34,19 +35,21 @@ struct HostRootProfile {
 /// secret is `BAD_REQUEST`; a managed or relay posture, or a root the
 /// provider holds, is `FORBIDDEN`; a secret that cannot profile the install
 /// fails with the engine's reason. A wrong root over a standing profile
-/// opens and is reported ([`profile`]).
+/// opens and is reported ([`profile`]). `device_class` is the host's
+/// declaration, `None` a computer (FIX 5591).
 pub(crate) fn open(
     py: Python<'_>,
     path: Option<PathBuf>,
     host_root_secret: &[u8],
     dimensions: Option<usize>,
+    device_class: Option<MachineDeviceClass>,
 ) -> PyResult<OneironClient> {
     // Crash output never carries world text: the engine's hook goes in before
     // any vault opens (owner ruling 2026-10-14, fix 6).
     oneiron::panic_report::install_panic_hook();
     let options = OpenOptions {
         dimensions,
-        device_class: None,
+        device_class,
     };
     py.detach(|| OneironClient::open_with_host_root(path.as_deref(), &options, host_root_secret))
         .map_err(raise)

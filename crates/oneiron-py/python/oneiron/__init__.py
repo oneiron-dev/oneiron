@@ -138,12 +138,19 @@ class Oneiron:
         path: str | os.PathLike[str] | None = None,
         *,
         dimensions: int | None = None,
+        device_class: str | None = None,
     ) -> "Oneiron":
         """Opens an embedded vault and returns an actor-bound handle.
 
         Omitting ``path`` resolves to ``~/.oneiron/default`` against the current
         process home, at call time. The handle is usable immediately; there is
         no ``as_actor`` call to make first.
+
+        ``device_class`` is the kind of machine this install is, as the host
+        declares it (FIX 5591): ``"computer"``, the default when omitted, or
+        ``"phone"``; any other name raises ``BAD_REQUEST``. It is set before
+        the vault opens, so the install enrols as it, and never read off the
+        operating system.
 
         Embedded open is currently supported only on Unix (macOS/Linux).
         On other targets, including Windows, it fails closed because writer
@@ -153,7 +160,7 @@ class Oneiron:
         ``VAULT_LOCKED_SINGLE_WRITER``; connect to the owning process instead.
         """
         resolved = os.fspath(path) if path is not None else None
-        return cls(_translate(lambda: _NativeClient.open(resolved, dimensions)))
+        return cls(_translate(lambda: _NativeClient.open(resolved, dimensions, device_class)))
 
     @classmethod
     def open_with_host_root(
@@ -162,6 +169,7 @@ class Oneiron:
         host_root_secret: bytes,
         *,
         dimensions: int | None = None,
+        device_class: str | None = None,
     ) -> dict[str, Any]:
         """:meth:`open`, then this install's own machine profile from the vault's host root secret.
 
@@ -181,11 +189,13 @@ class Oneiron:
         vault's settled root, over a profile that already stands, opens and
         says so in ``host_root["wrong_root"]``: reported, never refused. The
         handle binds the local owner actor, as :meth:`open` does, and carries
-        no owner proof.
+        no owner proof. ``device_class`` is :meth:`open`'s.
         """
         resolved = os.fspath(path) if path is not None else None
         native = _translate(
-            lambda: _NativeClient.open_with_host_root(resolved, host_root_secret, dimensions)
+            lambda: _NativeClient.open_with_host_root(
+                resolved, host_root_secret, dimensions, device_class
+            )
         )
         raw = native.host_root_profile()
         profile = json.loads(raw) if raw is not None else {}

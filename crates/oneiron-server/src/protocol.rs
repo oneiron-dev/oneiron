@@ -315,6 +315,12 @@ pub(crate) enum ProtocolError {
     FrameTooLarge { size: usize, max: usize },
     #[error("loro import error: {0}")]
     LoroImport(String),
+    /// The server could not export state it serves (a window delta or
+    /// replacement, a withheld-world read, a selector-filtered window): its
+    /// own fault, never the peer's frame. Closed with
+    /// `close_codes::INTERNAL_ERROR` and no refused-call receipt (FIX 5570).
+    #[error("server export error: {0}")]
+    ExportFailed(String),
     /// Inbound version-vector bytes failed Loro binary decoding.
     /// Fail-closed: the connection is dropped, NEVER answered with a
     /// full export as if the VV were empty (ONE-1127).
@@ -348,6 +354,7 @@ impl ProtocolError {
             Self::UnknownTag(_) => "unknown_tag",
             Self::FrameTooLarge { .. } => "frame_too_large",
             Self::LoroImport(_) => "loro_import_failed",
+            Self::ExportFailed(_) => "server_export_failed",
             Self::VvDecode(_) => "version_vector_decode_failed",
             Self::Persistence(_) => "sync_persistence_failed",
             Self::ReplacementUnsupported => "replacement_unsupported",
@@ -383,4 +390,10 @@ pub(crate) mod close_codes {
     /// RFC 6455 "Try Again Later": a frame waited for its turn past its
     /// deadline (rule 5); nothing was applied, and it may be sent again.
     pub(crate) const TRY_AGAIN_LATER: u16 = 1013;
+    /// RFC 6455 "Internal Error": the server met a fault of its own while
+    /// serving a frame (an export it could not make, FIX 5570). No peer
+    /// refusal, so no refused-call receipt.
+    pub(crate) const INTERNAL_ERROR: u16 = 1011;
+    /// The reason an [`INTERNAL_ERROR`] close for an export fault states.
+    pub(crate) const EXPORT_FAULT_REASON: &str = "server could not export this state";
 }

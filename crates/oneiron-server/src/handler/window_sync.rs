@@ -310,7 +310,7 @@ pub(super) async fn handle_window_sync(
                     }
                     return Ok(());
                 }
-                return Err(map_delta_export_err(error));
+                return Err(map_update_admission_err(error));
             }
             if protocol::is_residence_version(conn_state.protocol_version) {
                 let selector = conn_state
@@ -591,15 +591,25 @@ pub(super) fn decode_and_authorize_selector_request(
 ///
 /// Malformed inbound VV bytes (`CrdtDecodeError`) get the dedicated
 /// fail-closed `VvDecode` variant (the connection loop closes on it);
-/// anything else is an export-side failure.
+/// anything else is the server's own export fault (FIX 5570).
 fn map_delta_export_err(e: oneiron::Error) -> ProtocolError {
+    map_sync_err(e, ProtocolError::ExportFailed)
+}
+
+/// Maps a peer window update's admission error: an update that does not
+/// import stays the peer's refused frame (`LoroImport`), as before FIX 5570.
+fn map_update_admission_err(e: oneiron::Error) -> ProtocolError {
+    map_sync_err(e, ProtocolError::LoroImport)
+}
+
+fn map_sync_err(e: oneiron::Error, other: fn(String) -> ProtocolError) -> ProtocolError {
     if matches!(
         e,
         oneiron::Error::Sync(oneiron::error::SyncError::CrdtDecodeError { .. })
     ) {
         ProtocolError::VvDecode(e.to_string())
     } else {
-        ProtocolError::LoroImport(e.to_string())
+        other(e.to_string())
     }
 }
 

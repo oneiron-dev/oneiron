@@ -543,6 +543,9 @@ pub struct LexicalHits {
     pub value: Vec<LexicalHit>,
     /// The read's receipt.
     pub narrowing: ReadReceipt,
+    /// The home's references the page does not hold, apart from its hits;
+    /// absent when the device holds every window or runs no sync.
+    pub residence: Option<RecallResidence>,
 }
 
 /// `vault.neighbors` result, with the read's receipt.
