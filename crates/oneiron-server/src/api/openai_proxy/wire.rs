@@ -1,9 +1,15 @@
 //! OpenAI memory-proxy response conversion and refusal mapping (OF-445).
-use axum::{Json, http::StatusCode, response::{IntoResponse, Response}};
-use oneiron::{ContentPart, FatalLlmError, FinishReason, LlmError, LlmMessage, LlmResponse, RetryableLlmError};
+use axum::{
+    Json,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use oneiron::task_verb::sdk::{
     ChatCompletionChoice, ChatCompletionMemory, ChatCompletionMessage, ChatCompletionObject,
     ChatCompletionResponse, ChatCompletionRole, ChatCompletionUsage,
+};
+use oneiron::{
+    ContentPart, FatalLlmError, FinishReason, LlmError, LlmMessage, LlmResponse, RetryableLlmError,
 };
 use serde_json::{Value, json};
 
@@ -31,8 +37,10 @@ pub(super) fn completion(
     let prompt = response.usage.input.total;
     let completion = response.usage.output.total;
     ChatCompletionResponse {
-        id: id.to_owned(), object: ChatCompletionObject::ChatCompletion,
-        created, model: model.to_owned(),
+        id: id.to_owned(),
+        object: ChatCompletionObject::ChatCompletion,
+        created,
+        model: model.to_owned(),
         choices: vec![ChatCompletionChoice {
             index: 0,
             message: ChatCompletionMessage {
@@ -42,7 +50,8 @@ pub(super) fn completion(
             finish_reason: finish_reason(&response.finish_reason).to_owned(),
         }],
         usage: ChatCompletionUsage {
-            prompt_tokens: prompt, completion_tokens: completion,
+            prompt_tokens: prompt,
+            completion_tokens: completion,
             total_tokens: prompt.saturating_add(completion),
         },
         oneiron,
@@ -132,11 +141,17 @@ pub(super) fn upstream_error(failure: LlmError) -> Response {
 /// Preserve the raw door's refusal code on the typed facade's error envelope.
 pub(super) async fn facade_error(response: Response) -> oneiron::memory::MemoryError {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await;
-    let value: Value = bytes.ok().and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    let value: Value = bytes
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or(Value::Null);
     oneiron::memory::MemoryError::new(
-        value["error"]["code"].as_str().unwrap_or(oneiron::memory::MEMORY_CODE_INTERNAL),
-        value["error"]["message"].as_str().unwrap_or("the memory proxy did not finish"),
+        value["error"]["code"]
+            .as_str()
+            .unwrap_or(oneiron::memory::MEMORY_CODE_INTERNAL),
+        value["error"]["message"]
+            .as_str()
+            .unwrap_or("the memory proxy did not finish"),
         &["Use a live paired proxy credential and a supported buffered request."],
     )
 }

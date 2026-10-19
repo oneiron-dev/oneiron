@@ -934,8 +934,14 @@ pub(crate) fn trial_source_frontier(
     principal: EntityId,
     unit: EntityId,
 ) -> Result<Option<[u8; 32]>> {
-    source(vault, txn, principal, WriteActor::new(principal, crate::EdgeActorClass::Human), unit)
-        .map(|row| row.map(|row| row.frontier))
+    source(
+        vault,
+        txn,
+        principal,
+        WriteActor::new(principal, crate::EdgeActorClass::Human),
+        unit,
+    )
+    .map(|row| row.map(|row| row.frontier))
 }
 
 fn source(

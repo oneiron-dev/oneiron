@@ -49,8 +49,8 @@ use crate::server::{MediaRefusal, SyncServer};
 
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::artifact_hosting_doors::*;
-pub(crate) use super::deck_creation_doors::*;
 pub(crate) use super::authority_history_doors::*;
+pub(crate) use super::deck_creation_doors::*;
 // The run-bound board STREAM doors (DOOR-121), likewise.
 pub(crate) use super::board_stream_doors::*;
 pub(crate) use super::booking_doors::*;
@@ -77,17 +77,19 @@ pub(crate) use super::voice_bank_doors::*;
 pub(crate) use super::asr_doors::*;
 pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::clustering_doors::*;
+pub(crate) use super::identity_doors::*;
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
-pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_catalog_doors::*;
+pub(crate) use super::model_step_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 pub(crate) use super::run_review_doors::*;
 pub(crate) use super::sieve_observation_doors::*;
+pub(crate) use super::skill_attribution_doors::*;
 pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -191,9 +193,11 @@ pub(crate) use super::vector_doors::*;
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
-pub(crate) use super::critical_confirm_doors::*;
+// The plugin Context Board section doors (DOOR-112), likewise.
+pub(crate) use super::plugin_section_doors::*;
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;
+pub(crate) use super::critical_confirm_doors::*;
 // The owner's sieve interest-queue, policy and lease doors (DOOR-130), likewise.
 pub(crate) use super::sieve_doors::*;
 // The owner's standing-block and dreaming-choice doors (DOOR-134), likewise.
@@ -1235,6 +1239,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.pack_receipt"
         | "vault.skills.outcomes.project"
         | "vault.skills.outcomes.get"
+        | "vault.skills.attribution.settle"
+        | "vault.skills.attribution.read"
+        | "vault.skills.attribution.evidence.record"
+        | "vault.skills.attribution.project"
+        | "vault.skills.attribution.judgments"
+        | "vault.skills.attribution.proposals"
+        | "vault.skills.attribution.positive.retire"
         | "vault.packs.hooks.bind"
         | "vault.packs.hooks.list"
         | "vault.packs.hooks.grant.set"
@@ -1267,6 +1278,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.records.erase_sweep"
         | "vault.cleanup.run"
         | "vault.entities.mention"
+        | "vault.people.create"
+        | "vault.entities.look_before_mint"
+        | "vault.identity.mention"
+        | "self.identity.answer"
         | "vault.legal_holds.place"
         | "vault.legal_holds.widen"
         | "vault.legal_holds.list"
@@ -1315,6 +1330,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.trace"
         | "vault.retrieval.export"
         | "vault.retrieval.replay"
+        | "vault.retrieval.policy.get"
+        | "vault.retrieval.policy.pin"
+        | "vault.retrieval.policy.train"
+        | "vault.retrieval.policy.evaluate"
+        | "vault.retrieval.policy.admit"
+        | "vault.retrieval.policy.update"
         | "vault.learning.read"
         | "vault.learning.projection"
         | "vault.seal.confess"
@@ -1344,10 +1365,17 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.writes.critical_confirm.receipt"
         | "vault.claims.review"
         | "vault.claims.settle"
+        | "vault.packs.sections.grant"
+        | "vault.packs.sections.revoke"
+        | "vault.packs.sections.suggestions.get"
+        | "vault.packs.sections.suggestions.set"
         | "vault.claims.vet"
         | "vault.claims.vetting"
         | "vault.consolidation.promote"
         | "vault.consolidation.evidence"
+        | "vault.consolidation.pin"
+        | "vault.consolidation.frontier"
+        | "vault.consolidation.accounting"
         | "vault.sieve.evidence"
         | "vault.sieve.evidence.replay"
         | "vault.sieve.cadence"

@@ -27,12 +27,21 @@ fn matching_backend(
     Ok(row.backends()?.into_iter().find(|row| &row.pin == pin))
 }
 
-fn backend(vault: &Vault, txn: &heed::RoTxn<'_>, pin: &ModelBackendPin) -> Result<PricedModelBackend> {
+fn backend(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pin: &ModelBackendPin,
+) -> Result<PricedModelBackend> {
     matching_backend(vault, txn, pin)?
         .ok_or_else(|| invalid("model backend serving pin is not registered"))
 }
 
-fn replace(vault: &Vault, txn: &mut heed::RwTxn<'_>, previous: &ModelTrial, next: &ModelTrial) -> Result<()> {
+fn replace(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    previous: &ModelTrial,
+    next: &ModelTrial,
+) -> Result<()> {
     let key = (previous.request.question, previous.id);
     if TRIALS.get(&vault.store, txn, &key)?.as_ref() != Some(previous) {
         return Err(Error::ConcurrentWrite("model trial changed"));
@@ -43,7 +52,12 @@ fn replace(vault: &Vault, txn: &mut heed::RwTxn<'_>, previous: &ModelTrial, next
 impl Vault {
     /// The host supplies a sealed selection from eval authoring and the goal's
     /// remaining exploration allowance. Preparing work never invokes a model.
-    pub fn prepare_model_trial(&self, request: ModelTrialRequest, locality: CallerLocality, now: u64) -> Result<ModelTrial> {
+    pub fn prepare_model_trial(
+        &self,
+        request: ModelTrialRequest,
+        locality: CallerLocality,
+        now: u64,
+    ) -> Result<ModelTrial> {
         let mut txn = self.store.env.write_txn()?;
         let result = self.prepare_model_trial_in_txn(&mut txn, request, locality, now)?;
         txn.commit()?;
@@ -161,7 +175,13 @@ impl Vault {
 
     /// Retained labels are released only while their original, scoped outcome
     /// pairs remain readable. An old question version never becomes a new one.
-    pub fn model_trial(&self, principal: EntityId, question: EntityId, id: EntityId, locality: CallerLocality) -> Result<Option<ModelTrial>> {
+    pub fn model_trial(
+        &self,
+        principal: EntityId,
+        question: EntityId,
+        id: EntityId,
+        locality: CallerLocality,
+    ) -> Result<Option<ModelTrial>> {
         let txn = self.store.env.read_txn()?;
         let result = self.model_trial_in_txn(&txn, principal, question, id, locality)?;
         Ok(result)
@@ -175,9 +195,7 @@ impl Vault {
         id: EntityId,
         locality: CallerLocality,
     ) -> Result<Option<ModelTrial>> {
-        let stored = {
-            TRIALS.get(&self.store, txn, &(question, id))?
-        };
+        let stored = { TRIALS.get(&self.store, txn, &(question, id))? };
         let Some(trial) = stored.filter(|trial| trial.request.principal == principal) else {
             return Ok(None);
         };
@@ -188,9 +206,16 @@ impl Vault {
     }
 
     /// One durable approval changes only trial admission, never the answerer.
-    pub fn approve_model_trial(&self, principal: EntityId, question: EntityId, id: EntityId, locality: CallerLocality) -> Result<ModelTrial> {
+    pub fn approve_model_trial(
+        &self,
+        principal: EntityId,
+        question: EntityId,
+        id: EntityId,
+        locality: CallerLocality,
+    ) -> Result<ModelTrial> {
         let mut txn = self.store.env.write_txn()?;
-        let result = self.approve_model_trial_in_txn(&mut txn, principal, question, id, locality)?;
+        let result =
+            self.approve_model_trial_in_txn(&mut txn, principal, question, id, locality)?;
         txn.commit()?;
         Ok(result)
     }
@@ -214,7 +239,13 @@ impl Vault {
 
     /// Claim before any paid work. A crash leaves the claim for explicit host
     /// recovery, rather than silently replaying already billed model calls.
-    pub fn claim_model_trial(&self, principal: EntityId, question: EntityId, id: EntityId, locality: CallerLocality) -> Result<ModelTrial> {
+    pub fn claim_model_trial(
+        &self,
+        principal: EntityId,
+        question: EntityId,
+        id: EntityId,
+        locality: CallerLocality,
+    ) -> Result<ModelTrial> {
         let mut txn = self.store.env.write_txn()?;
         let result = self.claim_model_trial_in_txn(&mut txn, principal, question, id, locality)?;
         txn.commit()?;
@@ -285,7 +316,11 @@ impl Vault {
     pub(super) fn execute_model_trial(
         &self,
         trial: &ModelTrial,
-        mut execute: impl FnMut(&QuestionRecord, &PricedModelBackend, &TrialCaseInput) -> Result<TrialReading>,
+        mut execute: impl FnMut(
+            &QuestionRecord,
+            &PricedModelBackend,
+            &TrialCaseInput,
+        ) -> Result<TrialReading>,
     ) -> Result<Vec<TrialObservation>> {
         let record = read_question(
             self,
@@ -310,13 +345,25 @@ impl Vault {
         Ok(observations)
     }
 
-
-
     /// Commit the billed reads before asking eval authoring for its sufficiency
     /// card, so an unknown or failed assessment cannot erase measured cost.
-    pub fn record_model_trial_measurements(&self, principal: EntityId, question: EntityId, id: EntityId, locality: CallerLocality, observations: Vec<TrialObservation>) -> Result<TrialEvidence> {
+    pub fn record_model_trial_measurements(
+        &self,
+        principal: EntityId,
+        question: EntityId,
+        id: EntityId,
+        locality: CallerLocality,
+        observations: Vec<TrialObservation>,
+    ) -> Result<TrialEvidence> {
         let mut txn = self.store.env.write_txn()?;
-        let result = self.record_model_trial_measurements_in_txn(&mut txn, principal, question, id, locality, observations)?;
+        let result = self.record_model_trial_measurements_in_txn(
+            &mut txn,
+            principal,
+            question,
+            id,
+            locality,
+            observations,
+        )?;
         txn.commit()?;
         Ok(result)
     }
@@ -350,9 +397,19 @@ impl Vault {
         Ok(measured)
     }
 
-    pub fn complete_model_trial(&self, principal: EntityId, question: EntityId, id: EntityId, locality: CallerLocality, assessment: TrialAssessment, now: u64) -> Result<ModelTrialReceipt> {
+    pub fn complete_model_trial(
+        &self,
+        principal: EntityId,
+        question: EntityId,
+        id: EntityId,
+        locality: CallerLocality,
+        assessment: TrialAssessment,
+        now: u64,
+    ) -> Result<ModelTrialReceipt> {
         let mut txn = self.store.env.write_txn()?;
-        let result = self.complete_model_trial_in_txn(&mut txn, principal, question, id, locality, assessment, now)?;
+        let result = self.complete_model_trial_in_txn(
+            &mut txn, principal, question, id, locality, assessment, now,
+        )?;
         txn.commit()?;
         Ok(result)
     }
