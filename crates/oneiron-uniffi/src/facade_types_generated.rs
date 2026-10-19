@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1049 facade rows, 3506 generated types.
+// UniFFI census: 1049 facade rows, 3509 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1001.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -23950,6 +23950,24 @@ pub struct LegalHold {
         skip_serializing_if = "Option::is_none"
     )]
     pub matter_ref: Option<String>,
+    #[serde(
+        rename = "legal_basis_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub legal_basis_ref: Option<String>,
+    #[serde(
+        rename = "jurisdiction",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub jurisdiction: Option<String>,
+    #[serde(
+        rename = "issuing_authority_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issuing_authority_ref: Option<String>,
     #[serde(rename = "lifted_at", default, skip_serializing_if = "Option::is_none")]
     pub lifted_at: Option<u64>,
     #[serde(
@@ -23958,6 +23976,12 @@ pub struct LegalHold {
         skip_serializing_if = "Option::is_none"
     )]
     pub owner_told: Option<bool>,
+    #[serde(
+        rename = "requires_non_use",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub requires_non_use: Option<bool>,
 }
 
 /// `oneiron::task_verb::sdk_legal_hold::LegalHoldWidenRequest`.
@@ -24064,6 +24088,50 @@ pub struct LegalHoldLiftAndEraseRequest {
     pub records: Vec<String>,
 }
 
+/// `oneiron::deletion::legal_hold::types::ErasePendingReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ErasePendingReason {
+    #[serde(rename = "historical_sweep")]
+    HistoricalSweep,
+}
+
+/// `oneiron_contracts::error::legal_hold::LegalHoldBoundKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LegalHoldBoundKind {
+    #[serde(rename = "law")]
+    Law,
+}
+
+/// `oneiron_contracts::error::legal_hold::LegalHoldBound`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldBound {
+    #[serde(rename = "kind")]
+    pub kind: LegalHoldBoundKind,
+    #[serde(rename = "order_ref", default, skip_serializing_if = "Option::is_none")]
+    pub order_ref: Option<String>,
+    #[serde(
+        rename = "legal_basis_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub legal_basis_ref: Option<String>,
+    #[serde(
+        rename = "jurisdiction",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub jurisdiction: Option<String>,
+    #[serde(
+        rename = "issuing_authority_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issuing_authority_ref: Option<String>,
+    #[serde(rename = "ends_at", default, skip_serializing_if = "Option::is_none")]
+    pub ends_at: Option<u64>,
+}
+
 /// `oneiron::task_verb::sdk_legal_hold::LegalHoldEraseState`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
@@ -24078,9 +24146,25 @@ pub enum LegalHoldEraseState {
         receipt_ref: Option<String>,
     },
     #[serde(rename = "completion_pending")]
-    CompletionPending,
-    #[serde(rename = "kept_by_legal_order")]
-    KeptByLegalOrder,
+    CompletionPending {
+        #[serde(
+            rename = "receipt_ref",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        receipt_ref: Option<String>,
+        #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+        reason: Option<ErasePendingReason>,
+    },
+    #[serde(rename = "retained_for_law")]
+    RetainedForLaw {
+        #[serde(rename = "bound")]
+        bound: LegalHoldBound,
+        #[serde(rename = "works_self_hosted")]
+        works_self_hosted: bool,
+        #[serde(rename = "self_hosted_note")]
+        self_hosted_note: String,
+    },
     #[serde(rename = "failed")]
     Failed {
         #[serde(rename = "message")]

@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1083 code-mode rows (1059 host rows, 24 run rows), 3575 declarations.
+// Census: 1083 code-mode rows (1059 host rows, 24 run rows), 3578 declarations.
 // Replies: 966 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
@@ -1614,13 +1614,16 @@ declare namespace Sdk {
   type LegalHoldPlaceRequest = { targets: LegalHoldTarget[]; matter_ref?: string | null };
   type LegalHoldKind = "customer" | "host_order";
   type LegalHoldActorKind = "owner" | "member" | "agent" | "timer" | "host" | "unattributed";
-  type LegalHold = { hold_id: EntityId; kind: LegalHoldKind; targets: LegalHoldTarget[]; placed_by?: string | null; placed_by_kind: LegalHoldActorKind; placed_at: number; ends_at?: number | null; secret_until?: number | null; matter_ref?: string | null; lifted_at?: number | null; owner_told?: boolean };
+  type LegalHold = { hold_id: EntityId; kind: LegalHoldKind; targets: LegalHoldTarget[]; placed_by?: string | null; placed_by_kind: LegalHoldActorKind; placed_at: number; ends_at?: number | null; secret_until?: number | null; matter_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; lifted_at?: number | null; owner_told?: boolean; requires_non_use?: boolean };
   type LegalHoldWidenRequest = { hold_id: EntityId; targets: LegalHoldTarget[] };
   type LegalHoldEventKind = "placed" | "scope_changed" | "delete_refused" | "lift_and_erase_confirmed" | "erase_completed" | "lifted";
   type LegalHoldReason = "owner_placed" | "host_placed" | "legal_order" | "scope_widened" | "scope_narrowed_by_erase" | "end_date_changed" | "held_record" | "privacy_erase_kept" | "owner_confirmed" | "completion_pending" | "receipt_completed" | "authority_released" | "order_ended" | "host_released" | "secrecy_ended";
   type LegalHoldEvent = { hold_id: EntityId; kind: LegalHoldKind; targets: LegalHoldTarget[]; actor_ref?: string | null; actor_kind: LegalHoldActorKind; at: number; event: LegalHoldEventKind; reason: LegalHoldReason; matter_ref?: string | null; request_id?: string | null };
   type LegalHoldLiftAndEraseRequest = { records: EntityId[] };
-  type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending" } | { state: "kept_by_legal_order" } | { state: "failed"; message: string };
+  type ErasePendingReason = "historical_sweep";
+  type LegalHoldBoundKind = "law";
+  type LegalHoldBound = { kind: LegalHoldBoundKind; order_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; ends_at?: number | null };
+  type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending"; receipt_ref?: string | null; reason?: ErasePendingReason | null } | { state: "retained_for_law"; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string } | { state: "failed"; message: string };
   type LegalHoldErasedRecord = { record: EntityId; status: LegalHoldEraseState };
   type LegalHoldLiftAndErased = { holds: EntityId[]; records: LegalHoldErasedRecord[] };
   type CourtesyDeleteSendRequest = { pact: string; worlds?: string[]; epoch_cutoff?: number | null; peer: string; signed?: string | null };
