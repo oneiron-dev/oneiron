@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1100 code-mode rows (1075 host rows, 25 run rows), 3688 declarations.
-// Replies: 983 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1102 code-mode rows (1077 host rows, 25 run rows), 3695 declarations.
+// Replies: 985 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1752,7 +1752,8 @@ declare namespace Sdk {
   type BypassScope = { project: EntityId } | { thread: EntityId };
   type BypassExtent = { scope: BypassScope; floor_version: number };
   type ConsentRegistryDelegation = { purpose: string; ticket_ref?: string | null; approved_by: string; wall_expires_at: number; status: SupportGrantStatus; comm: CommReach };
-  type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null };
+  type ConsentRegistryAgentGrant = { agent: EntityId; delegated_by: EntityId; expires_at?: number | null; confers: boolean };
+  type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null; agent_grant?: ConsentRegistryAgentGrant | null };
   type ConsentRegistry = { rows: ConsentRegistryRow[] };
   type RevokeGrantRequest = { grant: string };
   type CatastropheClass = "WidenOwnAuthority" | "KeyRecovery" | "VaultWideDestruction" | "SecurityControlDisable" | "MassSecretExport" | "WorldPrivacyWiden";
@@ -2254,6 +2255,11 @@ declare namespace Sdk {
   type DreamingModeInput = "own" | "inherit" | "off";
   type AgentDreamingView = { agent_def_ref: EntityId; version: string; mode?: DreamingModeInput | null; effective_mode: DreamingModeInput; dreaming_model?: string | null };
   type AgentDreamingSetRequest = { agent_def_ref: EntityId; expected_version: string; new_version: string; mode: DreamingModeInput; dreaming_model?: string | null };
+  type AgentGrantMintRequest = { agent: EntityId; authority_scope: Scope; expires_at?: number | null };
+  type AgentGrantView = { grant_ref: EntityId; agent: EntityId; authority_scope: Scope; delegated_by: EntityId; expires_at?: number | null; confers: boolean; revoke_command: string };
+  type AgentGrantMinted = { grant: AgentGrantView; act_ref: string };
+  type AgentGrantRevokeRequest = { grant_ref: EntityId; seen?: string | null };
+  type AgentGrantRevoked = { grant_ref: EntityId; changed: boolean; agent?: EntityId | null; act_ref?: string | null };
   type StandingBlockConfigureRequest = { agent_ref: EntityId; world_ref: EntityId; name: string; token_floor: number };
   type StandingBlockRequest = { agent_ref: EntityId; world_ref: EntityId };
   type StandingBlocksRequest = { agent_ref: EntityId };
@@ -2880,7 +2886,8 @@ declare namespace Sdk {
   type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[] } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply };
   type OpenInput = { url: string };
   type TakeoverRecord = { by: string; asked?: string | null; taken_at_ms: number; returned_at_ms: number; inputs: number };
-  type WindowSwitch = { window: string; app: string; title: string; from: string };
+  type WindowSwitchCause = "opened" | "closed";
+  type WindowSwitch = { window: string; app: string; title: string; from: string; why: WindowSwitchCause };
   type DesktopAnswer<T> = T & { takeover?: TakeoverRecord | null; switched?: WindowSwitch | null };
   type RowSplice = { start: number; delete_count: number };
   type Row = { ref: string; locator: string; role: string; name: string; value?: string | null; states?: string[]; depth: number };
@@ -4204,6 +4211,12 @@ declare const vault: Sdk.VaultHost & {
     export_pack(input: Sdk.AgentPackExportRequest): Promise<Sdk.AgentPackExport | StoredResult>;
     /** The owner reads one saved agent composition, including its declared refusal dial, version and approval state. */
     get(input: Sdk.AgentDefinitionRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
+    grants: {
+      /** The owner grants one named agent an explicit verb list inside his exact scope, standing until he revokes it or until the expiry he sets; a second mint adds a second grant. */
+      mint(input: Sdk.AgentGrantMintRequest): Promise<Sdk.AgentGrantMinted | StoredResult>;
+      /** The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing. */
+      revoke(input: Sdk.AgentGrantRevokeRequest): Promise<Sdk.AgentGrantRevoked | StoredResult>;
+    };
     /** The owner launches one reserved planned agent or team under an intent key on this host's planner: the type placed, the plan frozen at the root, then queued; the same key answers what it kept. */
     spawn: ((input: Sdk.SpawnIntentRequest) => Promise<Sdk.SpawnIntentReply | StoredResult>) & {
       /** The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning. */

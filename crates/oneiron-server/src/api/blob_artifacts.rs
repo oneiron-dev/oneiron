@@ -778,6 +778,7 @@ pub(super) async fn keep(
         "remapped": outcome.reanchor.remapped.len(),
         "drifted": outcome.reanchor.drifted.len(),
         "receipt": outcome.receipt,
+        "reconciliation": outcome.reconciliation,
     })))
 }
 

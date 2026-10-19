@@ -9,6 +9,8 @@
 // kinds, the shared map/entity-ref helpers) are defined in `oneiron-authority`. The module
 // aliases keep every `federation::<module>::` path this crate uses.
 pub(crate) use oneiron_authority::federation::{codec, pact_scope, scope_codec};
+mod agent_grant;
+pub(crate) use agent_grant::{AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding};
 mod connect_grant;
 pub use connect_grant::ConnectGrantMinted;
 pub(crate) use connect_grant::{
