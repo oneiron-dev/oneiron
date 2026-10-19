@@ -84,7 +84,7 @@ impl Vault {
             let undone =
                 self.write_world_privacy_in_txn(txn, author, world, settings, Some(seen), None)?;
             let key_owner = key_owner_in_txn(self, txn, actor)?;
-            self.finish_world_key_work_in_txn(txn, Some(owner), key_owner, undone, secret)
+            self.finish_world_key_work_in_txn(txn, key_owner, undone, secret)
         })
     }
 }
