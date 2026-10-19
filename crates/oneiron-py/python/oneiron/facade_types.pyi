@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1063 facade rows, 3618 declarations.
-Inputs: 998 of 1063 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 953 of 1063 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1067 facade rows, 3642 declarations.
+Inputs: 1002 of 1067 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 957 of 1067 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
@@ -1965,10 +1965,16 @@ class RunSettlementsRequest(TypedDict):
 class RunRungSettlement(TypedDict):
     instance: str
     lease: str
+    run: str
     revision: int
     model: NotRequired[str | None]
     offer: str
     route: str
+    purpose: NotRequired[str | None]
+    agent: NotRequired[str | None]
+    cycle: NotRequired[str | None]
+    item: NotRequired[str | None]
+    spend_scope: NotRequired[str | None]
     reserved_units: int
     settled_units: int
     unit: str
@@ -12121,12 +12127,16 @@ class NativeOutputRequest(TypedDict):
     content_base64: str
     report: NotRequired[Any]
     made_by: NotRequired[Any | None]
+class VersionReconciliation(TypedDict):
+    base_version: int
+    kept_head: ArtifactVersionView
 class KeptProposal(TypedDict):
     version: ArtifactVersionView
     stranded: bool
     remapped: int
     drifted: int
     receipt: ReceiptRecord
+    reconciliation: NotRequired[VersionReconciliation | None]
 class DiscardedProposal(TypedDict):
     receipt: ReceiptRecord
 class KeepUndo(TypedDict):
@@ -16208,6 +16218,7 @@ class DeckExportView(TypedDict):
     effects: list[str]
     record: NotRequired[OfficeBodyExportRecord | None]
     proposed: NotRequired[PendingProposalView | None]
+    reconciliation: NotRequired[VersionReconciliation | None]
 class DeckGateRequest(TypedDict):
     profile: NotRequired[str | None]
 class StepOutcomeFailed(TypedDict):
@@ -16777,6 +16788,111 @@ class SieveLeaseView(TypedDict):
 class SieveLeaseRefillRequest(TypedDict):
     budget_id: str
     total_units: int
+class FreeTimePolicyRequest(TypedDict):
+    agent: str
+FreeTimePolicyState = Literal["set", "disabled"]
+FreeTimeCadence = Literal["daily", "nightly"]
+class FreeTimeSchedule(TypedDict):
+    cadence: FreeTimeCadence
+    hour: int
+    minute: int
+    zone: str
+class FreeTimeSplit(TypedDict):
+    for_human_units: int
+    own_time_units: int
+class FreeTimePolicyRow(TypedDict):
+    total_units: int
+    unit: str
+    schedule: FreeTimeSchedule
+    pinned_split: NotRequired[FreeTimeSplit | None]
+    cap_shown_at_ms: int
+    set_by: str
+    set_at: int
+class FreeTimePolicyView(TypedDict):
+    agent: str
+    state: FreeTimePolicyState
+    revision: int
+    policy: NotRequired[FreeTimePolicyRow | None]
+class FreeTimePolicyInput(TypedDict):
+    total_units: int
+    schedule: FreeTimeSchedule
+    pinned_split: NotRequired[FreeTimeSplit | None]
+    cap_shown_at_ms: int
+class FreeTimePolicySetRequest(TypedDict):
+    agent: str
+    expected_revision: int
+    policy: NotRequired[FreeTimePolicyInput | None]
+class FreeTimeCyclesRequest(TypedDict):
+    agent: str
+    cursor: NotRequired[str | None]
+    limit: NotRequired[int | None]
+FreeTimeCycleState = Literal["open", "closed"]
+FreeTimeFloor = Literal["met", "not_met", "unknown"]
+class FreeTimeCycleSummary(TypedDict):
+    cycle: str
+    state: FreeTimeCycleState
+    policy_revision: int
+    total_units: int
+    period_start: int
+    boundary: int
+    next_boundary: NotRequired[int | None]
+    opened_at: int
+    closed_at: NotRequired[int | None]
+    floor: FreeTimeFloor
+    items_complete: bool
+    has_note: bool
+class FreeTimeCyclesPage(TypedDict):
+    agent: str
+    cycles: list[FreeTimeCycleSummary]
+    next: NotRequired[str | None]
+class FreeTimeCycleRequest(TypedDict):
+    agent: str
+    cycle: str
+FreeTimeKind = Literal["for_human", "own_time"]
+FreeTimeItemOutcome = Literal["completed", "rested", "failed", "cancelled"]
+class FreeTimeItemReceiptView(TypedDict):
+    outcome: FreeTimeItemOutcome
+    policy_revision: int
+    attempt: NotRequired[str | None]
+    proposal: NotRequired[str | None]
+    at: int
+class FreeTimeItemView(TypedDict):
+    item: str
+    kind: FreeTimeKind
+    purpose: str
+    attempt: NotRequired[str | None]
+    spend_scope: NotRequired[str | None]
+    receipt: NotRequired[FreeTimeItemReceiptView | None]
+class FreeTimeNoteView(TypedDict):
+    author: str
+    at: int
+    text: str
+class FreeTimeLabelSpend(TypedDict):
+    purpose: NotRequired[str | None]
+    settlements: list[RunRungSettlement]
+class FreeTimeSpendView(TypedDict):
+    metering_enabled: bool
+    complete: bool
+    by_label: list[FreeTimeLabelSpend]
+class FreeTimeCycleView(TypedDict):
+    agent: str
+    cycle: str
+    state: FreeTimeCycleState
+    policy_revision: int
+    total_units: int
+    unit: str
+    pinned_split: NotRequired[FreeTimeSplit | None]
+    period_start: int
+    boundary: int
+    next_boundary: NotRequired[int | None]
+    opened_at: int
+    closed_at: NotRequired[int | None]
+    root_scope: str
+    floor: FreeTimeFloor
+    items_complete: bool
+    items: list[FreeTimeItemView]
+    note: NotRequired[FreeTimeNoteView | None]
+    spend: FreeTimeSpendView
 class SignalExtractionRequest(TypedDict):
     turn_refs: list[str]
 class SignalExtractionTicket(TypedDict):

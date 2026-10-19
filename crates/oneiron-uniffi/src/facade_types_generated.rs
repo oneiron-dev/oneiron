@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1063 facade rows, 3590 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1015.
+// UniFFI census: 1067 facade rows, 3614 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1019.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -5791,6 +5791,8 @@ pub struct RunRungSettlement {
     pub instance: String,
     #[serde(rename = "lease")]
     pub lease: String,
+    #[serde(rename = "run")]
+    pub run: String,
     #[serde(rename = "revision")]
     pub revision: u32,
     #[serde(rename = "model", default, skip_serializing_if = "Option::is_none")]
@@ -5799,6 +5801,20 @@ pub struct RunRungSettlement {
     pub offer: String,
     #[serde(rename = "route")]
     pub route: String,
+    #[serde(rename = "purpose", default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    #[serde(rename = "agent", default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(rename = "cycle", default, skip_serializing_if = "Option::is_none")]
+    pub cycle: Option<String>,
+    #[serde(rename = "item", default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<String>,
+    #[serde(
+        rename = "spend_scope",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub spend_scope: Option<String>,
     #[serde(rename = "reserved_units")]
     pub reserved_units: u64,
     #[serde(rename = "settled_units")]
@@ -37333,6 +37349,15 @@ pub struct NativeOutputRequest {
     pub made_by: Option<crate::WireJson>,
 }
 
+/// `oneiron::blob_artifact::family::VersionReconciliation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct VersionReconciliation {
+    #[serde(rename = "base_version")]
+    pub base_version: u64,
+    #[serde(rename = "kept_head")]
+    pub kept_head: ArtifactVersionView,
+}
+
 /// `oneiron::blob_artifact::verbs::KeptProposal`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct KeptProposal {
@@ -37346,6 +37371,12 @@ pub struct KeptProposal {
     pub drifted: u64,
     #[serde(rename = "receipt")]
     pub receipt: ReceiptRecord,
+    #[serde(
+        rename = "reconciliation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reconciliation: Option<VersionReconciliation>,
 }
 
 /// `oneiron::blob_artifact::verbs::DiscardedProposal`.
@@ -49549,6 +49580,12 @@ pub struct DeckExportView {
     pub record: Option<OfficeBodyExportRecord>,
     #[serde(rename = "proposed", default, skip_serializing_if = "Option::is_none")]
     pub proposed: Option<PendingProposalView>,
+    #[serde(
+        rename = "reconciliation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reconciliation: Option<VersionReconciliation>,
 }
 
 /// `oneiron::office_body::pptx::verbs::DeckGateRequest`.
@@ -51163,6 +51200,346 @@ pub struct SieveLeaseRefillRequest {
     pub budget_id: String,
     #[serde(rename = "total_units")]
     pub total_units: u64,
+}
+
+/// `oneiron::dreamer_runner::free_time::doors::FreeTimePolicyRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FreeTimePolicyRequest {
+    #[serde(rename = "agent")]
+    pub agent: String,
+}
+
+/// `oneiron::dreamer_runner::free_time::doors::FreeTimePolicyState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FreeTimePolicyState {
+    #[serde(rename = "set")]
+    Set,
+    #[serde(rename = "disabled")]
+    Disabled,
+}
+
+/// `oneiron::dreamer_runner::free_time::policy::FreeTimeCadence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FreeTimeCadence {
+    #[serde(rename = "daily")]
+    Daily,
+    #[serde(rename = "nightly")]
+    Nightly,
+}
+
+/// `oneiron::dreamer_runner::free_time::policy::FreeTimeSchedule`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FreeTimeSchedule {
+    #[serde(rename = "cadence")]
+    pub cadence: FreeTimeCadence,
+    #[serde(rename = "hour")]
+    pub hour: u8,
+    #[serde(rename = "minute")]
+    pub minute: u8,
+    #[serde(rename = "zone")]
+    pub zone: String,
+}
+
+/// `oneiron::dreamer_runner::free_time::policy::FreeTimeSplit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FreeTimeSplit {
+    #[serde(rename = "for_human_units")]
+    pub for_human_units: u64,
+    #[serde(rename = "own_time_units")]
+    pub own_time_units: u64,
+}
+
+/// `oneiron::dreamer_runner::free_time::doors::FreeTimePolicyRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FreeTimePolicyRow {
+    #[serde(rename = "total_units")]
+    pub total_units: u64,
+    #[serde(rename = "unit")]
+    pub unit: String,
+    #[serde(rename = "schedule")]
+    pub schedule: FreeTimeSchedule,
+    #[serde(
+        rename = "pinned_split",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pinned_split: Option<FreeTimeSplit>,
+    #[serde(rename = "cap_shown_at_ms")]
+    pub cap_shown_at_ms: u64,
+    #[serde(rename = "set_by")]
+    pub set_by: String,
+    #[serde(rename = "set_at")]
+    pub set_at: u64,
+}
+
+/// `oneiron::dreamer_runner::free_time::doors::FreeTimePolicyView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FreeTimePolicyView {
+    #[serde(rename = "agent")]
+    pub agent: String,
+    #[serde(rename = "state")]
+    pub state: FreeTimePolicyState,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<FreeTimePolicyRow>,
+}
+
+/// `oneiron::dreamer_runner::free_time::policy::FreeTimePolicyInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FreeTimePolicyInput {
+    #[serde(rename = "total_units")]
+    pub total_units: u64,
+    #[serde(rename = "schedule")]
+    pub schedule: FreeTimeSchedule,
+    #[serde(
+        rename = "pinned_split",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pinned_split: Option<FreeTimeSplit>,
+    #[serde(rename = "cap_shown_at_ms")]
+    pub cap_shown_at_ms: u64,
+}
+
+/// `oneiron::dreamer_runner::free_time::doors::FreeTimePolicySetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FreeTimePolicySetRequest {
+    #[serde(rename = "agent")]
+    pub agent: String,
+    #[serde(rename = "expected_revision")]
+    pub expected_revision: u64,
+    #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<FreeTimePolicyInput>,
+}
+
+/// `oneiron::dreamer_runner::free_time::doors::FreeTimeCyclesRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FreeTimeCyclesRequest {
+    #[serde(rename = "agent")]
+    pub agent: String,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::dreamer_runner::free_time::cycle::FreeTimeCycleState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FreeTimeCycleState {
+    #[serde(rename = "open")]
+    Open,
+    #[serde(rename = "closed")]
+    Closed,
+}
+
+/// `oneiron::dreamer_runner::free_time::receipt::FreeTimeFloor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FreeTimeFloor {
+    #[serde(rename = "met")]
+    Met,
+    #[serde(rename = "not_met")]
+    NotMet,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+/// `oneiron::dreamer_runner::free_time::doors::FreeTimeCycleSummary`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FreeTimeCycleSummary {
+    #[serde(rename = "cycle")]
+    pub cycle: String,
+    #[serde(rename = "state")]
+    pub state: FreeTimeCycleState,
+    #[serde(rename = "policy_revision")]
+    pub policy_revision: u64,
+    #[serde(rename = "total_units")]
+    pub total_units: u64,
+    #[serde(rename = "period_start")]
+    pub period_start: u64,
+    #[serde(rename = "boundary")]
+    pub boundary: u64,
+    #[serde(
+        rename = "next_boundary",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_boundary: Option<u64>,
+    #[serde(rename = "opened_at")]
+    pub opened_at: u64,
+    #[serde(rename = "closed_at", default, skip_serializing_if = "Option::is_none")]
+    pub closed_at: Option<u64>,
+    #[serde(rename = "floor")]
+    pub floor: FreeTimeFloor,
+    #[serde(rename = "items_complete")]
+    pub items_complete: bool,
+    #[serde(rename = "has_note")]
+    pub has_note: bool,
+}
+
+/// `oneiron::dreamer_runner::free_time::doors::FreeTimeCyclesPage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FreeTimeCyclesPage {
+    #[serde(rename = "agent")]
+    pub agent: String,
+    #[serde(rename = "cycles")]
+    pub cycles: Vec<FreeTimeCycleSummary>,
+    #[serde(rename = "next", default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
+/// `oneiron::dreamer_runner::free_time::doors::FreeTimeCycleRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FreeTimeCycleRequest {
+    #[serde(rename = "agent")]
+    pub agent: String,
+    #[serde(rename = "cycle")]
+    pub cycle: String,
+}
+
+/// `oneiron::dreamer_runner::free_time::FreeTimeKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FreeTimeKind {
+    #[serde(rename = "for_human")]
+    ForHuman,
+    #[serde(rename = "own_time")]
+    OwnTime,
+}
+
+/// `oneiron::dreamer_runner::free_time::receipt::FreeTimeItemOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FreeTimeItemOutcome {
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "rested")]
+    Rested,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+
+/// `oneiron::dreamer_runner::free_time::doors::FreeTimeItemReceiptView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FreeTimeItemReceiptView {
+    #[serde(rename = "outcome")]
+    pub outcome: FreeTimeItemOutcome,
+    #[serde(rename = "policy_revision")]
+    pub policy_revision: u64,
+    #[serde(rename = "attempt", default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<String>,
+    #[serde(rename = "proposal", default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<String>,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::dreamer_runner::free_time::doors::FreeTimeItemView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FreeTimeItemView {
+    #[serde(rename = "item")]
+    pub item: String,
+    #[serde(rename = "kind")]
+    pub kind: FreeTimeKind,
+    #[serde(rename = "purpose")]
+    pub purpose: String,
+    #[serde(rename = "attempt", default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<String>,
+    #[serde(
+        rename = "spend_scope",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub spend_scope: Option<String>,
+    #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<FreeTimeItemReceiptView>,
+}
+
+/// `oneiron::dreamer_runner::free_time::doors::FreeTimeNoteView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FreeTimeNoteView {
+    #[serde(rename = "author")]
+    pub author: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "text")]
+    pub text: String,
+}
+
+/// `oneiron::dreamer_runner::free_time::doors::FreeTimeLabelSpend`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FreeTimeLabelSpend {
+    #[serde(rename = "purpose", default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    #[serde(rename = "settlements")]
+    pub settlements: Vec<RunRungSettlement>,
+}
+
+/// `oneiron::dreamer_runner::free_time::doors::FreeTimeSpendView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FreeTimeSpendView {
+    #[serde(rename = "metering_enabled")]
+    pub metering_enabled: bool,
+    #[serde(rename = "complete")]
+    pub complete: bool,
+    #[serde(rename = "by_label")]
+    pub by_label: Vec<FreeTimeLabelSpend>,
+}
+
+/// `oneiron::dreamer_runner::free_time::doors::FreeTimeCycleView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FreeTimeCycleView {
+    #[serde(rename = "agent")]
+    pub agent: String,
+    #[serde(rename = "cycle")]
+    pub cycle: String,
+    #[serde(rename = "state")]
+    pub state: FreeTimeCycleState,
+    #[serde(rename = "policy_revision")]
+    pub policy_revision: u64,
+    #[serde(rename = "total_units")]
+    pub total_units: u64,
+    #[serde(rename = "unit")]
+    pub unit: String,
+    #[serde(
+        rename = "pinned_split",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pinned_split: Option<FreeTimeSplit>,
+    #[serde(rename = "period_start")]
+    pub period_start: u64,
+    #[serde(rename = "boundary")]
+    pub boundary: u64,
+    #[serde(
+        rename = "next_boundary",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_boundary: Option<u64>,
+    #[serde(rename = "opened_at")]
+    pub opened_at: u64,
+    #[serde(rename = "closed_at", default, skip_serializing_if = "Option::is_none")]
+    pub closed_at: Option<u64>,
+    #[serde(rename = "root_scope")]
+    pub root_scope: String,
+    #[serde(rename = "floor")]
+    pub floor: FreeTimeFloor,
+    #[serde(rename = "items_complete")]
+    pub items_complete: bool,
+    #[serde(rename = "items")]
+    pub items: Vec<FreeTimeItemView>,
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<FreeTimeNoteView>,
+    #[serde(rename = "spend")]
+    pub spend: FreeTimeSpendView,
 }
 
 /// `oneiron::memory::signal_extraction::SignalExtractionRequest`.

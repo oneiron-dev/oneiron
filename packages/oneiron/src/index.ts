@@ -2557,6 +2557,18 @@ export class Oneiron {
         refill: (input: Facade.SieveLeaseRefillRequest): Facade.SieveLeaseView => this.#call(() => this.#client.vaultSieveLeaseRefill(input) as Facade.SieveLeaseView),
       }),
     },
+    free_time: {
+      policy: {
+        /** The owner reads one agent's free-time policy with its revision: the total one cycle may spend, its daily clock in an IANA zone and any pinned split, or disabled when none is set. */
+        get: (input: Facade.FreeTimePolicyRequest): Facade.FreeTimePolicyView => this.#call(() => this.#client.vaultFreeTimePolicyGet(input) as Facade.FreeTimePolicyView),
+        /** The owner sets one agent's free-time policy at the revision it read, or clears it with no policy; a clear ends the open cycle and the agent goes back to its nightly dreaming. */
+        set: (input: Facade.FreeTimePolicySetRequest): Facade.FreeTimePolicyView => this.#call(() => this.#client.vaultFreeTimePolicySet(input) as Facade.FreeTimePolicyView),
+      },
+      /** The owner reads one agent's free-time cycles a page at a time, newest first: each cycle's state, period and floor from its item receipts, with the cursor of the next page. */
+      cycles: (input: Facade.FreeTimeCyclesRequest): Facade.FreeTimeCyclesPage => this.#call(() => this.#client.vaultFreeTimeCycles(input) as Facade.FreeTimeCyclesPage),
+      /** The owner reads one free-time cycle: its state, the floor and whether every item receipt read, the agent's short note, each item's receipt, and the spend records by label with their own completeness. Never the agent's diary. */
+      cycle: (input: Facade.FreeTimeCycleRequest): Facade.FreeTimeCycleView | null => this.#call(() => this.#client.vaultFreeTimeCycle(input) as Facade.FreeTimeCycleView | null),
+    },
     memory: {
       /** Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates. */
       signal_extraction: Object.assign((input: Facade.SignalExtractionRequest): Facade.SignalExtractionTicket => this.#call(() => this.#client.vaultMemorySignalExtraction(input) as Facade.SignalExtractionTicket), {

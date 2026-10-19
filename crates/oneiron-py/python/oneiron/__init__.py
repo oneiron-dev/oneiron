@@ -774,6 +774,9 @@ class Oneiron:
         def sieve(self) -> "Oneiron._VaultSieveVerbs":
             return Oneiron._VaultSieveVerbs(self._client)
         @property
+        def free_time(self) -> "Oneiron._VaultFreeTimeVerbs":
+            return Oneiron._VaultFreeTimeVerbs(self._client)
+        @property
         def memory(self) -> "Oneiron._VaultMemoryVerbs":
             return Oneiron._VaultMemoryVerbs(self._client)
         @property
@@ -4541,6 +4544,27 @@ class Oneiron:
         def refill(self, spec):
             """The owner refills one wake-budget lease to a replacement total; spent and reserved units keep their claim and replay adds nothing twice."""
             return json.loads(_translate(lambda: self._client.vault_sieve_lease_refill(json.dumps(spec))))
+    class _VaultFreeTimeVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def policy(self) -> "Oneiron._VaultFreeTimePolicyVerbs":
+            return Oneiron._VaultFreeTimePolicyVerbs(self._client)
+        def cycles(self, spec):
+            """The owner reads one agent's free-time cycles a page at a time, newest first: each cycle's state, period and floor from its item receipts, with the cursor of the next page."""
+            return json.loads(_translate(lambda: self._client.vault_free_time_cycles(json.dumps(spec))))
+        def cycle(self, spec):
+            """The owner reads one free-time cycle: its state, the floor and whether every item receipt read, the agent's short note, each item's receipt, and the spend records by label with their own completeness. Never the agent's diary."""
+            return json.loads(_translate(lambda: self._client.vault_free_time_cycle(json.dumps(spec))))
+    class _VaultFreeTimePolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads one agent's free-time policy with its revision: the total one cycle may spend, its daily clock in an IANA zone and any pinned split, or disabled when none is set."""
+            return json.loads(_translate(lambda: self._client.vault_free_time_policy_get(json.dumps(spec))))
+        def set(self, spec):
+            """The owner sets one agent's free-time policy at the revision it read, or clears it with no policy; a clear ends the open cycle and the agent goes back to its nightly dreaming."""
+            return json.loads(_translate(lambda: self._client.vault_free_time_policy_set(json.dumps(spec))))
     class _VaultMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

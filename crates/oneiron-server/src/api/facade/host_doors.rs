@@ -211,6 +211,8 @@ pub(crate) use super::critical_confirm_doors::*;
 pub(crate) use super::plugin_section_doors::*;
 // The owner's sieve interest-queue, policy and lease doors (DOOR-130), likewise.
 pub(crate) use super::sieve_doors::*;
+// The owner's free-time policy, cycle and cycle-sheet doors (FIX 4453), likewise.
+pub(crate) use super::free_time_doors::*;
 // The owner's standing-block and dreaming-choice doors (DOOR-134), likewise.
 pub(crate) use super::standing_doors::*;
 // The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
@@ -1469,6 +1471,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.sieve.recipe_policy.set"
         | "vault.sieve.lease"
         | "vault.sieve.lease.refill"
+        | "vault.free_time.policy.get"
+        | "vault.free_time.policy.set"
+        | "vault.free_time.cycles"
+        | "vault.free_time.cycle"
         | "vault.settings.wake_policy.set"
         | "vault.agents.create"
         | "vault.agents.update"

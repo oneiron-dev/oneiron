@@ -1,0 +1,120 @@
+//! The owner's free-time host doors (FIX 4453): `vault.free_time.policy.get`,
+//! `.policy.set`, `.cycles` and `.cycle`. `host_doors` re-exports them, so
+//! the generated HTTP facade handler and the MCP dispatcher call them by the
+//! name every host door has; `/v1/owner/free-time` runs the same engine
+//! doors. Each takes the vault owner's proof as `/v1/owner` takes it, and
+//! each engine door rechecks it in its own read or write.
+//!
+//! A cycle's sheet joins this server's trusted usage records: the settled
+//! calls whose run the engine bound to that cycle before it began, matched
+//! on the stamp, never on a run's name. No door here reads a response, a
+//! prompt or the agent's diary.
+use std::sync::Arc;
+
+use oneiron::dreamer_runner::{
+    self, FreeTimeCycleRequest, FreeTimeCycleView, FreeTimeCyclesPage, FreeTimeCyclesRequest,
+    FreeTimePolicyRequest, FreeTimePolicySetRequest, FreeTimePolicyView, FreeTimeSpendView,
+};
+use oneiron::memory::MemoryError;
+
+use super::host_doors::Listed;
+use super::legal_hold_doors::as_owner_naming;
+use crate::auth::CoreAuth;
+use crate::server::SyncServer;
+use crate::usage::UsageError;
+
+pub(crate) async fn vault_free_time_policy_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: FreeTimePolicyRequest,
+) -> Listed<FreeTimePolicyView> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.free_time.policy.get",
+        move |server, owner| {
+            dreamer_runner::free_time_policy_as_owner(server.vault(), owner, &input)
+                .map_err(MemoryError::from)
+        },
+        |_| Vec::new(),
+    )
+    .await
+}
+
+pub(crate) async fn vault_free_time_policy_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: FreeTimePolicySetRequest,
+) -> Listed<FreeTimePolicyView> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.free_time.policy.set",
+        move |server, owner| {
+            dreamer_runner::free_time_policy_set_as_owner(server.vault(), owner, &input)
+                .map_err(MemoryError::from)
+        },
+        |_| Vec::new(),
+    )
+    .await
+}
+
+pub(crate) async fn vault_free_time_cycles(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: FreeTimeCyclesRequest,
+) -> Listed<FreeTimeCyclesPage> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.free_time.cycles",
+        move |server, owner| {
+            dreamer_runner::free_time_cycles_as_owner(server.vault(), owner, &input)
+                .map_err(MemoryError::from)
+        },
+        |_| Vec::new(),
+    )
+    .await
+}
+
+pub(crate) async fn vault_free_time_cycle(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: FreeTimeCycleRequest,
+) -> Listed<Option<FreeTimeCycleView>> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.free_time.cycle",
+        move |server, owner| {
+            dreamer_runner::free_time_cycle_as_owner(server.vault(), owner, &input)
+                .map_err(MemoryError::from)?
+                .map(|sheet| {
+                    free_time_cycle_with_spend(server, sheet)
+                        .map_err(|error| MemoryError::bad_request(error.to_string()))
+                })
+                .transpose()
+        },
+        |_| Vec::new(),
+    )
+    .await
+}
+
+/// `sheet` with the spend records this server's usage ledger holds for its
+/// cycle, by label. A server that has not bound its usage ledger to an
+/// account leaves the spend unmetered: unknown, never zero.
+pub(crate) fn free_time_cycle_with_spend(
+    server: &SyncServer,
+    mut sheet: FreeTimeCycleView,
+) -> Result<FreeTimeCycleView, UsageError> {
+    if let Some(usage) = server.vault_usage() {
+        let read = server.usage_ledger.cycle_settlements(
+            usage.owner(),
+            usage.vault_id(),
+            &sheet.agent,
+            &sheet.cycle,
+        )?;
+        sheet.spend = FreeTimeSpendView::metered(read.settlements, read.complete);
+    }
+    Ok(sheet)
+}

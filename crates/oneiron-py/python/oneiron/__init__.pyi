@@ -684,6 +684,8 @@ class Oneiron:
         @property
         def sieve(self) -> "Oneiron._VaultSieveVerbs": ...
         @property
+        def free_time(self) -> "Oneiron._VaultFreeTimeVerbs": ...
+        @property
         def memory(self) -> "Oneiron._VaultMemoryVerbs": ...
         @property
         def channel_identities(self) -> "Oneiron._VaultChannelIdentitiesVerbs": ...
@@ -2883,6 +2885,18 @@ class Oneiron:
             """The owner reads one wake-budget lease counter without creating it: total, remaining and reserved units by its budget id."""
         def refill(self, spec: Facade.SieveLeaseRefillRequest) -> Facade.SieveLeaseView:
             """The owner refills one wake-budget lease to a replacement total; spent and reserved units keep their claim and replay adds nothing twice."""
+    class _VaultFreeTimeVerbs:
+        @property
+        def policy(self) -> "Oneiron._VaultFreeTimePolicyVerbs": ...
+        def cycles(self, spec: Facade.FreeTimeCyclesRequest) -> Facade.FreeTimeCyclesPage:
+            """The owner reads one agent's free-time cycles a page at a time, newest first: each cycle's state, period and floor from its item receipts, with the cursor of the next page."""
+        def cycle(self, spec: Facade.FreeTimeCycleRequest) -> Facade.FreeTimeCycleView | None:
+            """The owner reads one free-time cycle: its state, the floor and whether every item receipt read, the agent's short note, each item's receipt, and the spend records by label with their own completeness. Never the agent's diary."""
+    class _VaultFreeTimePolicyVerbs:
+        def get(self, spec: Facade.FreeTimePolicyRequest) -> Facade.FreeTimePolicyView:
+            """The owner reads one agent's free-time policy with its revision: the total one cycle may spend, its daily clock in an IANA zone and any pinned split, or disabled when none is set."""
+        def set(self, spec: Facade.FreeTimePolicySetRequest) -> Facade.FreeTimePolicyView:
+            """The owner sets one agent's free-time policy at the revision it read, or clears it with no policy; a clear ends the open cycle and the agent goes back to its nightly dreaming."""
     class _VaultMemoryVerbs:
         @property
         def signal_extraction(self) -> "Oneiron._VaultMemorySignalExtractionVerbs": ...

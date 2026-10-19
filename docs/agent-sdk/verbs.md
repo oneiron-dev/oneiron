@@ -957,6 +957,10 @@ both bindings and their export-census tests in one change.
 - `vault.sieve.recipe_policy.set`
 - `vault.sieve.lease`
 - `vault.sieve.lease.refill`
+- `vault.free_time.policy.get`
+- `vault.free_time.policy.set`
+- `vault.free_time.cycles`
+- `vault.free_time.cycle`
 - `vault.claims.vet`
 - `vault.claims.vetting`
 - `vault.memory.signal_extraction`

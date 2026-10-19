@@ -975,6 +975,10 @@ pub enum AgentVerb {
     VaultSieveRecipePolicySet,
     VaultSieveLease,
     VaultSieveLeaseRefill,
+    VaultFreeTimePolicyGet,
+    VaultFreeTimePolicySet,
+    VaultFreeTimeCycles,
+    VaultFreeTimeCycle,
     VaultClaimsVet,
     VaultClaimsVetting,
     VaultMemorySignalExtraction,
@@ -2061,6 +2065,10 @@ impl AgentVerb {
         Self::VaultSieveRecipePolicySet,
         Self::VaultSieveLease,
         Self::VaultSieveLeaseRefill,
+        Self::VaultFreeTimePolicyGet,
+        Self::VaultFreeTimePolicySet,
+        Self::VaultFreeTimeCycles,
+        Self::VaultFreeTimeCycle,
         Self::VaultClaimsVet,
         Self::VaultClaimsVetting,
         Self::VaultMemorySignalExtraction,
@@ -3172,6 +3180,10 @@ impl AgentVerb {
             Self::VaultSieveRecipePolicySet => "vault.sieve.recipe_policy.set",
             Self::VaultSieveLease => "vault.sieve.lease",
             Self::VaultSieveLeaseRefill => "vault.sieve.lease.refill",
+            Self::VaultFreeTimePolicyGet => "vault.free_time.policy.get",
+            Self::VaultFreeTimePolicySet => "vault.free_time.policy.set",
+            Self::VaultFreeTimeCycles => "vault.free_time.cycles",
+            Self::VaultFreeTimeCycle => "vault.free_time.cycle",
             Self::VaultClaimsVet => "vault.claims.vet",
             Self::VaultClaimsVetting => "vault.claims.vetting",
             Self::VaultMemorySignalExtraction => "vault.memory.signal_extraction",
@@ -4244,6 +4256,10 @@ impl AgentVerb {
                 | Self::VaultSieveRecipePolicySet
                 | Self::VaultSieveLease
                 | Self::VaultSieveLeaseRefill
+                | Self::VaultFreeTimePolicyGet
+                | Self::VaultFreeTimePolicySet
+                | Self::VaultFreeTimeCycles
+                | Self::VaultFreeTimeCycle
                 | Self::VaultClaimsVet
                 | Self::VaultClaimsVetting
                 | Self::VaultMemorySignalExtraction
@@ -5357,6 +5373,10 @@ impl AgentVerb {
                 | Self::VaultSieveRecipePolicySet
                 | Self::VaultSieveLease
                 | Self::VaultSieveLeaseRefill
+                | Self::VaultFreeTimePolicyGet
+                | Self::VaultFreeTimePolicySet
+                | Self::VaultFreeTimeCycles
+                | Self::VaultFreeTimeCycle
                 | Self::VaultClaimsVet
                 | Self::VaultClaimsVetting
                 | Self::VaultMemorySignalExtraction
@@ -6559,6 +6579,10 @@ impl AgentVerb {
                 | Self::VaultSieveRecipePolicySet
                 | Self::VaultSieveLease
                 | Self::VaultSieveLeaseRefill
+                | Self::VaultFreeTimePolicyGet
+                | Self::VaultFreeTimePolicySet
+                | Self::VaultFreeTimeCycles
+                | Self::VaultFreeTimeCycle
                 | Self::VaultClaimsVet
                 | Self::VaultClaimsVetting
                 | Self::VaultMemorySignalExtraction
@@ -7230,6 +7254,7 @@ impl AgentVerb {
                 | Self::VaultSievePolicySet
                 | Self::VaultSieveRecipePolicySet
                 | Self::VaultSieveLeaseRefill
+                | Self::VaultFreeTimePolicySet
                 | Self::VaultClaimsVet
                 | Self::VaultMemorySignalExtraction
                 | Self::VaultClaimsSeed
@@ -8320,6 +8345,10 @@ impl AgentVerb {
             Self::VaultSieveRecipePolicySet => &["spec"],
             Self::VaultSieveLease => &["spec"],
             Self::VaultSieveLeaseRefill => &["spec"],
+            Self::VaultFreeTimePolicyGet => &["spec"],
+            Self::VaultFreeTimePolicySet => &["spec"],
+            Self::VaultFreeTimeCycles => &["spec"],
+            Self::VaultFreeTimeCycle => &["spec"],
             Self::VaultClaimsVet => &["spec"],
             Self::VaultClaimsVetting => &["spec"],
             Self::VaultMemorySignalExtraction => &["spec"],
@@ -9407,6 +9436,10 @@ impl AgentVerb {
             Self::VaultSieveRecipePolicySet => &["spec"],
             Self::VaultSieveLease => &["spec"],
             Self::VaultSieveLeaseRefill => &["spec"],
+            Self::VaultFreeTimePolicyGet => &["spec"],
+            Self::VaultFreeTimePolicySet => &["spec"],
+            Self::VaultFreeTimeCycles => &["spec"],
+            Self::VaultFreeTimeCycle => &["spec"],
             Self::VaultClaimsVet => &["spec"],
             Self::VaultClaimsVetting => &["spec"],
             Self::VaultMemorySignalExtraction => &["spec"],
@@ -12346,6 +12379,18 @@ impl AgentVerb {
             }
             Self::VaultSieveLeaseRefill => {
                 "The owner refills one wake-budget lease to a replacement total; spent and reserved units keep their claim and replay adds nothing twice."
+            }
+            Self::VaultFreeTimePolicyGet => {
+                "The owner reads one agent's free-time policy with its revision: the total one cycle may spend, its daily clock in an IANA zone and any pinned split, or disabled when none is set."
+            }
+            Self::VaultFreeTimePolicySet => {
+                "The owner sets one agent's free-time policy at the revision it read, or clears it with no policy; a clear ends the open cycle and the agent goes back to its nightly dreaming."
+            }
+            Self::VaultFreeTimeCycles => {
+                "The owner reads one agent's free-time cycles a page at a time, newest first: each cycle's state, period and floor from its item receipts, with the cursor of the next page."
+            }
+            Self::VaultFreeTimeCycle => {
+                "The owner reads one free-time cycle: its state, the floor and whether every item receipt read, the agent's short note, each item's receipt, and the spend records by label with their own completeness. Never the agent's diary."
             }
             Self::VaultClaimsVet => {
                 "Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration."
