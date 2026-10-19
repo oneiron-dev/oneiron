@@ -464,6 +464,13 @@ impl FoldIssues {
                 .or_default()
                 .push("refused_owner_work");
         }
+        for entry in &fold.conversation_training.refused {
+            issues
+                .by_entry
+                .entry(*entry)
+                .or_default()
+                .push("refused_conversation_training");
+        }
         issues
     }
 
