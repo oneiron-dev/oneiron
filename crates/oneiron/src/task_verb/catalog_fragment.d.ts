@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1003 code-mode rows (979 host rows, 24 run rows), 3355 declarations.
-// Replies: 898 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1007 code-mode rows (983 host rows, 24 run rows), 3365 declarations.
+// Replies: 902 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1608,6 +1608,16 @@ declare namespace Sdk {
   type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null };
   type ConsentRegistry = { rows: ConsentRegistryRow[] };
   type RevokeGrantRequest = { grant: string };
+  type CatastropheClass = "WidenOwnAuthority" | "KeyRecovery" | "VaultWideDestruction" | "SecurityControlDisable" | "MassSecretExport" | "WorldPrivacyWiden";
+  type BypassActionEnvelopeRequest = { selectors: string[]; target?: string | null; budget?: number | null; receipt_required?: boolean };
+  type BypassGrantBoundRequest = { actor: string; actor_class?: string | null; classes: CatastropheClass[]; scope: BypassScope; envelope: BypassActionEnvelopeRequest };
+  type BypassGrantWarningRequest = { bound: BypassGrantBoundRequest };
+  type BypassGrantWarningView = { owner: string; bound: BypassGrantBoundRequest; floor_version: number; bound_digests: string[] };
+  type CreateBypassGrantRequest = { warning: BypassGrantWarningView };
+  type ActiveBypassGrantsRequest = Record<string, never>;
+  type BypassActiveState = { active: boolean; grant: string; bound: BypassGrantBoundRequest; floor_version: number; created_at: number };
+  type BypassedEffectReceiptsRequest = { grant: string };
+  type BypassedEffectReceipt = { decision_ref: string; grant_ref: string; effect_digest: string; reason_code: string; created_at: number };
   type GraduationScope = { op_kind: string; target_class: string; actor: string };
   type GraduationPolicyRequest = { scope?: GraduationScope | null };
   type GraduationPolicy = { scope_pattern: string; required_streak: number; posterior_guard: number; snooze_backoff_seconds: number[] };
@@ -4422,8 +4432,16 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   consent: {
+    /** The owner reads live scoped bypass states and their complete bounds, newest first; vault.consent.revoke ends each grant. */
+    active_bypass_grants(input: Sdk.ActiveBypassGrantsRequest): Promise<Sdk.BypassActiveState[] | StoredResult>;
     /** The owner approves exactly one engine-emitted effect digest; no standing grant is created. */
     approve_once(input: Sdk.ApproveOnceRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
+    /** The owner previews the exact actor, classes, envelope and project or thread of a scoped bypass; this warning grants nothing. */
+    bypass_grant_warning(input: Sdk.BypassGrantWarningRequest): Promise<Sdk.BypassGrantWarningView | StoredResult>;
+    /** The owner reads the existing Gate receipts for effects covered by one bypass grant, including after its revocation. */
+    bypassed_effect_receipts(input: Sdk.BypassedEffectReceiptsRequest): Promise<Sdk.BypassedEffectReceipt[] | StoredResult>;
+    /** The owner explicitly acknowledges a scoped bypass warning and atomically creates one receipted standing bypass per class. */
+    create_bypass_grant(input: Sdk.CreateBypassGrantRequest): Promise<Sdk.ConsentActReceipt[] | StoredResult>;
     /** The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision. */
     create_standing_grant(input: Sdk.CreateStandingGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
     /** The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority. */

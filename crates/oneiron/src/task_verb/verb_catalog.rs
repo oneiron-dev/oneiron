@@ -425,6 +425,10 @@ pub enum AgentVerb {
     VaultConsentCreateStandingGrant,
     VaultConsentRegistry,
     VaultConsentRevoke,
+    VaultConsentBypassGrantWarning,
+    VaultConsentCreateBypassGrant,
+    VaultConsentActiveBypassGrants,
+    VaultConsentBypassedEffectReceipts,
     VaultConsentGraduationPolicy,
     VaultConsentGraduationPolicySet,
     VaultConsentGraduationPolicyClear,
@@ -1417,6 +1421,10 @@ impl AgentVerb {
         Self::VaultConsentCreateStandingGrant,
         Self::VaultConsentRegistry,
         Self::VaultConsentRevoke,
+        Self::VaultConsentBypassGrantWarning,
+        Self::VaultConsentCreateBypassGrant,
+        Self::VaultConsentActiveBypassGrants,
+        Self::VaultConsentBypassedEffectReceipts,
         Self::VaultConsentGraduationPolicy,
         Self::VaultConsentGraduationPolicySet,
         Self::VaultConsentGraduationPolicyClear,
@@ -2424,6 +2432,10 @@ impl AgentVerb {
             Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
             Self::VaultConsentRegistry => "vault.consent.registry",
             Self::VaultConsentRevoke => "vault.consent.revoke",
+            Self::VaultConsentBypassGrantWarning => "vault.consent.bypass_grant_warning",
+            Self::VaultConsentCreateBypassGrant => "vault.consent.create_bypass_grant",
+            Self::VaultConsentActiveBypassGrants => "vault.consent.active_bypass_grants",
+            Self::VaultConsentBypassedEffectReceipts => "vault.consent.bypassed_effect_receipts",
             Self::VaultConsentGraduationPolicy => "vault.consent.graduation.policy",
             Self::VaultConsentGraduationPolicySet => "vault.consent.graduation.policy.set",
             Self::VaultConsentGraduationPolicyClear => "vault.consent.graduation.policy.clear",
@@ -3428,6 +3440,10 @@ impl AgentVerb {
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentBypassGrantWarning
+                | Self::VaultConsentCreateBypassGrant
+                | Self::VaultConsentActiveBypassGrants
+                | Self::VaultConsentBypassedEffectReceipts
                 | Self::VaultConsentGraduationPolicy
                 | Self::VaultConsentGraduationPolicySet
                 | Self::VaultConsentGraduationPolicyClear
@@ -4447,6 +4463,10 @@ impl AgentVerb {
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentBypassGrantWarning
+                | Self::VaultConsentCreateBypassGrant
+                | Self::VaultConsentActiveBypassGrants
+                | Self::VaultConsentBypassedEffectReceipts
                 | Self::VaultConsentGraduationPolicy
                 | Self::VaultConsentGraduationPolicySet
                 | Self::VaultConsentGraduationPolicyClear
@@ -5054,6 +5074,9 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsLog
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
+                | Self::VaultConsentCreateBypassGrant
+                | Self::VaultConsentActiveBypassGrants
+                | Self::VaultConsentBypassedEffectReceipts
                 | Self::VaultConsentGraduationOffers
                 | Self::VaultConsentGraduationTrustTable
                 | Self::VaultSealPending
@@ -5561,6 +5584,10 @@ impl AgentVerb {
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentBypassGrantWarning
+                | Self::VaultConsentCreateBypassGrant
+                | Self::VaultConsentActiveBypassGrants
+                | Self::VaultConsentBypassedEffectReceipts
                 | Self::VaultConsentGraduationPolicy
                 | Self::VaultConsentGraduationPolicySet
                 | Self::VaultConsentGraduationPolicyClear
@@ -6350,6 +6377,7 @@ impl AgentVerb {
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRevoke
+                | Self::VaultConsentCreateBypassGrant
                 | Self::VaultConsentGraduationPolicySet
                 | Self::VaultConsentGraduationPolicyClear
                 | Self::VaultConsentGraduationOutcome
@@ -7133,6 +7161,10 @@ impl AgentVerb {
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
+            Self::VaultConsentBypassGrantWarning => &["spec"],
+            Self::VaultConsentCreateBypassGrant => &["spec"],
+            Self::VaultConsentActiveBypassGrants => &["spec"],
+            Self::VaultConsentBypassedEffectReceipts => &["spec"],
             Self::VaultConsentGraduationPolicy => &["spec"],
             Self::VaultConsentGraduationPolicySet => &["spec"],
             Self::VaultConsentGraduationPolicyClear => &["spec"],
@@ -8126,6 +8158,10 @@ impl AgentVerb {
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
+            Self::VaultConsentBypassGrantWarning => &["spec"],
+            Self::VaultConsentCreateBypassGrant => &["spec"],
+            Self::VaultConsentActiveBypassGrants => &["spec"],
+            Self::VaultConsentBypassedEffectReceipts => &["spec"],
             Self::VaultConsentGraduationPolicy => &["spec"],
             Self::VaultConsentGraduationPolicySet => &["spec"],
             Self::VaultConsentGraduationPolicyClear => &["spec"],
@@ -9933,6 +9969,18 @@ impl AgentVerb {
             }
             Self::VaultConsentRevoke => {
                 "The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."
+            }
+            Self::VaultConsentBypassGrantWarning => {
+                "The owner previews the exact actor, classes, envelope and project or thread of a scoped bypass; this warning grants nothing."
+            }
+            Self::VaultConsentCreateBypassGrant => {
+                "The owner explicitly acknowledges a scoped bypass warning and atomically creates one receipted standing bypass per class."
+            }
+            Self::VaultConsentActiveBypassGrants => {
+                "The owner reads live scoped bypass states and their complete bounds, newest first; vault.consent.revoke ends each grant."
+            }
+            Self::VaultConsentBypassedEffectReceipts => {
+                "The owner reads the existing Gate receipts for effects covered by one bypass grant, including after its revocation."
             }
             Self::VaultConsentGraduationPolicy => {
                 "Reads runtime consent-graduation policy rows and the effective row for an optional exact scope."

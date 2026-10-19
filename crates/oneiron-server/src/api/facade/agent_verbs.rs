@@ -471,6 +471,13 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.consent.create_standing_grant", post(facade_route))
         .route("/vault.consent.registry", post(facade_route))
         .route("/vault.consent.revoke", post(facade_route))
+        .route("/vault.consent.bypass_grant_warning", post(facade_route))
+        .route("/vault.consent.create_bypass_grant", post(facade_route))
+        .route("/vault.consent.active_bypass_grants", post(facade_route))
+        .route(
+            "/vault.consent.bypassed_effect_receipts",
+            post(facade_route),
+        )
         .route("/vault.consent.graduation.policy", post(facade_route))
         .route("/vault.consent.graduation.policy.set", post(facade_route))
         .route("/vault.consent.graduation.policy.clear", post(facade_route))

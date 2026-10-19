@@ -2254,6 +2254,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.consent.bypass_grant_warning",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent::bypass_lifecycle::BypassGrantWarningRequest,
+                >(),
+            ),
+            (
+                "vault.consent.create_bypass_grant",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent::bypass_lifecycle::CreateBypassGrantRequest,
+                >(),
+            ),
+            (
+                "vault.consent.active_bypass_grants",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent::bypass_lifecycle::ActiveBypassGrantsRequest,
+                >(),
+            ),
+            (
+                "vault.consent.bypassed_effect_receipts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent::bypass_lifecycle::BypassedEffectReceiptsRequest,
+                >(),
+            ),
+            (
                 "vault.consent.graduation.policy",
                 crate::code_run::vault_read::request_schema::<
                     crate::consent_graduation::api::GraduationPolicyRequest,
@@ -5735,6 +5759,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.consent.create_standing_grant",
     "vault.consent.registry",
     "vault.consent.revoke",
+    "vault.consent.bypass_grant_warning",
+    "vault.consent.create_bypass_grant",
+    "vault.consent.active_bypass_grants",
+    "vault.consent.bypassed_effect_receipts",
     "vault.consent.graduation.policy",
     "vault.consent.graduation.policy.set",
     "vault.consent.graduation.policy.clear",
@@ -6925,6 +6953,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.consent.revoke" => crate::code_run::vault_read::request_schema::<
             crate::consent::lifecycle::ConsentActReceipt,
+        >(),
+        "vault.consent.bypass_grant_warning" => crate::code_run::vault_read::request_schema::<
+            crate::consent::bypass_lifecycle::BypassGrantWarningView,
+        >(),
+        "vault.consent.create_bypass_grant" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::consent::lifecycle::ConsentActReceipt>,
+        >(),
+        "vault.consent.active_bypass_grants" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::consent::bypass_lifecycle::BypassActiveState>,
+        >(),
+        "vault.consent.bypassed_effect_receipts" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::consent::bypass_lifecycle::BypassedEffectReceipt>,
         >(),
         "vault.consent.graduation.policy" => crate::code_run::vault_read::request_schema::<
             crate::consent_graduation::api::GraduationPolicies,
@@ -10982,6 +11022,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.consent.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.bypass_grant_warning" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.create_bypass_grant" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.active_bypass_grants" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.bypassed_effect_receipts" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -16236,6 +16304,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consent.revoke" => {
             let _input: crate::consent::lifecycle::RevokeGrantRequest = decode(value.clone())?;
         }
+        "vault.consent.bypass_grant_warning" => {
+            let _input: crate::consent::bypass_lifecycle::BypassGrantWarningRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.create_bypass_grant" => {
+            let _input: crate::consent::bypass_lifecycle::CreateBypassGrantRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.active_bypass_grants" => {
+            let _input: crate::consent::bypass_lifecycle::ActiveBypassGrantsRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.bypassed_effect_receipts" => {
+            let _input: crate::consent::bypass_lifecycle::BypassedEffectReceiptsRequest =
+                decode(value.clone())?;
+        }
         "vault.consent.graduation.policy" => {
             let _input: crate::consent_graduation::api::GraduationPolicyRequest =
                 decode(value.clone())?;
@@ -19076,6 +19160,19 @@ pub fn invoke(
         }
         "vault.consent.registry" => encode(vault_consent_registry(memory, decode(value)?)?),
         "vault.consent.revoke" => encode(vault_consent_revoke(memory, decode(value)?)?),
+        "vault.consent.bypass_grant_warning" => {
+            encode(vault_consent_bypass_grant_warning(memory, decode(value)?)?)
+        }
+        "vault.consent.create_bypass_grant" => {
+            encode(vault_consent_create_bypass_grant(memory, decode(value)?)?)
+        }
+        "vault.consent.active_bypass_grants" => {
+            encode(vault_consent_active_bypass_grants(memory, decode(value)?)?)
+        }
+        "vault.consent.bypassed_effect_receipts" => encode(vault_consent_bypassed_effect_receipts(
+            memory,
+            decode(value)?,
+        )?),
         "vault.consent.graduation.policy" => {
             encode(vault_consent_graduation_policy(memory, decode(value)?)?)
         }
@@ -23757,6 +23854,46 @@ pub fn vault_consent_revoke(
     crate::consent::lifecycle::revoke(
         memory.vault(),
         &memory.embedded_owner("vault.consent.revoke")?,
+        input,
+    )
+}
+pub fn vault_consent_bypass_grant_warning(
+    memory: &Memory<'_>,
+    input: crate::consent::bypass_lifecycle::BypassGrantWarningRequest,
+) -> MemoryResult<crate::consent::bypass_lifecycle::BypassGrantWarningView> {
+    crate::consent::bypass_lifecycle::bypass_grant_warning(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.bypass_grant_warning")?,
+        input,
+    )
+}
+pub fn vault_consent_create_bypass_grant(
+    memory: &Memory<'_>,
+    input: crate::consent::bypass_lifecycle::CreateBypassGrantRequest,
+) -> MemoryResult<Vec<crate::consent::lifecycle::ConsentActReceipt>> {
+    crate::consent::bypass_lifecycle::create_bypass_grant(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.create_bypass_grant")?,
+        input,
+    )
+}
+pub fn vault_consent_active_bypass_grants(
+    memory: &Memory<'_>,
+    input: crate::consent::bypass_lifecycle::ActiveBypassGrantsRequest,
+) -> MemoryResult<Vec<crate::consent::bypass_lifecycle::BypassActiveState>> {
+    crate::consent::bypass_lifecycle::active_bypass_grants(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.active_bypass_grants")?,
+        input,
+    )
+}
+pub fn vault_consent_bypassed_effect_receipts(
+    memory: &Memory<'_>,
+    input: crate::consent::bypass_lifecycle::BypassedEffectReceiptsRequest,
+) -> MemoryResult<Vec<crate::consent::bypass_lifecycle::BypassedEffectReceipt>> {
+    crate::consent::bypass_lifecycle::bypassed_effect_receipts(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.bypassed_effect_receipts")?,
         input,
     )
 }
