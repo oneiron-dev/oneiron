@@ -844,9 +844,17 @@ that destination: repeating the request is the same send, a changed destination 
 another owner's preview, is refused (409), and a preview older than an hour is refused. Two
 owners sending the same bundle are two sends. The send is an ordinary outbound effect: until the vault's policy grants
 `external:send` on the feedback channel to you, it is held (`"outcome": "held"`) and nothing
-leaves. A bundle carries no vault text the engine attached; proposal text is yours, and it leaves only
-on your send of exactly that preview. A written note is refused until the engine redacts notes
-in the vault (OF-420).
+leaves. A bundle carries no vault text the engine attached; proposal text and a written note are
+yours, and they leave only on your send of exactly that preview. When the vault's on-device
+OneiroNER tagger is serving, it replaces every name it recognises in the note and proposal with its
+label (`[PERSON]`, `[ORG]`, ...) before the preview; nothing is called safe, and you read the
+filtered text in the preview. A written note needs that filter: when it can't run (no on-device
+tagger), a note is refused (409), and a proposal without a note is sent as you wrote it (OF-420).
+
+Sharing real conversation text to train the models Oneiron ships ("Learn from my conversations")
+is off until the person whose words they are says yes, per world, and private worlds are never
+included. The engine has one door for it, and it sends nothing today: no machine-only intake is
+configured. Training a model of your own on your own data (the training pack) needs no sharing.
 
 A vault our cloud hosts (managed serve) sends to `collector` at `https://oneiron.dev/feedback`
 unless told otherwise; self-hosted serve sends nowhere until you set both keys. `GET
