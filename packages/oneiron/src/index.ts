@@ -1633,6 +1633,19 @@ export class Oneiron {
     disclosure: {
       /** An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses. */
       offer: (input: Facade.DisclosureOfferRequest): Facade.DisclosureOffered => this.#call(() => this.#client.vaultDisclosureOffer(input) as Facade.DisclosureOffered),
+      ceiling: {
+        /** Reads the owner registry dial for one model connection, optionally one data class. */
+        get: (input: Facade.DisclosureCeilingRequest): Facade.DisclosureCeilingView => this.#call(() => this.#client.vaultDisclosureCeilingGet(input) as Facade.DisclosureCeilingView),
+        /** The owner sets one connection or class disclosure ceiling; no read authority changes. */
+        set: (input: Facade.DisclosureCeilingSet): Facade.DisclosureCeilingView => this.#call(() => this.#client.vaultDisclosureCeilingSet(input) as Facade.DisclosureCeilingView),
+        /** The owner clears one dial, restoring connection or actor-class inference. */
+        clear: (input: Facade.DisclosureCeilingRequest): Facade.DisclosureCeilingView => this.#call(() => this.#client.vaultDisclosureCeilingClear(input) as Facade.DisclosureCeilingView),
+      },
+      /** The owner reads model-disclosure asks and receipts, including PERSON handles, without values. */
+      reveals: Object.assign((input: Facade.RevealAsksRequest): Facade.RevealAskView[] => this.#call(() => this.#client.vaultDisclosureReveals(input) as Facade.RevealAskView[]), {
+        /** The owner approves once, approves standing, or denies the exact frozen reveal ask. */
+        answer: (input: Facade.RevealAnswerRequest): Facade.RevealAnsweredView => this.#call(() => this.#client.vaultDisclosureRevealsAnswer(input) as Facade.RevealAnsweredView),
+      }),
     },
     shares: {
       /** The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels. */
@@ -2612,6 +2625,20 @@ export class Oneiron {
       /** Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay. */
       receipts: (input: Facade.AdmissionReceiptsRequest): Facade.AdmissionReceipt[] => this.#call(() => this.#client.selfAdmissionReceipts(input) as Facade.AdmissionReceipt[]),
     },
+    saved_query: {
+      /** Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller. */
+      create: (input: Facade.SavedQueryCreateRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryCreate(input) as Facade.SavedQueryRecordView),
+      /** One saved query the caller owns; a query absent or not the caller's reads as not found. */
+      read: (input: Facade.SavedQueryReadRequest): Facade.SavedQueryReadResult => this.#call(() => this.#client.selfSavedQueryRead(input) as Facade.SavedQueryReadResult),
+      /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check. */
+      update: (input: Facade.SavedQueryUpdateRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryUpdate(input) as Facade.SavedQueryRecordView),
+      /** Archives a saved query under a definition-version check: it stays readable and is never evaluated again. */
+      archive: (input: Facade.SavedQueryArchiveRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryArchive(input) as Facade.SavedQueryRecordView),
+      /** One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved. */
+      members: (input: Facade.SavedQueryMembersRequest): Facade.SavedQueryMembershipPageView => this.#call(() => this.#client.selfSavedQueryMembers(input) as Facade.SavedQueryMembershipPageView),
+      /** Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity. */
+      evaluate: (input: Facade.SavedQueryEvaluateRequest): Facade.SavedQueryEvaluationReceipt => this.#call(() => this.#client.selfSavedQueryEvaluate(input) as Facade.SavedQueryEvaluationReceipt),
+    },
     off_record: {
       /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
       execute: (input: Facade.OffRecordExecuteRequest): Facade.OffRecordExecuted => this.#call(() => this.#client.selfOffRecordExecute(input) as Facade.OffRecordExecuted),
@@ -2818,11 +2845,11 @@ export class Oneiron {
     /** The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt. */
     verdict: (input: Facade.AiVerdictRequest): Facade.AiVerdict => this.#call(() => this.#client.aiVerdict(input) as Facade.AiVerdict),
   }
-  /** Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
+  /** Asks for a custody or PERSON handle's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
   readonly reveal = Object.assign((input: Facade.RevealRequest): Facade.RevealPending => this.#call(() => this.#client.reveal(input) as Facade.RevealPending), {
     /** Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt. */
     wait: (input: Facade.RevealWaitRequest): Facade.RevealWaitAnswer => this.#call(() => this.#client.revealWait(input) as Facade.RevealWaitAnswer),
-    /** What a secret handle names, where it was found and what a reveal of it would do now; never the value. */
+    /** What a custody or PERSON handle names, where it was found and what a reveal of it would do now; never the value. */
     describe: (input: Facade.RevealDescribeRequest): Facade.RevealHandleCard => this.#call(() => this.#client.revealDescribe(input) as Facade.RevealHandleCard),
   })
   readonly host = {
