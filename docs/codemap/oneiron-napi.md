@@ -32,5 +32,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/email.rs` | src | s | 2 fn · 2 crate-vis | — | Email identity adapter conversion and inbound surface-event parsing |
 | `src/lib/host_root.rs` | src | s | 1 struct · 3 crate-vis | HostRootOpenOptions | The host root secret the raw openers take (FIX 4730): `NapiVault` and `VaultBridge` opens that profile this… |
 | `src/lib/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | — |
-| `src/lib/vault.rs` | src | m | 1 struct · 30 fn | NapiVault | Legacy buffer-oriented NapiVault binding and all its verbs |
+| `src/lib/vault.rs` | src | m | 1 struct · 30 fn · 1 crate-vis | NapiVault | Legacy buffer-oriented NapiVault binding and all its verbs |
 | `src/types.rs` | src | s | 7 struct · 1 crate-vis | NapiCodebaseFileEntry, NapiCodebaseSnapshot, NapiEdgeInfo, NapiEmailIdentityAdapterConfig, NapiEmailInboundEvent, NapiScoredEntity, NapiSubtreeEntry | — |
