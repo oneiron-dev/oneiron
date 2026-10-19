@@ -47,16 +47,20 @@ pub(super) fn renewal_refusal(error: &oneiron::Error) -> Option<ApiError> {
         RENEWAL_PROOF_NOT_FRESH => ApiError::new(
             *reason,
             ApiErrorDetails::Unauthorized,
-            ["Retry with a fresh holder and machine proof; an expired or revoked credential \
-              pairs again."],
+            [
+                "Retry with a fresh holder and machine proof; an expired or revoked credential \
+              pairs again.",
+            ],
         ),
         RENEWAL_LIFETIME => ApiError::new(
             *reason,
             ApiErrorDetails::BadRequest {
                 field: Some("lifetime_secs".to_owned()),
             },
-            ["Send a positive lifetime_secs within the original paired duration and the \
-              owner's current ceiling, or omit it."],
+            [
+                "Send a positive lifetime_secs within the original paired duration and the \
+              owner's current ceiling, or omit it.",
+            ],
         ),
         _ => return None,
     };

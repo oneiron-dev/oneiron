@@ -327,7 +327,10 @@ impl Vault {
         };
         self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(txn)?;
-        if !after.owner_work_cancels(&request).any(|cancel| cancel == hash) {
+        if !after
+            .owner_work_cancels(&request)
+            .any(|cancel| cancel == hash)
+        {
             return Err(invalid_authority());
         }
         Ok(hash)
