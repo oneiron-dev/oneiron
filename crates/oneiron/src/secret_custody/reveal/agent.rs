@@ -48,7 +48,8 @@ impl Vault {
         let reveal = self.store.clock.entity_id()?;
         self.with_write_txn_grouped(|txn| {
             let (handle, secret, class, person) = if handle.trim().starts_with("pr") {
-                let (handle, person, target) = super::person::resolve_person_in(self, txn, asker, handle)?;
+                let (handle, person, target) =
+                    super::person::resolve_person_in(self, txn, asker, handle)?;
                 (handle, person, "names".to_owned(), Some(target))
             } else {
                 let (handle, secret) = resolve_handle_in_txn(&self.store, txn, handle)?;
@@ -112,9 +113,13 @@ impl Vault {
             // A file's read is collected by reading the file again.
             let mut row = REVEALS
                 .get(&self.store, txn, reveal)?
-                .filter(|row| row.is_agents(&asker.agent) && row.file.is_none()
-                    && row.project == asker.project && row.run == asker.run
-                    && row.connection.as_deref() == Some(asker.connection().as_str()))
+                .filter(|row| {
+                    row.is_agents(&asker.agent)
+                        && row.file.is_none()
+                        && row.project == asker.project
+                        && row.run == asker.run
+                        && row.connection.as_deref() == Some(asker.connection().as_str())
+                })
                 .ok_or(Error::EntityNotFound)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let answer = |decision, row: &RevealRow| -> Result<SecretRevealWait> {
@@ -126,8 +131,13 @@ impl Vault {
             };
             // A PERSON claim is re-admitted in this writer before any grant
             // is spent or receipt is written. A changed claim needs a new ask.
-            let person_value = if row.person.is_some() && matches!(row.state,
-                SecretRevealState::Covered | SecretRevealState::ApprovedOnce | SecretRevealState::ApprovedStanding) {
+            let person_value = if row.person.is_some()
+                && matches!(
+                    row.state,
+                    SecretRevealState::Covered
+                        | SecretRevealState::ApprovedOnce
+                        | SecretRevealState::ApprovedStanding
+                ) {
                 Some(super::person::value_in(self, txn, asker, &row)?)
             } else {
                 None

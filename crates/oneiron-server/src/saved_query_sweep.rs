@@ -17,8 +17,8 @@ use std::time::Duration;
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::saved_query::{
-    EvaluationRequest, MatcherSpec, MembershipCause, QueryScope, SavedQueryEvaluation,
-    SWEEP_CANDIDATE_TYPE, SavedQueryEvaluator, SavedQueryJudgeBinding, SavedQueryRecord,
+    EvaluationRequest, MatcherSpec, MembershipCause, QueryScope, SWEEP_CANDIDATE_TYPE,
+    SavedQueryEvaluation, SavedQueryEvaluator, SavedQueryJudgeBinding, SavedQueryRecord,
     WakeEvaluationReport, reactive_saved_queries, saved_query_change_head,
     saved_query_changes_after, sweep_owner_read, sweep_saved_queries,
 };
@@ -288,7 +288,9 @@ pub(crate) fn manual_evaluation(
     now: u64,
 ) -> oneiron::Result<(Vec<(EntityId, SavedQueryEvaluation)>, Option<EntityId>)> {
     if !record.definition.lifecycle.is_evaluable() {
-        return Err(oneiron::Error::InvalidConfig("saved query is not active".into()));
+        return Err(oneiron::Error::InvalidConfig(
+            "saved query is not active".into(),
+        ));
     }
     with_evaluator(server, record, read, now, |evaluator| {
         block_on(async {

@@ -139,15 +139,18 @@ pub fn disclosure_reveals_as_owner(
     owner: &crate::consent::AuthenticatedOwner,
     input: RevealAsksRequest,
 ) -> MemoryResult<Vec<RevealAskView>> {
-    Ok(vault.secret_reveals(owner, input.pending, input.limit.unwrap_or(50).min(200))?
-        .into_iter().map(|ask| RevealAskView {
+    Ok(vault
+        .secret_reveals(owner, input.pending, input.limit.unwrap_or(50).min(200))?
+        .into_iter()
+        .map(|ask| RevealAskView {
             receipt: super::sdk_secret::reveal_receipt(ask.receipt),
             state: ask.state.as_str().to_owned(),
             expires_at: ask.expires_at,
             disclosure: ask.disclosure,
             expected_digest: ask.once_digest.map(|digest| digest.to_hex()),
             grant_ref: ask.grant_ref,
-        }).collect())
+        })
+        .collect())
 }
 
 pub fn answer_disclosure_reveal_as_owner(
@@ -159,7 +162,11 @@ pub fn answer_disclosure_reveal_as_owner(
         .map_err(|_| MemoryError::bad_request("reveal is not an entity id"))?;
     let invalid = || MemoryError::bad_request("expected_digest must be 64 lowercase hex");
     let text = input.expected_digest;
-    if text.len() != 64 || !text.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+    if text.len() != 64
+        || !text
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
         return Err(invalid());
     }
     let mut digest = [0_u8; 32];
@@ -173,7 +180,9 @@ pub fn answer_disclosure_reveal_as_owner(
     };
     let answered = vault.answer_secret_reveal(owner, &reveal, &digest, answer)?;
     Ok(RevealAnsweredView {
-        reveal: answered.reveal.to_hex(), outcome: answered.answer.as_str().to_owned(),
-        receipt_ref: format!("gate:{}", answered.decision.to_hex()), grant_ref: answered.grant_ref,
+        reveal: answered.reveal.to_hex(),
+        outcome: answered.answer.as_str().to_owned(),
+        receipt_ref: format!("gate:{}", answered.decision.to_hex()),
+        grant_ref: answered.grant_ref,
     })
 }
