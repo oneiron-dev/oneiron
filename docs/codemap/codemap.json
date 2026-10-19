@@ -4388,7 +4388,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/world_refold.rs",
-     "purpose": "A world edit, a world key record or a grant travel choice above a main-log row the fold did not keep, folded…",
+     "purpose": "A world edit, a world key record, a grant travel choice, or a root request or the owner's cancel of one…",
      "surface": {
       "crate-vis": 2
      }
