@@ -33855,6 +33855,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/origin_doors/setup.rs",
+     "purpose": "The owner's repository registration and outbound mirror setup, through the same proof and credential-scoped…",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CheckoutDoorBindRequest",
       "CheckoutDoorBinding",
@@ -33862,17 +33872,22 @@
       "CodeExportResult",
       "OriginAuthoritySetRequest",
       "OriginAuthorityView",
+      "OriginMirrorCleared",
+      "OriginMirrorSetRequest",
+      "OriginMirrorView",
       "OriginPublicationState",
       "OriginPublicationView",
       "OriginPublicationsRequest",
       "OriginPublicationsView",
+      "OriginRegisterRequest",
+      "OriginRegistered",
       "OriginRepoRequest"
      ],
      "path": "src/memory/origin_doors/types.rs",
      "purpose": "—",
      "surface": {
       "enum": 1,
-      "struct": 10
+      "struct": 15
      }
     },
     {
@@ -36720,7 +36735,8 @@
      "purpose": "Outbound mirror pushing (ARCH-0068 RA8)",
      "surface": {
       "const": 4,
-      "fn": 5,
+      "crate-vis": 2,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -36731,7 +36747,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "mod": 10,
+      "mod": 11,
       "re-export": 1
      }
     },
@@ -36836,6 +36852,16 @@
       "enum": 5,
       "fn": 11,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/registration.rs",
+     "purpose": "Owner registration of a new, empty served origin",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -44321,7 +44347,7 @@
      "path": "src/secret_lease/doors.rs",
      "purpose": "T0/T1/T2 Vault doors: inject, materialize, register, revoke, expire",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 8
      }
     },
@@ -53572,7 +53598,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1058
+      "fn": 1063
      }
     },
     {
@@ -60700,7 +60726,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 217,
+     "files": 218,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60742,7 +60768,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61381,7 +61407,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3738,
+   "source_files": 3740,
    "test_files": 902
   },
   "oneiron-android": {
@@ -70039,7 +70065,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1029
+      "fn": 1034
      }
     },
     {
@@ -71135,7 +71161,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1030
+      "fn": 1035
      }
     },
     {
@@ -74899,7 +74925,7 @@
      "path": "src/api/facade/origin_doors.rs",
      "purpose": "Credential-bound host projections of the typed origin and checkout doors (DOOR-139)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 10
      }
     },
     {
@@ -85615,10 +85641,17 @@
       "OriginAuthority",
       "OriginAuthoritySetRequest",
       "OriginAuthorityView",
+      "OriginMirrorCleared",
+      "OriginMirrorRun",
+      "OriginMirrorSetRequest",
+      "OriginMirrorTarget",
+      "OriginMirrorView",
       "OriginPublicationState",
       "OriginPublicationView",
       "OriginPublicationsRequest",
       "OriginPublicationsView",
+      "OriginRegisterRequest",
+      "OriginRegistered",
       "OriginRepoRequest",
       "OriginResidence",
       "OutcomeBinding",
@@ -87021,7 +87054,7 @@
      "purpose": "—",
      "surface": {
       "enum": 825,
-      "struct": 2636
+      "struct": 2643
      }
     },
     {
