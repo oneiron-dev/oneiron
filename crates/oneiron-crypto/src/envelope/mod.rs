@@ -118,6 +118,10 @@ pub enum Purpose {
     /// mints or retires, never a key. The owner binds the frame's header in
     /// `recipient`.
     CustodyLogFrame = 22,
+    /// One home-to-home handoff: the typed rows a vault's old home froze,
+    /// sealed to its new home's machine (FIX 5661). The owner binds the
+    /// handoff's id in `key_id` and the target machine as the recipient.
+    HomeHandoff = 23,
     /// One owner's compartment of a checkpoint's ordinary payload (KS-7), sealed under
     /// that compartment's custody key. The owner binds the custody id (kind, item,
     /// generation), the row locator and the chunk's position in `key_id`, so no
@@ -150,6 +154,7 @@ impl Purpose {
             20 => Self::CustodyCompartment,
             21 => Self::CustodyCompartmentKey,
             22 => Self::CustodyLogFrame,
+            23 => Self::HomeHandoff,
             24 => Self::CheckpointPayload,
             other => return Err(Error::UnknownPurpose(other)),
         })

@@ -223,6 +223,12 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SELF_HEAL_HEALER_RELEASE, CONTENT),
     (&t::SELF_HEAL_HEALER_RUN, CONTENT),
     (&t::INGEST_HISTORY_LEDGER, CONTENT),
+    // FIX 5661: the home-handoff lineage stands as the live vault holds it,
+    // so no image rolls a move back or replays an old export.
+    (&t::HOME_HANDOFF_HEAD, LIVE),
+    (&t::HOME_HANDOFF_PART, LIVE),
+    (&t::HOME_HANDOFF_RECEIPT, LIVE),
+    (&t::HOME_HANDOFF_TRANSFER, LIVE),
     (&t::HOOKS_BLOCK, CONTENT),
     (&t::HOOKS_CHECK, CONTENT),
     (&t::HOOKS_CURSOR, CONTENT),

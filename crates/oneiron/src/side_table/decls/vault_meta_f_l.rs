@@ -178,6 +178,18 @@ side_tables! {
     /// in, its MESSAGE and TURN ids, the hash of what was imported, its revision). Key: string
     /// (`source:native message id`).
     INGEST_HISTORY_LEDGER: VaultMeta b"history-import:v1:" Named Authored;
+    /// This node's place in the vault's home-state lineage: the newest generation it froze or
+    /// adopted, a home move its election recorded, and why a move carried nothing (FIX 5661).
+    /// Key: ().
+    HOME_HANDOFF_HEAD: VaultMeta b"home:handoff:head:v1" Named Engine;
+    /// One part of a home handoff's sealed bytes, kept by the source. Key: id32 (handoff) + u32be
+    /// (part index).
+    HOME_HANDOFF_PART: VaultMeta b"home:handoff:part:v1:" Named Ciphertext;
+    /// The signed ack of one home handoff: the one this node signed as its target, or the one its
+    /// target returned. Key: id32 (handoff).
+    HOME_HANDOFF_RECEIPT: VaultMeta b"home:handoff:receipt:v1:" Named Engine;
+    /// One home handoff's status on this node, with its signed header. Key: id32 (handoff).
+    HOME_HANDOFF_TRANSFER: VaultMeta b"home:handoff:transfer:v1:" Named Engine;
     /// A hook block: the rows one AddBlock pins for a recipient's board deliveries, its lifetime
     /// and its consumption. Key: id16 (block).
     HOOKS_BLOCK: VaultMeta b"hooks:block:v1:" Named Authored;
