@@ -26,6 +26,7 @@
 //! erases its office rows ([`erase_in_txn`]).
 
 mod actor_erase;
+mod author_token;
 mod consent;
 mod docx;
 mod fork;
@@ -191,7 +192,9 @@ pub struct OfficeBodyFork {
 pub struct OfficeBodyExportRequest<'a> {
     pub actor: WriteActor,
     /// The revision author a DOCX export shows; recorded for every export.
-    pub author: &'a str,
+    /// `None` shows the exporting actor, whose DOCX bytes hold a token
+    /// instead (FIX 4513).
+    pub author: Option<&'a str>,
     pub run_ref: &'a str,
     /// The envelope the export version carries; `None` gives it the
     /// exporter's own.
@@ -249,6 +252,11 @@ pub struct OfficeBodyExportRecord {
     pub actor: BodyActor,
     /// The author the export showed; empty once its actor was erased.
     pub author: String,
+    /// The token a DOCX export with no author carries in its bytes in place
+    /// of its actor; `None` for an author the caller gave and every other
+    /// format (FIX 4513).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
     pub at: u64,
     pub changes: u64,
     /// The engine that recalculated an XLSX export and the local time it
@@ -682,8 +690,9 @@ impl Vault {
         artifact: &EntityId,
         request: &OfficeBodyExportRequest<'_>,
     ) -> Result<OfficeBodyExport> {
-        if request.author.trim().is_empty()
-            || request.author.len() > 256
+        if request
+            .author
+            .is_some_and(|author| author.trim().is_empty() || author.len() > 256)
             || request.run_ref.trim().is_empty()
             || request.run_ref.len() > 256
         {
@@ -692,9 +701,11 @@ impl Vault {
         let head = self
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
+        // FIX 4513: a DOCX export with no author lands a token, not its actor.
+        let author = author_token::ExportAuthor::of(self, head.kind, request)?;
         let at = self.now_recorded_at();
         let Some((bytes, changes, recalc, effects)) =
-            self.project_body(artifact, &head, request.author, at, request.zone)?
+            self.project_body(artifact, &head, &author.landed, at, request.zone)?
         else {
             return Ok(OfficeBodyExport {
                 frontier: head.frontier,
@@ -734,7 +745,8 @@ impl Vault {
                 frontier: head.frontier.clone(),
                 source_version: head.source_version,
                 actor: BodyActor::Actor(request.actor.entity_ref()),
-                author: request.author.to_owned(),
+                author: author.shown.clone(),
+                token: author.token.clone(),
                 at,
                 changes: changes as u64,
                 recalc: recalc

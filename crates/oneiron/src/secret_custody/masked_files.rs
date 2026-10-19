@@ -250,7 +250,23 @@ impl Vault {
         version: Option<u64>,
         sight: SecretSight,
     ) -> Result<Option<ArtifactExport>> {
-        let Some(mut file) = self.export_blob_artifact(id, version)? else {
+        let Some(mut file) = self.export_blob_artifact_as_raw(id, version, sight)? else {
+            return Ok(None);
+        };
+        // FIX 4513: once, after custody read the stored bytes.
+        file.bytes = self.resolve_docx_authors(std::mem::take(&mut file.bytes))?;
+        Ok(Some(file))
+    }
+
+    /// [`Vault::export_blob_artifact_as`] with a DOCX's default-author token
+    /// kept, for a door that reads the file's units and hands no file out.
+    pub(crate) fn export_blob_artifact_as_raw(
+        &self,
+        id: &EntityId,
+        version: Option<u64>,
+        sight: SecretSight,
+    ) -> Result<Option<ArtifactExport>> {
+        let Some(mut file) = self.export_blob_artifact_raw(id, version)? else {
             return Ok(None);
         };
         file.bytes = self.sighted_asset_bytes(std::mem::take(&mut file.bytes), sight)?;
@@ -266,7 +282,11 @@ impl Vault {
     ) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;
         self.read_blob_artifact_version_in_txn(&rtxn, artifact_id, version)?
-            .map(|bytes| sighted_bytes_in_txn(&self.store, &rtxn, bytes, sight))
+            .map(|bytes| {
+                let bytes = sighted_bytes_in_txn(&self.store, &rtxn, bytes, sight)?;
+                // FIX 4513: once, after custody read the stored bytes.
+                self.resolve_docx_authors_in_txn(&rtxn, bytes)
+            })
             .transpose()
     }
 }

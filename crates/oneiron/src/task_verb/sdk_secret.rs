@@ -394,12 +394,14 @@ impl Memory<'_> {
         }) else {
             return Ok(vault.export_blob_artifact_as(artifact, version, sight)?);
         };
-        let Some(mut file) = vault.export_blob_artifact(artifact, version)? else {
+        let Some(mut file) = vault.export_blob_artifact_raw(artifact, version)? else {
             return Ok(None);
         };
         let asker = self.reveal_asker()?;
         let sight = vault.file_sight(&asker, &file.artifact_id, &file.bytes, why)?;
         file.bytes = vault.sighted_asset_bytes(std::mem::take(&mut file.bytes), sight)?;
+        // FIX 4513: once, after custody read the stored bytes.
+        file.bytes = vault.resolve_docx_authors(std::mem::take(&mut file.bytes))?;
         Ok(Some(file))
     }
 

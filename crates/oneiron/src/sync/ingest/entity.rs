@@ -446,8 +446,12 @@ fn admit(
     {
         // Pack echo: the local row holds receiver-local bytes (local handle/generation) while
         // the carrier holds canonical origin bytes, so byte equality never holds after a
-        // name-based remap; the canonical/local mapping decides.
-        if *local == *blob || pack_sync::pack_echo_equal(&local, blob) {
+        // name-based remap; the canonical/local mapping decides. A file-plane ASSET echoes its
+        // body inline (FIX 5393).
+        if *local == *blob
+            || pack_sync::pack_echo_equal(&local, blob)
+            || crate::sync::asset_body::file_echo_equal(&vault.store, wtxn, &id, &local, blob)?
+        {
             return Ok(EntityStep::Skip);
         }
         // SoftErase shell guard: `user_delete` truncates the local record to the 25 B header

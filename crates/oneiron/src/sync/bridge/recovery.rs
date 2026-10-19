@@ -70,9 +70,20 @@ pub(crate) fn preflight_canonical_recovery(
         {
             return Err(refusal.err);
         }
-        if crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?.as_deref()
-            != Some(entity.blob.as_slice())
-        {
+        // A file-plane ASSET the ingest skipped as the same body keeps its row (FIX 5393).
+        let stored = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?;
+        let landed = match stored {
+            Some(stored) if stored == entity.blob => true,
+            Some(stored) => crate::sync::asset_body::file_echo_equal(
+                &vault.store,
+                &txn,
+                &id,
+                &stored,
+                &entity.blob,
+            )?,
+            None => false,
+        };
+        if !landed {
             return Err(ArtifactError::InvalidRecoveryArtifact(
                 "entity refused recovery preflight",
             )

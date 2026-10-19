@@ -468,6 +468,12 @@ pub(super) fn filter_window_doc(
             .into_iter()
             .map(|(_, id)| id),
     );
+    // So does a file-plane ASSET, whose row holds no bytes (FIX 5393).
+    custody_withheld.extend(crate::sync::asset_body::file_rows_in(
+        &vault.store,
+        &rtxn,
+        &source_entities,
+    )?);
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();

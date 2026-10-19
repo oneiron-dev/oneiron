@@ -316,6 +316,8 @@ impl<'a> CodeViewSet<'a> {
                 .artifact_vault()
                 .read_blob_artifact_version(reference.artifact_id(), reference.version())?
                 .ok_or(Error::CorruptedIndex("cached output unavailable"))?;
+            // A DOCX output shows its default author (FIX 4513).
+            let bytes = cache.artifact_vault().resolve_docx_authors(bytes)?;
             let target = path.join(output.as_str());
             // Reject any output parent symlink rather than following it out of the view.
             let mut parent = path.clone();

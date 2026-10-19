@@ -15847,6 +15847,7 @@ class OfficeBodyExportRecord(TypedDict):
     source_version: int
     actor: BodyActor
     author: str
+    token: NotRequired[str | None]
     at: int
     changes: int
     recalc: NotRequired[str | None]

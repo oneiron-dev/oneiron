@@ -29,6 +29,7 @@
 //! - `federation_burst` — authenticated peer observations and durable defer/replay
 //! - `server_state` — server-side sync_state persistence (Observer-A-equivalent)
 
+pub(crate) mod asset_body;
 pub mod bridge;
 pub mod carrier;
 pub(crate) mod carrier_parts;

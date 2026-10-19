@@ -157,8 +157,8 @@ mod tests;
 pub(crate) use archive_scratch::ScratchEnv;
 #[cfg(unix)]
 pub(crate) use asset_body::{
-    AssetBodyFacts, asset_body_file_of_row, asset_file_in_txn, file_put_body_in_txn,
-    short_content_hash_in_txn, stage_asset_body_in_txn,
+    ASSET_FILE_PLANE, AssetBodyFacts, asset_body_file_of_row, asset_file_in_txn,
+    file_put_body_in_txn, short_content_hash_in_txn, stage_asset_body_in_txn,
 };
 #[cfg(unix)]
 pub(crate) use body_envelope::{
