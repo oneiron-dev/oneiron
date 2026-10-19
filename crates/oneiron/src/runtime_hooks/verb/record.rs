@@ -6,9 +6,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::runtime_hooks::store::{self, HookReadPin, HookRunRef, RunKey};
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::skill_hub::pack_catalog::HookPhase;
-use crate::{EntityId, Result, Vault};
+use crate::{EntityId, Result};
 
 use super::InvocationId;
 
@@ -48,19 +48,20 @@ pub(in crate::runtime_hooks) struct HookVerbRunRecord {
 }
 
 /// Saves `record` under `key` and indexes it at its write time. A retried
-/// invocation writes the same run again; its earlier index row goes.
+/// invocation writes the same run again; its earlier index row goes. The
+/// earlier run is read through `read` and the rows written along `write`:
+/// the vault for both, or a room's composed view and its run's route.
 pub(super) fn put_in_txn(
-    vault: &Vault,
+    read: &impl SideTableDbs,
+    write: &impl SideTableDbs,
     txn: &mut heed::RwTxn<'_>,
     key: &RunKey,
     record: &HookVerbRunRecord,
 ) -> Result<()> {
-    let previous = VERB_RUNS
-        .get(&vault.store, txn, key)?
-        .map(|old| old.committed_at);
-    VERB_RUNS.put(vault, txn, key, record)?;
+    let previous = VERB_RUNS.get(read, txn, key)?.map(|old| old.committed_at);
+    VERB_RUNS.put(write, txn, key, record)?;
     store::index_run_in_txn(
-        vault,
+        write,
         txn,
         record.binding,
         previous,

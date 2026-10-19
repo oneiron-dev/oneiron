@@ -7,8 +7,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::claim::{ClaimBody, ClaimSubject, PointRead, ScopedRead};
+use crate::ports::EdgeDirection;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::{EntityId, Result};
+use crate::{EdgeKind, EntityId, Result};
 
 use super::filter::glob_match;
 use super::grant::HookGrant;
@@ -176,12 +177,23 @@ fn read_about(
     limit: usize,
 ) -> Result<(String, Vec<HookReadRow>)> {
     let subject = EntityId::from_hex(subject)?;
-    let ids: Vec<EntityId> = lane
-        .vault()
-        .claims_for_subject(&subject)?
+    // The claims about the subject in the content the lane reads: a room's
+    // overlay over base for a lane in a room (WILL L11-01 S01-2c), base
+    // alone otherwise. Each still passes the lane, the cap and the grant.
+    let ids: Vec<EntityId> = {
+        let rtxn = lane.vault().store.env.read_txn()?;
+        crate::vault::filtered_edge_peers_in(
+            &lane.store_read(),
+            &rtxn,
+            EdgeDirection::In,
+            &subject,
+            EdgeKind::ClaimOf,
+            Some(ENTITY_TYPE_CLAIM),
+        )?
         .into_iter()
         .take(MAX_ABOUT_SCAN)
-        .collect();
+        .collect()
+    };
     let reads: Vec<PointRead<'_>> = ids.iter().map(|id| PointRead::id(*id)).collect();
     let rows = lane.read(&reads, None)?.value;
     let seen = visible_to(cap, &reads)?;

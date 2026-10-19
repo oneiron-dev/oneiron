@@ -76,7 +76,7 @@ impl HostSelfDispatcher<'_> {
     ) -> Result<SelfDispatchOutcome> {
         if matches!(self.storage, ExecutorStorage::Session(_)) {
             if let Some(read) = super::session_verbs::session_read(call.verb) {
-                return self.dispatch_session_read(read, &call);
+                return self.dispatch_session_read(read, &call, site);
             }
             if !crate::off_record::OffRecordSession::writes_verb(call.verb) {
                 return Ok(answered(Err(AgentVerbRefusal {

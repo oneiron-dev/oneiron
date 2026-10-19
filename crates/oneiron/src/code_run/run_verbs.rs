@@ -18,6 +18,7 @@ pub const JS_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
 use serde::{Deserialize, Serialize};
 
+use crate::code_run::SessionHookDisposition;
 use crate::entity_id::EntityId;
 
 /// `vault.search`: a bounded text search over the run's storage route.
@@ -459,10 +460,13 @@ pub struct TaskWaitSetRequest {
     pub step_key: String,
 }
 
-/// `vault.search`'s output: the hits, best first.
+/// `vault.search`'s output: the hits, best first, and in an off-record room
+/// what each verb hook bound to the search did (WILL L11-01 S01-2c).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MemorySearchOutput {
     pub results: Vec<MemorySearchHit>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hooks: Vec<SessionHookDisposition>,
 }
 
 /// One `vault.search` hit.

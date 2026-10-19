@@ -15,6 +15,7 @@ use crate::{EntityId, Result, Vault};
 
 use super::InvocationId;
 use super::credential::CredentialCheck;
+use super::storage::SessionHookKeep;
 use crate::runtime_hooks::HookBodyRuntime;
 
 /// How long a cached binding list stands without a change notice: a binding
@@ -55,6 +56,8 @@ pub(crate) struct VerbHookState {
     /// The host's check that runs a credential caller's settled call again;
     /// serve installs it once, before its hook runner starts.
     credential: OnceLock<CredentialCheck>,
+    /// Session-only hook records with no room overlay to keep them, in RAM.
+    pub(crate) session: SessionHookKeep,
 }
 
 /// The enabled verb bindings as of one read, in run order: priority
