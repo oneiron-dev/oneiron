@@ -26,6 +26,20 @@
 //! "Enacted" means the exact target change committed, nothing more (CALLS
 //! ROOT_WORK_COMPLETION).
 //!
+//! The owner may cancel a pending root request from any surface he is
+//! authenticated on ([`Vault::cancel_root_request`], FIX 4739, CALLS
+//! ROOT_WORK_CANCEL): an act carried by the install he asks on, ids only,
+//! that takes effect on the target whenever it syncs, however long it was
+//! offline. A newer request on the same target supersedes an older one in
+//! its causal past (CALLS ROOT_WORK_SUPERSESSION). The target decides at
+//! execution: a request its fold holds cancelled or superseded leaves its
+//! pickup and its pending-root read, and its recheck never runs it; no result
+//! is signed for it, and its receipt, derived from the fold, says cancelled
+//! or superseded. A request the target answered before it had the cancel
+//! keeps that answer, and the cancel's receipt says it came too late
+//! ("already enacted"). Nothing is ordered by clock or hash, nothing is
+//! undone, and nothing expires.
+//!
 //! No location, origin, substrate or hosted-mode rule reads anything here.
 //! What stays is real: only the target holds the seed it is given, and the
 //! seed gate, the stored pin and the kit inventory decide what it opens.
@@ -40,7 +54,8 @@ use super::{
 };
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, MachineEnrolmentRequest, OwnerWorkBody,
-    OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest, RecoveryRootId, RequestCode, RootChange,
+    OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest, RecoveryRootId,
+    RequestCode, RootChange, invalid_authority,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -105,6 +120,10 @@ const ROOT_WORK_COMPLETION: RootCompletion = RootCompletion::ExactTargetCommit;
 /// moved since. The refusal stands and nothing is replayed; the owner reviews
 /// where the target stands and asks again.
 const ROOT_REVISION_REFUSAL: OwnerWorkRefusal = OwnerWorkRefusal::RootRevisionMismatch;
+
+/// The cancel door's refusal for a request this install folds as no root
+/// request: nothing is written.
+const NO_ROOT_REQUEST: &str = "no root request with this id is recorded here; nothing was written";
 
 /// The install that makes a root change on `target` (CALLS
 /// ROOT_WORK_EXECUTOR), or why the recorder can name none: the target is the
@@ -284,10 +303,46 @@ impl Vault {
         })
     }
 
+    /// Records the owner's cancel of the root request signed as entry
+    /// `request` (CALLS ROOT_WORK_CANCEL), in one writer transaction signed
+    /// by this install as the carrier of his act. Any surface he is
+    /// authenticated on may decide it; it carries ids only, and `surface` is
+    /// audit only. It takes effect on the target whenever the target folds
+    /// it, however long it was offline: the target never runs a request its
+    /// fold holds cancelled, and signs no result for it. A result the target
+    /// signed before it had the cancel stands, and nothing is undone. The
+    /// answer is the request's receipt: cancelled, or that earlier answer
+    /// with the cancel marked "already enacted" (or "already refused"). A
+    /// request this install folds a cancel of already records nothing again;
+    /// for a request this install folds as no root request, nothing is
+    /// written and the call is refused.
+    pub fn cancel_root_request(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        request: AuthorityEntryHash,
+    ) -> Result<OwnerWorkReceipt> {
+        self.with_write_txn(|txn| {
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let fold = self.authority_view_readonly_in_txn(txn)?;
+            let target = match fold.owner_work_request(&request) {
+                Some(asked) if asked.kind() == OwnerWorkKind::Root => asked.act.target,
+                _ => return Err(super::refused(NO_ROOT_REQUEST)),
+            };
+            if fold.owner_work_cancels(&request).next().is_none() {
+                self.record_owner_work_cancel_in_txn(txn, actor, surface, target, request)?;
+            }
+            let after = self.authority_view_readonly_in_txn(txn)?;
+            OwnerWorkReceipt::of(&after, request).ok_or_else(invalid_authority)
+        })
+    }
+
     /// The root requests naming this install that count here and have no
     /// result yet, ascending by entry hash, each with its change and receipt:
-    /// what the target's surface shows the owner. Ids only. An owner's read:
-    /// the proof is revalidated.
+    /// what the target's surface shows the owner. A request the owner
+    /// cancelled, or a newer one on this install superseded, is not listed
+    /// (CALLS ROOT_WORK_CANCEL, ROOT_WORK_SUPERSESSION). Ids only. An owner's
+    /// read: the proof is revalidated.
     pub fn pending_root_requests(
         &self,
         owner: &AuthenticatedOwner,

@@ -11,6 +11,8 @@
 //! ([`OwnerWorkView`]), so a surface polls this one read for any of them.
 //! A refusal with a next step carries the engine's advice (FIX 4738), and a
 //! bundle publication whose home may keep no sealed copy says why (FIX 4786).
+//! A root request the owner cancelled, or a newer one superseded, reads as
+//! such, and his cancel says whether it came too late (FIX 4739).
 //!
 //! `/v1/owner/owner-work/{request}/diagnostics` reads what blocks a pending
 //! request as its executor observes it (FIX 4686, 4784, 4785, 4787): ids and
@@ -48,7 +50,8 @@ pub(super) struct OwnerWorkView {
     #[serde(flatten)]
     receipt: OwnerWorkReceipt,
     /// `OwnerWorkStatus::text`: "recorded, awaiting a holder", "enacted by
-    /// its holder" or "refused by its holder".
+    /// its holder", "refused by its holder", "cancelled by the owner" or
+    /// "superseded by a newer request on its target".
     status_text: &'static str,
     /// `OwnerWorkUnassigned::text`, when nothing was recorded.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -61,6 +64,11 @@ pub(super) struct OwnerWorkView {
     /// sealed copy (FIX 4786).
     #[serde(skip_serializing_if = "Option::is_none")]
     home_warning_text: Option<&'static str>,
+    /// `OwnerWorkCancelState::text`, when the owner cancelled a root request:
+    /// "cancelled", or that its target answered it first, "already enacted"
+    /// (FIX 4739).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cancel_text: Option<&'static str>,
 }
 
 impl From<OwnerWorkReceipt> for OwnerWorkView {
@@ -70,6 +78,7 @@ impl From<OwnerWorkReceipt> for OwnerWorkView {
             unassigned_text: receipt.unassigned.map(OwnerWorkUnassigned::text),
             advice_text: receipt.status.advice(),
             home_warning_text: receipt.home_warning.map(BundleHomeWarning::text),
+            cancel_text: receipt.cancel.as_ref().map(|cancel| cancel.state.text()),
             receipt,
         }
     }
