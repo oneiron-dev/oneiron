@@ -66,6 +66,17 @@ impl OffRecordSession<'_> {
         } else {
             conversation
         };
+        // The row's own put, whose position is staged once every op of the
+        // row is: a NOTE's follows the birth facet a later op writes.
+        let put = ops.iter().find_map(|op| match op {
+            BatchOp::Put {
+                id,
+                entity_type,
+                data,
+                ..
+            } if *id == row => Some((*entity_type, data.clone())),
+            _ => None,
+        });
         self.overlay_write_routed(route, |wtxn, apply| {
             {
                 let view = self.read_view()?;
@@ -85,6 +96,17 @@ impl OffRecordSession<'_> {
                         occurred,
                         op,
                     },
+                )?;
+            }
+            // Atomically beside the row, under the same route and budget
+            // (WILL L11-01): no authority row, nothing a save replays.
+            if let Some((kind, data)) = &put {
+                crate::federation::record_scope::stage_session_position(
+                    &self.read_view()?,
+                    wtxn,
+                    row,
+                    *kind,
+                    data,
                 )?;
             }
             let (short, _) = self

@@ -39140,6 +39140,10 @@ pub enum CallPurpose {
     Voice,
     #[serde(rename = "eval")]
     Eval,
+    #[serde(rename = "autonomy.for_human")]
+    AutonomyForHuman,
+    #[serde(rename = "autonomy.own_time")]
+    AutonomyOwnTime,
     #[serde(rename = "other")]
     Other {
         #[serde(rename = "name")]
@@ -49036,6 +49040,12 @@ pub struct ConsolidationLineageView {
     pub tries: Vec<ConsolidationTryView>,
     #[serde(rename = "chain_complete")]
     pub chain_complete: bool,
+    #[serde(
+        rename = "latest_job_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub latest_job_ref: Option<String>,
     #[serde(rename = "steps")]
     pub steps: Vec<ConsolidationStepRef>,
     #[serde(rename = "next_step", default, skip_serializing_if = "Option::is_none")]

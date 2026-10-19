@@ -7,7 +7,7 @@
 //!   which roots the head awaits (`residence.authority.checkpoint.roots`),
 //!   reads the image a part at a time (`residence.authority.checkpoint`),
 //!   checks it against its own fold and signs it
-//!   ([`Vault::attest_checkpoint_image_as_root`]), then delivers the
+//!   ([`Vault::attest_home_checkpoint_as_root`]), then delivers the
 //!   attestation to the home's intake (`residence.authority.checkpoint.attest`).
 //!   A hosted node, which never dials, has its images attested this way.
 //! - A root the home holds attests this machine's head. When the home signs
@@ -20,7 +20,10 @@
 //!
 //! Neither end trusts the other's fold: each signs only what its own fold
 //! rebuilds, and each intake verifies the root again. A wait or a refusal
-//! is logged, and the image waits for the next pass.
+//! is logged, and the image waits for the next pass. What a root held here
+//! signed for the home's head is kept until the home reports it accepted,
+//! so a failed delivery goes again with no new read or signature (FIX 5109,
+//! [`Vault::checkpoint_root_deliveries`]).
 
 use std::sync::Arc;
 
@@ -33,7 +36,7 @@ use super::{ResidenceRpc, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::{
     AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, AuthorityCheckpointAttestation, AuthorityKey,
-    CheckpointRootSigner, RootCheckpointAttest,
+    CheckpointRootSigner, PeerMachine, RootCheckpointAttest,
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::transport::TransportError;
@@ -96,13 +99,21 @@ pub(crate) async fn exchange_checkpoint_roots(
         // the exchange, has nothing to trade.
         Err(_) => return Ok(0),
     };
+    let head = home
+        .checkpoint
+        .as_deref()
+        .map(|checkpoint| {
+            base64::engine::general_purpose::STANDARD
+                .decode(checkpoint)
+                .ok()
+                .and_then(|raw| <[u8; 32]>::try_from(raw).ok())
+                .ok_or_else(refused)
+        })
+        .transpose()?;
+    // What roots held here signed for this home, against what it names now.
+    settle_kept(vault, rpc.home, head, home.awaiting.clone()).await?;
     let mut kept = 0;
-    if let Some(checkpoint) = home.checkpoint.as_deref() {
-        let id = base64::engine::general_purpose::STANDARD
-            .decode(checkpoint)
-            .ok()
-            .and_then(|raw| <[u8; 32]>::try_from(raw).ok())
-            .ok_or_else(refused)?;
+    if let Some(id) = head {
         for signer in &signers {
             if home.awaiting.contains(&signer.root()) {
                 kept += attest_home_head(vault, &mut rpc, id, signer).await?;
@@ -124,43 +135,50 @@ fn own_awaited_head(vault: &Vault) -> Option<([u8; 32], Vec<AuthorityKey>)> {
     (!awaited.is_empty()).then_some((roots.image, awaited))
 }
 
-/// `signer`'s root attests the home's head `id`, read from the home, and the
-/// attestation goes to the home's intake. Returns 1 once the home kept it.
+/// Settles what roots held here signed for the home against what it names
+/// now, its head `head` and the roots `awaiting` it (FIX 5109). A failure is
+/// logged: the rows are a delivery cache.
+async fn settle_kept(
+    vault: &Arc<Vault>,
+    home: PeerMachine,
+    head: Option<[u8; 32]>,
+    awaiting: Vec<AuthorityKey>,
+) -> Result<(), TransportError> {
+    let vault = Arc::clone(vault);
+    let settled =
+        tokio::task::spawn_blocking(move || vault.settle_root_attestations(home, head, &awaiting))
+            .await
+            .map_err(|_| stopped())?;
+    if let Err(error) = settled {
+        tracing::warn!(kind = ?error.kind(), "the kept root attestations did not settle");
+    }
+    Ok(())
+}
+
+/// `signer`'s root attests the home's head `id`, and the attestation goes to
+/// the home's intake. One this root made on an earlier pass and kept goes
+/// again as it was signed (FIX 5109); otherwise the image is read from the
+/// home and signed here. Returns 1 once the home kept it.
 async fn attest_home_head(
     vault: &Arc<Vault>,
     rpc: &mut ResidenceRpc,
     id: [u8; 32],
     signer: &Arc<dyn CheckpointRootSigner>,
 ) -> Result<usize, TransportError> {
-    let Some((image, _)) = fetch_authority_checkpoint(rpc, &id).await? else {
-        return Ok(0);
-    };
-    let attest = {
-        let vault = Arc::clone(vault);
-        let signer = Arc::clone(signer);
-        tokio::task::spawn_blocking(move || {
-            vault.attest_checkpoint_image_as_root(&image, signer.as_ref())
-        })
-        .await
-        .map_err(|_| stopped())?
-    };
-    let attestation = match attest {
-        Ok(RootCheckpointAttest::Attested { image, attestation }) if image == id => attestation,
-        Ok(RootCheckpointAttest::Attested { .. }) => {
-            tracing::warn!("the home served other bytes than the checkpoint it named");
-            return Ok(0);
-        }
-        Ok(RootCheckpointAttest::Waiting(reason)) => {
-            tracing::debug!(
-                reason,
-                "the home's checkpoint waits for this machine's root"
-            );
-            return Ok(0);
-        }
-        Err(error) => {
-            tracing::warn!(kind = ?error.kind(), "the home's checkpoint was not attested here");
-            return Ok(0);
-        }
+    let home = rpc.home;
+    let root = signer.root();
+    let kept = vault
+        .kept_root_attestation(home, &root, id)
+        .unwrap_or_else(|error| {
+            tracing::warn!(kind = ?error.kind(), "a kept root attestation was not read");
+            None
+        });
+    let attestation = match kept {
+        Some(attestation) => attestation,
+        None => match sign_home_head(vault, rpc, id, signer).await? {
+            Some(attestation) => attestation,
+            None => return Ok(0),
+        },
     };
     let attestation = serde_json::to_value(attestation).map_err(|_| refused())?;
     match rpc
@@ -173,10 +191,66 @@ async fn attest_home_head(
         )
         .await?
     {
-        Ok(_) => Ok(1),
+        Ok(_) => {
+            let vault = Arc::clone(vault);
+            let delivered = tokio::task::spawn_blocking(move || {
+                vault.root_attestation_delivered(home, &root, id)
+            })
+            .await
+            .map_err(|_| stopped())?;
+            if let Err(error) = delivered {
+                tracing::warn!(kind = ?error.kind(), "a delivered root attestation was not marked");
+            }
+            Ok(1)
+        }
         Err(_) => {
             tracing::warn!("the home refused this machine's root attestation of its checkpoint");
             Ok(0)
+        }
+    }
+}
+
+/// `signer`'s root signs the home's head `id`, read from the home, and keeps
+/// what it made until the home's intake has it
+/// ([`Vault::attest_home_checkpoint_as_root`]). `None` when it does not sign
+/// it now.
+async fn sign_home_head(
+    vault: &Arc<Vault>,
+    rpc: &mut ResidenceRpc,
+    id: [u8; 32],
+    signer: &Arc<dyn CheckpointRootSigner>,
+) -> Result<Option<AuthorityCheckpointAttestation>, TransportError> {
+    let Some((image, _)) = fetch_authority_checkpoint(rpc, &id).await? else {
+        return Ok(None);
+    };
+    let home = rpc.home;
+    let attest = {
+        let vault = Arc::clone(vault);
+        let signer = Arc::clone(signer);
+        tokio::task::spawn_blocking(move || {
+            vault.attest_home_checkpoint_as_root(home, id, &image, signer.as_ref())
+        })
+        .await
+        .map_err(|_| stopped())?
+    };
+    match attest {
+        Ok(RootCheckpointAttest::Attested { image, attestation }) if image == id => {
+            Ok(Some(*attestation))
+        }
+        Ok(RootCheckpointAttest::Attested { .. }) => {
+            tracing::warn!("the home served other bytes than the checkpoint it named");
+            Ok(None)
+        }
+        Ok(RootCheckpointAttest::Waiting(reason)) => {
+            tracing::debug!(
+                reason,
+                "the home's checkpoint waits for this machine's root"
+            );
+            Ok(None)
+        }
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "the home's checkpoint was not attested here");
+            Ok(None)
         }
     }
 }
