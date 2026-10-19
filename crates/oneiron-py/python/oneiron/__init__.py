@@ -3696,6 +3696,9 @@ class Oneiron:
         def dreaming(self) -> "Oneiron._VaultAgentsDreamingVerbs":
             return Oneiron._VaultAgentsDreamingVerbs(self._client)
         @property
+        def grants(self) -> "Oneiron._VaultAgentsGrantsVerbs":
+            return Oneiron._VaultAgentsGrantsVerbs(self._client)
+        @property
         def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs":
             return Oneiron._VaultAgentsSpawnVerbs(self._client)
         def export_pack(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -3710,6 +3713,15 @@ class Oneiron:
         def set(self, spec):
             """The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."""
             return json.loads(_translate(lambda: self._client.vault_agents_dreaming_set(json.dumps(spec))))
+    class _VaultAgentsGrantsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def mint(self, spec):
+            """The owner grants one named agent an explicit verb list inside his exact scope, standing until he revokes it or until the expiry he sets; a second mint adds a second grant."""
+            return json.loads(_translate(lambda: self._client.vault_agents_grants_mint(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."""
+            return json.loads(_translate(lambda: self._client.vault_agents_grants_revoke(json.dumps(spec))))
     class _VaultAgentsSpawnVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

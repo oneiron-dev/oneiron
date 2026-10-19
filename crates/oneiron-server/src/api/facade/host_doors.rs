@@ -64,6 +64,8 @@ pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::agent_definition_doors::*;
+// The owner's agent grant doors (FIX 5628) too.
+pub(crate) use super::agent_grant_doors::*;
 pub(crate) use super::shared_act_doors::*;
 pub(crate) use super::shared_admin_doors::*;
 // The shared-vault invitation doors (OF-531) too.
@@ -1362,6 +1364,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.legal_holds.list"
         | "vault.legal_holds.log"
         | "vault.legal_holds.lift_and_erase"
+        | "vault.agents.grants.mint"
+        | "vault.agents.grants.revoke"
         | "vault.residence.mode"
         | "vault.residence.open"
         | "vault.residence.index"

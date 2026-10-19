@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1061 facade rows, 3612 declarations.
-Inputs: 996 of 1061 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 951 of 1061 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1063 facade rows, 3618 declarations.
+Inputs: 998 of 1063 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 953 of 1063 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
@@ -8526,7 +8526,12 @@ class ConsentRegistryDelegation(TypedDict):
     wall_expires_at: int
     status: SupportGrantStatus
     comm: CommReach
-ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None]})
+class ConsentRegistryAgentGrant(TypedDict):
+    agent: EntityId
+    delegated_by: EntityId
+    expires_at: NotRequired[int | None]
+    confers: bool
+ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None], "agent_grant": NotRequired[ConsentRegistryAgentGrant | None]})
 class ConsentRegistry(TypedDict):
     rows: list[ConsentRegistryRow]
 class RevokeGrantRequest(TypedDict):
@@ -10756,6 +10761,29 @@ class AgentDreamingSetRequest(TypedDict):
     new_version: str
     mode: DreamingModeInput
     dreaming_model: NotRequired[str | None]
+class AgentGrantMintRequest(TypedDict):
+    agent: EntityId
+    authority_scope: Scope
+    expires_at: NotRequired[int | None]
+class AgentGrantView(TypedDict):
+    grant_ref: EntityId
+    agent: EntityId
+    authority_scope: Scope
+    delegated_by: EntityId
+    expires_at: NotRequired[int | None]
+    confers: bool
+    revoke_command: str
+class AgentGrantMinted(TypedDict):
+    grant: AgentGrantView
+    act_ref: str
+class AgentGrantRevokeRequest(TypedDict):
+    grant_ref: EntityId
+    seen: NotRequired[str | None]
+class AgentGrantRevoked(TypedDict):
+    grant_ref: EntityId
+    changed: bool
+    agent: NotRequired[EntityId | None]
+    act_ref: NotRequired[str | None]
 class StandingBlockConfigureRequest(TypedDict):
     agent_ref: EntityId
     world_ref: EntityId

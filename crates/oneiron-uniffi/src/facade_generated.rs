@@ -3206,6 +3206,16 @@ export_facade! {
     let output = client.vault_agents_dreaming_set(&input)?;
     crate::codec::lift_record("vault.agents.dreaming.set", &output)
 };
+"vault.agents.grants.mint" => fn vault_agents_grants_mint(&self, input: AgentGrantMintRequest) -> AgentGrantMinted = |client| {
+    let input: oneiron::task_verb::sdk::AgentGrantMintRequest = crate::codec::lower_record("vault.agents.grants.mint", input)?;
+    let output = client.vault_agents_grants_mint(&input)?;
+    crate::codec::lift_record("vault.agents.grants.mint", &output)
+};
+"vault.agents.grants.revoke" => fn vault_agents_grants_revoke(&self, input: AgentGrantRevokeRequest) -> AgentGrantRevoked = |client| {
+    let input: oneiron::task_verb::sdk::AgentGrantRevokeRequest = crate::codec::lower_record("vault.agents.grants.revoke", input)?;
+    let output = client.vault_agents_grants_revoke(&input)?;
+    crate::codec::lift_record("vault.agents.grants.revoke", &output)
+};
 "vault.standing_blocks.configure" => fn vault_standing_blocks_configure(&self, input: StandingBlockConfigureRequest) -> StandingBlockView = |client| {
     let input: oneiron::task_verb::sdk::StandingBlockConfigureRequest = crate::codec::lower_record("vault.standing_blocks.configure", input)?;
     let output = client.vault_standing_blocks_configure(&input)?;

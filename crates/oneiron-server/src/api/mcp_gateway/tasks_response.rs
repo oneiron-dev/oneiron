@@ -1522,6 +1522,8 @@ fn mcp_agent_verb_input(
         "vault.agents.update" => a.spec.clone().ok_or_else(invalid),
         "vault.agents.dreaming.get" => a.spec.clone().ok_or_else(invalid),
         "vault.agents.dreaming.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.agents.grants.mint" => a.spec.clone().ok_or_else(invalid),
+        "vault.agents.grants.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.standing_blocks.configure" => a.spec.clone().ok_or_else(invalid),
         "vault.standing_blocks.reconfigure" => a.spec.clone().ok_or_else(invalid),
         "vault.standing_blocks.get" => a.spec.clone().ok_or_else(invalid),
@@ -4029,6 +4031,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.agents.dreaming.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.agents.grants.mint" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.agents.grants.revoke" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.standing_blocks.configure" => {
@@ -16780,6 +16788,52 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_agents_dreaming_set(server, auth, input)
                     .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.agents.grants.mint" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.agents.grants.mint", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::AgentGrantMintRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_agents_grants_mint(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.agents.grants.revoke" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.agents.grants.revoke", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::AgentGrantRevokeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_agents_grants_revoke(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)

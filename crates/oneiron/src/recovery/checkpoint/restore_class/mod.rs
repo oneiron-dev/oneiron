@@ -146,6 +146,20 @@ fn own_device_grant_row(value: &[u8]) -> bool {
         .and_then(|body| crate::federation::decode_federation_grant_body(body).ok())
         .is_some_and(|grant| crate::federation::is_own_device_grant(&grant))
 }
+/// An owner's grant to a named agent (FIX 5628) is his standing will,
+/// durable until he revokes it, not vault content: it stays as the live
+/// vault holds it, so a grant he made after a checkpoint never blocks
+/// restoring that checkpoint.
+const OWNER_AGENT_GRANTS: Class = LIVE;
+
+/// Whether the entity row `value` holds an owner's agent grant: its body
+/// carries the `owner_agent` mark.
+fn owner_agent_grant_row(value: &[u8]) -> bool {
+    value
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .and_then(|body| crate::federation::decode_federation_grant_body(body).ok())
+        .is_some_and(|grant| grant.owner_agent)
+}
 const ACCESS_GRANTS: Class = refuse("access grants");
 const SECRET_CUSTODY: Class = refuse("secret custody");
 const CONNECTOR_KEYS: Class = refuse("connector keys");
@@ -513,6 +527,11 @@ impl Classes {
                             && own_device_grant_row(value)
                         {
                             return Some(OWN_DEVICE_GRANTS);
+                        }
+                        if header.entity_type == ENTITY_TYPE_FEDERATION_GRANT
+                            && owner_agent_grant_row(value)
+                        {
+                            return Some(OWNER_AGENT_GRANTS);
                         }
                         self.kinds[usize::from(header.entity_type)]
                     })
