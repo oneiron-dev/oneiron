@@ -31,6 +31,9 @@ pub(super) const THIS_INSTALL: &str = "this-install";
 pub(crate) struct FolderTarget {
     folder: PathBuf,
     spec: TargetSpec,
+    /// The floor its files claim their room on first: a backup's landing
+    /// disk's (FIX 5858). `None` claims nothing.
+    room: Option<Box<dyn crate::recovery::checkpoint::RecoveryWriteBudget>>,
 }
 
 impl FolderTarget {
@@ -38,7 +41,19 @@ impl FolderTarget {
         Self {
             spec: TargetSpec::folder(folder.clone()),
             folder,
+            room: None,
         }
+    }
+
+    /// This target, its frames and head claimed on `room` before a byte of
+    /// them is written: a claim the floor refuses leaves it pending by
+    /// name, retried by the next pass, and refuses nothing else.
+    pub(crate) fn claiming(
+        mut self,
+        room: Box<dyn crate::recovery::checkpoint::RecoveryWriteBudget>,
+    ) -> Self {
+        self.room = Some(room);
+        self
     }
 
     /// The lineage's directory under this folder.
@@ -90,7 +105,22 @@ impl CustodyTarget for FolderTarget {
         let after = held
             .filter(|held| held.epoch == position.epoch)
             .map_or(0, |held| held.seq);
-        for (seq, frame) in batch.frames_after(after)? {
+        let frames = batch.frames_after(after)?;
+        if let Some(room) = &self.room {
+            let bytes = frames
+                .iter()
+                .map(|(_, frame)| frame.len() as u64)
+                .fold(batch.head().len() as u64, u64::saturating_add);
+            if !room.hold(bytes) {
+                return Ok(TargetPublication::Pending(TargetPending {
+                    code: PendingCode::Denied,
+                    detail: "the custody folder's disk is at the write floor its host keeps; the \
+                             next pass retries"
+                        .into(),
+                }));
+            }
+        }
+        for (seq, frame) in frames {
             ship_frame(&dir, seq, &frame)?;
         }
         let evidence = switch_head(
@@ -214,6 +244,6 @@ fn sweep(dir: &Path) -> Result<u64> {
             }
         }
     }
-    fs::File::open(dir)?.sync_all()?;
+    super::platform::sync_dir(dir)?;
     Ok(removed)
 }

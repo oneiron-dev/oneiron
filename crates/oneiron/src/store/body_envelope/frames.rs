@@ -606,6 +606,133 @@ impl<R: Read> Read for SealedStream<R> {
     }
 }
 
+/// A plaintext body read out sealed: exactly the envelope a [`FrameWriter`]
+/// writes for it under `key`, head, chunks and terminal record, a frame at a
+/// time, so a checkpoint carries a plain body sealed under its instance's
+/// key with no plaintext temp file (KS-2A). The source must hold exactly
+/// `len` bytes, and `digest` when one is given: anything else fails the read.
+pub(crate) struct SealingStream<R> {
+    source: R,
+    key: Arc<FileKey>,
+    layout: Layout,
+    digest: Option<[u8; 32]>,
+    next: u64,
+    done: bool,
+    hasher: blake3::Hasher,
+    out: Vec<u8>,
+    at: usize,
+}
+
+impl<R: Read> SealingStream<R> {
+    /// The body of `len` bytes `source` holds, sealed under `key` as it is
+    /// read.
+    ///
+    /// # Errors
+    ///
+    /// Sealing errors.
+    pub(crate) fn new(
+        source: R,
+        key: Arc<FileKey>,
+        len: u64,
+        digest: Option<[u8; 32]>,
+    ) -> Result<Self> {
+        Ok(Self {
+            layout: Layout::new(overhead(&key)?, len)?,
+            source,
+            key,
+            digest,
+            next: 0,
+            done: false,
+            hasher: blake3::Hasher::new(),
+            out: Vec::new(),
+            at: 0,
+        })
+    }
+
+    /// The envelope's whole length, known before a byte is read.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::ArithmeticOverflow`] past `u64`.
+    pub(crate) fn sealed_len(&self) -> Result<u64> {
+        self.layout.physical()
+    }
+
+    /// Seals the next part into `out`; `false` at the end.
+    fn step(&mut self) -> Result<bool> {
+        if self.done {
+            return Ok(false);
+        }
+        if self.next < self.layout.chunks {
+            let len = self.layout.chunk_len(self.next);
+            let mut chunk = Zeroizing::new(vec![0u8; usize::try_from(len).map_err(|_| corrupt())?]);
+            self.source.read_exact(&mut chunk).map_err(|_| corrupt())?;
+            self.hasher.update(&chunk);
+            let frame = seal_frame(
+                &self.key,
+                Domain::Body,
+                self.next,
+                self.layout.role(self.next),
+                &chunk,
+            )?;
+            self.out.clear();
+            if self.next == 0 {
+                self.out.extend_from_slice(MAGIC);
+                self.out.extend_from_slice(&FORMAT_VERSION.to_be_bytes());
+                self.out.extend_from_slice(&self.key.instance);
+                self.out.extend_from_slice(
+                    &u32::try_from(self.layout.overhead)
+                        .map_err(|_| corrupt())?
+                        .to_be_bytes(),
+                );
+            }
+            self.out.extend_from_slice(&frame);
+            self.next += 1;
+            return Ok(true);
+        }
+        let digest = *self.hasher.finalize().as_bytes();
+        let mut probe = [0u8; 1];
+        if self.digest.is_some_and(|expected| expected != digest)
+            || self.source.read(&mut probe)? != 0
+        {
+            return Err(corrupt());
+        }
+        let terminal = terminal_bytes(self.layout.len, &digest, self.layout.chunks);
+        self.out = seal_frame(
+            &self.key,
+            Domain::Body,
+            self.layout.chunks,
+            Role::Terminal,
+            &terminal,
+        )?;
+        self.done = true;
+        Ok(true)
+    }
+}
+
+impl<R: Read> Read for SealingStream<R> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        loop {
+            if self.at < self.out.len() {
+                let read = out.len().min(self.out.len() - self.at);
+                out[..read].copy_from_slice(&self.out[self.at..self.at + read]);
+                self.at += read;
+                return Ok(read);
+            }
+            if out.is_empty() || !self.step().map_err(io::Error::other)? {
+                return Ok(0);
+            }
+            self.at = 0;
+        }
+    }
+}
+
+/// How many bytes each of `key`'s envelopes adds to its plaintext: one
+/// empty frame, sealed to measure.
+fn overhead(key: &FileKey) -> Result<u64> {
+    Ok(seal_frame(key, Domain::Body, 0, Role::Chunk, &[])?.len() as u64)
+}
+
 /// Writes `index`, the line index of a body sealed under `key`, sealed
 /// under the key's line-index domain into `out`.
 pub(super) fn write_line_index(out: File, key: Arc<FileKey>, index: &[u64]) -> Result<File> {
