@@ -692,13 +692,14 @@ impl Lift<ScopedReadResult<Option<engine::EntityView>>> for EntityRead {
     }
 }
 
-/// The page's hits and receipt; the home's references the page does not
-/// hold (`residence`) are not carried here.
+/// The page's hits, its receipt and the home's references the page does
+/// not hold (`residence`, FIX 5458).
 impl Lift<oneiron::task_verb::sdk::Bm25Search> for LexicalHits {
     fn lift(read: oneiron::task_verb::sdk::Bm25Search) -> Result<Self, OneironError> {
         Ok(Self {
             value: Lift::lift(read.value)?,
             narrowing: ReadReceipt::lift(read.receipt)?,
+            residence: read.residence.map(RecallResidence::lift).transpose()?,
         })
     }
 }

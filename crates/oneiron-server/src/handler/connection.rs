@@ -885,6 +885,24 @@ async fn handle_connection(
                             .await;
                             break;
                         }
+                        // FIX 5570: the server's own export fault is no
+                        // refused frame: no receipt, closed 1011.
+                        ProtocolError::ExportFailed(_) => {
+                            tracing::error!(
+                                conn_id,
+                                reason = "server_export_failed",
+                                "server export failure — closing"
+                            );
+                            transport
+                                .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
+                                    code: close_codes::INTERNAL_ERROR,
+                                    reason: Utf8Bytes::from_static(
+                                        close_codes::EXPORT_FAULT_REASON,
+                                    ),
+                                })))
+                                .await;
+                            break;
+                        }
                         ProtocolError::Persistence(_) => {
                             // Fail-closed: the server could not durably
                             // persist sync state — do not keep relaying on a
