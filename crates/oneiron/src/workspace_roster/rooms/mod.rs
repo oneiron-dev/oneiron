@@ -22,6 +22,7 @@ mod replica;
 #[cfg(test)]
 mod tests;
 mod thread_projection;
+mod thread_reads;
 mod upkeep;
 mod witness;
 use super::ProjectRoom;
@@ -34,8 +35,8 @@ use crate::{EntityId, Vault};
 pub(crate) use audience::{
     ROOM_THREAD_KEY, ThreadBinding, ThreadPlace, names_actor_in, record_thread_admits_in,
     require_thread_audience_in, stamp_thread, thread_audience_allows_in, thread_audience_in,
-    thread_binding, thread_members_in, thread_turn_readable_with_read_in,
-    validate_private_audience_in,
+    thread_audience_now_in, thread_binding, thread_members_in, thread_root_readable_with_read_in,
+    thread_turn_readable_with_read_in, validate_private_audience_in,
 };
 pub use audience_doors::{
     ThreadAudienceAddRequest, ThreadAudienceReceipt, ThreadAudienceRemoveRequest,
@@ -91,6 +92,7 @@ pub(crate) use replica::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 pub(crate) use thread_projection::room_thread_turns_in_txn;
+pub(crate) use thread_reads::turn_held_back_for_in;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub(crate) use upkeep::{room_upkeep_host, upkeep_rooms};
 pub(crate) use witness::{RoomRegenerationPermit, admit_witness};

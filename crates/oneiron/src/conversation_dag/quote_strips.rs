@@ -525,7 +525,9 @@ impl Memory<'_> {
                 }
             }
         }
-        if !ordinary && !admitted.contains(&trunk) {
+        // FIX 5545: a handle held back from the reader for its add still
+        // selects its thread; each strip below reads on its own gate.
+        if !ordinary && !admitted.contains(&trunk) && !self.handle_held_back(room, trunk)? {
             return Err(MemoryError::bad_request_with(
                 "thread is outside the reader's scope",
                 &[],
@@ -583,5 +585,12 @@ impl Memory<'_> {
             groups,
             next_after: (end < facts.len()).then(|| facts[end - 1].citer.to_hex()),
         })
+    }
+
+    /// Whether `handle`, a record of `room`, is held back from this reader
+    /// as a place in its private thread (FIX 5545).
+    fn handle_held_back(&self, room: EntityId, handle: EntityId) -> MemoryResult<bool> {
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        Ok(self.thread_turn_held_back_in(&txn, room, handle)?)
     }
 }

@@ -19,6 +19,8 @@ use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 use std::collections::HashSet;
 
+mod thread_reads;
+
 /// Renderer-neutral reply strip over an exact content revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplyStrip {
@@ -480,10 +482,14 @@ impl Vault {
     }
 
     /// [`Self::thread`] and [`Self::thread_roots`] as `read` reads them
-    /// (FIX 2951): the roots under `trunk` it admits, and the first of them,
+    /// (FIX 2951): the roots under `trunk` it reaches, and the first of them,
     /// with its chain chosen as [`Self::thread`] chooses one and its count
     /// and time taken from the replies it admits, never from the cached meta
-    /// line. A trunk whose every thread it withholds reads as one with none.
+    /// line. A root is reached as a place when `read` reads none of it for
+    /// a later add (FIX 5545, [`Self::thread_record_reached`]); the root then
+    /// counts as no reply, and a thread with no reply `read` admits has count
+    /// 0 and no time. A trunk whose every thread it withholds reads as one
+    /// with none.
     pub fn thread_under(
         &self,
         read: &crate::claim::ScopedRead<'_>,
@@ -498,7 +504,7 @@ impl Vault {
         };
         let mut admitted = Vec::new();
         for root in roots {
-            if read.is_entity_readable(&root)? {
+            if self.thread_record_reached(read, root)? {
                 admitted.push(root);
             }
         }
@@ -611,8 +617,11 @@ impl Vault {
                 }
             }
             // The tip is chosen in this transaction, so a concurrent reply
-            // never puts an unchecked parent under the writer.
+            // never puts an unchecked parent under the writer. A tip held back
+            // from the writer for its add is its place in the thread, not a
+            // read (FIX 5545).
             if target != trunk
+                && !writer.thread_turn_held_back_in(txn, conversation, target)?
                 && let Some(pointer) = policy::unresolved_append_reference_in_txn(
                     &lane,
                     txn,

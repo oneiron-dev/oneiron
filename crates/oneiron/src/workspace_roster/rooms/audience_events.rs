@@ -128,25 +128,35 @@ pub(crate) fn audience_event_put_refusal(
 /// thread it reads, `None` for the whole thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FoldedAudience {
-    root: EntityId,
     members: BTreeMap<EntityId, Option<EntityId>>,
 }
 
 impl FoldedAudience {
-    /// Everyone in the audience now, whatever turn each reads from.
+    /// Everyone in the audience now, whatever turn each reads from: who is
+    /// in the thread (the CURRENT rule, [`super::audience`]).
     pub(crate) fn current(&self) -> BTreeSet<EntityId> {
         self.members.keys().copied().collect()
     }
 
     /// The members who read `turn` of the thread: each whose first turn is
-    /// at or before it. The root reads for every member now, one added from
-    /// a later turn on as well.
+    /// at or before it (the CONTENT rule). The root is a turn like any
+    /// other, so one added from a later turn on does not read it (FIX 5545,
+    /// Engine ruling 2026-10-19).
     pub(crate) fn reading(&self, turn: EntityId) -> BTreeSet<EntityId> {
         self.members
             .iter()
-            .filter(|(_, from)| turn == self.root || from.is_none_or(|from| from <= turn))
+            .filter(|(_, from)| from.is_none_or(|from| from <= turn))
             .map(|(id, _)| *id)
             .collect()
+    }
+
+    /// Whether `turn` of the thread sits before some member's add, so the
+    /// audience now is wider than the one that reads it: a place in the
+    /// thread for every member, and a read for none it is withheld from.
+    pub(crate) fn cuts(&self, turn: EntityId) -> bool {
+        self.members
+            .values()
+            .any(|from| from.is_some_and(|from| from > turn))
     }
 }
 
@@ -200,5 +210,5 @@ pub(crate) fn fold_audience_in(
             }
         }
     }
-    Ok(FoldedAudience { root, members })
+    Ok(FoldedAudience { members })
 }

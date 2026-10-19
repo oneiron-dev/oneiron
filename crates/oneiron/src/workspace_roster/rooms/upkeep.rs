@@ -31,7 +31,8 @@ pub struct RoomUpkeepThread {
     pub handle: EntityId,
     /// The trunk turn it hangs under.
     pub trunk: EntityId,
-    /// Its root's time, or its newest reply's.
+    /// Its root's time, or its newest reply's, of those the reader reads; 0
+    /// when it reads none of them (FIX 5545).
     pub last_message_at: u64,
     /// The open TASKs bound to it that the reader reads.
     pub open_tasks: Vec<EntityId>,
@@ -57,11 +58,13 @@ impl RoomUpkeepThread {
 }
 
 /// `room` as `read` reads it for upkeep, in one snapshot. A room `read`
-/// cannot read is a missing room; a turn is kept only when it, its parent
-/// and its anchor are readable, and an answer whose parent is not kept goes
-/// with it, as a member's own read of the room drops it. Every turn and every
-/// member's TASK is read, however many (rule 5): past the threshold row the
-/// owner's check is raised for the room.
+/// cannot read is a missing room; a turn is kept only when it is readable
+/// and its parent and anchor are readable or held back from `read` as places
+/// (FIX 5545), and an answer whose parent is not kept goes with it, as a
+/// member's own read of the room drops it. A held-back turn places its
+/// thread and nothing else: no source ref, activity or TASK comes from it.
+/// Every turn and every member's TASK is read, however many (rule 5): past
+/// the threshold row the owner's check is raised for the room.
 pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUpkeepInput> {
     let vault = read.vault();
     read.persist_grant_clock()?;
@@ -85,22 +88,35 @@ pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUp
         crate::scan_check::EngineScan::RoomHistoryRows,
         room.as_bytes(),
     )?;
-    let mut turns = Vec::new();
+    let held = |id: &str| -> Result<bool> {
+        match EntityId::from_hex(id) {
+            Ok(id) => super::thread_reads::turn_held_back_for_in(read, &txn, id),
+            Err(_) => Ok(false),
+        }
+    };
+    let mut reach = super::thread_reads::RoomReach::default();
     for row in HISTORY.iter_from(&vault.store, &txn, room.as_bytes())? {
         turn_rows.row();
         let (_, turn_id) = row?;
         let turn = turn_in(vault, &txn, turn_id)?;
-        let mut kept = readable(turn.turn_id.as_str())?;
+        if !readable(turn.turn_id.as_str())? {
+            if held(turn.turn_id.as_str())? {
+                reach.push_held(&turn);
+            }
+            continue;
+        }
+        let mut kept = true;
         for parent in turn.reply_to.iter().chain(&turn.thread_of) {
-            kept = kept && readable(parent.as_str())?;
+            kept = kept && (readable(parent.as_str())? || held(parent.as_str())?);
         }
         if kept {
-            turns.push(turn);
+            reach.push_read(turn);
         }
     }
-    let turns = history::answer_closed(turns);
-    let roots = liveness::thread_root_map(&turns)?;
-    let bindings = liveness::thread_task_bindings(&turns, &roots)?;
+    let reach = reach.answer_closed();
+    let turns = reach.placed();
+    let roots = liveness::thread_root_map(turns)?;
+    let bindings = liveness::thread_task_bindings(turns, &roots)?;
     let mut census = crate::scan_check::ScanCount::start(
         &vault.store,
         &txn,
@@ -131,7 +147,7 @@ pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUp
             },
         );
     }
-    for turn in &turns {
+    for turn in reach.read() {
         let id = EntityId::from_hex(&turn.turn_id)?;
         if let Some(root) = roots.get(&id)
             && let Some(thread) = threads.get_mut(root)
@@ -153,11 +169,11 @@ pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUp
             }
         }
     }
-    let source_refs = turns
-        .iter()
+    let source_refs = reach
+        .read()
         .map(|turn| EntityId::from_hex(&turn.turn_id))
         .collect::<Result<Vec<_>>>()?;
-    let last_activity = turns.iter().map(|turn| turn.at).max();
+    let last_activity = reach.read().map(|turn| turn.at).max();
     drop(txn);
     turn_rows.finish(vault);
     census.finish(vault);

@@ -7,6 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::thread_reads::RoomReach;
 use super::{RoomTurn, agent_off_room_in_txn, history, liveness};
 use crate::EntityId;
 use crate::claim::{ClaimReadStatus, PointRead};
@@ -56,7 +57,14 @@ impl Memory<'_> {
             // reads them.
             let turns = self.room_turn_snapshot(room)?;
             let projection = self.for_room_projection(room)?;
-            return ended_in(projection.memory(), &turns, room, threads, members, now);
+            return ended_in(
+                projection.memory(),
+                turns.placed(),
+                room,
+                threads,
+                members,
+                now,
+            );
         }
         let mut ended = BTreeSet::new();
         for thread in threads {
@@ -64,7 +72,7 @@ impl Memory<'_> {
             let projection = self.for_thread_projection(room, *thread)?;
             let memory = projection.memory();
             let one = BTreeSet::from([*thread]);
-            ended.extend(ended_in(memory, &turns, room, &one, members, now)?);
+            ended.extend(ended_in(memory, turns.placed(), room, &one, members, now)?);
         }
         Ok(ended)
     }
@@ -74,7 +82,8 @@ impl Memory<'_> {
     /// structure alone ([`crate::conversation_dag::offer_turns_in_txn`]); each
     /// thread the caller reads is then admitted through a lane bound to that
     /// thread, its root's whole branch and the trunk record it hangs off, and
-    /// its tasks are read on the same lane.
+    /// its tasks are read on the same lane. A record held back from the
+    /// caller stays as its place alone (FIX 5545).
     fn ended_dag_threads(
         &self,
         room: EntityId,
@@ -140,16 +149,28 @@ impl Memory<'_> {
                 .collect();
             let projection = self.for_thread_projection(room, thread)?;
             let memory = projection.memory();
-            let admitted = history::answer_closed(admitted_records(memory, selected)?);
+            let admitted = admitted_records(memory, room, selected)?.answer_closed();
             let one = BTreeSet::from([thread]);
-            ended.extend(ended_in(memory, &admitted, room, &one, &members, now)?);
+            ended.extend(ended_in(
+                memory,
+                admitted.placed(),
+                room,
+                &one,
+                &members,
+                now,
+            )?);
         }
         Ok(ended)
     }
 }
 
-/// The turns among `turns` whose own records `memory`'s lane admits.
-fn admitted_records(memory: &Memory<'_>, turns: Vec<RoomTurn>) -> MemoryResult<Vec<RoomTurn>> {
+/// The turns among `turns`, records of `room`, whose own records `memory`'s
+/// lane admits, beside the place of each one held back from its reader.
+fn admitted_records(
+    memory: &Memory<'_>,
+    room: EntityId,
+    turns: Vec<RoomTurn>,
+) -> MemoryResult<RoomReach> {
     let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     let ids = turns
         .iter()
@@ -166,10 +187,22 @@ fn admitted_records(memory: &Memory<'_>, turns: Vec<RoomTurn>) -> MemoryResult<V
                 .filter_map(|(id, row)| row.map(|_| *id)),
         );
     }
-    Ok(turns
-        .into_iter()
-        .filter(|turn| EntityId::from_hex(&turn.turn_id).is_ok_and(|id| admitted.contains(&id)))
-        .collect())
+    let read = |id: &String| EntityId::from_hex(id).is_ok_and(|id| admitted.contains(&id));
+    let unread = turns
+        .iter()
+        .filter(|turn| !read(&turn.turn_id))
+        .map(|turn| turn.turn_id.clone())
+        .collect();
+    let held = memory.held_back_among(room, &unread)?;
+    let mut reach = RoomReach::default();
+    for turn in turns {
+        if read(&turn.turn_id) {
+            reach.push_read(turn);
+        } else if held.contains(&turn.turn_id) {
+            reach.push_held(&turn);
+        }
+    }
+    Ok(reach)
 }
 
 /// The fold itself: of `threads`, those `turns` hold whose direct-by-handle

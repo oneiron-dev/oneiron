@@ -336,7 +336,8 @@ pub(crate) fn append_at_in_txn(
     // FIX 2951: a thread record is born bound to its thread's root. The one
     // that opens a thread names its audience there, once; a later one names
     // that root, and writes there only from its audience. A private thread
-    // addresses its audience alone.
+    // addresses its audience alone. Both read who is in it now (the CURRENT
+    // rule, FIX 5545).
     let root =
         super::participation::thread_root_in_txn(&vault.store, txn, input.parent, id, thread)?;
     if let Some(quote) = &input.quote {
@@ -376,7 +377,12 @@ pub(crate) fn append_at_in_txn(
                     root,
                     writer,
                 )?;
-                crate::workspace_roster::thread_audience_in(vault, txn, input.conversation, root)?
+                crate::workspace_roster::thread_audience_now_in(
+                    vault,
+                    txn,
+                    input.conversation,
+                    root,
+                )?
             };
             // A pen is addressed there through its PERSON (FIX 3123).
             if let Some(audience) = &audience {
