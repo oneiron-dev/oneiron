@@ -345,15 +345,12 @@ pub(crate) fn weave_lens_plan_schema() -> Result<serde_json::Value> {
         .map_err(|_| invalid("the plan schema is not JSON"))
 }
 
-/// A frame for the opener's own key, as the default projection builds one.
+/// A frame for the opener's own key, as the default projection builds one:
+/// an agent's task, a system job, else a person's view (FIX 5548, as FIX
+/// 5278 framed the default projection). The key is the one the read lane
+/// built; nothing broadens it.
 fn opener_frame(read: &ScopedRead<'_>) -> Result<LensRenderFrame> {
-    let key = read.actor_key().clone();
-    let principal_ref = key.actor_ref().to_owned();
-    let principal = if key.actor_class() == Some(EdgeActorClass::Agent.gate_actor_class()) {
-        LensPrincipalBinding::agent_task(principal_ref, key.clone(), vec![key])?
-    } else {
-        LensPrincipalBinding::human_view(principal_ref, key.clone(), vec![key])?
-    };
+    let principal = LensPrincipalBinding::of_read_key(read.actor_key().clone())?;
     let render_id = LensRenderId::new(format!("weave-lens-{}", EntityId::now().to_hex()))?;
     Ok(LensRenderFrame::new(render_id, principal))
 }
