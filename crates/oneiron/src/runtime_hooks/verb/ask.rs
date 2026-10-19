@@ -288,6 +288,8 @@ pub(super) fn retry(
             return Ok(Retry::Stop(pending(call.invocation, row.ask)));
         }
         Ok(TaskAskStatus::Settled(result)) => result,
+        // An ask's status is never a world-privacy request's (FIX 4706).
+        Ok(TaskAskStatus::WorldPrivacy(_)) => return skipped("the hook's ask is no ask group"),
         Err(error) => return skipped(&format!("the hook's ask is unreadable: {}", error.message)),
     };
     if !proceeds(&result) {

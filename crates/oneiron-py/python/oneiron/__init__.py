@@ -342,7 +342,7 @@ class Oneiron:
             input = {"who": who, "what": what, "until": until, "default": default}
         return json.loads(_translate(lambda: self._client.ask(json.dumps(input))))
     def wait(self, handle, step_key="sdk.wait"):
-        """Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode."""
+        """Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode."""
         return json.loads(_translate(lambda: self._client.wait(json.dumps({"handle": handle, "step_key": step_key}))))
     @property
     def connector(self) -> "Oneiron._ConnectorVerbs":
