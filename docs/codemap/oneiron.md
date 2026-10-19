@@ -259,13 +259,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/invitee_slip.rs` | src | s | 2 crate-vis | — | FIX 1925: an invitee's own credential |
 | `src/authority/invocation_slip.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | InvocationSlipBinding | The signed instrument a request was admitted on, kept with the work it queued, so that work's standing is… |
 | `src/authority/left_notices.rs` | src | m | 3 fn · 3 crate-vis | — | A removed person's own notices of losing a shared vault (OF-158 client leave) |
+| `src/authority/local_host_root.rs` | src | s | 2 struct · 1 enum · 3 fn | LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace | Re-keying this install's host root (FIX 5571, the re-key half of FIX 5346; owner ruling FIX 5341 = A) |
 | `src/authority/local_open.rs` | src | s | 1 enum · 6 fn | LocalOpenProfile | A raw open's own machine profile, from the host's root secret (FIX 4730) |
 | `src/authority/log_budget.rs` | src | m | 1 struct · 3 fn · 7 const · 18 crate-vis | AuthorityLogCheck | The authority log's fold bounds, and the store-door checks that keep a stored log inside them (H72) |
 | `src/authority/log_structure.rs` | src | m | 17 crate-vis | — | The authority log's consent structure, read from its signed rows alone, so the fold's bounds and the store… |
 | `src/authority/machine_answers.rs` | src | m | 2 fn · 7 crate-vis | — | The owner's machine answers as one install writes them (mesh PR1b): he enrols, re-marks and removes a… |
 | `src/authority/machine_claims.rs` | src | s | 8 crate-vis | — | The fold's machine key claims, indexed once per view: P1's poison per admitter (a key two machines claim, a… |
 | `src/authority/machine_enroll.rs` | src | s | 1 fn · 1 crate-vis | — | Host-landed MACHINE enrollment: one EnrollDevice and its BindActor |
-| `src/authority/machine_identity.rs` | src | m | 3 struct · 1 enum · 11 fn · 1 const · 8 crate-vis | LocalMachine, MachineEnrolmentRequest, PeerMachine, RequestCode | A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a… |
+| `src/authority/machine_identity.rs` | src | m | 3 struct · 1 enum · 11 fn · 1 const · 9 crate-vis | LocalMachine, MachineEnrolmentRequest, PeerMachine, RequestCode | A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a… |
 | `src/authority/machine_profile/apply.rs` | src | s | 7 crate-vis | — | The fold transitions of a machine revision: a roster revision, an owner anchor's mark, and the checks every… |
 | `src/authority/machine_profile/merge.rs` | src | s | 4 crate-vis | — | How a machine's chains merge across branches: a higher revision supersedes, divergent profiles at one… |
 | `src/authority/machine_profile/mod.rs` | src | m | 4 struct · 2 enum · 15 fn · 11 crate-vis | FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine | Folds `MachineProfile` entries into each physical machine's standing |
@@ -275,7 +276,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/machine_write/successor.rs` | src | s | 1 crate-vis | — | Re-signing a MACHINE claim's successor with its writer's retained signer |
 | `src/authority/mesh_machine.rs` | src | m | 2 struct · 7 fn · 1 const · 1 re-export | MeshMachineAddress, MeshMachineAddressEnvelope | Local host-authorized mesh binding and grants, distinct from address hints |
 | `src/authority/mesh_machine/doors.rs` | src | m | 3 struct · 7 fn | MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding | Public mesh setup inputs and owner-bound doors over the host's existing binding, ALPN and terminal… |
-| `src/authority/mod.rs` | src | m | 55 re-export · 30 crate-vis | — | AUTHORITY_LOG record substrate |
+| `src/authority/mod.rs` | src | m | 56 re-export · 30 crate-vis | — | AUTHORITY_LOG record substrate |
 | `src/authority/observation_policy.rs` | src | s | 1 struct · 2 fn · 8 const · 1 crate-vis | AuthorityObservationPolicy | Device-local authority observation policy and its versioned duration row |
 | `src/authority/op_apply.rs` | src | m | 7 crate-vis | — | Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`] |
 | `src/authority/owner_act.rs` | src | m | 1 struct · 2 enum · 4 fn · 12 crate-vis | ActAuthority, GrantedAct, KeyWork | The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged… |
