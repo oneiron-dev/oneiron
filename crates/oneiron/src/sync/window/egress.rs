@@ -288,7 +288,7 @@ pub(super) fn scrub_local_claim_carriers(
         let witnesses = doc.get_map("retained_claim_worlds");
         let world = key.world().expect("retained witness needs a world");
         let mut changed = false;
-        for id in retained {
+        for &id in &retained {
             // Local UserDelete removes the live CRDT entity carrier while
             // retaining its 25-byte LMDB shell. Recreate that exact shell
             // beside its validated witness; without it the next peer gets an
@@ -306,6 +306,8 @@ pub(super) fn scrub_local_claim_carriers(
                 changed = true;
             }
         }
+        // A peer's origin for the row a shell stands in for leaves (FIX 4550).
+        changed |= crate::sync::ingest::forget_stale_peer_origins(doc, retained)?;
         if changed {
             doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
         }
@@ -330,6 +332,7 @@ pub(super) fn scrub_local_claim_carriers(
     removed |= delete_edges_touching_entities(&edges, &ids)?;
     if removed {
         crate::sync::row_birth::drop_orphan_births(doc)?;
+        crate::sync::ingest::forget_stale_peer_origins(doc, ids)?;
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(removed)
@@ -432,6 +435,7 @@ pub(super) fn scrub_withdrawn_delete_carriers(
         map_delete(&entities, raw_key)?;
     }
     crate::sync::row_birth::drop_orphan_births(doc)?;
+    crate::sync::ingest::forget_stale_peer_origins(doc, withdrawn.into_iter().map(|(_, id)| id))?;
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(pin)
 }

@@ -94,6 +94,7 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     strict(snapshot.room_turns.iter().map(|row| row.id))?;
     strict(snapshot.room_facts.iter().map(|row| row.key.as_str()))?;
     strict(snapshot.document_pins.iter().map(|row| row.key.as_str()))?;
+    strict(snapshot.peer_origins.iter().map(|row| row.id))?;
     // Custody transitions ride base windows only (OF-422).
     if snapshot.window.contains('@') && !snapshot.custody_transitions.is_empty() {
         return Err(invalid("custody transition in a world window"));
@@ -126,6 +127,18 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
             .and_then(|at| EntityMetadataHeader::parse(&snapshot.entity_blobs[at].blob));
         if held.is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_TASK) {
             return Err(invalid("suppressed task outside the window"));
+        }
+    }
+    // A peer origin names a row the window holds, by the digest of its whole
+    // blob (FIX 4550): never an absent row's, nor an earlier body's.
+    for origin in &snapshot.peer_origins {
+        let held = snapshot
+            .entity_blobs
+            .binary_search_by_key(&origin.id, |row| row.id)
+            .ok()
+            .map(|at| *blake3::hash(&snapshot.entity_blobs[at].blob).as_bytes());
+        if held != Some(origin.digest) {
+            return Err(invalid("peer origin outside the window"));
         }
     }
     strict(

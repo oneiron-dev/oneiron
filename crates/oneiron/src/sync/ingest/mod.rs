@@ -24,6 +24,7 @@ pub(in crate::sync) use self::entity::{
     ingest_entity_in_txn, waits_for_sibling_row,
 };
 pub(in crate::sync) use self::order::{authority_parent_order, is_authority_row};
+pub(crate) use self::peer_import::forget_stale_peer_origins;
 pub(in crate::sync) use self::peer_import::{
     PEER_ORIGIN_MAP, admit_peer_origin_carrier, admit_peer_origin_map, carried_origin_in_txn,
     carry_peer_rows, copy_peer_origins, forget_peer_origin, forget_peer_rows, peer_row_in_txn,

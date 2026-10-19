@@ -220,6 +220,37 @@ pub(in crate::sync) fn forget_peer_origin(
     })
 }
 
+/// Drops the origin `doc` carries for each of `ids` whose row it no longer
+/// holds with the bytes that origin names: a local path removed the carrier,
+/// or left only a deleted row's shell (FIX 4550). An origin names a peer's
+/// exact bytes, so one whose row holds other bytes is as stale as one whose
+/// row is gone. Returns whether any went; the caller commits.
+pub(crate) fn forget_stale_peer_origins(
+    doc: &LoroDoc,
+    ids: impl IntoIterator<Item = EntityId>,
+) -> Result<bool> {
+    if !carries_origins(doc) {
+        return Ok(false);
+    }
+    let carried = doc.get_map(PEER_ORIGIN_MAP);
+    let entities = doc.get_map("entities");
+    let mut dropped = false;
+    for id in ids {
+        let key = id.to_hex();
+        if carried.get(&key).is_none() {
+            continue;
+        }
+        let sent = map_get_bytes(&carried, &key);
+        if map_get_bytes(&entities, &key)
+            .is_none_or(|blob| sent.as_deref() != Some(&digest(&blob)[..]))
+        {
+            map_delete(&carried, &key)?;
+            dropped = true;
+        }
+    }
+    Ok(dropped)
+}
+
 fn refused() -> Error {
     Error::InvalidConfig("peer origin refused: not a digest filed under its row".into())
 }

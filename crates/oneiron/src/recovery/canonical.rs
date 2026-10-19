@@ -14,6 +14,9 @@ use crate::ports::{
 };
 use crate::{EntityId, Vault};
 
+mod peer_origins;
+pub use peer_origins::CanonicalPeerOrigin;
+
 /// Canonical Layer-1 artifact discriminator (not a Loro snapshot).
 pub const CANONICAL_SNAPSHOT_ARTIFACT_TYPE: u16 = 1;
 /// Maximum decoded artifact size. Recovery is off the hot path but remains bounded.
@@ -396,6 +399,10 @@ pub struct CanonicalSnapshot {
     /// not capture, by map key. Absent when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub document_pins: Vec<CanonicalPinCarrier>,
+    /// The window's peer origins (FIX 4550), by row id, each naming its
+    /// row's exact blob. Absent when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub peer_origins: Vec<CanonicalPeerOrigin>,
 }
 
 impl CanonicalSnapshot {
@@ -463,6 +470,7 @@ impl CanonicalSnapshot {
             "room_turns",
             "room_facts",
             "document_pins",
+            "peer_origins",
         ] {
             rows.push(CanonicalContainerManifest {
                 container_id: name.to_owned(),
@@ -635,6 +643,7 @@ pub(crate) fn capture_canonical_window_within(
         room_turns: Vec::new(),
         room_facts: Vec::new(),
         document_pins: Vec::new(),
+        peer_origins: Vec::new(),
     };
     for (key, blob) in binary_rows_within(doc, "entities", budget)? {
         snapshot.entity_blobs.push(CanonicalEntity {
@@ -910,6 +919,8 @@ pub(crate) fn capture_canonical_window_within(
         }
     }
     snapshot.entity_blobs.sort_by_key(|row| row.id);
+    // FIX 4550: the peer origins of the final rows, with their final bytes.
+    peer_origins::capture(doc, &mut snapshot, budget)?;
     // Only a TASK row carries a refusal: a forged fact may name any id as its
     // task, and the artifact's validation refuses a mark on anything else.
     for entity in &snapshot.entity_blobs {
@@ -994,6 +1005,7 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
     for entity in &snapshot.entity_blobs {
         insert(&doc, "entities", &id(entity.id)?.to_hex(), &entity.blob)?;
     }
+    peer_origins::rebuild(&doc, snapshot)?;
     for shell in &snapshot.retained_claim_worlds {
         insert(
             &doc,

@@ -265,6 +265,7 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         room_turns: Vec::new(),
         room_facts: Vec::new(),
         document_pins: Vec::new(),
+        peer_origins: Vec::new(),
     };
     for (key, bytes) in super::canonical::binary_rows(doc, "documents")? {
         let value: CanonicalDocument =
