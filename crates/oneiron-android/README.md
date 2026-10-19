@@ -21,7 +21,10 @@ EmbeddedVault(context.filesDir.resolve("memory").absolutePath).use { vault ->
 ```
 
 Beside `put` and `get`, `delete`, `putEdge`, `edgesOut`/`edgesIn`, `putVector` and
-`searchVector` (at most 1000 hits) cross the same boundary, with 32-character hex ids. A vault
+`searchVector` (at most 1000 hits) cross the same boundary, with 32-character hex ids, and so do
+the C ABI's reads: `contextPack(text, vector, limit, format)` (UTF-8 in `json`, `yaml`, `toon`,
+`markdown` or `plaintext`), `searchText(query, limit)`, `targets`/`sources(id, kind, type)`,
+`subtree(root, maxDepth)` and `ancestors(node)`, each lowered to the same core read. A vault
 from `bound(actorKey, session)` writes as that caller through the core's raw caller doors
 (OF-063); its `delete` is the owner-only `vault.delete` door, so an id naming no record throws.
 
@@ -68,7 +71,11 @@ HTTP/1.1 with upgrades, so `/ws` and streamed replies ride it. `send` writes
 bytes, `receive` returns the next bytes the server wrote (at most 64 KiB, empty
 once the connection ended) and `close` ends the app's side, returning a
 blocked `receive`; a `stop` drains it, so after `wake` open another. `vault()`
-shares the engine's open vault and never reopens the path. Every engine method
+shares the engine's open vault and never reopens the path. `artifactRequest` and
+`openArtifactConnection()` reach the artifact app (`/a/`) on its own origin, apart from the
+API's. An engine failure throws `EngineException`, an `IllegalStateException` whose `code` is
+its cause's stable code (`ENGINE_STOPPED`, `ENGINE_CLOSED`, ...), as every binding names it.
+Every engine method
 blocks: call it from an app thread, never from an `AppHost` callback (the engine calls those on its own threads, and a call
 back into it throws), and call `close()` before letting it go.
 

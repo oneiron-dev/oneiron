@@ -23,12 +23,20 @@ doctest = false
 [dependencies]
 oneiron = { path = "../oneiron" }
 oneiron-remote = { path = "../oneiron-remote" }
+# The engine-backed served client (OF-237), behind `engine`.
+oneiron-server = { path = "../oneiron-server", optional = true }
 # abi3-py310 matches the 3.10 floor and produces ONE wheel for every later
 # CPython, so the release matrix is a platform list rather than a
 # platform-by-interpreter grid.
 pyo3 = { version = "0.29", features = ["abi3-py310", "extension-module"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[features]
+# `oneiron.engine.EmbeddedEngine`: the full server inside this process, and
+# handles it serves under the caller's own credential. Off by default, so the
+# wheel builds exactly as before; build it with `--features engine`.
+engine = ["dep:oneiron-server"]
 
 [lints]
 workspace = true

@@ -537,7 +537,6 @@ impl Vault {
     }
     /// A script run compares the exact selected receipt in its own writer
     /// transaction; Candidates are never runnable installations.
-    #[cfg(any(test, feature = "microvm-firecracker"))]
     pub(crate) fn installed_pack_for_script_in_txn(
         &self,
         txn: &RoTxn<'_>,

@@ -25,6 +25,8 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use serde::Deserialize;
 
+#[cfg(feature = "engine")]
+mod embedded_engine;
 mod pairing;
 
 /// One message inside a witnessed turn, with the SDK's optional fields.
@@ -8407,5 +8409,8 @@ impl NativeClient {
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeClient>()?;
+    // The engine-backed served client, only in an `engine` build (OF-237).
+    #[cfg(feature = "engine")]
+    module.add_class::<embedded_engine::NativeEngine>()?;
     Ok(())
 }

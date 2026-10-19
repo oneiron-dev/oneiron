@@ -4,17 +4,19 @@
 //! A connected handle sends over the network through its reqwest agents. A
 //! served handle ([`crate::OneironClient::connect_in_process`]) hands the
 //! same request, headers, credential and holder proof included, to an
-//! [`InProcessTransport`] the binding that runs the server implements. The
-//! signing above this seam and the decoding below it are one code path for
-//! both, so neither a refusal envelope nor a receipt ref nor a lens callback
-//! reads differently in process.
+//! [`InProcessTransport`] the binding that runs the server implements; a
+//! long call (`vault.export`) streams its reply there as it does on the
+//! network, so neither carries a buffered cap of its own. The signing above
+//! this seam and the decoding below it are one code path for both, so
+//! neither a refusal envelope nor a receipt ref nor a lens callback reads
+//! differently in process.
 
 use std::io::Cursor;
 
 use reqwest::header::HeaderName;
 
 use super::*;
-use crate::{InProcessReply, InProcessRequest, InProcessTransport};
+use crate::{InProcessReply, InProcessRequest, InProcessStream, InProcessTransport};
 
 /// What carries a client's requests.
 #[derive(Clone)]
@@ -72,20 +74,22 @@ impl RemoteClient {
                 })
             }
             Wire::InProcess(transport) => {
-                exchange_in_process(transport.as_ref(), &method, &url, &headers, body)
+                exchange_in_process(transport.as_ref(), &method, &url, &headers, body, long)
             }
         }
     }
 }
 
 /// One exchange through the in-process server: the URL's path and query in
-/// origin form, every header as it would cross a socket.
+/// origin form, every header as it would cross a socket. A `long` call's
+/// reply streams, as the export agent's does on the network.
 fn exchange_in_process(
     transport: &dyn InProcessTransport,
     method: &Method,
     url: &Url,
     headers: &HeaderMap,
     body: Option<Vec<u8>>,
+    long: bool,
 ) -> Result<Reply, MemoryError> {
     let path = match url.query() {
         Some(query) => format!("{}?{query}", url.path()),
@@ -100,15 +104,25 @@ fn exchange_in_process(
             .collect(),
         body: body.unwrap_or_default(),
     };
-    let InProcessReply {
-        status,
-        headers: reply_headers,
-        body,
-    } = transport.exchange(request).map_err(|message| {
-        transport_error(format!(
-            "the in-process Oneiron server did not answer: {message}"
-        ))
-    })?;
+    let (status, reply_headers, body) = if long {
+        let InProcessStream {
+            status,
+            headers,
+            body,
+        } = transport.exchange_streamed(request)?;
+        (status, headers, body as Box<dyn Read>)
+    } else {
+        let InProcessReply {
+            status,
+            headers,
+            body,
+        } = transport.exchange(request)?;
+        (
+            status,
+            headers,
+            Box::new(Cursor::new(body)) as Box<dyn Read>,
+        )
+    };
     let status = StatusCode::from_u16(status).map_err(|_| {
         transport_error(format!(
             "the in-process Oneiron server answered an invalid status {status}"
@@ -127,6 +141,6 @@ fn exchange_in_process(
     Ok(Reply {
         status,
         headers,
-        body: Box::new(Cursor::new(body)),
+        body,
     })
 }

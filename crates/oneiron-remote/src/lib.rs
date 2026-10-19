@@ -60,7 +60,9 @@ pub use crate::caps::{
 use crate::embedded::EmbeddedClient;
 pub use crate::embedded::store_open_count;
 use crate::error::forbidden;
-pub use crate::in_process::{InProcessReply, InProcessRequest, InProcessTransport};
+pub use crate::in_process::{
+    InProcessReply, InProcessRequest, InProcessStream, InProcessTransport,
+};
 pub use crate::invocation::pending_invocation;
 pub use crate::lens_frames::{CloseLensFrameReply, LensFrameEventReply, LensFrameEventRequest};
 use crate::remote::RemoteClient;

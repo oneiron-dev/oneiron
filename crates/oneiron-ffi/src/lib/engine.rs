@@ -4,7 +4,13 @@
 //!
 //! Every engine call blocks its caller on the engine's own runtime: call it
 //! from an app thread, never from an `OneironAppHost` callback, where it
-//! fails `EngineError`.
+//! fails `EngineError`. A call that fails `EngineError` leaves its cause on
+//! the calling thread, a stable `OneironEngineErrorCode` and the error's
+//! words, which `oneiron_engine_last_error` reads.
+//!
+//! The artifact app (`/a/`) keeps its own origin, apart from the API's:
+//! `oneiron_engine_artifact_request` and
+//! `oneiron_engine_artifact_connection_open` reach it.
 //!
 //! Built only with the `engine` feature (`cargo build -p oneiron-ffi
 //! --features engine`); the default library is the storage ABI alone.
@@ -19,6 +25,7 @@ use oneiron_vault_contract::host_adapters::AppHost;
 use zeroize::Zeroizing;
 
 use super::alloc::{buffer_from_vec, free_vec};
+use super::engine_error::engine_failure;
 use super::guard::{ffi_guard, with_optional_slice, write_out};
 use super::parse::{string_from_optional, string_from_required, validate_dimensions};
 use super::types::{OneironBuffer, OneironByteSlice, OneironStatus, OneironVault};
@@ -190,10 +197,6 @@ impl AppHost for CAppHost {
     }
 }
 
-fn engine_failure(_error: anyhow::Error) -> OneironStatus {
-    OneironStatus::EngineError
-}
-
 fn status(result: Result<(), OneironStatus>) -> OneironStatus {
     result.map_or_else(|status| status, |()| OneironStatus::Ok)
 }
@@ -324,6 +327,53 @@ pub unsafe extern "C" fn oneiron_engine_request(
     body: OneironByteSlice,
     out_reply: *mut OneironReply,
 ) -> OneironStatus {
+    request_on(engine, Origin::Api, method, path, headers, body, out_reply)
+}
+
+/// `oneiron_engine_request` on the artifact app's own origin (`/a/`), apart
+/// from the API's: what an app's web view loads artifacts through.
+///
+/// # Safety
+///
+/// As for `oneiron_engine_request`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oneiron_engine_artifact_request(
+    engine: *mut OneironEngine,
+    method: OneironByteSlice,
+    path: OneironByteSlice,
+    headers: OneironByteSlice,
+    body: OneironByteSlice,
+    out_reply: *mut OneironReply,
+) -> OneironStatus {
+    request_on(
+        engine,
+        Origin::Artifacts,
+        method,
+        path,
+        headers,
+        body,
+        out_reply,
+    )
+}
+
+/// Which of the engine's two origins a call rides.
+#[derive(Clone, Copy)]
+enum Origin {
+    Api,
+    Artifacts,
+}
+
+/// One buffered request on `origin`, under `oneiron_engine_request`'s
+/// contract.
+fn request_on(
+    engine: *mut OneironEngine,
+    origin: Origin,
+    method: OneironByteSlice,
+    path: OneironByteSlice,
+    headers: OneironByteSlice,
+    body: OneironByteSlice,
+    out_reply: *mut OneironReply,
+) -> OneironStatus {
     ffi_guard(|| {
         if let Err(status) = write_out(out_reply, OneironReply::empty()) {
             return status;
@@ -339,7 +389,11 @@ pub unsafe extern "C" fn oneiron_engine_request(
                     Ok(bytes.unwrap_or_default().to_vec())
                 })?,
             };
-            let reply = handle.engine.request(request).map_err(engine_failure)?;
+            let reply = match origin {
+                Origin::Api => handle.engine.request(request),
+                Origin::Artifacts => handle.engine.request_artifact(request),
+            }
+            .map_err(engine_failure)?;
             write_out(
                 out_reply,
                 OneironReply {
@@ -509,12 +563,41 @@ pub unsafe extern "C" fn oneiron_engine_connection_open(
     engine: *mut OneironEngine,
     out_connection: *mut *mut OneironEngineConnection,
 ) -> OneironStatus {
+    connection_open(engine, Origin::Api, out_connection)
+}
+
+/// `oneiron_engine_connection_open` on the artifact app's own origin (`/a/`),
+/// apart from the API's. The handle is an `OneironEngineConnection`: send,
+/// receive, close and free it as any other.
+///
+/// # Safety
+///
+/// As for `oneiron_engine_connection_open`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn oneiron_engine_artifact_connection_open(
+    engine: *mut OneironEngine,
+    out_connection: *mut *mut OneironEngineConnection,
+) -> OneironStatus {
+    connection_open(engine, Origin::Artifacts, out_connection)
+}
+
+/// One fresh connection on `origin`, under
+/// `oneiron_engine_connection_open`'s contract.
+fn connection_open(
+    engine: *mut OneironEngine,
+    origin: Origin,
+    out_connection: *mut *mut OneironEngineConnection,
+) -> OneironStatus {
     ffi_guard(|| {
         if let Err(status) = write_out(out_connection, ptr::null_mut()) {
             return status;
         }
         status(with_engine(engine, |handle| {
-            let connection = handle.engine.connect().map_err(engine_failure)?;
+            let connection = match origin {
+                Origin::Api => handle.engine.connect(),
+                Origin::Artifacts => handle.engine.connect_artifact(),
+            }
+            .map_err(engine_failure)?;
             write_out(
                 out_connection,
                 Box::into_raw(Box::new(OneironEngineConnection {

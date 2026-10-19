@@ -7,11 +7,21 @@
 //! binding shares the open vault ([`EmbeddedEngine::vault`]) with SDK
 //! handles through `OneironClient::attach`, again for each new handle, and
 //! never opens the path a second time. [`EmbeddedEngine::request`] carries
-//! one buffered HTTP/1.1 exchange; `/ws` and streamed bodies are not served
-//! through it. [`EmbeddedEngine::connect`] opens a connection the app holds
-//! instead: a raw byte stream into the same serve channel, served as a
-//! socket's connection is, upgrades included, so `/ws` and a streamed reply
-//! ride it.
+//! one buffered HTTP/1.1 exchange; `/ws` is not served through it, and a
+//! reply over its cap is refused. [`EmbeddedEngine::request_streamed`] sends
+//! the same request and hands back the reply as the server writes it, with
+//! no whole-body buffer. [`EmbeddedEngine::connect`] opens a connection the
+//! app holds instead: a raw byte stream into the same serve channel, served
+//! as a socket's connection is, upgrades included, so `/ws` and a streamed
+//! reply ride it.
+//!
+//! The artifact app (`/a/`) keeps its own origin: a second channel of each
+//! serve run, which [`EmbeddedEngine::request_artifact`] and
+//! [`EmbeddedEngine::connect_artifact`] reach. The API channel never carries
+//! it.
+//!
+//! Every failure names its cause where the engine knows it
+//! ([`super::EngineFailure`]), so a binding raises a stable code.
 //!
 //! [`EmbeddedEngine::stop`] is the app backgrounding: connections drain,
 //! every worker stops, the vault stays open and the app's timer stays armed.
@@ -27,21 +37,22 @@
 //! [`start`]: EmbeddedEngine::start
 
 use std::path::Path;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context as _;
-use axum::body::Body;
+use axum::body::{Body, BodyDataStream, Bytes};
 use futures_util::StreamExt as _;
 use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
 use oneiron_vault_contract::host::HostLimits;
 use oneiron_vault_contract::host_adapters::{AppHost, EmbeddedHost};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, DuplexStream, ReadHalf, WriteHalf};
-use tokio::runtime::{Handle, Runtime};
+use tokio::runtime::Handle;
 use tokio::sync::{Mutex, Notify, mpsc, oneshot, watch};
 use zeroize::Zeroizing;
 
+use super::failure::{EngineErrorKind, cause, failure};
 use crate::commands::{OpenedServedVault, open_served_vault};
 use crate::config::{ServeArgs, ServeConfig};
 use crate::owner::schedule::OwnerHost;
@@ -92,6 +103,10 @@ pub fn embedded_serve_config(
         dimensions,
         ..ServeArgs::default()
     })
+    .context(cause(
+        EngineErrorKind::Config,
+        "the embedded engine's serve config did not resolve",
+    ))
 }
 
 /// The limits an app grants its engine; an absent one is unbounded.
@@ -116,10 +131,12 @@ pub fn unix_millis(at: SystemTime) -> u64 {
 /// runtime, so a callback that calls back into the engine is refused here
 /// rather than left to deadlock.
 pub fn ensure_app_thread() -> anyhow::Result<()> {
-    anyhow::ensure!(
-        Handle::try_current().is_err(),
-        "the embedded engine blocks its caller; call it from an app thread, never from an async task or an app host callback"
-    );
+    if Handle::try_current().is_ok() {
+        return Err(failure(
+            EngineErrorKind::WrongThread,
+            "the embedded engine blocks its caller; call it from an app thread, never from an async task or an app host callback",
+        ));
+    }
     Ok(())
 }
 
@@ -169,6 +186,8 @@ fn embedded_host<A: AppHost>(
 /// One run of the serve body, from ready until it returns.
 struct Serving {
     connector: mpsc::Sender<DuplexStream>,
+    /// The artifact app's own channel (`/a/`), apart from the API's.
+    artifacts: mpsc::Sender<DuplexStream>,
     wake: Arc<Notify>,
     stop: Arc<Notify>,
     done: oneshot::Receiver<anyhow::Result<()>>,
@@ -201,17 +220,27 @@ async fn serve_on<A: AppHost + 'static>(
     owner_host: OwnerHost,
 ) -> anyhow::Result<Serving> {
     let connector = host.connector();
+    // The artifact origin's channel, served beside the API's for this run.
+    let (artifacts, artifact_streams) = mpsc::channel(ENGINE_CONNECTION_BACKLOG);
     let (wake, stop) = (host.wake_handle(), host.stop_handle());
     let (finished, mut done) = oneshot::channel();
     let runtime = Handle::current();
     std::thread::Builder::new()
         .name("oneiron-engine-serve".to_owned())
         .spawn(move || {
-            let served =
-                runtime.block_on(super::serve_prepared(host, vault, config, None, owner_host));
+            let served = runtime.block_on(super::serve_prepared(
+                host,
+                vault,
+                config,
+                Some(artifact_streams),
+                owner_host,
+            ));
             let _ = finished.send(served);
         })
-        .context("the embedded engine's serve thread did not start")?;
+        .context(cause(
+            EngineErrorKind::StartFailed,
+            "the embedded engine's serve thread did not start",
+        ))?;
     let ready = tokio::select! {
         biased;
         ready = &mut readied => ready.is_ok(),
@@ -222,6 +251,7 @@ async fn serve_on<A: AppHost + 'static>(
     }
     Ok(Serving {
         connector,
+        artifacts,
         wake,
         stop,
         done,
@@ -231,11 +261,18 @@ async fn serve_on<A: AppHost + 'static>(
 /// Why serving ended before the app's `ready` ran.
 fn startup_failure(served: Result<anyhow::Result<()>, oneshot::error::RecvError>) -> anyhow::Error {
     match served {
-        Ok(Err(error)) => error.context("the embedded engine did not start"),
-        Ok(Ok(())) => anyhow::anyhow!("the embedded engine stopped before it was ready"),
-        Err(_) => {
-            anyhow::anyhow!("the embedded engine's serve thread panicked before it was ready")
-        }
+        Ok(Err(error)) => error.context(cause(
+            EngineErrorKind::StartFailed,
+            "the embedded engine did not start",
+        )),
+        Ok(Ok(())) => failure(
+            EngineErrorKind::StartFailed,
+            "the embedded engine stopped before it was ready",
+        ),
+        Err(_) => failure(
+            EngineErrorKind::StartFailed,
+            "the embedded engine's serve thread panicked before it was ready",
+        ),
     }
 }
 
@@ -267,12 +304,15 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
     /// A relay host's config is refused before anything opens. Returns once
     /// `app`'s `ready` has run, or with the serve body's startup error.
     pub async fn start(app: A, config: ServeConfig, limits: HostLimits) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            config.privacy_posture != oneiron::HostingPrivacyPosture::Relay,
-            super::RELAY_REFUSAL
-        );
+        if config.privacy_posture == oneiron::HostingPrivacyPosture::Relay {
+            return Err(failure(EngineErrorKind::RelayRefused, super::RELAY_REFUSAL));
+        }
         let (mut host, readied) = embedded_host(app.clone(), limits);
-        let OpenedServedVault { vault, owner_host } = open_served_vault(&mut host, &config)?;
+        let OpenedServedVault { vault, owner_host } = open_served_vault(&mut host, &config)
+            .context(cause(
+                EngineErrorKind::VaultOpen,
+                "the embedded engine's vault did not open",
+            ))?;
         let rehearsal = owner_host.vault_config.clone();
         let serving = serve_on(
             host,
@@ -313,7 +353,34 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
     /// Sends one request over a fresh connection and collects the whole
     /// reply. Refused while the engine is stopped.
     pub async fn request(&self, request: EmbeddedRequest) -> anyhow::Result<EmbeddedReply> {
-        exchange(&self.connector().await?, request).await
+        exchange(&self.connector(Origin::Api).await?, request).await
+    }
+
+    /// [`Self::request`], with the reply handed back once its head arrives
+    /// and its body read as the server writes it: no whole-body buffer, so
+    /// the buffered reply's cap does not apply and the reader's own ceiling
+    /// is the only one. Refused while the engine is stopped; a stop cuts the
+    /// body off once the drain ends.
+    pub async fn request_streamed(
+        &self,
+        request: EmbeddedRequest,
+    ) -> anyhow::Result<EmbeddedReplyStream> {
+        let response = send(&self.connector(Origin::Api).await?, request).await?;
+        let (status, headers) = reply_head(&response);
+        Ok(EmbeddedReplyStream {
+            status,
+            headers,
+            body: EmbeddedBody(Body::new(response.into_body()).into_data_stream()),
+        })
+    }
+
+    /// [`Self::request`] on the artifact app's own origin (`/a/`), apart
+    /// from the API's: an app's web view loads artifacts through it.
+    pub async fn request_artifact(
+        &self,
+        request: EmbeddedRequest,
+    ) -> anyhow::Result<EmbeddedReply> {
+        exchange(&self.connector(Origin::Artifacts).await?, request).await
     }
 
     /// Opens a connection the app holds: one fresh stream on the channel
@@ -324,19 +391,34 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
     /// the engine is stopped. A stop drains it as it drains a socket's
     /// connection, so after a wake the app connects again.
     pub async fn connect(&self) -> anyhow::Result<EmbeddedConnection> {
-        let stream = dial(&self.connector().await?).await?;
+        let stream = dial(&self.connector(Origin::Api).await?).await?;
         Ok(EmbeddedConnection::new(stream))
     }
 
-    /// The channel the running serve body takes connections on.
-    async fn connector(&self) -> anyhow::Result<mpsc::Sender<DuplexStream>> {
+    /// [`Self::connect`] on the artifact app's own origin (`/a/`), apart from
+    /// the API's. Refused while the engine is stopped.
+    pub async fn connect_artifact(&self) -> anyhow::Result<EmbeddedConnection> {
+        let stream = dial(&self.connector(Origin::Artifacts).await?).await?;
+        Ok(EmbeddedConnection::new(stream))
+    }
+
+    /// The channel the running serve body takes `origin`'s connections on.
+    async fn connector(&self, origin: Origin) -> anyhow::Result<mpsc::Sender<DuplexStream>> {
         self.state
             .lock()
             .await
             .serving
             .as_ref()
-            .map(|serving| serving.connector.clone())
-            .ok_or_else(|| anyhow::anyhow!("the embedded engine is stopped; wake it first"))
+            .map(|serving| match origin {
+                Origin::Api => serving.connector.clone(),
+                Origin::Artifacts => serving.artifacts.clone(),
+            })
+            .ok_or_else(|| {
+                failure(
+                    EngineErrorKind::Stopped,
+                    "the embedded engine is stopped; wake it first",
+                )
+            })
     }
 
     /// The app's timer fired, or a push arrived: run what is due. A stopped
@@ -388,6 +470,15 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
     }
 }
 
+/// Which of the engine's two origins a request or a connection rides.
+#[derive(Clone, Copy)]
+enum Origin {
+    /// The API, `/ws` included.
+    Api,
+    /// The artifact app (`/a/`), on an origin of its own.
+    Artifacts,
+}
+
 impl<A> Drop for EmbeddedEngine<A> {
     fn drop(&mut self) {
         if let Some(serving) = self.state.get_mut().serving.take() {
@@ -400,10 +491,12 @@ impl<A> Drop for EmbeddedEngine<A> {
 /// the app's end returned.
 async fn dial(connector: &mpsc::Sender<DuplexStream>) -> anyhow::Result<DuplexStream> {
     let (client, server) = tokio::io::duplex(ENGINE_DUPLEX_BUFFER_BYTES);
-    connector
-        .send(server)
-        .await
-        .map_err(|_| anyhow::anyhow!("the embedded engine stopped taking connections"))?;
+    connector.send(server).await.map_err(|_| {
+        failure(
+            EngineErrorKind::ConnectionEnded,
+            "the embedded engine stopped taking connections",
+        )
+    })?;
     Ok(client)
 }
 
@@ -412,26 +505,48 @@ async fn exchange(
     connector: &mpsc::Sender<DuplexStream>,
     request: EmbeddedRequest,
 ) -> anyhow::Result<EmbeddedReply> {
-    let request = http_request(request)?;
-    let client = dial(connector).await?;
-    let (mut sender, connection) =
-        hyper::client::conn::http1::handshake::<_, Body>(TokioIo::new(client)).await?;
-    tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    let response = sender.send_request(request).await?;
-    let status = response.status().as_u16();
-    let headers = response
-        .headers()
-        .iter()
-        .map(|(name, value)| (name.as_str().to_owned(), value.as_bytes().to_vec()))
-        .collect();
+    let response = send(connector, request).await?;
+    let (status, headers) = reply_head(&response);
     let body = reply_body(response.into_body()).await?;
     Ok(EmbeddedReply {
         status,
         headers,
         body,
     })
+}
+
+/// Sends `request` over a fresh duplex stream handed to the engine's channel
+/// and returns the reply once its head arrives, its body unread.
+async fn send(
+    connector: &mpsc::Sender<DuplexStream>,
+    request: EmbeddedRequest,
+) -> anyhow::Result<hyper::Response<Incoming>> {
+    let request = http_request(request)?;
+    let client = dial(connector).await?;
+    let (mut sender, connection) =
+        hyper::client::conn::http1::handshake::<_, Body>(TokioIo::new(client))
+            .await
+            .context(cause(
+                EngineErrorKind::ConnectionEnded,
+                "the embedded engine's connection did not open",
+            ))?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    sender.send_request(request).await.context(cause(
+        EngineErrorKind::ConnectionEnded,
+        "the embedded engine did not answer the request",
+    ))
+}
+
+/// A reply's status and every header it carried, repeats included.
+fn reply_head(response: &hyper::Response<Incoming>) -> (u16, Vec<(String, Vec<u8>)>) {
+    let headers = response
+        .headers()
+        .iter()
+        .map(|(name, value)| (name.as_str().to_owned(), value.as_bytes().to_vec()))
+        .collect();
+    (response.status().as_u16(), headers)
 }
 
 /// The request as hyper sends it. A request that names no `Host` takes
@@ -444,39 +559,77 @@ fn http_request(request: EmbeddedRequest) -> anyhow::Result<hyper::Request<Body>
         headers,
         body,
     } = request;
-    anyhow::ensure!(
-        path.starts_with('/'),
-        "an embedded request's path is origin form and starts with `/`"
-    );
+    if !path.starts_with('/') {
+        return Err(failure(
+            EngineErrorKind::BadRequest,
+            "an embedded request's path is origin form and starts with `/`",
+        ));
+    }
     let mut has_host = false;
     let mut builder = hyper::Request::builder().method(method.as_str()).uri(path);
     for (name, value) in headers {
-        anyhow::ensure!(
-            !name.eq_ignore_ascii_case("upgrade"),
-            "an embedded request is buffered; an upgrade such as `/ws` is not served through it"
-        );
+        if name.eq_ignore_ascii_case("upgrade") {
+            return Err(failure(
+                EngineErrorKind::BadRequest,
+                "an embedded request is buffered; an upgrade such as `/ws` is not served through it",
+            ));
+        }
         has_host |= name.eq_ignore_ascii_case("host");
         builder = builder.header(name, value);
     }
     if !has_host {
         builder = builder.header(hyper::header::HOST, ENGINE_AUTHORITY);
     }
-    Ok(builder.body(Body::from(body))?)
+    builder.body(Body::from(body)).context(cause(
+        EngineErrorKind::BadRequest,
+        "an embedded request's method, path or header is malformed",
+    ))
 }
 
 /// The whole reply body, up to [`ENGINE_REPLY_BODY_CAP_BYTES`].
 async fn reply_body(body: Incoming) -> anyhow::Result<Vec<u8>> {
-    let mut chunks = Body::new(body).into_data_stream();
+    let mut chunks = EmbeddedBody(Body::new(body).into_data_stream());
     let mut collected = Vec::new();
-    while let Some(chunk) = chunks.next().await {
-        let chunk = chunk.context("the embedded engine's reply broke off")?;
-        anyhow::ensure!(
-            collected.len().saturating_add(chunk.len()) <= ENGINE_REPLY_BODY_CAP_BYTES,
-            "the embedded engine's reply body is over the {ENGINE_REPLY_BODY_CAP_BYTES}-byte cap of a buffered request"
-        );
+    while let Some(chunk) = chunks.next_chunk().await? {
+        if collected.len().saturating_add(chunk.len()) > ENGINE_REPLY_BODY_CAP_BYTES {
+            return Err(failure(
+                EngineErrorKind::ReplyTooLarge,
+                format!(
+                    "the embedded engine's reply body is over the {ENGINE_REPLY_BODY_CAP_BYTES}-byte cap of a buffered request"
+                ),
+            ));
+        }
         collected.extend_from_slice(&chunk);
     }
     Ok(collected)
+}
+
+/// A reply whose body arrives as the server writes it
+/// ([`EmbeddedEngine::request_streamed`]). A 4xx or 5xx status is a reply,
+/// not an error.
+pub struct EmbeddedReplyStream {
+    pub status: u16,
+    /// Every header the reply carried, repeats included.
+    pub headers: Vec<(String, Vec<u8>)>,
+    /// The body, chunk by chunk.
+    pub body: EmbeddedBody,
+}
+
+/// A streamed reply's body ([`EmbeddedReplyStream::body`]).
+pub struct EmbeddedBody(BodyDataStream);
+
+impl EmbeddedBody {
+    /// The next chunk the server wrote, waiting until one arrives; `None`
+    /// once the body has ended. An error is a body cut off before its end.
+    pub async fn next_chunk(&mut self) -> anyhow::Result<Option<Bytes>> {
+        match self.0.next().await {
+            Some(chunk) => chunk.map(Some).context(cause(
+                EngineErrorKind::ConnectionEnded,
+                "the embedded engine's reply broke off",
+            )),
+            None => Ok(None),
+        }
+    }
 }
 
 /// One connection an app holds to its engine ([`EmbeddedEngine::connect`]):
@@ -511,10 +664,14 @@ impl EmbeddedConnection {
             written = async {
                 writer.write_all(bytes).await?;
                 writer.flush().await
-            } => written.context("the embedded engine ended the connection"),
-            _ = closed.wait_for(|closed| *closed) => {
-                Err(anyhow::anyhow!("the engine connection is closed"))
-            }
+            } => written.context(cause(
+                EngineErrorKind::ConnectionEnded,
+                "the embedded engine ended the connection",
+            )),
+            _ = closed.wait_for(|closed| *closed) => Err(failure(
+                EngineErrorKind::ConnectionEnded,
+                "the engine connection is closed",
+            )),
         }
     }
 
@@ -527,7 +684,10 @@ impl EmbeddedConnection {
         let mut buffer = vec![0; ENGINE_RECEIVE_CHUNK_BYTES];
         tokio::select! {
             read = reader.read(&mut buffer) => {
-                let read = read.context("the embedded engine's connection broke off")?;
+                let read = read.context(cause(
+                    EngineErrorKind::ConnectionEnded,
+                    "the embedded engine's connection broke off",
+                ))?;
                 buffer.truncate(read);
                 Ok(buffer)
             }
@@ -545,202 +705,5 @@ impl EmbeddedConnection {
         // A server that already ended the connection has nothing left to
         // read, so a failed shutdown changes nothing.
         let _ = self.writer.lock().await.shutdown().await;
-    }
-}
-
-/// An [`EmbeddedConnection`] from a [`BlockingEngine`], whose calls block an
-/// app thread on that engine's runtime.
-///
-/// Every method is refused from inside an async runtime
-/// ([`ensure_app_thread`]). A send and a receive may block two app threads at
-/// once, and a close from a third returns the waiting receive. No call holds
-/// a lock on the engine while it waits, so the engine's stop or close goes
-/// ahead and ends the connection: a receive then returns empty and a send is
-/// refused.
-pub struct BlockingConnection {
-    connection: EmbeddedConnection,
-    runtime: Handle,
-}
-
-impl BlockingConnection {
-    /// [`EmbeddedConnection::send`].
-    pub fn send(&self, bytes: &[u8]) -> anyhow::Result<()> {
-        ensure_app_thread()?;
-        self.runtime.block_on(self.connection.send(bytes))
-    }
-
-    /// [`EmbeddedConnection::receive`].
-    pub fn receive(&self) -> anyhow::Result<Vec<u8>> {
-        ensure_app_thread()?;
-        self.runtime.block_on(self.connection.receive())
-    }
-
-    /// [`EmbeddedConnection::close`].
-    pub fn close(&self) -> anyhow::Result<()> {
-        ensure_app_thread()?;
-        self.runtime.block_on(self.connection.close());
-        Ok(())
-    }
-}
-
-/// An engine and the runtime it runs on, while it runs.
-struct Running<A> {
-    engine: EmbeddedEngine<A>,
-    runtime: Runtime,
-}
-
-impl<A: AppHost + Clone + 'static> Running<A> {
-    /// The ordered stop, then the runtime, last.
-    fn close(self) -> anyhow::Result<()> {
-        let Self { engine, runtime } = self;
-        let closed = runtime.block_on(engine.close());
-        drop(runtime);
-        closed
-    }
-}
-
-/// An [`EmbeddedEngine`] on a multi-thread Tokio runtime it owns, for a
-/// binding whose callers are app threads.
-///
-/// Every method blocks its caller and is refused from inside an async
-/// runtime, an app host callback included ([`ensure_app_thread`]). Calls
-/// may come from several app threads at once.
-///
-/// [`Self::close`] stops serving in order, then drops the runtime; call it
-/// from an app thread. Dropped unclosed, it closes the same way on the
-/// dropping thread, or, when that thread is inside a runtime, on a thread
-/// of its own, so nothing blocks inside a runtime.
-pub struct BlockingEngine<A: AppHost + Clone + 'static> {
-    running: RwLock<Option<Running<A>>>,
-    path: std::path::PathBuf,
-    dimensions: usize,
-}
-
-impl<A: AppHost + Clone + 'static> BlockingEngine<A> {
-    /// Starts an engine as [`EmbeddedEngine::start`] does, on a runtime of
-    /// its own.
-    pub fn start(app: A, config: ServeConfig, limits: HostLimits) -> anyhow::Result<Self> {
-        ensure_app_thread()?;
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .thread_name("oneiron-engine")
-            .build()
-            .context("the embedded engine's runtime did not start")?;
-        let engine = runtime.block_on(EmbeddedEngine::start(app, config, limits))?;
-        Ok(Self {
-            path: engine.path().to_path_buf(),
-            dimensions: engine.config().dimensions,
-            running: RwLock::new(Some(Running { engine, runtime })),
-        })
-    }
-
-    /// The vault's directory.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// The embedding width the vault was opened with.
-    pub fn dimensions(&self) -> usize {
-        self.dimensions
-    }
-
-    /// The open vault, to share; refused once closed.
-    pub fn vault(&self) -> anyhow::Result<Arc<oneiron::Vault>> {
-        self.with_running(|running| Ok(Arc::clone(running.engine.vault())))
-    }
-
-    /// [`EmbeddedEngine::request`].
-    pub fn request(&self, request: EmbeddedRequest) -> anyhow::Result<EmbeddedReply> {
-        self.with_running(|running| running.runtime.block_on(running.engine.request(request)))
-    }
-
-    /// [`EmbeddedEngine::connect`], as a [`BlockingConnection`] on this
-    /// engine's runtime. Refused once closed.
-    pub fn connect(&self) -> anyhow::Result<BlockingConnection> {
-        self.with_running(|running| {
-            Ok(BlockingConnection {
-                connection: running.runtime.block_on(running.engine.connect())?,
-                runtime: running.runtime.handle().clone(),
-            })
-        })
-    }
-
-    /// [`EmbeddedEngine::wake`].
-    pub fn wake(&self) -> anyhow::Result<()> {
-        self.with_running(|running| running.runtime.block_on(running.engine.wake()))
-    }
-
-    /// [`EmbeddedEngine::stop`].
-    pub fn stop(&self) -> anyhow::Result<()> {
-        self.with_running(|running| running.runtime.block_on(running.engine.stop()))
-    }
-
-    /// Stops serving in order and releases the runtime and the engine's
-    /// share of the vault. Later calls are refused; closing again does
-    /// nothing.
-    pub fn close(&self) -> anyhow::Result<()> {
-        ensure_app_thread()?;
-        let running = self
-            .running
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        running.map_or(Ok(()), Running::close)
-    }
-
-    fn with_running<T>(
-        &self,
-        call: impl FnOnce(&Running<A>) -> anyhow::Result<T>,
-    ) -> anyhow::Result<T> {
-        ensure_app_thread()?;
-        let running = self.running.read().unwrap_or_else(PoisonError::into_inner);
-        let running = running
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("the embedded engine is closed"))?;
-        call(running)
-    }
-}
-
-impl<A: AppHost + Clone + 'static> Drop for BlockingEngine<A> {
-    fn drop(&mut self) {
-        let Some(running) = self
-            .running
-            .get_mut()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take()
-        else {
-            return;
-        };
-        if Handle::try_current().is_err() {
-            close_logged(running);
-            return;
-        }
-        // Dropped inside a runtime, where nothing may block: the ordered
-        // stop finishes on a thread of its own.
-        let (hand_over, handed) = std::sync::mpsc::channel::<Running<A>>();
-        let closer = std::thread::Builder::new()
-            .name("oneiron-engine-close".to_owned())
-            .spawn(move || {
-                if let Ok(running) = handed.recv() {
-                    close_logged(running);
-                }
-            });
-        match closer {
-            Ok(_) => {
-                let _ = hand_over.send(running);
-            }
-            Err(error) => {
-                tracing::warn!(%error, "the embedded engine could not stop in order; stopping it at once");
-                let Running { engine, runtime } = running;
-                drop(engine);
-                runtime.shutdown_background();
-            }
-        }
-    }
-}
-
-fn close_logged<A: AppHost + Clone + 'static>(running: Running<A>) {
-    if let Err(error) = running.close() {
-        tracing::warn!(%error, "the embedded engine did not stop cleanly");
     }
 }

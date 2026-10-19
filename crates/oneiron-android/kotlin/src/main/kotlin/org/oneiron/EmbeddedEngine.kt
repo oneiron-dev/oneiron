@@ -20,7 +20,11 @@ class EngineReply(
  *
  * Every method blocks: call it from an app thread, never from an [AppHost] callback, and call
  * [close] before letting the engine go. No method holds this object's monitor, so a callback
- * that runs while a call blocks never waits on it.
+ * that runs while a call blocks never waits on it. An engine failure throws [EngineException]
+ * with its stable code.
+ *
+ * The artifact app (`/a/`) keeps its own origin, apart from the API's: [artifactRequest] and
+ * [openArtifactConnection] reach it.
  *
  * The native library must be built with `--features engine`
  * (`cargo build -p oneiron-android --features engine`); the default build has only [EmbeddedVault].
@@ -55,6 +59,19 @@ class EmbeddedEngine(
         return requestNative(method, path, names, values, body)
     }
 
+    /** [request] on the artifact app's own origin (`/a/`): what a web view loads artifacts through. */
+    fun artifactRequest(
+        method: String,
+        path: String,
+        headers: List<Pair<String, ByteArray>> = emptyList(),
+        body: ByteArray = ByteArray(0),
+    ): EngineReply {
+        check(!closed.get()) { "engine is closed" }
+        val names = Array(headers.size) { headers[it].first }
+        val values = Array(headers.size) { headers[it].second }
+        return artifactRequestNative(method, path, names, values, body)
+    }
+
     /** The app's timer fired, or a push arrived: run what is due; a stopped engine serves again first. */
     fun wake() {
         check(!closed.get()) { "engine is closed" }
@@ -74,7 +91,13 @@ class EmbeddedEngine(
      */
     fun openConnection(): EngineConnection {
         check(!closed.get()) { "engine is closed" }
-        return EngineConnection(this)
+        return EngineConnection(this, artifacts = false)
+    }
+
+    /** [openConnection] on the artifact app's own origin (`/a/`), apart from the API's. */
+    fun openArtifactConnection(): EngineConnection {
+        check(!closed.get()) { "engine is closed" }
+        return EngineConnection(this, artifacts = true)
     }
 
     /** The engine's own vault, shared rather than opened again; close it on its own. */
@@ -97,6 +120,13 @@ class EmbeddedEngine(
         cpuMillisPerSecond: Int,
     )
     private external fun requestNative(
+        method: String,
+        path: String,
+        headerNames: Array<String>,
+        headerValues: Array<ByteArray>,
+        body: ByteArray,
+    ): EngineReply
+    private external fun artifactRequestNative(
         method: String,
         path: String,
         headerNames: Array<String>,
