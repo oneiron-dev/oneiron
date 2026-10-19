@@ -20880,7 +20880,7 @@
      "path": "src/dreamer_runner/constants.rs",
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
-      "const": 24,
+      "const": 25,
       "crate-vis": 31
      }
     },
@@ -21593,9 +21593,9 @@
      "path": "src/dreamer_runner/mod.rs",
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 4,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -21636,6 +21636,90 @@
       "crate-vis": 1,
       "fn": 4,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/admit.rs",
+     "purpose": "DOOR-141 admission: one writer judges a wake against the live vault and, in one commit, records its Gate…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/arm.rs",
+     "purpose": "DOOR-141 setup: an actor arms a pinned callable SKILL entry for its own future turns",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/authority.rs",
+     "purpose": "The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as…",
+     "surface": {
+      "crate-vis": 12,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/lease.rs",
+     "purpose": "The program kind's own lease and reservation (DOOR-141): the runner's one admission chain over program…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/mod.rs",
+     "purpose": "Turn-woken programs (DOOR-141, FIX 4382)",
+     "surface": {
+      "crate-vis": 3,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArmTurnProgram",
+      "LandedTurnRef",
+      "ProgramRecipePin",
+      "TurnProgramAdmissionOutcome",
+      "TurnProgramAdmissionReceipt",
+      "TurnProgramDrain",
+      "TurnProgramRegistration"
+     ],
+     "path": "src/dreamer_runner/program/types.rs",
+     "purpose": "The DOOR-141 vocabulary: the pinned program, its arming, the wake a landed turn owes it, and what admitting…",
+     "surface": {
+      "crate-vis": 10,
+      "enum": 1,
+      "fn": 1,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/wake.rs",
+     "purpose": "The wake a landed turn owes its actor's armed programs (DOOR-141 §4): it is recorded in the turn's own…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -22152,7 +22236,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -35786,6 +35870,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/turn_program.rs",
+     "purpose": "DOOR-141's two seams on the actor's surface: arming a program for this actor's own future turns, and the…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "WitnessAssertions",
       "WitnessAuthor",
@@ -46408,7 +46503,7 @@
      "path": "src/skill/call.rs",
      "purpose": "Callable skill execution through the caller's existing sandbox runtime and host",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "re-export": 1
      }
@@ -61160,7 +61255,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 69,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61496,7 +61591,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 219,
+     "files": 220,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62177,7 +62272,7 @@
    },
    "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3798,
+   "source_files": 3806,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71297,7 +71392,23 @@
      "surface": {
       "crate-vis": 1,
       "fn": 15,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallMeasure",
+      "CallSize"
+     ],
+     "path": "src/host/sized.rs",
+     "purpose": "A call its caller sizes from what it lends (Rule 5): a booking and a process grant that grow with the input…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -71390,7 +71501,7 @@
      "path": "src/process.rs",
      "purpose": "One live organ process: spawn, handshake, a reader thread, calls",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -71462,7 +71573,6 @@
       "SealIdentity",
       "SealKeyError",
       "SealKeys",
-      "SealLimits",
       "SealSettings",
       "SealTsa"
      ],
@@ -71473,7 +71583,7 @@
       "enum": 1,
       "fn": 5,
       "re-export": 1,
-      "struct": 6,
+      "struct": 5,
       "trait": 1
      }
     },
@@ -71498,6 +71608,16 @@
      "surface": {
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/seal/observe.rs",
+     "purpose": "What one seal or verification call measured, against the engine's `[limits]` rows (OF-520, Rule 5)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -71625,10 +71745,10 @@
      "purpose": "The handlers a caller supplies for an organ's asks (protocol 1.1)"
     },
     "host": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The organ host: install, call, unload, revoke"
     },
     "landing": {
@@ -71695,7 +71815,7 @@
      "purpose": "What the host does to an organ process between fork and exec"
     },
     "seal": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -71725,7 +71845,7 @@
    },
    "over_bar": 1,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 25,
+   "source_files": 27,
    "test_files": 4
   },
   "oneiron-organ-protocol": {
@@ -71740,7 +71860,7 @@
      "purpose": "Framing: `len: u32 LE | MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries…",
      "surface": {
       "enum": 1,
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -72773,6 +72893,8 @@
       "SealClock",
       "SealConfig",
       "SealFetcher",
+      "SealObservations",
+      "SealObserved",
       "SealRequest",
       "SealResourceLimits",
       "SealWarning",
@@ -72786,12 +72908,13 @@
      "path": "src/api.rs",
      "purpose": "Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5)",
      "surface": {
-      "const": 2,
+      "const": 5,
+      "crate-vis": 3,
       "enum": 11,
-      "fn": 1,
+      "fn": 2,
       "mod": 1,
       "re-export": 2,
-      "struct": 13,
+      "struct": 15,
       "trait": 4,
       "type": 1
      }
@@ -72985,7 +73108,7 @@
      "path": "src/native/pdf/lex.rs",
      "purpose": "Bounded PDF structural tokens",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -73023,7 +73146,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/native/pdf/revision_chain.rs",
-     "purpose": "Shared, bounded PDF revision discovery from the actual xref /Prev chain",
+     "purpose": "Shared PDF revision discovery from the actual xref /Prev chain",
      "surface": {
       "crate-vis": 6
      }
@@ -73033,7 +73156,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/native/pdf/revision_facts.rs",
-     "purpose": "One bounded structural account of PDF revisions, definitions and xref roles",
+     "purpose": "One structural account of PDF revisions, definitions and xref roles",
      "surface": {
       "crate-vis": 8
      }
@@ -73906,6 +74029,16 @@
      "notable": [],
      "path": "src/ai_host/turn_actions.rs",
      "purpose": "The turn-action worker: runs each queued Continue and Retry (`vault.conversations.turn.continue` / `.retry`)…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/turn_program.rs",
+     "purpose": "The host's half of DOOR-141: the wakes a landed turn's own commit owed its actor's armed programs, typed…",
      "surface": {
       "crate-vis": 1
      }
@@ -83943,7 +84076,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 51,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84386,7 +84519,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 810,
+   "source_files": 811,
    "test_files": 182
   },
   "oneiron-spawn": {

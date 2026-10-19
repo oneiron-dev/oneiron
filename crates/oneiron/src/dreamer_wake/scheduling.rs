@@ -413,4 +413,15 @@ impl Vault {
         }
         Ok(queued)
     }
+
+    /// The authority-bearing turn producer (DOOR-141), beside the Micro one:
+    /// each wake a landed turn's own commit owed one of its actor's armed
+    /// programs is admitted as one Dreamer program attempt under that actor's
+    /// authority, never the Dreamer's, through the same dedupe after a turn
+    /// as at boot. It reads no partition and moves no consolidation grain.
+    /// One batch per call; [`crate::dreamer_runner::TurnProgramDrain::more`]
+    /// asks for the next.
+    pub fn wake_turn_programs(&self, now: u64) -> Result<crate::dreamer_runner::TurnProgramDrain> {
+        crate::dreamer_runner::drain_turn_program_wakes(self, now)
+    }
 }
