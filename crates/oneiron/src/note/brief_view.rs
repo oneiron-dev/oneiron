@@ -45,7 +45,7 @@ impl Vault {
         frame: &LensRenderFrame,
         read: &ScopedRead<'_>,
     ) -> Result<ScopedReadResult<Option<BriefView>>> {
-        self.render_brief_with_claims(id, frame, read, None, None)
+        self.render_brief_with_claims(id, frame, read, None, None, &mut Vec::new())
     }
 
     /// The existing share evaluator remains the single authorization evaluator;
@@ -58,12 +58,34 @@ impl Vault {
         frame: &LensRenderFrame,
         read: &ScopedRead<'_>,
     ) -> Result<ScopedReadResult<Option<BriefView>>> {
-        self.render_shared_brief_selected(share_id, viewer, narrowing, frame, read, None)
+        let listed = &mut Vec::new();
+        self.render_shared_brief_selected(share_id, viewer, narrowing, frame, read, None, listed)
+    }
+
+    /// [`Self::render_shared_brief`], listing in `listed` the rows the view
+    /// is read from, in the same reads: the share, its brief, and each pin's
+    /// claim and source document it judged, a redacted one among them.
+    pub fn render_shared_brief_listing(
+        &self,
+        share_id: EntityId,
+        viewer: EntityId,
+        narrowing: Option<&crate::share::ShareViewerScope>,
+        frame: &LensRenderFrame,
+        read: &ScopedRead<'_>,
+        listed: &mut Vec<EntityId>,
+    ) -> Result<ScopedReadResult<Option<BriefView>>> {
+        self.render_shared_brief_selected(share_id, viewer, narrowing, frame, read, None, listed)
     }
 
     /// A saved citation handle is only an address inside its share. Resolve
     /// that share again, and select by its stored claim id before redaction
     /// replaces hidden ids. If a claim has several pins, follow its first pin.
+    /// `listed` holds the rows the citation is read from, as
+    /// [`Self::render_shared_brief_listing`] lists them.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the share, viewer, claim and read frame, and the caller's list"
+    )]
     pub fn follow_shared_brief_citation(
         &self,
         share_id: EntityId,
@@ -72,12 +94,18 @@ impl Vault {
         narrowing: Option<&crate::share::ShareViewerScope>,
         frame: &LensRenderFrame,
         read: &ScopedRead<'_>,
+        listed: &mut Vec<EntityId>,
     ) -> Result<ScopedReadResult<Option<BriefCitationView>>> {
+        let claim = Some(claim);
         Ok(self
-            .render_shared_brief_selected(share_id, viewer, narrowing, frame, read, Some(claim))?
+            .render_shared_brief_selected(share_id, viewer, narrowing, frame, read, claim, listed)?
             .map(|view| view.and_then(|view| view.citations.into_iter().next())))
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the share, viewer, read frame, selected citation and the caller's list"
+    )]
     fn render_shared_brief_selected(
         &self,
         share_id: EntityId,
@@ -86,6 +114,7 @@ impl Vault {
         frame: &LensRenderFrame,
         read: &ScopedRead<'_>,
         citation: Option<EntityId>,
+        listed: &mut Vec<EntityId>,
     ) -> Result<ScopedReadResult<Option<BriefView>>> {
         if read.actor_key().actor_ref() != viewer.to_hex() {
             return Err(invalid("brief viewer key mismatch"));
@@ -96,11 +125,13 @@ impl Vault {
                 receipt: read.read_receipt(None, 0)?,
             })
         };
+        listed.push(share_id);
         let Some(share) = self.get_share(&share_id)? else {
             return unresolved();
         };
         let id = EntityId::from_hex(&share.brief_ref)
             .map_err(|_| invalid("brief handle must name a vault NOTE"))?;
+        listed.push(id);
         let document = self.note_document(id)?;
         let refs: Vec<_> = document.pins.iter().map(|pin| pin.claim).collect();
         let Some(resolved) = self.resolve_share_for_view(&share_id, &viewer, narrowing, &refs)?
@@ -113,6 +144,7 @@ impl Vault {
             read,
             Some(&resolved.visible_claim_refs),
             citation,
+            listed,
         )?;
         if let Some(view) = rendered.value.as_mut() {
             view.born_with = self
@@ -122,6 +154,8 @@ impl Vault {
         Ok(rendered)
     }
 
+    /// `listed` holds what the view is read from: the brief, and each pin's
+    /// claim it judged, and the source document of one it admitted.
     fn render_brief_with_claims(
         &self,
         id: EntityId,
@@ -129,7 +163,9 @@ impl Vault {
         read: &ScopedRead<'_>,
         visible: Option<&[EntityId]>,
         citation: Option<EntityId>,
+        listed: &mut Vec<EntityId>,
     ) -> Result<ScopedReadResult<Option<BriefView>>> {
+        listed.push(id);
         if self.vault_id() != read.vault().vault_id() {
             return Err(invalid("brief read frame belongs to another vault"));
         }
@@ -154,6 +190,7 @@ impl Vault {
             .iter()
             .filter(|pin| citation.is_none_or(|claim| pin.claim == claim))
         {
+            listed.push(pin.claim);
             let admitted = if visible.is_none_or(|ids| ids.contains(&pin.claim)) {
                 let claim = frame.scoped_body(read, &pin.claim)?;
                 receipt.restrict_with(&claim.receipt);
@@ -163,6 +200,7 @@ impl Vault {
             };
             let live = match admitted {
                 Some(body) => {
+                    listed.push(pin.document);
                     let document = frame.scoped_body(read, &pin.document)?;
                     receipt.restrict_with(&document.receipt);
                     document

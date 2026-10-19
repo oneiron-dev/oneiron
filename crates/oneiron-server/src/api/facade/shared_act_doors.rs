@@ -37,7 +37,7 @@ use oneiron::federation::{
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{
-    self, EmptyRequest, HandoffAlarmRequest, SharedActExecuted, SharedActRequest,
+    self, ActAnswer, EmptyRequest, HandoffAlarmRequest, SharedActExecuted, SharedActRequest,
     SharedMemberAddRequest, SharedMemberInvited, SharedMemberRequest, SharedMemberRoleRequest,
     SharedReceiptRequest, SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
 };
@@ -203,15 +203,14 @@ pub(crate) async fn vault_shared_propose_remove_owner(
 /// slip issuer. Beside it, the rows it was derived from
 /// ([`sdk::execute_shared_act_listing`]): `None` for an export-first
 /// removal, whose receipt no list covers. A refusal before the act runs
-/// lists no row.
+/// lists no row. The act runs from whatever surface the Owner's proof came
+/// from; a caller off this device whose answer would carry a row that stays
+/// here hears only that it ran (FIX 3414).
 pub(crate) async fn vault_shared_execute(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedActRequest,
-) -> (
-    MemoryResult<SharedActExecuted>,
-    Option<Vec<oneiron::EntityId>>,
-) {
+) -> MaybeListed<ActAnswer<SharedActExecuted>> {
     const VERB: &str = "vault.shared.execute";
     let executor = match person(server, auth, VERB) {
         Ok(executor) => executor,
@@ -228,7 +227,8 @@ pub(crate) async fn vault_shared_execute(
         })
     })
     .await;
-    ran.unwrap_or_else(|refusal| (Err(refusal), Some(Vec::new())))
+    let answer = ran.unwrap_or_else(|refusal| (Err(refusal), Some(Vec::new())));
+    crate::device_local::act_answer_maybe(server.vault(), &auth.destination(), answer)
 }
 
 /// `vault.shared.receipt`: a receipt its reader was told about.

@@ -83,6 +83,33 @@ impl RecallResidence {
             selection: None,
         }
     }
+
+    /// The home's answer to a text search (FIX 3876, `vault.search.bm25`):
+    /// its `hits` in its order, each entity once and none of `held`, the
+    /// full ids the device's own page holds; `complete` as the home said;
+    /// `capped` when the search asked past the residence `search_limit`.
+    #[must_use]
+    pub fn home_text(
+        hits: impl IntoIterator<Item = RecallResidenceHit>,
+        complete: bool,
+        capped: bool,
+        held: &[String],
+    ) -> Self {
+        let mut held: std::collections::HashSet<String> =
+            held.iter().map(|id| id.to_ascii_lowercase()).collect();
+        Self {
+            source: RecallResidenceSource::Home,
+            complete,
+            capped,
+            hits: hits
+                .into_iter()
+                .filter(|hit| held.insert(hit.id.to_ascii_lowercase()))
+                .collect(),
+            marked_partial: false,
+            #[cfg(feature = "sync")]
+            selection: None,
+        }
+    }
 }
 
 /// How a recall joins the home's references to its own items (FIX 2905).

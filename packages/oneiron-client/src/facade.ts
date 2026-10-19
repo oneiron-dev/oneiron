@@ -1134,9 +1134,9 @@ export interface FacadeResults {
   "vault.budgets.rsi.top_up": Facade.RsiLineView;
   "vault.budgets.rsi.hold": Facade.RsiLineView;
   "vault.budgets.rsi.hold.resume": Facade.RsiLineView;
-  "vault.fanout.resume": Facade.FanoutLaunchView;
-  "vault.fanout.resume_as": Facade.FanoutLaunchView;
-  "vault.fanout.ack": Facade.FanoutLaunchView;
+  "vault.fanout.resume": Facade.ActAnswer<Facade.FanoutLaunchView>;
+  "vault.fanout.resume_as": Facade.ActAnswer<Facade.FanoutLaunchView>;
+  "vault.fanout.ack": Facade.ActAnswer<Facade.FanoutLaunchView>;
   "tasks.update": Facade.TaskUpdateReceipt;
   "tasks.accept": Facade.TaskCallReceipt;
   "vault.commit_message": Facade.WitnessReceipt;
@@ -1341,7 +1341,7 @@ export interface FacadeResults {
   "vault.shared.propose_delete": Facade.PendingAuthorityAct;
   "vault.shared.propose_transfer": Facade.PendingAuthorityAct;
   "vault.shared.propose_remove_owner": Facade.PendingAuthorityAct;
-  "vault.shared.execute": Facade.SharedActExecuted;
+  "vault.shared.execute": Facade.ActAnswer<Facade.SharedActExecuted>;
   "vault.shared.receipt": Facade.SharedActExecutionReceipt;
   "vault.shared.outcomes": Facade.SharedActOutcome[];
   "vault.shared.deletion": Facade.SharedVaultDeletion | null;
@@ -1434,7 +1434,7 @@ export interface FacadeResults {
   "vault.off_record.rooms.confirm_save": Facade.OffRecordRoomSaved;
   "vault.off_record.rooms.decline_save": Facade.OffRecordRoomView;
   "vault.records.erase_preview": Facade.RecordErasePreview;
-  "vault.records.erase_confirm": Facade.RecordEraseOutcome;
+  "vault.records.erase_confirm": Facade.ActAnswer<Facade.RecordEraseOutcome>;
   "vault.records.erase_sweep": Facade.RecordEraseSweep | null;
   "vault.research.create_child": Facade.ResearchChildReceipt;
   "vault.research.archive": Facade.ResearchArchive;
@@ -1927,7 +1927,7 @@ export interface FacadeResults {
   "vault.vectors.put": Facade.VectorPutReceipt;
   "vault.search.hybrid": Facade.ScopedReadResult<Facade.HybridSearchHit[]>;
   "vault.search.temporal": Facade.ScopedReadResult<Facade.TemporalSearchResult>;
-  "vault.search.bm25": Facade.ScopedReadResult<Facade.LexicalHit[]>;
+  "vault.search.bm25": Facade.Bm25Search;
   "vault.neighbors": Facade.ScopedReadResult<Facade.NeighborHit[]>;
   "vault.structural.put": Facade.EntityRefReceipt;
   "vault.habits.checkin": Facade.EntityRefReceipt;
@@ -2997,7 +2997,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.vectors.put": { description: "Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.search.hybrid": { description: "Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.search.temporal": { description: "Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.search.bm25": { description: "BM25 text search over the engine index; surfaceable claims only.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.search.bm25": { description: "BM25 text search over the engine index; surfaceable claims only. On a device that syncs only what it opened, a server's door asks the home under the caller's own proof, and its references ride in residence.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.neighbors": { description: "The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.structural.put": { description: "Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.habits.checkin": { description: "Appends one immutable check-in under a Habit TASK.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -3625,7 +3625,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         hybrid: (input: Facade.HybridSearchRequest, options?: O): FacadeReturns<"vault.search.hybrid">[K] => invoke("vault.search.hybrid", input, options, newInvocation()),
         /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */
         temporal: (input: Facade.TemporalSearchRequest, options?: O): FacadeReturns<"vault.search.temporal">[K] => invoke("vault.search.temporal", input, options, newInvocation()),
-        /** BM25 text search over the engine index; surfaceable claims only. */
+        /** BM25 text search over the engine index; surfaceable claims only. On a device that syncs only what it opened, a server's door asks the home under the caller's own proof, and its references ride in residence. */
         bm25: (input: Facade.QueryBm25Request, options?: O): FacadeReturns<"vault.search.bm25">[K] => invoke("vault.search.bm25", input, options, newInvocation()),
       },
       images: {

@@ -4,6 +4,7 @@
 //! gate, so a row lands only where the vault's policy lets that effect run.
 //! A provisioned identity waits for fulfillment, as any other does.
 use super::invalid;
+use super::live::ShapeSources;
 use crate::channel_identity::{
     ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
     DelegatedGrant, DelegatedGrantScope, DelegatedProvisionRequest, SelfHeldShape,
@@ -159,7 +160,11 @@ impl Vault {
     /// Provisions the identity `channel`/`address` as `owner`. A self-held
     /// one passes the lifecycle gate's provision; a delegated one is
     /// requested against its custody record, then passes the gate's bind.
-    /// The item lands once the identity waits for fulfillment.
+    /// The item lands once the identity waits for fulfillment. `sources`
+    /// lists the identity once a writer wrote it, beside the ledger receipt
+    /// and beside a refusal after that write; a delegated one's custody
+    /// record is resolved by name inside its writer, so its rows are unknown.
+    #[expect(clippy::too_many_arguments, reason = "one landing's plain inputs")]
     pub(super) fn provision_shape_channel(
         &self,
         owner: &AuthenticatedOwner,
@@ -168,6 +173,7 @@ impl Vault {
         provision: &ShapeChannelProvision,
         binding: ChannelIdentityBinding,
         now: u64,
+        sources: &mut ShapeSources,
     ) -> Result<String> {
         let actor = owner.revalidate(self)?;
         let request = |intent: ChannelIdentityLifecycleIntent| ChannelIdentityLifecycleRequest {
@@ -197,20 +203,22 @@ impl Vault {
             )));
         }
         let (result, rests) = match &provision.custody {
-            ShapeChannelCustody::SelfHeld { .. } => (
-                self.apply_channel_identity_lifecycle_intent(request(
+            ShapeChannelCustody::SelfHeld { .. } => {
+                let result = self.apply_channel_identity_lifecycle_intent(request(
                     ChannelIdentityLifecycleIntent::Provision(ProvisionIntent {
                         identity_id,
                         identity,
                         fulfillment_mode,
                     }),
-                ))?,
-                String::new(),
-            ),
+                ))?;
+                sources.list(identity_id);
+                (result, String::new())
+            }
             ShapeChannelCustody::Delegated {
                 custody_record_ref,
                 scopes,
             } => {
+                sources.unknown();
                 self.provision_delegated_identity(
                     &identity_id,
                     DelegatedProvisionRequest {

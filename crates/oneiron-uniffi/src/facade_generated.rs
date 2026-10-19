@@ -363,17 +363,17 @@ export_facade! {
     let output = client.vault_budgets_rsi_hold_resume(&input)?;
     crate::codec::lift_record("vault.budgets.rsi.hold.resume", &output)
 };
-"vault.fanout.resume" => fn vault_fanout_resume(&self, input: FanoutResumeRequest) -> FanoutLaunchView = |client| {
+"vault.fanout.resume" => fn vault_fanout_resume(&self, input: FanoutResumeRequest) -> ActAnswerFanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume", input)?;
     let output = client.vault_fanout_resume(&input)?;
     crate::codec::lift_record("vault.fanout.resume", &output)
 };
-"vault.fanout.resume_as" => fn vault_fanout_resume_as(&self, input: FanoutResumeRequest) -> FanoutLaunchView = |client| {
+"vault.fanout.resume_as" => fn vault_fanout_resume_as(&self, input: FanoutResumeRequest) -> ActAnswerFanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume_as", input)?;
     let output = client.vault_fanout_resume_as(&input)?;
     crate::codec::lift_record("vault.fanout.resume_as", &output)
 };
-"vault.fanout.ack" => fn vault_fanout_ack(&self, input: FanoutAckRequest) -> FanoutLaunchView = |client| {
+"vault.fanout.ack" => fn vault_fanout_ack(&self, input: FanoutAckRequest) -> ActAnswerFanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutAckRequest = crate::codec::lower_record("vault.fanout.ack", input)?;
     let output = client.vault_fanout_ack(&input)?;
     crate::codec::lift_record("vault.fanout.ack", &output)
@@ -1401,7 +1401,7 @@ export_facade! {
     let output = client.vault_shared_propose_remove_owner(&input)?;
     crate::codec::lift_record("vault.shared.propose_remove_owner", &output)
 };
-"vault.shared.execute" => fn vault_shared_execute(&self, input: SharedActRequest) -> SharedActExecuted = |client| {
+"vault.shared.execute" => fn vault_shared_execute(&self, input: SharedActRequest) -> ActAnswerSharedActExecuted = |client| {
     let input: oneiron::task_verb::sdk::SharedActRequest = crate::codec::lower_record("vault.shared.execute", input)?;
     let output = client.vault_shared_execute(&input)?;
     crate::codec::lift_record("vault.shared.execute", &output)
@@ -1866,7 +1866,7 @@ export_facade! {
     let output = client.vault_records_erase_preview(&input)?;
     crate::codec::lift_record("vault.records.erase_preview", &output)
 };
-"vault.records.erase_confirm" => fn vault_records_erase_confirm(&self, input: RecordEraseConfirmRequest) -> RecordEraseOutcome = |client| {
+"vault.records.erase_confirm" => fn vault_records_erase_confirm(&self, input: RecordEraseConfirmRequest) -> ActAnswerRecordEraseOutcome = |client| {
     let input: oneiron::task_verb::sdk::RecordEraseConfirmRequest = crate::codec::lower_record("vault.records.erase_confirm", input)?;
     let output = client.vault_records_erase_confirm(&input)?;
     crate::codec::lift_record("vault.records.erase_confirm", &output)

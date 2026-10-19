@@ -32,7 +32,7 @@ pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, Win
 pub use self::driver::EngineNativeExecutor;
 #[cfg(test)]
 use self::record::step_state_hash;
-pub use self::skill_call::execute_live_skill_call;
+pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
 pub(crate) use self::store::{
     RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, clean_for_context, is_result_output_path,
     result_handle_json, store_result_output_path,

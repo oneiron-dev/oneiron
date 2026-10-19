@@ -249,6 +249,13 @@ SERVER_RECALL_DOC = "/// `vault.recall` → `SyncServer::recall_home_listing`, t
 # FIX 2905: the server doors that also ask an opened device's home, by row,
 # with the caller the call (or the MCP actor) admitted as the last argument.
 HOME_SERVER_DOORS = {'vault.recall': 'recall_home_listing'}
+# FIX 3876: the rows whose page is read on the transport's own caller surface,
+# as a plain row's is, then completed by the opened device's home under the
+# caller the call admitted. REST runs the row's facade door (its hooks
+# outside, its surface the facade's own); MCP runs the plain arm on its own
+# surface and then the home step, which lists the home's references.
+CALL_HOME_DOORS = {'vault.search.bm25': ('super::search_home_doors::vault_search_bm25',
+                                         'crate::api::search::complete_bm25_with_home')}
 
 # Boundary codecs are selected by argument/result type, never by verb name.
 ARGUMENTS = {
@@ -823,6 +830,13 @@ def mcp_input_dispatch(row):
                      '// Derived from the rows its reads listed, on a refusal too.\n'
                      'served.extend(listed);\n'
                      'let output = output.map_err(mcp_facade_error)?;\n')
+        elif name in CALL_HOME_DOORS:
+            # Its page as the plain arm reads it, then the home's references.
+            body += ('let asked = (input.query.clone(), input.limit);\n'
+                     f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
+                     f'let (output, listed) = {CALL_HOME_DOORS[name][1]}(server.vault(), output, &asked.0, asked.1, &actor.home_caller()).await;\n'
+                     '// The home\'s references, found under the caller\'s own proof.\n'
+                     'served.extend(listed);\n')
         else:
             body += f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
         if 'mcp_served_output' in row:
@@ -1428,6 +1442,9 @@ def facade_dispatch(facade_rows):
                          if home_door else f'{r["server_door"]}_listing(actor, class, auth.verified_slip().cloned(), auth.locality(), call.room_turn()?, facade_input(value)?)')
             result = (f'let (output, listed) = server.{door_call}.await;\n'
                       'let output = facade_output(output?)?;\nlet rows = Some(listed);')
+        elif name in CALL_HOME_DOORS:
+            result = (f'let (output, listed) = {CALL_HOME_DOORS[name][0]}(server, call, actor, class, facade_input(value)?).await;\n'
+                      'let output = facade_output(output?)?;\nlet rows = Some(listed);')
         landed = ''
         if r.get('lands_turn'):
             landed = 'server.ai.turn_landed_by(server.vault(), actor, class);'
@@ -1441,7 +1458,7 @@ def facade_dispatch(facade_rows):
         # here (ARCH-0080 §3): after the call's own refusals, before the checks
         # its args meet, so a rewrite meets them too. `invoke` crosses them for
         # every other row.
-        if 'rows' in readables or r.get('server_door'):
+        if 'rows' in readables or r.get('server_door') or name in CALL_HOME_DOORS:
             actor = 'let (actor, class) = facade_actor(server, auth)?;'
             self_branch = ''
             if name == 'describe':
@@ -1453,8 +1470,9 @@ def facade_dispatch(facade_rows):
                                'let (output, rows) = crate::api::context_board::describe_self_for_auth(server, auth, &value).await?; '
                                'return Ok(FacadeCallOutput { value: facade_hooks_post(server, hooks, output).await?, rows: Some(rows) }); } ' + actor)
                 actor = ''
-            producers = '' if r.get('server_door') else 'let producers = oneiron::memory::ProducerRows::default();\n'
-            output = result if r.get('server_door') else f'let output = {result}'
+            door = r.get('server_door') or name in CALL_HOME_DOORS
+            producers = '' if door else 'let producers = oneiron::memory::ProducerRows::default();\n'
+            output = result if door else f'let output = {result}'
             dispatch += head + f'''oneiron::task_verb::sdk::validate_input("{name}", &value)?;
         {room_guard}{actor}
         let hooks = facade_hooks_pre(server, call, "{name}", value).await?;

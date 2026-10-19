@@ -205,6 +205,10 @@ pub(super) struct HookReadRow {
 pub(super) struct HookVerdictPin {
     pub(super) request_json: String,
     pub(super) reply: std::result::Result<String, String>,
+    /// The rows the verdict's evidence resolved to, as the ask heard it;
+    /// `None` when they are not known.
+    #[serde(default)]
+    pub(super) evidence: Option<Vec<EntityId>>,
 }
 
 /// The memo row: a run's saved result. A repeat run finds it and computes

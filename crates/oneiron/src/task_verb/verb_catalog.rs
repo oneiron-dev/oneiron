@@ -11990,7 +11990,7 @@ impl AgentVerb {
                 "Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds."
             }
             Self::VaultSearchBm25 => {
-                "BM25 text search over the engine index; surfaceable claims only."
+                "BM25 text search over the engine index; surfaceable claims only. On a device that syncs only what it opened, a server's door asks the home under the caller's own proof, and its references ride in residence."
             }
             Self::VaultNeighbors => {
                 "The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight."

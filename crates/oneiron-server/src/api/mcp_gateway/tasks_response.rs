@@ -19764,8 +19764,19 @@ async fn execute_agent_verb_row(
         "vault.search.bm25" => {
             let input: oneiron::task_verb::sdk::QueryBm25Request =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            let asked = (input.query.clone(), input.limit);
             let output = oneiron::task_verb::sdk::vault_search_bm25(&memory, input)
                 .map_err(mcp_facade_error)?;
+            let (output, listed) = crate::api::search::complete_bm25_with_home(
+                server.vault(),
+                output,
+                &asked.0,
+                asked.1,
+                &actor.home_caller(),
+            )
+            .await;
+            // The home's references, found under the caller's own proof.
+            served.extend(listed);
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
