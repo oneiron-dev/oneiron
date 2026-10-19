@@ -1,3 +1,7 @@
+mod session_write;
+
+pub use self::session_write::{SessionWriteAdmission, SessionWriteCeiling};
+
 // Referenced only by an intra-doc link on `SelfCall::MemoryWriteFixture`;
 // gated so the name is in scope for rustdoc without being an unused import.
 #[cfg(doc)]
@@ -647,6 +651,23 @@ pub trait AgentVerbDoor: Send + Sync {
         &self,
         _verb: crate::task_verb::sdk::AgentVerb,
     ) -> std::result::Result<crate::claim::ScopedReadActorKey, AgentVerbRefusal> {
+        Err(AgentVerbRefusal {
+            code: AGENT_VERB_SESSION_BOUND.to_owned(),
+        })
+    }
+
+    /// Admits one of the two writes a run bound to an off-record session
+    /// stages in its room (WILL L11-01, S01-2a): `vault.notes.create` or
+    /// `vault.claims.upsert`. The answer is what the write lands under: this
+    /// door's caller, as its credential and ceiling bind them now, and the
+    /// ceiling the write's own transaction checks again. A read's key
+    /// ([`Self::admit_session_read`]) is no write permit. A door that admits
+    /// no such write refuses it as a session-bound run's verbs were refused
+    /// before.
+    fn admit_session_write(
+        &self,
+        _verb: crate::task_verb::sdk::AgentVerb,
+    ) -> std::result::Result<SessionWriteAdmission, AgentVerbRefusal> {
         Err(AgentVerbRefusal {
             code: AGENT_VERB_SESSION_BOUND.to_owned(),
         })
