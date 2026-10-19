@@ -483,9 +483,8 @@ impl ManagedArgs {
             // passes it, either way; unset, the settings file's, then the
             // managed default.
             failure_signal_export: args.failure_signal_export,
-            // Training on what it sends, by the same rule: unset, the
-            // settings file's, then the switch's managed default, on (FIX
-            // 5188).
+            // Training on what it sends: unset, the settings file's, then
+            // whatever the switch is (FIX 5188).
             failure_signal_training: args.failure_signal_training,
             ..defaults
         };

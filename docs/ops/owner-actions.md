@@ -903,9 +903,9 @@ Hypnos runs) shares them by default, and you can turn that off: "Help improve On
 `failure_signal_export = false` in its settings. A server you run yourself shares nothing until you
 set `failure_signal_export = true` (`ONEIRON_FAILURE_SIGNAL_EXPORT`), whatever privacy posture it
 declares. Training on what leaves is its own yes or no, `failure_signal_training`
-(`ONEIRON_FAILURE_SIGNAL_TRAINING`), and until you set it, it takes the same default: on for a
-vault our cloud hosts, off on a server you run yourself. Real conversations stay under each
-person's own "Learn from my conversations" choice. Where it goes:
+(`ONEIRON_FAILURE_SIGNAL_TRAINING`), and until you set it, it follows "Help improve Oneiron": on
+when the vault shares, off when it does not. Real conversations stay under each person's own
+"Learn from my conversations" choice. Where it goes:
 
 ```toml
 [failure_signals]

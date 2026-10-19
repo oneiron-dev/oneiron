@@ -899,8 +899,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     };
     let mut vault_config = config.vault_config();
     // Our cloud hosts this vault. The owner's "Help improve Oneiron" and
-    // training choices stand as the supervisor passed them; an unset one
-    // takes the managed default, on.
+    // training choices stand as the supervisor passed them; an unset export
+    // takes the managed default, and unset training follows the export.
     vault_config.failure_signals.deployment =
         oneiron::config::failure_signals::DeploymentTier::Managed;
     // Set before the open: LMDB takes the page key with the environment.

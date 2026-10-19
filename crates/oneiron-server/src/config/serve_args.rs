@@ -419,8 +419,7 @@ pub struct ServeArgs {
     #[arg(long, action = clap::ArgAction::Set)]
     pub failure_signal_export: Option<bool>,
     /// Training on what "Help improve Oneiron" sends, as its own yes or no.
-    /// Unset, it takes the switch's default: on for a hosted vault, which
-    /// can turn it off; off on self-host until set true.
+    /// Unset, it follows that switch: on exactly when the vault exports.
     #[arg(long, action = clap::ArgAction::Set)]
     pub failure_signal_training: Option<bool>,
 

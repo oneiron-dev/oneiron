@@ -1,6 +1,7 @@
 //! The owner's "Help improve Oneiron" switch (`export_opt_in`, with
 //! [`default_exports`] when he has not chosen) decides whether a vault
-//! exports, and is separate from permission to train.
+//! exports, and whether what it sends may be trained on unless training is
+//! chosen on its own.
 //!
 //! What a vault exports is the content-free tier-1 aggregate
 //! ([`Vault::export_tier1_failure_counts`](crate::Vault::export_tier1_failure_counts)):
@@ -14,9 +15,10 @@
 //! Neither carries real chat text, and a failure that touched a private world
 //! sends counts only.
 //!
-//! Training on what the switch sends is its own yes or no, and when the owner
-//! has not chosen it takes the switch's default (owner ruling 2026-10-19, FIX
-//! 5188). Real conversations stay under each person's own choice (FIX 4489).
+//! Training on what the switch sends sits inside the switch (owner ruling
+//! 2026-10-19, FIX 5188): unset, it is on exactly when the vault exports, and
+//! an explicit training yes or no stands over it. Real conversations stay
+//! under each person's own choice (FIX 4489).
 
 use serde::{Deserialize, Serialize};
 
@@ -39,15 +41,14 @@ pub struct FailureSignalConfig {
     pub export_opt_in: Option<bool>,
     /// The owner's training choice on what the switch sends, in every tier:
     /// `Some` is an explicit yes or no and stands as given, whatever the
-    /// switch says; `None` takes [`default_exports`], on for a vault our
-    /// cloud hosts and off on self-host and OSS.
+    /// switch says; `None` follows the switch ([`Self::exports`]), the
+    /// owner's choice there or else [`default_exports`].
     pub training_opt_in: Option<bool>,
 }
 
-/// Whether a deployment exports, and permits training on what it sends,
-/// when its owner has not chosen (owner rulings 2026-10-19, FIX 4488 and
-/// FIX 5188): on for a vault our cloud hosts, which its owner can turn off;
-/// off on self-host and OSS until the owner turns it on.
+/// Whether a deployment exports when its owner has not chosen (owner ruling
+/// 2026-10-19, FIX 4488): on for a vault our cloud hosts, which its owner can
+/// turn off; off on self-host and OSS until the owner turns it on.
 pub const fn default_exports(deployment: DeploymentTier) -> bool {
     match deployment {
         DeploymentTier::Managed => true,
@@ -61,7 +62,6 @@ impl FailureSignalConfig {
             .unwrap_or(default_exports(self.deployment))
     }
     pub fn permits_training(self) -> bool {
-        self.training_opt_in
-            .unwrap_or(default_exports(self.deployment))
+        self.training_opt_in.unwrap_or(self.exports())
     }
 }

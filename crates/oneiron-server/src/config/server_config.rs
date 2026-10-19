@@ -356,7 +356,7 @@ pub struct ServeConfig {
     /// serve ([`oneiron::config::failure_signals::default_exports`]).
     pub failure_signal_export: Option<bool>,
     /// The owner's training choice on what that switch sends, as given:
-    /// `None` takes the same deployment default (FIX 5188).
+    /// `None` follows the switch (FIX 5188).
     pub failure_signal_training: Option<bool>,
     /// Opaque host-managed KMS key reference. `Some` only for the managed
     /// posture; relay and self-host keep no host reference at all. Never key
