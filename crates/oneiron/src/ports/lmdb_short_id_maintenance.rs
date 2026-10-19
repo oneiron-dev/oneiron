@@ -2,8 +2,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use xxhash_rust::xxh32::xxh32;
-
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, encode_short_id_forward_key, parse_short_id_value};
 use crate::entity_id::parse_entity_id;
@@ -88,8 +86,9 @@ pub(super) fn recompute_short_id_hashes(
             return Err(Error::InvalidKey);
         }
 
-        let payload = &blob[ENTITY_METADATA_HEADER_LEN..];
-        let new_hash = (xxh32(payload, 0) % 256) as u8;
+        // The logical body's hash: a file-plane ASSET's from its manifest
+        // (FIX 3677).
+        let new_hash = crate::store::short_content_hash_in_txn(&vault.store, wtxn, &id, &blob)?;
         if new_hash != current_hash {
             let mut updated_value = Vec::with_capacity(short_id.len() + 1);
             updated_value.extend_from_slice(short_id.as_bytes());

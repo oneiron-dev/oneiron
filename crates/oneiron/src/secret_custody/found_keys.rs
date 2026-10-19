@@ -45,7 +45,7 @@ use crate::store::Store;
 use crate::vault::Vault;
 
 pub use self::actions::FOUND_KEY_REASON_NOT_A_SECRET;
-pub(crate) use self::actions::settle_found_key_in_txn;
+pub(crate) use self::actions::{ruled_no_secret_in_txn, settle_found_key_in_txn};
 
 /// Producer name of a found-key notice.
 pub const NOTIFICATION_PRODUCER_FOUND_KEY: &str = "secret.found_key";

@@ -17,6 +17,11 @@
 //! request it is for, until the holder answers (`crate::sync::custody`). A
 //! surface that seals the input itself hands the console no plaintext; an
 //! upload of the raw value to the holder stays an explicit choice.
+//!
+//! A kept or relayed input carries its request's signed entry as a witness
+//! (FIX 4996), beside the envelope and outside the digest the request names,
+//! since the request names that digest: a window admits an input row only
+//! on a witness that proves the row names a real request for it.
 
 use getrandom::SysRng;
 use oneiron_crypto::{
@@ -27,6 +32,11 @@ use zeroize::Zeroizing;
 
 use crate::Vault;
 use crate::authority::{AuthorityEntryHash, CustodyChange, CustodyRecipientPermit, WrapRecipient};
+#[cfg(feature = "sync")]
+use crate::authority::{
+    AuthorityFold, AuthorityFoldIssue, AuthorityKey, AuthorityOp, OwnerWorkBody, OwnerWorkRequest,
+    authority_entry_hash, decode_authority_log_entry_body,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
@@ -43,8 +53,10 @@ const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
 /// The largest input envelope a door takes or a relay carries, as for a
 /// custody transition.
 pub(crate) const MAX_INPUT_BYTES: usize = 4 << 20;
-/// A relayed input's frame: the second it was sealed at, then the request.
-const FRAME_BYTES: usize = 8 + 32;
+/// A relayed input's frame: the second it was sealed at, the request, then
+/// its witness's length. The witness and the envelope follow, each at most
+/// [`MAX_INPUT_BYTES`].
+const FRAME_BYTES: usize = 8 + 32 + 4;
 /// The label of a sealed register's input as its recorder records it: the
 /// envelope the owner's surface sealed, then the manifest the recorder
 /// resolved for the `manifest_ref` that surface stated (CALLS
@@ -282,12 +294,47 @@ pub(crate) fn input_digest(envelope: &[u8]) -> [u8; 32] {
 }
 
 /// One input as it is kept and relayed: the second it was sealed at, whose
-/// month's base window carries it, the request it is for and its envelope.
+/// month's base window carries it, the request it is for, that request's
+/// witness and its envelope.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct RelayedInput {
     pub(crate) sealed_at: u64,
     pub(crate) request: AuthorityEntryHash,
+    /// The request's signed authority entry, canonical (FIX 4996). It rides
+    /// outside the envelope's digest, which the request names.
+    pub(crate) witness: Vec<u8>,
     pub(crate) envelope: Vec<u8>,
+}
+
+/// What an input's witness proves: the request, and the install key that
+/// signed it, when it is one.
+#[cfg(feature = "sync")]
+pub(crate) struct Witnessed {
+    key: Option<[u8; 32]>,
+    request: OwnerWorkRequest,
+}
+
+#[cfg(feature = "sync")]
+impl Witnessed {
+    /// Whether `fold` judged the request entry `hash` invalid with its
+    /// signer folded (FIX 4996): a chain of its carrier names the key that
+    /// signed it, and the fold holds an issue for exactly this entry, other
+    /// than one that waits on a parent not here yet.
+    pub(crate) fn folded_invalid(&self, fold: &AuthorityFold, hash: &AuthorityEntryHash) -> bool {
+        let Some(key) = &self.key else {
+            return false;
+        };
+        fold.machine(self.request.carrier)
+            .is_some_and(|machine| machine.names_key(key))
+            && fold.issues.iter().any(|issue| match issue {
+                AuthorityFoldIssue::InvalidEntry(entry)
+                | AuthorityFoldIssue::RetiredSigner(entry)
+                | AuthorityFoldIssue::SignerNotInAncestry(entry)
+                | AuthorityFoldIssue::NonMonotonicSeq(entry)
+                | AuthorityFoldIssue::WrongVault(entry) => entry == hash,
+                _ => false,
+            })
+    }
 }
 
 // Never print the ciphertext.
@@ -301,38 +348,89 @@ impl std::fmt::Debug for RelayedInput {
 }
 
 impl RelayedInput {
-    /// The frame, then the envelope.
+    /// The frame, the witness, then the envelope. A witness longer than a
+    /// `u32` is never framed: [`Self::decode`] refuses one past
+    /// [`MAX_INPUT_BYTES`].
     pub(crate) fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(FRAME_BYTES + self.envelope.len());
+        let witness_len = u32::try_from(self.witness.len()).unwrap_or(u32::MAX);
+        let mut out = Vec::with_capacity(FRAME_BYTES + self.witness.len() + self.envelope.len());
         out.extend_from_slice(&self.sealed_at.to_be_bytes());
         out.extend_from_slice(&self.request);
+        out.extend_from_slice(&witness_len.to_be_bytes());
+        out.extend_from_slice(&self.witness);
         out.extend_from_slice(&self.envelope);
         out
     }
 
     /// Decodes a kept or relayed input strictly; `None` for a short frame,
-    /// an empty or oversized envelope or a zero request.
+    /// a zero request, or an empty or oversized witness or envelope. The
+    /// witness is read, not judged: [`Self::witnessed`] judges it.
     pub(crate) fn decode(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() <= FRAME_BYTES || bytes.len() > FRAME_BYTES + MAX_INPUT_BYTES {
-            return None;
-        }
-        let (sealed_at, rest) = bytes.split_at(8);
-        let (request, envelope) = rest.split_at(32);
-        let request: AuthorityEntryHash = request.try_into().ok()?;
-        if request == [0; 32] {
+        let (sealed_at, rest) = bytes.split_first_chunk::<8>()?;
+        let (request, rest) = rest.split_first_chunk::<32>()?;
+        let (witness_len, rest) = rest.split_first_chunk::<4>()?;
+        let (witness, envelope) =
+            rest.split_at_checked(usize::try_from(u32::from_be_bytes(*witness_len)).ok()?)?;
+        if *request == [0; 32]
+            || witness.is_empty()
+            || witness.len() > MAX_INPUT_BYTES
+            || envelope.is_empty()
+            || envelope.len() > MAX_INPUT_BYTES
+        {
             return None;
         }
         Some(Self {
-            sealed_at: u64::from_be_bytes(sealed_at.try_into().ok()?),
-            request,
+            sealed_at: u64::from_be_bytes(*sealed_at),
+            request: *request,
+            witness: witness.to_vec(),
             envelope: envelope.to_vec(),
         })
+    }
+
+    /// The request this input's witness proves (FIX 4996): the witness is a
+    /// canonical authority entry whose signature verifies, it hashes to
+    /// `request`, and it is a custody request naming this input's digest.
+    /// `None` otherwise.
+    #[cfg(feature = "sync")]
+    pub(crate) fn witnessed(&self) -> Option<Witnessed> {
+        let entry = decode_authority_log_entry_body(&self.witness).ok()?;
+        if authority_entry_hash(&entry).ok()? != self.request {
+            return None;
+        }
+        let key = match entry.signer_key() {
+            AuthorityKey::Ed25519(key) => Some(*key),
+            _ => None,
+        };
+        let AuthorityOp::OwnerWorkRequest(request) = entry.op else {
+            return None;
+        };
+        let digest = self.digest();
+        matches!(
+            &request.work,
+            OwnerWorkBody::Custody { input: Some(named), .. } if *named == digest
+        )
+        .then_some(Witnessed { key, request })
     }
 
     /// The digest the request names.
     pub(crate) fn digest(&self) -> [u8; 32] {
         input_digest(&self.envelope)
     }
+}
+
+/// The witness of the request signed as entry `hash` (FIX 4996): its stored
+/// entry, canonical, which hashes to `hash`.
+///
+/// # Errors
+/// No authority row is stored under `hash`; storage errors.
+pub(crate) fn request_witness_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    hash: &AuthorityEntryHash,
+) -> Result<Vec<u8>> {
+    let entry = crate::authority::stored_authority_row(&vault.store, txn, hash)?
+        .ok_or_else(crate::authority::invalid_authority)?;
+    crate::authority::encode_authority_log_entry_body(&entry)
 }
 
 /// Keeps `input` under its digest in `wtxn`.

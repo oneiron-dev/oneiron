@@ -11,34 +11,37 @@ use super::super::transition::{
     Enactment, custody_portable, drop_sealed_carrier_in_txn, holds_sealed_carrier_in_txn,
     write_custody_transition_in_txn,
 };
-use super::super::types::{CustodyClass, SecretCustodyStatus};
+use super::super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus};
 use super::input::drop_inputs_for_in_txn;
+use super::pending_revoke::{can_carry_in_txn, defer_revoke_in_txn};
 use super::{CustodyKeptHere, SecretCustodyWork, enacted};
 use crate::authority::{ActSurface, CustodyChange, OwnerWorkBody};
-use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result, SecretError};
-use crate::secret_rotation::{RevokeCause, revoke_custody_in_txn};
+use crate::secret_rotation::{RevokeCause, holds_erasable_value_in_txn, revoke_custody_in_txn};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
 impl Vault {
     /// Records the owner's revoke of the record `secret_ref` names for his
     /// other machines, in the revoke door's write transaction, after the
-    /// record and its leases were revoked here: a custody revoke request
-    /// naming this install, its carrier, as executor (CALLS
-    /// CUSTODY_EXECUTOR), its enacted result, then the revoked transition
-    /// bound to the request. Its `seen` is the secret's custody revision here
-    /// (CALLS CUSTODY_REVISION). Nothing is recorded, and the work says why
-    /// the revoke stays here (FIX 4994), for a record that stays on its
-    /// device, or when this install has no live machine profile to carry the
-    /// act.
+    /// record and its leases were revoked here, for `actor`, the live vault
+    /// owner the door checked in it: a custody revoke request naming this
+    /// install, its carrier, as executor (CALLS CUSTODY_EXECUTOR), its
+    /// enacted result, then the revoked transition bound to the request. Its
+    /// `seen` is the secret's custody revision here (CALLS
+    /// CUSTODY_REVISION). Nothing is recorded, and the work says why the
+    /// revoke stays here (FIX 4994), for a record that stays on its device.
+    /// When this install cannot carry the act now, with no live machine
+    /// profile or no install key loaded, the revoke stands here and its
+    /// carry is kept pending, value-free, for the next pass that can sign
+    /// (CALLS CUSTODY_REVOKE_PENDING_CARRY, FIX 4851).
     ///
     /// # Errors
     /// A name no record holds; the store's errors.
     pub(crate) fn carry_custody_revoke_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        owner: &AuthenticatedOwner,
+        actor: EntityId,
         surface: ActSurface,
         secret_ref: &str,
         at: u64,
@@ -50,9 +53,36 @@ impl Vault {
         if !custody_portable(&record) {
             return Ok(SecretCustodyWork::kept(CustodyKeptHere::DeviceLocal));
         }
+        match self.carry_revoke_for_in_txn(txn, actor, surface, id, &record, at)? {
+            Some(work) => Ok(work),
+            None => defer_revoke_in_txn(
+                self,
+                txn,
+                id,
+                actor,
+                surface,
+                record.rotation_generation,
+                at,
+            ),
+        }
+    }
+
+    /// Carries `actor`'s revoke of portable record `id`, held here as
+    /// `record`, its value out: the request, its enacted result and the
+    /// revoked transition signed at `at`, in `txn`. `None`, with nothing
+    /// written, when this install cannot carry an owner act now.
+    pub(super) fn carry_revoke_for_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: EntityId,
+        surface: ActSurface,
+        id: EntityId,
+        record: &SecretCustodyRecord,
+        at: u64,
+    ) -> Result<Option<SecretCustodyWork>> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        if self.owner_work_carrier_in_txn(txn, &fold)?.is_none() {
-            return Ok(SecretCustodyWork::kept(CustodyKeptHere::NoCarrier));
+        if !can_carry_in_txn(self, txn, &fold)? {
+            return Ok(None);
         }
         let seen = fold.custody_work_revision(id);
         let work = OwnerWorkBody::Custody {
@@ -62,9 +92,9 @@ impl Vault {
             holder: None,
             recipients: Vec::new(),
         };
-        let receipt = self.record_owner_work_in_txn(txn, owner, surface, id, seen, work)?;
+        let receipt = self.record_owner_work_for_in_txn(txn, actor, surface, id, seen, work)?;
         let (Some(request), Some(executor)) = (receipt.request_entry(), receipt.executor) else {
-            return Ok(SecretCustodyWork::recorded(receipt));
+            return Ok(Some(SecretCustodyWork::recorded(receipt)));
         };
         self.append_owner_work_result_in_txn(txn, request, executor, enacted())?;
         let enactment = Enactment {
@@ -72,19 +102,21 @@ impl Vault {
             input: None,
             permits: &[],
         };
-        write_custody_transition_in_txn(self, txn, id, &record, enactment, at)?;
+        write_custody_transition_in_txn(self, txn, id, record, enactment, at)?;
         let after = self.authority_view_readonly_in_txn(txn)?;
-        Ok(SecretCustodyWork::recorded(receipt.refreshed(&after)))
+        Ok(Some(SecretCustodyWork::recorded(receipt.refreshed(&after))))
     }
 
     /// Settles every admitted custody revoke this vault has not met yet,
     /// byte-free, in one writer transaction: each portable record held under
     /// an id the fold holds terminal is revoked here with its leases, its
-    /// value erased (CALLS CUSTODY_REVOKE_ERASE), and a carrier that still
-    /// seals the value is dropped, even where this install holds the carrier
-    /// alone. The owner work drain runs it after an authority catch-up and
-    /// on the served tick; the fold is its only input, so nothing is queued
-    /// and a restart loses nothing. Returns how many ids it settled.
+    /// value erased (CALLS CUSTODY_REVOKE_ERASE), a record revoked before
+    /// that erase gives up the value it still holds (FIX 5272), and a
+    /// carrier that still seals the value is dropped, even where this
+    /// install holds the carrier alone. The owner work drain runs it after
+    /// an authority catch-up and on the served tick; the fold is its only
+    /// input, so nothing is queued and a restart loses nothing. Returns how
+    /// many ids it settled.
     pub(crate) fn settle_revoked_custody(&self) -> Result<usize> {
         let due = {
             let txn = self.store.env.read_txn()?;
@@ -116,22 +148,34 @@ impl Vault {
 }
 
 /// Whether this vault holds record `id` of the portable class and not yet
-/// revoked: what an admitted revoke of the id kills here. Its "this device
-/// only" dial does not shield it: the owner revoked the secret itself.
+/// revoked, or revoked with value bytes a revoke erases still on it
+/// ([`holds_erasable_value_in_txn`], FIX 5272): what an admitted revoke of
+/// the id kills here. Its "this device only" dial does not shield it: the
+/// owner revoked the secret itself.
 fn revoke_due_in_txn(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    Ok(
-        read_secret_custody_admission_in_txn(store, txn, id)?.is_some_and(|held| {
-            held.class == CustodyClass::CustodyPortable
-                && held.status != SecretCustodyStatus::Revoked
-        }),
-    )
+    let Some(held) = read_secret_custody_admission_in_txn(store, txn, id)? else {
+        return Ok(false);
+    };
+    if held.class != CustodyClass::CustodyPortable {
+        return Ok(false);
+    }
+    if held.status != SecretCustodyStatus::Revoked {
+        return Ok(true);
+    }
+    let Some(mut record) = read_secret_custody_in_txn(store, txn, id)? else {
+        return Ok(false);
+    };
+    let due = holds_erasable_value_in_txn(store, txn, id, &record);
+    record.value_bytes.zeroize();
+    due
 }
 
 /// Revokes record `id`, an id an admitted revoke names, here in `txn` with
 /// every lease over it and its value erased, when this vault holds it of the
-/// portable class and not yet revoked; otherwise drops what this install
-/// still holds of it beyond the record ([`drop_revoked_copies_in_txn`]).
-/// Returns whether it changed anything.
+/// portable class and not yet revoked, or revoked with its value still at
+/// rest; otherwise drops what this install still holds of it beyond the
+/// record ([`drop_revoked_copies_in_txn`]). Returns whether it changed
+/// anything.
 pub(crate) fn settle_revoked_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

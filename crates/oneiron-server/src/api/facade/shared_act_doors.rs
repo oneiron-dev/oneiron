@@ -17,7 +17,8 @@
 //!   the slips of whoever lost a role or signs an owner handover;
 //! - nothing, for the deletion marker the engine reads for anyone;
 //! - nothing but the host's slip issuer, for proof-of-control owner recovery,
-//!   whose operator route (`api/operator_routes.rs`) checks the host's root.
+//!   whose operator route (`api/operator_routes.rs`) checks the host's root,
+//!   or a managed vault's attested account owner.
 //!
 //! Each row lists its rows (`host_door_lists`). An act, its objections and
 //! receipt, a notice, an invitation, an erase ask and a fork alarm live in
@@ -410,7 +411,8 @@ pub(crate) async fn vault_authority_handoff_alarms_acknowledge(
 /// Proof-of-control owner recovery (ARCH-0043, OF-163), for the host
 /// operator's route alone (`/v1/operator/shared/recover-owner`): no verb row
 /// reaches it, so no agent does. The operator has judged, outside the engine,
-/// the claimant's proof that they control the organization owning the vault.
+/// the claimant's proof that they control the organization owning the vault,
+/// or a managed vault's attested account owner asked it as his own act.
 /// The engine checks only what it holds (no live Owner left, `from` still an
 /// Owner, `claimant` a live person) and signs the handover with the host's
 /// slip issuer, keeping `proof` (the BLAKE3 of the judged proof note, never

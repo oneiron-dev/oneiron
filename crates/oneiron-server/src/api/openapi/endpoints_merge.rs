@@ -4,8 +4,8 @@ use super::*;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 use axum::extract::State;
-use axum::http::HeaderMap;
 use axum::http::header::CONTENT_TYPE;
+use axum::http::request::Parts;
 use axum::response::IntoResponse;
 use axum::response::Json;
 use oneiron::blob_artifact::DeckProposeRejection;
@@ -61,10 +61,10 @@ pub(crate) const SKILL_PACK_RESOLUTION: &str = "Resolve endpoint against the sam
     )
 )]
 pub(crate) async fn openapi_json(
-    headers: HeaderMap,
+    parts: Parts,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Json<Value>, ApiError> {
-    check_api_auth(&headers, &server)?;
+    crate::api::scoped_auth::check_request_auth(&parts, &server)?;
     Ok(Json(openapi_document()))
 }
 
@@ -95,10 +95,10 @@ pub(crate) async fn openapi_json(
     )
 )]
 pub(crate) async fn skills_pack(
-    headers: HeaderMap,
+    parts: Parts,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    check_api_auth(&headers, &server)?;
+    crate::api::scoped_auth::check_request_auth(&parts, &server)?;
     Ok((
         [(CONTENT_TYPE, skills_pack_artifact::MEDIA_TYPE)],
         skills_pack_artifact::CONTENT,
