@@ -232,8 +232,8 @@ async fn serve(
     let mut transport = StoppingTransport::new(transport, stop.clone());
     // FIX 3303: each refusal below is its connection's receipt, then the close.
     match protocol_close::hello(&mut transport, &server, conn_id).await {
-        Some(version)
-            if version >= oneiron::sync::transport::APP_TIER_PROTOCOL_VERSION_VERSION => {}
+        Some(version) if version >= oneiron::sync::transport::APP_TIER_PROTOCOL_VERSION_VERSION => {
+        }
         Some(_) => {
             protocol_close::refuse_hello_version(
                 &mut transport,
