@@ -338,6 +338,7 @@ pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'
         "device_sync" => struct_fields::<super::DeviceSyncConfig>(),
         "embedding" => struct_fields::<super::EmbeddingConfig>(),
         "line" => struct_fields::<super::LineConfig>(),
+        "linear" => struct_fields::<super::LinearConfig>(),
         _ => return None,
     };
     (!keys.is_empty()).then_some(keys)
@@ -435,6 +436,9 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
         connector.validate(name)?;
     }
     config.line.validate()?;
+    if let Some(linear) = &config.linear {
+        linear.validate()?;
+    }
     crate::conversation_training::validate_outbox_dir(
         config.publisher_training_outbox_dir.as_deref(),
     )?;
@@ -654,6 +658,7 @@ struct FileServeConfig {
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
     embedding: Option<super::EmbeddingConfig>,
     line: Option<super::LineConfig>,
+    linear: Option<super::LinearConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -721,6 +726,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             connectors: value.connectors,
             embedding: value.embedding,
             line: value.line,
+            linear: value.linear,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -800,6 +806,9 @@ struct PartialServeConfig {
     embedding: Option<super::EmbeddingConfig>,
     /// `[line]` is file-only, as `[browser]` is.
     line: Option<super::LineConfig>,
+    /// `[linear]` is file-only, as `[native_mail]` is; a plain serve's
+    /// `ONEIRON_LINEAR_*` environment is read beside it at serve start.
+    linear: Option<super::LinearConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -885,6 +894,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
+            .field("linear", &self.linear)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -1072,6 +1082,9 @@ impl PartialServeConfig {
         if let Some(value) = self.line {
             resolved.line = value;
         }
+        if let Some(value) = self.linear {
+            resolved.linear = Some(value);
+        }
         if let Some(value) = self.gpu {
             resolved.gpu = Some(value);
         }
@@ -1184,6 +1197,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             connectors: None,
             embedding: None,
             line: None,
+            linear: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,

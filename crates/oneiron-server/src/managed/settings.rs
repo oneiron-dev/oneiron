@@ -52,6 +52,11 @@ const OWNER_PATHS: &[&str] = &[
     "models.voice.extraction_prompt_file",
 ];
 
+/// The leaves this vault's host derives, which the owner's settings never
+/// set: the direct Linear mirror's response custody beside the data
+/// directory (`owner_storage`).
+const HOST_DERIVED: &[&str] = &["linear.response_dir"];
+
 /// Settles the settings file `managed` names onto `config`, the
 /// configuration [`ManagedArgs::serve_config`] built from argv; nothing
 /// without one.
@@ -61,7 +66,8 @@ const OWNER_PATHS: &[&str] = &[
 /// stands whole, in place of our cloud's default. The supervisor's voice
 /// socket is set on the file's `[models.voice]` after the file is refused,
 /// so the owner's voice settings turn the loop on and the supervisor names
-/// where it listens.
+/// where it listens. A direct `[linear]` mirror is given its host's response
+/// custody the same way.
 pub(super) fn settle(
     managed: &ManagedArgs,
     args: &ServeArgs,
@@ -83,7 +89,7 @@ pub(super) fn settle(
     }
     refuse_unknown(&table)?;
     visit(&table, &mut Vec::new(), &mut |field, _| {
-        if matches_any(field, SUPERVISOR_OWNED) {
+        if matches_any(field, SUPERVISOR_OWNED) || matches_any(field, HOST_DERIVED) {
             return Err(refused(field, SettingsRefusal::SupervisorOwned));
         }
         if matches_any(field, ENVIRONMENT_KEYS) {
@@ -147,6 +153,18 @@ pub(super) fn settle(
             .to_str()
             .context("--voice-socket must be a UTF-8 path")?;
         voice.insert("socket".into(), toml::Value::String(socket.to_owned()));
+    }
+    if let Some(linear) = table.get_mut("linear").and_then(toml::Value::as_table_mut)
+        && linear.get("mode").and_then(toml::Value::as_str) == Some("direct")
+    {
+        let responses = super::owner_storage::linear_response_dir(&managed.data_dir);
+        let responses = responses
+            .to_str()
+            .context("--data-dir must be a UTF-8 path")?;
+        linear.insert(
+            "response_dir".into(),
+            toml::Value::String(responses.to_owned()),
+        );
     }
     let names_runtime = table.contains_key("runtime");
 

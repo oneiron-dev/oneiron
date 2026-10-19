@@ -12,6 +12,7 @@ use super::feedback::{FeedbackConfig, FeedbackInboxConfig};
 use super::keystore::KeystoreConfig;
 use super::limits::LimitsConfig;
 use super::line::LineConfig;
+use super::linear::LinearConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use super::oneironer::OneironerConfig;
 use super::recall::RecallConfig;
@@ -125,6 +126,29 @@ pub struct SyncServerConfig {
     /// `[line]`: the plan of the LINE Official Account the built-in LINE
     /// pack serves, and the pushes it includes each month.
     pub line: LineConfig,
+    /// `[linear]`: the Linear mirror this server runs and its webhook's
+    /// tracker mapping, nonsecret. A plain serve with no section reads its
+    /// `ONEIRON_LINEAR_*` environment into this before the server starts
+    /// ([`LinearConfig::or_environment`]); `None`, no mirror runs and the
+    /// webhook maps nothing.
+    pub linear: Option<LinearConfig>,
+    /// Who authenticates the requests this server takes.
+    pub ingress: IngressAuth,
+}
+
+/// Who authenticates the requests a server takes, as its serve entry
+/// declares it. The Linear mirror runs only behind authenticated ingress,
+/// so no anonymous core writer can hand it TASKs to send.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IngressAuth {
+    /// The server's own `auth_secret` and `allow_unauthenticated` decide:
+    /// every plain serve.
+    #[default]
+    Configured,
+    /// The managed supervisor authenticates ingress on the private socket
+    /// it owns, and the vault attests the owner on each route it forwards;
+    /// a request with no credential is anonymous and stands for no one.
+    Supervisor,
 }
 
 impl Default for SyncServerConfig {
@@ -162,6 +186,8 @@ impl Default for SyncServerConfig {
             runtime: RuntimeConfig::default(),
             skills: SkillsConfig::default(),
             line: LineConfig::default(),
+            linear: None,
+            ingress: IngressAuth::Configured,
         }
     }
 }
@@ -239,6 +265,8 @@ impl fmt::Debug for SyncServerConfig {
             .field("runtime", &self.runtime)
             .field("skills", &self.skills)
             .field("line", &self.line)
+            .field("linear", &self.linear)
+            .field("ingress", &self.ingress)
             .finish()
     }
 }
@@ -349,6 +377,9 @@ pub struct ServeConfig {
     /// The `[line]` section: the LINE Official Account's plan, a free
     /// account unless the config file names one.
     pub line: LineConfig,
+    /// The `[linear]` section: the Linear mirror and its webhook's tracker
+    /// mapping, absent until the config file names it.
+    pub linear: Option<LinearConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     /// The owner's "Help improve Oneiron" choice, as given: `None` takes the
@@ -445,6 +476,7 @@ impl Default for ServeConfig {
             connectors: std::collections::BTreeMap::new(),
             embedding: None,
             line: server.line,
+            linear: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -527,6 +559,7 @@ impl fmt::Debug for ServeConfig {
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
+            .field("linear", &self.linear)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -585,6 +618,10 @@ impl ServeConfig {
             runtime: self.runtime.clone(),
             skills: self.skills.clone(),
             line: self.line,
+            linear: self.linear.clone(),
+            // A plain serve's own auth config; a managed vault declares its
+            // supervisor's.
+            ingress: IngressAuth::Configured,
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
             tracing::warn!(

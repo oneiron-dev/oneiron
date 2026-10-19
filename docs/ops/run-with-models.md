@@ -188,8 +188,14 @@ The file is read once at start, before anything else reads the configuration,
 and it is the vault's one settings layer. Each section the owner sets
 (`[limits]`, `[connectors.<name>]`, `[native_mail]`, `[browser]`, `[desktop]`,
 `[oneironer]`, `[embedding]`, `[self_heal]`, `[recall]`, `[skills]`,
-`[failure_signals]`, `[feedback]`, `[runtime]` and the rest) works as it does
-on a self-hosted server. A value the supervisor also passes on argv
+`[failure_signals]`, `[feedback]`, `[runtime]`, `[linear]` and the rest) works
+as it does on a self-hosted server. The `[linear]` mirror starts before the
+vault reports ready (settings it cannot use stop the start), admits each pass
+like a served write, and reads its API key or bridge token at each pass from
+the vault secret `api_key_secret` or `bridge_token_secret` names, bound to
+`connector:linear`; a direct mirror keeps its response custody in
+`<data_dir>.linear-responses` (`/vault/data.linear-responses` in the vault VM),
+made private at start. A value the supervisor also passes on argv
 (`--dimensions`, `--fast-dims`, `--map-size`, `--log-level`,
 `--dict-search-paths`, `--assistant-display-names`, `--maximum-tier`,
 `--failure-signal-export`, `--failure-signal-training`) keeps the supervisor's
@@ -204,7 +210,8 @@ names the field and never its value:
   `kit_bundle_public_urls`, `allow_unauthenticated`, `allowed_origins`,
   `artifact_domains`, `artifact_vault_name`, `trusted_proxies`,
   `lease_vault_id`, `privacy_posture`, `hosted_kms_key_ref`, `device_class`,
-  every `[models.broker]` key, `[models.voice] socket` and `[keystore] dir`.
+  every `[models.broker]` key, `[models.voice] socket`, `[keystore] dir` and
+  `[linear] response_dir`, which the vault derives itself.
   The supervisor passes the voice loop's socket as `--voice-socket`, the key
   directory as `--keystore-dir`, the host's public https origin as
   `--oauth-resource-indicator <url>` and the URLs a recovery kit dials as

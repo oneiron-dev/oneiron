@@ -40,8 +40,8 @@ pub(crate) async fn vault_tasks_linear_mapping_edit(
         auth,
         caller,
         "vault.tasks.linear.mapping.edit",
-        move |_, _, memory| {
-            let team = crate::linear_host::webhook_tracker()
+        move |server, _, memory| {
+            let team = crate::linear_host::webhook_tracker(server)
                 .unwrap_or_else(|error| {
                     tracing::warn!(%error, "the Linear webhook mapping is unreadable");
                     None

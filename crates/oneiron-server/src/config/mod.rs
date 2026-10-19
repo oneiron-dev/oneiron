@@ -15,6 +15,7 @@ pub mod import;
 mod keystore;
 mod limits;
 mod line;
+mod linear;
 mod lookup;
 pub mod merge;
 pub mod models;
@@ -47,6 +48,8 @@ pub use import::ImportConfig;
 pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig};
 pub use limits::LimitsConfig;
 pub use line::LineConfig;
+pub(crate) use linear::LinearCredential;
+pub use linear::{LinearConfig, LinearMode};
 pub(crate) use lookup::normalize_list;
 pub(crate) use merge::layer_serve_config;
 pub use merge::{
@@ -61,7 +64,7 @@ pub use oneironer::{
 pub use recall::RecallConfig;
 pub use self_heal::{DetectorConfig, DetectorTier, SelfHealConfig};
 pub use serve_args::ServeArgs;
-pub use server_config::{ServeConfig, SyncServerConfig};
+pub use server_config::{IngressAuth, ServeConfig, SyncServerConfig};
 pub use skills::SkillsConfig;
 pub use trusted_proxy::TrustedProxy;
 

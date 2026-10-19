@@ -6,10 +6,12 @@
 //! for both the verified TASK writer and the configured scheduler actor. A raw
 //! issue-list poll cannot supply exact event IDs.
 //!
-//! Beside the scheduled pass, the host serves the signed Linear webhook
-//! (`webhook`, OF-427): its tracker mapping is the direct config's tracker
-//! part in direct mode, else the file `ONEIRON_LINEAR_WEBHOOK_CONFIG` names,
-//! read and checked once, at startup.
+//! Every host starts the mirror through [`spawn_configured`] from the server's
+//! own `[linear]` settings (`crate::config::LinearConfig`): a managed vault's
+//! settings file, a plain serve's config file, or its `ONEIRON_LINEAR_*`
+//! environment read into the same settings before the server starts. Beside
+//! the scheduled pass, the host serves the signed Linear webhook (`webhook`,
+//! OF-427) under the same settings' tracker mapping, checked at startup.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -25,7 +27,8 @@ use reqwest::blocking::Client;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use crate::server::SyncServer;
+use crate::config::{IngressAuth, LinearConfig, LinearCredential, LinearMode, SyncServerConfig};
+use crate::server::{HousekeepingAdmission, SyncServer};
 use oneiron::linear_sync::VaultLinearTaskStore;
 use oneiron_linear::LinearTrackerConfig;
 
@@ -34,81 +37,17 @@ mod webhook;
 
 pub(crate) use webhook::routes as webhook_routes;
 
-/// Names the JSON file of the webhook's tracker mapping in bridge mode.
-const LINEAR_WEBHOOK_CONFIG_ENV: &str = "ONEIRON_LINEAR_WEBHOOK_CONFIG";
-
-/// A webhook reads no tracker page; this only meets the shared mapping's
-/// own check.
-const WEBHOOK_PAGE_SIZE: u32 = 1;
-
-/// The webhook's tracker mapping in bridge mode.
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WebhookConfig {
-    team_id: String,
-    status_ids: BTreeMap<String, String>,
-    assignee_ids: BTreeMap<String, String>,
-}
-
 /// The tracker mapping the Linear webhook applies under (OF-427 C11): the
-/// direct config's tracker part in direct mode, else the file
-/// `ONEIRON_LINEAR_WEBHOOK_CONFIG` names, each checked as the poller checks
-/// its own; `None` when the host configures neither, and the webhook answers
-/// `linear_webhook_not_configured`. The first good read, at startup, is
-/// kept: a later edit of the file waits for a restart rather than turning
-/// the route to 404.
-pub(crate) fn webhook_tracker() -> anyhow::Result<Option<LinearTrackerConfig>> {
-    static TRACKER: std::sync::OnceLock<Option<LinearTrackerConfig>> = std::sync::OnceLock::new();
-    if let Some(tracker) = TRACKER.get() {
-        return Ok(tracker.clone());
-    }
-    let tracker = read_webhook_tracker()?;
-    Ok(TRACKER.get_or_init(|| tracker).clone())
-}
-
-fn read_webhook_tracker() -> anyhow::Result<Option<LinearTrackerConfig>> {
-    let webhook = std::env::var_os(LINEAR_WEBHOOK_CONFIG_ENV);
-    if let Some(direct) = std::env::var_os("ONEIRON_LINEAR_CONFIG") {
-        anyhow::ensure!(
-            webhook.is_none(),
-            "a direct Linear mirror maps its webhook in ONEIRON_LINEAR_CONFIG, not {LINEAR_WEBHOOK_CONFIG_ENV}"
-        );
-        return direct::tracker_at(std::path::Path::new(&direct)).map(Some);
-    }
-    let Some(path) = webhook else {
-        return Ok(None);
-    };
-    let config: WebhookConfig = serde_json::from_slice(&std::fs::read(path)?)?;
-    let tracker = LinearTrackerConfig {
-        team_id: config.team_id,
-        status_ids: config.status_ids,
-        assignee_ids: config.assignee_ids,
-        page_size: WEBHOOK_PAGE_SIZE,
-    };
-    tracker.validate()?;
-    Ok(Some(tracker))
-}
-
-/// A host-configured Linear URL, the bridge base or the direct GraphQL
-/// endpoint: HTTPS, or HTTP on a loopback host only, with no embedded
-/// credentials, query or fragment.
-fn check_host_url(url: &reqwest::Url, what: &str) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        url.scheme() == "https"
-            || (url.scheme() == "http"
-                && url.host_str().is_some_and(|host| host == "localhost"
-                    || host == "127.0.0.1"
-                    || host == "[::1]")),
-        "{what} must use HTTPS or local loopback"
-    );
-    anyhow::ensure!(
-        url.username().is_empty()
-            && url.password().is_none()
-            && url.query().is_none()
-            && url.fragment().is_none(),
-        "{what} URL must not embed credentials or parameters"
-    );
-    Ok(())
+/// server's `[linear]` mapping, a plain serve's direct config or webhook
+/// file read into it at startup; `None` when it maps none, and the webhook
+/// answers `linear_webhook_not_configured`. The mapping was checked when
+/// the server started, so a later edit of a file waits for a restart.
+pub(crate) fn webhook_tracker(server: &SyncServer) -> anyhow::Result<Option<LinearTrackerConfig>> {
+    server
+        .config
+        .linear
+        .as_ref()
+        .map_or(Ok(None), LinearConfig::tracker)
 }
 
 #[derive(Clone)]
@@ -120,33 +59,27 @@ struct LinearBridge {
 }
 
 impl LinearBridge {
-    fn configured(
-        base: Option<String>,
-        token: Option<String>,
-        timeout_secs: u64,
-    ) -> anyhow::Result<Option<Self>> {
-        anyhow::ensure!(
-            base.is_some() == token.is_some(),
-            "Linear bridge requires both URL and token"
-        );
-        let (Some(base), Some(token)) = (base, token) else {
-            return Ok(None);
-        };
-        anyhow::ensure!(!token.trim().is_empty(), "Linear bridge token is empty");
-        let mut base = reqwest::Url::parse(&base)?;
-        let normalized_path = format!("{}/", base.path().trim_end_matches('/'));
-        base.set_path(&normalized_path);
-        check_host_url(&base, "Linear bridge")?;
-        let credential = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?;
-        let client = Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
-        Ok(Some(Self {
+    /// The bridge at `base` over `client`, presenting `token` as its bearer.
+    fn with_token(
+        client: Client,
+        base: reqwest::Url,
+        token: &str,
+        request_timeout: Duration,
+    ) -> LinearSyncResult<Self> {
+        let invalid =
+            |what: &str| LinearSyncError::Store(oneiron::Error::InvalidConfig(what.into()));
+        if token.trim().is_empty() {
+            return Err(invalid("Linear bridge token is empty"));
+        }
+        let mut credential = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+            .map_err(|_| invalid("Linear bridge token is not a valid header"))?;
+        credential.set_sensitive(true);
+        Ok(Self {
             client,
             base,
             credential,
-            request_timeout: Duration::from_secs(timeout_secs),
-        }))
+            request_timeout,
+        })
     }
 
     fn request(
@@ -288,11 +221,87 @@ pub(crate) fn validate_server_auth(
     Ok(())
 }
 
-fn scheduler_actor(raw: Option<String>) -> anyhow::Result<EntityId> {
-    let raw = raw
-        .ok_or_else(|| anyhow::anyhow!("Linear mirror requires ONEIRON_LINEAR_SCHEDULER_ACTOR"))?;
-    EntityId::from_hex(raw.trim())
-        .map_err(|_| anyhow::anyhow!("Linear scheduler actor must be an entity id"))
+/// The ingress a mirror needs, as the server's serve entry declares it: a
+/// plain serve's own auth config ([`validate_server_auth`]), or a managed
+/// vault's supervisor, which authenticates the private socket it owns. Either
+/// way a dev mode's anonymous ingress is refused.
+fn validate_ingress(config: &SyncServerConfig) -> anyhow::Result<()> {
+    match config.ingress {
+        IngressAuth::Configured => validate_server_auth(
+            true,
+            config.auth_secret.as_deref(),
+            config.allow_unauthenticated,
+        ),
+        IngressAuth::Supervisor if config.allow_unauthenticated => {
+            anyhow::bail!("Linear mirror refuses a server without authenticated core writes")
+        }
+        IngressAuth::Supervisor => Ok(()),
+    }
+}
+
+/// Where each pass reads the mirror's provider credential.
+#[derive(Clone)]
+enum PassCredential {
+    /// The vault custody secret of this name, read through the door bound to
+    /// `connector:linear` for one pass at a time. A secret the vault does not
+    /// hold or bind there refuses that pass, and the next pass asks again.
+    Secret(String),
+    /// A plain serve's environment value, read once at startup.
+    Held(Arc<zeroize::Zeroizing<String>>),
+}
+
+impl PassCredential {
+    /// The settings' credential: a vault secret by name, or the plain
+    /// serve's environment variable, read now.
+    fn of(settings: &LinearConfig) -> anyhow::Result<Self> {
+        match settings.credential()? {
+            LinearCredential::Secret(name) => Ok(Self::Secret(name.to_owned())),
+            LinearCredential::Environment(variable) => std::env::var(variable)
+                .map(|value| Self::Held(Arc::new(zeroize::Zeroizing::new(value))))
+                .map_err(|_| anyhow::anyhow!("Linear mirror requires {variable}")),
+        }
+    }
+
+    /// Runs `pass` with the credential's text. A vault secret is read
+    /// through its door for this pass alone and scrubbed when it ends.
+    fn with<T>(
+        &self,
+        vault: &oneiron::Vault,
+        pass: impl FnOnce(&str) -> LinearSyncResult<T>,
+    ) -> LinearSyncResult<T> {
+        let name = match self {
+            Self::Held(value) => return pass(value.as_str()),
+            Self::Secret(name) => name,
+        };
+        let mut pass = Some(pass);
+        let mut outcome = None;
+        vault
+            .inject_secret_at_door(
+                name,
+                webhook::LINEAR_SECRET_EFFECTOR,
+                &mut |value: &[u8]| {
+                    let text = std::str::from_utf8(value).map_err(|_| {
+                        oneiron::Error::InvalidConfig(
+                            "the stored Linear credential is not text".into(),
+                        )
+                    })?;
+                    outcome = pass.take().map(|pass| pass(text.trim()));
+                    Ok(())
+                },
+            )
+            .inspect_err(|error| {
+                tracing::warn!(
+                    reason = "linear_credential_unavailable",
+                    %error,
+                    "the Linear credential is not available at its door"
+                );
+            })?;
+        outcome.unwrap_or_else(|| {
+            Err(LinearSyncError::Transport(
+                "the Linear credential door did not run".into(),
+            ))
+        })
+    }
 }
 
 fn synchronize_once<I: LinearChangeSource, O: LinearEgress>(
@@ -309,86 +318,117 @@ fn synchronize_once<I: LinearChangeSource, O: LinearEgress>(
         .synchronize(now, max_pull_pages_per_pass)
 }
 
-/// Construct the blocking HTTP client off the Tokio runtime thread. Inputs
-/// are explicit so a parallel test needs no process-global env mutation.
-async fn build_bridge(
-    base: Option<String>,
-    token: Option<String>,
-    timeout_secs: u64,
-) -> anyhow::Result<Option<LinearBridge>> {
-    crate::logging::off_runtime("Linear bridge setup", move || {
-        LinearBridge::configured(base, token, timeout_secs)
-    })
-    .await?
-}
-
-/// Start a scheduled mirror when the host configured its authenticated bridge.
-/// Every pass uses the vault's durable dirty outbox and pull cursor; errors
-/// leave both for the next pass. This timer lives in the server, never core.
-pub(crate) async fn spawn(
+/// Starts the Linear host the server's `[linear]` settings name: checks the
+/// webhook's tracker mapping, and runs the scheduled mirror when they name
+/// a mode. The one entry for every host. Each pass is admitted through
+/// `admit` and holds that admission on its blocking thread through the
+/// policy and budget reads, every provider request, the response journal
+/// and the cursor and receipt settlement; a refused pass sends nothing and
+/// waits its interval. Settings, a mapping, an actor, a URL or an ingress
+/// the mirror cannot use fail the start.
+pub(crate) async fn spawn_configured(
     server: Arc<SyncServer>,
+    admit: HousekeepingAdmission,
 ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
-    // An unreadable or invalid webhook mapping fails startup (OF-427 C11).
-    crate::logging::off_runtime("Linear webhook mapping", webhook_tracker).await??;
-    let api_key = std::env::var("ONEIRON_LINEAR_API_KEY").ok();
-    let direct_config = std::env::var_os("ONEIRON_LINEAR_CONFIG");
-    if api_key.is_some() || direct_config.is_some() {
-        anyhow::ensure!(
-            std::env::var_os("ONEIRON_LINEAR_BRIDGE_URL").is_none()
-                && std::env::var_os("ONEIRON_LINEAR_BRIDGE_TOKEN").is_none(),
-            "configure either direct Linear GraphQL or a Linear bridge, not both"
-        );
-        let api_key = api_key.ok_or_else(|| {
-            anyhow::anyhow!("Linear direct mirror requires ONEIRON_LINEAR_API_KEY")
-        })?;
-        let config = direct_config.ok_or_else(|| {
-            anyhow::anyhow!("Linear direct mirror requires ONEIRON_LINEAR_CONFIG")
-        })?;
-        return direct::spawn(server, api_key, config.into()).await;
-    }
-    let base = std::env::var("ONEIRON_LINEAR_BRIDGE_URL").ok();
-    let token = std::env::var("ONEIRON_LINEAR_BRIDGE_TOKEN").ok();
-    if base.is_none() && token.is_none() {
-        return Ok(None);
-    }
-    validate_server_auth(
-        true,
-        server.config.auth_secret.as_deref(),
-        server.config.allow_unauthenticated,
-    )?;
-    let scheduler_actor = scheduler_actor(std::env::var("ONEIRON_LINEAR_SCHEDULER_ACTOR").ok())?;
-    // Fail at configuration time if a provided credential is incomplete or
-    // the resolved manifest is unreadable. The client itself is built off
-    // Tokio's runtime thread.
-    let policy = server.vault().linear_mirror_policy()?;
-    let Some(bridge) = build_bridge(base, token, policy.request_timeout_secs).await? else {
+    let Some(settings) = server.config.linear.clone() else {
         return Ok(None);
     };
-    let handle = tokio::spawn(async move {
+    // An invalid tracker mapping fails startup (OF-427 C11).
+    settings.validate()?;
+    let tracker = settings.tracker()?;
+    let Some(mode) = settings.mode else {
+        return Ok(None);
+    };
+    validate_ingress(&server.config)?;
+    let scheduler_actor = settings.scheduler_actor()?;
+    let credential = PassCredential::of(&settings)?;
+    match mode {
+        LinearMode::Direct => {
+            direct::spawn(
+                server,
+                &settings,
+                tracker,
+                scheduler_actor,
+                credential,
+                admit,
+            )
+            .await
+        }
+        LinearMode::Bridge => spawn_bridge(server, &settings, scheduler_actor, credential, admit)
+            .await
+            .map(Some),
+    }
+}
+
+/// The bridge mirror. Every pass uses the vault's durable dirty outbox and
+/// pull cursor; errors leave both for the next pass. This timer lives in the
+/// server, never core.
+async fn spawn_bridge(
+    server: Arc<SyncServer>,
+    settings: &LinearConfig,
+    scheduler_actor: EntityId,
+    credential: PassCredential,
+    admit: HousekeepingAdmission,
+) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+    let base = settings.bridge_base()?;
+    // Fail at configuration time if the resolved manifest is unreadable or a
+    // token the environment holds is blank. The client itself is built off
+    // Tokio's runtime thread.
+    let policy = server.vault().linear_mirror_policy()?;
+    let client = crate::logging::off_runtime("Linear bridge setup", || {
+        Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+    })
+    .await??;
+    if let PassCredential::Held(token) = &credential {
+        LinearBridge::with_token(
+            client.clone(),
+            base.clone(),
+            token.as_str(),
+            Duration::from_secs(policy.request_timeout_secs),
+        )?;
+    }
+    Ok(tokio::spawn(async move {
         let mut wait = Duration::ZERO;
         let mut last_valid_interval = policy.poll_interval_secs;
         loop {
             tokio::time::sleep(wait).await;
+            wait = Duration::from_secs(last_valid_interval);
+            // A refused tick (a vault frozen for reap) asks again after it.
+            let Some(admission) = admit() else {
+                continue;
+            };
             let vault = server.vault().clone();
-            let client = bridge.clone();
+            let (client, base, credential) = (client.clone(), base.clone(), credential.clone());
             let outcome = tokio::task::spawn_blocking(move || {
+                // Held through every read, request and settlement of the
+                // pass, even when its waiter is aborted.
+                let _admission = admission;
                 let policy = vault
                     .linear_mirror_policy()
                     .map_err(LinearSyncError::Store)?;
                 let budget = vault.linear_sync_budget().map_err(LinearSyncError::Store)?;
-                let mut inbound = client;
-                inbound.request_timeout = Duration::from_secs(policy.request_timeout_secs);
-                let outbound = ServedLinearEgress::new(&vault, scheduler_actor, inbound.clone());
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |time| time.as_secs());
-                let result = synchronize_once(
-                    &vault,
-                    inbound,
-                    outbound,
-                    now,
-                    budget.max_pull_pages_per_pass,
-                )?;
+                let result = credential.with(&vault, |token| {
+                    let inbound = LinearBridge::with_token(
+                        client,
+                        base,
+                        token,
+                        Duration::from_secs(policy.request_timeout_secs),
+                    )?;
+                    let outbound =
+                        ServedLinearEgress::new(&vault, scheduler_actor, inbound.clone());
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |time| time.as_secs());
+                    synchronize_once(
+                        &vault,
+                        inbound,
+                        outbound,
+                        now,
+                        budget.max_pull_pages_per_pass,
+                    )
+                })?;
                 Ok::<_, LinearSyncError>((result, policy.poll_interval_secs))
             })
             .await;
@@ -421,8 +461,7 @@ pub(crate) async fn spawn(
                 }
             }
         }
-    });
-    Ok(Some(handle))
+    }))
 }
 
 #[cfg(test)]

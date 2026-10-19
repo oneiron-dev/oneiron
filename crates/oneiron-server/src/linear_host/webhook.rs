@@ -6,9 +6,10 @@
 //! archive or write. The `Linear-Delivery` header is the delivery's identity;
 //! its permanent dedupe answers a replay, so no timestamp window applies.
 //!
-//! A verified delivery is normalized under the host's tracker mapping, its
-//! body archived in the vault, and applied by the engine's ordinary inbound
-//! merge. The reply is the engine's receipt; a replay answers the stored one.
+//! A verified delivery is normalized under the tracker mapping of this
+//! server's own `[linear]` settings, its body archived in the vault, and
+//! applied by the engine's ordinary inbound merge. The reply is the engine's
+//! receipt; a replay answers the stored one.
 
 use std::sync::Arc;
 
@@ -20,7 +21,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use oneiron::linear_sync::LinearWebhookReceipt;
 use oneiron::{LinearSyncError, Vault};
-use oneiron_linear::normalize_issue_webhook;
+use oneiron_linear::{LinearTrackerConfig, normalize_issue_webhook};
 
 use crate::server::SyncServer;
 
@@ -71,21 +72,26 @@ async fn linear_webhook(
 ) -> Response {
     let signature = header(&headers, LINEAR_SIGNATURE_HEADER);
     let delivery = header(&headers, LINEAR_DELIVERY_HEADER);
+    let tracker = super::webhook_tracker(&server);
     let vault = Arc::clone(server.vault());
-    match tokio::task::spawn_blocking(move || deliver(&vault, signature, delivery, &body)).await {
+    match tokio::task::spawn_blocking(move || deliver(&vault, tracker, signature, delivery, &body))
+        .await
+    {
         Ok(reply) => reply.into_response(),
         Err(_) => FAILED.into_response(),
     }
 }
 
-/// One delivery, verified before anything reads its body.
+/// One delivery under the server's `tracker` mapping, verified before
+/// anything reads its body.
 fn deliver(
     vault: &Vault,
+    tracker: anyhow::Result<Option<LinearTrackerConfig>>,
     signature: Option<String>,
     delivery: Option<String>,
     body: &[u8],
 ) -> Reply {
-    let tracker = match super::webhook_tracker() {
+    let tracker = match tracker {
         Ok(Some(tracker)) => tracker,
         Ok(None) => return NOT_CONFIGURED,
         Err(error) => {

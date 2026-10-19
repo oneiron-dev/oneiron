@@ -305,12 +305,30 @@ reports `pages`: `sealed` or `plain`.
 
 ## Linear mirror host bridge (opt-in)
 
-The server starts a mirror pass only when both
-`ONEIRON_LINEAR_BRIDGE_URL` and `ONEIRON_LINEAR_BRIDGE_TOKEN` are set. The URL
+The mirror and the Linear webhook's tracker mapping come from the config
+file's `[linear]` section (`mode = "direct"` or `"bridge"`, `scheduler_actor`,
+`team_id`, `status_ids`, `assignee_ids`, and per mode `page_size`,
+`api_key_secret`, `graphql_endpoint`, `response_dir` or `bridge_url`,
+`bridge_token_secret`; see `src/config/linear.rs`). A section with no `mode`
+maps the webhook alone. The section names each credential by the vault secret
+holding it, bound to the effector `connector:linear`; every pass reads it
+through that custody door, so no key sits in the file or in memory between
+passes, and a secret not yet stored refuses the pass until it is. A managed
+vault reads the section from its settings file, and its direct mirror's
+`response_dir` is the host's `<data_dir>.linear-responses`.
+
+With no `[linear]` section, a plain `serve` reads the environment below into the
+same settings; the keys stay in the environment, read at startup. A section and
+any `ONEIRON_LINEAR_*` variable together stop startup: one host runs one mirror.
+
+The server starts a bridge pass when both
+`ONEIRON_LINEAR_BRIDGE_URL` and `ONEIRON_LINEAR_BRIDGE_TOKEN` are set (or
+`[linear] mode = "bridge"`). The URL
 must be HTTPS (or loopback HTTP for a local bridge). A partial or blank config
 stops startup. An enabled mirror also requires authenticated core writes (an
-`auth_secret`, and no `--insecure-allow-unauthenticated`), and
-`ONEIRON_LINEAR_SCHEDULER_ACTOR`: the entity id of the stored Machine actor the
+`auth_secret`, and no `--insecure-allow-unauthenticated`; a managed vault's
+supervisor authenticates its socket instead), and
+`ONEIRON_LINEAR_SCHEDULER_ACTOR` (`scheduler_actor`): the entity id of the stored Machine actor the
 scheduler acts as. Before the bridge receives any create or update, the vault's
 ExternalEffect Gate must admit it for both that scheduler and the verified
 writer of the TASK revision (live standing grants and `linear` connector
@@ -319,8 +337,9 @@ sent. Poll wait and request timeout resolve from vault policy manifest rows
 `linear_mirror_policy` (seeded 30s/15s), and the page allowance from
 `linear_sync_budget` (seeded 64); allowed holder selectors may only narrow
 the resolved vault bounds. The daemon re-resolves these at each pass. The
-token is sent only as an `Authorization: Bearer` header; it
-is not stored in the vault. Unmanaged `serve` starts the pass. A failed pass
+token is sent only as an `Authorization: Bearer` header. Both `serve` and a
+managed vault start the pass; a managed vault admits each pass like a served
+write, so a vault frozen for reap sends nothing. A failed pass
 keeps the TASK outbox revision and inbound cursor for retry.
 
 The bridge is a host-owned authenticated provider/OF-327 outbound-door adapter,
@@ -354,7 +373,7 @@ success page. The pass reads one page at a time and stores its cursor only
 following successful application. Host deployments without a bridge do not
 start any mirror or make a tracker request.
 
-The direct mode's `ONEIRON_LINEAR_CONFIG` file may name `graphql_endpoint`
+The direct mode's `ONEIRON_LINEAR_CONFIG` file (or `[linear]`) may name `graphql_endpoint`
 (default `https://api.linear.app/graphql`), checked as the bridge URL is:
 HTTPS, or HTTP on a loopback host only, with no credentials, query or fragment.
 
@@ -363,7 +382,8 @@ Slack and LINE hooks). `Linear-Signature` must be the hex HMAC-SHA256 of the
 raw body under the custody secret `linear.webhook_signing_secret` (effector
 `connector:linear`); `Linear-Delivery` names the delivery, and a replay of
 the same id and body answers its stored receipt. The webhook's tracker mapping
-is the direct config's in direct mode; otherwise `ONEIRON_LINEAR_WEBHOOK_CONFIG`
-names a JSON file of `team_id`, `status_ids` and `assignee_ids`, checked at
-startup (an invalid file stops it). With neither, the route answers 404
+is the server's own `[linear]` mapping; from the environment, the direct
+config's in direct mode, otherwise `ONEIRON_LINEAR_WEBHOOK_CONFIG` names a JSON
+file of `team_id`, `status_ids` and `assignee_ids`. It is checked at startup
+(an invalid one stops it). With none, the route answers 404
 `linear_webhook_not_configured`.
