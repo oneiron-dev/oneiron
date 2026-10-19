@@ -45,11 +45,13 @@ pub mod clustering;
 pub mod commitment_doors;
 mod conflict_settle;
 pub mod consolidation;
+pub mod consolidation_frontier;
 pub mod coping_doors;
 mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
 mod people_verbs;
+mod plugin_sections;
 pub mod run_review;
 mod skill_authoring;
 pub mod wellness_doors;
@@ -82,6 +84,7 @@ pub mod foreign_code;
 pub mod graph_fs_doors;
 pub mod hook_regen_doors;
 mod inspection;
+pub mod identity_doors;
 mod key_value;
 mod lifted_view;
 mod locality;
@@ -195,6 +198,14 @@ pub use oneiron_contracts::memory::{
     MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MEMORY_CODE_WRONG_ROOT,
     MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult,
     MemoryWrongRoot,
+};
+pub use plugin_sections::{
+    PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest,
+    PluginSectionGrantState, PluginSectionListRequest, PluginSectionPackRow,
+    PluginSectionPendingRow, PluginSectionProposal, PluginSectionProposeRequest,
+    PluginSectionRevokeRequest, PluginSectionRevoked, PluginSectionSuggestRequest,
+    PluginSectionSuggestion, PluginSectionSuggestionState, PluginSectionTargetInput,
+    PluginSectionsView, PluginSuggestionsSetRequest, PluginSuggestionsView,
 };
 pub use people_verbs::{
     GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,

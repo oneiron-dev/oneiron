@@ -41,6 +41,9 @@ pub enum AgentVerb {
     VaultCoachInspect,
     VaultPeopleList,
     VaultPeopleGet,
+    VaultPeopleCreate,
+    VaultEntitiesLookBeforeMint,
+    VaultIdentityMention,
     VaultShapeRead,
     VaultShapePlan,
     VaultShapeApply,
@@ -235,6 +238,13 @@ pub enum AgentVerb {
     VaultPacksConnectorGrantsGet,
     VaultPacksConnectorGrantsPut,
     VaultPacksRemove,
+    VaultPacksSectionsPropose,
+    VaultPacksSectionsList,
+    VaultPacksSectionsGrant,
+    VaultPacksSectionsRevoke,
+    VaultPacksSectionsSuggest,
+    VaultPacksSectionsSuggestionsGet,
+    VaultPacksSectionsSuggestionsSet,
     AiChatCompletions,
     VaultConnectorsProxyAdmit,
     VaultConnectorsProxyRevokeWrite,
@@ -256,6 +266,11 @@ pub enum AgentVerb {
     VaultSlimDropHeavy,
     VaultSlimResume,
     VaultMeshPathReceipts,
+    VaultMeshIdentity,
+    VaultMeshBindMachine,
+    VaultMeshSetAlpnGrant,
+    VaultMeshRevokeMachine,
+    VaultMeshDial,
     VaultInspectionResolve,
     VaultSharedProposeDelete,
     VaultSharedProposeTransfer,
@@ -887,6 +902,9 @@ pub enum AgentVerb {
     VaultConsolidationHomeGet,
     VaultConsolidationLineage,
     VaultConsolidationPromote,
+    VaultConsolidationPin,
+    VaultConsolidationFrontier,
+    VaultConsolidationAccounting,
     VaultConsolidationEvidence,
     VaultSieveEvidence,
     VaultSieveEvidenceReplay,
@@ -1054,6 +1072,9 @@ impl AgentVerb {
         Self::VaultCoachInspect,
         Self::VaultPeopleList,
         Self::VaultPeopleGet,
+        Self::VaultPeopleCreate,
+        Self::VaultEntitiesLookBeforeMint,
+        Self::VaultIdentityMention,
         Self::VaultShapeRead,
         Self::VaultShapePlan,
         Self::VaultShapeApply,
@@ -1248,6 +1269,13 @@ impl AgentVerb {
         Self::VaultPacksConnectorGrantsGet,
         Self::VaultPacksConnectorGrantsPut,
         Self::VaultPacksRemove,
+        Self::VaultPacksSectionsPropose,
+        Self::VaultPacksSectionsList,
+        Self::VaultPacksSectionsGrant,
+        Self::VaultPacksSectionsRevoke,
+        Self::VaultPacksSectionsSuggest,
+        Self::VaultPacksSectionsSuggestionsGet,
+        Self::VaultPacksSectionsSuggestionsSet,
         Self::AiChatCompletions,
         Self::VaultConnectorsProxyAdmit,
         Self::VaultConnectorsProxyRevokeWrite,
@@ -1269,6 +1297,11 @@ impl AgentVerb {
         Self::VaultSlimDropHeavy,
         Self::VaultSlimResume,
         Self::VaultMeshPathReceipts,
+        Self::VaultMeshIdentity,
+        Self::VaultMeshBindMachine,
+        Self::VaultMeshSetAlpnGrant,
+        Self::VaultMeshRevokeMachine,
+        Self::VaultMeshDial,
         Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
         Self::VaultSharedProposeTransfer,
@@ -1900,6 +1933,9 @@ impl AgentVerb {
         Self::VaultConsolidationHomeGet,
         Self::VaultConsolidationLineage,
         Self::VaultConsolidationPromote,
+        Self::VaultConsolidationPin,
+        Self::VaultConsolidationFrontier,
+        Self::VaultConsolidationAccounting,
         Self::VaultConsolidationEvidence,
         Self::VaultSieveEvidence,
         Self::VaultSieveEvidenceReplay,
@@ -2070,6 +2106,9 @@ impl AgentVerb {
             Self::VaultCoachInspect => "vault.coach.inspect",
             Self::VaultPeopleList => "vault.people.list",
             Self::VaultPeopleGet => "vault.people.get",
+            Self::VaultPeopleCreate => "vault.people.create",
+            Self::VaultEntitiesLookBeforeMint => "vault.entities.look_before_mint",
+            Self::VaultIdentityMention => "vault.identity.mention",
             Self::VaultShapeRead => "vault.shape.read",
             Self::VaultShapePlan => "vault.shape.plan",
             Self::VaultShapeApply => "vault.shape.apply",
@@ -2264,6 +2303,13 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => "vault.packs.connector.grants.get",
             Self::VaultPacksConnectorGrantsPut => "vault.packs.connector.grants.put",
             Self::VaultPacksRemove => "vault.packs.remove",
+            Self::VaultPacksSectionsPropose => "vault.packs.sections.propose",
+            Self::VaultPacksSectionsList => "vault.packs.sections.list",
+            Self::VaultPacksSectionsGrant => "vault.packs.sections.grant",
+            Self::VaultPacksSectionsRevoke => "vault.packs.sections.revoke",
+            Self::VaultPacksSectionsSuggest => "vault.packs.sections.suggest",
+            Self::VaultPacksSectionsSuggestionsGet => "vault.packs.sections.suggestions.get",
+            Self::VaultPacksSectionsSuggestionsSet => "vault.packs.sections.suggestions.set",
             Self::AiChatCompletions => "ai.chat.completions",
             Self::VaultConnectorsProxyAdmit => "vault.connectors.proxy.admit",
             Self::VaultConnectorsProxyRevokeWrite => "vault.connectors.proxy.revoke_write",
@@ -2285,6 +2331,11 @@ impl AgentVerb {
             Self::VaultSlimDropHeavy => "vault.slim.drop_heavy",
             Self::VaultSlimResume => "vault.slim.resume",
             Self::VaultMeshPathReceipts => "vault.mesh.path_receipts",
+            Self::VaultMeshIdentity => "vault.mesh.identity",
+            Self::VaultMeshBindMachine => "vault.mesh.bind_machine",
+            Self::VaultMeshSetAlpnGrant => "vault.mesh.set_alpn_grant",
+            Self::VaultMeshRevokeMachine => "vault.mesh.revoke_machine",
+            Self::VaultMeshDial => "vault.mesh.dial",
             Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
             Self::VaultSharedProposeTransfer => "vault.shared.propose_transfer",
@@ -2938,6 +2989,9 @@ impl AgentVerb {
             Self::VaultConsolidationHomeGet => "vault.consolidation.home.get",
             Self::VaultConsolidationLineage => "vault.consolidation.lineage",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
+            Self::VaultConsolidationPin => "vault.consolidation.pin",
+            Self::VaultConsolidationFrontier => "vault.consolidation.frontier",
+            Self::VaultConsolidationAccounting => "vault.consolidation.accounting",
             Self::VaultConsolidationEvidence => "vault.consolidation.evidence",
             Self::VaultSieveEvidence => "vault.sieve.evidence",
             Self::VaultSieveEvidenceReplay => "vault.sieve.evidence.replay",
@@ -3111,6 +3165,9 @@ impl AgentVerb {
                 | Self::VaultCoachInspect
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
+                | Self::VaultPeopleCreate
+                | Self::VaultEntitiesLookBeforeMint
+                | Self::VaultIdentityMention
                 | Self::VaultShapeRead
                 | Self::VaultShapePlan
                 | Self::VaultShapeApply
@@ -3305,6 +3362,13 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsList
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsGet
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::AiChatCompletions
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
@@ -3326,6 +3390,11 @@ impl AgentVerb {
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
+                | Self::VaultMeshIdentity
+                | Self::VaultMeshBindMachine
+                | Self::VaultMeshSetAlpnGrant
+                | Self::VaultMeshRevokeMachine
+                | Self::VaultMeshDial
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -3937,6 +4006,9 @@ impl AgentVerb {
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationPin
+                | Self::VaultConsolidationFrontier
+                | Self::VaultConsolidationAccounting
                 | Self::VaultConsolidationEvidence
                 | Self::VaultSieveEvidence
                 | Self::VaultSieveEvidenceReplay
@@ -4151,6 +4223,9 @@ impl AgentVerb {
                 | Self::VaultCoachInspect
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
+                | Self::VaultPeopleCreate
+                | Self::VaultEntitiesLookBeforeMint
+                | Self::VaultIdentityMention
                 | Self::VaultShapeRead
                 | Self::VaultShapePlan
                 | Self::VaultShapeApply
@@ -4345,6 +4420,13 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsList
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsGet
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::AiChatCompletions
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
@@ -4366,6 +4448,11 @@ impl AgentVerb {
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
+                | Self::VaultMeshIdentity
+                | Self::VaultMeshBindMachine
+                | Self::VaultMeshSetAlpnGrant
+                | Self::VaultMeshRevokeMachine
+                | Self::VaultMeshDial
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -4977,6 +5064,9 @@ impl AgentVerb {
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationPin
+                | Self::VaultConsolidationFrontier
+                | Self::VaultConsolidationAccounting
                 | Self::VaultConsolidationEvidence
                 | Self::VaultSieveEvidence
                 | Self::VaultSieveEvidenceReplay
@@ -5307,6 +5397,9 @@ impl AgentVerb {
                 | Self::SelfInboxConcernMove
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
+                | Self::VaultPeopleCreate
+                | Self::VaultEntitiesLookBeforeMint
+                | Self::VaultIdentityMention
                 | Self::VaultShapeRead
                 | Self::VaultShapePlan
                 | Self::VaultShapeApply
@@ -5485,6 +5578,13 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsList
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsGet
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
                 | Self::VaultConnectorsSubscriptionsPut
@@ -5505,6 +5605,11 @@ impl AgentVerb {
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
+                | Self::VaultMeshIdentity
+                | Self::VaultMeshBindMachine
+                | Self::VaultMeshSetAlpnGrant
+                | Self::VaultMeshRevokeMachine
+                | Self::VaultMeshDial
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -6101,6 +6206,9 @@ impl AgentVerb {
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationPin
+                | Self::VaultConsolidationFrontier
+                | Self::VaultConsolidationAccounting
                 | Self::VaultConsolidationEvidence
                 | Self::VaultSieveEvidence
                 | Self::VaultSieveEvidenceReplay
@@ -6242,6 +6350,7 @@ impl AgentVerb {
                 | Self::SelfInboxMark
                 | Self::SelfInboxConcernOutcome
                 | Self::SelfInboxConcernMove
+                | Self::VaultPeopleCreate
                 | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
@@ -6353,6 +6462,11 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorUpdate
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::AiChatCompletions
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
@@ -6365,6 +6479,10 @@ impl AgentVerb {
                 | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
+                | Self::VaultMeshBindMachine
+                | Self::VaultMeshSetAlpnGrant
+                | Self::VaultMeshRevokeMachine
+                | Self::VaultMeshDial
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -6738,6 +6856,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationPin
+                | Self::VaultConsolidationFrontier
                 | Self::VaultSieveEvidenceReplay
                 | Self::VaultSievePolicySet
                 | Self::VaultSieveRecipePolicySet
@@ -6878,6 +6998,9 @@ impl AgentVerb {
             Self::VaultCoachInspect => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
+            Self::VaultPeopleCreate => &["spec"],
+            Self::VaultEntitiesLookBeforeMint => &["spec"],
+            Self::VaultIdentityMention => &["spec"],
             Self::VaultShapeRead => &["spec"],
             Self::VaultShapePlan => &["spec"],
             Self::VaultShapeApply => &["spec"],
@@ -7089,6 +7212,13 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => &["spec"],
             Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
+            Self::VaultPacksSectionsPropose => &["spec"],
+            Self::VaultPacksSectionsList => &["spec"],
+            Self::VaultPacksSectionsGrant => &["spec"],
+            Self::VaultPacksSectionsRevoke => &["spec"],
+            Self::VaultPacksSectionsSuggest => &["spec"],
+            Self::VaultPacksSectionsSuggestionsGet => &["spec"],
+            Self::VaultPacksSectionsSuggestionsSet => &["spec"],
             Self::AiChatCompletions => &["spec"],
             Self::VaultConnectorsProxyAdmit => &["spec"],
             Self::VaultConnectorsProxyRevokeWrite => &["spec"],
@@ -7110,6 +7240,11 @@ impl AgentVerb {
             Self::VaultSlimDropHeavy => &["spec"],
             Self::VaultSlimResume => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
+            Self::VaultMeshIdentity => &["spec"],
+            Self::VaultMeshBindMachine => &["spec"],
+            Self::VaultMeshSetAlpnGrant => &["spec"],
+            Self::VaultMeshRevokeMachine => &["spec"],
+            Self::VaultMeshDial => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
@@ -7741,6 +7876,9 @@ impl AgentVerb {
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
+            Self::VaultConsolidationPin => &["spec"],
+            Self::VaultConsolidationFrontier => &["spec"],
+            Self::VaultConsolidationAccounting => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultSieveEvidence => &["spec"],
             Self::VaultSieveEvidenceReplay => &["spec"],
@@ -7909,6 +8047,9 @@ impl AgentVerb {
             Self::VaultCoachInspect => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
+            Self::VaultPeopleCreate => &["spec"],
+            Self::VaultEntitiesLookBeforeMint => &["spec"],
+            Self::VaultIdentityMention => &["spec"],
             Self::VaultShapeRead => &["spec"],
             Self::VaultShapePlan => &["spec"],
             Self::VaultShapeApply => &["spec"],
@@ -8103,6 +8244,13 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => &["spec"],
             Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
+            Self::VaultPacksSectionsPropose => &["spec"],
+            Self::VaultPacksSectionsList => &["spec"],
+            Self::VaultPacksSectionsGrant => &["spec"],
+            Self::VaultPacksSectionsRevoke => &["spec"],
+            Self::VaultPacksSectionsSuggest => &["spec"],
+            Self::VaultPacksSectionsSuggestionsGet => &["spec"],
+            Self::VaultPacksSectionsSuggestionsSet => &["spec"],
             Self::AiChatCompletions => &["spec"],
             Self::VaultConnectorsProxyAdmit => &["spec"],
             Self::VaultConnectorsProxyRevokeWrite => &["spec"],
@@ -8124,6 +8272,11 @@ impl AgentVerb {
             Self::VaultSlimDropHeavy => &["spec"],
             Self::VaultSlimResume => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
+            Self::VaultMeshIdentity => &["spec"],
+            Self::VaultMeshBindMachine => &["spec"],
+            Self::VaultMeshSetAlpnGrant => &["spec"],
+            Self::VaultMeshRevokeMachine => &["spec"],
+            Self::VaultMeshDial => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
@@ -8755,6 +8908,9 @@ impl AgentVerb {
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
+            Self::VaultConsolidationPin => &["spec"],
+            Self::VaultConsolidationFrontier => &["spec"],
+            Self::VaultConsolidationAccounting => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultSieveEvidence => &["spec"],
             Self::VaultSieveEvidenceReplay => &["spec"],
@@ -8967,7 +9123,7 @@ impl AgentVerb {
                 "This agent proposes one persona field's new text for its standing block, as a Generated claim its gate settles; compiled text is never edited."
             }
             Self::SelfIdentityAnswer => {
-                "A vault owner's tap on an identity choice card: who a person named in their conversations is."
+                "The owner answers an identity choice with supporting evidence refs; the original mention and verified owner resolution provenance are retained atomically."
             }
             Self::SelfIdentitySettle => {
                 "Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask."
@@ -8992,6 +9148,15 @@ impl AgentVerb {
             }
             Self::VaultPeopleList => "One page of the people the caller reads, in handle order.",
             Self::VaultPeopleGet => "One person the vault knows, by their pr handle.",
+            Self::VaultPeopleCreate => {
+                "The owner creates a distinct PERSON with declared identity hints and existing identity-evidence refs, looking before minting an opaque id without selecting or merging a namesake."
+            }
+            Self::VaultEntitiesLookBeforeMint => {
+                "The owner queries the declared PERSON, ORG or PLACE identity hints for N candidates with evidence and provenance; only stored mention evidence is scored by the waterfall, and no entity is restored, linked or minted."
+            }
+            Self::VaultIdentityMention => {
+                "The owner reads one saved mention as unresolved, candidates or resolved, preserving the original tagger suggestion and the resolving owner evidence and provenance."
+            }
             Self::VaultShapeRead => {
                 "The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read."
             }
@@ -9572,6 +9737,27 @@ impl AgentVerb {
             Self::VaultPacksRemove => {
                 "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."
             }
+            Self::VaultPacksSectionsPropose => {
+                "The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing."
+            }
+            Self::VaultPacksSectionsList => {
+                "Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project."
+            }
+            Self::VaultPacksSectionsGrant => {
+                "The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent."
+            }
+            Self::VaultPacksSectionsRevoke => {
+                "The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild."
+            }
+            Self::VaultPacksSectionsSuggest => {
+                "Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal."
+            }
+            Self::VaultPacksSectionsSuggestionsGet => {
+                "The owner's plugin suggestion knob: whether workflow-pattern suggestion passes may run at all."
+            }
+            Self::VaultPacksSectionsSuggestionsSet => {
+                "The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted."
+            }
             Self::AiChatCompletions => {
                 "Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling."
             }
@@ -9632,6 +9818,21 @@ impl AgentVerb {
             }
             Self::VaultMeshPathReceipts => {
                 "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."
+            }
+            Self::VaultMeshIdentity => {
+                "This install's public mesh keys and both binding proofs, for the owner; no private key or grant is returned."
+            }
+            Self::VaultMeshBindMachine => {
+                "Bind a paired MACHINE's address and transport key using both possession proofs; the binding starts with no ALPN grants."
+            }
+            Self::VaultMeshSetAlpnGrant => {
+                "Allow or revoke one exact ALPN for a paired MACHINE and endpoint key, under the caller's own owner proof."
+            }
+            Self::VaultMeshRevokeMachine => {
+                "Permanently revoke a MACHINE's mesh admission and all its ALPN grants; a new enrollment needs a new MACHINE and pairing."
+            }
+            Self::VaultMeshDial => {
+                "Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream."
             }
             Self::VaultInspectionResolve => {
                 "Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item."
@@ -11445,6 +11646,15 @@ impl AgentVerb {
             }
             Self::VaultConsolidationPromote => {
                 "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."
+            }
+            Self::VaultConsolidationPin => {
+                "Pins reference-only evidence for six-axis consolidation buckets at one owner-scoped ledger revision. Hashes, lineage taint and source eligibility are derived by the root, never accepted from children."
+            }
+            Self::VaultConsolidationFrontier => {
+                "Records immutable child judgements and reference sets against an existing root pin, in any completion order, and accounts source-plus-hash corroboration without merging projects. Does not settle claims."
+            }
+            Self::VaultConsolidationAccounting => {
+                "Reads the original root revision, source hashes, ancestor and edge provenance taint, zero-signal exclusions and per-bucket corroboration accounting under current owner read authority."
             }
             Self::VaultConsolidationEvidence => {
                 "Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."

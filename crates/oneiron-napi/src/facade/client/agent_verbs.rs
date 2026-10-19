@@ -289,6 +289,30 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_people_create(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.people.create", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_entities_look_before_mint(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.entities.look_before_mint", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_identity_mention(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.identity.mention", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_shape_read(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.shape.read", js_json(input))
@@ -1996,6 +2020,69 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_packs_sections_propose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.propose", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.list", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.grant", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.revoke", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_suggest(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.suggest", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_suggestions_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.suggestions.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_suggestions_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.suggestions.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_chat_completions(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.chat.completions", js_json(input))
@@ -2170,6 +2257,45 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.mesh.path_receipts", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mesh_identity(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mesh.identity", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mesh_bind_machine(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mesh.bind_machine", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mesh_set_alpn_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mesh.set_alpn_grant", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mesh_revoke_machine(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mesh.revoke_machine", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_mesh_dial(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.mesh.dial", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -7768,6 +7894,33 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.consolidation.promote", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_pin(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.pin", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_frontier(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.frontier", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_accounting(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.accounting", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

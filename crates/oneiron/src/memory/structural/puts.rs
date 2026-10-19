@@ -48,6 +48,14 @@ impl Memory<'_> {
     /// the prior row is the snapshot of record, so a refusal here destroys
     /// nothing and mints nothing.
     pub fn put_structural(&self, input: &StructuralPutInput) -> MemoryResult<EntityRefReceipt> {
+        self.put_structural_guarded(input, |_| Ok(()))
+    }
+
+    pub(crate) fn put_structural_guarded(
+        &self,
+        input: &StructuralPutInput,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<EntityRefReceipt> {
         let type_byte = type_byte_for_kind(&input.kind)?;
         if type_byte == ENTITY_TYPE_CLAIM {
             return Err(MemoryError::bad_request_with(
@@ -216,6 +224,7 @@ impl Memory<'_> {
                 return Ok(true);
             }
             ensure_structural_create_in_txn(self.vault, content.read(), &id)?;
+            guard(content.read())?;
             let mut batch = if sources.is_empty() {
                 self.vault
                     .batch_in()

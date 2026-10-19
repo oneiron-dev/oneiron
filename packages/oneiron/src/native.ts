@@ -67,6 +67,9 @@ vaultDiagnosticsGet(input: unknown): unknown
 vaultCoachInspect(input: unknown): unknown
 vaultPeopleList(input: unknown): unknown
 vaultPeopleGet(input: unknown): unknown
+vaultPeopleCreate(input: unknown): unknown
+vaultEntitiesLookBeforeMint(input: unknown): unknown
+vaultIdentityMention(input: unknown): unknown
 vaultShapeRead(input: unknown): unknown
 vaultShapePlan(input: unknown): unknown
 vaultShapeApply(input: unknown): unknown
@@ -261,6 +264,13 @@ vaultPacksConnectorUpdate(input: unknown): unknown
 vaultPacksConnectorGrantsGet(input: unknown): unknown
 vaultPacksConnectorGrantsPut(input: unknown): unknown
 vaultPacksRemove(input: unknown): unknown
+vaultPacksSectionsPropose(input: unknown): unknown
+vaultPacksSectionsList(input: unknown): unknown
+vaultPacksSectionsGrant(input: unknown): unknown
+vaultPacksSectionsRevoke(input: unknown): unknown
+vaultPacksSectionsSuggest(input: unknown): unknown
+vaultPacksSectionsSuggestionsGet(input: unknown): unknown
+vaultPacksSectionsSuggestionsSet(input: unknown): unknown
 aiChatCompletions(input: unknown): unknown
 vaultConnectorsProxyAdmit(input: unknown): unknown
 vaultConnectorsProxyRevokeWrite(input: unknown): unknown
@@ -282,6 +292,11 @@ vaultSlimResumeStep(input: unknown): unknown
 vaultSlimDropHeavy(input: unknown): unknown
 vaultSlimResume(input: unknown): unknown
 vaultMeshPathReceipts(input: unknown): unknown
+vaultMeshIdentity(input: unknown): unknown
+vaultMeshBindMachine(input: unknown): unknown
+vaultMeshSetAlpnGrant(input: unknown): unknown
+vaultMeshRevokeMachine(input: unknown): unknown
+vaultMeshDial(input: unknown): unknown
 vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
 vaultSharedProposeTransfer(input: unknown): unknown
@@ -893,6 +908,9 @@ vaultRunsCheckpoint(input: unknown): unknown
 vaultConsolidationHomeGet(input: unknown): unknown
 vaultConsolidationLineage(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
+vaultConsolidationPin(input: unknown): unknown
+vaultConsolidationFrontier(input: unknown): unknown
+vaultConsolidationAccounting(input: unknown): unknown
 vaultConsolidationEvidence(input: unknown): unknown
 vaultSieveEvidence(input: unknown): unknown
 vaultSieveEvidenceReplay(input: unknown): unknown
