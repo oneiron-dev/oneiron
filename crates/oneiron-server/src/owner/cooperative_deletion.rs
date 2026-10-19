@@ -50,6 +50,29 @@ pub(crate) fn check_peer(peer: &str) -> OwnerResult<()> {
     peer_url("peer", peer, COOP_DELETION_PEER_PATH).map(drop)
 }
 
+/// A verb hook's rewrite of a `vault.courtesy_delete.answer` call, its
+/// `reply_to` checked as [`answer`] takes it, with nothing sent (FIX 5140):
+/// both rows' rewrite admissions run it, so a hook's destination the answer
+/// could not reach gives way to the caller's own args instead of refusing
+/// the owner's delete. Any other verb passes.
+pub(crate) fn check_rewritten_reply_to(
+    verb: &str,
+    rewritten: &serde_json::Value,
+) -> Result<(), String> {
+    if verb != "vault.courtesy_delete.answer" {
+        return Ok(());
+    }
+    match rewritten
+        .get("reply_to")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some(origin) => peer_url("reply_to", origin, COOP_DELETION_REPLY_PEER_PATH)
+            .map(drop)
+            .map_err(|_| "reply_to must be an https origin".to_owned()),
+        None => Ok(()),
+    }
+}
+
 /// Runs `sign` with this host's authority key.
 pub(super) fn with_issuer<T>(
     server: &SyncServer,
