@@ -523,20 +523,27 @@ fn seat_routes(
 /// attempt, and those of a review whose run reference is the run's canonical
 /// id (`vault.critic.review` keys a review's branch by its run reference's
 /// hash). A review under a run reference the caller chose is not found from
-/// an attempt, so the list is not exhaustive.
+/// an attempt, so the list is not exhaustive. A critique that does not read
+/// is an issue on the read, and every other one is still listed (FIX 4468).
 fn critiques(
     vault: &Vault,
     launched: &[LaunchedMember],
     issues: &mut Vec<ObservationIssue>,
 ) -> Result<Vec<CriticObservation>> {
     let store = CritiqueArtifactStore::new(vault);
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let mut seen = BTreeSet::new();
     let mut critics = Vec::new();
     for member in launched {
         let run = member.attempt_ref.to_hex();
         let named_branch = blake3::hash(run.as_bytes());
-        let direct = store.list_branch(AttemptId::from_bytes(member.attempt_ref.as_bytes())?)?;
-        let named = store.list_branch(AttemptId::from_bytes(&named_branch.as_bytes()[..16])?)?;
+        let (direct, direct_unread) = store
+            .observe_branch_in_txn(&txn, AttemptId::from_bytes(member.attempt_ref.as_bytes())?)?;
+        let (named, named_unread) = store
+            .observe_branch_in_txn(&txn, AttemptId::from_bytes(&named_branch.as_bytes()[..16])?)?;
+        for reason in direct_unread.into_iter().chain(named_unread) {
+            issues.push(unavailable("critic", format!("run {run}: {reason}")));
+        }
         let found = direct
             .into_iter()
             .map(|artifact| (CriticAssociation::BranchAttempt, artifact))
