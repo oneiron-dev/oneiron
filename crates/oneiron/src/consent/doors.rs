@@ -55,7 +55,7 @@ pub struct AuthenticatedOwner {
     /// someone who need not own this vault, when a transport bound one
     /// ([`Vault::bind_person_credential`], FIX 4707). Every person-tier
     /// revalidation then also requires it to be live; it adds no owner
-    /// authority, so an owner-tier door still asks for a live owner.
+    /// authority, so every owner-tier door refuses the proof.
     person_credential: Option<Box<crate::authority::VerifiedSlip>>,
     /// The host action this owner was authenticated from, when a host
     /// authenticated a self-hosted root or the local dev mode as the owner
@@ -181,6 +181,14 @@ impl AuthenticatedOwner {
         txn: &heed::RoTxn<'_>,
     ) -> Result<EntityId> {
         let actor = self.revalidate_person_in_txn(vault, txn)?;
+        // A person credential carries no owner authority, even an owner's:
+        // a narrowed slip of his never acts at an owner-tier door through
+        // the holders' door (FIX 4707).
+        if self.person_credential.is_some() {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "a person credential carries no owner authority",
+            )));
+        }
         // A bound credential's check above already asked for an owner.
         if self.credential.is_none()
             && !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?

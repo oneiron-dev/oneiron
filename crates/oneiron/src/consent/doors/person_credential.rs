@@ -12,9 +12,9 @@ impl Vault {
     /// their request arrived with (FIX 4707): their own human slip, not
     /// handed to another key, and live now. It need not be owner-grade and
     /// its person need not own this vault. From then on every person-tier
-    /// revalidation also refuses once that slip is revoked or expired; an
-    /// owner-tier door still asks for a live owner, so the binding lends a
-    /// non-owner no owner authority.
+    /// revalidation also refuses once that slip is revoked or expired, and
+    /// every owner-tier door refuses the proof outright, an owner's too, so
+    /// the binding lends no one owner authority.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
