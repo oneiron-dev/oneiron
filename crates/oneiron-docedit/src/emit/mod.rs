@@ -223,15 +223,7 @@ pub fn emit(plan: &DesignPlan, inputs: &EmitInputs<'_>) -> Result<Candidate, Emi
     plan.check(&inputs.kept, template)?;
     let brief = Brief::parse(inputs.kept.bytes).map_err(CompileError::from)?;
     let presentation = TemplateView::read(template)?.presentation;
-    let held: Vec<String> = template
-        .relationships(&presentation)?
-        .into_iter()
-        .filter(|rel| rel.kind == format!("{REL}/{SLIDE_REL}"))
-        .map(|rel| rel.target)
-        .collect();
-    if !held.is_empty() {
-        return Err(EmitError::TemplateSlides(held));
-    }
+    check_template(template)?;
     let mut writer = Writer {
         package: template.clone(),
         plan,
@@ -302,6 +294,22 @@ pub fn emit(plan: &DesignPlan, inputs: &EmitInputs<'_>) -> Result<Candidate, Emi
             Err(FitUnverified { units: unverified })
         },
     })
+}
+
+/// The creation template must have no existing slides. Design and emission
+/// share this check, so an offered plan is never built over a live deck.
+pub fn check_template(template: &Package) -> Result<(), EmitError> {
+    let presentation = TemplateView::read(template)?.presentation;
+    let held: Vec<String> = template
+        .relationships(&presentation)?
+        .into_iter()
+        .filter(|rel| rel.kind == format!("{REL}/{SLIDE_REL}"))
+        .map(|rel| rel.target)
+        .collect();
+    if !held.is_empty() {
+        return Err(EmitError::TemplateSlides(held));
+    }
+    Ok(())
 }
 
 struct Writer<'a> {

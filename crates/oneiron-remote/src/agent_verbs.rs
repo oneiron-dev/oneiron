@@ -1908,6 +1908,24 @@ impl OneironClient {
                 "vault.critic.review" => remote_agent_verb_output::<
                     oneiron::critic::review::CriticReviewOutcome,
                 >(client, verb, &input),
+                "vault.artifacts.propose_outline" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::deck_creation::DeckOutlineView,
+                >(client, verb, &input),
+                "vault.artifacts.outline" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::deck_creation::DeckOutlineView,
+                >(client, verb, &input),
+                "vault.artifacts.keep_outline" => remote_agent_verb_output::<
+                    oneiron::edit_roundtrip::deck_create::KeptOutline,
+                >(client, verb, &input),
+                "vault.artifacts.decline_outline" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::deck_creation::DeckOutlineDeclined,
+                >(client, verb, &input),
+                "vault.artifacts.design_deck" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::deck_creation::DeckDesignView,
+                >(client, verb, &input),
+                "vault.artifacts.create_deck" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::deck_creation::DeckEmissionOutcome,
+                >(client, verb, &input),
                 "vault.artifacts.inspect_deck" => remote_agent_verb_output::<
                     oneiron::blob_artifact::DeckInspectionView,
                 >(client, verb, &input),
@@ -10494,6 +10512,78 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.critic.review", value)
+    }
+    pub fn vault_artifacts_propose_outline(
+        &self,
+        input: &oneiron::blob_artifact::deck_creation::DeckOutlineProposeRequest,
+    ) -> Result<oneiron::blob_artifact::deck_creation::DeckOutlineView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.propose_outline", value)
+    }
+    pub fn vault_artifacts_outline(
+        &self,
+        input: &oneiron::blob_artifact::deck_creation::DeckOutlineRefRequest,
+    ) -> Result<oneiron::blob_artifact::deck_creation::DeckOutlineView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.outline", value)
+    }
+    pub fn vault_artifacts_keep_outline(
+        &self,
+        input: &oneiron::blob_artifact::deck_creation::DeckOutlineSettleRequest,
+    ) -> Result<oneiron::edit_roundtrip::deck_create::KeptOutline, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.keep_outline", value)
+    }
+    pub fn vault_artifacts_decline_outline(
+        &self,
+        input: &oneiron::blob_artifact::deck_creation::DeckOutlineSettleRequest,
+    ) -> Result<oneiron::blob_artifact::deck_creation::DeckOutlineDeclined, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.decline_outline", value)
+    }
+    pub fn vault_artifacts_design_deck(
+        &self,
+        input: &oneiron::blob_artifact::deck_creation::DeckDesignRequest,
+    ) -> Result<oneiron::blob_artifact::deck_creation::DeckDesignView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.design_deck", value)
+    }
+    pub fn vault_artifacts_create_deck(
+        &self,
+        input: &oneiron::blob_artifact::deck_creation::DeckEmissionRequest,
+    ) -> Result<oneiron::blob_artifact::deck_creation::DeckEmissionOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.create_deck", value)
     }
     pub fn vault_artifacts_inspect_deck(
         &self,

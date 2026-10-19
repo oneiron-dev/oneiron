@@ -1607,6 +1607,18 @@ export class Oneiron {
       review_slides: (request: Facade.SlideReviewSubmit): Facade.SlideReviewOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReviewSlides(keyedJson(request))) as Facade.SlideReviewOutcome; return result }),
       /** Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard. */
       ask: (input: Facade.ArtifactAskSubmit): Facade.ArtifactAskOutcome => this.#call(() => this.#client.vaultArtifactsAsk(input) as Facade.ArtifactAskOutcome),
+      /** Proposes a closed typed deck outline as a brief NOTE for the person to keep or decline. */
+      propose_outline: (input: Facade.DeckOutlineProposeRequest): Facade.DeckOutlineView => this.#call(() => this.#client.vaultArtifactsProposeOutline(input) as Facade.DeckOutlineView),
+      /** Reads a typed deck outline, its current NOTE frontier, its keep and its freshness. */
+      outline: (input: Facade.DeckOutlineRefRequest): Facade.DeckOutlineView => this.#call(() => this.#client.vaultArtifactsOutline(input) as Facade.DeckOutlineView),
+      /** The owner keeps the exact outline frontier, freezing its version and content hash. */
+      keep_outline: (input: Facade.DeckOutlineSettleRequest): Facade.KeptOutline => this.#call(() => this.#client.vaultArtifactsKeepOutline(input) as Facade.KeptOutline),
+      /** The owner declines the exact outline frontier, clearing its keep and design directions. */
+      decline_outline: (input: Facade.DeckOutlineSettleRequest): Facade.DeckOutlineDeclined => this.#call(() => this.#client.vaultArtifactsDeclineOutline(input) as Facade.DeckOutlineDeclined),
+      /** Compiles one to three template directions from the exact fresh keep into validated plans or typed design decisions. */
+      design_deck: (input: Facade.DeckDesignRequest): Facade.DeckDesignView => this.#call(() => this.#client.vaultArtifactsDesignDeck(input) as Facade.DeckDesignView),
+      /** Emits one checked deck from a fresh kept outline and a planned template, retaining born-from and unverified fit. */
+      create_deck: (input: Facade.DeckEmissionRequest): Facade.DeckEmissionOutcome => this.#call(() => this.#client.vaultArtifactsCreateDeck(input) as Facade.DeckEmissionOutcome),
       /** Inspects one PPTX version for native edit targets and comment identities without minting ids. */
       inspect_deck: (input: Facade.DeckInspectRequest): Facade.DeckInspectionView => this.#call(() => this.#client.vaultArtifactsInspectDeck(input) as Facade.DeckInspectionView),
       /** Runs one native deck transaction over the head and holds the proposal for Keep. */
