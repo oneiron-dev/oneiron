@@ -119,7 +119,7 @@ fn default_request_limit() -> usize {
 }
 
 /// Owner/control-plane view of pending requests only. A pending grant never authorizes a content read.
-#[utoipa::path(get, path = "/v1/companion/personas/access-requests", params(AccessRequestListQuery),
+#[utoipa::path(get, path = "/v1/companion/profiles/access-requests", params(AccessRequestListQuery),
     responses((status = 200, body = AccessRequestsListResponse),
               (status = 403, body = ApiErrorEnvelope)))]
 pub(crate) async fn list_access_requests(

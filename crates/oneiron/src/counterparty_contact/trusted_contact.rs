@@ -37,6 +37,10 @@ const MAX_TARGET_BYTES: usize = 512;
 
 const MAX_ROW_REF_BYTES: usize = 256;
 
+/// The refusal of a tier whose row is in the manifest but not a live
+/// `RouteToHelp` row.
+const TIER_ROW_NOT_ROUTE_TO_HELP: &str = "a tier names an active RouteToHelp owner policy row";
+
 /// Whether the engine asks the person before it reaches their contact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -338,7 +342,8 @@ impl Vault {
     }
 
     /// The owner names the trusted-contact tier of one `RouteToHelp` policy
-    /// row. A row the owner never names is a concern.
+    /// row, active in the policy in force. A row the owner never names is a
+    /// concern.
     pub fn set_trusted_contact_tier(
         &self,
         owner: &AuthenticatedOwner,
@@ -350,6 +355,16 @@ impl Vault {
         }
         self.with_write_txn(|wtxn| {
             owner.revalidate_in_txn(self, wtxn)?;
+            // The row is read in this same transaction (FIX 4330): a ref no
+            // owner row carries is not found, and one whose rows are all
+            // retired or act otherwise than `RouteToHelp` is refused.
+            match crate::gate::resolve_policy_manifest(&self.store, wtxn)?
+                .owner_policy_row_routes_to_help(row_ref)
+            {
+                None => return Err(Error::EntityNotFound),
+                Some(false) => return Err(invalid(TIER_ROW_NOT_ROUTE_TO_HELP)),
+                Some(true) => {}
+            }
             TIERS.put(&self.store, wtxn, &row_ref.to_owned(), &tier)
         })
     }
@@ -410,7 +425,7 @@ impl Vault {
             if !yes {
                 return Ok(TrustedContactAskOutcome::Declined);
             }
-            stage_notice_in_txn(
+            let fire = stage_notice_in_txn(
                 self,
                 wtxn,
                 &relation,
@@ -427,7 +442,7 @@ impl Vault {
                 },
                 config,
             );
-            inform_inboxes_in_txn(self, wtxn, &relation, ask, &notices, now)?;
+            inform_inboxes_in_txn(self, wtxn, &relation, fire, &notices, now)?;
             Ok(TrustedContactAskOutcome::Notified(notices))
         })
     }
@@ -436,13 +451,15 @@ impl Vault {
     /// settled, in the gate's own transaction. Each live relation is notified
     /// at once on the imminent tier with just-call, authorized by the firing
     /// row, and asked about otherwise; either way the person and the sending
-    /// agent are told in their inboxes. A proof that no longer stands binds
-    /// no one: the help card still shows.
+    /// agent are told in their inboxes, each body as the host's `config`
+    /// words it. A proof that no longer stands binds no one: the help card
+    /// still shows.
     pub(crate) fn fire_trusted_contacts_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         person: &AuthenticatedOwner,
         row_ref: Option<&str>,
+        config: &PolicyModelConfig,
         now: u64,
     ) -> Result<TrustedContactFire> {
         let person = match person.revalidate_person_in_txn(self, wtxn) {
@@ -464,10 +481,9 @@ impl Vault {
             tier,
         });
         // What the person and the agent are told, per relation, in the
-        // engine's own words: the gate's receipt carries the host's.
-        let told = |fire: TrustedContactFire| {
-            crate::policy_model::trusted_contact_notices(fire, &PolicyModelConfig::default())
-        };
+        // host's words, as the gate's receipt carries them (FIX 4422).
+        let told =
+            |fire: TrustedContactFire| crate::policy_model::trusted_contact_notices(fire, config);
         let mut fire = TrustedContactFire::default();
         for (_, relation) in RELATIONS.scan_from(&self.store, wtxn, person.as_bytes())? {
             if relation.person != person || !relation.is_live() {
@@ -477,8 +493,10 @@ impl Vault {
                 && tier == TrustedContactTier::Imminent
                 && let Some(origin) = origin.clone()
             {
-                let sent = EntityId::now();
-                stage_notice_in_txn(self, wtxn, &relation, sent, origin, now)?;
+                // The fire that delivers: a fresh one, or the notice already
+                // waiting for this naming (FIX 4423).
+                let fresh = EntityId::now();
+                let sent = stage_notice_in_txn(self, wtxn, &relation, fresh, origin, now)?;
                 let notices = told(TrustedContactFire {
                     notified: 1,
                     asked: 0,

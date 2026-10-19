@@ -122,7 +122,7 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
         ("/v1/companion/access-grants", "post"),
         ("/v1/companion/access-grants/{grant_id}/revoke", "post"),
         ("/v1/companion/profiles", "get"),
-        ("/v1/companion/personas/access-requests", "get"),
+        ("/v1/companion/profiles/access-requests", "get"),
         ("/v1/companion/profiles/{person_ref}", "get"),
         ("/v1/companion/profiles/{person_ref}", "post"),
         ("/v1/owner/courtesy-delete/send", "post"),

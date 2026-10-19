@@ -9,30 +9,16 @@ use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{
     COOP_DELETION_PEER_PATH, COOP_DELETION_REPLY_PEER_PATH, CooperativeDeletionAnswer,
-    CooperativeDeletionNotice, IncomingCooperativeDeletion,
     decode_self_signed_cooperative_deletion_request, parse_hex,
 };
 use oneiron::task_verb::sdk::{
-    CourtesyDeleteAnswerRequest, CourtesyDeleteAskedWorld, CourtesyDeleteChoice,
-    CourtesyDeleteIncoming, CourtesyDeleteSendRequest, CourtesyDeleteSent,
+    CourtesyDeleteAnswerRequest, CourtesyDeleteIncoming, CourtesyDeleteSendRequest,
+    CourtesyDeleteSent, courtesy_delete_incoming_ask, courtesy_delete_sent_ask,
 };
 use rand_core::RngCore;
 
-use super::stamp::rfc3339_secs;
 use super::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
-
-/// One sent ask, as the ledger holds it.
-fn sent_ask(notice: CooperativeDeletionNotice) -> CourtesyDeleteSent {
-    CourtesyDeleteSent {
-        request: notice.request_id,
-        pact: notice.connection_id,
-        recipient: notice.recipient_id,
-        status: notice.status.as_str().to_owned(),
-        created: rfc3339_secs(notice.created_at),
-        updated: rfc3339_secs(notice.updated_at),
-    }
-}
 
 fn now() -> u64 {
     std::time::SystemTime::now()
@@ -55,6 +41,13 @@ fn peer_url(field: &str, origin: &str, path: &str) -> OwnerResult<String> {
     let destination = format!("{}{path}", origin.trim_end_matches('/'));
     crate::feedback_delivery::check_endpoint(&destination).map_err(|_| invalid())?;
     Ok(destination)
+}
+
+/// Checks a former peer's host origin as [`send`] takes it, with nothing
+/// written (FIX 4186): a guest revoke runs it on its hook-rewritten `peer`
+/// before the revoke commits, whether or not the revoke ends a pact.
+pub(crate) fn check_peer(peer: &str) -> OwnerResult<()> {
+    peer_url("peer", peer, COOP_DELETION_PEER_PATH).map(drop)
 }
 
 /// Runs `sign` with this host's authority key.
@@ -118,99 +111,19 @@ pub(crate) fn send(
     };
     let notice =
         vault.queue_cooperative_deletion_request_as(owner, &signed, &destination, now())?;
-    Ok(sent_ask(notice))
+    Ok(courtesy_delete_sent_ask(notice))
 }
 
-/// Every ask this vault sent.
+/// Every ask this vault sent: the engine's ledger projection, shared with
+/// an embedded handle (FIX 3139).
 pub(crate) fn sent(server: &SyncServer) -> OwnerResult<Vec<CourtesyDeleteSent>> {
-    Ok(server
-        .vault()
-        .cooperative_deletion_notices()?
-        .into_iter()
-        .map(sent_ask)
-        .collect())
+    Ok(oneiron::task_verb::sdk::courtesy_delete_sent(server.vault())?)
 }
 
 /// Every ask filed here, with each named world's stale stamp and the
-/// records the ask covers.
+/// records the ask covers: the engine's ledger projection (FIX 3139).
 pub(crate) fn incoming(server: &SyncServer) -> OwnerResult<Vec<CourtesyDeleteIncoming>> {
-    let vault = server.vault();
-    let fold = vault.authority_fold()?;
-    vault
-        .incoming_cooperative_deletions()?
-        .into_iter()
-        .map(|filed| incoming_ask(vault, &fold, filed))
-        .collect()
-}
-
-fn incoming_ask(
-    vault: &oneiron::Vault,
-    fold: &oneiron::authority::AuthorityFold,
-    filed: IncomingCooperativeDeletion,
-) -> OwnerResult<CourtesyDeleteIncoming> {
-    let pact = parse_hex::<32>(&filed.connection_id);
-    let pact_status = pact
-        .and_then(|pact| fold.federation_pacts.get(&pact))
-        .map(|state| format!("{:?}", state.status));
-    // The records the pact delivered that the ask covers (FIX 321). A named
-    // world that does not parse matches nothing: it never widens the ask to
-    // every world.
-    let named: Vec<oneiron::EntityId> = filed
-        .worlds
-        .iter()
-        .filter_map(|world| oneiron::EntityId::from_hex(world).ok())
-        .collect();
-    let candidates = match pact {
-        Some(pact) if named.len() == filed.worlds.len() => vault
-            .cooperative_deletion_candidates(&pact, &named, filed.epoch_cutoff)?
-            .iter()
-            .map(oneiron::EntityId::to_hex)
-            .collect(),
-        _ => Vec::new(),
-    };
-    // The ask names the requester's own world ids; a named world's stale stamp
-    // is the one on the foreign WORLD it lands in here (FIX 3497). The signed
-    // ask is never rewritten.
-    let worlds = filed
-        .worlds
-        .iter()
-        .map(|world| {
-            let here = match (pact, oneiron::EntityId::from_hex(world)) {
-                (Some(pact), Ok(id)) => oneiron::federation::pact_foreign_world(fold, &pact, id)?,
-                _ => None,
-            };
-            let stamp = here
-                .map(|foreign| {
-                    oneiron::federation::foreign_world_stale_stamp(vault, foreign.entity_id())
-                })
-                .transpose()?
-                .flatten();
-            Ok(CourtesyDeleteAskedWorld {
-                world: world.clone(),
-                stale: stamp.map(|stamp| format!("{:?}", stamp.reason)),
-                stale_epoch: stamp.map(|stamp| stamp.disconnect_epoch),
-            })
-        })
-        .collect::<OwnerResult<Vec<_>>>()?;
-    Ok(CourtesyDeleteIncoming {
-        request: filed.request_id,
-        pact: filed.connection_id,
-        pact_status,
-        requester: filed.requester_vault_id,
-        worlds,
-        epoch_cutoff: filed.epoch_cutoff,
-        candidates,
-        requested: rfc3339_secs(filed.requested_at),
-        received: rfc3339_secs(filed.received_at),
-        answer: filed.disposition.map(|choice| CourtesyDeleteChoice {
-            choice: choice.kind,
-            reason_code: choice.reason_code,
-            review: choice.review_at.map(rfc3339_secs),
-            deleted: choice.deleted,
-            recorded: rfc3339_secs(choice.recorded_at),
-        }),
-        reply_status: filed.reply_status.map(|status| status.as_str().to_owned()),
-    })
+    Ok(oneiron::task_verb::sdk::courtesy_delete_incoming(server.vault())?)
 }
 
 /// Records the owner's choice on one filed ask and, with `reply_to`, queues
@@ -265,5 +178,5 @@ pub(crate) fn answer(
         filed = vault.queue_cooperative_deletion_reply_as(owner, &reply, &destination, now())?;
     }
     let fold = vault.authority_fold()?;
-    incoming_ask(vault, &fold, filed)
+    Ok(courtesy_delete_incoming_ask(vault, &fold, filed)?)
 }

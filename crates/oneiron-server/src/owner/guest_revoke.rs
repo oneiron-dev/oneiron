@@ -9,14 +9,23 @@
 //! staged, and inside each one's own hook boundary. Queuing writes the
 //! outbox and waits on no network: the courier delivers. A target whose ask
 //! does not queue keeps `not_requested` with its error, and the committed
-//! revoke still answers.
+//! revoke still answers. A malformed `peer` refuses the whole revoke before
+//! its writer runs ([`check_peer`], FIX 4186).
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::receipt::{GuestDeletionRequestStatus, GuestRevokeResponse};
 use oneiron::task_verb::sdk::CourtesyDeleteSendRequest;
 
-use super::cooperative_deletion;
+use super::{OwnerResult, cooperative_deletion};
 use crate::server::SyncServer;
+
+/// Refuses a `peer` the courtesy ask would refuse, before the revoke
+/// commits (FIX 4186). Both the owner route and the host door run it on
+/// the hook-rewritten input, so a malformed origin is a bad request with
+/// nothing written, even for a revoke that ends no pact. No `peer` passes.
+pub(crate) fn check_peer(peer: Option<&str>) -> OwnerResult<()> {
+    peer.map_or(Ok(()), cooperative_deletion::check_peer)
+}
 
 /// Queues one courtesy-delete ask to `peer` per courtesy target `revoked`
 /// names, and records each outcome on its target. With no `peer` it sends

@@ -13,6 +13,10 @@
 //! tiers live in the engine's trusted-contact side tables, which hold no
 //! listed row, so each lists none.
 //!
+//! `.concern.authorize` and `.concern.propose` word their notices with the
+//! host's owner-plane configuration ([`owner_policy_config`]), the one the
+//! gate's own fire under `.concern.propose` reads too.
+//!
 //! DOOR-140 B: `.concern.propose` and `.concern.deliver` act on the
 //! caller's own credential handle (`host_door_caller`), as `connector.call`
 //! does. Propose reads the message under the caller's own read scope, for
@@ -40,6 +44,14 @@ use super::host_doors::{Listed, MaybeListed, credential_listing, owner_proof, re
 use super::shared_act_doors::{as_person_naming, person};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
+
+/// The one owner-plane policy configuration this host serves
+/// (`SyncServer::with_owner_policy_config`), so a concern's notices, and
+/// the gate's fire under `.concern.propose`, carry the host's wording, not
+/// per-door defaults (FIX 4329, 4422).
+fn owner_policy_config(server: &SyncServer) -> &PolicyModelConfig {
+    &server.policy_doors.owner
+}
 
 /// `vault.trusted_contacts.name`: the owner names their trusted contact.
 pub(crate) async fn vault_trusted_contacts_name(
@@ -178,7 +190,7 @@ pub(crate) async fn vault_trusted_contacts_concern_authorize(
                 server.vault(),
                 &owner,
                 input,
-                &PolicyModelConfig::default(),
+                owner_policy_config(server),
             )
         },
         |_| Some(Vec::new()),
@@ -201,8 +213,8 @@ pub(crate) async fn vault_trusted_contacts_concern_propose(
         Ok(proof) => proof,
         Err(refusal) => return refused(refusal),
     };
-    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        sdk::propose_trusted_contact_concern(&memory, &proof, input, &PolicyModelConfig::default())
+    credential_listing(server, auth, caller, VERB, move |server, _, memory| {
+        sdk::propose_trusted_contact_concern(&memory, &proof, input, owner_policy_config(server))
     })
     .await
 }
