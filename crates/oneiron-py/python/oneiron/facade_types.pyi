@@ -10774,11 +10774,12 @@ class RouteObservation(TypedDict):
     effort: ReasoningEffort
     why: str
     reused: bool
-CriticAssociation = Literal["branch_attempt", "canonical_run_ref"]
+CriticAssociation = Literal["branch_attempt", "canonical_run_ref", "declared_spawn_attempt"]
 class CriticObservation(TypedDict):
     run_ref: str
     branch_attempt_ref: EntityId
     association: CriticAssociation
+    declared_attempt_ref: NotRequired[EntityId | None]
     artifact_id: str
     target_ref: str
     type_ref: TypeStamp
@@ -11210,6 +11211,7 @@ class CriticReviewSubmit(TypedDict):
     auto_resolve_threshold: float
     catalog: Any
     critics: list[CriticBinding]
+    spawn_attempt_ref: NotRequired[str | None]
 class CritiqueTriageScores(TypedDict):
     accept: float
     revise: float
@@ -11263,6 +11265,7 @@ class CriticReviewOutcome(TypedDict):
     triage: CritiqueTriage
     artifacts: list[CritiqueArtifact]
     receipts: list[DecisionReceipt]
+    spawn_attempt_ref: NotRequired[str | None]
 class OutlineCommunication(TypedDict):
     audience: str
     outcome: str
