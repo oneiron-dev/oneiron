@@ -6,9 +6,10 @@
 //! A person sees only rows that name them. A submission names every person
 //! whose words it carries (FIX 5502: one per conversation), so each of them
 //! lists it, and nobody else does; it shows its source, worlds and custody,
-//! never who else is in it. Controls name ids, not persons, and are not
-//! listed; a withdrawn submission reads withdrawn on its own row. Nothing
-//! says what the intake holds for anyone else.
+//! never who else is in it. This door is local and authenticated: it names
+//! the raw ids this vault keeps, never the codes that left. Controls name no
+//! person and are not listed; a withdrawn submission reads withdrawn on its
+//! own row. Nothing says what the intake holds for anyone else.
 //!
 //! A page walks the submissions in key order from a cursor. It lists
 //! [`RECEIPT_PAGE`] rows at most, a pace and not a cap: the rest come on the
@@ -18,7 +19,7 @@ use std::collections::BTreeSet;
 use std::ops::Bound;
 
 use oneiron_vault_contract::conversation_training::{
-    TRAINING_WITHDRAWAL_NOTE, TrainingReceiptStatusV1, is_lower_hex,
+    TRAINING_WITHDRAWAL_NOTE, TrainingReceiptStatusV2, is_lower_hex,
 };
 
 use crate::Vault;
@@ -89,7 +90,7 @@ pub struct PersonTrainingSubmission {
     /// Where it stands in local custody.
     pub custody: TrainingCustody,
     /// The intake's last receipt for it; `None` while it sent none.
-    pub receipt: Option<TrainingReceiptStatusV1>,
+    pub receipt: Option<TrainingReceiptStatusV2>,
     /// The runs the intake says used it.
     pub used_runs: Vec<TrainingUsedRun>,
     /// [`TRAINING_WITHDRAWAL_NOTE`] once it is withdrawn or its removal is
@@ -223,7 +224,7 @@ fn own_submission(id: TrainingSubmissionId, row: SubmissionCustody) -> PersonTra
     let withdrawn = row.state == SubmissionState::Withdrawn
         || matches!(
             receipt,
-            Some(TrainingReceiptStatusV1::RemovalPending | TrainingReceiptStatusV1::Removed)
+            Some(TrainingReceiptStatusV2::RemovalPending | TrainingReceiptStatusV2::Removed)
         );
     PersonTrainingSubmission {
         id,

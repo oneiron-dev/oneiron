@@ -1,14 +1,19 @@
 //! The publisher training lifecycle (OF-420 A2): what an outbox takes, and
 //! what the engine decides about it.
 //!
-//! [`PublisherTrainingLifecycle`] sits beside [`super::PublisherTrainingSink`]
-//! and leaves it as it is. An implementation is a transport: it stages,
-//! publishes and purges bytes the engine sealed and signed, writes controls
-//! the engine signed, and reads back the intake's receipts. It decides
-//! nothing. [`TrainingQueued`] means local durable custody only: never that
-//! the intake took anything, and never that a run used it. A `stored`
-//! receipt means the intake's committed custody; `removed`, a verified
-//! purge; a used run is a fact of its own.
+//! [`PublisherTrainingLifecycle`] is the one transport conversation text
+//! leaves the engine by. An implementation stages, publishes and purges
+//! bytes the engine sealed and signed, writes controls the engine signed,
+//! reads back the intake's receipts, and keeps the vault's scopes file. It
+//! decides nothing. [`TrainingQueued`] means local durable custody only:
+//! never that the intake took anything, and never that a run used it. A
+//! `stored` receipt means the intake's committed custody; `removed`, a
+//! verified purge; a used run is a fact of its own.
+//!
+//! Every offer and control sits at its place in one scope's own order
+//! (TRAINING-LINK = C): its [`TrainingScope`], the month's opaque tag, and
+//! its ordinal there. No order runs across scopes, and receipts resume per
+//! scope ([`ReceiptCursor`]).
 //!
 //! Release is publication. An offer is prepared and held in local custody;
 //! [`crate::Vault::release_training_submission`] rechecks its source,
@@ -17,7 +22,7 @@
 //! [`ReleaseDecision::Release`] publishes.
 
 use oneiron_vault_contract::conversation_training::{
-    INTAKE_RECEIPT_KEY_FILE, INTAKE_RECIPIENT_FILE, TrainingReceiptV1,
+    INTAKE_RECEIPT_KEY_FILE, INTAKE_RECIPIENT_FILE, TrainingReceiptV2,
 };
 
 use crate::error::Result;
@@ -68,13 +73,36 @@ fn hex_id(text: &str) -> Option<[u8; 16]> {
     oneiron_vault_contract::from_hex(text)?.try_into().ok()
 }
 
+/// One scope: the opaque tag S of one month of this vault's training events
+/// (TRAINING-LINK = C). It names no vault. Its `Debug` prints no byte of it,
+/// so no log names it.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TrainingScope(pub [u8; 32]);
+
+impl TrainingScope {
+    /// The scope as 64 lower-case hex characters, as files name it.
+    #[must_use]
+    pub fn to_hex(&self) -> String {
+        oneiron_vault_contract::hex(&self.0)
+    }
+}
+
+impl std::fmt::Debug for TrainingScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TrainingScope(<redacted>)")
+    }
+}
+
 /// What a transport took into local durable custody: one offer or one
-/// control, at its place in the event order. Nothing more.
+/// control, at its place in its scope's order. Nothing more.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrainingQueued {
     /// The submission or control id.
     pub id: [u8; 16],
-    /// Its place in the one event order offers and controls share.
+    /// The scope it rides.
+    pub scope: TrainingScope,
+    /// Its ordinal within that scope, the order offers and controls share
+    /// there.
     pub event_seq: u64,
 }
 
@@ -85,7 +113,9 @@ pub struct TrainingQueued {
 pub struct SealedTrainingOffer {
     /// The submission.
     pub submission: TrainingSubmissionId,
-    /// Its place in the event order.
+    /// The scope of the month it was first prepared in.
+    pub scope: TrainingScope,
+    /// Its ordinal within that scope.
     pub event_seq: u64,
     /// The manifest file's name and bytes.
     pub manifest: (String, Vec<u8>),
@@ -108,7 +138,9 @@ impl std::fmt::Debug for SealedTrainingOffer {
 pub struct SignedTrainingControl {
     /// The control.
     pub control: TrainingControlId,
-    /// Its place in the event order.
+    /// The scope it rides.
+    pub scope: TrainingScope,
+    /// Its ordinal within that scope.
     pub event_seq: u64,
     /// The control file's name.
     pub file: String,
@@ -116,10 +148,16 @@ pub struct SignedTrainingControl {
     pub bytes: Vec<u8>,
 }
 
-/// Where a receipt read resumes: the highest publisher sequence this vault
-/// applied.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ReceiptCursor(pub u64);
+/// One scope this vault used and where its receipts resume: the highest
+/// publisher sequence this vault applied in it. A scope's sequence is never
+/// compared with another's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ReceiptCursor {
+    /// The scope.
+    pub scope: TrainingScope,
+    /// The highest publisher sequence applied in it; 0 before any.
+    pub sequence: u64,
+}
 
 /// One receipt a transport read, with the file it came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,15 +165,18 @@ pub struct ReceivedTrainingReceipt {
     /// The receipt file's name.
     pub file: String,
     /// The receipt, decoded strictly; its signature is not yet checked.
-    pub receipt: TrainingReceiptV1,
+    pub receipt: TrainingReceiptV2,
 }
 
-/// The receipts a transport read past a cursor.
+/// The receipts a transport read against the vault's cursors.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TrainingReceiptPage {
-    /// Receipts past the cursor, in no promised order.
+    /// Receipts past their own scope's cursor, and receipts for a scope the
+    /// cursors do not name (the engine refuses those and leaves them in
+    /// place), in no promised order.
     pub receipts: Vec<ReceivedTrainingReceipt>,
-    /// Receipt files at or before the cursor: replays, applied already.
+    /// Receipt files at or before their own scope's cursor: replays,
+    /// applied already. Never one for a scope the cursors do not name.
     pub stale: Vec<String>,
 }
 
@@ -172,11 +213,19 @@ pub trait PublisherTrainingLifecycle {
     /// The control could not be written; the next pass retries it.
     fn control(&self, control: &SignedTrainingControl) -> Result<TrainingQueued>;
 
-    /// The receipts past `after`.
+    /// The receipts past `after`, each scope's cursor read for its own
+    /// scope only.
     ///
     /// # Errors
     /// The receipt directory could not be read.
-    fn receipts(&self, after: ReceiptCursor) -> Result<TrainingReceiptPage>;
+    fn receipts(&self, after: &[ReceiptCursor]) -> Result<TrainingReceiptPage>;
+
+    /// Keeps the vault's scopes file: every scope it used, with its cursor,
+    /// rewritten whole when it differs from what the file holds.
+    ///
+    /// # Errors
+    /// The file could not be written; the next pass writes it.
+    fn scopes(&self, scopes: &[ReceiptCursor]) -> Result<()>;
 
     /// Removes one receipt file the engine applied.
     ///
@@ -196,7 +245,7 @@ pub enum ReleaseDecision {
         setting_revision: [u8; 32],
         /// The worlds' settings revision digest now.
         policy_revision: [u8; 32],
-        /// The offer's place in the event order.
+        /// The offer's ordinal within its scope.
         event_seq: u64,
     },
     /// Hold it back: it is purged, never published.
@@ -219,6 +268,9 @@ pub enum TrainingWithheld {
     PolicyChanged,
     /// The source does not pass the egress check now.
     Ineligible(Withheld),
+    /// The vault's training scopes are being purged for an erase (TL-5):
+    /// nothing new is released.
+    Purging,
 }
 
 /// Why no offer is written. Controls still flow in every case.

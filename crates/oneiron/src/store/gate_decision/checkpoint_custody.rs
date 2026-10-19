@@ -448,6 +448,11 @@ pub(crate) fn preflight_checkpoint_rows(
         retirements.extend(checkpoint_retirements(&source.rows)?);
     }
     let mut plan = CustodyPlan::new(bound.clone(), retirements);
+    // The training link key (TL-2) rides a side restore while it is live, so
+    // the copy can still withdraw and purge its past codes.
+    if let Some(bound) = bound.as_ref() {
+        crate::store::training_link::require_live_link_key(&mut plan, bound)?;
+    }
     let mut erased = Vec::new();
     for (key, value) in rows {
         if key.starts_with(GATE_DECISION_KEY_PREFIX) && orcb::is_orcb(value) {

@@ -1,4 +1,5 @@
-//! The offer pass and its release gate (OF-420 A2, A3; D1; FIX 5502).
+//! The offer pass and its release gate (OF-420 A2, A3; D1; FIX 5502;
+//! TRAINING-LINK = C).
 //!
 //! Release is publication. While the vault's setting is on, each of the
 //! vault's conversations is selected from the canonical rows, once; a source
@@ -8,14 +9,21 @@
 //! rechecks the source, the setting, the opt-outs and the worlds immediately
 //! before the transport renames the offer into `offers/`. Only a release
 //! publishes; a withheld offer is purged, so a setting turned off refuses
-//! every held offer. Retries of an offer still held keep its id.
+//! every held offer. Retries of an offer still held keep its id, its month
+//! and scope, its ordinal there and its first preparation time.
+//!
+//! An offer names no vault, source, person or world: the scope of the month
+//! it was first prepared in, its ordinal within that scope, and that month's
+//! codes for its source, persons and worlds (`link`). The release's private
+//! rechecks read the raw ids and revisions local custody keeps. While a
+//! purge stands (TL-5) the pass prepares and releases nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron_vault_contract::conversation_training::{
     TRAINING_OFFER_TYPE, TRAINING_PRIVACY_EVERYWHERE, TRAINING_SCHEMA_VERSION,
-    TRAINING_TEXT_ENCODING, TrainingChunkV1, TrainingFilterV1, TrainingOfferBodyV1,
-    TrainingOfferV1, TrainingPayloadV1, TrainingReceiptStatusV1, TrainingSettingV1,
+    TRAINING_TEXT_ENCODING, TrainingChunkV2, TrainingFilterV2, TrainingOfferBodyV2,
+    TrainingOfferV2, TrainingPayloadV2, TrainingReceiptStatusV2, TrainingSettingV2,
     offer_chunk_file_name, offer_manifest_file_name,
 };
 
@@ -28,13 +36,14 @@ use crate::limit_ask::EngineLimit;
 use super::super::redaction::{FilteredText, TextFilter, TextFilterError};
 use super::crypto::{IntakeRecipient, seal_training_text, sign_training_payload};
 use super::custody::{
-    self, ControlChange, SubmissionCustody, SubmissionState, next_event_seq_in, put_submission_in,
-    random_id, record_control_in,
+    self, ControlChange, SubmissionCustody, SubmissionState, put_submission_in, random_id,
+    record_control_in,
 };
 use super::lifecycle::{
-    PublisherTrainingLifecycle, ReleaseDecision, SealedTrainingOffer, TrainingSubmissionId,
-    TrainingUnavailable, TrainingWithheld,
+    PublisherTrainingLifecycle, ReleaseDecision, SealedTrainingOffer, TrainingScope,
+    TrainingSubmissionId, TrainingUnavailable, TrainingWithheld,
 };
+use super::link;
 use super::source::{self, TrainingSelection};
 use super::{ConversationSource, Eligibility, eligible};
 
@@ -60,20 +69,17 @@ struct Setting {
     revision: [u8; 32],
     /// The authority entry of the choice in force.
     act: Option<[u8; 32]>,
-    /// The admin's PERSON who set it, when its row is stored here.
-    set_by: Option<EntityId>,
 }
 
 impl Setting {
-    /// The setting as `fold` reads it in `txn`.
-    fn of(vault: &Vault, txn: &heed::RoTxn<'_>, fold: &AuthorityFold) -> Result<Self> {
+    /// The setting as `fold` reads it.
+    fn of(fold: &AuthorityFold) -> Self {
         let setting = &fold.conversation_training_vault;
-        Ok(Self {
+        Self {
             on: setting.on(),
             revision: setting.revision().0,
             act: setting.act(),
-            set_by: vault.conversation_learning_set_by_in_txn(txn, fold)?,
-        })
+        }
     }
 }
 
@@ -92,7 +98,7 @@ impl Vault {
     /// [`ReleaseDecision::Release`] publishes. Every file in `offers/` is
     /// therefore a released offer. Withdrawals never wait on a release: they
     /// reach the intake as controls, ordered by `event_seq` with the offers
-    /// (C6).
+    /// of their scope (C6).
     ///
     /// The release reads everything again, not only what was read when the
     /// offer was queued: the source is selected anew, the opt-outs as they
@@ -100,7 +106,7 @@ impl Vault {
     /// offer, D4); the vault's setting revision must be the one the offer was
     /// prepared on; the worlds' settings must be unchanged; and the source
     /// must pass the egress check now ([`eligible`]), the setting on
-    /// included.
+    /// included. While a purge stands (TL-5) nothing is released.
     ///
     /// # Errors
     /// Storage faults, and history this vault lacks, as the fold reads them:
@@ -117,11 +123,14 @@ impl Vault {
             if row.state != SubmissionState::Held {
                 return Ok(ReleaseDecision::Withheld(TrainingWithheld::NotHeld));
             }
+            if custody::state(self, &txn)?.purge.is_some() {
+                return Ok(ReleaseDecision::Withheld(TrainingWithheld::Purging));
+            }
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             let Some(selection) = source::select(self, &txn, &fold, row.source)? else {
                 return Ok(ReleaseDecision::Withheld(TrainingWithheld::SourceGone));
             };
-            let setting = Setting::of(self, &txn, &fold)?;
+            let setting = Setting::of(&fold);
             let policy = policy_digest(&fold, &selection.worlds);
             (row, selection, setting, policy)
         };
@@ -148,7 +157,7 @@ impl Vault {
             source_revision: selection.revision,
             setting_revision: setting.revision,
             policy_revision,
-            event_seq: row.event_seq,
+            event_seq: row.scope_seq,
         })
     }
 
@@ -158,18 +167,20 @@ impl Vault {
     /// source still moving (a row newer than `quiet_secs`) waits for a later
     /// pass, whole. A source already published at its revision is not
     /// offered again; a changed one is offered anew, and once the newer
-    /// offer is published, a forget control naming the older published ones
-    /// of that source is recorded in the same write (a source edit
-    /// invalidates the old version; the new offer stays live).
+    /// offer is published, forget controls naming the older published ones
+    /// of that source are recorded in the same write, one per month they
+    /// were prepared in (a source edit invalidates the old version; the new
+    /// offer stays live). While a purge stands (TL-5) nothing is prepared.
+    /// The pass ends by handing `sink` the vault's scopes.
     ///
     /// The caller judged that offers may be written at all: an intake key in
     /// the outbox and, for a self-hosted vault, an account binding. A filter
     /// that cannot run stops the pass with nothing of that source sent.
     ///
     /// # Errors
-    /// Storage faults, a rule read that fails, and a transport that could
-    /// not stage, publish or purge: the pass stops, and what is held stays
-    /// held for the next pass.
+    /// Storage faults, a rule read that fails, a training link key that is
+    /// gone, and a transport that could not stage, publish or purge: the
+    /// pass stops, and what is held stays held for the next pass.
     pub fn offer_conversation_training(
         &self,
         sink: &dyn PublisherTrainingLifecycle,
@@ -181,6 +192,10 @@ impl Vault {
         let mut pass = TrainingOfferPass::default();
         let (rooms, latest) = {
             let txn = self.store.env.read_txn()?;
+            // A purge stands: nothing new is prepared.
+            if custody::state(self, &txn)?.purge.is_some() {
+                return Ok(pass);
+            }
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             // Off: nothing is selected, read or filtered.
             if !fold.conversation_training_vault.on() {
@@ -192,7 +207,7 @@ impl Vault {
             for (id, row) in custody::submissions(self, &txn)? {
                 let newer = latest
                     .get(&row.source)
-                    .is_none_or(|(_, held)| held.event_seq < row.event_seq);
+                    .is_none_or(|(_, held)| held.local_seq < row.local_seq);
                 if newer {
                     latest.insert(row.source, (id, row));
                 }
@@ -216,10 +231,11 @@ impl Vault {
                 Offered::Skipped => {}
                 Offered::Unavailable(why) => {
                     pass.unavailable = Some(why);
-                    return Ok(pass);
+                    break;
                 }
             }
         }
+        self.write_training_scopes(sink)?;
         Ok(pass)
     }
 
@@ -231,7 +247,7 @@ impl Vault {
             let Some(selection) = source::select(self, &txn, &fold, offer.room)? else {
                 return Ok(Offered::Skipped);
             };
-            let setting = Setting::of(self, &txn, &fold)?;
+            let setting = Setting::of(&fold);
             let policy = policy_digest(&fold, &selection.worlds);
             (selection, setting, policy)
         };
@@ -240,7 +256,7 @@ impl Vault {
         }
         let reuse = match offer.held {
             Some((id, row)) if row.source_revision == selection.revision => match row.state {
-                SubmissionState::Held => Some((*id, row.event_seq)),
+                SubmissionState::Held => Some((*id, row)),
                 SubmissionState::Published => return Ok(Offered::Skipped),
                 SubmissionState::Withheld | SubmissionState::Withdrawn
                     if row.setting_revision == setting.revision
@@ -282,53 +298,56 @@ impl Vault {
             .held
             .filter(|(_, row)| reuse.is_none() && row.state == SubmissionState::Held)
             .map(|(id, _)| *id);
-        let (id, event_seq) =
-            self.hold_submission((reuse, superseded), &selection, &setting, policy, offer.now)?;
-        let Some(sealed) = self.seal_offer(
-            &Prepared {
-                id,
-                event_seq,
-                selection: &selection,
-                setting: &setting,
-                policy,
-                now: offer.now,
-            },
-            &filtered,
-            offer.intake,
-        )?
+        let Some(placed) =
+            self.hold_submission((reuse, superseded), &selection, &setting, policy, offer.now)?
         else {
+            return Ok(Offered::Skipped);
+        };
+        let prepared = Prepared {
+            placed: &placed,
+            selection: &selection,
+            setting: &setting,
+        };
+        let Some(sealed) = self.seal_offer(&prepared, &filtered, offer.intake)? else {
             return Ok(Offered::Unavailable(TrainingUnavailable::NoInstallKey));
         };
         let queued = offer.sink.accept(&sealed)?;
-        match self.release_training_submission(id)? {
+        match self.release_training_submission(placed.id)? {
             ReleaseDecision::Release { .. } => {
                 offer.sink.publish(&queued)?;
-                self.mark_submission(id, SubmissionState::Published, offer.now)?;
-                Ok(Offered::Published(id))
+                self.mark_submission(placed.id, SubmissionState::Published, offer.now)?;
+                Ok(Offered::Published(placed.id))
             }
             ReleaseDecision::Withheld(why) => {
-                offer.sink.purge(id)?;
-                self.mark_submission(id, SubmissionState::Withheld, offer.now)?;
-                Ok(Offered::Withheld(id, why))
+                offer.sink.purge(placed.id)?;
+                self.mark_submission(placed.id, SubmissionState::Withheld, offer.now)?;
+                Ok(Offered::Withheld(placed.id, why))
             }
         }
     }
 
-    /// Holds one submission in local custody, under a new id and event
-    /// number or, for a retry of one still held, under its own; a held one
-    /// it supersedes is withheld in the same write.
+    /// Holds one submission in local custody: a new one under a new id, the
+    /// next number of the private order and, in the month of `now`, the
+    /// next ordinal of that month's scope; a retry of one still held under
+    /// its own id, order, month, ordinal and first preparation time. A held
+    /// one it supersedes is withheld in the same write. `None` while a purge
+    /// stands: nothing is held.
     fn hold_submission(
         &self,
         (reuse, superseded): (
-            Option<(TrainingSubmissionId, u64)>,
+            Option<(TrainingSubmissionId, &SubmissionCustody)>,
             Option<TrainingSubmissionId>,
         ),
         selection: &TrainingSelection,
         setting: &Setting,
         policy: [u8; 32],
         now: u64,
-    ) -> Result<(TrainingSubmissionId, u64)> {
+    ) -> Result<Option<Placed>> {
         self.with_write_txn_grouped(|txn| {
+            let state = custody::state(self, txn)?;
+            if state.purge.is_some() {
+                return Ok(None);
+            }
             if let Some(old) = superseded
                 && let Some(mut row) = custody::submission(self, txn, old)?
                 && row.state == SubmissionState::Held
@@ -336,12 +355,31 @@ impl Vault {
                 row.state = SubmissionState::Withheld;
                 put_submission_in(self, txn, old, &row)?;
             }
-            let (id, event_seq) = match reuse {
-                Some(held) => held,
-                None => (
-                    TrainingSubmissionId(random_id()),
-                    next_event_seq_in(self, txn)?,
+            let (local_seq, placed) = match reuse {
+                Some((id, held)) => (
+                    held.local_seq,
+                    Placed {
+                        id,
+                        scope: state.scope_of(&held.month)?,
+                        month: held.month.clone(),
+                        scope_seq: held.scope_seq,
+                        prepared_at: held.prepared_at,
+                    },
                 ),
+                None => {
+                    let local_seq = custody::next_local_seq_in(self, txn)?;
+                    let month = link::training_month(now);
+                    let (scope, scope_seq) = custody::next_scope_seq_in(self, txn, &month)?;
+                    let id = TrainingSubmissionId(random_id());
+                    let placed = Placed {
+                        id,
+                        month,
+                        scope,
+                        scope_seq,
+                        prepared_at: now,
+                    };
+                    (local_seq, placed)
+                }
             };
             let row = SubmissionCustody {
                 source: selection.source,
@@ -352,31 +390,38 @@ impl Vault {
                 setting_revision: setting.revision,
                 setting_act: setting.act,
                 policy_revision: policy,
-                event_seq,
-                prepared_at: now,
+                local_seq,
+                month: placed.month.clone(),
+                scope_seq: placed.scope_seq,
+                prepared_at: placed.prepared_at,
                 published_at: None,
                 state: SubmissionState::Held,
                 files: true,
                 receipt: None,
                 used_runs: Vec::new(),
             };
-            put_submission_in(self, txn, id, &row)?;
-            Ok((id, event_seq))
+            put_submission_in(self, txn, placed.id, &row)?;
+            Ok(Some(placed))
         })
     }
 
-    /// Seals a held submission's filtered text to the intake and signs its
-    /// manifest; `None` when this install has no key to sign with.
+    /// Seals a held submission's filtered text to the intake under its
+    /// scope, and signs its manifest naming that month's codes; `None` when
+    /// this install has no key to sign with.
     fn seal_offer(
         &self,
         prepared: &Prepared<'_>,
         filtered: &FilteredText,
         intake: &IntakeRecipient,
     ) -> Result<Option<SealedTrainingOffer>> {
-        let vault_id = *self.vault_id().as_bytes();
+        let key = {
+            let txn = self.store.env.read_txn()?;
+            link::training_link_key(self, &txn)?
+        };
+        let placed = prepared.placed;
         let text = filtered.as_str().as_bytes();
-        let submission = prepared.id.to_hex();
-        let sealed = seal_training_text(intake, &vault_id, &prepared.id.0, text)?;
+        let submission = placed.id.to_hex();
+        let sealed = seal_training_text(intake, &placed.scope, &placed.id.0, text)?;
         let mut ciphertext = blake3::Hasher::new();
         let mut chunks = Vec::with_capacity(sealed.len());
         let mut files = Vec::with_capacity(sealed.len());
@@ -387,7 +432,7 @@ impl Vault {
                 Error::InvariantViolation("a submission id names no chunk file"),
             )?;
             ciphertext.update(&bytes);
-            chunks.push(TrainingChunkV1 {
+            chunks.push(TrainingChunkV2 {
                 part,
                 bytes: bytes.len() as u64,
                 digest: blake3::hash(&bytes).to_hex().to_string(),
@@ -396,43 +441,35 @@ impl Vault {
             files.push((file, bytes));
         }
         let selection = prepared.selection;
-        let setting = prepared.setting;
-        let hex_set = |ids: &BTreeSet<EntityId>| -> Vec<String> {
-            ids.iter().map(EntityId::to_hex).collect()
-        };
-        let body = TrainingOfferBodyV1 {
+        let month = placed.month.as_str();
+        let body = TrainingOfferBodyV2 {
             submission_id: submission.clone(),
-            event_seq: prepared.event_seq,
-            engine_vault_id: oneiron_vault_contract::hex(&vault_id),
-            source: selection.source.to_hex(),
-            source_revision: oneiron_vault_contract::hex(&selection.revision),
-            persons: hex_set(&selection.persons),
-            worlds: hex_set(&selection.worlds),
-            training: TrainingSettingV1 {
-                on: setting.on,
-                revision: oneiron_vault_contract::hex(&setting.revision),
-                set_by: setting.set_by.as_ref().map(EntityId::to_hex),
-                act: setting.act.map(|act| oneiron_vault_contract::hex(&act)),
+            scope: oneiron_vault_contract::hex(&placed.scope),
+            event_seq: placed.scope_seq,
+            source: link::code_hex(&key, link::SOURCE, &selection.source, month),
+            persons: link::code_set(&key, link::PERSON, &selection.persons, month),
+            worlds: link::code_set(&key, link::WORLD, &selection.worlds, month),
+            training: TrainingSettingV2 {
+                on: prepared.setting.on,
             },
-            world_policy_revision: oneiron_vault_contract::hex(&prepared.policy),
             privacy: TRAINING_PRIVACY_EVERYWHERE.to_owned(),
-            filter: TrainingFilterV1 {
+            filter: TrainingFilterV2 {
                 model: filtered.filter().model.clone(),
                 stack_sha16: filtered.filter().stack_sha16.clone(),
             },
-            payload: TrainingPayloadV1 {
+            payload: TrainingPayloadV2 {
                 encoding: TRAINING_TEXT_ENCODING.to_owned(),
                 key_id: oneiron_vault_contract::hex(intake.key_id()),
                 text_bytes: text.len() as u64,
                 ciphertext_digest: ciphertext.finalize().to_hex().to_string(),
                 chunks,
             },
-            prepared_at: prepared.now,
+            prepared_at: placed.prepared_at,
         };
         let Some(signature) = sign_training_payload(self, TRAINING_OFFER_TYPE, &body)? else {
             return Ok(None);
         };
-        let manifest = TrainingOfferV1 {
+        let manifest = TrainingOfferV2 {
             schema_version: TRAINING_SCHEMA_VERSION,
             file_type: TRAINING_OFFER_TYPE.to_owned(),
             body,
@@ -444,16 +481,17 @@ impl Vault {
             "a submission id names no manifest file",
         ))?;
         Ok(Some(SealedTrainingOffer {
-            submission: prepared.id,
-            event_seq: prepared.event_seq,
+            submission: placed.id,
+            scope: TrainingScope(placed.scope),
+            event_seq: placed.scope_seq,
             manifest: (name, bytes),
             chunks: files,
         }))
     }
 
     /// Settles a held submission after its release: published, and every
-    /// older published submission of the same source withdrawn by an id-only
-    /// forget control naming exactly those ids; or withheld, its files
+    /// older published submission of the same source withdrawn by id-only
+    /// forget controls naming exactly those ids; or withheld, its files
     /// already purged. A row no longer held is left as it stands.
     fn mark_submission(
         &self,
@@ -481,9 +519,11 @@ impl Vault {
 }
 
 /// Withdraws every published submission of `row`'s source but `id` that
-/// the intake has not already removed, and records one forget control
-/// naming exactly those ids: the source changed, so its older versions are
-/// invalid, while the offer just published stays live.
+/// the intake has not already removed, and records forget controls naming
+/// exactly those ids: one per month they were prepared in, each under that
+/// month's scope, never recoded under the new offer's month. The source
+/// changed, so its older versions are invalid, while the offer just
+/// published stays live.
 fn forget_older_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -491,11 +531,11 @@ fn forget_older_in(
     row: &SubmissionCustody,
     now: u64,
 ) -> Result<()> {
-    let mut older = Vec::new();
+    let mut older: BTreeMap<String, Vec<[u8; 16]>> = BTreeMap::new();
     for (other, mut held) in custody::submissions(vault, txn)? {
         let removed = held
             .receipt
-            .is_some_and(|mark| mark.status == TrainingReceiptStatusV1::Removed);
+            .is_some_and(|mark| mark.status == TrainingReceiptStatusV2::Removed);
         if other == id
             || held.source != row.source
             || held.state != SubmissionState::Published
@@ -505,16 +545,15 @@ fn forget_older_in(
         }
         held.state = SubmissionState::Withdrawn;
         put_submission_in(vault, txn, other, &held)?;
-        older.push(other.0);
+        older.entry(held.month).or_default().push(other.0);
     }
-    if older.is_empty() {
-        return Ok(());
+    for (month, submissions) in older {
+        let change = ControlChange::ForgetSource {
+            source: row.source,
+            submissions,
+        };
+        record_control_in(vault, txn, &month, change, now)?;
     }
-    let change = ControlChange::ForgetSource {
-        source: row.source,
-        submissions: older,
-    };
-    record_control_in(vault, txn, change, now)?;
     Ok(())
 }
 
@@ -529,14 +568,22 @@ struct Offer<'a> {
     quiet_secs: u64,
 }
 
+/// Where a held submission sits: its id, the month of its first
+/// preparation and that month's scope, its ordinal there, and when it was
+/// first prepared. A retry keeps every one of them.
+struct Placed {
+    id: TrainingSubmissionId,
+    month: String,
+    scope: [u8; 32],
+    scope_seq: u64,
+    prepared_at: u64,
+}
+
 /// A held submission, ready to seal.
 struct Prepared<'a> {
-    id: TrainingSubmissionId,
-    event_seq: u64,
+    placed: &'a Placed,
     selection: &'a TrainingSelection,
     setting: &'a Setting,
-    policy: [u8; 32],
-    now: u64,
 }
 
 /// The digest of `worlds`' settings revisions on `fold`.

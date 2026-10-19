@@ -13,8 +13,9 @@
 //! keeps their messages out ([`opted_out`]). Turning the setting off, or
 //! opting out, stops new sharing; it withdraws nothing already shared, which
 //! follows the intake's retention. Before anything leaves, the in-vault
-//! filter runs over it (a [`TextFilter`]: the Oneironer, under OF-420's
-//! in-vault redaction), and what it returns is called filtered, never more.
+//! filter runs over it (a [`TextFilter`](super::TextFilter): the Oneironer,
+//! under OF-420's in-vault redaction), and what it returns is called
+//! filtered, never more.
 //! No person reads it. Otherwise real chat text never leaves, except in a
 //! report the person sends (the feedback bundle's one-shot approval, not
 //! this setting).
@@ -25,20 +26,29 @@
 //! (`training_pack`), its connector and the reservoir export it reads are not
 //! gated by this switch.
 //!
-//! Two doors in the engine hand conversation text toward a publisher, and
-//! nothing else may send it there: [`share_for_publisher_training`], over a
-//! sink its caller supplies, and the publisher training outbox
+//! One door in the engine hands conversation text toward a publisher, and
+//! nothing else may send it there: the publisher training outbox
 //! ([`Vault::offer_conversation_training`], OF-420), which selects each
 //! source from the canonical rows itself and publishes only what a release
-//! lets through ([`Vault::release_training_submission`]). Each judges a
-//! source with [`eligible`] before filtering and again at the send or the
-//! release itself: turning the switch off takes no lock a send waits on, so
-//! the send-time read is the guard. With no machine-only intake configured
-//! neither reads, judges or filters anything.
+//! lets through ([`Vault::release_training_submission`]). It judges a source
+//! with [`eligible`] before filtering and again at the release itself:
+//! turning the switch off takes no lock a release waits on, so the
+//! release-time read is the guard. With no outbox configured nothing is
+//! read, judged or filtered.
+//!
+//! What the outbox writes names no vault, source, person or world
+//! (TRAINING-LINK = C): each offer and control carries the opaque scope of
+//! its month, its ordinal within that scope, and that month's codes, all
+//! made under a key the vault holds in its own key custody and never lets
+//! out (`link`). The raw ids stay in local custody, where the release
+//! rechecks them and a person's own receipts are read; an erase purges every
+//! scope (`purge`) before the vault is destroyed.
 
 mod crypto;
 mod custody;
 mod lifecycle;
+mod link;
+mod purge;
 mod receipts;
 mod reconcile;
 mod release;
@@ -48,7 +58,8 @@ pub use self::crypto::{IntakeReceiptKey, IntakeRecipient};
 pub use self::lifecycle::{
     PublisherTrainingLifecycle, ReceiptCursor, ReceivedTrainingReceipt, ReleaseDecision,
     SealedTrainingOffer, SignedTrainingControl, TrainingControlId, TrainingQueued,
-    TrainingReceiptPage, TrainingSubmissionId, TrainingUnavailable, TrainingWithheld,
+    TrainingReceiptPage, TrainingScope, TrainingSubmissionId, TrainingUnavailable,
+    TrainingWithheld,
 };
 pub use self::receipts::{
     PersonTrainingReceipts, PersonTrainingSubmission, TrainingCustody, TrainingReceiptsCursor,
@@ -64,12 +75,6 @@ use crate::authority::{AuthorityFold, EffectiveRead};
 use crate::consent::person_is_live_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-
-use super::redaction::{FilteredText, TextFilter, TextFilterError};
-
-/// Why [`share_for_publisher_training`] sent nothing at all.
-pub const NO_PUBLISHER_TRAINING_INTAKE: &str =
-    "no machine-only intake for conversation training is configured";
 
 /// Where the vault's "Learn from my conversations" setting is read, and
 /// each person's own opt-out while the setting lets people opt out.
@@ -142,16 +147,6 @@ pub struct ConversationSource {
     pub persons: BTreeSet<EntityId>,
     /// Every world the text came from; empty is unplaced.
     pub worlds: BTreeSet<EntityId>,
-}
-
-/// One conversation text and where it came from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConversationText {
-    /// Whose words, and which worlds.
-    pub source: ConversationSource,
-    /// The text as stored. It reaches an intake only as the filter returns
-    /// it.
-    pub text: String,
 }
 
 /// Whether a source may go toward training the models Oneiron ships.
@@ -232,120 +227,5 @@ fn fold_withholds(vault: &Vault, source: &ConversationSource) -> Result<Option<W
             return Ok(Some(Withheld::PersonNotLive(*person)));
         }
     }
-    Ok(None)
-}
-
-/// A machine-only intake for conversation text toward training the models
-/// Oneiron ships.
-///
-/// An implementation is the contract the owner's rule needs from the far
-/// side: no person reads what it takes; it honours withdrawal, so a person's
-/// deleted words, a deleted source or a world turned private are removed
-/// from its store and from every later run; and it names the runs that used
-/// them.
-/// Nothing in this engine implements it, and the human-readable feedback
-/// inbox is not one.
-pub trait PublisherTrainingSink {
-    /// Takes one filtered text and where it came from. The raw text never
-    /// reaches it.
-    ///
-    /// # Errors
-    /// The intake refused or could not take it; the pass stops there.
-    fn accept(&self, source: &ConversationSource, text: &FilteredText) -> Result<()>;
-}
-
-/// Why one source did not go to the intake.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ShareWithheld {
-    /// The source did not pass [`eligible`], before filtering or at the send.
-    Ineligible(Withheld),
-    /// The filter could not run; the text was not sent unfiltered.
-    FilterUnavailable(String),
-    /// The filter rejected its recogniser's answer; the text was not sent.
-    FilterRejected(String),
-}
-
-/// What [`share_for_publisher_training`] did.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ShareOutcome {
-    /// Nothing was read, judged, filtered or sent, for this reason.
-    Unavailable {
-        /// Why ([`NO_PUBLISHER_TRAINING_INTAKE`]).
-        reason: &'static str,
-    },
-    /// Every source was judged: these went to the intake, these did not.
-    Shared {
-        /// The sources the intake took, in the order given.
-        sent: Vec<EntityId>,
-        /// The sources held back, and why.
-        withheld: Vec<(EntityId, ShareWithheld)>,
-    },
-}
-
-/// The only door that hands conversation text toward training the models
-/// Oneiron ships.
-///
-/// With no `sink` it returns [`ShareOutcome::Unavailable`] before reading,
-/// judging or filtering anything. Otherwise, for each source in order: it
-/// must pass [`eligible`]; then the filter runs over its text, and a filter
-/// that cannot run or rejects its answer withholds the source (it is never
-/// sent unfiltered); then [`eligible`] is asked again at the send itself, so
-/// a setting turned off, a person who opted out, or a world made private,
-/// while the filter ran stops the send; then the filtered text and its
-/// provenance go to the sink.
-///
-/// # Errors
-/// A storage fault, a setting read that fails, or a sink that refuses stops
-/// the pass; every source already taken passed every check.
-pub fn share_for_publisher_training(
-    vault: &Vault,
-    choices: &dyn ConversationTrainingChoice,
-    filter: &dyn TextFilter,
-    sink: Option<&dyn PublisherTrainingSink>,
-    sources: &[ConversationText],
-) -> Result<ShareOutcome> {
-    let Some(sink) = sink else {
-        return Ok(ShareOutcome::Unavailable {
-            reason: NO_PUBLISHER_TRAINING_INTAKE,
-        });
-    };
-    let mut sent = Vec::new();
-    let mut withheld = Vec::new();
-    for item in sources {
-        match share_one(vault, choices, filter, sink, item)? {
-            None => sent.push(item.source.source),
-            Some(reason) => withheld.push((item.source.source, reason)),
-        }
-    }
-    Ok(ShareOutcome::Shared { sent, withheld })
-}
-
-/// One source through [`share_for_publisher_training`]: `None` when the
-/// sink took it.
-fn share_one(
-    vault: &Vault,
-    choices: &dyn ConversationTrainingChoice,
-    filter: &dyn TextFilter,
-    sink: &dyn PublisherTrainingSink,
-    item: &ConversationText,
-) -> Result<Option<ShareWithheld>> {
-    if let Eligibility::Withheld(reason) = eligible(vault, choices, &item.source)? {
-        return Ok(Some(ShareWithheld::Ineligible(reason)));
-    }
-    let filtered = match filter.filter(&item.text) {
-        Ok(filtered) => filtered,
-        Err(TextFilterError::Unavailable(reason)) => {
-            return Ok(Some(ShareWithheld::FilterUnavailable(reason)));
-        }
-        Err(TextFilterError::Rejected(reason)) => {
-            return Ok(Some(ShareWithheld::FilterRejected(reason)));
-        }
-    };
-    // The send-time read: the setting, the opt-outs and the worlds as they
-    // stand now, not as they stood before the filter ran.
-    if let Eligibility::Withheld(reason) = eligible(vault, choices, &item.source)? {
-        return Ok(Some(ShareWithheld::Ineligible(reason)));
-    }
-    sink.accept(&item.source, &filtered)?;
     Ok(None)
 }

@@ -1,13 +1,16 @@
 //! The outbox directory as the engine's training transport: three protocol
-//! subdirectories under one lock, written whole.
+//! subdirectories and the vault's scopes file under one lock, written whole.
 //!
 //! An offer is staged in `offers/` under hidden names (`.<file>.staged`,
 //! never a protocol file), each synced. Publishing renames the chunks in
 //! first and the manifest last, then syncs the directory, so a manifest the
 //! consumer sees always has its chunks. A purge removes the manifest first.
 //! Controls are written whole into `controls/`; receipts are read from
-//! `receipts/` and removed once the engine applied them. Nothing here
-//! decides what is staged, published or purged.
+//! `receipts/` against each scope's own cursor and removed once the engine
+//! applied them, and a receipt for a scope the vault does not list is never
+//! removed here. The scopes file (`training-scopes.v2.json`) is rewritten
+//! whole when the engine's list of scopes or a cursor differs from it.
+//! Nothing here decides what is staged, published or purged.
 
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
@@ -20,8 +23,9 @@ use oneiron::feedback::{
     SignedTrainingControl, TrainingQueued, TrainingReceiptPage, TrainingSubmissionId,
 };
 use oneiron_vault_contract::conversation_training::{
-    CONTROLS_DIR, OFFERS_DIR, RECEIPTS_DIR, TrainingFileName, decode_training_receipt,
-    parse_training_file_name, spool_training_file,
+    CONTROLS_DIR, OFFERS_DIR, RECEIPTS_DIR, TRAINING_SCHEMA_VERSION, TRAINING_SCOPES_FILE,
+    TRAINING_SCOPES_TYPE, TrainingFileName, TrainingScopeCursorV2, TrainingScopesV2,
+    decode_training_receipt, parse_training_file_name, spool_training_file,
 };
 
 /// Held for a tick, so two vault processes never share the directory.
@@ -31,6 +35,7 @@ const STAGED_SUFFIX: &str = ".staged";
 
 /// The outbox, locked for one tick.
 pub(super) struct Outbox {
+    root: PathBuf,
     offers: PathBuf,
     controls: PathBuf,
     receipts: PathBuf,
@@ -63,6 +68,7 @@ impl Outbox {
             .with_context(|| format!("open {}", path.display()))?;
         match lock.try_lock() {
             Ok(()) => Ok(Some(Self {
+                root: root.to_path_buf(),
                 offers,
                 controls,
                 receipts,
@@ -118,6 +124,7 @@ impl PublisherTrainingLifecycle for Outbox {
         }
         Ok(TrainingQueued {
             id: offer.submission.0,
+            scope: offer.scope,
             event_seq: offer.event_seq,
         })
     }
@@ -172,11 +179,12 @@ impl PublisherTrainingLifecycle for Outbox {
         }
         Ok(TrainingQueued {
             id: control.control.0,
+            scope: control.scope,
             event_seq: control.event_seq,
         })
     }
 
-    fn receipts(&self, after: ReceiptCursor) -> oneiron::Result<TrainingReceiptPage> {
+    fn receipts(&self, after: &[ReceiptCursor]) -> oneiron::Result<TrainingReceiptPage> {
         let mut page = TrainingReceiptPage::default();
         for entry in fs::read_dir(&self.receipts).map_err(oneiron::Error::Io)? {
             let entry = entry.map_err(oneiron::Error::Io)?;
@@ -202,7 +210,14 @@ impl PublisherTrainingLifecycle for Outbox {
                     continue;
                 }
             };
-            if receipt.body.publisher_sequence <= after.0 {
+            // Each scope's cursor reads its own receipts only; one for a
+            // scope `after` does not name goes to the engine, which refuses
+            // it unapplied and leaves it where it is.
+            let applied = after
+                .iter()
+                .find(|cursor| cursor.scope.to_hex() == receipt.body.scope)
+                .is_some_and(|cursor| receipt.body.publisher_sequence <= cursor.sequence);
+            if applied {
                 page.stale.push(file);
             } else {
                 page.receipts
@@ -210,6 +225,32 @@ impl PublisherTrainingLifecycle for Outbox {
             }
         }
         Ok(page)
+    }
+
+    fn scopes(&self, scopes: &[ReceiptCursor]) -> oneiron::Result<()> {
+        let file = TrainingScopesV2 {
+            schema_version: TRAINING_SCHEMA_VERSION,
+            file_type: TRAINING_SCOPES_TYPE.to_owned(),
+            scopes: scopes
+                .iter()
+                .map(|cursor| TrainingScopeCursorV2 {
+                    scope: cursor.scope.to_hex(),
+                    receipt_cursor: cursor.sequence,
+                })
+                .collect(),
+        };
+        let bytes = serde_json::to_vec_pretty(&file).map_err(|error| {
+            oneiron::Error::Io(io::Error::other(format!(
+                "the training scopes file does not encode: {error}"
+            )))
+        })?;
+        // Rewritten whole only when it differs: the list or a cursor moved.
+        if fs::read(self.root.join(TRAINING_SCOPES_FILE)).is_ok_and(|held| held == bytes) {
+            return Ok(());
+        }
+        spool_training_file(&self.root, TRAINING_SCOPES_FILE, &bytes)
+            .map_err(|error| oneiron::Error::Io(io::Error::other(format!("{error:#}"))))?;
+        Ok(())
     }
 
     fn retire_receipt(&self, file: &str) -> oneiron::Result<()> {

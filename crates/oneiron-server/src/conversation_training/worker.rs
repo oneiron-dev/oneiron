@@ -92,7 +92,8 @@ fn tick(
     for file in &upkeep.receipts_refused {
         tracing::warn!(
             %file,
-            "a publisher training receipt is not the intake's for this vault; it stays unapplied"
+            "a publisher training receipt is not the intake's for one of this vault's scopes; it \
+             stays unapplied"
         );
     }
     if upkeep.controls_recorded + upkeep.controls_written + upkeep.receipts_applied > 0 {

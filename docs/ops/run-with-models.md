@@ -305,8 +305,14 @@ file, and still writes withdrawals; without the receipt key it applies no
 receipt. Offers wait for the vault's admission like every background pass;
 withdrawals the vault already recorded are written even while it is frozen for
 reap, and stay shippable from a cold vault. The supervisor binds the registry
-vault id and the node's bearer when it ships: the files carry the engine vault
-id and the install's signature only.
+vault id and the node's bearer when it ships: the files name no vault, only each
+month's scope and codes, with the install's signature for the intake to check
+and discard. The vault also keeps `training-scopes.v2.json` there, every scope it
+used with its receipt cursor, rewritten whole when either changes, for the node
+to pull receipts by scope. Before an erase the supervisor sends `training_purge`
+on the ctl socket: the vault records one purge per scope and answers
+`not_needed`, `pending` (with `purge_unsent`, `receipt_pending` or
+`purge_rejected`) or `done`, and the erase waits for `done`.
 
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
