@@ -109,6 +109,15 @@ Each request gets 120 seconds, answer included (`--request-timeout-secs`), and
 an answer that starts arriving and then stalls for 30 seconds is given up on
 (`--idle-timeout-secs`).
 
+`oneiron mcp` also has an owner mode, for the vault's owner himself rather
+than an agent: `--auth-mode owner --owner-upgrade-headers-file <file>` sends
+the sign-in that a surface he signed in on wrote to that file on the socket's
+upgrade, in place of a slip
+([agent setup](../agent-setup.md#owner-mode-mcp-as-the-vaults-owner)). Oneiron
+itself does not mint or refresh that file. Without an issuer that writes it
+(a console, or the identity tooling in front of his vault), owner mode has
+nothing to send; connect with an agent credential as above.
+
 ## 3. Revoke an agent
 
 ```bash

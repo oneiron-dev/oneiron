@@ -61,6 +61,13 @@ pub struct HookCommonArgs {
     /// Seconds before giving up.
     #[arg(long, default_value_t = 8.0)]
     pub timeout: f64,
+
+    /// The owner's settings file, layered over the config as `serve
+    /// --settings-file` layers it, for a server the hook starts and an
+    /// import it queues. Without it a hand-over takes the running local
+    /// vault's own, unless its `--config` names another config.
+    #[arg(long, value_name = "FILE")]
+    pub settings_file: Option<PathBuf>,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -120,7 +127,8 @@ pub struct HookHandOverArgs {
     pub common: HookCommonArgs,
 
     /// The serve config, for where the import queue is. Without it, the
-    /// config of the running local vault, else the default config.
+    /// config of the running local vault, else the default config. A config
+    /// named here takes that vault's settings file only if it is its own.
     #[arg(long)]
     pub config: Option<PathBuf>,
 }

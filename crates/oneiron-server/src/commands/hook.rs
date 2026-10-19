@@ -52,7 +52,12 @@ fn session_start(args: &HookRecallArgs) -> Vec<String> {
     };
     let deadline = deadline(args.common.timeout);
     let oneiron = oneiron(args.common.oneiron.as_deref());
-    let bound = bind::session(args.url.as_deref(), &oneiron, deadline);
+    let bound = bind::session(
+        args.url.as_deref(),
+        &oneiron,
+        args.common.settings_file.as_deref(),
+        deadline,
+    );
     let mut said = bound.lines;
     let (Some(url), Some(credential)) = (bound.url, &args.credential_file) else {
         return said;
@@ -89,7 +94,12 @@ fn session_start(args: &HookRecallArgs) -> Vec<String> {
 fn bind_json(args: &HookBindArgs) -> String {
     let deadline = deadline(args.common.timeout);
     let oneiron = oneiron(args.common.oneiron.as_deref());
-    let bound = bind::session(args.url.as_deref(), &oneiron, deadline);
+    let bound = bind::session(
+        args.url.as_deref(),
+        &oneiron,
+        args.common.settings_file.as_deref(),
+        deadline,
+    );
     serde_json::json!({ "url": bound.url, "lines": bound.lines }).to_string()
 }
 
@@ -130,7 +140,9 @@ fn prompt(args: &HookRecallArgs) -> Vec<String> {
 
 /// `oneiron import claude-code <log> --queue`: one small file in the queue
 /// of the config named, else of the running local vault, else of the
-/// default config. Its output is not the host's.
+/// default config, under the settings file named, else the running vault's
+/// own when the import takes that vault's config. Its output is not the
+/// host's.
 fn hand_over(args: &HookHandOverArgs) {
     let Some(event) = read_event() else {
         return;
@@ -148,8 +160,24 @@ fn hand_over(args: &HookHandOverArgs) {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    if let Some(config) = args.config.clone().or_else(bind::running_config) {
+    // A named file stands over a found one. The running vault's settings
+    // file goes over its own config alone, never over another config named
+    // here (FIX 5602).
+    let running = bind::running_config().unwrap_or_default();
+    let its_own = args
+        .config
+        .as_deref()
+        .is_none_or(|config| std::path::absolute(config).ok() == running.config);
+    let settings_file = args
+        .common
+        .settings_file
+        .clone()
+        .or(running.settings_file.filter(|_| its_own));
+    if let Some(config) = args.config.clone().or(running.config) {
         command.arg("--config").arg(config);
+    }
+    if let Some(settings_file) = settings_file {
+        command.arg("--settings-file").arg(settings_file);
     }
     let deadline = deadline(args.common.timeout);
     if let Ok(mut child) = command.spawn()

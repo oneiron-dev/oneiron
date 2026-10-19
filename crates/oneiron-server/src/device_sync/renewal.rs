@@ -192,6 +192,18 @@ impl Renewal {
     }
 }
 
+/// The schedule goes when its link stops. A mesh renewal still under way is
+/// aborted then, so it neither reads the vault for its machine proof nor
+/// dials over a mesh that is closing (FIX 5773). A renewal off the async
+/// loop cannot be aborted and runs to its end. Neither writes anything.
+impl Drop for Renewal {
+    fn drop(&mut self) {
+        if let Some(in_flight) = self.in_flight.as_ref().filter(|_| self.dialer.is_some()) {
+            in_flight.abort();
+        }
+    }
+}
+
 /// One renewal of the credential `path` holds, off the async loop: the
 /// replacement the home answered, read but not written.
 fn renew(origin: &str, path: &Path, vault: &oneiron::Vault) -> Result<Candidate, Failure> {

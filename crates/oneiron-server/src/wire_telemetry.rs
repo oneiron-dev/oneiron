@@ -718,9 +718,18 @@ pub(crate) async fn observe_http(
         )
     })
     .ok();
+    // A call on the managed owner's held MCP socket that names no caller of
+    // its own counts under the owner whose socket it is (FIX 5539): a count,
+    // never his authentication, which the door judges again.
+    let socket_owner = request
+        .extensions()
+        .get::<crate::managed::ManagedOwnerSession>()
+        .filter(|_| server.managed_issuer.is_some())
+        .map(|session| session.holder().to_hex());
+    let unattributed = socket_owner.as_deref().unwrap_or("unauthenticated");
     let actor = auth
         .as_ref()
-        .map_or("unauthenticated", |a| match a.principal_ref() {
+        .map_or(unattributed, |a| match a.principal_ref() {
             Some(principal) => principal,
             // An owner-grade credential with no person behind it (the
             // shared secret) speaks for the vault's owner, so its traffic

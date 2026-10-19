@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::ConfigFiles;
 use crate::config::{EnvConfig, ServeArgs, default_config_path};
 
 /// A runtime file is a few hundred bytes; a larger one is not read.
@@ -35,6 +36,8 @@ pub(super) struct LocalServer {
     pub(super) state_dir: PathBuf,
     /// The config file `serve` read, if it read one.
     pub(super) config: Option<PathBuf>,
+    /// The owner's settings file `serve` layered over it, if it named one.
+    pub(super) settings_file: Option<PathBuf>,
     pub(super) started_at_ms: u64,
 }
 
@@ -82,14 +85,14 @@ pub(super) fn vault_id(vault: &oneiron::Vault) -> Option<String> {
         .map(|id| id.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
-/// Registers a ready `serve` whose API listener is bound at `bound`. A
-/// server that cannot write its file still serves; a client just does not
-/// find it.
+/// Registers a ready `serve` whose API listener is bound at `bound`, with
+/// the `files` it read its config from, each made absolute here. A server
+/// that cannot write its file still serves; a client just does not find it.
 pub(super) fn register(
     vault_id: Option<String>,
     bound: SocketAddr,
     state_dir: &Path,
-    config: Option<&Path>,
+    files: Option<&ConfigFiles>,
 ) -> Option<Registration> {
     // A wildcard bind is reached on loopback.
     let ip = match bound.ip() {
@@ -103,7 +106,12 @@ pub(super) fn register(
         url: format!("http://{}", SocketAddr::new(ip, bound.port())),
         pid: std::process::id(),
         state_dir: absolute(state_dir),
-        config: config.map(absolute),
+        config: files
+            .and_then(|files| files.config.as_deref())
+            .map(absolute),
+        settings_file: files
+            .and_then(|files| files.settings_file.as_deref())
+            .map(absolute),
         started_at_ms: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |since| {
