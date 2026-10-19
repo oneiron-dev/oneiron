@@ -3,8 +3,10 @@
 //! effect, its finding at Auto, one typed inverse row and one Gate receipt
 //! together; the owner reverts it through [`Vault::revert_dreamer_maintenance`].
 //! A background identity abstention lands no finding: its row and receipt
-//! name the identity ask it kept provisional. The Coach's and the Healer's
-//! findings keep the run tray.
+//! name the identity ask it kept provisional. A project's team-shape fork the
+//! Coach put in force (OF-420) lands no finding either: its row and receipt
+//! name the project and the fork, and its revert takes the fork off the
+//! project. The Coach's other findings and the Healer's keep the run tray.
 //!
 //! A kind is one `MaintenanceInverse` variant carrying the before-state its
 //! effect changed, one arm in `MaintenanceInverse::label` and one arm in
@@ -32,24 +34,36 @@ pub const MAINTENANCE_REVERT_KIND: &str = "dreamer_maintenance_revert";
 const APPLY_REASON: &str = "gate.dreamer.maintenance_applied";
 const REVERT_REASON: &str = "gate.dreamer.maintenance_reverted";
 
-/// What one applied write is filed under: the finding it landed, or the
-/// identity ask a background abstention kept provisional, which has no
-/// finding claim.
+/// What one applied write is filed under: the finding it landed, the
+/// identity ask a background abstention kept provisional, or the project
+/// tree fork the Coach put in force; the last two have no finding claim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MaintenanceTarget {
     Finding(EntityId),
     /// The ask's key, the 64 hex `/v1/owner/identity/asks` lists.
     IdentityAsk([u8; 32]),
+    /// A project and the team-shape fork put in force for it.
+    ProjectTreeFork {
+        project: EntityId,
+        fork: EntityId,
+    },
 }
 
+/// The first byte of a project tree fork's key, ahead of its two ids.
+const PROJECT_TREE_FORK_KEY: u8 = 1;
+
 impl MaintenanceTarget {
-    /// A finding's 32 hex, or an identity ask's 64 hex.
+    /// A finding's 32 hex, an identity ask's 64 hex, or a project tree
+    /// fork's project and fork, 32 hex each, joined by `:`.
     #[must_use]
     pub fn to_hex(&self) -> String {
         match self {
             Self::Finding(id) => id.to_hex(),
             Self::IdentityAsk(key) => crate::entity_id::bytes_to_hex_lower(key),
+            Self::ProjectTreeFork { project, fork } => {
+                format!("{}:{}", project.to_hex(), fork.to_hex())
+            }
         }
     }
 
@@ -63,18 +77,24 @@ impl MaintenanceTarget {
     pub(super) const fn finding(&self) -> Option<EntityId> {
         match self {
             Self::Finding(id) => Some(*id),
-            Self::IdentityAsk(_) => None,
+            Self::IdentityAsk(_) | Self::ProjectTreeFork { .. } => None,
         }
     }
 }
 
-/// A finding's 16 id bytes or an ask's 32 key bytes: the width tells them
-/// apart.
+/// A finding's 16 id bytes, an ask's 32 key bytes, or a project tree fork's
+/// tag byte and its project's and fork's 16 id bytes (33): the width tells
+/// them apart.
 impl SideKey for MaintenanceTarget {
     fn encode_into(&self, out: &mut Vec<u8>) {
         match self {
             Self::Finding(id) => id.encode_into(out),
             Self::IdentityAsk(key) => key.encode_into(out),
+            Self::ProjectTreeFork { project, fork } => {
+                out.push(PROJECT_TREE_FORK_KEY);
+                project.encode_into(out);
+                fork.encode_into(out);
+            }
         }
     }
 
@@ -82,6 +102,17 @@ impl SideKey for MaintenanceTarget {
         match bytes.len() {
             16 => EntityId::decode_key(bytes).map(Self::Finding),
             32 => <[u8; 32]>::decode_key(bytes).map(Self::IdentityAsk),
+            33 => {
+                let (&tag, ids) = bytes.split_first()?;
+                if tag != PROJECT_TREE_FORK_KEY {
+                    return None;
+                }
+                let (project, fork) = ids.split_at(16);
+                Some(Self::ProjectTreeFork {
+                    project: EntityId::decode_key(project)?,
+                    fork: EntityId::decode_key(fork)?,
+                })
+            }
             _ => None,
         }
     }
@@ -105,6 +136,9 @@ pub(super) enum MaintenanceInverse {
     RepresentationPlan,
     /// A background identity abstention: the ask as it stood before.
     IdentityProvisional(Box<identity::ProvisionalInverse>),
+    /// A project's team-shape fork put in force: the revert takes it off the
+    /// project's skill forks, and the fork's record stays.
+    ProjectTreeFork { project: EntityId, fork: EntityId },
 }
 
 impl MaintenanceInverse {
@@ -117,6 +151,7 @@ impl MaintenanceInverse {
             Self::ReachOut => "reach_out",
             Self::RepresentationPlan => "representation_plan",
             Self::IdentityProvisional(_) => "identity_provisional",
+            Self::ProjectTreeFork { .. } => "project_tree_fork",
         }
     }
 
@@ -140,8 +175,31 @@ impl MaintenanceInverse {
             Self::IdentityProvisional(inverse) => {
                 identity::revert_provisional_in_txn(vault, txn, inverse, now, out)
             }
+            Self::ProjectTreeFork { project, fork } => {
+                revert_project_tree_fork_in_txn(vault, txn, *project, *fork, now, out)
+            }
         }
     }
+}
+
+/// Takes `fork` off `project`'s skill forks, which puts the project back on
+/// the vault tree unless another admitted fork of its own is listed; the
+/// fork's record stays as it is. A project out of view, or one a later write
+/// already took the fork off, is left alone.
+fn revert_project_tree_fork_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    project: EntityId,
+    fork: EntityId,
+    now: u64,
+    out: &mut MaintenanceRevert,
+) -> Result<()> {
+    if vault.detach_project_skill_fork_in_txn(txn, project, fork, now)? {
+        out.restored.push(project);
+    } else {
+        out.left_alone.push(project.to_hex());
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -153,7 +211,8 @@ struct AppliedRow {
     attempt: Option<AttemptId>,
     facet: String,
     /// The BLAKE3 of the finding's body as it landed; none for an identity
-    /// abstention, whose inverse holds the ask it left.
+    /// abstention, whose inverse holds the ask it left, or a project tree
+    /// fork, whose inverse names the fork.
     finding_revision: Option<[u8; 32]>,
     applied_at: u64,
     receipt: GateDecisionId,
@@ -165,7 +224,7 @@ struct AppliedRow {
 pub struct AppliedMaintenance {
     pub target: MaintenanceTarget,
     /// `finding`, `curator`, `proactivity_policy`, `reach_out`,
-    /// `representation_plan` or `identity_provisional`.
+    /// `representation_plan`, `identity_provisional` or `project_tree_fork`.
     pub kind: &'static str,
     pub facet: String,
     /// The attempt that wrote it, as 32 hex; none for an identity abstention.
@@ -306,6 +365,74 @@ pub(super) fn record_disposition_in_txn(
             reverted: None,
         },
     )
+}
+
+/// Records one project tree fork the Coach put in force, in the admission's
+/// transaction: the inverse row under (project, fork) and the Coach's
+/// receipt naming both. No finding lands; the fork's own record is what the
+/// admission changed.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one admitted fork's project, attempt, facet and writer"
+)]
+pub(super) fn record_project_tree_fork_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    project: EntityId,
+    fork: EntityId,
+    attempt: AttemptId,
+    facet: &str,
+    actor: WriteActor,
+    now: u64,
+) -> Result<()> {
+    let target = MaintenanceTarget::ProjectTreeFork { project, fork };
+    if APPLIED.contains(&vault.store, &*txn, &target)? {
+        return Err(invalid());
+    }
+    let mut key = Vec::new();
+    target.encode_into(&mut key);
+    let mut receipt = decision(
+        actor,
+        MAINTENANCE_APPLY_KIND,
+        APPLY_REASON,
+        target,
+        key,
+        now,
+    );
+    vault
+        .store
+        .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+    APPLIED.put(
+        &vault.store,
+        txn,
+        &target,
+        &AppliedRow {
+            inverse: MaintenanceInverse::ProjectTreeFork { project, fork },
+            attempt: Some(attempt),
+            facet: facet.to_owned(),
+            finding_revision: None,
+            applied_at: now,
+            receipt: receipt.decision_id,
+            reverted: None,
+        },
+    )
+}
+
+/// Every project tree fork the owner reverted, as (project, fork).
+pub(super) fn reverted_project_tree_forks_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(EntityId, EntityId)>> {
+    let mut reverted = Vec::new();
+    for row in APPLIED.iter_from(&vault.store, txn, &[])? {
+        let (target, row) = row?;
+        if let MaintenanceTarget::ProjectTreeFork { project, fork } = target
+            && row.reverted.is_some()
+        {
+            reverted.push((project, fork));
+        }
+    }
+    Ok(reverted)
 }
 
 /// One approved Gate receipt by `actor`, naming `target`'s claim when it is
