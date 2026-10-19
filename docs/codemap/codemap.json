@@ -679,7 +679,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "WorkflowDefinition"
@@ -687,7 +687,7 @@
      "path": "src/agent_def/workflow.rs",
      "purpose": "Saved ordered agent compositions",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 9,
       "struct": 1
      }
