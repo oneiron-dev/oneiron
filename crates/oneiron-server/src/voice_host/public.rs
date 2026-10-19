@@ -1,11 +1,12 @@
 //! Credential-bound public sessions. HTTP and held-socket RPC use the same
 //! typed facade rows. No UDS listener, hello or wire DTO is a public API.
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::*;
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
 
 use super::boot::{PreparedCall, prepare_call};
 use super::public_events::Journal;
@@ -14,13 +15,28 @@ use crate::auth::CoreAuth;
 use crate::managed::ManagedShutdown;
 use crate::server::{HousekeepingAdmission, SyncServer};
 
+/// What a session start refused once the host is stopping.
+const STOPPING: &str = "the host is stopping; no live voice session starts";
+
 #[derive(Default)]
 pub(crate) struct LiveVoiceSessions {
     entries: Mutex<HashMap<String, Arc<PublicSession>>>,
+    /// Each session's task, owned so the host's stop waits for its teardown
+    /// (FIX 5324), behind the gate that stop closes.
+    tasks: Mutex<SessionTasks>,
     /// The host's write gate each session holds an admission from
     /// (`public_hold`); unset on a host with no freeze, which admits every
     /// session.
     admit: OnceLock<HousekeepingAdmission>,
+}
+
+/// The sessions' tasks, and whether the host has stopped them.
+#[derive(Default)]
+struct SessionTasks {
+    /// Set by [`LiveVoiceSessions::stop_all`]: no session starts after it.
+    closing: bool,
+    /// Each running session's stop and task.
+    running: Vec<(ManagedShutdown, JoinHandle<()>)>,
 }
 
 pub(crate) struct PublicSession {
@@ -113,6 +129,24 @@ impl LiveVoiceSessions {
             .map_err(|_| unavailable())?
             .remove(session_ref);
         Ok(())
+    }
+
+    /// Ends every session at the host's stop (FIX 5324): no session starts
+    /// after this, each running one is told to end, and each ends through
+    /// its usual teardown, its journal finished, before this returns. Only
+    /// the host's own stop calls it; a reap's pause leaves sessions open.
+    pub(crate) async fn stop_all(&self) {
+        let running = {
+            let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
+            tasks.closing = true;
+            for (shutdown, _) in &tasks.running {
+                shutdown.trigger();
+            }
+            std::mem::take(&mut tasks.running)
+        };
+        for (_, task) in running {
+            let _ = task.await;
+        }
     }
 }
 
@@ -223,6 +257,18 @@ pub(crate) async fn start_public(
     let journal = Arc::new(Mutex::new(Journal::new(session_ref.clone())));
     let (commands, receiver) = mpsc::channel(settings.queue_capacity);
     let hold = Arc::new(SessionHold::new(admission, server.live_voice.releases()));
+    // The enrolled device the session is opened from, while it stands here
+    // as the owner's own: its standing is checked again through the session,
+    // as a voice loop call's is (FIX 5323). A caller from any other machine
+    // has no device standing to lose.
+    let device =
+        Some(auth.peer()).filter(|peer| crate::auth::owned_machine_stands(server.vault(), *peer));
+    // Registered and spawned under the gate the host's stop closes, so no
+    // session starts after it took the tasks it waits for.
+    let mut tasks = server.live_voice.tasks.lock().map_err(|_| unavailable())?;
+    if tasks.closing {
+        return Err(invalid(STOPPING));
+    }
     let entry = Arc::new(PublicSession {
         auth: auth.clone(),
         owner_only: input.room_ref.is_none() && input.roster_ref.is_none(),
@@ -251,26 +297,33 @@ pub(crate) async fn start_public(
         live,
         hold: Arc::clone(&hold),
     };
-    let server = Arc::clone(server);
-    let auth = auth.clone();
-    tokio::spawn(async move {
-        {
-            let serving = running.run(&server, receiver, &shutdown);
-            tokio::pin!(serving);
-            // Released, the media worker and the credential's recheck wait
-            // with the loop.
-            let worker = while_held(worker.run(), hold.watch());
-            tokio::pin!(worker);
-            let revoked = while_held(super::boot::revoked(&auth, &server), hold.watch());
-            tokio::select! {
-                result = &mut serving => { if let Err(error) = result { tracing::warn!(%error.code, "public voice stopped"); } }
-                () = &mut worker => { shutdown.trigger(); let _ = serving.await; }
-                () = revoked => { shutdown.trigger(); let _ = serving.await; }
+    let stop = shutdown.clone();
+    let task = {
+        let server = Arc::clone(server);
+        let auth = auth.clone();
+        tokio::spawn(async move {
+            {
+                let serving = running.run(&server, receiver, &shutdown);
+                tokio::pin!(serving);
+                // Released, the media worker and the credential's recheck wait
+                // with the loop.
+                let worker = while_held(worker.run(), hold.watch());
+                tokio::pin!(worker);
+                let revoked =
+                    while_held(super::boot::revoked(&auth, &server, device), hold.watch());
+                tokio::select! {
+                    result = &mut serving => { if let Err(error) = result { tracing::warn!(%error.code, "public voice stopped"); } }
+                    () = &mut worker => { shutdown.trigger(); let _ = serving.await; }
+                    () = revoked => { shutdown.trigger(); let _ = serving.await; }
+                }
             }
-        }
-        // Last, once the session's work is dropped: its admission, for good.
-        hold.end();
-    });
+            // Last, once the session's work is dropped: its admission, for good.
+            hold.end();
+        })
+    };
+    tasks.running.retain(|(_, ended)| !ended.is_finished());
+    tasks.running.push((stop, task));
+    drop(tasks);
     Ok(LiveVoiceSession {
         session_ref,
         sample_rate: input.sample_rate,
