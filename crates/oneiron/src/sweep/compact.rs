@@ -356,6 +356,8 @@ fn compact_window_with(
     // and an erased message's document.
     crate::sync::document_pins::scrub_document_pins(vault, &doc, None)?;
     crate::sync::message_docs::scrub_message_docs(vault, &doc, None)?;
+    // FIX 3877: an origin claim carrier names no erased actor.
+    crate::sync::origin_claims::scrub_origin_claims(vault, &doc, None)?;
     // A removed session's epoch floor leaves the window too.
     crate::sync::withdrawn_cutoffs::scrub_removed_epoch_floors(vault, &doc, None)?;
 

@@ -514,6 +514,8 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     // and an erased message's document.
     crate::sync::document_pins::scrub_document_pins(vault, doc, Some(key))?;
     crate::sync::message_docs::scrub_message_docs(vault, doc, Some(key))?;
+    // FIX 3877: and an origin claim carrier that names an erased actor.
+    crate::sync::origin_claims::scrub_origin_claims(vault, doc, Some(key))?;
     // And a removed session's epoch floor.
     crate::sync::withdrawn_cutoffs::scrub_removed_epoch_floors(vault, doc, Some(key))?;
     // A persisted or returned snapshot carries the same project history as

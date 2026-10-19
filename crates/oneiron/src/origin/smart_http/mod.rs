@@ -90,6 +90,7 @@ mod exchange_idle;
 mod held;
 mod hooks;
 mod intent;
+mod intent_erase;
 mod landing;
 mod landing_lfs;
 mod maintain;
@@ -103,9 +104,12 @@ pub use self::door::{DoorAdmissionStamp, DoorSeam};
 pub use self::door_window::{DoorWindowReport, DoorWindowVerdict};
 pub use self::evidence::{ObservedRef, PackStats, ReceivePackOutcome, RefUpdate};
 pub(super) use self::evidence::{RECEIVE_PACK_ADMISSION_PREDICATE, RECEIVE_PACK_OUTCOME_PREDICATE};
+// An actor's erase reaches the receive-pack rows (FIX 3877).
+pub(crate) use self::evidence::erase_receive_pack_evidence_actor_in_txn;
 pub use self::held::{AtDiskFloor, HeldBytes, SpillFloor};
 pub use self::hooks::DoorHooksDir;
 pub use self::intent::{ReceivePackRefResult, ReceivePackRefStatus};
+pub(crate) use self::intent_erase::erase_receive_pack_intent_actor_in_txn;
 pub use self::landing::{
     ReceivePackAttribution, ReceivePackCertificate, ReceivePackLanding, refs_already_applied,
 };

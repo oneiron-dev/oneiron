@@ -6,9 +6,11 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo, lock_repository};
+use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Named, Raw, SideTable};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Owner-controlled origin residence/epoch/writer authority for one repository. Key: repo id.
@@ -19,6 +21,13 @@ const AUTHORITY: SideTable<EntityId, OriginAuthority, Named> =
 /// current authority epoch. Key: publication id.
 const AUTHORITY_PERMIT: SideTable<EntityId, u64, Raw> =
     SideTable::new(&side_table::ORIGIN_AUTHORITY_PERMIT);
+
+/// The writer an erased host leaves in the authority row, its admission
+/// stamps and its intents (FIX 3877; a call, L02's ruling): one fixed marker,
+/// never Nil and never a dropped field, so it can never read as an
+/// unconfigured origin. The repository and epoch stay; no host holds the
+/// repository until the owner's explicit cutover, and nothing fails over.
+pub(crate) const ORIGIN_ERASED_WRITER: &str = ERASED_CALL_IDENTITY;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum OriginResidence {
@@ -78,6 +87,11 @@ impl OriginAuthorityStamp {
         }
     }
     pub(in crate::origin) fn lease(&self) -> Result<OriginAuthorityLease> {
+        if self.writer_erased() {
+            return Err(Error::ConcurrentWrite(
+                "an erased origin host holds no lease",
+            ));
+        }
         Ok(OriginAuthorityLease {
             repo_id: EntityId::from_hex(&self.repo_id)?,
             epoch: self.epoch,
@@ -109,13 +123,87 @@ impl OriginAuthorityStamp {
             .filter(|epoch| *epoch != 0)
             .ok_or_else(invalid)?;
         let writer = fields[2].as_str().ok_or_else(invalid)?.to_owned();
-        EntityId::from_hex(&writer).map_err(|_| invalid())?;
+        // An erased host is its own state, never an absent stamp.
+        if writer != ORIGIN_ERASED_WRITER {
+            EntityId::from_hex(&writer).map_err(|_| invalid())?;
+        }
         Ok(Some(Self {
             repo_id: repo_id.to_hex(),
             epoch,
             writer,
         }))
     }
+    /// Whether an erase took the host this stamp names.
+    pub(in crate::origin) fn writer_erased(&self) -> bool {
+        self.writer == ORIGIN_ERASED_WRITER
+    }
+    /// Names [`ORIGIN_ERASED_WRITER`] where the stamp names `actor`; `true`
+    /// when it did.
+    pub(in crate::origin) fn erase_writer(&mut self, actor: &EntityId) -> bool {
+        let named = self.writer == actor.to_hex();
+        if named {
+            ORIGIN_ERASED_WRITER.clone_into(&mut self.writer);
+        }
+        named
+    }
+}
+
+/// Erasing `actor` from the origin authority rows (FIX 3877): a row whose
+/// writer is that machine keeps its epoch, residence and mirror flag and
+/// names [`ORIGIN_ERASED_WRITER`], so the repository reads `Elsewhere` until
+/// the owner's explicit cutover. One-way, in the erase's own transaction. An
+/// id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a row that cannot be read.
+pub(crate) fn erase_origin_authority_writer_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::typed_body::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let writer = actor.to_hex();
+    let mut rows = Vec::new();
+    for (id, mut row) in AUTHORITY.scan(&vault.store, wtxn)? {
+        if row.writer == writer {
+            ORIGIN_ERASED_WRITER.clone_into(&mut row.writer);
+            rows.push((id, row));
+        }
+    }
+    for (id, row) in rows {
+        AUTHORITY.put(&vault.store, wtxn, &id, &row)?;
+    }
+    Ok(())
+}
+
+/// The authority rows `vault` holds whose writer an erase replaced, by their
+/// stored key. A restore keeps each as the live vault holds it (FIX 3877).
+///
+/// # Errors
+///
+/// Storage errors, or a row that cannot be read.
+pub(crate) fn erased_writer_rows(vault: &Vault) -> Result<BTreeMap<Vec<u8>, OriginAuthority>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(AUTHORITY
+        .scan(&vault.store, &txn)?
+        .into_iter()
+        .filter(|(_, row)| row.writer == ORIGIN_ERASED_WRITER)
+        .map(|(id, row)| (AUTHORITY.key_bytes(&id), row))
+        .collect())
+}
+
+/// Whether the stored row `value` is `live`'s row but for its writer: the
+/// same epoch, so the writer the erase replaced, or the marker itself.
+pub(crate) fn erased_writer_row(live: &OriginAuthority, value: &[u8]) -> bool {
+    AUTHORITY.decode_value(value).is_ok_and(|row| {
+        OriginAuthority {
+            writer: live.writer.clone(),
+            ..row
+        } == *live
+    })
 }
 impl Vault {
     pub fn origin_authority(&self, repo: &GitWireRepo) -> Result<Option<OriginAuthority>> {
@@ -370,6 +458,12 @@ impl Vault {
         repo_id: EntityId,
         authority: Option<&OriginAuthorityStamp>,
     ) -> Result<()> {
+        // An erased host starts no new effect, whatever the row says (FIX 3877).
+        if authority.is_some_and(OriginAuthorityStamp::writer_erased) {
+            return Err(Error::ConcurrentWrite(
+                "receive-pack names an erased origin host",
+            ));
+        }
         let row = AUTHORITY.get(&self.store, txn, &repo_id)?;
         match (row, authority) {
             (None, None) => Ok(()),

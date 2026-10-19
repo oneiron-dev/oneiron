@@ -16,6 +16,8 @@ mod vault_meta_d_l;
 mod vault_meta_m_r;
 mod vault_meta_s_z;
 
+use std::collections::BTreeMap;
+
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus};
 use crate::registry::{
@@ -170,6 +172,11 @@ const SHARE_ADMISSIONS: Class = refuse("share admissions");
 const PUBLIC_BOOKING_PAGES: Class = refuse("public booking pages");
 const PUBLISHED_ARTIFACTS: Class = refuse("published artifacts");
 const ORIGIN_AUTHORITY: Class = refuse("repository origin authority");
+/// An authority row whose writer an actor's erase replaced (FIX 3877): the
+/// erase changes who it names and nothing else, so the row stays as the live
+/// vault holds it, and a checkpoint that holds it naming that writer still
+/// restores. A cutover moves the epoch, so it still refuses.
+const ERASED_ORIGIN_AUTHORITY: Class = LIVE;
 const ORIGIN_MIRRORS: Class = refuse("repository mirror targets");
 const ROOMS: Class = Class::Refuse {
     what: "room roles and membership",
@@ -430,6 +437,9 @@ pub(super) struct Classes {
     vault_meta: Vec<(&'static [u8], Class)>,
     sync_state: Vec<(&'static [u8], Class)>,
     kinds: [Option<Class>; 256],
+    /// The live vault's origin authority rows an erase rewrote, by key. A
+    /// read that fails keeps none, so those rows refuse as before.
+    erased_authority: BTreeMap<Vec<u8>, crate::origin::residence::OriginAuthority>,
 }
 
 impl Classes {
@@ -465,6 +475,8 @@ impl Classes {
             vault_meta,
             sync_state,
             kinds,
+            erased_authority: crate::origin::residence::erased_writer_rows(current)
+                .unwrap_or_default(),
         }
     }
 
@@ -497,6 +509,14 @@ impl Classes {
                 };
                 let below = families.partition_point(|(prefix, _)| *prefix <= key);
                 match below.checked_sub(1).map(|index| families[index]) {
+                    Some((prefix, _))
+                        if database == "vault_meta"
+                            && self.erased_authority.get(key).is_some_and(|live| {
+                                crate::origin::residence::erased_writer_row(live, value)
+                            }) =>
+                    {
+                        (ERASED_ORIGIN_AUTHORITY, prefix.len())
+                    }
                     Some((prefix, class)) if key.starts_with(prefix) => (class, prefix.len()),
                     _ => (UNCLASSIFIED_ROWS, 0),
                 }

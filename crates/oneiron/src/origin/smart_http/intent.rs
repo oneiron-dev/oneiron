@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 /// lands, keyed by repo identity then operation id. Key: string(repo identity hex) + id16
 /// (operation id), with NO separator — the repo identity hex is always the fixed-length hash
 /// spelling, so the trailing 16 raw bytes are unambiguous.
-const INTENTS: SideTable<ReceivePackIntentKey, ReceivePackIntent, Named> =
+pub(super) const INTENTS: SideTable<ReceivePackIntentKey, ReceivePackIntent, Named> =
     SideTable::new(&side_table::ORIGIN_RECEIVE_PACK_INTENT);
 
 /// Settled intents one write transaction prunes when a scan meets them.
@@ -167,10 +167,10 @@ impl ReceivePackIntentRef {
 #[derive(Serialize, Deserialize)]
 pub(super) struct ReceivePackIntent {
     pub(super) operation_id: String,
-    actor_id: String,
+    pub(super) actor_id: String,
     repo_root: String,
     admitted_at: u64,
-    origin_authority: Option<OriginAuthorityStamp>,
+    pub(super) origin_authority: Option<OriginAuthorityStamp>,
     // Written once after the exchange, before any outcome evidence. Recovery
     // without this checkpoint has no measured transport totals.
     pub(super) transport_bytes: Option<(u64, u64)>,
@@ -589,8 +589,11 @@ impl Vault {
                     }
                     count.row();
                     fold_receive_pack_progress(&self.store, &rtxn, &key, &mut intent)?;
+                    // An intent an erase took is neither pending nor pruned (FIX 3877).
                     if !intent.is_settled() {
-                        pending.push((key, intent));
+                        if intent.resumes() {
+                            pending.push((key, intent));
+                        }
                         continue;
                     }
                     settled.push(key);

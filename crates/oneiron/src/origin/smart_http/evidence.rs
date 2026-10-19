@@ -12,7 +12,8 @@ use super::paths::{now_secs, serve_failed};
 use super::serve_cmd::path_arg;
 use crate::Vault;
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, encode_claim_body,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, decode_claim_body,
+    encode_claim_body,
 };
 use crate::codebase::RepoRef;
 use crate::credential_door::DOOR_RECEIVE_PACK_EFFECTOR;
@@ -20,6 +21,10 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{GitOid, GitRefExpectation, GitRefName, GitRefPublication, GitWire};
+use crate::origin::actor_erase::{
+    ClaimRewrite, ORIGIN_ACTOR_ERASE_PROOF, OriginClaimKind, OriginProofErase,
+    erase_claims_naming_in_txn, erased_for,
+};
 use crate::origin::lfs::{LfsOid, LfsPushedPointer, lfs_repo_id};
 use crate::origin::publication::OriginPublicationRequest;
 use crate::origin::residence::OriginAuthorityStamp;
@@ -574,6 +579,30 @@ impl Vault {
         Ok(())
     }
 
+    /// Rewrites one admission or outcome claim in place as its actor-erased
+    /// form (FIX 3877), its producer receipt with it when the receipt holds
+    /// the stored bytes ([`ORIGIN_ACTOR_ERASE_PROOF`]). A claim with no
+    /// receipt never gets one.
+    pub(in crate::origin) fn redact_receive_pack_claim_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        rewrite: &ClaimRewrite<'_>,
+    ) -> Result<()> {
+        let paired = EVIDENCE
+            .get(&self.store, wtxn, rewrite.id)?
+            .is_some_and(|receipt| receipt == rewrite.held);
+        rewrite.put_in_txn(self, wtxn)?;
+        match ORIGIN_ACTOR_ERASE_PROOF {
+            OriginProofErase::RehashRedactedBody if paired => EVIDENCE.put(
+                &self.store,
+                wtxn,
+                rewrite.id,
+                &encode_claim_body(rewrite.erased)?,
+            ),
+            OriginProofErase::RehashRedactedBody => Ok(()),
+        }
+    }
+
     pub(in crate::origin) fn has_receive_pack_evidence(&self, id: EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
         EVIDENCE.contains(&self.store, &rtxn, &id)
@@ -654,4 +683,53 @@ impl Vault {
         }
         Ok(())
     }
+}
+
+/// Erasing `actor` from the receive-pack evidence (FIX 3877): each admission
+/// and outcome claim that names it, as the pusher or as the host its
+/// authority stamp names, is rewritten in place naming no one, its producer
+/// receipt with it. A receipt whose claim is gone or holds other bytes is
+/// rewritten alone, and no claim gets a receipt it lacked. Every observed
+/// fact stays: times, refs, pointers, counters, scan and transport outcome.
+/// A rewritten claim no longer matches any live push, so it lands nothing.
+/// One-way, in the erase's own transaction. An id whose entity is no actor
+/// scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a claim that cannot be rewritten.
+pub(crate) fn erase_receive_pack_evidence_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::typed_body::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    erase_claims_naming_in_txn(vault, wtxn, actor, &OriginClaimKind::RECEIVE_PACK)?;
+    let mut orphans = Vec::new();
+    for row in EVIDENCE.iter_from(&vault.store, wtxn, &[])? {
+        let (id, receipt) = row?;
+        let held = vault.get_raw_in(wtxn, &id)?;
+        if held
+            .as_deref()
+            .and_then(|raw| raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..))
+            == Some(receipt.as_slice())
+        {
+            continue;
+        }
+        let Some((kind, body)) = decode_claim_body(&receipt, true)
+            .ok()
+            .and_then(|body| Some((OriginClaimKind::of(&body.predicate)?, body)))
+        else {
+            continue;
+        };
+        if let Some(erased) = erased_for(kind, &id, &body, actor) {
+            orphans.push((id, encode_claim_body(&erased)?));
+        }
+    }
+    for (id, receipt) in &orphans {
+        EVIDENCE.put(&vault.store, wtxn, id, receipt)?;
+    }
+    Ok(())
 }

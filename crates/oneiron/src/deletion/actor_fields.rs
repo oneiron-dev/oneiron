@@ -17,14 +17,19 @@ use super::tombstone::HARD_DELETE_MARKER;
 /// and the actor's author carriers go.
 const IDENTITY_OPS: ActorScrub = Vault::scrub_identity_op_actor_in_txn;
 
-/// Runs in the purge's transaction: the identity ops first, then every
-/// declared table's scrub in catalog order.
+/// Origin's intent, publication and change claims are claims, not a side
+/// table: each that names the actor is rewritten naming no one (FIX 3877).
+const ORIGIN_CLAIMS: ActorScrub = crate::origin::actor_erase::erase_publication_claim_actor_in_txn;
+
+/// Runs in the purge's transaction: the identity ops first, then origin's
+/// claims, then every declared table's scrub in catalog order.
 pub(super) fn erase_actor_fields_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
     IDENTITY_OPS(vault, wtxn, actor)?;
+    ORIGIN_CLAIMS(vault, wtxn, actor)?;
     for scrub in crate::side_table::actor_scrubs() {
         scrub(vault, wtxn, actor)?;
     }
