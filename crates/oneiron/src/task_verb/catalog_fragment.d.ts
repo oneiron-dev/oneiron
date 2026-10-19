@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1083 code-mode rows (1059 host rows, 24 run rows), 3575 declarations.
+// Census: 1083 code-mode rows (1059 host rows, 24 run rows), 3577 declarations.
 // Replies: 966 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
@@ -246,7 +246,7 @@ declare namespace Sdk {
   type ClaimApprovalStatus = "auto" | "proposed" | "approved" | "rejected";
   type TaskCancelReceipt = { approval: ClaimApprovalStatus; effected: boolean; proposal_ref?: EntityId | null; gate_decision_ref?: string | null; status?: RunTreeStatus | null; cancel_requested: boolean; forced: boolean };
   type SteerRequest = { task_ref: string; instruction: string; key: string };
-  type RunSignalState = "Pending" | "Settled" | "RefusedCancelCapacity" | "RefusedCancelUnavailable";
+  type RunSignalState = "Pending" | "Settled" | "RefusedCancelUnavailable";
   type SteerReceipt = { task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState };
   type AttemptHandle = { task_ref: EntityId; attempt_ref: string; attempt_count: number; node_ref?: EntityId | null };
   type TaskHandle = { kind: "proposed"; proposal_ref: EntityId } | { kind: "task"; task_ref: EntityId } | (AttemptHandle & { kind: "attempt" }) | { kind: "ask"; group_ref: EntityId };
@@ -2783,7 +2783,9 @@ declare namespace Sdk {
   type HostingPrivacyPosture = "managed" | "relay" | "self-host";
   type QuestionCriteria = { yes_if_all: string[]; no_if_any: string[]; not_a_reason_to_say_no: string[] };
   type GraphAskRequest = { question: DecisionQuestion; units?: EntityId[]; select?: GraphAskSelection | null; ceiling?: DecisionRung | null; unit_deadline_ms?: number | null; posture?: HostingPrivacyPosture | null; criteria?: QuestionCriteria | null };
-  type AnswerRecord = { claim: string; unit: string; decision: TypedDecision; frontier: number[]; source_kind: number; answered_at: number };
+  type SourceConflict = "facet" | "project" | "world" | "relationship" | "scope_term" | "principal" | "unrepresentable";
+  type OmittedNeighbor = { id: string; reason: SourceConflict };
+  type AnswerRecord = { claim: string; unit: string; decision: TypedDecision; frontier: number[]; source_kind: number; answered_at: number; omitted?: OmittedNeighbor[] };
   type GraphAskDeclined = { unit: EntityId; decision: TypedDecision };
   type GraphAskOutcome = { state: "done"; answers: AnswerRecord[]; abstained: EntityId[]; declined: GraphAskDeclined[] } | { state: "failed"; failed_unit?: EntityId | null; code: string; message: string; answers: AnswerRecord[]; abstained: EntityId[] };
   type GraphAdmitRequest = { question: DecisionQuestion; unit: EntityId; decision: TypedDecision };
