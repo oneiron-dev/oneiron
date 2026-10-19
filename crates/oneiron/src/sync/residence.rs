@@ -38,6 +38,7 @@ pub use bundle_access::{
     ensure_sealed_pad_access, offer_sealed_pad_access, pending_sealed_pad_access,
     sealed_pad_access,
 };
+pub use bundle_payload::RecoveryCheckpointTrust;
 pub use bundle_payload::SealedBundleTake;
 pub use bundle_payload::SealedKitRestore;
 pub use bundle_stage::{SealedBundleStaged, sealed_bundle_stages};

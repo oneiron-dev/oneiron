@@ -170,9 +170,13 @@ pub struct AuthorityFold {
     pub(crate) checkpoint_policy: super::checkpoint_choice::FoldedCheckpointPolicy,
     /// The owner's home node picks and the one in force here (DOOR-101).
     pub(crate) home_pick: super::home_pick::FoldedHomePick,
-    /// Each person's conversation training choices, keyed by the PERSON
-    /// (FIX 4489).
+    /// Each person's conversation training opt-out choices, keyed by the
+    /// PERSON (FIX 4489, FIX 5502).
     pub(crate) conversation_training: super::conversation_training::FoldedConversationTraining,
+    /// The vault's conversation training setting choices and the one in
+    /// force here (FIX 5502).
+    pub(crate) conversation_training_vault:
+        super::conversation_training_vault::FoldedConversationTrainingVault,
     /// Every owner work request and its one result, as this install counts
     /// them.
     pub(super) owner_work: super::owner_work::FoldedOwnerWork,
@@ -260,6 +264,7 @@ impl AuthorityFold {
             || !self.checkpoint_policy.live.is_empty()
             || !self.home_pick.live.is_empty()
             || self.conversation_training.rests_on_counting()
+            || self.conversation_training_vault.rests_on_counting()
     }
 
     /// True when [`Self::vault_id`] is `None` because the log carries MORE THAN
@@ -358,9 +363,13 @@ pub(super) struct FoldState {
     pub(super) checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState,
     /// The vault's home picks, merged the same way (DOOR-101).
     pub(super) home_pick: super::home_pick::HomePickChoiceState,
-    /// Each person's conversation training choices, merged the same way
-    /// (FIX 4489).
+    /// Each person's conversation training opt-out choices, merged the same
+    /// way (FIX 4489, FIX 5502).
     pub(super) conversation_training: super::conversation_training::ConversationTrainingChoiceState,
+    /// The vault's conversation training setting choices, merged the same
+    /// way (FIX 5502).
+    pub(super) conversation_training_vault:
+        super::conversation_training_vault::ConversationTrainingVaultState,
     /// Every owner work request and result, merged by union.
     pub(super) owner_work: super::owner_work::OwnerWorkState,
     /// Each world key's counted records, merged by union.
@@ -610,6 +619,10 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     super::owner_choice::merge_owner_choices(
         &mut merged.conversation_training,
         &right.conversation_training,
+    );
+    super::owner_choice::merge_owner_choices(
+        &mut merged.conversation_training_vault,
+        &right.conversation_training_vault,
     );
     super::owner_work::merge_owner_work(&mut merged.owner_work, &right.owner_work);
     super::world_key_fold::merge_world_keys(&mut merged.world_keys, &right.world_keys);
