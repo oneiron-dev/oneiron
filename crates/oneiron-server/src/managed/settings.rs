@@ -52,11 +52,6 @@ const OWNER_PATHS: &[&str] = &[
     "models.voice.extraction_prompt_file",
 ];
 
-/// The leaves this vault's host derives, which the owner's settings never
-/// set: the direct Linear mirror's response custody beside the data
-/// directory (`owner_storage`).
-const HOST_DERIVED: &[&str] = &["linear.response_dir"];
-
 /// Settles the settings file `managed` names onto `config`, the
 /// configuration [`ManagedArgs::serve_config`] built from argv; nothing
 /// without one.
@@ -89,7 +84,7 @@ pub(super) fn settle(
     }
     refuse_unknown(&table)?;
     visit(&table, &mut Vec::new(), &mut |field, _| {
-        if matches_any(field, SUPERVISOR_OWNED) || matches_any(field, HOST_DERIVED) {
+        if matches_any(field, SUPERVISOR_OWNED) {
             return Err(refused(field, SettingsRefusal::SupervisorOwned));
         }
         if matches_any(field, ENVIRONMENT_KEYS) {
