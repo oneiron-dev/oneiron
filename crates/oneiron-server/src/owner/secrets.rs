@@ -375,6 +375,11 @@ pub(crate) struct CustodyReply {
     pub(crate) delivery: &'static str,
     /// The words a surface shows.
     pub(crate) said: &'static str,
+    /// For a sealed register that stated no `manifest_ref`, what its holder
+    /// checked the record against, naming the manifests, or what this
+    /// install attached for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) manifest: Option<String>,
 }
 
 impl From<SecretCustodyWork> for CustodyReply {
@@ -383,6 +388,10 @@ impl From<SecretCustodyWork> for CustodyReply {
             said: custody.text(),
             kept_here: custody.kept_here.map(CustodyKeptHere::as_str),
             delivery: custody.delivery.as_str(),
+            manifest: custody
+                .manifest
+                .as_ref()
+                .map(oneiron::secret_custody::CustodyManifestCheck::text),
             work: custody.work,
         }
     }
