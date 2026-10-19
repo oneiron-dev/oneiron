@@ -66,7 +66,7 @@ const CARD_ROWS: SideTable<[u8; 32], CardRow, Named> =
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 enum VerdictRow {
-    Live(ProjectDetectionVerdict),
+    Live(Box<ProjectDetectionVerdict>),
     History { erased_history: VerdictHistory },
 }
 
@@ -221,7 +221,7 @@ pub(super) fn live_verdict(
 ) -> Result<Option<ProjectDetectionVerdict>> {
     match VERDICT_ROWS.get(store, txn, message)? {
         None => Ok(None),
-        Some(VerdictRow::Live(verdict)) => Ok(Some(verdict)),
+        Some(VerdictRow::Live(verdict)) => Ok(Some(*verdict)),
         Some(VerdictRow::History { .. }) => Err(refused(
             "the project question's answer on this message named an actor that was erased; \
              it is history, and nothing drafts on it",
