@@ -489,6 +489,9 @@ impl Vault {
                 .and_then(|()| crate::federation::reject_ruling_delete(&self.store, &wtxn, id))
                 .and_then(|()| crate::task_authority::reject_fact_delete(&self.store, &wtxn, id))
                 .and_then(|()| {
+                    crate::workspace_roster::reject_audience_edit_delete(&self.store, &wtxn, id)
+                })
+                .and_then(|()| {
                     if value.reason.is_hard() {
                         self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
                         crate::world_keys::reject_held_pad_world_in_txn(
@@ -704,6 +707,7 @@ impl Vault {
             // stops the deletion before it becomes remote truth.
             reverify_deletion_authority_before_publication(gate, wtxn)?;
             crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
+            crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
             self.store.put_pending_deletion_gate_decision_in_txn(
                 wtxn,
                 decision,

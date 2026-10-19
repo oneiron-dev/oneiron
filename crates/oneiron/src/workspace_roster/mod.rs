@@ -178,6 +178,12 @@ pub(crate) use project::{
 mod rooms;
 pub(crate) use rooms::RoomRegenerationPermit;
 pub(crate) use rooms::admit_witness as admit_room_witness;
+#[cfg(feature = "sync")]
+pub(crate) use rooms::audience_edit_unlink_refusal;
+pub(crate) use rooms::{
+    AUDIENCE_EDIT_BOUND, erase_audience_edit, erased_audience_edit, reject_audience_edit_delete,
+    reject_audience_edit_unlink,
+};
 pub(crate) use rooms::{
     ROOM_THREAD_AUDIENCE_KEY, ROOM_THREAD_KEY, ThreadBinding, ThreadPlace,
     audience_event_put_refusal, names_actor_in, overlay_thread_binding_in, record_thread_admits_in,
