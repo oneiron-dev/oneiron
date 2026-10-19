@@ -295,47 +295,69 @@ impl Vault {
         warning: &BypassGrantWarning,
     ) -> Result<ConsentReceipt> {
         self.with_write_txn_grouped(|wtxn| {
-            let current = self.check_bypass_request_in_txn(
-                wtxn,
-                owner,
-                warning.bound.clone(),
-                warning.scope,
-            )?;
-            if current != *warning {
-                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                    "the bypass warning was not shown to this owner for this grant",
-                )));
-            }
-            let extent = BypassExtent {
-                scope: warning.scope,
-                floor_version: warning.floor_version,
-            };
-            let row = ConsentGrantRow {
-                grant: StandingConsentGrant::from_bound(warning.bound.clone())?,
-                status: ConsentGrantStatus::Active,
-                owner_stamp: owner.stamp(),
-                created_at: crate::ports::recorded_at_in_txn(&self.store, wtxn)?,
-                bypass: Some(extent),
-            };
-            let grant_ref = row.grant_ref();
-            GRANTS.put(&self.store, wtxn, &grant_ref, &row)?;
-            let receipt = ConsentReceipt::BypassCreated {
-                decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
-                grant_ref,
-                bound_digest: warning.bound.digest(),
-            };
-            self.append_consent_receipt_in_txn(wtxn, owner, &receipt)?;
-            Ok(receipt)
+            self.create_bypass_grant_in_txn(wtxn, owner, warning)
         })
+    }
+
+    /// The single-row creation door, shared by an atomic multi-class owner act.
+    pub(super) fn create_bypass_grant_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        warning: &BypassGrantWarning,
+    ) -> Result<ConsentReceipt> {
+        let current = self.check_bypass_request_in_txn(
+            wtxn,
+            owner,
+            warning.bound.clone(),
+            warning.scope,
+        )?;
+        if current != *warning {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "the bypass warning was not shown to this owner for this grant",
+            )));
+        }
+        let extent = BypassExtent {
+            scope: warning.scope,
+            floor_version: warning.floor_version,
+        };
+        let row = ConsentGrantRow {
+            grant: StandingConsentGrant::from_bound(warning.bound.clone())?,
+            status: ConsentGrantStatus::Active,
+            owner_stamp: owner.stamp(),
+            created_at: crate::ports::recorded_at_in_txn(&self.store, wtxn)?,
+            bypass: Some(extent),
+        };
+        let grant_ref = row.grant_ref();
+        GRANTS.put(&self.store, wtxn, &grant_ref, &row)?;
+        let receipt = ConsentReceipt::BypassCreated {
+            decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
+            grant_ref,
+            bound_digest: warning.bound.digest(),
+        };
+        self.append_consent_receipt_in_txn(wtxn, owner, &receipt)?;
+        Ok(receipt)
     }
 
     /// The typed "bypass active" state: every live bypass grant, newest
     /// first. Empty when none is live.
     pub fn active_bypass_grants(&self) -> Result<Vec<BypassActive>> {
         let txn = self.store.env.read_txn()?;
-        let floor = crate::gate::resolve_policy_manifest(&self.store, &txn)?.catastrophe_floor();
+        Ok(self
+            .active_bypass_grants_in_txn(&txn)?
+            .into_iter()
+            .map(|(active, _)| active)
+            .collect())
+    }
+
+    /// The live state and its complete bound, on the caller's read snapshot.
+    pub(super) fn active_bypass_grants_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<(BypassActive, GrantBound)>> {
+        let floor = crate::gate::resolve_policy_manifest(&self.store, txn)?.catastrophe_floor();
         let mut active = Vec::new();
-        for (grant_ref, row) in GRANTS.scan(&self.store, &txn)? {
+        for (grant_ref, row) in GRANTS.scan(&self.store, txn)? {
             let Some(extent) = row.bypass.filter(|_| row.is_active()) else {
                 continue;
             };
@@ -346,25 +368,26 @@ impl Vault {
             let allows = floor
                 .member_named(bound.class().as_str())
                 .ok_or(Error::CorruptedIndex("consent bypass grant class"))?;
-            active.push(BypassActive {
+            active.push((BypassActive {
                 grant_ref,
                 scope: extent.scope,
                 allows,
                 actor_ref: actor.actor_ref().to_owned(),
                 floor_version: extent.floor_version,
                 created_at: row.created_at,
-            });
+            }, bound.clone()));
         }
         active.sort_by(|left, right| {
             right
+                .0
                 .created_at
-                .cmp(&left.created_at)
-                .then_with(|| left.grant_ref.cmp(&right.grant_ref))
+                .cmp(&left.0.created_at)
+                .then_with(|| left.0.grant_ref.cmp(&right.0.grant_ref))
         });
         Ok(active)
     }
 
-    fn check_bypass_request_in_txn(
+    pub(super) fn check_bypass_request_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         owner: &AuthenticatedOwner,

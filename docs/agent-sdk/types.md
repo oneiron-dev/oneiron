@@ -2181,6 +2181,14 @@ class Oneiron:
             """The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."""
         def revoke(self, spec: Facade.RevokeGrantRequest) -> Facade.ConsentActReceipt:
             """The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."""
+        def bypass_grant_warning(self, spec: Facade.BypassGrantWarningRequest) -> Facade.BypassGrantWarningView:
+            """The owner previews the exact actor, classes, envelope and project or thread of a scoped bypass; this warning grants nothing."""
+        def create_bypass_grant(self, spec: Facade.CreateBypassGrantRequest) -> list[Facade.ConsentActReceipt]:
+            """The owner explicitly acknowledges a scoped bypass warning and atomically creates one receipted standing bypass per class."""
+        def active_bypass_grants(self, spec: Facade.ActiveBypassGrantsRequest) -> list[Facade.BypassActiveState]:
+            """The owner reads live scoped bypass states and their complete bounds, newest first; vault.consent.revoke ends each grant."""
+        def bypassed_effect_receipts(self, spec: Facade.BypassedEffectReceiptsRequest) -> list[Facade.BypassedEffectReceipt]:
+            """The owner reads the existing Gate receipts for effects covered by one bypass grant, including after its revocation."""
         @property
         def graduation(self) -> "Oneiron._VaultConsentGraduationVerbs": ...
     class _VaultConsentGraduationVerbs:

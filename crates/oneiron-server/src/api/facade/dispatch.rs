@@ -9898,6 +9898,108 @@ async fn vault_consent_revoke(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_consent_bypass_grant_warning(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.bypass_grant_warning")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.bypass_grant_warning", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consent.bypass_grant_warning", value).await?;
+    let (output, listed) = super::host_doors::vault_consent_bypass_grant_warning(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consent_create_bypass_grant(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.create_bypass_grant")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.create_bypass_grant", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consent.create_bypass_grant", value).await?;
+    let (output, listed) = super::host_doors::vault_consent_create_bypass_grant(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consent_active_bypass_grants(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.active_bypass_grants")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.active_bypass_grants", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consent.active_bypass_grants", value).await?;
+    let (output, listed) = super::host_doors::vault_consent_active_bypass_grants(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consent_bypassed_effect_receipts(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.bypassed_effect_receipts")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.bypassed_effect_receipts", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.consent.bypassed_effect_receipts",
+        value,
+    )
+    .await?;
+    let (output, listed) = super::host_doors::vault_consent_bypassed_effect_receipts(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_consent_graduation_policy(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -23286,6 +23388,18 @@ pub(crate) async fn call_verb(
         }
         "vault.consent.registry" => vault_consent_registry(server, call, input).await,
         "vault.consent.revoke" => vault_consent_revoke(server, call, input).await,
+        "vault.consent.bypass_grant_warning" => {
+            vault_consent_bypass_grant_warning(server, call, input).await
+        }
+        "vault.consent.create_bypass_grant" => {
+            vault_consent_create_bypass_grant(server, call, input).await
+        }
+        "vault.consent.active_bypass_grants" => {
+            vault_consent_active_bypass_grants(server, call, input).await
+        }
+        "vault.consent.bypassed_effect_receipts" => {
+            vault_consent_bypassed_effect_receipts(server, call, input).await
+        }
         "vault.consent.graduation.policy" => {
             vault_consent_graduation_policy(server, call, input).await
         }

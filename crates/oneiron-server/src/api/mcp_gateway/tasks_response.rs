@@ -1275,6 +1275,10 @@ fn mcp_agent_verb_input(
         "vault.consent.create_standing_grant" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.registry" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.revoke" => a.spec.clone().ok_or_else(invalid),
+        "vault.consent.bypass_grant_warning" => a.spec.clone().ok_or_else(invalid),
+        "vault.consent.create_bypass_grant" => a.spec.clone().ok_or_else(invalid),
+        "vault.consent.active_bypass_grants" => a.spec.clone().ok_or_else(invalid),
+        "vault.consent.bypassed_effect_receipts" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.graduation.policy" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.graduation.policy.set" => a.spec.clone().ok_or_else(invalid),
         "vault.consent.graduation.policy.clear" => a.spec.clone().ok_or_else(invalid),
@@ -3248,6 +3252,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consent.revoke" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consent.bypass_grant_warning" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consent.create_bypass_grant" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consent.active_bypass_grants" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consent.bypassed_effect_receipts" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consent.graduation.policy" => {
@@ -12183,6 +12199,93 @@ async fn execute_agent_verb_row(
             );
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consent.bypass_grant_warning" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.consent.bypass_grant_warning", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::consent::bypass_lifecycle::BypassGrantWarningRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_consent_bypass_grant_warning(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consent.create_bypass_grant" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.consent.create_bypass_grant", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::consent::bypass_lifecycle::CreateBypassGrantRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_consent_create_bypass_grant(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consent.active_bypass_grants" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.consent.active_bypass_grants", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::consent::bypass_lifecycle::ActiveBypassGrantsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_consent_active_bypass_grants(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consent.bypassed_effect_receipts" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.consent.bypassed_effect_receipts",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::consent::bypass_lifecycle::BypassedEffectReceiptsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_consent_bypassed_effect_receipts(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
         "vault.consent.graduation.policy" => {

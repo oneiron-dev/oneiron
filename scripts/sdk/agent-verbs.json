@@ -6493,6 +6493,66 @@
       "openapi": true
     },
     {
+      "name": "vault.consent.bypass_grant_warning",
+      "description": "The owner previews the exact actor, classes, envelope and project or thread of a scoped bypass; this warning grants nothing.",
+      "input": "crate::consent::bypass_lifecycle::BypassGrantWarningRequest",
+      "output": "crate::consent::bypass_lifecycle::BypassGrantWarningView",
+      "call": "crate::consent::bypass_lifecycle::bypass_grant_warning(memory.vault(), &memory.embedded_owner(\"vault.consent.bypass_grant_warning\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.create_bypass_grant",
+      "description": "The owner explicitly acknowledges a scoped bypass warning and atomically creates one receipted standing bypass per class.",
+      "input": "crate::consent::bypass_lifecycle::CreateBypassGrantRequest",
+      "output": "Vec<crate::consent::lifecycle::ConsentActReceipt>",
+      "call": "crate::consent::bypass_lifecycle::create_bypass_grant(memory.vault(), &memory.embedded_owner(\"vault.consent.create_bypass_grant\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.active_bypass_grants",
+      "description": "The owner reads live scoped bypass states and their complete bounds, newest first; vault.consent.revoke ends each grant.",
+      "input": "crate::consent::bypass_lifecycle::ActiveBypassGrantsRequest",
+      "output": "Vec<crate::consent::bypass_lifecycle::BypassActiveState>",
+      "call": "crate::consent::bypass_lifecycle::active_bypass_grants(memory.vault(), &memory.embedded_owner(\"vault.consent.active_bypass_grants\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.bypassed_effect_receipts",
+      "description": "The owner reads the existing Gate receipts for effects covered by one bypass grant, including after its revocation.",
+      "input": "crate::consent::bypass_lifecycle::BypassedEffectReceiptsRequest",
+      "output": "Vec<crate::consent::bypass_lifecycle::BypassedEffectReceipt>",
+      "call": "crate::consent::bypass_lifecycle::bypassed_effect_receipts(memory.vault(), &memory.embedded_owner(\"vault.consent.bypassed_effect_receipts\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.consent.graduation.policy",
       "description": "Reads runtime consent-graduation policy rows and the effective row for an optional exact scope.",
       "input": "crate::consent_graduation::api::GraduationPolicyRequest",

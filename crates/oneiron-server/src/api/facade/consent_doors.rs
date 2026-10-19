@@ -2,6 +2,11 @@
 use std::sync::Arc;
 
 use oneiron::Vault;
+use oneiron::consent::bypass_lifecycle::{
+    self as bypass, ActiveBypassGrantsRequest, BypassActiveState, BypassGrantWarningRequest,
+    BypassGrantWarningView, BypassedEffectReceipt, BypassedEffectReceiptsRequest,
+    CreateBypassGrantRequest,
+};
 use oneiron::consent::lifecycle::{
     self, ApproveOnceRequest, ConsentActReceipt, CreateStandingGrantRequest, DenyConsentRequest,
     RevokeGrantRequest,
@@ -92,5 +97,61 @@ pub(crate) async fn vault_consent_revoke(
     as_owner(server, auth, "vault.consent.revoke", move |vault, owner| {
         lifecycle::revoke(vault, owner, input)
     })
+    .await
+}
+
+pub(crate) async fn vault_consent_bypass_grant_warning(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: BypassGrantWarningRequest,
+) -> Listed<BypassGrantWarningView> {
+    as_owner(
+        server,
+        auth,
+        "vault.consent.bypass_grant_warning",
+        move |vault, owner| bypass::bypass_grant_warning(vault, owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_consent_create_bypass_grant(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CreateBypassGrantRequest,
+) -> Listed<Vec<ConsentActReceipt>> {
+    as_owner(
+        server,
+        auth,
+        "vault.consent.create_bypass_grant",
+        move |vault, owner| bypass::create_bypass_grant(vault, owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_consent_active_bypass_grants(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ActiveBypassGrantsRequest,
+) -> Listed<Vec<BypassActiveState>> {
+    as_owner(
+        server,
+        auth,
+        "vault.consent.active_bypass_grants",
+        move |vault, owner| bypass::active_bypass_grants(vault, owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_consent_bypassed_effect_receipts(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: BypassedEffectReceiptsRequest,
+) -> Listed<Vec<BypassedEffectReceipt>> {
+    as_owner(
+        server,
+        auth,
+        "vault.consent.bypassed_effect_receipts",
+        move |vault, owner| bypass::bypassed_effect_receipts(vault, owner, input),
+    )
     .await
 }
