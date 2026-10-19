@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1018 code-mode rows (994 host rows, 24 run rows), 3399 declarations.
-// Replies: 913 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1032 code-mode rows (1008 host rows, 24 run rows), 3457 declarations.
+// Replies: 927 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 105; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -453,7 +453,10 @@ declare namespace Sdk {
   type RerankReport = { status: "applied"; model: string; served_model?: string | null; candidates: number; calls: number } | { status: "skipped"; reason: RerankSkip };
   type RetrievalMeta = { quality?: RetrievalQuality; degradation?: RetrievalDegradation[]; confidence_adjustment?: ConfidenceAdjustment; sparse?: boolean | null; total_candidates: number; claims_returned: number; deep_pending?: boolean | null; partial?: boolean; temporal_hints?: TemporalHintReport[]; rerank?: RerankReport | null; limit_clamped?: boolean };
   type RetrievalRunId = { bytes: number[] };
-  type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt; retrieval_run_id?: RetrievalRunId | null };
+  type RecallResidenceSource = "home" | "local_only";
+  type RecallResidenceHit = { id: string; score: number; window: string };
+  type RecallResidence = { source: RecallResidenceSource; complete: boolean; capped: boolean; hits: RecallResidenceHit[] };
+  type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt; retrieval_run_id?: RetrievalRunId | null; residence?: RecallResidence | null };
   type AccessFactorPolicy = { half_life_secs: number; floor: number };
   type ClaimAgingProfiles = { durable: AccessFactorPolicy; standard: AccessFactorPolicy; ephemeral: AccessFactorPolicy };
   type ClaimAgingProfilesView = { manifest_ref: string; body_hash: string; profiles: ClaimAgingProfiles };
@@ -990,6 +993,28 @@ declare namespace Sdk {
   type ConnectorPackGrantRow = { tool: string; ceiling: DataClass; headers?: boolean };
   type ConnectorPackGrantsPutRequest = { basis: ConnectorPackBasis; endpoint: string; actor?: string | null; rows: ConnectorPackGrantRow[] };
   type PackRemoveRequest = { pack: string };
+  type SectionId = string;
+  type SectionManifestProvenance = { pack_id: string; skill_id: string; skill_version: string; content_hash_hex: string };
+  type SectionManifest = { section_id: SectionId; name: string; state_family: StateFamilyRef; verbs: SectionVerbRef[]; authority_lane: AuthorityLaneRef; budget_policy: BudgetPolicyRef; provenance: SectionManifestProvenance };
+  type SectionManifestEnvelope = { schema_version: number; manifest: SectionManifest };
+  type PluginSectionTargetInput = { kind: "existing_skill"; skill_ref: EntityId } | { kind: "hub_package"; hub_ref: HubRef; target_skill_ref: EntityId };
+  type PluginSectionProposeRequest = { manifest: SectionManifestEnvelope; target: PluginSectionTargetInput; turn_ref: string };
+  type PluginSectionProposal = { claim_ref: string; pending_ref: string; manifest_digest: string; section_id: string; manifest: SectionManifestEnvelope };
+  type PluginSectionListRequest = { limit?: number | null };
+  type PluginSectionPendingRow = { claim_ref: string; pack_id: string; section_id: string; label: string; origin: string; awaiting_owner_consent: boolean };
+  type PluginSectionAdmittedRow = { claim_ref: string; section_id: string; manifest: SectionManifestEnvelope };
+  type PluginSectionPackRow = { section_id: string; pack_name: string; source_id: string; content_hash: string; section: PackSection };
+  type PluginSectionsView = { pending: PluginSectionPendingRow[]; admitted: PluginSectionAdmittedRow[]; pack_sections: PluginSectionPackRow[]; rendered_pack_sections: string[] };
+  type PluginSectionGrantRequest = { claim_ref: string; review_id?: string | null };
+  type PluginSectionGrantState = "admitted" | "pending_activation";
+  type PluginSectionGrant = { claim_ref: string; state: PluginSectionGrantState; section_id?: string | null; skill_ref: string; settlement_receipt_ref?: string | null; manifest: SectionManifestEnvelope };
+  type PluginSectionRevokeRequest = { claim_ref?: string | null; section_id?: string | null };
+  type PluginSectionRevoked = { section_id?: string | null; claim_refs: string[]; revoked: number };
+  type PluginSectionSuggestRequest = { hub_ref: HubRef; run_id: string; digest_window: string; pattern_key: string; summary: string; evidence_refs: EntityId[]; observed_at: number };
+  type PluginSectionSuggestionState = "disabled" | "no_match" | "suppressed_duplicate" | "proposed";
+  type PluginSectionSuggestion = { state: PluginSectionSuggestionState; suggestion_key?: string | null; claim_ref?: string | null; pack_id?: string | null; section_id?: string | null; label?: string | null };
+  type PluginSuggestionsView = { enabled: boolean };
+  type PluginSuggestionsSetRequest = { enabled: boolean };
   type ChatRole = "system" | "developer" | "user" | "assistant";
   type ChatPart = { type: "text"; text: string };
   type ChatContent = string | ChatPart[];
@@ -2448,6 +2473,39 @@ declare namespace Sdk {
   type SkillPackOutcomeRequest = { attempt_receipt: string; outcome_receipt: string; succeeded: boolean; axis: string; at: number; goal_revision?: string | null };
   type SkillPackOutcomeProjection = { receipt: LateCreditReceipt; persisted: boolean };
   type SkillPackCreditRequest = { receipt_id: string };
+  type ProposalReplacement = { before: string; after: string };
+  type ProposalAmendmentCause = "proposal_wrong" | "external_change" | "decider_preference";
+  type AttributionLabel = "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear";
+  type ProposalHunkVerdict = { verdict: AttributionLabel; confidence?: number; note?: string | null };
+  type ProposalShareClaim = { class: AttributionLabel; share: number };
+  type ProposalDeltaSettleRequest = { proposed_text: string; replacements: ProposalReplacement[]; actor: EntityId; skill?: EntityId | null; attempt_receipt?: string | null; source_turn_ref?: EntityId | null; scope: string; cause?: ProposalAmendmentCause | null; followed_skill?: boolean | null; skill_covered_step?: boolean | null; at: number; hunk_verdicts?: ProposalHunkVerdict[] | null; shares?: ProposalShareClaim[] | null };
+  type OpsSummaryView = { ins: number; del: number; kept: number; moved: number; approx: boolean };
+  type AmendmentDeltaView = { proposed_ref: string; final_ref: string; source: string; d_norm: number; ops_summary: OpsSummaryView; engine_ver: string };
+  type SettledHunkView = { before: string; after: string; edit_mass: number; actor?: EntityId | null; trust?: string | null };
+  type AmendmentShareView = { class: AttributionLabel; share: number; subject?: EntityId | null };
+  type AmendmentJudgmentView = { receipt_id: string; split: AmendmentShareView[]; scope: string; evidence_receipts: string[]; d_norm: number; at: number };
+  type ProposalDeltaSettlement = { receipt_id: string; artifact_ref: EntityId; proposed_text: string; final_text: string; delta: AmendmentDeltaView; hunks: SettledHunkView[]; judgment?: AmendmentJudgmentView | null; edit_cost_claims: EntityId[]; reliability_heads: EntityId[]; lessons: EntityId[] };
+  type ProposalDeltaReadRequest = { receipt_id: string; artifact_ref?: EntityId | null };
+  type ProposalOpSpanView = { actor?: EntityId | null; trust: string; before_text: string; after_text: string; lamport: number; timestamp: number };
+  type ProposalArtifactView = { artifact_ref: EntityId; proposed_text: string; final_text: string; source_turn_ref?: EntityId | null; spans: ProposalOpSpanView[] };
+  type AmendmentEvidenceView = { receipt_id: string; actor: EntityId; skill?: EntityId | null; attempt_receipt?: string | null; scope: string; cause?: ProposalAmendmentCause | null; followed_skill?: boolean | null; skill_covered_step?: boolean | null; at: number };
+  type PreferenceProposalView = { receipt_id: string; scope: string; evidence_receipts: string[]; share: number; at: number };
+  type UnclearNoteView = { reason: string; leaning?: AttributionLabel | null; confidence: number; share: number; note?: string | null };
+  type UnclearAttributionView = { lane: string; reference: string; evidence_receipts: string[]; notes: UnclearNoteView[]; at: number };
+  type ProposalDeltaRead = { receipt_id: string; delta?: AmendmentDeltaView | null; artifact?: ProposalArtifactView | null; evidence?: AmendmentEvidenceView | null; judgment?: AmendmentJudgmentView | null; preference_proposals: PreferenceProposalView[]; unclear: UnclearAttributionView[] };
+  type FollowedStateInput = { kind: "followed" } | { kind: "partly" } | { kind: "ignored" } | { kind: "deviated_with_reason"; reason: string; cause?: string | null };
+  type AttributionEvidenceRequest = { receipt_ref: string; actor: EntityId; skill?: EntityId | null; outcome: string; followed_skill?: boolean | null; followed_state?: FollowedStateInput | null; skill_covered_step?: boolean | null; at: number };
+  type AttributionEvidenceReceipt = { sequence: number };
+  type AttributionProjectRequest = { since_cursor?: number | null };
+  type AttemptJudgmentView = { sequence: number; verdict: AttributionLabel; subject: EntityId; evidence_receipts: string[]; at: number };
+  type PositiveProposalView = { evidence_sequence: number; skill: EntityId; actor: EntityId; finding: string; reason?: string | null; evidence_receipts: string[]; at: number };
+  type SkillEditProposalView = { judgment_sequence: number; skill: EntityId; evidence_receipts: string[]; at: number };
+  type AttributionProjection = { cursor: number; judgments: AttemptJudgmentView[]; positive_proposals: PositiveProposalView[]; pending_edit_proposals: SkillEditProposalView[] };
+  type AttributionListRequest = Record<string, never>;
+  type AttributionJudgmentsView = { cursor: number; attempt_judgments: AttemptJudgmentView[]; amendment_judgments: AmendmentJudgmentView[]; unclear: UnclearAttributionView[] };
+  type AttributionProposalsView = { edit_proposals: SkillEditProposalView[]; preference_proposals: PreferenceProposalView[]; positive_proposals: PositiveProposalView[] };
+  type PositiveRetireRequest = { evidence_sequence: number };
+  type PositiveRetireReceipt = { retired: boolean };
   type CallPurpose = "extraction" | "consolidation" | "answer_gen" | "auto_check" | "tool_routing" | "voice" | "eval" | { other: { name: string } };
   type DeterministicFallback = { name: string; config?: unknown | null };
   type CallClass = { kind: "durable"; fallback: DeterministicFallback } | { kind: "best_effort" };
@@ -5156,6 +5214,24 @@ declare const vault: Sdk.VaultHost & {
     put(input: Sdk.PackPutRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
     /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
     remove(input: Sdk.PackRemoveRequest): Promise<Sdk.PackInstallReceipt | StoredResult>;
+    sections: {
+      /** The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent. */
+      grant(input: Sdk.PluginSectionGrantRequest): Promise<Sdk.PluginSectionGrant | StoredResult>;
+      /** Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project. */
+      list(input: Sdk.PluginSectionListRequest): Promise<Sdk.PluginSectionsView | StoredResult>;
+      /** The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing. */
+      propose(input: Sdk.PluginSectionProposeRequest): Promise<Sdk.PluginSectionProposal | StoredResult>;
+      /** The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild. */
+      revoke(input: Sdk.PluginSectionRevokeRequest): Promise<Sdk.PluginSectionRevoked | StoredResult>;
+      /** Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal. */
+      suggest(input: Sdk.PluginSectionSuggestRequest): Promise<Sdk.PluginSectionSuggestion | StoredResult>;
+      suggestions: {
+        /** The owner's plugin suggestion knob: whether workflow-pattern suggestion passes may run at all. */
+        get(input: Sdk.EmptyRequest): Promise<Sdk.PluginSuggestionsView | StoredResult>;
+        /** The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted. */
+        set(input: Sdk.PluginSuggestionsSetRequest): Promise<Sdk.PluginSuggestionsView | StoredResult>;
+      };
+    };
     setup: {
       /** The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here. */
       answer(input: Sdk.PackSetupAnswerRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;
@@ -5656,6 +5732,26 @@ declare const vault: Sdk.VaultHost & {
   skills: {
     /** The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled. */
     archive(input: Sdk.HubSkillRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
+    attribution: {
+      evidence: {
+        /** The owner records one attempt outcome as attribution evidence, grounded against its stamped pack receipt; recording never classifies it. */
+        record(input: Sdk.AttributionEvidenceRequest): Promise<Sdk.AttributionEvidenceReceipt | StoredResult>;
+      };
+      /** The owner reads every persisted attribution judgment in both lanes, the projector cursor and the unclear ledger. */
+      judgments(input: Sdk.AttributionListRequest): Promise<Sdk.AttributionJudgmentsView | StoredResult>;
+      positive: {
+        /** The owner retires one positive skill proposal once the optimizer has drafted from it or declined it. */
+        retire(input: Sdk.PositiveRetireRequest): Promise<Sdk.PositiveRetireReceipt | StoredResult>;
+      };
+      /** The owner runs one attribution pass over recorded evidence, plus the positive lane, returning the judgments and positive proposals it minted. */
+      project(input: Sdk.AttributionProjectRequest): Promise<Sdk.AttributionProjection | StoredResult>;
+      /** The owner reads the pending skill edit proposals, preference proposals and positive skill proposals attribution has minted. */
+      proposals(input: Sdk.AttributionListRequest): Promise<Sdk.AttributionProposalsView | StoredResult>;
+      /** The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows. */
+      read(input: Sdk.ProposalDeltaReadRequest): Promise<Sdk.ProposalDeltaRead | StoredResult>;
+      /** The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer. */
+      settle(input: Sdk.ProposalDeltaSettleRequest): Promise<Sdk.ProposalDeltaSettlement | StoredResult>;
+    };
     code_auto_install: {
       /** The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification. */
       set(input: Sdk.SkillCodeAutoInstallRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;

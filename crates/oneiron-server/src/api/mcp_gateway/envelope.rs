@@ -203,6 +203,10 @@ pub(crate) struct McpCallContext {
     /// Ask): its row's pre chain enters as the drain's run of it. Never a
     /// request's.
     pub(crate) drain: Option<oneiron::runtime_hooks::verb::VerbAskDrainPermit>,
+    /// A narrower caller's own holder proof, as the MCP HTTP ingress
+    /// carried it, for the home an opened device asks (FIX 2905, FIX 2907).
+    /// `None` for an owner-grade caller and off that ingress.
+    pub(crate) forwarded: Option<oneiron::authority::ForwardedCallerProof>,
 }
 
 impl std::ops::Deref for McpCallContext {
@@ -214,6 +218,19 @@ impl std::ops::Deref for McpCallContext {
 }
 
 impl McpCallContext {
+    /// Who this request asks an opened device's home for (FIX 2905): an
+    /// owner-grade credential is the device's owner; a narrower one is
+    /// judged at the home on the holder proof its ingress carried, and with
+    /// none asks nothing.
+    pub(crate) fn home_caller(&self) -> oneiron::memory::HomeRecallCaller {
+        let owner_grade = self
+            .actor
+            .auth
+            .as_ref()
+            .is_some_and(crate::auth::CoreAuth::is_owner_grade);
+        oneiron::memory::HomeRecallCaller::admitted(owner_grade, self.forwarded.clone())
+    }
+
     /// The closed metadata envelope for one result on this endpoint.
     pub(super) fn metadata(
         &self,

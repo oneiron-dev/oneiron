@@ -1156,6 +1156,41 @@ export_facade! {
     let output = client.vault_packs_remove(&input)?;
     crate::codec::lift_record("vault.packs.remove", &output)
 };
+"vault.packs.sections.propose" => fn vault_packs_sections_propose(&self, input: PluginSectionProposeRequest) -> PluginSectionProposal = |client| {
+    let input: oneiron::memory::PluginSectionProposeRequest = crate::codec::lower_record("vault.packs.sections.propose", input)?;
+    let output = client.vault_packs_sections_propose(&input)?;
+    crate::codec::lift_record("vault.packs.sections.propose", &output)
+};
+"vault.packs.sections.list" => fn vault_packs_sections_list(&self, input: PluginSectionListRequest) -> PluginSectionsView = |client| {
+    let input: oneiron::memory::PluginSectionListRequest = crate::codec::lower_record("vault.packs.sections.list", input)?;
+    let output = client.vault_packs_sections_list(&input)?;
+    crate::codec::lift_record("vault.packs.sections.list", &output)
+};
+"vault.packs.sections.grant" => fn vault_packs_sections_grant(&self, input: PluginSectionGrantRequest) -> PluginSectionGrant = |client| {
+    let input: oneiron::memory::PluginSectionGrantRequest = crate::codec::lower_record("vault.packs.sections.grant", input)?;
+    let output = client.vault_packs_sections_grant(&input)?;
+    crate::codec::lift_record("vault.packs.sections.grant", &output)
+};
+"vault.packs.sections.revoke" => fn vault_packs_sections_revoke(&self, input: PluginSectionRevokeRequest) -> PluginSectionRevoked = |client| {
+    let input: oneiron::memory::PluginSectionRevokeRequest = crate::codec::lower_record("vault.packs.sections.revoke", input)?;
+    let output = client.vault_packs_sections_revoke(&input)?;
+    crate::codec::lift_record("vault.packs.sections.revoke", &output)
+};
+"vault.packs.sections.suggest" => fn vault_packs_sections_suggest(&self, input: PluginSectionSuggestRequest) -> PluginSectionSuggestion = |client| {
+    let input: oneiron::memory::PluginSectionSuggestRequest = crate::codec::lower_record("vault.packs.sections.suggest", input)?;
+    let output = client.vault_packs_sections_suggest(&input)?;
+    crate::codec::lift_record("vault.packs.sections.suggest", &output)
+};
+"vault.packs.sections.suggestions.get" => fn vault_packs_sections_suggestions_get(&self) -> PluginSuggestionsView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.packs.sections.suggestions.get")?;
+    let output = client.vault_packs_sections_suggestions_get(&input)?;
+    crate::codec::lift_record("vault.packs.sections.suggestions.get", &output)
+};
+"vault.packs.sections.suggestions.set" => fn vault_packs_sections_suggestions_set(&self, input: PluginSuggestionsSetRequest) -> PluginSuggestionsView = |client| {
+    let input: oneiron::memory::PluginSuggestionsSetRequest = crate::codec::lower_record("vault.packs.sections.suggestions.set", input)?;
+    let output = client.vault_packs_sections_suggestions_set(&input)?;
+    crate::codec::lift_record("vault.packs.sections.suggestions.set", &output)
+};
 "ai.chat.completions" => fn ai_chat_completions(&self, input: ChatCompletionRequest) -> ChatCompletionResponse = |client| {
     let input: oneiron::task_verb::sdk::ChatCompletionRequest = crate::codec::lower_record("ai.chat.completions", input)?;
     let output = client.ai_chat_completions(&input)?;
@@ -3395,6 +3430,41 @@ export_facade! {
     let input: oneiron::task_verb::sdk::SkillPackCreditRequest = crate::codec::lower_record("vault.skills.outcomes.get", input)?;
     let output = client.vault_skills_outcomes_get(&input)?;
     crate::codec::lift_record("vault.skills.outcomes.get", &output)
+};
+"vault.skills.attribution.settle" => fn vault_skills_attribution_settle(&self, input: ProposalDeltaSettleRequest) -> ProposalDeltaSettlement = |client| {
+    let input: oneiron::task_verb::sdk::ProposalDeltaSettleRequest = crate::codec::lower_record("vault.skills.attribution.settle", input)?;
+    let output = client.vault_skills_attribution_settle(&input)?;
+    crate::codec::lift_record("vault.skills.attribution.settle", &output)
+};
+"vault.skills.attribution.read" => fn vault_skills_attribution_read(&self, input: ProposalDeltaReadRequest) -> ProposalDeltaRead = |client| {
+    let input: oneiron::task_verb::sdk::ProposalDeltaReadRequest = crate::codec::lower_record("vault.skills.attribution.read", input)?;
+    let output = client.vault_skills_attribution_read(&input)?;
+    crate::codec::lift_record("vault.skills.attribution.read", &output)
+};
+"vault.skills.attribution.evidence.record" => fn vault_skills_attribution_evidence_record(&self, input: AttributionEvidenceRequest) -> AttributionEvidenceReceipt = |client| {
+    let input: oneiron::task_verb::sdk::AttributionEvidenceRequest = crate::codec::lower_record("vault.skills.attribution.evidence.record", input)?;
+    let output = client.vault_skills_attribution_evidence_record(&input)?;
+    crate::codec::lift_record("vault.skills.attribution.evidence.record", &output)
+};
+"vault.skills.attribution.project" => fn vault_skills_attribution_project(&self, input: AttributionProjectRequest) -> AttributionProjection = |client| {
+    let input: oneiron::task_verb::sdk::AttributionProjectRequest = crate::codec::lower_record("vault.skills.attribution.project", input)?;
+    let output = client.vault_skills_attribution_project(&input)?;
+    crate::codec::lift_record("vault.skills.attribution.project", &output)
+};
+"vault.skills.attribution.judgments" => fn vault_skills_attribution_judgments(&self) -> AttributionJudgmentsView = |client| {
+    let input: oneiron::task_verb::sdk::AttributionListRequest = crate::codec::lower_empty("vault.skills.attribution.judgments")?;
+    let output = client.vault_skills_attribution_judgments(&input)?;
+    crate::codec::lift_record("vault.skills.attribution.judgments", &output)
+};
+"vault.skills.attribution.proposals" => fn vault_skills_attribution_proposals(&self) -> AttributionProposalsView = |client| {
+    let input: oneiron::task_verb::sdk::AttributionListRequest = crate::codec::lower_empty("vault.skills.attribution.proposals")?;
+    let output = client.vault_skills_attribution_proposals(&input)?;
+    crate::codec::lift_record("vault.skills.attribution.proposals", &output)
+};
+"vault.skills.attribution.positive.retire" => fn vault_skills_attribution_positive_retire(&self, input: PositiveRetireRequest) -> PositiveRetireReceipt = |client| {
+    let input: oneiron::task_verb::sdk::PositiveRetireRequest = crate::codec::lower_record("vault.skills.attribution.positive.retire", input)?;
+    let output = client.vault_skills_attribution_positive_retire(&input)?;
+    crate::codec::lift_record("vault.skills.attribution.positive.retire", &output)
 };
 "ai.steps.submit" => fn ai_steps_submit(&self, input: ModelStepSubmit) -> ModelStepReceipt = |client| {
     let input: oneiron::llm::model_step::ModelStepSubmit = crate::codec::lower_record("ai.steps.submit", input)?;

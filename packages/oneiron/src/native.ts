@@ -261,6 +261,13 @@ vaultPacksConnectorUpdate(input: unknown): unknown
 vaultPacksConnectorGrantsGet(input: unknown): unknown
 vaultPacksConnectorGrantsPut(input: unknown): unknown
 vaultPacksRemove(input: unknown): unknown
+vaultPacksSectionsPropose(input: unknown): unknown
+vaultPacksSectionsList(input: unknown): unknown
+vaultPacksSectionsGrant(input: unknown): unknown
+vaultPacksSectionsRevoke(input: unknown): unknown
+vaultPacksSectionsSuggest(input: unknown): unknown
+vaultPacksSectionsSuggestionsGet(input: unknown): unknown
+vaultPacksSectionsSuggestionsSet(input: unknown): unknown
 aiChatCompletions(input: unknown): unknown
 vaultConnectorsProxyAdmit(input: unknown): unknown
 vaultConnectorsProxyRevokeWrite(input: unknown): unknown
@@ -709,6 +716,13 @@ selfSkillsCallables(input: unknown): unknown
 vaultSkillsPackReceipt(input: unknown): unknown
 vaultSkillsOutcomesProject(input: unknown): unknown
 vaultSkillsOutcomesGet(input: unknown): unknown
+vaultSkillsAttributionSettle(input: unknown): unknown
+vaultSkillsAttributionRead(input: unknown): unknown
+vaultSkillsAttributionEvidenceRecord(input: unknown): unknown
+vaultSkillsAttributionProject(input: unknown): unknown
+vaultSkillsAttributionJudgments(input: unknown): unknown
+vaultSkillsAttributionProposals(input: unknown): unknown
+vaultSkillsAttributionPositiveRetire(input: unknown): unknown
 aiStepsSubmit(input: unknown): unknown
 aiStepsReceipt(input: unknown): unknown
 aiReply(input: unknown): unknown

@@ -88,6 +88,7 @@ pub(crate) use super::model_step_doors::*;
 pub(crate) use super::run_read_doors::*;
 pub(crate) use super::run_review_doors::*;
 pub(crate) use super::sieve_observation_doors::*;
+pub(crate) use super::skill_attribution_doors::*;
 pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -191,6 +192,8 @@ pub(crate) use super::vector_doors::*;
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
+// The plugin Context Board section doors (DOOR-112), likewise.
+pub(crate) use super::plugin_section_doors::*;
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;
 pub(crate) use super::critical_confirm_doors::*;
@@ -1235,6 +1238,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.pack_receipt"
         | "vault.skills.outcomes.project"
         | "vault.skills.outcomes.get"
+        | "vault.skills.attribution.settle"
+        | "vault.skills.attribution.read"
+        | "vault.skills.attribution.evidence.record"
+        | "vault.skills.attribution.project"
+        | "vault.skills.attribution.judgments"
+        | "vault.skills.attribution.proposals"
+        | "vault.skills.attribution.positive.retire"
         | "vault.packs.hooks.bind"
         | "vault.packs.hooks.list"
         | "vault.packs.hooks.grant.set"
@@ -1350,6 +1360,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.writes.critical_confirm.receipt"
         | "vault.claims.review"
         | "vault.claims.settle"
+        | "vault.packs.sections.grant"
+        | "vault.packs.sections.revoke"
+        | "vault.packs.sections.suggestions.get"
+        | "vault.packs.sections.suggestions.set"
         | "vault.claims.vet"
         | "vault.claims.vetting"
         | "vault.consolidation.promote"

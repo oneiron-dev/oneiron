@@ -242,6 +242,13 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.packs.connector.grants.get", post(facade_route))
         .route("/vault.packs.connector.grants.put", post(facade_route))
         .route("/vault.packs.remove", post(facade_route))
+        .route("/vault.packs.sections.propose", post(facade_route))
+        .route("/vault.packs.sections.list", post(facade_route))
+        .route("/vault.packs.sections.grant", post(facade_route))
+        .route("/vault.packs.sections.revoke", post(facade_route))
+        .route("/vault.packs.sections.suggest", post(facade_route))
+        .route("/vault.packs.sections.suggestions.get", post(facade_route))
+        .route("/vault.packs.sections.suggestions.set", post(facade_route))
         .route("/ai.chat.completions", post(facade_route))
         .route("/vault.connectors.proxy.admit", post(facade_route))
         .route("/vault.connectors.proxy.revoke_write", post(facade_route))
@@ -747,6 +754,19 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.skills.pack_receipt", post(facade_route))
         .route("/vault.skills.outcomes.project", post(facade_route))
         .route("/vault.skills.outcomes.get", post(facade_route))
+        .route("/vault.skills.attribution.settle", post(facade_route))
+        .route("/vault.skills.attribution.read", post(facade_route))
+        .route(
+            "/vault.skills.attribution.evidence.record",
+            post(facade_route),
+        )
+        .route("/vault.skills.attribution.project", post(facade_route))
+        .route("/vault.skills.attribution.judgments", post(facade_route))
+        .route("/vault.skills.attribution.proposals", post(facade_route))
+        .route(
+            "/vault.skills.attribution.positive.retire",
+            post(facade_route),
+        )
         .route("/ai.steps.submit", post(facade_route))
         .route("/ai.steps.receipt", post(facade_route))
         .route("/ai.reply", post(facade_route))

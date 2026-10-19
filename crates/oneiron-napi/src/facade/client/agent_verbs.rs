@@ -1996,6 +1996,69 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_packs_sections_propose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.propose", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.list", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.grant", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.revoke", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_suggest(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.suggest", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_suggestions_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.suggestions.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_suggestions_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.suggestions.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_chat_completions(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.chat.completions", js_json(input))
@@ -6026,6 +6089,69 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.skills.outcomes.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_attribution_settle(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.attribution.settle", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_attribution_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.attribution.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_attribution_evidence_record(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.attribution.evidence.record", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_attribution_project(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.attribution.project", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_attribution_judgments(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.attribution.judgments", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_attribution_proposals(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.attribution.proposals", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_attribution_positive_retire(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.attribution.positive.retire", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

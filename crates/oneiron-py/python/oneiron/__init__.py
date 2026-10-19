@@ -1566,6 +1566,9 @@ class Oneiron:
             """The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."""
             return json.loads(_translate(lambda: self._client.vault_packs_remove(json.dumps(spec))))
         @property
+        def sections(self) -> "Oneiron._VaultPacksSectionsVerbs":
+            return Oneiron._VaultPacksSectionsVerbs(self._client)
+        @property
         def setup(self) -> "Oneiron._VaultPacksSetupVerbs":
             return Oneiron._VaultPacksSetupVerbs(self._client)
     class _VaultPacksHooksVerbs:
@@ -1622,6 +1625,36 @@ class Oneiron:
         def put(self, spec):
             """Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint."""
             return json.loads(_translate(lambda: self._client.vault_packs_connector_grants_put(json.dumps(spec))))
+    class _VaultPacksSectionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def propose(self, spec):
+            """The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing."""
+            return json.loads(_translate(lambda: self._client.vault_packs_sections_propose(json.dumps(spec))))
+        def list(self, spec):
+            """Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project."""
+            return json.loads(_translate(lambda: self._client.vault_packs_sections_list(json.dumps(spec))))
+        def grant(self, spec):
+            """The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent."""
+            return json.loads(_translate(lambda: self._client.vault_packs_sections_grant(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild."""
+            return json.loads(_translate(lambda: self._client.vault_packs_sections_revoke(json.dumps(spec))))
+        def suggest(self, spec):
+            """Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal."""
+            return json.loads(_translate(lambda: self._client.vault_packs_sections_suggest(json.dumps(spec))))
+        @property
+        def suggestions(self) -> "Oneiron._VaultPacksSectionsSuggestionsVerbs":
+            return Oneiron._VaultPacksSectionsSuggestionsVerbs(self._client)
+    class _VaultPacksSectionsSuggestionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """The owner's plugin suggestion knob: whether workflow-pattern suggestion passes may run at all."""
+            return json.loads(_translate(lambda: self._client.vault_packs_sections_suggestions_get(json.dumps({} if spec is None else spec))))
+        def set(self, spec):
+            """The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted."""
+            return json.loads(_translate(lambda: self._client.vault_packs_sections_suggestions_set(json.dumps(spec))))
     class _VaultPacksSetupVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1688,6 +1721,9 @@ class Oneiron:
         @property
         def outcomes(self) -> "Oneiron._VaultSkillsOutcomesVerbs":
             return Oneiron._VaultSkillsOutcomesVerbs(self._client)
+        @property
+        def attribution(self) -> "Oneiron._VaultSkillsAttributionVerbs":
+            return Oneiron._VaultSkillsAttributionVerbs(self._client)
     class _VaultSkillsRulesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1781,6 +1817,42 @@ class Oneiron:
         def get(self, spec):
             """Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."""
             return json.loads(_translate(lambda: self._client.vault_skills_outcomes_get(json.dumps(spec))))
+    class _VaultSkillsAttributionVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def settle(self, spec):
+            """The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer."""
+            return json.loads(_translate(lambda: self._client.vault_skills_attribution_settle(json.dumps(spec))))
+        def read(self, spec):
+            """The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows."""
+            return json.loads(_translate(lambda: self._client.vault_skills_attribution_read(json.dumps(spec))))
+        @property
+        def evidence(self) -> "Oneiron._VaultSkillsAttributionEvidenceVerbs":
+            return Oneiron._VaultSkillsAttributionEvidenceVerbs(self._client)
+        def project(self, spec):
+            """The owner runs one attribution pass over recorded evidence, plus the positive lane, returning the judgments and positive proposals it minted."""
+            return json.loads(_translate(lambda: self._client.vault_skills_attribution_project(json.dumps(spec))))
+        def judgments(self, spec):
+            """The owner reads every persisted attribution judgment in both lanes, the projector cursor and the unclear ledger."""
+            return json.loads(_translate(lambda: self._client.vault_skills_attribution_judgments(json.dumps(spec))))
+        def proposals(self, spec):
+            """The owner reads the pending skill edit proposals, preference proposals and positive skill proposals attribution has minted."""
+            return json.loads(_translate(lambda: self._client.vault_skills_attribution_proposals(json.dumps(spec))))
+        @property
+        def positive(self) -> "Oneiron._VaultSkillsAttributionPositiveVerbs":
+            return Oneiron._VaultSkillsAttributionPositiveVerbs(self._client)
+    class _VaultSkillsAttributionEvidenceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def record(self, spec):
+            """The owner records one attempt outcome as attribution evidence, grounded against its stamped pack receipt; recording never classifies it."""
+            return json.loads(_translate(lambda: self._client.vault_skills_attribution_evidence_record(json.dumps(spec))))
+    class _VaultSkillsAttributionPositiveVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def retire(self, spec):
+            """The owner retires one positive skill proposal once the optimizer has drafted from it or declined it."""
+            return json.loads(_translate(lambda: self._client.vault_skills_attribution_positive_retire(json.dumps(spec))))
     class _VaultProjectsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

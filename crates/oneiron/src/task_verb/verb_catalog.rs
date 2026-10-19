@@ -235,6 +235,13 @@ pub enum AgentVerb {
     VaultPacksConnectorGrantsGet,
     VaultPacksConnectorGrantsPut,
     VaultPacksRemove,
+    VaultPacksSectionsPropose,
+    VaultPacksSectionsList,
+    VaultPacksSectionsGrant,
+    VaultPacksSectionsRevoke,
+    VaultPacksSectionsSuggest,
+    VaultPacksSectionsSuggestionsGet,
+    VaultPacksSectionsSuggestionsSet,
     AiChatCompletions,
     VaultConnectorsProxyAdmit,
     VaultConnectorsProxyRevokeWrite,
@@ -683,6 +690,13 @@ pub enum AgentVerb {
     VaultSkillsPackReceipt,
     VaultSkillsOutcomesProject,
     VaultSkillsOutcomesGet,
+    VaultSkillsAttributionSettle,
+    VaultSkillsAttributionRead,
+    VaultSkillsAttributionEvidenceRecord,
+    VaultSkillsAttributionProject,
+    VaultSkillsAttributionJudgments,
+    VaultSkillsAttributionProposals,
+    VaultSkillsAttributionPositiveRetire,
     AiStepsSubmit,
     AiStepsReceipt,
     AiReply,
@@ -1242,6 +1256,13 @@ impl AgentVerb {
         Self::VaultPacksConnectorGrantsGet,
         Self::VaultPacksConnectorGrantsPut,
         Self::VaultPacksRemove,
+        Self::VaultPacksSectionsPropose,
+        Self::VaultPacksSectionsList,
+        Self::VaultPacksSectionsGrant,
+        Self::VaultPacksSectionsRevoke,
+        Self::VaultPacksSectionsSuggest,
+        Self::VaultPacksSectionsSuggestionsGet,
+        Self::VaultPacksSectionsSuggestionsSet,
         Self::AiChatCompletions,
         Self::VaultConnectorsProxyAdmit,
         Self::VaultConnectorsProxyRevokeWrite,
@@ -1690,6 +1711,13 @@ impl AgentVerb {
         Self::VaultSkillsPackReceipt,
         Self::VaultSkillsOutcomesProject,
         Self::VaultSkillsOutcomesGet,
+        Self::VaultSkillsAttributionSettle,
+        Self::VaultSkillsAttributionRead,
+        Self::VaultSkillsAttributionEvidenceRecord,
+        Self::VaultSkillsAttributionProject,
+        Self::VaultSkillsAttributionJudgments,
+        Self::VaultSkillsAttributionProposals,
+        Self::VaultSkillsAttributionPositiveRetire,
         Self::AiStepsSubmit,
         Self::AiStepsReceipt,
         Self::AiReply,
@@ -2252,6 +2280,13 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => "vault.packs.connector.grants.get",
             Self::VaultPacksConnectorGrantsPut => "vault.packs.connector.grants.put",
             Self::VaultPacksRemove => "vault.packs.remove",
+            Self::VaultPacksSectionsPropose => "vault.packs.sections.propose",
+            Self::VaultPacksSectionsList => "vault.packs.sections.list",
+            Self::VaultPacksSectionsGrant => "vault.packs.sections.grant",
+            Self::VaultPacksSectionsRevoke => "vault.packs.sections.revoke",
+            Self::VaultPacksSectionsSuggest => "vault.packs.sections.suggest",
+            Self::VaultPacksSectionsSuggestionsGet => "vault.packs.sections.suggestions.get",
+            Self::VaultPacksSectionsSuggestionsSet => "vault.packs.sections.suggestions.set",
             Self::AiChatCompletions => "ai.chat.completions",
             Self::VaultConnectorsProxyAdmit => "vault.connectors.proxy.admit",
             Self::VaultConnectorsProxyRevokeWrite => "vault.connectors.proxy.revoke_write",
@@ -2718,6 +2753,17 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => "vault.skills.pack_receipt",
             Self::VaultSkillsOutcomesProject => "vault.skills.outcomes.project",
             Self::VaultSkillsOutcomesGet => "vault.skills.outcomes.get",
+            Self::VaultSkillsAttributionSettle => "vault.skills.attribution.settle",
+            Self::VaultSkillsAttributionRead => "vault.skills.attribution.read",
+            Self::VaultSkillsAttributionEvidenceRecord => {
+                "vault.skills.attribution.evidence.record"
+            }
+            Self::VaultSkillsAttributionProject => "vault.skills.attribution.project",
+            Self::VaultSkillsAttributionJudgments => "vault.skills.attribution.judgments",
+            Self::VaultSkillsAttributionProposals => "vault.skills.attribution.proposals",
+            Self::VaultSkillsAttributionPositiveRetire => {
+                "vault.skills.attribution.positive.retire"
+            }
             Self::AiStepsSubmit => "ai.steps.submit",
             Self::AiStepsReceipt => "ai.steps.receipt",
             Self::AiReply => "ai.reply",
@@ -3283,6 +3329,13 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsList
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsGet
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::AiChatCompletions
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
@@ -3731,6 +3784,13 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultSkillsAttributionSettle
+                | Self::VaultSkillsAttributionRead
+                | Self::VaultSkillsAttributionEvidenceRecord
+                | Self::VaultSkillsAttributionProject
+                | Self::VaultSkillsAttributionJudgments
+                | Self::VaultSkillsAttributionProposals
+                | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
                 | Self::AiReply
@@ -4317,6 +4377,13 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsList
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsGet
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::AiChatCompletions
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
@@ -4765,6 +4832,13 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultSkillsAttributionSettle
+                | Self::VaultSkillsAttributionRead
+                | Self::VaultSkillsAttributionEvidenceRecord
+                | Self::VaultSkillsAttributionProject
+                | Self::VaultSkillsAttributionJudgments
+                | Self::VaultSkillsAttributionProposals
+                | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
                 | Self::AiReply
@@ -5451,6 +5525,13 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsList
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsGet
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
                 | Self::VaultConnectorsSubscriptionsPut
@@ -5886,6 +5967,13 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultSkillsAttributionSettle
+                | Self::VaultSkillsAttributionRead
+                | Self::VaultSkillsAttributionEvidenceRecord
+                | Self::VaultSkillsAttributionProject
+                | Self::VaultSkillsAttributionJudgments
+                | Self::VaultSkillsAttributionProposals
+                | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
                 | Self::AiReply
@@ -6313,6 +6401,11 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorUpdate
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::AiChatCompletions
                 | Self::VaultConnectorsProxyAdmit
                 | Self::VaultConnectorsProxyRevokeWrite
@@ -6587,6 +6680,10 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::VaultSkillsOutcomesProject
+                | Self::VaultSkillsAttributionSettle
+                | Self::VaultSkillsAttributionEvidenceRecord
+                | Self::VaultSkillsAttributionProject
+                | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiReply
                 | Self::AiVoiceStart
@@ -7044,6 +7141,13 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => &["spec"],
             Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
+            Self::VaultPacksSectionsPropose => &["spec"],
+            Self::VaultPacksSectionsList => &["spec"],
+            Self::VaultPacksSectionsGrant => &["spec"],
+            Self::VaultPacksSectionsRevoke => &["spec"],
+            Self::VaultPacksSectionsSuggest => &["spec"],
+            Self::VaultPacksSectionsSuggestionsGet => &["spec"],
+            Self::VaultPacksSectionsSuggestionsSet => &["spec"],
             Self::AiChatCompletions => &["spec"],
             Self::VaultConnectorsProxyAdmit => &["spec"],
             Self::VaultConnectorsProxyRevokeWrite => &["spec"],
@@ -7492,6 +7596,13 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
+            Self::VaultSkillsAttributionSettle => &["spec"],
+            Self::VaultSkillsAttributionRead => &["spec"],
+            Self::VaultSkillsAttributionEvidenceRecord => &["spec"],
+            Self::VaultSkillsAttributionProject => &["spec"],
+            Self::VaultSkillsAttributionJudgments => &["spec"],
+            Self::VaultSkillsAttributionProposals => &["spec"],
+            Self::VaultSkillsAttributionPositiveRetire => &["spec"],
             Self::AiStepsSubmit => &["spec"],
             Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
@@ -8052,6 +8163,13 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => &["spec"],
             Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
+            Self::VaultPacksSectionsPropose => &["spec"],
+            Self::VaultPacksSectionsList => &["spec"],
+            Self::VaultPacksSectionsGrant => &["spec"],
+            Self::VaultPacksSectionsRevoke => &["spec"],
+            Self::VaultPacksSectionsSuggest => &["spec"],
+            Self::VaultPacksSectionsSuggestionsGet => &["spec"],
+            Self::VaultPacksSectionsSuggestionsSet => &["spec"],
             Self::AiChatCompletions => &["spec"],
             Self::VaultConnectorsProxyAdmit => &["spec"],
             Self::VaultConnectorsProxyRevokeWrite => &["spec"],
@@ -8500,6 +8618,13 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
+            Self::VaultSkillsAttributionSettle => &["spec"],
+            Self::VaultSkillsAttributionRead => &["spec"],
+            Self::VaultSkillsAttributionEvidenceRecord => &["spec"],
+            Self::VaultSkillsAttributionProject => &["spec"],
+            Self::VaultSkillsAttributionJudgments => &["spec"],
+            Self::VaultSkillsAttributionProposals => &["spec"],
+            Self::VaultSkillsAttributionPositiveRetire => &["spec"],
             Self::AiStepsSubmit => &["spec"],
             Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
@@ -9514,6 +9639,27 @@ impl AgentVerb {
             }
             Self::VaultPacksRemove => {
                 "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."
+            }
+            Self::VaultPacksSectionsPropose => {
+                "The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing."
+            }
+            Self::VaultPacksSectionsList => {
+                "Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project."
+            }
+            Self::VaultPacksSectionsGrant => {
+                "The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent."
+            }
+            Self::VaultPacksSectionsRevoke => {
+                "The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild."
+            }
+            Self::VaultPacksSectionsSuggest => {
+                "Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal."
+            }
+            Self::VaultPacksSectionsSuggestionsGet => {
+                "The owner's plugin suggestion knob: whether workflow-pattern suggestion passes may run at all."
+            }
+            Self::VaultPacksSectionsSuggestionsSet => {
+                "The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted."
             }
             Self::AiChatCompletions => {
                 "Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling."
@@ -10820,6 +10966,27 @@ impl AgentVerb {
             }
             Self::VaultSkillsOutcomesGet => {
                 "Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."
+            }
+            Self::VaultSkillsAttributionSettle => {
+                "The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer."
+            }
+            Self::VaultSkillsAttributionRead => {
+                "The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows."
+            }
+            Self::VaultSkillsAttributionEvidenceRecord => {
+                "The owner records one attempt outcome as attribution evidence, grounded against its stamped pack receipt; recording never classifies it."
+            }
+            Self::VaultSkillsAttributionProject => {
+                "The owner runs one attribution pass over recorded evidence, plus the positive lane, returning the judgments and positive proposals it minted."
+            }
+            Self::VaultSkillsAttributionJudgments => {
+                "The owner reads every persisted attribution judgment in both lanes, the projector cursor and the unclear ledger."
+            }
+            Self::VaultSkillsAttributionProposals => {
+                "The owner reads the pending skill edit proposals, preference proposals and positive skill proposals attribution has minted."
+            }
+            Self::VaultSkillsAttributionPositiveRetire => {
+                "The owner retires one positive skill proposal once the optimizer has drafted from it or declined it."
             }
             Self::AiStepsSubmit => {
                 "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."
