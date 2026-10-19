@@ -80870,6 +80870,7 @@
       "HostVmArgs",
       "InitArgs",
       "McpArgs",
+      "McpAuthMode",
       "McpSurface",
       "McpTransport",
       "ProvenanceArgs",
@@ -80890,7 +80891,7 @@
      "path": "src/cli.rs",
      "purpose": "—",
      "surface": {
-      "enum": 11,
+      "enum": 12,
       "fn": 3,
       "re-export": 11,
       "struct": 23
@@ -81331,6 +81332,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/mcp_bridge/bridge_auth.rs",
+     "purpose": "Whom `oneiron mcp`'s requests run as (FIX 5540): a paired slip, or the vault's owner himself by the sign-in…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -86598,7 +86609,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 41,
+     "files": 42,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -86978,7 +86989,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 862,
+   "source_files": 863,
    "test_files": 182
   },
   "oneiron-spawn": {
