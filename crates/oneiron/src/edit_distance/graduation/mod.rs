@@ -26,10 +26,9 @@
 //!    not just repetition.
 //! 3. **The offer answer.** An offer has three answers, not two:
 //!    [`OfferAnswer::GoAuto`] mints the standing grant through MS-06's
-//!    owner-only door; [`OfferAnswer::NotNow`] snoozes it on a compiled
-//!    backoff; and the THIRD answer is emergent — a third "not now" is the
-//!    owner saying *stop asking*, which lands as
-//!    [`SnoozeState::ManualPinned`] and is undone only by [`unpin_scope`].
+//!    owner-only door; [`OfferAnswer::NotNow`] resets the streak and snoozes
+//!    it on the owner's policy backoff. [`OfferAnswer::ManualPinned`] stops
+//!    offers, as does a third decline. Only [`unpin_scope`] clears a pin.
 //!
 //! # What a pin is, and is not
 //!
@@ -40,8 +39,8 @@
 //! outcomes, and keeps its posture in [`crate::consent_graduation::RampState`]
 //! — the ramp state answers *what authority is live*, the snooze state answers
 //! *are we asking about it*, and the two are deliberately orthogonal columns of
-//! [`trust_table`]. That is also why [`OfferAnswer::GoAuto`] is accepted while
-//! snoozed or pinned: suppression silences the engine, never the owner.
+//! [`trust_table`]. A manual pin must be cleared in settings before an
+//! acceptance can mint authority.
 //!
 //! # Storage
 //!
@@ -148,19 +147,23 @@ mod threshold_policy;
 mod trust_table;
 
 pub use self::answers::{
-    OfferAnswer, OfferAnswerOutcome, SnoozeState, answer_graduation_offer, snooze_state,
-    unpin_scope,
+    OfferAnswer, OfferAnswerOutcome, SnoozeState, answer_graduation_offer,
+    answer_graduation_offer_as_owner, snooze_state, unpin_scope, unpin_scope_as_owner,
 };
 pub use self::pattern::{WILDCARD_PATTERN, exact_pattern};
 pub use self::posterior::{guard_evidence, posterior_lower_bound};
 pub use self::receipts::is_graduation_answer_receipt;
 pub use self::threshold_policy::{
-    DEFAULT_POSTERIOR_GUARD, ThresholdRow, clear_graduation_policy, graduation_policy_for,
-    graduation_policy_rows, set_graduation_policy,
+    DEFAULT_POSTERIOR_GUARD, DEFAULT_SNOOZE_BACKOFF_SECONDS, ThresholdRow, clear_graduation_policy,
+    clear_graduation_policy_as_owner, graduation_policy_for, graduation_policy_rows,
+    set_graduation_policy, set_graduation_policy_as_owner,
 };
 pub use self::trust_table::{TrustTableRow, trust_table};
 
-pub(crate) use self::answers::{asks_are_suppressed_in_txn, record_go_auto_answer_in_txn};
+pub(crate) use self::answers::{
+    asks_are_suppressed_in_txn, record_go_auto_answer_in_txn, scope_is_manual_pinned_in_txn,
+    streak_resets_in_txn,
+};
 pub(crate) use self::receipts::answer_receipts_in_txn;
 pub(crate) use self::threshold_policy::graduation_policy_in_txn;
 

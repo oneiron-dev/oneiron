@@ -3,5 +3,5 @@ import type { Oneiron, WitnessTurn, WitnessReceipt, RecallOptions, MemoryPack, F
 export declare function memoryTools(memory: { vault: Pick<Oneiron["vault"], "witness" | "recall" | "receipts"> }): {
   witness: Tool<WitnessTurn, WitnessReceipt>
   recall: Tool<{ query: string; options?: RecallOptions }, MemoryPack>
-  receipts: Tool<{ limit?: number }, FacadeReceipt[]>
+  receipts: Tool<{ limit?: number; kinds?: string[] }, FacadeReceipt[]>
 }

@@ -1,7 +1,8 @@
 //! The house compaction route's call (moved from `compaction.rs`): one
 //! pass's request, admitted on the role's live route or as exactly the
 //! model the host resolved, held to the admitted model's context, dressed in
-//! the room it leaves, sent on the run's meter and booked.
+//! the room it leaves, sent on the run's meter and booked. A live fork's
+//! call (FIX 4465 C) is admitted its own way and sent the same way.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -24,10 +25,10 @@ use super::{
     BACKEND_KEY, COMPACTION_RUN, CompactionMeter, ServedCompactionBackend, output_tokens, refused,
 };
 use crate::ai_host::payer_funding::scope_funding;
-use crate::models::RoleRefusal;
+use crate::models::{RoleCall, RoleRefusal};
 
 impl ServedCompactionBackend {
-    fn llm_request(
+    pub(super) fn llm_request(
         &self,
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
@@ -101,6 +102,10 @@ pub(super) struct Served<D> {
     pub(super) model: ModelId,
     /// The admitted request's durable-step identity.
     pub(super) step_hash: Option<[u8; 32]>,
+    /// The request as it was sent, as its JSON, when it was admitted as
+    /// exactly one model: a self-written call files it as its step (FIX
+    /// 4465 B). `None` for the house's calls.
+    pub(super) sent: Option<Vec<u8>>,
     pub(super) worn: D,
     pub(super) latency: Duration,
 }
@@ -126,15 +131,23 @@ impl ServedCompactionBackend {
                 self.models.admit_seat_bound(&self.vault, self.role, llm)
             }
         };
-        let mut call = admitted.map_err(|refusal| {
-            let suppression = match refusal {
-                RoleRefusal::NoSeat => CompactionSuppression::Sticky {
-                    why: CompactionOff::NoSeat,
-                },
-                _ => CompactionSuppression::TurnScoped { check: None },
-            };
-            refused(suppression, refusal.to_string())
-        })?;
+        let call = admitted.map_err(admission_refused)?;
+        let exact = matches!(admit, Admit::Exact { .. });
+        self.send(started, call, exact, request.summary_token_budget, dress)
+    }
+
+    /// One admitted call, `exact` when it was admitted as exactly one model
+    /// (sent with no fallback, and its request kept for its step): held to
+    /// the admitted model's context, `dress`ed in the room it leaves, sent
+    /// on the run's meter with a permit of its own, and booked.
+    pub(super) fn send<D>(
+        &self,
+        started: Instant,
+        mut call: RoleCall,
+        exact: bool,
+        summary_token_budget: u64,
+        dress: impl FnOnce(&mut LlmRequest, CallRoom) -> Result<D, CompactionRefusal>,
+    ) -> Result<Served<D>, CompactionRefusal> {
         // The admitted model, not the configured ladder, must hold the call.
         let Some(&context) = self.allowances.get(&call.request.model) else {
             return Err(refused(
@@ -143,7 +156,7 @@ impl ServedCompactionBackend {
             ));
         };
         let input = request_input_tokens(&call.request);
-        let output = output_tokens(request.summary_token_budget);
+        let output = output_tokens(summary_token_budget);
         if input.saturating_add(output) > context {
             return Err(refused(
                 CompactionSuppression::TurnScoped { check: None },
@@ -186,16 +199,19 @@ impl ServedCompactionBackend {
             }
         };
         let step_hash = call.request.canonical_hash().ok();
+        let sent = if exact {
+            serde_json::to_vec(&call.request).ok()
+        } else {
+            None
+        };
         let model = call.request.model.clone();
         let run = self.models.funded_run(COMPACTION_RUN, guard.clone(), payer);
-        let reply = match admit {
-            Admit::Role => self
-                .handle
-                .block_on(call.ladder.generate(&run, call.request, None)),
-            Admit::Exact { .. } => {
-                self.handle
-                    .block_on(call.ladder.generate_exact(&run, call.request, None))
-            }
+        let reply = if exact {
+            self.handle
+                .block_on(call.ladder.generate_exact(&run, call.request, None))
+        } else {
+            self.handle
+                .block_on(call.ladder.generate(&run, call.request, None))
         };
         if let CompactionMeter::Scope(scope) = &self.meter
             && let Err(error) =
@@ -208,6 +224,7 @@ impl ServedCompactionBackend {
                 response,
                 model,
                 step_hash,
+                sent,
                 worn,
                 latency: started.elapsed(),
             }),
@@ -279,6 +296,18 @@ impl CompactionBackend for ServedCompactionBackend {
     }
 }
 
+/// Why a pass's call was refused before it left: a role no seat serves is
+/// off for the run, anything else holds for the turn.
+pub(super) fn admission_refused(refusal: RoleRefusal) -> CompactionRefusal {
+    let suppression = match refusal {
+        RoleRefusal::NoSeat => CompactionSuppression::Sticky {
+            why: CompactionOff::NoSeat,
+        },
+        _ => CompactionSuppression::TurnScoped { check: None },
+    };
+    refused(suppression, refusal.to_string())
+}
+
 /// The text of every text part of a reply, as one string.
 pub(super) fn product_of(response: &LlmResponse, latency: Duration) -> CompactionProduct {
     CompactionProduct {
@@ -297,7 +326,7 @@ pub(super) fn product_of(response: &LlmResponse, latency: Duration) -> Compactio
 }
 
 /// Every text token a request sends.
-fn request_input_tokens(request: &LlmRequest) -> u64 {
+pub(super) fn request_input_tokens(request: &LlmRequest) -> u64 {
     request
         .messages
         .iter()

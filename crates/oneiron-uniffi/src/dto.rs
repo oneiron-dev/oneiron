@@ -327,7 +327,7 @@ pub struct PendingWrite {
 }
 
 /// One governance receipt: a gate decision, or a receipt of another family.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct FacadeReceipt {
     /// Stable ref (`gate:<decision-hex>`, or the family receipt's id).
     pub receipt_ref: String,
@@ -347,6 +347,9 @@ pub struct FacadeReceipt {
     pub content_kind: String,
     /// 32-hex id of the claim the decision covers, if any.
     pub claim_ref: Option<String>,
+    /// That claim as a typed record ref (OF-063), labelled with its kind and
+    /// id: the generated facade record.
+    pub claim: Option<crate::RecordRef>,
     /// A family receipt's own fields (a hook run's hook, CODE id, body hash
     /// and run key), with its trigger, job and principal refs. Empty on a
     /// gate-ledger row.
@@ -847,6 +850,44 @@ pub struct MemoryPack {
     pub narrowing: ReadReceipt,
     /// The finalized serving-run id as sixteen bytes; absent when capture is off.
     pub retrieval_run_id: Option<Vec<u8>>,
+    /// What a device that syncs only what it opened says of the windows it
+    /// does not hold; absent when it holds every window or runs no sync.
+    pub residence: Option<RecallResidence>,
+}
+
+/// Who answered an opened device's recall residence.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum RecallResidenceSource {
+    /// The home answered the query.
+    Home,
+    /// The home was not asked, was out of reach or refused.
+    LocalOnly,
+}
+
+/// What an opened device's recall says of the windows it does not hold
+/// (FIX 2905): the home's discovery hits are separate references the local
+/// pack does not hold, and a hit's window opens it.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct RecallResidence {
+    /// Who answered.
+    pub source: RecallResidenceSource,
+    /// The home answered in full; false also marks the pack partial.
+    pub complete: bool,
+    /// The home was asked for no more than the residence `search_limit`.
+    pub capped: bool,
+    /// The home's references, in its order, each entity once.
+    pub hits: Vec<RecallResidenceHit>,
+}
+
+/// One reference the home holds that the local pack does not.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct RecallResidenceHit {
+    /// The entity's full id, 32 lowercase hex.
+    pub id: String,
+    /// The home's own score, never compared with a local item's.
+    pub score: f32,
+    /// The month window (`YYYY-MM`) that holds the hit.
+    pub window: String,
 }
 
 // ── jobs and effects ────────────────────────────────────────────────────
@@ -878,7 +919,7 @@ pub struct DreamerJobRef {
 }
 
 /// Poll view of one consolidation job.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct DreamerJobView {
     /// 32-hex job id.
     pub job_ref: String,
@@ -898,6 +939,10 @@ pub struct DreamerJobView {
     pub created_at: i64,
     /// Unix seconds.
     pub updated_at: i64,
+    /// The job's park, when the runner parked it (DOOR-144 A): its work
+    /// remains for a later resume. Absent when it holds no park row. The
+    /// generated facade record.
+    pub parked: Option<crate::DreamerParkedAttemptView>,
 }
 
 /// One outbound schedule request. Scheduling only; this surface never

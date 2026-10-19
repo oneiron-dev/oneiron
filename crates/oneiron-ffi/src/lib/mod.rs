@@ -12,7 +12,8 @@
 //! With the `engine` feature, `oneiron_engine_start` runs the full server
 //! `oneiron serve` runs inside the app's process (OF-237);
 //! `oneiron_engine_vault` hands the same open vault to the storage functions
-//! above, beside the plain `oneiron_vault_open`.
+//! above, beside the plain `oneiron_vault_open`. A call that fails
+//! `EngineError` leaves its stable cause for `oneiron_engine_last_error`.
 //!
 //! # Safety
 //!
@@ -69,8 +70,11 @@
 mod alloc;
 #[cfg(feature = "engine")]
 mod engine;
+#[cfg(feature = "engine")]
+mod engine_error;
 mod entity;
 mod guard;
+mod host_root;
 mod parse;
 mod query;
 mod types;
@@ -81,12 +85,15 @@ mod tests;
 #[cfg(feature = "engine")]
 pub use self::engine::{
     OneironAppHost, OneironEngine, OneironEngineConnection, OneironReply, OneironSecretSink,
+    oneiron_engine_artifact_connection_open, oneiron_engine_artifact_request,
     oneiron_engine_connection_close, oneiron_engine_connection_free,
     oneiron_engine_connection_open, oneiron_engine_connection_receive,
     oneiron_engine_connection_send, oneiron_engine_free, oneiron_engine_reply_free,
     oneiron_engine_request, oneiron_engine_start, oneiron_engine_stop, oneiron_engine_vault,
     oneiron_engine_wake, oneiron_secret_sink_write,
 };
+#[cfg(feature = "engine")]
+pub use self::engine_error::{OneironEngineErrorCode, oneiron_engine_last_error};
 pub use self::entity::{
     oneiron_buffer_free, oneiron_edge_info_array_free, oneiron_scored_entity_array_free,
     oneiron_subtree_entry_array_free, oneiron_vault_batch_put_entities, oneiron_vault_bind,
@@ -94,6 +101,7 @@ pub use self::entity::{
     oneiron_vault_get_entity, oneiron_vault_health_json, oneiron_vault_open,
     oneiron_vault_put_entity,
 };
+pub use self::host_root::oneiron_vault_open_with_host_root;
 pub use self::query::{
     oneiron_vault_ancestors, oneiron_vault_context_pack, oneiron_vault_edges_in,
     oneiron_vault_edges_out, oneiron_vault_entities_by_type, oneiron_vault_get_entity_type,

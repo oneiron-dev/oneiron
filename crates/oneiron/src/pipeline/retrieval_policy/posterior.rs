@@ -28,6 +28,12 @@ pub struct RetrievalPolicyPosterior {
 }
 
 impl RetrievalPolicyPosterior {
+    /// How many gated observations the learned posterior currently holds.
+    #[must_use]
+    pub fn observation_count(&self) -> usize {
+        self.observations.len()
+    }
+
     pub(crate) fn observe(
         &mut self,
         identity: RetrievalPolicyIdentity,

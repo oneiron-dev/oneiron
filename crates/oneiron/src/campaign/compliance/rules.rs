@@ -43,7 +43,9 @@ pub(super) const CONFIDENCE_MILLIS_SCALE: f32 = 1000.0;
 // ---------------------------------------------------------------------------
 
 /// The ARCH-0059 §8 `rule_kind` axis.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ComplianceRuleKind {
     /// What lawful basis the send needs, and whether a B2B exemption exists.
@@ -79,7 +81,7 @@ impl ComplianceRuleKind {
 }
 
 /// Whether a row's requirement admits a business-recipient exemption.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum B2bExemption {
     /// The exemption applies unconditionally.
@@ -91,7 +93,7 @@ pub enum B2bExemption {
 }
 
 /// The primary source a row was verified against.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ComplianceSource {
     /// Human-readable citation, e.g. the article or regulation number.
     pub citation: String,
@@ -104,7 +106,7 @@ pub struct ComplianceSource {
 /// `jurisdiction` is hierarchical: `EU/DE` selects the German rows AND the EU
 /// floor rows above them, which is how a directive floor composes with a
 /// national pole without either being duplicated into the other.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ComplianceRuleRow {
     /// Hierarchical jurisdiction token, e.g. `UK`, `JP`, `EU`, `EU/DE`.
     pub jurisdiction: String,
@@ -138,7 +140,7 @@ impl ComplianceRuleRow {
 }
 
 /// What to do when the dispatch carries no trusted jurisdiction.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UnknownJurisdictionDefault {
     /// Evaluate under the pack's strictest seeded pole. Never an automatic
@@ -150,7 +152,7 @@ pub enum UnknownJurisdictionDefault {
 ///
 /// Two mechanical primitives, not two jurisdictions. Which jurisdiction demands
 /// which is [`CompliancePack::conditional_exemption_evidence`] — a data row.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ComplianceExemptionEvidence {
     /// The recipient's legal form must be known.
@@ -160,7 +162,7 @@ pub enum ComplianceExemptionEvidence {
 }
 
 /// Binds one jurisdiction's conditional rows to the evidence they demand.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConditionalExemptionEvidence {
     /// The jurisdiction token this binding governs.
     pub jurisdiction: String,
@@ -174,7 +176,7 @@ pub struct ConditionalExemptionEvidence {
 /// pole, the confidence floor, the prohibited provenance classes, or the
 /// conditional-evidence bindings would each re-introduce exactly the
 /// jurisdiction-specific branch this module exists to avoid.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CompliancePack {
     /// Stable pack id; an amendment may never change it.
     pub pack_id: String,

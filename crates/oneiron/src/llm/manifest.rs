@@ -25,7 +25,9 @@ pub use encoder_export::{
 };
 pub(crate) use teacher_probe::valid_holder_ref as valid_teacher_probe_holder_ref;
 pub use teacher_probe::{TEACHER_PROBE_ID, TeacherProbeApproval, TeacherProbePolicy};
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelRole {
     RetrievalEmbedder,
@@ -113,7 +115,7 @@ impl ModelRole {
 /// tagger and runs background passes (extraction, consolidation, eval); it
 /// never serves a turn. An owner who routes a seat to it marks its row
 /// `served` and pays its cost (owner, 2026-10-08).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelDisposition {
     Offline,
@@ -128,7 +130,7 @@ pub enum ModelSlot {
     Embedder,
     Oneironer,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelBinding {
     pub model: ModelId,
