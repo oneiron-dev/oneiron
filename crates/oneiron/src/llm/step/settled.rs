@@ -1,17 +1,21 @@
 //! Settled-step point read (DOOR-141 A): one committed model step of a
-//! Dreamer attempt, as its terminal `dreamer.step` claim recorded it. It
-//! executes nothing, admits nothing and spends no lease; a step with no
-//! completion claim reads as absent, never as a success synthesized from a
-//! live progression row or a completed queue row.
+//! Dreamer attempt, as its terminal `dreamer.step` claim recorded it; and
+//! a page of one attempt's committed step refs (DOOR-101). Neither
+//! executes, admits or spends a lease; a step with no completion claim
+//! reads as absent, never as a success synthesized from a live progression
+//! row or a completed queue row.
+use std::ops::Bound;
+
 use serde::{Deserialize, Serialize};
 
 use super::super::{LlmResponse, ModelId};
 use super::codec::decode_hash_hex;
 use super::step_claim::{
-    DecodedStepClaim, decode_step_claim_value, load_step_response_in_txn, step_index_lookup_in_txn,
-    terminal_step_identity,
+    DecodedStepClaim, STEP_INDEX_FORWARD, StepIndexKey, decode_step_claim_value,
+    load_step_response_in_txn, step_index_lookup_in_txn, terminal_step_identity,
 };
 use super::types::{DurableStepError, ENVELOPE_PROVENANCE_RUN_KEY};
+use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimBody;
 use crate::consent::AuthenticatedOwner;
@@ -102,6 +106,55 @@ pub fn settled_step_as_owner(
         params_hash: decoded.params_hash,
         response,
     }))
+}
+
+/// One page of `attempt`'s committed steps in the caller's snapshot: its
+/// memo-index rows in step-hash order from `from_step` (64-hex, inclusive),
+/// each kept only while its claim is still the runner's finished record of
+/// exactly that step, and the hash the next page starts at. Refs only: no
+/// response is loaded.
+pub(crate) fn committed_steps_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+    from_step: Option<&str>,
+    limit: usize,
+) -> MemoryResult<(Vec<(String, EntityId)>, Option<String>)> {
+    let from = match from_step {
+        Some(hash) => decode_hash_hex(hash.trim())
+            .map_err(|_| MemoryError::bad_request("from_step must be 64 hex characters"))?,
+        None => [0; 32],
+    };
+    let index_key = |step_hash| StepIndexKey {
+        attempt_id: attempt,
+        step_hash,
+    };
+    let rows = STEP_INDEX_FORWARD
+        .iter_range(
+            &vault.store,
+            txn,
+            Bound::Included(&index_key(from)),
+            Bound::Included(&index_key([u8::MAX; 32])),
+        )?
+        .take(limit.saturating_add(1))
+        .collect::<Result<Vec<_>, Error>>()?;
+    let next = rows
+        .get(limit)
+        .map(|(key, _)| bytes_to_hex_lower(&key.step_hash));
+    let mut steps = Vec::new();
+    for (key, claim_id) in rows.into_iter().take(limit) {
+        let committed = vault
+            .get_claim_in_txn(txn, &claim_id)?
+            .as_ref()
+            .and_then(terminal_step_identity)
+            .is_some_and(|(bound_attempt, bound_hash, _)| {
+                bound_attempt == attempt && bound_hash == key.step_hash
+            });
+        if committed {
+            steps.push((bytes_to_hex_lower(&key.step_hash), claim_id));
+        }
+    }
+    Ok((steps, next))
 }
 
 fn attempt_ref(job_ref: &str) -> MemoryResult<AttemptId> {

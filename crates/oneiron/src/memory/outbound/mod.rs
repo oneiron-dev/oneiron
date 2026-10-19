@@ -18,4 +18,4 @@ pub use self::types::{OutboundDraftInput, OutboundIntentReceipt, OutboundSchedul
 
 pub(crate) use self::errors::facade_error_from_outbound_dispatch;
 
-pub(super) use self::dedupe::parse_job_ref;
+pub(crate) use self::dedupe::parse_job_ref;

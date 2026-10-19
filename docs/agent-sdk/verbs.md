@@ -69,6 +69,7 @@ both bindings and their export-census tests in one change.
 - `vault.budgets.hold`
 - `vault.budgets.hold.resume`
 - `vault.budgets.local`
+- `vault.budgets.reservations`
 - `vault.budgets.settlements`
 - `vault.budgets.rsi.configure`
 - `vault.budgets.rsi`
@@ -834,6 +835,8 @@ both bindings and their export-census tests in one change.
 - `vault.consolidation.status`
 - `vault.runs.step`
 - `vault.runs.checkpoint`
+- `vault.consolidation.home.get`
+- `vault.consolidation.lineage`
 - `vault.consolidation.promote`
 - `vault.consolidation.evidence`
 - `vault.sieve.evidence`

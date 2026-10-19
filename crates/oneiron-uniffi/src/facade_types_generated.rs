@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 956 facade rows, 3218 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 908.
+// UniFFI census: 959 facade rows, 3227 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 911.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -5332,6 +5332,8 @@ pub struct LocalRunnerBudgetCounter {
     pub remaining_units: u64,
     #[serde(rename = "reserved_units")]
     pub reserved_units: u64,
+    #[serde(rename = "spent_units")]
+    pub spent_units: u64,
     #[serde(rename = "updated_at")]
     pub updated_at: u64,
 }
@@ -5343,6 +5345,46 @@ pub struct LocalRunnerBudgetView {
     pub budget_id: String,
     #[serde(rename = "counter", default, skip_serializing_if = "Option::is_none")]
     pub counter: Option<LocalRunnerBudgetCounter>,
+}
+
+/// `oneiron::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RunnerBudgetReservationsRequest {
+    #[serde(rename = "budget_id")]
+    pub budget_id: String,
+    #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::agent_dispatch::budget_doors::RunnerBudgetReservation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunnerBudgetReservation {
+    #[serde(rename = "job_ref")]
+    pub job_ref: String,
+    #[serde(rename = "reserved_units")]
+    pub reserved_units: u64,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+    #[serde(rename = "updated_at")]
+    pub updated_at: u64,
+}
+
+/// `oneiron::agent_dispatch::budget_doors::RunnerBudgetReservationsView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunnerBudgetReservationsView {
+    #[serde(rename = "budget_id")]
+    pub budget_id: String,
+    #[serde(rename = "counter", default, skip_serializing_if = "Option::is_none")]
+    pub counter: Option<LocalRunnerBudgetCounter>,
+    #[serde(rename = "reservations")]
+    pub reservations: Vec<RunnerBudgetReservation>,
+    #[serde(rename = "next", default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+    #[serde(rename = "local_only")]
+    pub local_only: bool,
 }
 
 /// `oneiron::agent_dispatch::budget_doors::RunSettlementsRequest`.
@@ -44784,6 +44826,137 @@ pub struct CheckpointView {
     pub next_step: Option<u64>,
 }
 
+/// `oneiron::dreamer_runner::owner_doors::ConsolidationHomeNode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsolidationHomeNode {
+    #[serde(rename = "node_id")]
+    pub node_id: u64,
+    #[serde(rename = "class")]
+    pub class: String,
+    #[serde(rename = "elected_at")]
+    pub elected_at: u64,
+}
+
+/// `oneiron::dreamer_runner::owner_doors::ConsolidationHomeView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsolidationHomeView {
+    #[serde(rename = "home", default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<ConsolidationHomeNode>,
+    #[serde(rename = "this_node", default, skip_serializing_if = "Option::is_none")]
+    pub this_node: Option<u64>,
+    #[serde(rename = "candidates_available")]
+    pub candidates_available: bool,
+}
+
+/// `oneiron::dreamer_runner::owner_doors::ConsolidationLineageRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConsolidationLineageRequest {
+    #[serde(rename = "job_ref")]
+    pub job_ref: String,
+    #[serde(rename = "from_step", default, skip_serializing_if = "Option::is_none")]
+    pub from_step: Option<String>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::memory::dreamer::DreamerParkCauseView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DreamerParkCauseView {
+    #[serde(rename = "provider_unavailable")]
+    ProviderUnavailable,
+    #[serde(rename = "executor_error")]
+    ExecutorError,
+    #[serde(rename = "checkpoint")]
+    Checkpoint,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "signal")]
+    Signal,
+    #[serde(rename = "other")]
+    Other,
+}
+
+/// `oneiron::memory::dreamer::DreamerParkedAttemptView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DreamerParkedAttemptView {
+    #[serde(rename = "job_ref")]
+    pub job_ref: String,
+    #[serde(rename = "cause")]
+    pub cause: DreamerParkCauseView,
+    #[serde(rename = "parked_at")]
+    pub parked_at: u64,
+}
+
+/// `oneiron::dreamer_runner::owner_doors::ConsolidationTryView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsolidationTryView {
+    #[serde(rename = "job_ref")]
+    pub job_ref: String,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "state")]
+    pub state: AttemptState,
+    #[serde(rename = "run_id", default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(
+        rename = "parent_attempt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parent_attempt: Option<String>,
+    #[serde(rename = "retry_of", default, skip_serializing_if = "Option::is_none")]
+    pub retry_of: Option<String>,
+    #[serde(rename = "folded_retries")]
+    pub folded_retries: u32,
+    #[serde(rename = "attempt_count")]
+    pub attempt_count: u32,
+    #[serde(
+        rename = "lease_owner",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub lease_owner: Option<String>,
+    #[serde(
+        rename = "result_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub result_ref: Option<String>,
+    #[serde(
+        rename = "resume_point",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub resume_point: Option<AttemptResumePoint>,
+    #[serde(rename = "parked", default, skip_serializing_if = "Option::is_none")]
+    pub parked: Option<DreamerParkedAttemptView>,
+}
+
+/// `oneiron::dreamer_runner::owner_doors::ConsolidationStepRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsolidationStepRef {
+    #[serde(rename = "step_hash")]
+    pub step_hash: String,
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+}
+
+/// `oneiron::dreamer_runner::owner_doors::ConsolidationLineageView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsolidationLineageView {
+    #[serde(rename = "job_ref")]
+    pub job_ref: String,
+    #[serde(rename = "tries")]
+    pub tries: Vec<ConsolidationTryView>,
+    #[serde(rename = "chain_complete")]
+    pub chain_complete: bool,
+    #[serde(rename = "steps")]
+    pub steps: Vec<ConsolidationStepRef>,
+    #[serde(rename = "next_step", default, skip_serializing_if = "Option::is_none")]
+    pub next_step: Option<String>,
+}
+
 /// `oneiron::dreamer_promotion::admission::EvidenceKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum EvidenceKind {
@@ -45302,23 +45475,6 @@ pub struct WakeSettlementsRequest {
     pub limit: u32,
 }
 
-/// `oneiron::memory::dreamer::DreamerParkCauseView`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum DreamerParkCauseView {
-    #[serde(rename = "provider_unavailable")]
-    ProviderUnavailable,
-    #[serde(rename = "executor_error")]
-    ExecutorError,
-    #[serde(rename = "checkpoint")]
-    Checkpoint,
-    #[serde(rename = "cancelled")]
-    Cancelled,
-    #[serde(rename = "signal")]
-    Signal,
-    #[serde(rename = "other")]
-    Other,
-}
-
 /// `oneiron::dreamer_runner::observation::WakeRecipeJobView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WakeRecipeJobView {
@@ -45617,17 +45773,6 @@ pub struct SignalExtractionTicket {
 pub struct SignalExtractionResultRequest {
     #[serde(rename = "job_ref")]
     pub job_ref: String,
-}
-
-/// `oneiron::memory::dreamer::DreamerParkedAttemptView`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct DreamerParkedAttemptView {
-    #[serde(rename = "job_ref")]
-    pub job_ref: String,
-    #[serde(rename = "cause")]
-    pub cause: DreamerParkCauseView,
-    #[serde(rename = "parked_at")]
-    pub parked_at: u64,
 }
 
 /// `oneiron::memory::dreamer::DreamerAttemptView`.

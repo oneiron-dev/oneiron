@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 956 facade rows, 3239 declarations.
-Inputs: 899 of 956 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 858 of 956 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 959 facade rows, 3248 declarations.
+Inputs: 902 of 959 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 861 of 959 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -1800,10 +1800,26 @@ class LocalRunnerBudgetCounter(TypedDict):
     total_units: int
     remaining_units: int
     reserved_units: int
+    spent_units: int
     updated_at: int
 class LocalRunnerBudgetView(TypedDict):
     budget_id: str
     counter: NotRequired[LocalRunnerBudgetCounter | None]
+class RunnerBudgetReservationsRequest(TypedDict):
+    budget_id: str
+    after: NotRequired[str | None]
+    limit: NotRequired[int | None]
+class RunnerBudgetReservation(TypedDict):
+    job_ref: str
+    reserved_units: int
+    created_at: int
+    updated_at: int
+class RunnerBudgetReservationsView(TypedDict):
+    budget_id: str
+    counter: NotRequired[LocalRunnerBudgetCounter | None]
+    reservations: list[RunnerBudgetReservation]
+    next: NotRequired[str | None]
+    local_only: bool
 class RunSettlementsRequest(TypedDict):
     run: str
 class RunRungSettlement(TypedDict):
@@ -14693,6 +14709,37 @@ class CheckpointView(TypedDict):
     steps: list[CheckpointStepView]
     resumed: list[CheckpointResumeView]
     next_step: NotRequired[int | None]
+ConsolidationHomeNode = TypedDict("ConsolidationHomeNode", {"node_id": int, "class": str, "elected_at": int})
+class ConsolidationHomeView(TypedDict):
+    home: NotRequired[ConsolidationHomeNode | None]
+    this_node: NotRequired[int | None]
+    candidates_available: bool
+class ConsolidationLineageRequest(TypedDict):
+    job_ref: str
+    from_step: NotRequired[str | None]
+    limit: NotRequired[int | None]
+class ConsolidationTryView(TypedDict):
+    job_ref: str
+    kind: str
+    state: AttemptState
+    run_id: NotRequired[str | None]
+    parent_attempt: NotRequired[str | None]
+    retry_of: NotRequired[str | None]
+    folded_retries: int
+    attempt_count: int
+    lease_owner: NotRequired[str | None]
+    result_ref: NotRequired[str | None]
+    resume_point: NotRequired[AttemptResumePoint | None]
+    parked: NotRequired[DreamerParkedAttemptView | None]
+class ConsolidationStepRef(TypedDict):
+    step_hash: str
+    claim_ref: EntityId
+class ConsolidationLineageView(TypedDict):
+    job_ref: str
+    tries: list[ConsolidationTryView]
+    chain_complete: bool
+    steps: list[ConsolidationStepRef]
+    next_step: NotRequired[str | None]
 EvidenceKind = Literal["turn", "message", "note", "asset_text", "import_record"]
 class CursorSpan(TypedDict):
     start: list[int]
