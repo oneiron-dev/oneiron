@@ -860,6 +860,9 @@ fn spool_vault_key_escrow(vault: &oneiron::Vault, managed: &ManagedArgs) {
 /// ready byte, and the ready byte is what tells the supervisor any of it
 /// happened.
 pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Result<()> {
+    // The supervisor names a personal vault's owner by the contract's copy of
+    // the embedded owner's id; a copy that drifted stops the boot here.
+    super::vault_gates::check_embedded_owner_holder()?;
     let mut config = managed.serve_config(args);
     // The owner's settings file, refused leaf by leaf and settled once,
     // before anything reads the configuration: its `[oneironer]` arms the

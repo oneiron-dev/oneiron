@@ -135,6 +135,13 @@ pub enum ManagedError {
     #[error("vault metadata: {0}")]
     VaultMeta(String),
 
+    /// The engine's embedded owner id and the vault contract's copy, which
+    /// the supervisor names a personal vault's owner by, differ.
+    #[error(
+        "the embedded owner's holder id drifted: the engine derives {engine}, the vault contract gives {contract}; a supervisor naming the owner by the contract's id would name no one this vault knows"
+    )]
+    EmbeddedOwnerDrift { engine: String, contract: String },
+
     #[error("managed serve io: {0}")]
     Io(#[from] std::io::Error),
 }

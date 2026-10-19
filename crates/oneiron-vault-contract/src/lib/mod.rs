@@ -59,7 +59,7 @@ pub use self::limits::{
 pub use self::managed_holder::{
     MANAGED_OWNER_ACTION_HEADER, MANAGED_OWNER_BOUND_HEADERS, MANAGED_VOICE_MAX_SKEW_SECS,
     MANAGED_VOICE_METHOD, MANAGED_VOICE_PATH, ManagedOwnerAction, ManagedOwnerRequest,
-    ManagedWidenAction,
+    ManagedWidenAction, embedded_owner_holder_hex,
 };
 pub use self::secrets::{
     Credentials, TokenHex, from_hex, hex, read_credentials, write_credentials,
