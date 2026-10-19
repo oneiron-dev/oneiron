@@ -2405,6 +2405,18 @@ impl OneironClient {
                 "vault.delete" => {
                     remote_agent_verb_output::<oneiron::memory::DeleteReceipt>(client, verb, &input)
                 }
+                "vault.writes.critical_confirm.pending" => remote_agent_verb_output::<
+                    Option<oneiron::memory::CriticalWriteConfirmPending>,
+                >(client, verb, &input),
+                "vault.writes.critical_confirm.clear" => remote_agent_verb_output::<
+                    oneiron::memory::CriticalWriteConfirmSettlement,
+                >(client, verb, &input),
+                "vault.writes.critical_confirm.decline" => remote_agent_verb_output::<
+                    oneiron::memory::CriticalWriteConfirmSettlement,
+                >(client, verb, &input),
+                "vault.writes.critical_confirm.receipt" => remote_agent_verb_output::<
+                    oneiron::memory::CriticalWriteConfirmReceipt,
+                >(client, verb, &input),
                 "vault.writes.pending" => remote_agent_verb_output::<
                     Vec<oneiron::memory::PendingWrite>,
                 >(client, verb, &input),
@@ -12457,6 +12469,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.delete", value)
+    }
+    pub fn vault_writes_critical_confirm_pending(
+        &self,
+        input: &oneiron::memory::CriticalWriteConfirmPendingRequest,
+    ) -> Result<Option<oneiron::memory::CriticalWriteConfirmPending>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.writes.critical_confirm.pending", value)
+    }
+    pub fn vault_writes_critical_confirm_clear(
+        &self,
+        input: &oneiron::memory::CriticalWriteConfirmRequest,
+    ) -> Result<oneiron::memory::CriticalWriteConfirmSettlement, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.writes.critical_confirm.clear", value)
+    }
+    pub fn vault_writes_critical_confirm_decline(
+        &self,
+        input: &oneiron::memory::CriticalWriteConfirmRequest,
+    ) -> Result<oneiron::memory::CriticalWriteConfirmSettlement, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.writes.critical_confirm.decline", value)
+    }
+    pub fn vault_writes_critical_confirm_receipt(
+        &self,
+        input: &oneiron::memory::CriticalWriteConfirmReceiptRequest,
+    ) -> Result<oneiron::memory::CriticalWriteConfirmReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.writes.critical_confirm.receipt", value)
     }
     pub fn vault_writes_pending(
         &self,
