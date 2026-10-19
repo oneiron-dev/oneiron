@@ -9,7 +9,9 @@
 //! the provider's own meter. What a scoped start used is booked on the
 //! scope once it ends, whatever it answered; a scope that cannot fund it
 //! stops it, and it never spends on the provider's meter instead. An
-//! action that writes no start opens no line.
+//! action that writes no start opens no line, and an action whose line
+//! cannot fund a start when it binds lends no runner, so its planned spawn
+//! keeps the path a host with no runner takes.
 
 use std::sync::Arc;
 
@@ -46,18 +48,23 @@ struct ActionPatternRunner {
 }
 
 /// The runner an action on `entry`'s run lends its planner, on `server`'s
-/// native provider. `None` where the run's entry lends none either: a run
-/// born on no seat (a vault with no model manifest) or holding no lease, a
-/// host with no native provider, or a run spending under no scope on a
-/// provider with no meter of its own. Nothing is opened to tell.
+/// native provider. `None` where the run's entry lends none either (a run
+/// born on no seat, a vault with no model manifest, or holding no lease; a
+/// host with no native provider), and where [`funds_a_start`] says the
+/// run's line cannot fund a start now.
 pub(super) fn runner(
     server: &SyncServer,
     entry: &LiveRunEntry,
 ) -> Option<Arc<dyn PatternLaunchRunner>> {
     let seat = entry.model_seat.clone()?;
     let provider = server.code_execution_host()?.engine_native()?.provider();
-    let unmetered = entry.spend_scope.is_none() && provider.host_meter().is_none();
-    if entry.leased.lease_owner.is_none() || unmetered {
+    if entry.leased.lease_owner.is_none()
+        || !funds_a_start(
+            server.vault(),
+            provider.as_ref(),
+            entry.spend_scope.as_ref(),
+        )
+    {
         return None;
     }
     Some(Arc::new(ActionPatternRunner {
@@ -69,6 +76,28 @@ pub(super) fn runner(
         seat,
         spend: entry.spend_scope.clone(),
     }))
+}
+
+/// Whether the run's line could fund a start now: its scope's meter opens
+/// with units left, else the provider's own meter has units left, and the
+/// provider lends that line a backend. Only reads; each start opens its own
+/// line. The policy hook for an unfunded action (Engine 10-19 09:2x): it
+/// keeps the planned path it took before the runner was bound, never a
+/// refusal.
+fn funds_a_start(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    spend: Option<&SpendScopeId>,
+) -> bool {
+    let line = match spend {
+        Some(scope) => ScopeMeter::open(vault, scope)
+            .ok()
+            .map(|meter| (meter.guard, meter.payer)),
+        None => provider.host_meter().map(|guard| (guard, None)),
+    };
+    line.is_some_and(|(guard, payer)| {
+        guard.read().remaining_units > 0 && provider.reader_backend(guard, payer).is_some()
+    })
 }
 
 impl PatternLaunchRunner for ActionPatternRunner {
