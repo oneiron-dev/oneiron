@@ -10,6 +10,11 @@
 //! error, never the text as written; and a tagger that recognised nothing
 //! proves nothing about what the text holds.
 //!
+//! The filter serves the slot's tagger whichever tagger the vault's manifest
+//! binds ([`TaggerSlot::selected_by`]): when they differ, every answer names
+//! the binding beside the tagger that served (`differs_from_binding`), and
+//! nothing is refused for it.
+//!
 //! A feedback door filters when the filter runs, and otherwise sends what it
 //! sent before the filter existed ([`Unfiltered`]), through
 //! [`UnredactedFeedback`] and never labelled filtered: filtering adds to a
@@ -27,6 +32,7 @@ use oneiron::feedback::{
 };
 use oneiron::memory::extraction::{EncoderInput, EncoderMessage, ExtractionEncoder};
 
+use crate::oneironer::{EncoderNotSelected, TaggerSlot};
 use crate::server::SyncServer;
 
 /// The turn id of the filter's input: the text is no stored turn, and it is
@@ -40,17 +46,30 @@ const FILTER_MESSAGE: &str = "text";
 pub(crate) struct OneironerFilter {
     /// The tagger slot's tagger; `None` when no tagger is configured.
     encoder: Option<Arc<dyn ExtractionEncoder>>,
+    /// The vault manifest's tagger binding when the slot's tagger is not it.
+    differs_from_binding: Option<String>,
 }
 
 impl OneironerFilter {
     /// The filter over `server`'s tagger slot.
     pub(crate) fn of_server(server: &SyncServer) -> Self {
+        let slot = server.tagger.as_ref();
         Self {
-            encoder: server
-                .tagger
-                .as_ref()
-                .map(|slot| Arc::clone(slot.tagger()) as Arc<dyn ExtractionEncoder>),
+            encoder: slot.map(|slot| Arc::clone(slot.tagger()) as Arc<dyn ExtractionEncoder>),
+            differs_from_binding: slot.and_then(|slot| unselected_binding(slot, server.vault())),
         }
+    }
+}
+
+/// The binding `vault`'s manifest names when it is not the tagger `slot`
+/// serves. A matching binding, a vault with no manifest or no Oneironer
+/// route, and a manifest that cannot be read name none: the slot's tagger
+/// serves either way.
+fn unselected_binding(slot: &TaggerSlot, vault: &oneiron::Vault) -> Option<String> {
+    let error = slot.selected_by(vault).err()?;
+    match error.downcast_ref::<EncoderNotSelected>()? {
+        EncoderNotSelected::OtherEncoder { bound, .. }
+        | EncoderNotSelected::OtherTier { bound, .. } => Some(bound.clone()),
     }
 }
 
@@ -99,6 +118,7 @@ impl TextFilter for OneironerFilter {
             TextFilterIdentity {
                 model: encoder.model_id().as_str().to_owned(),
                 stack_sha16: output.stack_sha16,
+                differs_from_binding: self.differs_from_binding.clone(),
             },
         )
     }

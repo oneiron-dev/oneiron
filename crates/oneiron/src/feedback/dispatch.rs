@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use crate::genui::ConsentActionEvaluation;
+use crate::limit_ask::EngineLimit;
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
     OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionOutcome,
@@ -284,7 +285,8 @@ pub struct FeedbackSendOutcome {
 /// granted by the principal for this exact bundle and this exact route. Policy
 /// class, opt-out where a contact is addressable, and budget arms all still
 /// decide the outcome, and a held or denied dispatch never reaches the
-/// transport.
+/// transport. The bundle's longest free text is measured against the engine's
+/// text row and never refused for its length.
 pub fn send_feedback<T>(
     vault: &crate::Vault,
     preview: &FeedbackPreview,
@@ -296,6 +298,10 @@ where
     T: FeedbackTransport,
 {
     let request = feedback_dispatch_request(preview, context, evaluation)?;
+    let _ = vault.measure_limit(
+        EngineLimit::MaintenanceTextBytes,
+        preview.bundle().longest_text() as u64,
+    );
     let logical_send_ref = request.receipt_id.clone();
     let approval_receipt_ref = request.intent.trigger_ref.clone();
     let mut adapter = FeedbackOutboundAdapter {

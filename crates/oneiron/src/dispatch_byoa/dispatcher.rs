@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::Vault;
 use crate::attempt_queue::{
-    AbandonAttempt, AbandonOutcome, AttemptId, AttemptQueue, AttemptRecord, AttemptState,
-    CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome,
+    AbandonAttempt, AbandonOutcome, AttemptId, AttemptQueue, AttemptRecord, CompleteAttempt,
+    CompleteOutcome, EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome,
     FinishAttemptLanding, FinishLandingOutcome, SetAttemptResult,
 };
 use crate::blob_artifact::{
@@ -36,9 +36,9 @@ use super::error::{
 use super::exhaust::{
     ByoaEgressLease, ByoaEgressPort, ByoaExhaust, ByoaExhaustEnvelope, ByoaTerminalDisposition,
     ByoaTerminalReceipt, CaptureByoaExhaust, append_exhaust_envelope, byoa_exhaust_artifact_id,
-    byoa_exhaust_artifact_name, byoa_result_ref, canonical_result_version, decode_byoa_exhaust,
-    decode_byoa_record, disposition_matches_state, ensure_byoa_runtime_actor,
-    normalize_capture_reason, union_taint_refs, validate_canonical_capture,
+    byoa_exhaust_artifact_name, byoa_result_ref, canonical_result_version, decode_byoa_record,
+    disposition_matches_state, ensure_byoa_runtime_actor, normalize_capture_reason,
+    union_taint_refs, validate_canonical_capture,
 };
 use super::official_seats::{
     DispatchOfficialSeat, DrySeatDecision, OfficialSeatDispatchOutcome, OfficialSeatStamp,
@@ -142,6 +142,8 @@ pub struct ByoaDispatcher<'a, B, E> {
     vault: &'a Vault,
     endpoint_factory: B,
     egress: E,
+    /// Writes a CLI run's pinned job into its checkout before the run.
+    pub(super) stager: Option<Box<dyn super::staged_input::ByoaInputStager + 'a>>,
 }
 
 impl<'a, B, E> ByoaDispatcher<'a, B, E>
@@ -156,48 +158,12 @@ where
             vault,
             endpoint_factory,
             egress,
+            stager: None,
         }
     }
 
     pub(crate) fn vault(&self) -> &Vault {
         self.vault
-    }
-
-    /// Read the canonical successful capture, not a worker-supplied receipt.
-    pub(crate) fn completed_cli_exhaust(
-        &self,
-        attempt_id: AttemptId,
-    ) -> ByoaResult<(AttemptRecord, CliSandboxSpec, ByoaExhaust)> {
-        let record = AttemptQueue::new(self.vault)
-            .get(attempt_id)?
-            .ok_or_else(|| invalid(ERR_ATTEMPT_MISSING))?;
-        let payload = decode_byoa_record(&record)?;
-        self.check_payload_placement(&payload)?;
-        let ByoaConnectorSpec::CliSandbox(spec) = payload.connector else {
-            return Err(invalid(ERR_EXECUTION_SHAPE));
-        };
-        let artifact_id = byoa_exhaust_artifact_id(attempt_id)?;
-        // The result ref names the capture's head version, its envelope.
-        let version = record
-            .result_ref
-            .as_ref()
-            .and_then(|result_ref| canonical_result_version(result_ref, &artifact_id));
-        let Some(version) = version.filter(|_| record.state == AttemptState::Completed) else {
-            return Err(invalid(ERR_CAPTURE_CONFLICT));
-        };
-        if self
-            .vault
-            .blob_artifact_version_metadata(&artifact_id, version)?
-            .is_none()
-        {
-            return Err(invalid(ERR_CAPTURE_CONFLICT));
-        }
-        let (captured_id, disposition, exhaust) =
-            decode_byoa_exhaust(self.vault, &artifact_id, version)?;
-        if captured_id != attempt_id || disposition != ByoaTerminalDisposition::Completed {
-            return Err(invalid(ERR_CAPTURE_CONFLICT));
-        }
-        Ok((record, spec, exhaust))
     }
 
     /// Validates a foreign connector and lands it on a durable attempt row.
@@ -446,6 +412,7 @@ where
                     for (index, next) in policy.seats.iter().enumerate().skip(seat + 1) {
                         let connector =
                             next.connector(registry, task.to_owned(), ran.checkout_id)?;
+                        let connector = super::staged_input::carry_staged_input(connector, &ran);
                         if let Some(bound) = self.login_bound(next.logs_in(), &connector) {
                             receipt.skipped_seats.push(SkippedRunnerSeat {
                                 seat: index,
@@ -525,7 +492,7 @@ where
     /// official seat is judged by its vendor's terms (the same table its
     /// dispatch passed); an unstamped row by the connector it carries. Both
     /// re-resolve [`hosted_seat_bound`] here; no verdict is stored.
-    fn check_payload_placement(&self, payload: &ByoaAttemptPayload) -> ByoaResult<()> {
+    pub(super) fn check_payload_placement(&self, payload: &ByoaAttemptPayload) -> ByoaResult<()> {
         match payload.official_seat {
             Some(stamp) => check_seat_placement(
                 stamp.route,
@@ -626,13 +593,13 @@ where
     }
 
     /// Invokes a host sandbox against a live checkout through the foreign
-    /// boundary. Lease validation occurs again at terminal capture; no LMDB
-    /// write lock is held while host code executes.
+    /// boundary, once the run's pinned job is staged there. Lease validation
+    /// occurs again at terminal capture; no LMDB write lock is held meanwhile.
     ///
     /// # Errors
-    /// Refuses stale leases, missing/expired checkouts, and invalid budgets,
-    /// or propagates the sandbox's refusal (its spool's disk floor and
-    /// deadline among them).
+    /// Refuses stale leases, missing/expired checkouts, invalid budgets and a
+    /// pinned job with no stager, or propagates the stager's or the sandbox's
+    /// refusal (its spool's disk floor and deadline among them).
     pub fn execute_cli<C: ByoaCliExecutor, F: CheckoutFactSink, L: CheckoutLiveness>(
         &mut self,
         fence: &ByoaExecutionFence,
@@ -662,6 +629,7 @@ where
         {
             return Err(invalid(ERR_EXECUTION_CHECKOUT));
         }
+        self.stage_pinned_input(&spec, &checkout)?;
         let intent = bytes_to_hex_lower(fence.attempt_id.as_bytes());
         // Every secret a granted lease injected taints this run's output.
         let mut injected = Vec::new();

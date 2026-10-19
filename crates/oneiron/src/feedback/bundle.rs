@@ -32,12 +32,6 @@ pub const FEEDBACK_ENGINE_VERSION_MAX_BYTES: usize = 64;
 /// Maximum accepted `embedding_model` length in bytes.
 pub const FEEDBACK_EMBEDDING_MODEL_MAX_BYTES: usize = 128;
 
-/// Maximum accepted free-text note length in bytes.
-pub const FEEDBACK_USER_NOTE_MAX_BYTES: usize = 4096;
-
-/// Maximum accepted length of a proposal's problem or fix text in bytes.
-pub const FEEDBACK_PROPOSAL_MAX_BYTES: usize = 4096;
-
 /// Maximum accepted length of any single reference token in bytes.
 pub const FEEDBACK_REF_MAX_BYTES: usize = 256;
 
@@ -375,12 +369,8 @@ impl FeedbackProposal {
     }
 
     pub(super) fn validate(&self) -> Result<(), FeedbackError> {
-        checked_note(
-            "proposal problem",
-            &self.problem,
-            FEEDBACK_PROPOSAL_MAX_BYTES,
-        )?;
-        checked_note("proposal fix", &self.fix, FEEDBACK_PROPOSAL_MAX_BYTES)
+        checked_note("proposal problem", &self.problem)?;
+        checked_note("proposal fix", &self.fix)
     }
 }
 
@@ -479,7 +469,23 @@ impl FeedbackBundle {
         }
     }
 
-    /// Checks every field constraint the wire contract promises.
+    /// Bytes of the longest free text the bundle carries (the note, or a
+    /// proposal's problem or fix): what a send measures, never a bound.
+    pub(super) fn longest_text(&self) -> usize {
+        let proposal = self
+            .proposal
+            .iter()
+            .flat_map(|proposal| [&proposal.problem, &proposal.fix]);
+        self.user_note
+            .iter()
+            .chain(proposal)
+            .map(String::len)
+            .max()
+            .unwrap_or_default()
+    }
+
+    /// Checks every field constraint the wire contract promises. Free text
+    /// is checked for its shape, never refused for its length.
     pub fn validate(&self) -> Result<(), FeedbackError> {
         checked_token(
             "engine_version",
@@ -494,7 +500,7 @@ impl FeedbackBundle {
             diagnosis.validate()?;
         }
         if let Some(note) = self.user_note.as_deref() {
-            checked_note("user_note", note, FEEDBACK_USER_NOTE_MAX_BYTES)?;
+            checked_note("user_note", note)?;
         }
         if let Some(proposal) = &self.proposal {
             proposal.validate()?;

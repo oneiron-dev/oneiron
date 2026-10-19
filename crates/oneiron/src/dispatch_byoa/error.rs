@@ -113,6 +113,12 @@ pub(super) const ERR_SEAT_SPEC: &str = "official seat spec is incomplete or unbo
 
 pub(super) const ERR_PKCE_VERIFIER: &str = "pkce verifier must be 43-128 unreserved characters";
 
+pub(super) const ERR_STAGED_INPUT_PIN: &str =
+    "cli sandbox staged input pin does not name its job's own artifact and file";
+
+pub(super) const ERR_STAGED_INPUT_COLLISION: &str =
+    "byoa staged input artifact is not owned by its job";
+
 /// Every way a foreign-agent door can refuse.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -158,6 +164,15 @@ pub enum ByoaError {
     /// The run's deadline passed before its exhaust was wholly captured.
     #[error("byoa run passed its deadline before its exhaust was captured")]
     SpoolDeadline,
+    /// A run's job is staged in its checkout, and this dispatcher has no
+    /// stager installed to write it there
+    /// ([`ByoaDispatcher::with_input_stager`](super::ByoaDispatcher::with_input_stager)).
+    #[error("byoa input stager unavailable: this host stages no job in a checkout")]
+    InputStagerUnavailable,
+    /// A staged job's artifact is missing, or does not hold the bytes its
+    /// pin names (their length and BLAKE3 digest).
+    #[error("byoa staged input does not resolve to the job its pin names")]
+    StagedInputUnresolved,
     /// Any crate-level refusal raised beneath this module — a queue door, a
     /// vault write, or a connector validator.
     #[error(transparent)]

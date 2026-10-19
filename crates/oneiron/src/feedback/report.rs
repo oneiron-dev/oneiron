@@ -6,10 +6,7 @@ mod store;
 pub use crate::edit_distance::publisher::IssueCategory;
 pub use routing::{ReportDisclosureChoice, ReportRoute, ReportRoutedPayload, ReportSignature};
 
-use super::{
-    FEEDBACK_MAX_SUBJECT_REFS, FEEDBACK_REF_MAX_BYTES, FEEDBACK_USER_NOTE_MAX_BYTES,
-    FeedbackProposal,
-};
+use super::{FEEDBACK_MAX_SUBJECT_REFS, FEEDBACK_REF_MAX_BYTES, FeedbackProposal};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 
@@ -53,8 +50,10 @@ impl ReportRequest {
         for reference in &self.evidence_refs {
             validate_ref(reference)?;
         }
+        // Text of any length; its length is measured where the report is
+        // recorded, never refused.
         for text in [&self.note, &self.why].into_iter().flatten() {
-            if text.trim().is_empty() || text.len() > FEEDBACK_USER_NOTE_MAX_BYTES {
+            if text.trim().is_empty() {
                 return Err(invalid("invalid report text"));
             }
         }
@@ -83,6 +82,22 @@ impl ReportRequest {
 
     pub fn carries_text(&self) -> bool {
         self.note.is_some() || self.why.is_some() || self.proposal.is_some()
+    }
+
+    /// Bytes of the longest text the reporter wrote: what a submit measures,
+    /// never a bound.
+    fn longest_text(&self) -> usize {
+        let proposal = self
+            .proposal
+            .iter()
+            .flat_map(|proposal| [&proposal.problem, &proposal.fix]);
+        [&self.note, &self.why]
+            .into_iter()
+            .flatten()
+            .chain(proposal)
+            .map(String::len)
+            .max()
+            .unwrap_or_default()
     }
 }
 

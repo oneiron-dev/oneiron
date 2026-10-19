@@ -14,6 +14,8 @@
 //! run, or answers out of shape, stops the whole bundle: nothing leaves half
 //! filtered.
 
+use std::cmp::Reverse;
+
 use crate::memory::extraction::NerSpan;
 
 use super::bundle::{FeedbackBundle, FeedbackProposal};
@@ -41,6 +43,11 @@ pub struct TextFilterIdentity {
     pub model: String,
     /// The served stack that made the answer, when the recogniser names one.
     pub stack_sha16: Option<String>,
+    /// The vault manifest's recogniser binding, as the manifest names it,
+    /// when the recogniser that served is not that binding. The filter still
+    /// served: this names the difference and refuses nothing. `None` when the
+    /// recogniser is the binding or the vault binds none.
+    pub differs_from_binding: Option<String>,
 }
 
 /// Text as an in-vault filter returned it, and the filter that made it.
@@ -100,11 +107,14 @@ pub trait TextFilter: Send + Sync {
 ///
 /// Every span must name message 0 (the filter's one message), cover a
 /// nonempty half-open byte range inside `text` on character boundaries, and
-/// carry a label with no whitespace, control character or bracket; once
-/// sorted, no two spans may overlap. Any span out of shape rejects the whole
-/// answer. Each span the label policy redacts becomes `[label]`; every byte
-/// outside the spans stays as written. No spans is an answer like any other:
-/// the text comes back filtered, and that says nothing about what it holds.
+/// carry a label with no whitespace, control character or bracket. Any span
+/// out of shape rejects the whole answer. Spans that overlap or nest are one
+/// group, replaced as their union (CALLS "FIX 5211 OVERLAP_SPANS_UNION"): when
+/// any member's label redacts, the whole union becomes one `[label]`, the
+/// label `union_label` picks; when none does, the union stays as written.
+/// Every byte outside the spans stays as written. No spans is an answer like
+/// any other: the text comes back filtered, and that says nothing about what
+/// it holds.
 ///
 /// # Errors
 /// [`TextFilterError::Rejected`] for any span out of shape.
@@ -116,29 +126,52 @@ pub fn apply_recognised_spans(
     for span in spans {
         check_span(text, span)?;
     }
+    // Ordered by start, the longest first, so a group opens on the span that
+    // reaches furthest from its start.
     let mut ordered: Vec<&NerSpan> = spans.iter().collect();
-    ordered.sort_by_key(|span| (span.start, span.end));
+    ordered.sort_by_key(|span| (span.start, Reverse(span.end)));
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0;
-    for span in ordered {
-        if span.start < cursor {
-            return Err(TextFilterError::Rejected(format!(
-                "two recognised spans overlap at byte {}",
-                span.start
-            )));
+    let mut rest = ordered.as_slice();
+    while let Some(first) = rest.first() {
+        // A span joins the group while it starts before the group's end.
+        let mut end = first.end;
+        let members = rest
+            .iter()
+            .take_while(|span| {
+                let joins = span.start < end;
+                if joins {
+                    end = end.max(span.end);
+                }
+                joins
+            })
+            .count();
+        let (group, next) = rest.split_at(members);
+        out.push_str(slice(text, cursor, first.start)?);
+        match union_label(group) {
+            Some(label) => {
+                out.push('[');
+                out.push_str(label);
+                out.push(']');
+            }
+            None => out.push_str(slice(text, first.start, end)?),
         }
-        out.push_str(slice(text, cursor, span.start)?);
-        if redacts_label(&span.label) {
-            out.push('[');
-            out.push_str(&span.label);
-            out.push(']');
-        } else {
-            out.push_str(slice(text, span.start, span.end)?);
-        }
-        cursor = span.end;
+        cursor = end;
+        rest = next;
     }
     out.push_str(slice(text, cursor, text.len())?);
     Ok(FilteredText { text: out, filter })
+}
+
+/// The one label a group of overlapping or nested spans is replaced by: the
+/// label of its first member, in the group's order, that the label policy
+/// redacts. `None` when no member redacts, and the union stays as written.
+/// A ruling on which label a union carries changes this function.
+fn union_label<'a>(group: &[&'a NerSpan]) -> Option<&'a str> {
+    group
+        .iter()
+        .map(|span| span.label.as_str())
+        .find(|label| redacts_label(label))
 }
 
 /// One span against the text it claims to cover. The refusal names offsets

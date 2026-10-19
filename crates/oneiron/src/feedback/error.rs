@@ -170,13 +170,9 @@ pub(super) fn checked_token(
     bounded_bytes(label, value.len(), max_bytes)
 }
 
-/// Free text a person wrote. Newlines are allowed; other control characters
-/// and blank-only text are not.
-pub(super) fn checked_note(
-    label: &str,
-    value: &str,
-    max_bytes: usize,
-) -> Result<(), FeedbackError> {
+/// Free text a person wrote, of any length. Newlines are allowed; other
+/// control characters and blank-only text are not.
+pub(super) fn checked_note(label: &str, value: &str) -> Result<(), FeedbackError> {
     if value.trim().is_empty() {
         return Err(FeedbackError::InvalidBundle(format!(
             "{label} must not be blank"
@@ -187,7 +183,7 @@ pub(super) fn checked_note(
             "{label} must not contain control characters other than newline"
         )));
     }
-    bounded_bytes(label, value.len(), max_bytes)
+    Ok(())
 }
 
 pub(super) fn checked_embedding_model(model: &str) -> Result<String, FeedbackError> {

@@ -200,6 +200,18 @@ impl oneiron::origin::smart_http::SpillFloor for DiskFloor {
     fn has_room_for(&self, bytes: u64) -> bool {
         DiskFloor::has_room_for(self, bytes)
     }
+
+    /// `spool` in the directory this floor measures, made on first use, so
+    /// the floor guards the disk a spool fills. `None` when it cannot be made.
+    fn spool_dir(&self) -> Option<PathBuf> {
+        let dir = self.dir.join("spool");
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(&dir).ok()?;
+        Some(dir)
+    }
 }
 
 impl Drop for DiskClaim {
