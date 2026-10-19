@@ -3867,8 +3867,11 @@ class Oneiron:
             """Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed."""
             return json.loads(_translate(lambda: self._client.vault_rooms_claim(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
         def speak(self, spec):
-            """Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."""
+            """Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove."""
             return json.loads(_translate(lambda: self._client.vault_rooms_speak(json.dumps(spec))))
+        @property
+        def thread_audience(self) -> "Oneiron._VaultRoomsThreadAudienceVerbs":
+            return Oneiron._VaultRoomsThreadAudienceVerbs(self._client)
         def join(self, spec):
             """Files and decides a request to take part in a room or one of its threads."""
             return json.loads(_translate(lambda: self._client.vault_rooms_join(json.dumps(spec))))
@@ -3890,6 +3893,15 @@ class Oneiron:
         def sharing(self, spec):
             """A room's effective sharing scope and why it is clamped, for a member of the room."""
             return json.loads(_translate(lambda: self._client.vault_rooms_sharing(json.dumps(spec))))
+    class _VaultRoomsThreadAudienceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def add(self, spec):
+            """Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_thread_audience_add(json.dumps(spec))))
+        def remove(self, spec):
+            """Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_thread_audience_remove(json.dumps(spec))))
     class _VaultRoomsOfferVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

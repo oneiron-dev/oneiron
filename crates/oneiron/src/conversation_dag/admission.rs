@@ -181,6 +181,14 @@ pub(crate) fn guard_record_put(
         {
             return Err(invalid("a TURN's thread binding is immutable"));
         }
+        // So is an audience edit (FIX 5545), which rides a reply.
+        if let Some(reason) = crate::workspace_roster::audience_event_put_refusal(
+            *id,
+            prior.as_ref().map(|previous| previous.body.as_slice()),
+            body,
+        )? {
+            return Err(invalid(reason));
+        }
     }
     let stored_pin = BODY_PINS.get(store, txn, id)?;
     let inferred_pin = if stored_pin.is_none() {

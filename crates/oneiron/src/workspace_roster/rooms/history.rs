@@ -863,13 +863,21 @@ impl Memory<'_> {
         if limit == 0 || limit > 256 {
             return Err(MemoryError::from(invalid()));
         }
-        let turns = self.room_turn_snapshot(room)?;
+        // FIX 5545: the vault's Owner or an Admin also finds the room's
+        // private threads, by root id alone, with a seat in it or not.
+        let owner = self.owner_private_roots(room)?;
+        let turns = match &owner {
+            Some(owner) if !owner.reads_room => Vec::new(),
+            _ => self.room_turn_snapshot(room)?,
+        };
         let mut roots = turns
             .iter()
             .filter(|turn| super::liveness::is_thread_root(turn))
             .map(|turn| EntityId::from_hex(&turn.turn_id))
             .collect::<Result<Vec<_>>>()?;
+        roots.extend(owner.into_iter().flat_map(|owner| owner.roots));
         roots.sort();
+        roots.dedup();
         if after.is_some_and(|cursor| !roots.contains(&cursor)) {
             return Err(MemoryError::from(invalid()));
         }

@@ -396,10 +396,11 @@ pub(crate) fn admit_witness(
         None,
         now,
     )?;
-    // A private thread names only its audience: a mention hands the named
-    // agent the turn. A pen is named there through its PERSON (FIX 3123).
+    // A private thread names only its audience now, a stored root's edits
+    // folded in (FIX 5545): a mention hands the named agent the turn. A pen
+    // is named there through its PERSON (FIX 3123).
     let private = match &thread {
-        Some(binding) if binding.root == turn_id => binding.audience.clone(),
+        Some(binding) if binding.root == turn_id && stored.is_none() => binding.audience.clone(),
         Some(binding) => thread_audience_in(vault, txn, room, binding.root)?,
         None => None,
     };

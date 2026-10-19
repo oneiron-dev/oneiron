@@ -62,6 +62,7 @@ fn stamp_body(
                 | "dag_kind"
                 | "scope_project_id"
                 | crate::workspace_roster::ROOM_THREAD_KEY
+                | crate::workspace_roster::ROOM_THREAD_AUDIENCE_KEY
         ) {
             return Err(invalid("record body contains door-owned fields"));
         }
@@ -487,6 +488,39 @@ pub(crate) fn append_at_in_txn(
         head: if input.advance { Some(id) } else { old_head },
         parent: input.parent,
     })
+}
+
+/// Puts the door-built TURN `body` at `id` as an audience edit of the
+/// thread rooted at `root` (FIX 5545), in the door's own write: the row, its
+/// `ChildOf` carrier `room`, as a reply of the thread has, and its `About`
+/// edge to the root. A room of either kind takes it, one that adopted the
+/// DAG on the permit its own records land under.
+pub(crate) fn put_thread_event_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    id: EntityId,
+    room: EntityId,
+    root: EntityId,
+    body: &[u8],
+) -> Result<()> {
+    let now = vault.store.clock.now_recorded_at();
+    super::admission::permit(&vault.store, txn, &id, &room)?;
+    vault
+        .batch_in()
+        .put(
+            &id,
+            ENTITY_TYPE_TURN,
+            crate::TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+            body,
+        )
+        .edge(&id, EdgeKind::ChildOf, &room, 1.0)
+        .edge(&id, EdgeKind::About, &root, 1.0)
+        .apply(txn)?;
+    super::admission::finish(&vault.store, txn, &id)
 }
 
 pub(super) fn set_head_in_txn(

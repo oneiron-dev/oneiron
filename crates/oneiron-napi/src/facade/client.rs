@@ -48,8 +48,9 @@ pub struct NapiWitnessTurnInput {
     pub messages: Vec<NapiWitnessMessage>,
     /// Unix seconds; omitted ⇒ stamped at the call boundary.
     pub occurred_at: Option<f64>,
-    /// A new project room thread root's audience (32-hex PERSON and
-    /// AGENT_DEF ids), fixed once set; omitted ⇒ it reads as its room does.
+    /// A new project room thread root's audience seed (32-hex PERSON and
+    /// AGENT_DEF ids), edited later through `vault.rooms.thread_audience`;
+    /// omitted ⇒ it reads as its room does.
     pub thread_audience: Option<Vec<String>>,
 }
 

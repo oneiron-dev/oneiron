@@ -164,7 +164,7 @@ export type WitnessTurn = {
   messages: WitnessMessage[]
   /** Unix seconds; omitted is stamped at the call boundary. */
   occurredAt?: number
-  /** A new project room thread root's audience (32-hex ids); fixed once set. */
+  /** A new project room thread root's audience seed (32-hex ids); edited later through vault.rooms.thread_audience. */
   threadAudience?: string[]
 }
 

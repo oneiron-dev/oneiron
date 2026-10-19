@@ -2165,6 +2165,12 @@ impl OneironClient {
                 "vault.rooms.speak" => remote_agent_verb_output::<oneiron::memory::WitnessReceipt>(
                     client, verb, &input,
                 ),
+                "vault.rooms.thread_audience.add" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::ThreadAudienceReceipt,
+                >(client, verb, &input),
+                "vault.rooms.thread_audience.remove" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::ThreadAudienceReceipt,
+                >(client, verb, &input),
                 "vault.projects.propose" => remote_agent_verb_output::<
                     oneiron::genui::ProjectProposalCard,
                 >(client, verb, &input),
@@ -11809,6 +11815,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.speak", value)
+    }
+    pub fn vault_rooms_thread_audience_add(
+        &self,
+        input: &oneiron::workspace_roster::ThreadAudienceAddRequest,
+    ) -> Result<oneiron::workspace_roster::ThreadAudienceReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.thread_audience.add", value)
+    }
+    pub fn vault_rooms_thread_audience_remove(
+        &self,
+        input: &oneiron::workspace_roster::ThreadAudienceRemoveRequest,
+    ) -> Result<oneiron::workspace_roster::ThreadAudienceReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.thread_audience.remove", value)
     }
     pub fn vault_projects_propose(
         &self,

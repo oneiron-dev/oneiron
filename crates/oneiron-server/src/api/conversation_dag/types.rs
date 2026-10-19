@@ -92,9 +92,10 @@ pub(crate) struct DagAppendRequest {
     /// Quotes a span of one MESSAGE; the record then replies to its TURN.
     #[serde(default)]
     pub quote: Option<DagQuoteSpan>,
-    /// A new thread root's audience (FIX 2951): room PERSON and AGENT_DEF
-    /// ids, the writer among them, fixed once set. Only the reply that opens
-    /// a thread takes it; the trunk append refuses it.
+    /// A new thread root's audience seed (FIX 2951): room PERSON and
+    /// AGENT_DEF ids, the writer among them, edited later through
+    /// `vault.rooms.thread_audience`. Only the reply that opens a thread
+    /// takes it; the trunk append refuses it.
     #[serde(default)]
     pub thread_audience: Option<Vec<String>>,
 }

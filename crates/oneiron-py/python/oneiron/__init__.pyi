@@ -44,7 +44,7 @@ class WitnessTurn(TypedDict):
     messages: list[WitnessMessage]
     # Unix seconds; omitted is stamped at the call boundary.
     occurred_at: NotRequired[int]
-    # A new project room thread root's audience; fixed once set.
+    # A new project room thread root's audience seed; edited later through vault.rooms.thread_audience.
     thread_audience: NotRequired[list[str] | None]
 
 class WitnessReceipt(TypedDict):
@@ -2491,7 +2491,9 @@ class Oneiron:
         def claim(self, room_ref: str, turn_ref: str) -> Facade.RoomClaimOutcome:
             """Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed."""
         def speak(self, spec: Facade.WitnessTurn) -> Facade.WitnessReceipt:
-            """Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."""
+            """Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove."""
+        @property
+        def thread_audience(self) -> "Oneiron._VaultRoomsThreadAudienceVerbs": ...
         def join(self, spec: Facade.JoinRequest) -> Facade.JoinOutcome:
             """Files and decides a request to take part in a room or one of its threads."""
         def invite(self, spec: Facade.JoinRequest) -> Facade.JoinOutcome:
@@ -2506,6 +2508,11 @@ class Oneiron:
         def host(self) -> "Oneiron._VaultRoomsHostVerbs": ...
         def sharing(self, spec: Facade.RoomRefRequest) -> Facade.RoomSharingView:
             """A room's effective sharing scope and why it is clamped, for a member of the room."""
+    class _VaultRoomsThreadAudienceVerbs:
+        def add(self, spec: Facade.ThreadAudienceAddRequest) -> Facade.ThreadAudienceReceipt:
+            """Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it."""
+        def remove(self, spec: Facade.ThreadAudienceRemoveRequest) -> Facade.ThreadAudienceReceipt:
+            """Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."""
     class _VaultRoomsOfferVerbs:
         def __call__(self, spec: Facade.OfferDraft) -> Facade.OfferCard:
             """Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card."""

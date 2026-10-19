@@ -17,6 +17,7 @@ use super::audience::{
     ThreadBinding, names_actor_in, private_members_readable_in, thread_binding,
     thread_root_readable_with_read_in, validate_private_audience_in,
 };
+use super::audience_events::fold_audience_in;
 use super::*;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -174,7 +175,7 @@ pub(crate) fn overlay_thread_binding_in(
     let Some(held) = &binding else {
         return Ok(None);
     };
-    let audience = if held.root == id {
+    let seed = if held.root == id {
         held.audience.clone()
     } else {
         let root = binding_of(held.root)?.ok_or_else(invalid)?;
@@ -183,9 +184,14 @@ pub(crate) fn overlay_thread_binding_in(
         }
         root.audience
     };
-    // The writer stands in a private thread's audience and is still one of
-    // the room's members; a member it mentions is named there, a pen
-    // through its PERSON (FIX 3123).
+    // The writer stands in a private thread's audience now, the root's edits
+    // folded in on base (FIX 5545), and is still one of the room's members;
+    // a member it mentions is named there, a pen through its PERSON (FIX
+    // 3123).
+    let audience = match seed {
+        Some(seed) => Some(fold_audience_in(vault, txn, held.root, &seed)?.current()),
+        None => None,
+    };
     if !private_members_readable_in(vault, txn, room, audience.as_ref(), &[actor])? {
         return Err(invalid());
     }

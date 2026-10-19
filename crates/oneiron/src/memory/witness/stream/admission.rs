@@ -117,15 +117,12 @@ impl Memory<'_> {
                     &self.vault.store,
                     &txn,
                     &action.assistant_turn,
-                )? && crate::workspace_roster::thread_binding(&body)?
-                    .is_some_and(|binding| binding.root == action.assistant_turn)
+                )? && let Some(binding) = crate::workspace_roster::thread_binding(&body)?
+                    && binding.root == action.assistant_turn
                 {
-                    audience = crate::workspace_roster::thread_audience_in(
-                        self.vault,
-                        &txn,
-                        action.conversation,
-                        action.assistant_turn,
-                    )?;
+                    // The root's birth seed, never its edited audience, which
+                    // the retry's own admission compares (FIX 5545).
+                    audience = binding.audience;
                 }
             }
             turn.messages[0].metadata = metadata;

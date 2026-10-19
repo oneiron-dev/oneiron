@@ -700,6 +700,8 @@ both bindings and their export-census tests in one change.
 - `vault.rooms.reply_strips`
 - `vault.rooms.claim`
 - `vault.rooms.speak`
+- `vault.rooms.thread_audience.add`
+- `vault.rooms.thread_audience.remove`
 - `vault.projects.propose`
 - `vault.projects.proposals`
 - `vault.projects.dismiss_card`

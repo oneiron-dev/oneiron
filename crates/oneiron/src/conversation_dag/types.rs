@@ -102,8 +102,9 @@ pub struct AppendRecord {
     pub actor: WriteActor,
     /// The audience a new thread's root names (FIX 2951): room PERSON and
     /// AGENT_DEF members, the writer among them. Only the record that opens
-    /// a thread takes one; it is fixed from then on, and the thread's later
-    /// records read under it. `None` opens a thread read as its room is.
+    /// a thread takes one, as its seed; later edits are ordered events
+    /// (`vault.rooms.thread_audience.add` / `.remove`, FIX 5545). `None`
+    /// opens a thread read as its room is.
     pub thread_audience: Option<std::collections::BTreeSet<EntityId>>,
 }
 

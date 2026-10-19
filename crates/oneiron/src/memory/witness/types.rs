@@ -89,9 +89,10 @@ pub struct WitnessTurn {
     pub turn_ref: Option<String>,
     /// The audience a project room thread's root names (FIX 2951): room
     /// PERSON and AGENT_DEF members, the speaker among them. Only the turn
-    /// that opens a thread takes one, and it is fixed from then on: the
-    /// thread's later turns read under it, and a retry may repeat the same
-    /// set. Absent ⇒ the thread reads as its room does.
+    /// that opens a thread takes one, as its seed: later edits are ordered
+    /// events (`vault.rooms.thread_audience.add` / `.remove`, FIX 5545), and
+    /// a retry may repeat the same set. Absent ⇒ the thread reads as its
+    /// room does.
     #[serde(default)]
     pub thread_audience: Option<std::collections::BTreeSet<crate::EntityId>>,
     /// Messages, all attributed to the bound actor unless `System`.

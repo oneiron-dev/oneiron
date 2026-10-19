@@ -106,8 +106,9 @@ pub struct WitnessTurn {
     pub conversation_ref: String,
     /// Turn ref (create-or-get); omitted means a fresh turn.
     pub turn_ref: Option<String>,
-    /// A new project room thread root's audience, as 32-hex PERSON and
-    /// AGENT_DEF ids, fixed once set. Omitted means it reads as its room does.
+    /// A new project room thread root's audience seed, as 32-hex PERSON and
+    /// AGENT_DEF ids, edited later through `vault.rooms.thread_audience`.
+    /// Omitted means it reads as its room does.
     pub thread_audience: Option<Vec<String>>,
     /// Messages, attributed to the bound actor unless authored by `System`.
     pub messages: Vec<WitnessMessage>,
