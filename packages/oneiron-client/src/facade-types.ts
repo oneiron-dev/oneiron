@@ -5295,7 +5295,7 @@ export type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "s
 /** `oneiron_model::llm::error::SpentKind` */
 export type SpentKind = "window" | "credit"
 /** `oneiron_model::llm::error::RetryableLlmError` */
-export type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[] } } | "ServerError" | "Timeout" | "StreamCut"
+export type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "ServerError" | "Timeout" | "StreamCut"
 /** `oneiron_model::llm::error::BudgetDenied` */
 export type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied"
 /** `oneiron_model::llm::error::LlmError` */

@@ -6864,7 +6864,7 @@ async fn execute_agent_verb_row(
                     actor.actor_ref,
                     actor.actor_class,
                     proof,
-                    actor.locality(),
+                    actor.destination(),
                     None,
                     input,
                     actor.home_caller(),
@@ -7663,7 +7663,7 @@ async fn execute_agent_verb_row(
                         &input,
                         proof,
                         surface,
-                        actor.locality(),
+                        actor.destination(),
                     )
                     .map(|(output, listed)| {
                         served.extend(listed);
@@ -7672,7 +7672,7 @@ async fn execute_agent_verb_row(
                 (Some(proof), _) => memory.export_with_verified_owner(&input, proof, surface),
                 (None, Some(action)) => server
                     .vault
-                    .export_with_host_action_listing(&input, &action, surface, actor.locality())
+                    .export_with_host_action_listing(&input, &action, surface, actor.destination())
                     .map(|(output, listed)| {
                         served.extend(listed);
                         output
@@ -7692,7 +7692,7 @@ async fn execute_agent_verb_row(
                             &input,
                             &owner,
                             surface,
-                            actor.locality(),
+                            actor.destination(),
                         )
                         .map(|(output, listed)| {
                             served.extend(listed);

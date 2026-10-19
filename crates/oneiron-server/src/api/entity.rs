@@ -2,6 +2,7 @@ use super::ViewQuery;
 use super::query_params;
 use super::scoped_auth::check_request_owner_act;
 use super::scoped_read_for_legacy_api;
+use super::core_engine_error;
 use crate::auth::Locality;
 use crate::error::ApiError;
 use crate::projection;
@@ -93,6 +94,12 @@ use utoipa::ToSchema;
             content_type = "application/json"
         ),
         (
+            status = 409,
+            description = "A legal order keeps this readable record from use: its state, and the bound its message names.",
+            body = ApiError,
+            content_type = "application/json"
+        ),
+        (
             status = 500,
             description = "Entity lookup or projection failed.",
             body = ApiError,
@@ -116,20 +123,23 @@ pub(crate) async fn get_entity(
     })?;
 
     let scoped_read = scoped_read_for_legacy_api(&server, &auth)?;
+    // The caller named this row (FIX 5226): a legal order that keeps a row
+    // it otherwise reads from use answers its own refusal; a missing or
+    // withheld row stays absent. An engine refusal answers by its kind.
     let read = scoped_read
-        .read(&[oneiron::claim::PointRead::id(id)], None)
+        .read_named(&[oneiron::claim::PointRead::id(id)], None)
         .inspect_err(|error| tracing::error!(kind = ?error.kind(), "get entity failed"))
-        .map_err(|_| ApiError::internal_server_error("get entity failed"))?
-        .single();
-    let response = match read
-        .value
-        .and_then(|row| row.body.map(|data| (row.entity_type, row.learned_at, data)))
-    {
-        None => ApiError::not_found("entity", Some(&id_hex)).into_response(),
-        Some((_, _, data)) if view == View::Standard => {
+        .map_err(|error| core_engine_error("get entity failed", error))?;
+    let slot = read.value.into_iter().next().unwrap_or(Ok(None));
+    let response = match slot.map(|row| {
+        row.and_then(|row| row.body.map(|data| (row.entity_type, row.learned_at, data)))
+    }) {
+        Err(refusal) => core_engine_error("get entity failed", refusal).into_response(),
+        Ok(None) => ApiError::not_found("entity", Some(&id_hex)).into_response(),
+        Ok(Some((_, _, data))) if view == View::Standard => {
             (StatusCode::OK, redacted_payload(data)?).into_response()
         }
-        Some((entity_type, updated_at, data)) => (
+        Ok(Some((entity_type, updated_at, data))) => (
             StatusCode::OK,
             Json(projection::project_entity_parts(
                 &id,

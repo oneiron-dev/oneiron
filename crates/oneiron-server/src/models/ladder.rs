@@ -349,10 +349,11 @@ impl OfferLadder {
         include_prompt: bool,
     ) -> LlmResult<(LlmRequest, ServedOffer)> {
         self.admits(&request)?;
-        if self.kept_on_device(0, &request) {
+        if let Some(reason) = self.kept_on_device(0, &request) {
             return Err(RetryableLlmError::KeptOnDevice {
                 retry_after: None,
                 resets_at: Vec::new(),
+                reason: Some(reason.to_owned()),
             }
             .into());
         }
@@ -453,17 +454,18 @@ impl OfferLadder {
         passed_over
     }
 
-    /// Whether a fallback to the rung at `index` would take `request` off
-    /// the device while its world stays on it. A seat's configured first
-    /// rung, and the one model a caller or a manifest named, are the owner's
-    /// own pick, never a fallback; a later rung is one even when no rung
-    /// before it could be built.
-    fn kept_on_device(&self, index: usize, request: &LlmRequest) -> bool {
+    /// Why a fallback to the rung at `index` would take `request` off the
+    /// device while its world stays on it, judged for where that rung's
+    /// offer sends it (FIX 4938); `None` when it would not. A seat's
+    /// configured first rung, and the one model a caller or a manifest
+    /// named, are the owner's own pick, never a fallback; a later rung is one
+    /// even when no rung before it could be built.
+    fn kept_on_device(&self, index: usize, request: &LlmRequest) -> Option<&'static str> {
         let rung = &self.rungs[index];
-        !self.picked
-            && rung.position > 0
-            && leaves_device(&rung.offer.binding)
-            && !self.rests.world_may_leave(request)
+        if self.picked || rung.position == 0 || !leaves_device(&rung.offer.binding) {
+            return None;
+        }
+        self.rests.world_hold(request, &rung.offer.destination())
     }
 
     /// Whether the call passes the rung at `index` without sending it: it
@@ -477,8 +479,8 @@ impl OfferLadder {
             walk.note(index, Passed::VoiceNotHeld);
             return true;
         }
-        if self.kept_on_device(index, call.request) {
-            self.hold(call, index, walk);
+        if let Some(reason) = self.kept_on_device(index, call.request) {
+            self.hold(call, index, walk, reason);
             return true;
         }
         let rung = &self.rungs[index];
@@ -674,11 +676,12 @@ impl OfferLadder {
                     .filter(|fallback| !fallback.rests_now())
                     .filter(|fallback| fallback.can_serve(&self.scope, call.needs))
                     .filter(|fallback| {
-                        !fallback
-                            .rungs
-                            .iter()
-                            .any(|rung| leaves_device(&rung.offer.binding))
-                            || self.rests.world_may_leave(call.request)
+                        fallback.rungs.iter().all(|rung| {
+                            !leaves_device(&rung.offer.binding)
+                                || self
+                                    .rests
+                                    .world_may_leave(call.request, &rung.offer.destination())
+                        })
                     })
             })
     }
@@ -687,9 +690,9 @@ impl OfferLadder {
     /// take it off the device. A held call is never silent: the first time
     /// this call is held from that rung, the run's receipts get a `Denied`
     /// row for it.
-    fn hold(&self, call: Call<'_>, index: usize, walk: &mut Walk) {
+    fn hold(&self, call: Call<'_>, index: usize, walk: &mut Walk, reason: &'static str) {
         let first = !walk.held_from(index);
-        walk.note(index, Passed::KeptOnDevice);
+        walk.note(index, Passed::KeptOnDevice { reason });
         if !first {
             return;
         }
@@ -697,7 +700,7 @@ impl OfferLadder {
         call.run.refuse(
             Some(call.selector.unwrap_or(self.name.as_str())),
             rung.model.as_str(),
-            RunDenied::KeptOnDevice,
+            RunDenied::KeptOnDevice { reason },
         );
         tracing::info!(
             rung = rung.position,
@@ -824,8 +827,10 @@ impl OfferLadder {
             return None;
         }
         for index in 0..self.rungs.len() {
-            if !self.voice_not_held(call, index) && self.kept_on_device(index, call.request) {
-                self.hold(call, index, walk);
+            if !self.voice_not_held(call, index)
+                && let Some(reason) = self.kept_on_device(index, call.request)
+            {
+                self.hold(call, index, walk, reason);
             }
         }
         let now = self.rests.now()?;
@@ -870,11 +875,12 @@ impl OfferLadder {
             .back()
             .zip(self.rests.now())
             .map(|((_, back), now)| (Some(back.saturating_sub(now)), vec![back]));
-        if walk.kept() {
+        if let Some(reason) = walk.kept_reason() {
             let (retry_after, resets_at) = back.unwrap_or_default();
             return RetryableLlmError::KeptOnDevice {
                 retry_after,
                 resets_at,
+                reason: Some(reason.to_owned()),
             }
             .into();
         }
@@ -1131,9 +1137,9 @@ impl OfferLadder {
         // Admission can wait on the run's receipts, and the world settings
         // can change meanwhile: the world is judged again right before the
         // rung is sent.
-        if self.kept_on_device(index, call.request) {
+        if let Some(reason) = self.kept_on_device(index, call.request) {
             settle_failed(permit);
-            self.hold(call, index, walk);
+            self.hold(call, index, walk, reason);
             return Ok(Sent::Held);
         }
         let Some(_probe) = self.probe(index, walk) else {
@@ -1286,9 +1292,9 @@ impl OfferLadder {
         let permit = call
             .run
             .admit_media(selector, &bound, &rung.offer.binding)?;
-        if self.kept_on_device(index, call.request) {
+        if let Some(reason) = self.kept_on_device(index, call.request) {
             settle_failed(permit);
-            self.hold(call, index, walk);
+            self.hold(call, index, walk, reason);
             return Ok(None);
         }
         let Some(probe) = self.probe(index, walk) else {
@@ -1458,7 +1464,7 @@ impl OfferLadder {
         // device, the rung is settled unsent and every rung is judged again,
         // so the one wait goes to an offer the call may use now, or none.
         if let Some(back) = wait
-            && self.kept_on_device(back.index, request)
+            && self.kept_on_device(back.index, request).is_some()
         {
             if let Some((_, (_, permit))) = held.take() {
                 settle_failed(permit);
@@ -1595,9 +1601,9 @@ impl OfferLadder {
             // The world is judged again right before the rung is sent: its
             // admission, or the wait a held first rung sat through, may have
             // outlasted the world settings it was judged by.
-            if self.kept_on_device(index, request) {
+            if let Some(reason) = self.kept_on_device(index, request) {
                 settle_failed(next.1);
-                self.hold(call, index, walk);
+                self.hold(call, index, walk, reason);
                 continue;
             }
             if let Flow::Ended = self.stream_rung(run, index, next, walk, events).await {

@@ -19,7 +19,7 @@ use super::context_pack::{
 use super::contract::{VaultReadMethod, VaultReadRequest, VaultReadResponse};
 use super::error::{
     VaultReadError, VaultReadErrorExt, VaultReadResult, engine_absent, engine_failure,
-    invalid_request,
+    invalid_request, named_row,
 };
 use super::projection::{
     batch_item_from_result, entity_record_from_parts, project_context_pack,
@@ -406,19 +406,11 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     ) -> VaultReadResult<(CoreHydrateResponse, Option<ServedForm>)> {
         let hydrated = self
             .scoped_read
-            .read(&[PointRead::short(&short_id, content_hash)], None)
-            .map_err(|error| engine_failure(method, &error))?
-            .single();
+            .read_named(&[PointRead::short(&short_id, content_hash)], None)
+            .map_err(|error| engine_failure(method, &error))?;
         let mut narrowing = hydrated.receipt;
-        self.project_hydrate(
-            method,
-            short_id,
-            content_hash,
-            view,
-            reader,
-            hydrated.value,
-            &mut narrowing,
-        )
+        let row = named_row(method, hydrated.value)?;
+        self.project_hydrate(method, short_id, content_hash, view, reader, row, &mut narrowing)
     }
 
     /// One hydrated item, and the form it serves `reader` in place of an
@@ -545,7 +537,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .collect();
         let hydrated = self
             .scoped_read
-            .read(&refs, None)
+            .read_named(&refs, None)
             .map_err(|error| engine_failure(METHOD, &error))?;
         let mut narrowing = hydrated.receipt;
         let mut values = hydrated.value.into_iter();
@@ -560,6 +552,16 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                 });
                 continue;
             };
+            // A ref a legal order keeps from use answers in its own slot
+            // (FIX 5226); the batch goes on.
+            let Ok(row) = values.next().unwrap_or(Ok(None)) else {
+                results.push(CoreBatchShortIdHydrateItem {
+                    reference: reference.clone(),
+                    outcome: CoreShortIdHydrateOutcome::UseRestricted,
+                    result: None,
+                });
+                continue;
+            };
             // The batch receipt covers every item in the same authority txn,
             // and each text an item's asset is served.
             let result = self
@@ -569,7 +571,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
                     content_hash,
                     view,
                     &reader,
-                    values.next().flatten(),
+                    row,
                     &mut narrowing,
                 )
                 .map(|(response, form)| {

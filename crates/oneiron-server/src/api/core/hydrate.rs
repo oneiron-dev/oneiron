@@ -22,6 +22,8 @@ use serde_json::Value;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+mod use_restricted;
+
 /// Short-id hydrate request.
 #[derive(Debug, Deserialize, ToSchema)]
 #[schema(example = json!({
@@ -224,6 +226,8 @@ pub(crate) enum CoreShortIdHydrateOutcome {
     Deleted,
     MalformedShortId,
     NotFound,
+    /// A legal order keeps the named record from use (FIX 5226).
+    UseRestricted,
 }
 
 /// Per-input short-id hydrate error.
@@ -244,6 +248,9 @@ pub(crate) struct CoreShortIdHydrateError {
 pub(crate) enum CoreShortIdHydrateErrorKind {
     MalformedShortId,
     NotFound,
+    /// A legal order keeps the named record from use (FIX 5226): its
+    /// message is the order's own refusal.
+    UseRestricted,
 }
 
 /// Hydrate an entity by context-pack short reference.
@@ -257,6 +264,7 @@ pub(crate) enum CoreShortIdHydrateErrorKind {
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Short ref was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "A legal order keeps the named record from use.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Hydrate lookup failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -377,7 +385,7 @@ pub(crate) async fn core_batch_short_id_hydrate(
         .map(|(id, hash, mode)| oneiron::claim::PointRead::short(id, *hash).at(*mode))
         .collect();
     let hydrated = scoped_read
-        .read(&valid_refs, None)
+        .read_named(&valid_refs, None)
         .map_err(|error| core_engine_error("batch hydrate failed", error))?;
     let narrowing = hydrated.receipt;
     // Each item starts from the bulk read's receipt; a successor an item's
@@ -462,7 +470,7 @@ fn project_short_id_batch(
     scoped_read: &oneiron::claim::ScopedRead<'_>,
     refs: Vec<String>,
     parsed: Vec<Result<(String, u8, oneiron::memory::ReadMode), ApiError>>,
-    rows: Vec<Option<oneiron::claim::ReadRow>>,
+    rows: Vec<oneiron::claim::NamedSlot>,
     items: BatchItems<'_, '_>,
 ) -> Result<Vec<CoreBatchShortIdHydrateItem>, ApiError> {
     let BatchItems {
@@ -481,6 +489,15 @@ fn project_short_id_batch(
     for (reference, parsed) in refs.into_iter().zip(parsed) {
         let item = match parsed {
             Ok((short_id, content_hash, mode)) => {
+                // A ref a legal order keeps from use answers in its own slot
+                // (FIX 5226); the batch goes on.
+                let row = match values.next().unwrap_or(Ok(None)) {
+                    Ok(row) => row,
+                    Err(refusal) => {
+                        results.push(use_restricted::item(reference, &refusal));
+                        continue;
+                    }
+                };
                 match project_hydrated_short_id(
                     scoped_read,
                     short_id,
@@ -488,7 +505,7 @@ fn project_short_id_batch(
                     view,
                     reader,
                     mode,
-                    values.next().flatten(),
+                    row,
                     pick,
                     ItemReceipts {
                         start: narrowing.clone(),
@@ -631,13 +648,15 @@ pub(crate) fn hydrate_short_id_response_with_mode(
     ApiError,
 > {
     // A live read keeps deletion metadata. A pinned read preserves the pin.
+    // The caller named this ref: a legal order that keeps its row from use
+    // answers its own refusal (FIX 5226).
     let read = scoped_read
-        .read(
+        .read_named(
             &[oneiron::claim::PointRead::short(&short_id, content_hash).at(mode)],
             None,
         )
-        .map_err(|error| core_engine_error("core short hydrate failed", error))?
-        .single();
+        .map_err(|error| core_engine_error("core short hydrate failed", error))?;
+    let row = use_restricted::named_row(read.value)?;
     let mut receipt = read.receipt;
     let (value, observe) = project_hydrated_short_id(
         scoped_read,
@@ -646,7 +665,7 @@ pub(crate) fn hydrate_short_id_response_with_mode(
         view,
         reader,
         mode,
-        read.value,
+        row,
         pick,
         ItemReceipts {
             start: receipt.clone(),
