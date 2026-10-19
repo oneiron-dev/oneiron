@@ -21,6 +21,15 @@
 //! Real refusals of the caller's own input stay: authority, legal holds,
 //! shared-act windows and vetoes, a stale confirmed preview, storage errors.
 //! A hook may still annotate, explicitly Skip or explicitly Ask.
+//!
+//! Three rows are restrictive only by what they carry, judged on the
+//! caller's own args with the vault's help ([`payload`], FIX 5137-5139):
+//! `vault.batch`'s grant withdrawals, `vault.packs.connector.accept`'s
+//! revoking dispositions and `vault.shared.execute`'s delete, erase and
+//! remove-owner acts. Only those parts are pinned; the rest of such a call
+//! stays the hooks' to change.
+
+mod payload;
 
 use std::fmt;
 
@@ -88,7 +97,7 @@ macro_rules! always {
 
 /// The restrictive rows (sweep rows D01-D39; the owner HTTP doors H1-H4 share
 /// D01, D02, D11 and D35's verbs). `vault.batch`, `vault.packs.connector.accept`
-/// and `vault.shared.execute` are polymorphic and not here yet (FIX-LIST).
+/// and `vault.shared.execute` are polymorphic: [`payload`] judges them.
 const ROWS: &[Row] = &[
     always!("vault.guests.revoke", [pin(&["grant_ref"], typed)]),
     always!("vault.support_grants.revoke", [pin(&["grant_ref"], hex32)]),
@@ -159,16 +168,23 @@ const ROWS: &[Row] = &[
         "vault.notes.history_purge_execute",
         [pin(&["act_id"], typed)],
     ),
-    always!(
-        "vault.courtesy_delete.answer",
-        [
+    // A hook's reason code or review date that breaks the answer's shape
+    // (one on a delete choice, or a bad one on any other) is ignored, not a
+    // refusal of the delete (FIX 5140).
+    Row {
+        verb: "vault.courtesy_delete.answer",
+        when: When::Always,
+        pins: &[
             pin(&["pact"], hex32),
             pin(&["request"], hex16),
             pin(&["choice"], typed),
             pin(&["delete"], entities),
             pin(&["hold"], entities),
+            pin(&["reason_code"], typed),
+            pin(&["review_at"], typed),
         ],
-    ),
+        check: Some(courtesy_answer_shape),
+    },
     always!(
         "vault.skill_hubs.publishers.revoke",
         [pin(&["hub"], typed), pin(&["identity"], typed)],
@@ -366,6 +382,33 @@ fn names_a_section(args: &Value) -> bool {
         .any(|field| args.get(field).is_some_and(|value| !value.is_null()))
 }
 
+/// The longest reason code a courtesy answer carries, as the engine's
+/// answer check takes it (`deletion/coop_delivery.rs` MAX_REASON_CODE_LEN).
+const COURTESY_REASON_CODE_MAX: usize = 48;
+
+/// A courtesy answer's shape, as the engine checks it before its delete loop
+/// (`Vault::answer_cooperative_deletion_as`): a delete choice carries no
+/// reason code or review date; any other carries a short snake_case reason
+/// code and a review date, and deletes nothing.
+fn courtesy_answer_shape(args: &Value) -> bool {
+    let present = |field: &str| args.get(field).is_some_and(|value| !value.is_null());
+    if args.get("choice").and_then(Value::as_str) == Some("delete") {
+        return !present("reason_code") && !present("review_at");
+    }
+    let code = args.get("reason_code").and_then(Value::as_str);
+    code.is_some_and(|code| {
+        !code.is_empty()
+            && code.len() <= COURTESY_REASON_CODE_MAX
+            && code
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    }) && present("review_at")
+        && args
+            .get("delete")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty)
+}
+
 /// A KV address the KV doors take.
 fn kv_address(args: &Value) -> bool {
     <crate::memory::KeyValueAddress as serde::Deserialize>::deserialize(args)
@@ -382,18 +425,31 @@ pub(crate) fn restrictive(verb: &str, args: &Value) -> Option<&'static Row> {
     }
 }
 
-/// A restrictive call's landing: its row, the caller's own args, and what
-/// the owner's notice says about the hooks' changes.
+/// A restrictive call's landing: its verb, its pinned fields and its row's
+/// own check, the caller's own args, and what the owner's notice says about
+/// the hooks' changes.
 pub(crate) struct Landing {
-    row: &'static Row,
+    verb: &'static str,
+    pins: Vec<Pinned>,
+    check: Option<fn(&Value) -> bool>,
+    /// The grant withdrawals of a `vault.batch` call, as the caller sent
+    /// them ([`payload`]); empty for every other call.
+    puts: Vec<Value>,
     original: Value,
     notes: Vec<String>,
+}
+
+/// One field a restrictive call pins: its path in the args, and the door's
+/// own pure parse of its value.
+struct Pinned {
+    path: Vec<String>,
+    parse: fn(&Value) -> bool,
 }
 
 impl fmt::Debug for Landing {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Landing")
-            .field("verb", &self.row.verb)
+            .field("verb", &self.verb)
             .field("notes", &self.notes)
             .finish_non_exhaustive()
     }
@@ -401,10 +457,29 @@ impl fmt::Debug for Landing {
 
 impl Landing {
     /// The landing of a call of `verb` on the caller's own `args`: `Some`
-    /// only for a restrictive call.
-    pub(crate) fn of(verb: &str, args: &Value) -> Option<Self> {
-        restrictive(verb, args).map(|row| Self {
-            row,
+    /// only for a restrictive call, a polymorphic row's judged on what it
+    /// carries ([`payload`]).
+    pub(crate) fn of(vault: &Vault, verb: &str, args: &Value) -> Option<Self> {
+        let (verb, pins, check, puts) = match restrictive(verb, args) {
+            Some(row) => (
+                row.verb,
+                row.pins
+                    .iter()
+                    .map(|pin| Pinned {
+                        path: pin.path.iter().map(|key| (*key).to_owned()).collect(),
+                        parse: pin.parse,
+                    })
+                    .collect(),
+                row.check,
+                Vec::new(),
+            ),
+            None => payload::restrictive(vault, verb, args)?,
+        };
+        Some(Self {
+            verb,
+            pins,
+            check,
+            puts,
             original: args.clone(),
             notes: Vec::new(),
         })
@@ -445,9 +520,9 @@ impl Landing {
     /// change that stands.
     fn pin(&self, base: &Value, candidate: &mut Value, applied: bool) -> Vec<String> {
         let mut notes = Vec::new();
-        for pin in self.row.pins {
-            let before = lookup(base, pin.path);
-            let after = lookup(candidate, pin.path).cloned();
+        for pin in &self.pins {
+            let before = lookup(base, &pin.path);
+            let after = lookup(candidate, &pin.path).cloned();
             if before == after.as_ref() {
                 continue;
             }
@@ -458,12 +533,12 @@ impl Landing {
                 shown(after.as_ref())
             );
             if !after.as_ref().is_some_and(pin.parse) {
-                restore(candidate, pin.path, before.cloned());
+                restore(candidate, &pin.path, before.cloned());
                 notes.push(format!(
                     "a hook changed what this revoke acts on: {change}; it fails the door's check and was ignored"
                 ));
             } else if RESTRICTIVE_TARGETS_PINNED {
-                restore(candidate, pin.path, before.cloned());
+                restore(candidate, &pin.path, before.cloned());
                 notes.push(format!(
                     "a hook changed what this revoke acts on: {change}; the change was ignored"
                 ));
@@ -472,16 +547,15 @@ impl Landing {
             }
         }
         let pinned_differs = self
-            .row
             .pins
             .iter()
-            .any(|pin| lookup(base, pin.path) != lookup(candidate, pin.path));
+            .any(|pin| lookup(base, &pin.path) != lookup(candidate, &pin.path));
         if pinned_differs
-            && let Some(check) = self.row.check
+            && let Some(check) = self.check
             && !check(candidate)
         {
-            for pin in self.row.pins {
-                restore(candidate, pin.path, lookup(base, pin.path).cloned());
+            for pin in &self.pins {
+                restore(candidate, &pin.path, lookup(base, &pin.path).cloned());
             }
             notes.clear();
             notes.push(
@@ -489,16 +563,28 @@ impl Landing {
                     .to_owned(),
             );
         }
+        if !self.puts.is_empty() {
+            match payload::keep_puts(&self.puts, candidate, applied) {
+                Some(kept) => notes.extend(kept),
+                None => {
+                    *candidate = base.clone();
+                    notes.push(
+                        "a hook's change to this batch's grant withdrawals could not be put back, so the batch kept the input it had"
+                            .to_owned(),
+                    );
+                }
+            }
+        }
         notes
     }
 
     /// The caller's own target, as the notice shows it: its first pinned
     /// field the args hold.
     fn target(&self) -> Option<String> {
-        self.row
-            .pins
+        self.pins
             .iter()
-            .find_map(|pin| lookup(&self.original, pin.path))
+            .find_map(|pin| lookup(&self.original, &pin.path))
+            .or_else(|| self.puts.first().and_then(|put| put.get("id")))
             .map(|value| shown(Some(value)))
     }
 }
@@ -519,7 +605,7 @@ pub fn settle(pre: &mut VerbHookPre, decodes: &dyn Fn(&Value) -> bool) {
         pre.args = original;
         landing.notes.push(format!(
             "the args the hooks left do not decode as {}'s input, so it ran on the caller's own input",
-            landing.row.verb
+            landing.verb
         ));
     }
 }
@@ -606,26 +692,28 @@ fn record_notice(vault: &Vault, pre: &VerbHookPre, landing: &Landing) -> crate::
 }
 
 /// The value at `path` in `args`.
-fn lookup<'v>(args: &'v Value, path: &[&str]) -> Option<&'v Value> {
-    path.iter().try_fold(args, |node, key| node.get(key))
+fn lookup<'v, S: AsRef<str>>(args: &'v Value, path: &[S]) -> Option<&'v Value> {
+    path.iter()
+        .try_fold(args, |node, key| node.get(key.as_ref()))
 }
 
 /// Puts `old` at `path` in `args`, or takes the field away when `old` is
 /// `None`.
-fn restore(args: &mut Value, path: &[&str], old: Option<Value>) {
+fn restore<S: AsRef<str>>(args: &mut Value, path: &[S], old: Option<Value>) {
     let Some((last, parents)) = path.split_last() else {
         return;
     };
     let mut node = args;
     for key in parents {
+        let key = key.as_ref();
         let Some(map) = node.as_object_mut() else {
             return;
         };
-        if old.is_none() && !map.contains_key(*key) {
+        if old.is_none() && !map.contains_key(key) {
             return;
         }
         node = map
-            .entry((*key).to_owned())
+            .entry(key.to_owned())
             .or_insert_with(|| Value::Object(serde_json::Map::new()));
     }
     let Some(map) = node.as_object_mut() else {
@@ -633,10 +721,10 @@ fn restore(args: &mut Value, path: &[&str], old: Option<Value>) {
     };
     match old {
         Some(old) => {
-            map.insert((*last).to_owned(), old);
+            map.insert(last.as_ref().to_owned(), old);
         }
         None => {
-            map.remove(*last);
+            map.remove(last.as_ref());
         }
     }
 }
