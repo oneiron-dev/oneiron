@@ -22,12 +22,34 @@ pub(crate) fn custody_corrupt() -> Error {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct CustodyNamespace([u8; 16]);
 
+impl CustodyNamespace {
+    /// The namespace a custody head, log frame or anchor record names.
+    pub(super) fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self(bytes)
+    }
+
+    pub(super) fn as_bytes(&self) -> &[u8; 16] {
+        &self.0
+    }
+}
+
 /// The vault whose subjects a custody holds: the store's own identity
 /// (`vault_identity:local:v1`) when the binding was minted, else 32 random
 /// bytes. Never a path hash. A fork keeps it: the entries it copies are still
 /// that vault's subjects, in another namespace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct CustodyVaultId([u8; 32]);
+
+impl CustodyVaultId {
+    /// The vault a custody head, log frame or anchor record names.
+    pub(super) fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    pub(super) fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
 
 /// What a custody entry keys. Each kind has a stable one-byte tag, used by
 /// its directory name and its intent key; a tag is never reused or renumbered.
@@ -233,6 +255,22 @@ impl CustodyBinding {
 
     pub(crate) fn vault(&self) -> CustodyVaultId {
         self.vault
+    }
+
+    /// The fork and retirement domain this custody's entries live in.
+    pub(crate) fn namespace(&self) -> CustodyNamespace {
+        self.namespace
+    }
+
+    /// The same custody, its namespace and vault kept, beside the vault at
+    /// `root`: a disaster recovery's destination, which takes over the
+    /// source's lineage (KS-4) rather than forking it.
+    pub(crate) fn rebind_to(&self, root: PathBuf) -> Self {
+        Self {
+            namespace: self.namespace,
+            vault: self.vault,
+            root,
+        }
     }
 
     /// The vault root this custody sits beside.

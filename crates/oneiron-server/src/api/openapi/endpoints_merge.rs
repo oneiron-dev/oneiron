@@ -111,7 +111,7 @@ pub(crate) fn openapi_document() -> Value {
     merge_booking_components(&mut spec);
     merge_retrieval_depth_components(&mut spec);
     super::owner_paths::merge_owner_paths(&mut spec);
-    super::owner_paths::merge_left_slip_paths(&mut spec);
+    super::left_slip_paths::merge_left_slip_paths(&mut spec);
     super::facade_paths::merge_facade_paths(&mut spec);
     super::openai_proxy_paths::merge_openai_proxy_paths(&mut spec);
     super::anonymous_chat_paths::merge_anonymous_chat_paths(&mut spec);

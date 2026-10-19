@@ -183,6 +183,11 @@ pub use group_commit::GroupCommitStats;
 pub(crate) use group_commit::{Callback, GroupCommit, GroupCommitCounters, Rows};
 pub use handle::*;
 pub(crate) use key_custody::ForkedCustodyDir;
+pub(crate) use key_custody::{
+    AnchorAdvance, AnchorStore, CUSTODY_HEAD_WRAP_CONTEXT, CustodyRecipients, CustodyRequirement,
+    CustodyRoute, CustodySourceAt, FileAnchor, FolderTarget, Publication, PublicationState,
+    route_custody, unbind_in_txn as unbind_custody_in_txn,
+};
 pub(crate) use key_encoding::*;
 pub use open_gates::*;
 pub(crate) use outbound_send_receipt::*;

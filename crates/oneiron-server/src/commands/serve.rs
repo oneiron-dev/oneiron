@@ -254,7 +254,8 @@ pub fn open_served_vault<H: oneiron_vault_contract::host::Host>(
     // scratch takes a fresh incarnation of it (`owner::backup`).
     let mut rehearsal_config = vault_config.clone();
     rehearsal_config.page_seal = None;
-    let owner_host = crate::owner::schedule::OwnerHost::from_config(config, rehearsal_config);
+    let owner_host = crate::owner::schedule::OwnerHost::from_config(config, rehearsal_config)
+        .anchored_at(&config.backup);
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(reembed::with_model_change_remedy)?;
     managed::warn_if_reader_table_short(&vault);
@@ -527,6 +528,8 @@ pub(crate) async fn start_desktop_workers(
         crate::server::admit_every_pass(),
     ));
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
+    // The custody head beside the backups, and its anchor (KS-4A1).
+    workers.extend(sync_server.spawn_custody_publication());
     // Documents whose signing finished are sealed as a task (OF-415).
     #[cfg(unix)]
     workers.push(crate::api::spawn_esign_seal_worker(Arc::clone(

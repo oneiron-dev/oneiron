@@ -50,12 +50,15 @@ use crate::cli::{
 };
 use crate::commands::credential_file;
 use crate::config::{ServeConfig, resolve_serve_config};
-use crate::owner::backup::{self, RestoreTarget, RestoredFresh};
 use crate::owner::local_owner;
 use crate::owner::vault_key::{self as view, SignerPin, hex, secret32};
 
 /// The most a secret read is: a password is at most 1024 bytes.
 const SECRET_LIMIT: usize = 4096;
+
+mod fresh_restore;
+
+pub(super) use self::fresh_restore::restore_fresh;
 
 /// What a command that runs on a stopped vault does instead while a server
 /// holds it.
@@ -908,63 +911,4 @@ pub(super) fn backup_key(
             opened(CheckpointKey::unlock(backup, &engine))?.trusting(pins),
         )),
     }
-}
-
-/// What a restore where no vault was did.
-#[derive(Serialize)]
-pub(super) struct FreshRestore {
-    #[serde(flatten)]
-    restored: RestoredFresh,
-    unlocked_with: String,
-    /// The restored vault's wraps, with this install's device wrap when its
-    /// keystore is on.
-    wraps: Vec<view::WrapView>,
-}
-
-/// Restores `backup` where no vault is yet, unlocks the new vault's data key
-/// the same way and wraps it to this install's keystore. The vault is sealed
-/// (OF-570 maximum tier) when the config asks for the tier, under the
-/// backup's own data key, and is kept only once its key is wrapped here.
-pub(super) fn restore_fresh(
-    backup: &Path,
-    config: &ServeConfig,
-    keystore: Option<Arc<dyn DeviceKeystore>>,
-    unlock: &HostUnlock,
-    pins: Option<Vec<CheckpointSigner>>,
-) -> anyhow::Result<FreshRestore> {
-    let key = match backup_key(backup, &config.vault_path, keystore.as_ref(), unlock, pins)? {
-        Some(key) => key,
-        None => match keystore {
-            Some(keystore) => {
-                CheckpointKey::unlock(backup, &VaultKeyUnlock::Device(keystore.as_ref()))
-                    .map(|key| key.trusting_device(keystore))
-            }
-            None => CheckpointKey::unlock_on_this_device(backup, &config.vault_path),
-        }
-        .map_err(|error| anyhow::anyhow!("backup {} does not open: {error}", backup.display()))?,
-    };
-    let mut target = vault_config(config);
-    target.page_seal = backup::restore_target_seal(RestoreTarget::Fresh {
-        maximum_tier: config.maximum_tier,
-        key: &key,
-    })?;
-    let path = &config.vault_path;
-    // Before the vault is kept: its key unlocks the same way and is wrapped
-    // to this install, so a sealed one is published only once it opens here.
-    let (vault, restored) = backup::restore_fresh(backup, path, target, &key, |vault| {
-        let installed = config.keystore.install_on(vault, path);
-        unlock.unlock_live(vault)?;
-        // A device unlock of a plain vault wraps the key to this install on
-        // its own; a sealed vault's key is already held from its page seal.
-        let sealed = vault.vault_pages_sealed();
-        if installed && (sealed || !matches!(unlock, HostUnlock::Device)) {
-            vault.add_vault_key_device()?;
-        }
-        vault.check_page_custody()
-    })?;
-    Ok(FreshRestore {
-        wraps: view::report(&vault)?.wraps,
-        unlocked_with: unlock.name(),
-        restored,
-    })
 }

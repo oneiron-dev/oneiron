@@ -39,7 +39,10 @@ use crate::owner::local_owner;
 use crate::owner::recovery_kit::{self as view, kit_id};
 use crate::owner::vault_key::{WrapView, hex, secret32};
 
+mod custody;
 mod issue;
+
+pub(super) use self::custody::kit_custody_root;
 
 /// The most a piece file is: an export is 89 bytes, a code 99 characters.
 const PIECE_LIMIT: usize = 1024;

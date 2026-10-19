@@ -20,19 +20,24 @@ mod artifact;
 mod authority_plane;
 mod carried_bodies;
 mod commitment;
+mod custody_head;
 mod decisions;
 mod host_holds;
 mod rebuild;
 mod restore_class;
+mod snapshot;
 mod tiers;
 mod write_budget;
 mod write_estimate;
-use crate::ports::{IndexRows, RetrievalIndexInventory};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody, MadeDestination};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
 pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey};
 pub use commitment::CheckpointSigner;
+pub use custody_head::{
+    CUSTODY_ANCHOR_PENDING, CUSTODY_FENCED, CUSTODY_NONE, CUSTODY_PUBLISHED,
+    CUSTODY_TARGET_PENDING, CustodyAnchorRoot, CustodyRecovery, CustodyStatus,
+};
 use heed::types::Bytes;
 pub use host_holds::HostOrderHolds;
 use serde::{Deserialize, Serialize};
@@ -96,6 +101,11 @@ enum Custody<'a> {
     /// holds a key the source's live state, when given, says is destroyed or
     /// committed to be.
     Fork(Option<&'a LiveCustody>),
+    /// As `Keep`, for a new-host restore of an image that names no custody
+    /// head and whose custody is not on this host: its claim-bound rows whose
+    /// keys stayed there are dropped and named, and its binding and
+    /// retirement intents go with them (CALLS CUSTODY_NO_HEAD_GATE_ROWS).
+    NewHost,
 }
 /// The custody a side restore forked, removed on drop unless kept: a restore
 /// that fails or is refused after its fork leaves no copy of a live key.
@@ -256,6 +266,14 @@ pub struct RestoreReport {
     pub rebuilt_entities: usize,
     pub rebuilt_text_documents: usize,
     pub pending_embeddings: usize,
+    /// Claim-bound gate decisions a new-host restore dropped because their
+    /// keys stayed on the old host, by decision id (hex): the image named
+    /// no custody head (CALLS CUSTODY_NO_HEAD_GATE_ROWS).
+    pub dropped_gate_decisions: Vec<String>,
+    /// What the restore says about the custody head it used: rollback is
+    /// not proven when no anchor was configured (CALLS
+    /// CUSTODY_ANCHOR_UNSET_RESTORE).
+    pub custody_note: Option<String>,
 }
 fn codec_error() -> Error {
     Error::CorruptedIndex("canonical checkpoint image")
@@ -266,6 +284,19 @@ fn read_image<'k>(
     path: &Path,
     key: &'k CheckpointKey,
 ) -> Result<(CheckpointImage, String, artifact::SealedBodies<'k>)> {
+    read_image_required(path, key).map(|(image, id, bodies, _)| (image, id, bodies))
+}
+
+/// [`read_image`], with what the image needs of its custody (KS-4).
+fn read_image_required<'k>(
+    path: &Path,
+    key: &'k CheckpointKey,
+) -> Result<(
+    CheckpointImage,
+    String,
+    artifact::SealedBodies<'k>,
+    Option<crate::store::CustodyRequirement>,
+)> {
     let opened = artifact::open_artifact(path, key)?;
     let image: CheckpointImage = rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
     if image.version != 2
@@ -298,7 +329,7 @@ fn read_image<'k>(
         return Err(codec_error());
     }
     let id = blake3::Hash::from(opened.image_id).to_hex().to_string();
-    Ok((image, id, opened.bodies))
+    Ok((image, id, opened.bodies, opened.custody))
 }
 impl Vault {
     /// Create-new output only: one sealed artifact under this vault's
@@ -362,182 +393,6 @@ impl Vault {
     ) -> Result<String> {
         self.snapshot_checkpoint_checked(path, created_at, owner, ArtifactKind::Backup, budget)
     }
-    fn snapshot_checkpoint_checked(
-        &self,
-        path: &Path,
-        created_at: u64,
-        owner: Option<&crate::consent::AuthenticatedOwner>,
-        kind: ArtifactKind,
-        budget: &dyn RecoveryWriteBudget,
-    ) -> Result<String> {
-        self.unlock_vault_key()?;
-        let keys = self.checkpoint_signing_keys()?;
-        let _custody = self.store.gate_custody_read_guard()?;
-        let _bodies = self.pin_all_result_bodies();
-        let txn = self.store.env.read_txn()?;
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(self, &txn)?;
-        }
-        // The vault key's wraps the artifact carries are the rows' own, and
-        // so is the chain it extends.
-        let (carried, key) = self.checkpoint_seal_in_txn(&txn)?;
-        let link = commitment::Link {
-            keys,
-            head: self.checkpoint_chain_in_txn(&txn)?,
-        };
-        // Refuse a checkpoint that cannot read CURRENT exterior custody; it
-        // cannot package key bytes to paper over a missing/shredded key.
-        self.store.for_each_gate_decision_in_txn(&txn, |_| Ok(()))?;
-        // Only claim/summary bodies have a canonical re-embedding path today.
-        // Diagnostics are deliberately runtime-only. Other explicit vectors must
-        // not silently disappear.
-        for row in self.store.port_vector_rows(&txn, |id, _| {
-            crate::EntityId::from_bytes(id.try_into().map_err(|_| codec_error())?)
-        })? {
-            let id = row??;
-            let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?;
-            let reconstructable = match raw.as_deref() {
-                Some(raw) => {
-                    rebuild::has_embedding_source(raw)?
-                        || crate::batch::EntityMetadataHeader::parse(raw).is_some_and(|header| {
-                            header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
-                        })
-                }
-                None => false,
-            };
-            if !reconstructable {
-                return Err(Error::InvalidConfig(
-                    "checkpoint vector lacks a canonical re-embedding source".into(),
-                ));
-            }
-        }
-        // A pre-witness index is not silently restored as an empty search surface.
-        for row in self
-            .store
-            .port_index_rows(&txn, IndexRows::TextForward, |id, _| {
-                EntityId::from_bytes(id.try_into().map_err(|_| codec_error())?)
-            })?
-        {
-            let id = row??;
-            if !INDEX_SOURCE_TEXT.contains(&self.store, &txn, &id)? {
-                return Err(Error::InvalidConfig(
-                    "text index lacks canonical rebuild input".into(),
-                ));
-            }
-        }
-        for row in self
-            .store
-            .port_index_rows(&txn, IndexRows::PhoneticForward, |id, _| {
-                EntityId::from_bytes(id.try_into().map_err(|_| codec_error())?)
-            })?
-        {
-            let id = row??;
-            if !INDEX_SOURCE_PHONETIC.contains(&self.store, &txn, &id)? {
-                return Err(Error::InvalidConfig(
-                    "phonetic index lacks canonical rebuild input".into(),
-                ));
-            }
-        }
-        let mut excluded = std::collections::BTreeSet::<Vec<u8>>::new();
-        for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
-            let (key, value) = row?;
-            if crate::batch::EntityMetadataHeader::parse(&value)
-                .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC)
-            {
-                excluded.insert(key.as_bytes().to_vec());
-            }
-        }
-        let mut databases = BTreeMap::new();
-        let mut census = carried_bodies::BodyCensus::default();
-        for entry in DB_MANIFEST {
-            let mut image_row = |key: &[u8], value: &[u8]| -> Result<Option<(Vec<u8>, Vec<u8>)>> {
-                if storage_tier(entry.name, key) != StorageTier::Canonical {
-                    return Ok(None);
-                }
-                let excluded_row = match entry.name {
-                    "entities" | "short_ids_reverse" => excluded.contains(key),
-                    "short_ids" => excluded.contains(value),
-                    "edges_out" | "edges_in" => {
-                        key.len() == 33
-                            && (excluded.contains(&key[..16]) || excluded.contains(&key[17..]))
-                    }
-                    "vault_meta" => [
-                        INDEX_SOURCE_TEXT.decl().prefix,
-                        INDEX_SOURCE_PHONETIC.decl().prefix,
-                    ]
-                    .iter()
-                    .any(|p| key.strip_prefix(*p).is_some_and(|id| excluded.contains(id))),
-                    _ => false,
-                };
-                if excluded_row {
-                    return Ok(None);
-                }
-                // Every body file a row names goes with it: a result body's,
-                // a file-plane ASSET's (FIX 3677), each descriptor's, and a
-                // sealed file's key row (FIX 5348).
-                census.note(&self.store, &txn, entry.name, key, value)?;
-                let value = if entry.name == "job_records" {
-                    rebuild::unlease_attempt(key, value)?
-                } else {
-                    value.to_vec()
-                };
-                Ok(Some((key.to_vec(), value)))
-            };
-            let mut rows = Vec::new();
-            // A retrieval-index table is read through the inventory port, whose tables the open
-            // gate proved present; any other table opens by name, and a missing one is a corrupt
-            // image.
-            if let Some(index) = IndexRows::of_manifest_db(entry.name) {
-                for row in self.store.port_index_rows(&txn, index, &mut image_row)? {
-                    rows.extend(row??);
-                }
-            } else {
-                let db = self
-                    .store
-                    .env
-                    .open_database::<Bytes, Bytes>(&txn, Some(entry.name))?
-                    .ok_or(codec_error())?;
-                for row in db.iter(&txn)? {
-                    let (key, value) = row?;
-                    rows.extend(image_row(key, value)?);
-                }
-            }
-            databases.insert(entry.name.into(), rows);
-        }
-        drop(txn);
-        // Two rows may name one file: it is carried once. Body files are
-        // immutable once named, so the ones the snapshot's rows name read the
-        // same after its transaction. Each is sealed into the artifact after
-        // the image, and never lands anywhere in the clear.
-        let files = census.finish(&self.store)?;
-        let (bodies, sealed_bodies) = files.image_bodies();
-        let image = CheckpointImage {
-            version: 2,
-            created_at,
-            databases,
-            bodies,
-            sealed_bodies,
-        };
-        let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
-        let (id, head) = artifact::write_artifact(
-            path,
-            &key,
-            kind,
-            &carried,
-            &link,
-            created_at,
-            &bytes,
-            &files.streams(),
-            |index| files.open(index),
-            budget,
-        )?;
-        // A checkpoint the chain does not take is no checkpoint.
-        if let Err(error) = self.advance_checkpoint_chain(link.head, head) {
-            let _ = std::fs::remove_file(path);
-            return Err(error);
-        }
-        Ok(blake3::Hash::from(id).to_hex().to_string())
-    }
     /// Restore, wake and migrate use the same fail-closed path, with no tail replay.
     /// Model-dependent vectors enter the normal pending-embedding queue; no vector
     /// from another owner or old model can be served while that queue is rebuilt.
@@ -585,24 +440,15 @@ impl Vault {
         restored_at: u64,
         finish: impl FnOnce(&Self) -> Result<()>,
     ) -> Result<(Self, RestoreReport)> {
-        let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
-        image.drop_machine_identity();
-        let (made, forked, mut vault, report) = Self::restore_image(
-            image,
-            checkpoint_id,
-            bodies,
+        Self::restore_keeping_custody(
+            path,
+            key,
             destination,
             config,
-            reason,
-            restored_at,
-            Custody::Keep,
-            &BTreeSet::new(),
-            &write_budget::Unfloored,
-        )?;
-        finish(&vault)?;
-        forked.keep();
-        made.keep(&mut vault);
-        Ok((vault, report))
+            (reason, restored_at),
+            None,
+            finish,
+        )
     }
     /// [`Vault::restore_checkpoint`] as a copy served beside its source vault.
     /// Key custody forks at restore time: the copy gets its own custody beside
@@ -875,12 +721,16 @@ impl Vault {
         // creating a destination. A checkpoint never carries a key copy, and
         // a row whose key an erase destroyed since is dropped, not restored.
         let (fork, source, home) = match custody {
-            Custody::Keep => (false, None, None),
+            Custody::Keep | Custody::NewHost => (false, None, None),
             Custody::Replace(home) => (false, None, Some(home)),
             Custody::Fork(source) => (true, source, None),
         };
-        let gate_custody =
-            crate::store::preflight_checkpoint_rows(&image.databases["vault_meta"], source)?;
+        let new_host = matches!(custody, Custody::NewHost);
+        let gate_custody = if new_host {
+            crate::store::preflight_absent_custody_rows(&image.databases["vault_meta"])?
+        } else {
+            crate::store::preflight_checkpoint_rows(&image.databases["vault_meta"], source)?
+        };
         if fork {
             crate::store::refuse_custody_beside(destination)?;
         }
@@ -941,7 +791,10 @@ impl Vault {
             }
             vault
                 .store
-                .drop_erased_gate_decisions_in_txn(txn, gate_custody.erased())?;
+                .drop_erased_gate_decisions_in_txn(txn, &gate_custody.dropped())?;
+            if new_host {
+                crate::store::unbind_custody_in_txn(&vault.store, txn)?;
+            }
             // A written-here mark carried from the live vault binds only a
             // carrier the restored rows hold, byte for byte.
             crate::identity_topology::drop_unheld_author_marks_in_txn(&vault.store, txn)?;
@@ -1024,6 +877,12 @@ impl Vault {
             rebuilt_entities,
             rebuilt_text_documents,
             pending_embeddings,
+            dropped_gate_decisions: gate_custody
+                .lost()
+                .iter()
+                .map(|(id, _)| id.to_hex())
+                .collect(),
+            custody_note: None,
         };
         Ok((made, forked, vault, report))
     }

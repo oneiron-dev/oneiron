@@ -104,6 +104,7 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
     kind: ArtifactKind,
     carried: &CarriedVaultKey,
     link: &Link,
+    custody: Option<&crate::store::CustodyRequirement>,
     created_at: u64,
     image: &[u8],
     bodies: &[ArtifactBody],
@@ -171,6 +172,7 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
         key_header: *blake3::hash(&key_header).as_bytes(),
         image,
         bodies: sealed_bodies,
+        custody: custody.cloned(),
     };
     let manifest_at = sink.offset;
     let bytes = rmp_serde::to_vec_named(&manifest).map_err(|_| codec())?;
