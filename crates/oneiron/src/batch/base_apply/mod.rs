@@ -850,7 +850,7 @@ pub(super) fn apply_ops_with_origin(
     // DOOR-101: an owner home pick this batch landed, local or from a peer's
     // log, re-elects this node's MACRO home over the final batch state.
     if crate::authority::authority_cache_generation(store, wtxn)? != authority_generation {
-        crate::dreamer_runner::reelect_home_in_txn(store, wtxn, config.privacy.posture)?;
+        crate::dreamer_runner::reelect_home_in_txn(store, wtxn, config.privacy.posture);
     }
 
     finalize_batch_indexes(

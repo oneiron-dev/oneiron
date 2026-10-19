@@ -267,7 +267,7 @@ impl Vault {
         // The adopted fold may carry an owner home pick (DOOR-101): it
         // re-elects this node's MACRO home in the caller's transaction, whose
         // commit owes the wake.
-        crate::dreamer_runner::reelect_home_in_txn(store, wtxn, self.privacy_posture())?;
+        crate::dreamer_runner::reelect_home_in_txn(store, wtxn, self.privacy_posture());
         Ok(id)
     }
 

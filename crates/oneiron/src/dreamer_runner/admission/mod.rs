@@ -282,7 +282,7 @@ impl DreamerRunnerStore<'_> {
                         &self.vault.store,
                         wtxn,
                         self.vault.privacy_posture(),
-                    )?;
+                    );
                     let Some(designation) = self.home_node_designation_in_txn(wtxn)? else {
                         return Ok(DreamerConsolidationAdmissionOutcome::NoHomeNode);
                     };

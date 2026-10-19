@@ -69,12 +69,22 @@ impl DreamerRunnerStore<'_> {
     ) -> Result<Option<DreamerHomeNodeDesignation>> {
         let store = &self.vault.store;
         let mut wtxn = store.env.write_txn()?;
-        let pick = crate::authority::election_home_pick_in_txn(
+        // A fold this snapshot cannot read elects in the default order, as
+        // the election did before picks: it never fails the topology write.
+        let pick = match crate::authority::election_home_pick_in_txn(
             store,
             self.vault.privacy_posture(),
             &wtxn,
-        )?
-        .and_then(|picks| picks.election_pick());
+        ) {
+            Ok(picks) => picks.and_then(|picks| picks.election_pick()),
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "MACRO home election read no owner pick; it elects in the default order"
+                );
+                None
+            }
+        };
         let (designation, moved) = elect_in_txn(store, &mut wtxn, candidates, pick, now)?;
         HOME_CANDIDATES.put(store, &mut wtxn, &(), &candidates.to_vec())?;
         wtxn.commit()?;
@@ -121,7 +131,28 @@ impl DreamerRunnerStore<'_> {
 /// kept, or while this snapshot cannot read the pick (history the vault
 /// lacks, conflicting vault roots): the designation stands. Returns whether
 /// the designation moved; the caller's commit owes the wake.
+///
+/// Never fails the write that carries it (Engine 10-19 10:0x): an error
+/// reading the fold or electing is logged, the last elected home stands,
+/// and the next landing or admission elects again.
 pub(crate) fn reelect_home_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    posture: HostingPrivacyPosture,
+) -> bool {
+    match reelect(store, txn, posture) {
+        Ok(moved) => moved,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "MACRO home re-election skipped; the last elected home stands"
+            );
+            false
+        }
+    }
+}
+
+fn reelect(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     posture: HostingPrivacyPosture,
