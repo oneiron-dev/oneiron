@@ -155,5 +155,6 @@ fn enrollment_gate_input(
         has_opted_in: true,
         has_permission: true,
         policy_risk: ExternalEffectPolicyRisk::Normal,
+        send_autonomy: None,
     }
 }

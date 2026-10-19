@@ -5,6 +5,8 @@ use super::capability::{OutboundVerbContract, UnsupportedOutboundCapability};
 use super::intent::OutboundIntent;
 use crate::calendar::invite::{CalendarInviteMimePart, CalendarInvitePayload};
 use crate::campaign::send_hygiene::ListUnsubscribeTarget;
+use crate::channel_identity_autonomy::SendAutonomyContext;
+use crate::channel_identity_selection::RelationshipContext;
 use crate::connector_key::{EffectorBudgetRead, EffectorPoolCharge};
 use crate::delivery_window::{
     DeliveryWindowApnsInterruptionLevel, DeliveryWindowContextCondition,
@@ -156,6 +158,12 @@ pub struct OutboundDispatchRequest {
     /// The facet the sender wears on this send, frozen with the payload. A
     /// reply on a pinned thread takes the pin's facet.
     pub facet_ref: Option<EntityId>,
+    /// FIX 1158 (OF-374): the relationship context the host selected this
+    /// sender for, and the counterparty class it named, frozen with the
+    /// payload so a retry cannot switch them. The Gate's envelope release
+    /// reads only this context's autonomy row; `None` keeps its rule that
+    /// exactly one unpinned context on the sender row may release.
+    pub send_autonomy: Option<SendAutonomyContext>,
 }
 
 impl OutboundDispatchRequest {
@@ -196,6 +204,7 @@ impl OutboundDispatchRequest {
             calendar_invite: None,
             reply_thread_ref: None,
             facet_ref: None,
+            send_autonomy: None,
         }
     }
 
@@ -209,6 +218,19 @@ impl OutboundDispatchRequest {
     #[must_use]
     pub fn facet_ref(mut self, facet_ref: EntityId) -> Self {
         self.facet_ref = Some(facet_ref);
+        self
+    }
+
+    /// FIX 1158: the host's handoff from sender selection, before freeze:
+    /// the relationship its selection query named, and a counterparty class
+    /// only when the host passed one explicitly (else unclassified).
+    #[must_use]
+    pub fn send_autonomy(
+        mut self,
+        relationship: RelationshipContext,
+        explicit_class: Option<&str>,
+    ) -> Self {
+        self.send_autonomy = Some(SendAutonomyContext::from_host(relationship, explicit_class));
         self
     }
 
