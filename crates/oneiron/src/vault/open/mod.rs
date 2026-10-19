@@ -583,6 +583,7 @@ impl Vault {
             world_keys: Default::default(),
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),
+            pending_owner_export_receipts: Default::default(),
             housekeeping: Default::default(),
             entity_docs: std::sync::Mutex::new(crate::entity_doc::EntityDocRegistry::default()),
             #[cfg(feature = "sync")]

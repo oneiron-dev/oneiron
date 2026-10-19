@@ -291,7 +291,10 @@ impl Vault {
         let mint = next_entry(
             issuer,
             &fold,
-            AuthorityOp::SlipMint(SlipMintAction { claims }),
+            AuthorityOp::SlipMint(SlipMintAction {
+                claims,
+                renews: None,
+            }),
             now,
         )?;
         pending.push(mint);
@@ -495,6 +498,24 @@ impl Vault {
         issuer: &HostSlipIssuer,
         claims: SlipClaims,
     ) -> Result<CapabilitySlip> {
+        self.mint_slip_action_in_txn(
+            txn,
+            issuer,
+            SlipMintAction {
+                claims,
+                renews: None,
+            },
+        )
+    }
+    /// [`Self::mint_slip_in_txn`] for a whole logged mint action: a renewal's
+    /// names the slip it renews (FIX 5481).
+    pub(super) fn mint_slip_action_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        action: SlipMintAction,
+    ) -> Result<CapabilitySlip> {
+        let claims = &action.claims;
         let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
@@ -502,12 +523,7 @@ impl Vault {
             return Err(invalid_authority());
         }
         let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
-        let entry = next_entry(
-            issuer,
-            &fold,
-            AuthorityOp::SlipMint(SlipMintAction { claims }),
-            now,
-        )?;
+        let entry = next_entry(issuer, &fold, AuthorityOp::SlipMint(action), now)?;
         self.put_authority_log_entries_in_txn(
             txn,
             &[(

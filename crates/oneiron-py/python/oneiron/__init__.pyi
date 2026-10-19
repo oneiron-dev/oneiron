@@ -309,6 +309,8 @@ class CheckpointPinPolicy(TypedDict):
     quorum: int
     # One attesting root must be hardware-backed.
     hardware: bool
+    # The owner selected these roots and this quorum: no host root need attest.
+    owner_selected: bool
 
 class CheckpointPinBinding(TypedDict):
     vault_id: str
@@ -341,6 +343,8 @@ class Paired(TypedDict):
     # Checked against the link and stored nowhere; None when the vault has
     # no attested checkpoint.
     pin: CheckpointPin | None
+    # Whom an agent paired by the credential may address, as the server took it.
+    comm: Facade.CommReach
 
 class HostRootProfile(TypedDict):
     # This open enrolled this install as an Unanswered machine; False when

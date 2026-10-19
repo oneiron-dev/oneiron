@@ -214,9 +214,11 @@ class Oneiron:
     def pair(cls, link: str) -> dict[str, Any]:
         """Redeems a one-use pairing link and connects with its credential.
 
-        Returns ``{"memory", "credential", "pin"}``: the connected handle, the
-        credential, and the checkpoint pin the link named (``None`` when the
-        vault has no attested checkpoint). Store the credential as
+        Returns ``{"memory", "credential", "pin", "comm"}``: the connected
+        handle, the credential, the checkpoint pin the link named (``None``
+        when the vault has no attested checkpoint), and the comm reach the
+        server says the credential carries (``"parent"``, ``"subtree"``,
+        ``"project"`` or ``"vault"``). Store the credential as
         ``ONEIRON_KEY``; the link cannot be redeemed twice. The pin is already
         checked against the link and is stored nowhere: a machine that will
         run a local replica keeps it beside the server origin and the
@@ -227,6 +229,7 @@ class Oneiron:
             "memory": cls.connect(paired["url"], paired["credential"]),
             "credential": paired["credential"],
             "pin": paired["pin"],
+            "comm": paired["comm"],
         }
 
     def as_actor(self, actor_key: str) -> "Oneiron":

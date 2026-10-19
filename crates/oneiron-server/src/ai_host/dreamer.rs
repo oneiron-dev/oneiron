@@ -307,16 +307,19 @@ async fn supervise(
     report
 }
 
-/// One Dreamer per vault: this server is the vault's always-on local node
-/// and designates itself home, so macro rounds admit here too. A device of
-/// another home (`device`) claims nothing and leaves macro rounds there.
+/// One Dreamer per vault: this server is the vault's always-on local node.
+/// It declares itself a MACRO home candidate that can run MACRO now (FIX
+/// 4898), keeps itself as its own candidate, and elects over the vault's
+/// authorized candidates, so macro rounds admit here when it wins: alone,
+/// it elects itself. The node id it returns is this install's own, which
+/// admission matches. A device of another home (`device`) claims nothing:
+/// its candidacy is the one its `[device_sync]` section declares.
 fn claim_home_node(vault: &Vault, device: bool) -> oneiron::Result<u64> {
     let store = DreamerRunnerStore::new(vault);
     let candidate = store.local_home_node_candidate(true, true, false)?;
     let node_id = candidate.node_id;
-    // A device defers to the elected home its sync section names; claiming
-    // it here would make this install the home, and a home dials no one.
     if !device {
+        crate::home_candidacy::declare(vault, true, false, true);
         store.elect_home_node(&[candidate], now_ms() / 1_000)?;
     }
     Ok(node_id)

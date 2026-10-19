@@ -47,8 +47,9 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 
 /// The fold-state schema an image encodes. A decoder refuses any other. 5:
 /// each row summary marks whether its body is required (FIX 2988). 6: a
-/// machine revision carries its owner say-so's causal past (FIX 4610).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 6;
+/// machine revision carries its owner say-so's causal past (FIX 4610). 7:
+/// the fold keeps each machine's home candidacy (FIX 4898).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 7;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.
