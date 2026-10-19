@@ -596,6 +596,15 @@ impl ManagedState {
                 self.record_alarm(id, reason_tag).await;
                 Ok(CtlResponse::Ok { ok: true })
             }
+            CtlRequest::TrainingPurge => {
+                self.guard_write()?;
+                let training_purge = self.server.vault().training_purge().map_err(|error| {
+                    ManagedError::CtlRequestRefused {
+                        reason: error.to_string(),
+                    }
+                })?;
+                Ok(CtlResponse::TrainingPurge { training_purge })
+            }
         }
     }
 
