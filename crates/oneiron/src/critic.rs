@@ -519,6 +519,41 @@ impl<'a> CritiqueArtifactStore<'a> {
         artifacts.sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
         Ok(artifacts)
     }
+
+    /// The branch's critiques for an observation that reads past a bad row
+    /// (FIX 4468): every row that decodes and validates, sorted as
+    /// [`Self::list_branch`] sorts them, and one line naming each row that
+    /// does not. A storage fault still fails the read.
+    pub(crate) fn observe_branch_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        branch_attempt: AttemptId,
+    ) -> Result<(Vec<CritiqueArtifact>, Vec<String>)> {
+        let mut artifacts = Vec::new();
+        let mut unread = Vec::new();
+        for row in
+            CRITIQUE_ARTIFACT.iter_raw_from(&self.vault.store, txn, branch_attempt.as_bytes())?
+        {
+            let (key, value) = row?;
+            let Some(key) = CritiqueArtifactKey::decode_key(&key) else {
+                unread.push("a critique row on this run's branch has an unreadable key".to_owned());
+                continue;
+            };
+            let artifact = CRITIQUE_ARTIFACT.decode_value(&value).and_then(|artifact| {
+                validate_critique_artifact(&artifact)?;
+                Ok(artifact)
+            });
+            match artifact {
+                Ok(artifact) => artifacts.push(artifact),
+                Err(error) => {
+                    let id = &key.artifact_id;
+                    unread.push(format!("critique {id} does not read: {error}"));
+                }
+            }
+        }
+        artifacts.sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
+        Ok((artifacts, unread))
+    }
 }
 
 fn soft_verdict(scores: CritiqueTriageScores) -> CritiqueVerdict {

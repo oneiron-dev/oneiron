@@ -9,28 +9,6 @@ use serde::{Deserialize, Serialize};
 use crate::attempt_queue::validate::validate_cancel_actor;
 use crate::error::Result;
 
-/// Defensive cap on [`AttemptCancelState::receipts`] rows.
-///
-/// Like the manifest and unlike `events`, this door REFUSES at the cap instead
-/// of draining: the rejection history is the pathology evidence (ONE-1896 §1),
-/// so dropping its oldest rows would let a worker that refused a hundred times
-/// present as one that refused twice.
-pub const MAX_ATTEMPT_CANCEL_RECEIPTS: usize = 256;
-
-/// Rows of [`MAX_ATTEMPT_CANCEL_RECEIPTS`] held back for the ONE terminal
-/// receipt.
-///
-/// A bounded history must never make an attempt unsettleable: without this
-/// slot, a row that reached the cap could not record `Landed`, `ForceCancelled`
-/// or the runtime's lease-expiry cleanup, so a worker could refuse its way into
-/// a permanently unkillable attempt. Non-terminal rows therefore refuse one row
-/// EARLIER, and the reserved slot is spendable only by a terminal receipt.
-pub const TERMINAL_CANCEL_RECEIPT_RESERVE: usize = 1;
-
-/// Cap the append-only, NON-terminal protocol evidence refuses at.
-pub const MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS: usize =
-    MAX_ATTEMPT_CANCEL_RECEIPTS - TERMINAL_CANCEL_RECEIPT_RESERVE;
-
 /// Share of an attempt's dialed budget held back for LANDING work.
 ///
 /// The dial is a percent of INTEGER budget units, never a float: the reserve is
@@ -371,8 +349,8 @@ impl AttemptCancelReceiptKind {
     }
 
     /// True for the two rows that SETTLE an attempt. Exactly one of them may
-    /// exist on a row, and it is always the last one: it is the receipt the
-    /// reserved history slot ([`TERMINAL_CANCEL_RECEIPT_RESERVE`]) exists for.
+    /// exist on a row, and it is always the last one. No receipt count
+    /// refuses, so a long refusal history never leaves it without room.
     #[must_use]
     pub const fn is_terminal(self) -> bool {
         matches!(self, Self::Landed | Self::ForceCancelled)
@@ -582,7 +560,10 @@ pub struct AttemptCancelState {
     pub cancellation: Option<AttemptCancellation>,
     #[serde(default)]
     pub pressure: AttemptCancelPressure,
-    /// Append-only protocol evidence, never drained.
+    /// Append-only protocol evidence, never drained and never refused on a
+    /// count: the rejection history is the pathology evidence (ONE-1896 §1),
+    /// so every row is kept. Past the `[limits]` `attempt_cancel_receipts`
+    /// row an append asks whether everything is okay and lands (Rule 5).
     #[serde(default)]
     pub receipts: Vec<AttemptCancelReceipt>,
     #[serde(default)]
