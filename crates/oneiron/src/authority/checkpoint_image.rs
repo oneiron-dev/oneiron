@@ -46,7 +46,7 @@ use crate::error::{Error, RecordError, Result};
 use crate::{EntityId, HostingPrivacyPosture, Vault};
 
 /// The fold-state schema an image encodes. A decoder refuses any other.
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 2;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 3;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.
@@ -100,6 +100,7 @@ pub(super) fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::WorldPrivacy(_)
                 | AuthorityOp::GrantTravelSet(_)
                 | AuthorityOp::CheckpointPolicySet(_)
+                | AuthorityOp::HomeNodePick(_)
         )
 }
 

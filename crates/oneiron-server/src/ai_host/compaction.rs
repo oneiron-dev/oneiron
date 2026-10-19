@@ -7,7 +7,10 @@
 //! seat or no compaction block, compaction is off and says why; an off seat
 //! never calls a model. An agent whose profile names `self` writes its own
 //! summaries (FIX 4465): the same cheap route, wearing its home, on its own
-//! compaction model when its definition names one.
+//! compaction model when its definition names one; or, when the vault's row
+//! reads the live context, a fork of its live request on the rung that
+//! admitted it (FIX 4465 C). The same factory serves a self agent's chat
+//! turn (FIX 4465 D), with or without the code sandbox.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,20 +24,36 @@ use oneiron::compaction::{
 use oneiron::embed::Embedder;
 use oneiron::engine_executor::{CompactionSpawn, RunCompaction};
 use oneiron::llm::manifest::ModelRole;
+use oneiron::llm::run_admission::PayerPerson;
 use oneiron::llm::{ModelId, ModelLocality, ModelTierRef};
-use oneiron::{BudgetGuard, CompactionOwnership, EdgeActorClass, MemoryProfile, Vault, WriteActor};
+use oneiron::{
+    BudgetGuard, CompactionOwnership, EdgeActorClass, LlmRequest, MemoryProfile, Vault, WriteActor,
+};
 
 use super::CHAT_ROLE;
+#[cfg(feature = "code-sandbox-wasmtime")]
 use super::status::{CompactionState, CompactionStatus, StatusCell};
 use crate::admission::Admission;
 use crate::config::models::{ModelsConfig, Rung, role_key};
 use crate::embedder::EmbedderSlot;
+#[cfg(feature = "code-sandbox-wasmtime")]
 use crate::mcp::McpQuickJsProvider;
-use crate::models::ModelRuntime;
+use crate::models::{ModelRuntime, RoleCall, RoleRefusal};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
+mod chat;
+mod live_fork;
 mod self_writer;
 mod serve;
+
+pub(crate) use chat::{ChatBreakpointCall, ChatSelfMode};
+
+/// How a run's own compaction writer reads the rung its live request is
+/// admitted on (FIX 4465 C): the step's call admitted exactly as its host
+/// admits it, at the breakpoint, before it is sent.
+pub(super) trait LiveAdmission: Send + Sync {
+    fn admit_live(&self, request: LlmRequest) -> Result<RoleCall, RoleRefusal>;
+}
 
 /// The registry key a run's memory profile names.
 const BACKEND_KEY: &str = "code-mode-compaction";
@@ -56,7 +75,9 @@ const COMPACTION_RUN: &str = "code-mode-compaction";
 /// tokenizer may count up to twice as long as the engine's.
 const REPLY_FRAME_TOKENS: u64 = 64;
 
-/// Code mode's compaction, settled once when code mode is bound.
+/// The compaction writer factory, settled once when the AI host attaches:
+/// code mode's runs and a self agent's chat turns compact through it.
+#[derive(Clone)]
 pub(super) enum CodeModeCompaction {
     Off(CompactionOff),
     Live(Arc<LiveCompaction>),
@@ -82,8 +103,40 @@ pub(super) struct LiveCompaction {
 }
 
 impl CodeModeCompaction {
+    /// The factory `models` asks for, and the code-mode meter its house
+    /// route spends on (FIX 4465 D, Engine D4): settled whether or not the
+    /// code sandbox binds, so a chat turn compacts on a build without it. A
+    /// host with no `[models.code_mode]` prompt package holds no compaction
+    /// prompt, a named reason. `None` with no `[models]`.
+    pub(super) fn bind_shared(
+        server: &crate::server::SyncServer,
+        runtime: &Arc<ModelRuntime>,
+        models: Option<&ModelsConfig>,
+    ) -> Option<(Self, BudgetGuard)> {
+        let models = models?;
+        let guard = BudgetGuard::new(
+            "code-mode",
+            models.code_mode.budget_units,
+            oneiron::BudgetExhaustionPolicy::Suspend,
+        );
+        let Some(prompt_package) = models.code_mode.prompt_package.as_deref() else {
+            return Some((Self::Off(CompactionOff::NoPrompt), guard));
+        };
+        let compaction = Self::resolve(
+            server.vault(),
+            runtime,
+            models,
+            prompt_package,
+            guard.clone(),
+            Arc::clone(server.wire_telemetry.limit_questions()),
+            server.config.limits.queue_wait(),
+        );
+        Some((compaction, guard))
+    }
+
     /// The registered cheap route already used by code mode, for an
     /// owner's explicit host compaction. An off route has no replacement.
+    #[cfg(feature = "code-sandbox-wasmtime")]
     pub(super) fn host_backend(
         &self,
     ) -> Option<(Arc<dyn CompactionBackend>, CompactionGatePolicy)> {
@@ -101,7 +154,7 @@ impl CodeModeCompaction {
     /// On when `[models.code_mode.compaction]` leaves it on, a seat serves
     /// its role and `prompt_package` holds the compaction block. Call from
     /// the runtime its passes will block on.
-    pub(super) fn resolve(
+    fn resolve(
         vault: &Arc<Vault>,
         runtime: &Arc<ModelRuntime>,
         models: &ModelsConfig,
@@ -221,6 +274,7 @@ impl CodeModeCompaction {
         }))
     }
 
+    #[cfg(feature = "code-sandbox-wasmtime")]
     pub(super) fn status(&self) -> CompactionStatus {
         match self {
             Self::Off(why) => CompactionStatus::off(why.as_str()),
@@ -235,18 +289,21 @@ impl CodeModeCompaction {
 
     /// Hands `provider` a fresh seat per run and reports the state. A run in
     /// an off-record room embeds its summaries on `embedder`, the server's
-    /// own, while it serves on this device (FIX 522).
+    /// own, while it serves on this device (FIX 522). An agent's own writer
+    /// reads its run's live rung through `live` (FIX 4465 C).
+    #[cfg(feature = "code-sandbox-wasmtime")]
     pub(super) fn attach(
         self,
         provider: McpQuickJsProvider,
         status: &StatusCell,
         embedder: Option<Arc<EmbedderSlot>>,
+        live: Arc<dyn LiveAdmission>,
     ) -> McpQuickJsProvider {
         status.update(|status| status.compaction = self.status());
         let vectors = embedder.map(|slot| slot as Arc<dyn EpochEmbedder>);
         provider.with_compaction(Arc::new(
             move |host: CompactionHostBinding, credential: &str, spend: Option<&SpendScopeId>| {
-                let seat = self.for_run(host, credential, spend);
+                let seat = self.for_run(host, credential, spend, &live);
                 match &vectors {
                     Some(vectors) => seat.with_room_vectors(Arc::clone(vectors)),
                     None => seat,
@@ -260,12 +317,15 @@ impl CodeModeCompaction {
     /// profile of the agent that actor names. A run that spends under
     /// `spend` compacts on that scope's meter (OF-533); any other on code
     /// mode's. An agent whose profile names `self` compacts as itself
-    /// (FIX 4465), wherever its run is served.
+    /// (FIX 4465), wherever its run is served, reading its live rung through
+    /// `admission` when the row selects the live fork.
+    #[cfg(feature = "code-sandbox-wasmtime")]
     pub(super) fn for_run(
         &self,
         host: CompactionHostBinding,
         credential: &str,
         spend: Option<&SpendScopeId>,
+        admission: &Arc<dyn LiveAdmission>,
     ) -> RunCompaction {
         let live = match self {
             Self::Off(why) => return RunCompaction::off(*why),
@@ -277,16 +337,19 @@ impl CodeModeCompaction {
         let hot_steps = profile.hot_steps.unwrap_or(live.hot_steps);
         let scoped;
         let registry = match (definition, spend) {
-            (Some(definition), _) => match live.self_registry(&profile, definition, host, spend) {
-                Ok(registry) => {
-                    scoped = registry;
-                    &scoped
+            (Some(definition), _) => {
+                let meter = spend.map(|scope| CompactionMeter::Scope(scope.clone()));
+                match live.self_registry(&profile, definition, host, meter, admission) {
+                    Ok(registry) => {
+                        scoped = registry;
+                        &scoped
+                    }
+                    Err(error) => {
+                        tracing::error!(kind = ?error.kind(), "a run's own compaction writer did not register");
+                        return RunCompaction::off(CompactionOff::BackendFailed);
+                    }
                 }
-                Err(error) => {
-                    tracing::error!(kind = ?error.kind(), "a run's own compaction writer did not register");
-                    return RunCompaction::off(CompactionOff::BackendFailed);
-                }
-            },
+            }
             (None, None) => &live.registry,
             (None, Some(scope)) => match live.scoped_registry(scope) {
                 Ok(registry) => {
@@ -323,6 +386,7 @@ impl CodeModeCompaction {
 impl LiveCompaction {
     /// The registry a run that spends under `scope` compacts on: each served
     /// backend, its calls metered on `scope` in place of code mode's.
+    #[cfg(feature = "code-sandbox-wasmtime")]
     fn scoped_registry(&self, scope: &SpendScopeId) -> oneiron::Result<CompactionBackendRegistry> {
         let mut registry = CompactionBackendRegistry::new();
         for backend in &self.served {
@@ -338,13 +402,17 @@ impl LiveCompaction {
     /// (FIX 4465): one writer, bound to the run's authenticated actor, on
     /// the house compaction seat's route, metered as the run's other passes
     /// are. It wears the agent's home and, when its definition names one,
-    /// its own compaction model.
+    /// its own compaction model. It reads its run's live rung through
+    /// `admission` for a flight whose row selects the live fork (C). Its
+    /// calls spend on `meter`, else on the house route's (a chat turn's
+    /// names its own, FIX 4465 D).
     fn self_registry(
         &self,
         profile: &MemoryProfile,
         definition: oneiron::agent_def::AgentDefinition,
         host: CompactionHostBinding,
-        spend: Option<&SpendScopeId>,
+        meter: Option<CompactionMeter>,
+        admission: &Arc<dyn LiveAdmission>,
     ) -> oneiron::Result<CompactionBackendRegistry> {
         let house = self
             .served
@@ -353,10 +421,7 @@ impl LiveCompaction {
                 "code mode's compaction serves no house seat",
             ))?;
         let route = ServedCompactionBackend {
-            meter: spend.map_or_else(
-                || house.meter.clone(),
-                |scope| CompactionMeter::Scope(scope.clone()),
-            ),
+            meter: meter.unwrap_or_else(|| house.meter.clone()),
             ..ServedCompactionBackend::clone(house)
         };
         let mut registry = CompactionBackendRegistry::new();
@@ -365,6 +430,7 @@ impl LiveCompaction {
             route,
             definition,
             host,
+            Arc::clone(admission),
         )))?;
         Ok(registry)
     }
@@ -528,6 +594,14 @@ enum CompactionMeter {
     /// books what it used once it returns, paid or failed, so a pass that
     /// outlives its run still books.
     Scope(SpendScopeId),
+    /// `chat_compaction_meter` (FIX 4465 D): a chat turn's flight spends on
+    /// its own guard on the chat actor's budget line and bills the payer the
+    /// turn resolved (`None` is the vault owner, as a turn's is). Each call
+    /// takes its own permit and settles itself once.
+    Chat {
+        guard: BudgetGuard,
+        payer: Option<PayerPerson>,
+    },
 }
 
 /// A pass's model call: admitted on the configured role against the vault's
@@ -570,5 +644,5 @@ fn refused(suppression: CompactionSuppression, detail: String) -> CompactionRefu
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "code-sandbox-wasmtime"))]
 pub(crate) mod tests;

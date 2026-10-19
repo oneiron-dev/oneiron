@@ -10,7 +10,8 @@
 //!
 //! The artifact app (`/a/`) keeps an origin of its own and never rides the
 //! API channel: a second channel serves it when the app passes one, and
-//! without one the server advertises no artifact origin.
+//! without one the server advertises no artifact origin. [`EmbeddedEngine`]
+//! always passes one, which its artifact requests and connections reach.
 //!
 //! The app's keychain answers the secrets the config does not name. Its
 //! timer is armed for the Dreamer's next wake and wakes the engine back
@@ -23,11 +24,18 @@
 //! app's host it opens the vault the way `oneiron serve` does
 //! ([`open_served_vault`]), serves it, answers one buffered request at a
 //! time over a fresh duplex stream, hands the app a connection of its own
-//! for `/ws` and streamed replies ([`EmbeddedConnection`]), and stops and
-//! restarts serving over the same open vault. [`BlockingEngine`] runs one on a runtime of its own for
-//! a binding whose callers are app threads.
+//! for `/ws` and streamed replies ([`EmbeddedConnection`]), streams one
+//! request's reply ([`EmbeddedEngine::request_streamed`]), and stops and
+//! restarts serving over the same open vault. [`BlockingEngine`] runs one on
+//! a runtime of its own for a binding whose callers are app threads, and
+//! [`ProcessHost`] is the host of a binding whose app is a plain process.
+//! Each failure names its cause ([`EngineErrorKind`]), which every binding
+//! raises as a stable code.
 
+mod blocking;
 mod engine;
+mod failure;
+mod process_host;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::pin;
@@ -47,11 +55,14 @@ use tokio::io::DuplexStream;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
+pub use self::blocking::{BlockingBody, BlockingConnection, BlockingEngine, BlockingReply};
 pub use self::engine::{
-    BlockingConnection, BlockingEngine, ENGINE_RECEIVE_CHUNK_BYTES, EmbeddedConnection,
-    EmbeddedEngine, EmbeddedReply, EmbeddedRequest, embedded_serve_config, ensure_app_thread,
-    host_limits, unix_millis,
+    ENGINE_RECEIVE_CHUNK_BYTES, EmbeddedBody, EmbeddedConnection, EmbeddedEngine, EmbeddedReply,
+    EmbeddedReplyStream, EmbeddedRequest, embedded_serve_config, ensure_app_thread, host_limits,
+    unix_millis,
 };
+pub use self::failure::{EngineErrorKind, EngineFailure, engine_error_kind, engine_memory_error};
+pub use self::process_host::ProcessHost;
 pub use crate::commands::{OpenedServedVault, open_served_vault};
 use crate::config::ServeConfig;
 use crate::web_client::DeploymentPosition;

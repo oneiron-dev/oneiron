@@ -93,6 +93,7 @@ impl EnvConfig {
         values.trusted_proxies = lookup_list(&mut lookup, "ONEIRON_TRUSTED_PROXIES");
         values.lease_vault_id = lookup_parse(&mut lookup, "ONEIRON_LEASE_VAULT_ID")?;
         values.dimensions = lookup_parse(&mut lookup, "ONEIRON_DIMENSIONS")?;
+        values.fast_dims = lookup_parse(&mut lookup, "ONEIRON_FAST_DIMS")?;
         values.map_size = lookup_parse(&mut lookup, "ONEIRON_MAP_SIZE")?;
         values.log_level = lookup("ONEIRON_LOG_LEVEL");
         values.dict_search_paths = lookup_path_list(&mut lookup, "ONEIRON_DICT_SEARCH_PATHS");
@@ -260,8 +261,8 @@ pub(crate) fn layer_serve_config(
 /// One `[embedder]` table settled onto `config` as [`layer_serve_config`]
 /// settles the layered section: applied over the defaults as the vault file's
 /// layer, its local space settled, then refused as serve refuses a section
-/// that cannot make a working slot. Managed mode's `--embedder-file` is the
-/// one layer it has (FIX 777).
+/// that cannot make a working slot. A managed vault's settings file is the
+/// one layer it has (FIX 777, [`settle_managed_settings`]).
 pub(crate) fn settle_embedder_section(
     config: &mut ServeConfig,
     section: EmbedderConfigOverride,
@@ -272,6 +273,106 @@ pub(crate) fn settle_embedder_section(
     super::embedder_space::settle_local_space(&mut embedder, space_naming)?;
     config.embedder = Some(embedder);
     validate_embedder_config(config)
+}
+
+/// A managed vault's settings file, which managed mode has already refused
+/// leaf by leaf (`managed::settings`), settled once over the `config` it
+/// built from argv: read in the config file's schema, its `[models]`
+/// resolved beside the file (`dir`), applied as the vault file's layer, its
+/// `[embedder]` settled as [`settle_embedder_section`] settles one, and the
+/// result refused as serve refuses a config that cannot serve. No other
+/// layer is read: no environment, no default config path.
+pub(crate) fn settle_managed_settings(
+    config: &mut ServeConfig,
+    table: toml::Table,
+    dir: Option<&Path>,
+) -> anyhow::Result<()> {
+    let mut file: FileServeConfig = toml::Value::Table(table)
+        .try_into()
+        .context("parse the settings file")?;
+    let models = file
+        .models
+        .take()
+        .map(|models| models.resolve(dir))
+        .transpose()
+        .context("the settings file's [models]")?;
+    let embedder = file.embedder.take();
+    let mut values = PartialServeConfig::from(file);
+    values.models = models;
+    values.apply_to(config, ConfigLayer::Vault)?;
+    if let Some(section) = embedder {
+        settle_embedder_section(config, section).context("the settings file's [embedder]")?;
+    }
+    validate_serve_config(config)
+}
+
+/// The keys the config file's schema holds: its top-level fields for
+/// `None`, and for `Some(section)` that section's own keys. `None` for a
+/// section whose keys are names (`[connectors.<name>]`), a key that is no
+/// section, and a section whose type is no struct.
+/// Each list is the one the schema's own derive names, so it cannot drift
+/// from what deserializes.
+pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'static str]> {
+    let Some(section) = section else {
+        return Some(struct_fields::<FileServeConfig>());
+    };
+    let keys = match section {
+        "runtime" => struct_fields::<RuntimeConfigOverride>(),
+        "embedder" => struct_fields::<EmbedderConfigOverride>(),
+        "oneironer" => struct_fields::<OneironerConfigOverride>(),
+        "backup" => struct_fields::<BackupConfigOverride>(),
+        "feedback" => struct_fields::<FeedbackConfigOverride>(),
+        "failure_signals" => struct_fields::<FailureSignalsConfigOverride>(),
+        "self_heal" => struct_fields::<SelfHealConfigOverride>(),
+        "recall" => struct_fields::<RecallConfigOverride>(),
+        "skills" => struct_fields::<SkillsConfigOverride>(),
+        "keystore" => struct_fields::<KeystoreConfigOverride>(),
+        "limits" => struct_fields::<LimitsConfigOverride>(),
+        "import" => struct_fields::<ImportConfigOverride>(),
+        "models" => struct_fields::<ModelsFile>(),
+        "browser" => struct_fields::<super::BrowserConfig>(),
+        "desktop" => struct_fields::<super::DesktopConfig>(),
+        "gpu" => struct_fields::<crate::runtime::GpuPoolConfig>(),
+        "native_mail" => struct_fields::<super::NativeMailConfig>(),
+        "device_sync" => struct_fields::<super::DeviceSyncConfig>(),
+        "embedding" => struct_fields::<super::EmbeddingConfig>(),
+        "line" => struct_fields::<super::LineConfig>(),
+        _ => return None,
+    };
+    (!keys.is_empty()).then_some(keys)
+}
+
+/// The field names a derived struct reads, as its derive passes them to
+/// `deserialize_struct`: this deserializer keeps them and refuses, so no
+/// value is read. Empty for a type that is not a struct.
+fn struct_fields<T: serde::de::DeserializeOwned>() -> &'static [&'static str] {
+    struct Fields(&'static [&'static str]);
+    impl<'de> serde::Deserializer<'de> for &mut Fields {
+        type Error = serde::de::value::Error;
+        fn deserialize_any<V: serde::de::Visitor<'de>>(
+            self,
+            _: V,
+        ) -> Result<V::Value, Self::Error> {
+            Err(serde::de::Error::custom("not a struct"))
+        }
+        fn deserialize_struct<V: serde::de::Visitor<'de>>(
+            self,
+            _: &'static str,
+            fields: &'static [&'static str],
+            _: V,
+        ) -> Result<V::Value, Self::Error> {
+            self.0 = fields;
+            Err(serde::de::Error::custom("field names only"))
+        }
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes
+            byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map enum
+            identifier ignored_any
+        }
+    }
+    let mut fields = Fields(&[]);
+    let _ = T::deserialize(&mut fields);
+    fields.0
 }
 
 /// The engine's own config-validation refusal, wrapped for this crate's
@@ -507,6 +608,7 @@ struct FileServeConfig {
     trusted_proxies: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
+    fast_dims: Option<u16>,
     map_size: Option<usize>,
     log_level: Option<String>,
     dict_search_paths: Option<Vec<PathBuf>>,
@@ -572,6 +674,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             trusted_proxies: value.trusted_proxies,
             lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
+            fast_dims: value.fast_dims,
             map_size: value.map_size,
             log_level: value.log_level,
             dict_search_paths: value.dict_search_paths,
@@ -638,6 +741,7 @@ struct PartialServeConfig {
     trusted_proxies: Option<Vec<String>>,
     lease_vault_id: Option<u64>,
     dimensions: Option<usize>,
+    fast_dims: Option<u16>,
     map_size: Option<usize>,
     log_level: Option<String>,
     dict_search_paths: Option<Vec<PathBuf>>,
@@ -714,6 +818,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("trusted_proxies", &self.trusted_proxies)
             .field("lease_vault_id", &self.lease_vault_id)
             .field("dimensions", &self.dimensions)
+            .field("fast_dims", &self.fast_dims)
             .field("map_size", &self.map_size)
             .field("log_level", &self.log_level)
             .field("dict_search_paths", &self.dict_search_paths)
@@ -826,6 +931,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.dimensions {
             resolved.dimensions = value;
+        }
+        if let Some(value) = self.fast_dims {
+            resolved.fast_dims = Some(value);
         }
         if let Some(value) = self.map_size {
             resolved.map_size = value;
@@ -953,8 +1061,9 @@ impl PartialServeConfig {
         if let Some(value) = self.connectors {
             resolved.connectors = value;
         }
+        // An explicit no stands as firmly as a yes.
         if let Some(value) = self.failure_signal_export {
-            resolved.failure_signal_export = value;
+            resolved.failure_signal_export = Some(value);
         }
         if let Some(value) = self.failure_signal_training {
             resolved.failure_signal_training = value;
@@ -998,6 +1107,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             trusted_proxies: value.trusted_proxies.clone(),
             lease_vault_id: value.lease_vault_id,
             dimensions: value.dimensions,
+            fast_dims: value.fast_dims,
             map_size: value.map_size,
             log_level: value.log_level.clone(),
             dict_search_paths: value.dict_search_paths.clone(),

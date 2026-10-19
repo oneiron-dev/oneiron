@@ -23,6 +23,9 @@ side_tables! {
     MESSAGE_STREAM_RECEIPT: VaultMeta b"message_stream_receipt:v1:" Named;
     /// Owner-submitted model requests and their terminal receipts. Key: id16(step attempt).
     MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored;
+    /// Owner-submitted shared model streams: the frozen request and its one durable terminal.
+    /// Key: id16(stream).
+    MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored;
     /// Named entity secondary index. Key: byte + (u64be|id16) + id16.
     PORTS_NAMED_ENTITY_INDEX: VaultMeta b"named_entity:v1:" Raw;
     /// Saved oplog version-vector floor an authority rebase cannot cross past a scrub. Key:
@@ -123,7 +126,8 @@ side_tables! {
     /// Key: hex32 (org_ref).
     ORG_ADMIN_POLICY: VaultMeta b"org.admin.v1." LegacyJson;
     /// Owner-controlled origin residence/epoch/writer authority for one repository. Key: id16.
-    ORIGIN_AUTHORITY: VaultMeta b"origin:authority:v1:" Named;
+    ORIGIN_AUTHORITY: VaultMeta b"origin:authority:v1:" Named
+        => crate::origin::residence::erase_origin_authority_writer_in_txn;
     /// Epoch-bound publication permit stamp (u64be epoch), authorizing one publication under the
     /// current authority epoch. Key: id16.
     ORIGIN_AUTHORITY_PERMIT: VaultMeta b"origin:authority_permit:v1:" Raw;
@@ -135,7 +139,7 @@ side_tables! {
     /// Published. Key: id16 "\x00" string "\x00" string "\x00" string.
     ORIGIN_CAS_INTENT: VaultMeta b"origin:cas_intent:v1:" Raw;
     /// Tamper-detection proof hash (32 bytes) pinning one repo.change claim's exact byte content at
-    /// publication time. Key: id16.
+    /// publication time, or its erased form once an actor's erase re-hashed it. Key: id16.
     ORIGIN_CHANGE_RECEIPT: VaultMeta b"origin:change_receipt:v1:" Raw;
     /// Crash-idempotent receipt of the file operations one push landed against one ref, keyed by
     /// provenance then blake3(ref_name). Key: id16 ":" hash32.
@@ -183,10 +187,12 @@ side_tables! {
         => crate::origin::publication::erase_publication_actor_in_txn;
     /// Producer receipt pinning the exact encoded admission/outcome evidence claim body for one
     /// receive-pack operation. Key: id16.
-    ORIGIN_RECEIVE_PACK_EVIDENCE: VaultMeta b"origin:receive_pack_evidence:v1:" Raw;
+    ORIGIN_RECEIVE_PACK_EVIDENCE: VaultMeta b"origin:receive_pack_evidence:v1:" Raw
+        => crate::origin::smart_http::erase_receive_pack_evidence_actor_in_txn;
     /// Crash-durable per-push intent journal recording every proposed ref move before any effect
     /// lands, keyed by repo identity then operation id. Key: string + id16.
-    ORIGIN_RECEIVE_PACK_INTENT: VaultMeta b"origin:receive_pack_intent:v1:" Named;
+    ORIGIN_RECEIVE_PACK_INTENT: VaultMeta b"origin:receive_pack_intent:v1:" Named
+        => crate::origin::smart_http::erase_receive_pack_intent_actor_in_txn;
     /// One batch of a push intent's per-ref progress, so settling a batch rewrites that batch
     /// alone. Key: string + id16 (the intent's key) + u64be (batch index).
     ORIGIN_RECEIVE_PACK_PROGRESS: VaultMeta b"origin:receive_pack_progress:v1:" Named;
@@ -404,7 +410,8 @@ side_tables! {
         => crate::workspace_roster::erase_pending_actor_in_txn;
     /// The project question's yes, or its ask of a person, on one source message, with its
     /// decision receipt. Key: id16 (source message).
-    PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named;
+    PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named
+        => crate::Vault::erase_project_verdict_actor_in_txn;
     /// A held revision waiting for its slip's mint. Key: slip id32 + id16 (project) + hash32
     /// (revision).
     PROJECT_REVISION_AWAITING_MINT: VaultMeta b"project.revision_awaiting_mint.v1/" Raw;
@@ -534,6 +541,8 @@ side_tables! {
     /// strict-msgpack decode does not run; `RawValue` delegates to the
     /// module's own `encode_retrieval_outcome`/`decode_retrieval_outcome`.
     RETRIEVAL_OUTCOME: VaultMeta b"retr_out:v0:" Raw;
+    /// Owner-pinned retrieval blend weights no learned update may move. Key: ().
+    RETRIEVAL_POLICY_PINS: VaultMeta b"retr_policy_pins:v1:" Named;
     /// Account-local contextual retrieval posterior, updated by the Coach at sleep. Key: ().
     RETRIEVAL_POLICY_POSTERIOR: VaultMeta b"retr_policy_posterior:v1:" Named;
     /// Retrieval run telemetry record. Key: id16.
@@ -595,7 +604,8 @@ side_tables! {
     /// when, written once and never rewritten. Key: id16 (room) + 16 bytes (thread, all zero for the
     /// room itself) + u8 (subject kind) + id16 (subject) + u8 (cause kind) + 16 bytes (the cause's turn
     /// or task id, or an offer id's digest).
-    ROOMS_PARTICIPATION: VaultMeta b"rooms.participation.v1/" LegacyJson;
+    ROOMS_PARTICIPATION: VaultMeta b"rooms.participation.v1/" LegacyJson
+        => crate::Vault::erase_participation_actor_in_txn;
     /// Maps a host-configured platform handle to the one present actor it addresses within a room.
     /// Key: id16 (room id) + bytes (platform handle).
     ROOMS_HANDLE: VaultMeta b"rooms.platform_handle.v1/" Raw;

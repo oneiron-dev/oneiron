@@ -7,33 +7,27 @@
 
 use super::{RECEIPTS, RotationKind, RotationReceipt, encode_rotation_receipt_body};
 use crate::Vault;
-use crate::authority::ActSurface;
+use crate::authority::{ActSurface, CustodyChange};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result, SecretError};
 use crate::secret_custody::{
-    SecretCustodyRecord, SecretCustodyStatus, SecretRevoked, put_secret_custody_in_txn,
-    read_secret_custody_in_txn, refuse_bindings_wider_than_live_floor, resolve_secret_ref_in_txn,
+    ActiveChange, CustodyKeptHere, CustodyPlan, Material, SecretCustodyRecord, SecretCustodyStatus,
+    SecretCustodyWork, SecretRevoked, SecretRotated, custody_portable, put_secret_custody_in_txn,
+    read_secret_custody_in_txn, refuse_bindings_wider_than_live_floor, refuse_revoked_use_in_txn,
+    resolve_secret_ref_in_txn,
 };
 use crate::side_table::HexId;
 use zeroize::Zeroize;
 
 impl Vault {
-    /// Rotates a secret on the vault owner's behalf, behind the owner proof,
-    /// rechecked in the committing transaction: the vault-side value update
-    /// of ARCH-0069 S6 (the module docs). In one write transaction the
-    /// record's `rotation_generation` advances by one, `rotated_at` is
-    /// stamped, the value is replaced, a [`RotationReceipt`] lands, and a
-    /// portable record's signed transition is written (OF-422). It kills no
-    /// lease and touches no build exhaust. It is the only served rotation.
+    /// Rotates a secret on the vault owner's behalf, this install the
+    /// holder, keeping the permits of the secret's live change
+    /// ([`Vault::rotate_secret_with_custody`] with the default plan). Returns
+    /// the rotation receipt this install wrote.
     ///
     /// # Errors
-    /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof belongs to
-    /// another vault, its slip or person is no longer live, or the actor is no
-    /// longer an owner of this vault; [`SecretError::SecretRefNotFound`] for a
-    /// name custody does not hold; [`SecretError::SecretCustodyNotActive`] for
-    /// a record that is not `Active`; [`SecretError::ManifestWidensFloor`]
-    /// when its bindings no longer fit the live custody floor; otherwise the
-    /// store's errors.
+    /// Those of [`Vault::rotate_secret_with_custody`], and a rotation this
+    /// install did not do in this commit.
     pub fn rotate_secret_as_owner(
         &self,
         owner: &AuthenticatedOwner,
@@ -41,7 +35,60 @@ impl Vault {
         new_value: &[u8],
         at: u64,
     ) -> Result<RotationReceipt> {
-        let _ = self.load_install_signing_if_minted();
+        self.rotate_secret_with_custody(
+            owner,
+            ActSurface::ThisInstall,
+            secret_ref,
+            new_value,
+            &CustodyPlan::default(),
+            at,
+        )?
+        .rotation
+        .ok_or_else(|| {
+            Error::InvalidConfig(
+                "the rotation is recorded for its holder, which has not done it yet".to_owned(),
+            )
+        })
+    }
+
+    /// Rotates a secret on the vault owner's behalf, behind the owner proof,
+    /// rechecked in the committing transaction: the vault-side value update
+    /// of ARCH-0069 S6 (the module docs). In one write transaction the
+    /// record's `rotation_generation` advances by one, `rotated_at` is
+    /// stamped, the value is replaced and a [`RotationReceipt`] lands. It
+    /// kills no lease and touches no build exhaust. It is the only served
+    /// rotation.
+    ///
+    /// A portable record's rotation is a custody rotate request (WILL L04
+    /// row 04): its holder, the one `plan` names or this install, rotates
+    /// it and signs the transition to the recipients `plan` permits, or
+    /// those of the secret's live change when it names none. When this
+    /// install is the holder it does so in this commit; any other holder
+    /// gets the new value sealed to its key as the request's protected
+    /// input, and the receipt reads awaiting it. A record that stays on its
+    /// device, or an install that carries no owner act, rotates here alone,
+    /// and the receipt says so. `surface` is audit only.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof belongs to
+    /// another vault, its slip or person is no longer live, or the actor is no
+    /// longer an owner of this vault; [`SecretError::SecretRefNotFound`] for a
+    /// name custody does not hold; [`SecretError::SecretCustodyNotActive`] for
+    /// a record that is not `Active`, or one an admitted revoke ended;
+    /// [`SecretError::ManifestWidensFloor`] when its bindings no longer fit
+    /// the live custody floor; a holder or recipient that is no live linked
+    /// install with an importable key; a refusal of this install as holder;
+    /// an install key that fails to load; otherwise the store's errors.
+    pub fn rotate_secret_with_custody(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        secret_ref: &str,
+        new_value: &[u8],
+        plan: &CustodyPlan,
+        at: u64,
+    ) -> Result<SecretRotated> {
+        self.load_install_signing_if_minted()?;
         let mut wtxn = self.store.env.write_txn()?;
         let actor = owner.revalidate_in_txn(self, &wtxn)?;
         if !crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &actor)? {
@@ -49,11 +96,64 @@ impl Vault {
                 "only the vault owner rotates a secret",
             )));
         }
-        let receipt = self.rotate_secret_in_txn(&mut wtxn, secret_ref, new_value, at)?;
-        let transition = self.write_transition_of_in_txn(&mut wtxn, secret_ref, at)?;
+        let id = resolve_secret_ref_in_txn(&self.store, &wtxn, secret_ref)?.ok_or_else(|| {
+            Error::Secret(SecretError::SecretRefNotFound {
+                name: secret_ref.to_owned(),
+            })
+        })?;
+        let held = Held(
+            read_secret_custody_in_txn(&self.store, &wtxn, &id)?
+                .ok_or(Error::CorruptedIndex("secret custody record for live name"))?,
+        );
+        let rotated = if custody_portable(&held.0) {
+            refuse_revoked_use_in_txn(self, &wtxn, &id, held.0.class, &held.0.name)?;
+            if held.0.status != SecretCustodyStatus::Active {
+                return Err(Error::Secret(SecretError::SecretCustodyNotActive {
+                    name: held.0.name.clone(),
+                }));
+            }
+            refuse_bindings_wider_than_live_floor(&self.store, &wtxn, &held.0)?;
+            let generation = held
+                .0
+                .rotation_generation
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("secret rotation generation"))?;
+            let recorded = self.record_custody_change_in_txn(
+                &mut wtxn,
+                actor,
+                surface,
+                ActiveChange {
+                    change: CustodyChange::Rotate,
+                    id,
+                    generation,
+                    plan,
+                    material: Material::Value(new_value),
+                    sealed: None,
+                    seen: None,
+                    permits: None,
+                },
+                at,
+            )?;
+            // An install that carries no owner act rotates here alone.
+            let rotation = if recorded.custody.kept_here.is_some() {
+                Some(self.rotate_secret_in_txn(&mut wtxn, secret_ref, new_value, at)?)
+            } else {
+                recorded.rotation
+            };
+            SecretRotated {
+                rotation,
+                custody: recorded.custody,
+            }
+        } else {
+            SecretRotated {
+                rotation: Some(self.rotate_secret_in_txn(&mut wtxn, secret_ref, new_value, at)?),
+                custody: SecretCustodyWork::kept(CustodyKeptHere::DeviceLocal),
+            }
+        };
+        drop(held);
         wtxn.commit()?;
-        self.mirror_transition(transition.as_ref());
-        Ok(receipt)
+        self.mirror_custody_change(&rotated.custody);
+        Ok(rotated)
     }
 
     /// Revokes a secret on the vault owner's behalf: terminal value death,
@@ -64,16 +164,17 @@ impl Vault {
     /// A portable record's revocation reaches the owner's other machines
     /// with no byte (WILL L04 row 04): in the same transaction this install,
     /// as the carrier of his act decided on `surface` (audit only), records
-    /// a custody revoke request naming itself as executor and appends its
-    /// enacted result, and every replica that folds it holds the id as
-    /// terminal. The returned work receipt says it committed here, never
-    /// that every replica holds it (CALLS CUSTODY_COMPLETION). The signed
-    /// transition of OF-422 is still written beside it.
+    /// a custody revoke request naming itself as executor, appends its
+    /// enacted result and writes the revoked transition bound to it, and
+    /// every replica that folds the request holds the id as terminal. The
+    /// returned work receipt says it committed here, never that every
+    /// replica holds it (CALLS CUSTODY_COMPLETION).
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is no longer
     /// the live owner's; [`SecretError::SecretRefNotFound`] for a name
-    /// custody does not hold; otherwise the store's errors.
+    /// custody does not hold; an install key that fails to load; otherwise
+    /// the store's errors.
     pub fn revoke_secret_as_owner(
         &self,
         owner: &AuthenticatedOwner,
@@ -81,7 +182,7 @@ impl Vault {
         secret_ref: &str,
         at: u64,
     ) -> Result<SecretRevoked> {
-        let _ = self.load_install_signing_if_minted();
+        self.load_install_signing_if_minted()?;
         let mut wtxn = self.store.env.write_txn()?;
         let actor = owner.revalidate_in_txn(self, &wtxn)?;
         if !crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &actor)? {
@@ -90,41 +191,19 @@ impl Vault {
             )));
         }
         let rotation = self.revoke_secret_in_txn(&mut wtxn, secret_ref, at)?;
-        let transition = self.write_transition_of_in_txn(&mut wtxn, secret_ref, at)?;
-        let work = self.carry_custody_revoke_in_txn(&mut wtxn, owner, surface, secret_ref)?;
+        let work = self.carry_custody_revoke_in_txn(&mut wtxn, owner, surface, secret_ref, at)?;
         wtxn.commit()?;
-        self.mirror_transition(transition.as_ref());
+        if let Some(work) = &work {
+            self.mirror_custody_change(&SecretCustodyWork::recorded(work.clone()));
+        }
         Ok(SecretRevoked { rotation, work })
     }
 
-    /// The signed transition of the record `secret_ref` names, as it now
-    /// stands in `wtxn` (OF-422); none for a record that stays here.
-    fn write_transition_of_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        secret_ref: &str,
-        at: u64,
-    ) -> Result<Option<crate::secret_custody::CustodyTransition>> {
-        let Some(id) = resolve_secret_ref_in_txn(&self.store, wtxn, secret_ref)? else {
-            return Ok(None);
-        };
-        let Some(rec) = read_secret_custody_in_txn(&self.store, wtxn, &id)? else {
-            return Ok(None);
-        };
-        crate::secret_custody::write_custody_transition_in_txn(self, wtxn, id, &rec, at)
-    }
-
-    /// Mirrors a committed transition into the live windows.
-    fn mirror_transition(&self, transition: Option<&crate::secret_custody::CustodyTransition>) {
-        #[cfg(feature = "sync")]
-        if transition.is_some() {
-            self.refresh_custody_in_live_windows();
-        }
-        #[cfg(not(feature = "sync"))]
-        let _ = transition;
-    }
-
-    pub(super) fn rotate_secret_in_txn(
+    /// A rotation's body, inside the caller's transaction: the owner door
+    /// for a record that stays here, and a custody holder's rotate. A record
+    /// an admitted revoke ended refuses, though this install has not
+    /// settled it yet.
+    pub(crate) fn rotate_secret_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         secret_ref: &str,
@@ -141,6 +220,7 @@ impl Vault {
                 .ok_or(Error::CorruptedIndex("secret custody record for live name"))?,
         );
         let rec = &mut rec.0;
+        refuse_revoked_use_in_txn(self, wtxn, &id, rec.class, &rec.name)?;
         if rec.status != SecretCustodyStatus::Active {
             return Err(Error::Secret(SecretError::SecretCustodyNotActive {
                 name: rec.name.clone(),

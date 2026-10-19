@@ -3,8 +3,8 @@
 
 use super::record::eligible_readers;
 use crate::authority::{
-    AuthorityEntryHash, AuthorityFold, EffectiveRead, OwnerWorkBody, OwnerWorkOutcome,
-    OwnerWorkRefusal, OwnerWorkRequest, WorldKeyMode,
+    AuthorityEntryHash, AuthorityFold, CustodyChange, EffectiveRead, OwnerWorkBody,
+    OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest, WorldKeyMode,
 };
 use crate::error::{Error, Result};
 use crate::world_keys::reassert::{ReassertIncomplete, WORLD_KEY_REASSERT_INCOMPLETE};
@@ -32,11 +32,18 @@ pub struct OwnerWorkDrain {
 }
 
 /// Whether a request's pickup reads this install's hybrid secret: a world's
-/// key work and a root change open keys with it, and a bundle publication
-/// waits for it as it always has. A custody change reads none: a revoke
-/// needs no byte, and an active change's holder opens its own input.
+/// key work and a root change open keys with it, a bundle publication waits
+/// for it as it always has, and a custody register or rotate's holder opens
+/// its protected input with it. A revoke needs no byte, and a rewrap seals
+/// the value its holder holds.
 fn reads_machine_secret(work: &OwnerWorkBody) -> bool {
-    !matches!(work, OwnerWorkBody::Custody { .. })
+    !matches!(
+        work,
+        OwnerWorkBody::Custody {
+            change: CustodyChange::Revoke | CustodyChange::Rewrap,
+            ..
+        }
+    )
 }
 
 /// What one request's transaction did.
@@ -54,10 +61,11 @@ impl Vault {
     /// OWNER_WORK_PICKUP: after an authority catch-up and on the served
     /// lifecycle tick, never on a timer of its own). First every admitted
     /// custody revoke is settled here, byte-free (`settle_revoked_custody`
-    /// in `crate::secret_custody`). The machine secret is read outside every
-    /// transaction, and only when a request's kind reads it: with no
+    /// in `crate::secret_custody`), and each kept custody input whose
+    /// request is answered is forgotten. The machine secret is read outside
+    /// every transaction, and only when a request's kind reads it: with no
     /// keystore, slot or secret here each such request stays pending, and
-    /// nothing is taken over. A custody request reads none.
+    /// nothing is taken over. A custody revoke or rewrap reads none.
     ///
     /// Each request is read again and rechecked in its transaction: its
     /// world is live, its owner still a live vault owner, its target's
@@ -77,6 +85,16 @@ impl Vault {
                 "admitted custody revokes were not settled on this install"
             );
         }
+        if let Err(error) = self.settle_custody_inputs() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "answered custody inputs were not forgotten on this install"
+            );
+        }
+        // A custody transition or input that arrived before its request
+        // stands now that the request is in.
+        #[cfg(feature = "sync")]
+        self.reapply_custody_in_live_windows();
         let (machine, pending): (EntityId, Vec<(AuthorityEntryHash, bool)>) = {
             let txn = self.store.env.read_txn()?;
             let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
@@ -127,6 +145,12 @@ impl Vault {
                 }
             }
         }
+        // A custody change enacted here rides the live windows now, not at
+        // their next rematerialization.
+        #[cfg(feature = "sync")]
+        if drain.enacted > 0 {
+            self.refresh_custody_in_live_windows();
+        }
         Ok(drain)
     }
 
@@ -157,8 +181,8 @@ impl Vault {
             (OwnerWorkBody::PublishBundle { home }, Some(_)) => {
                 self.publish_bundle_work_in_txn(txn, &fold, request, *home, machine)?
             }
-            (OwnerWorkBody::Custody { change, .. }, _) => {
-                self.custody_work_in_txn(txn, &fold, request, *change)?
+            (OwnerWorkBody::Custody { .. }, secret) => {
+                self.custody_work_in_txn(txn, &fold, hash, request, secret)?
             }
             (
                 OwnerWorkBody::WorldKey { .. }
@@ -174,8 +198,9 @@ impl Vault {
         Ok(Ran::Answered(outcome))
     }
 
-    /// A world's key work, as the act's owner, each record naming the
-    /// request signed as entry `hash`. In Ensure mode: mint the world's
+    /// A world's key work, as the vault owner its key binds
+    /// ([`OwnerWorkRequest::key_owner`]), each record naming the request
+    /// signed as entry `hash`. In Ensure mode: mint the world's
     /// first key, or wrap its current key to every reader the settings
     /// allow. In Reassert mode: first wrap again each key this install
     /// wrapped itself, from its own records and keeping each id, then the
@@ -207,7 +232,7 @@ impl Vault {
         }
         match self.ensure_world_key_or_wide_in_txn(
             txn,
-            request.act.owner,
+            request.key_owner(),
             world,
             secret,
             Some(hash),
@@ -234,11 +259,12 @@ impl Vault {
         executor: EntityId,
     ) -> Result<Option<OwnerWorkRefusal>> {
         let world = request.act.target;
+        let key_owner = request.key_owner();
         Ok(if !self.world_row_live_in_txn(txn, world)? {
             Some(OwnerWorkRefusal::WorldNotLive)
-        } else if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, &request.act.owner)? {
+        } else if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, &key_owner)? {
             Some(OwnerWorkRefusal::OwnerNotLive)
-        } else if fold.world_policy_revision(world).0 != request.act.seen {
+        } else if fold.world_policy_revision(world).0 != request.revision() {
             Some(OWNER_WORK_STALE)
         } else if !eligible_readers(fold, world).any(|reader| reader == executor) {
             Some(OwnerWorkRefusal::ExecutorNotReader)

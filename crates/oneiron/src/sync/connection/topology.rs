@@ -102,7 +102,10 @@ fn route_home(
 
 /// Apply the initial snapshot before any socket work, then consume later
 /// host updates even while the socket is disconnected/backing off. Each
-/// election also moves `route` to the elected home's named endpoint.
+/// election also moves `route` to the elected home's named endpoint. An
+/// owner's home pick re-elects where it lands, in its own commit; on the
+/// wake that follows, the route moves to the committed home over the last
+/// host snapshot, and only a host update replaces that snapshot.
 pub(super) fn watch_topology(
     vault: Arc<Vault>,
     source: &HomeNodeTopology,
@@ -110,17 +113,35 @@ pub(super) fn watch_topology(
     events: mpsc::UnboundedSender<SyncEvent>,
 ) -> Result<TopologyWatcher> {
     let mut updates = source.subscribe();
-    let snapshot = updates.borrow_and_update().clone();
-    let home =
+    let mut wakes = vault.subscribe_proactivity_changes();
+    let mut snapshot = updates.borrow_and_update().clone();
+    let mut routed =
         DreamerRunnerStore::new(&vault).sync_topology_changed(&snapshot.candidates, now_secs())?;
-    route_home(route.as_ref(), &snapshot, home.as_ref());
+    route_home(route.as_ref(), &snapshot, routed.as_ref());
     Ok(TopologyWatcher(tokio::spawn(async move {
-        while updates.changed().await.is_ok() {
-            let snapshot = updates.borrow_and_update().clone();
-            match DreamerRunnerStore::new(&vault)
-                .sync_topology_changed(&snapshot.candidates, now_secs())
-            {
-                Ok(home) => route_home(route.as_ref(), &snapshot, home.as_ref()),
+        loop {
+            let home = tokio::select! {
+                changed = updates.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                    snapshot = updates.borrow_and_update().clone();
+                    DreamerRunnerStore::new(&vault)
+                        .sync_topology_changed(&snapshot.candidates, now_secs())
+                }
+                Ok(()) = wakes.changed() => {
+                    let home = DreamerRunnerStore::new(&vault).home_node_designation();
+                    if matches!(&home, Ok(home) if *home == routed) {
+                        continue;
+                    }
+                    home
+                }
+            };
+            match home {
+                Ok(home) => {
+                    route_home(route.as_ref(), &snapshot, home.as_ref());
+                    routed = home;
+                }
                 Err(error) => {
                     let _ = events.send(SyncEvent::Error(format!(
                         "Home-node topology update failed: {error}"

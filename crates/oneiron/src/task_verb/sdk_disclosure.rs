@@ -87,3 +87,102 @@ pub fn offer_contact_disclosure_as_caller(
         expires_at: proposal.expires_at,
     })
 }
+
+/// The owner's model-disclosure asks and quiet receipts, newest first.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RevealAsksRequest {
+    #[serde(default)]
+    pub pending: bool,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RevealAskView {
+    pub receipt: super::sdk_secret::RevealReceipt,
+    pub state: String,
+    pub expires_at: u64,
+    pub disclosure: Option<String>,
+    pub expected_digest: Option<String>,
+    pub grant_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RevealOutcome {
+    Once,
+    Standing,
+    Deny,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RevealAnswerRequest {
+    pub reveal: String,
+    pub expected_digest: String,
+    pub outcome: RevealOutcome,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RevealAnsweredView {
+    pub reveal: String,
+    pub outcome: String,
+    pub receipt_ref: String,
+    pub grant_ref: Option<String>,
+}
+
+pub fn disclosure_reveals_as_owner(
+    vault: &crate::Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    input: RevealAsksRequest,
+) -> MemoryResult<Vec<RevealAskView>> {
+    Ok(vault
+        .secret_reveals(owner, input.pending, input.limit.unwrap_or(50).min(200))?
+        .into_iter()
+        .map(|ask| RevealAskView {
+            receipt: super::sdk_secret::reveal_receipt(ask.receipt),
+            state: ask.state.as_str().to_owned(),
+            expires_at: ask.expires_at,
+            disclosure: ask.disclosure,
+            expected_digest: ask.once_digest.map(|digest| digest.to_hex()),
+            grant_ref: ask.grant_ref,
+        })
+        .collect())
+}
+
+pub fn answer_disclosure_reveal_as_owner(
+    vault: &crate::Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    input: RevealAnswerRequest,
+) -> MemoryResult<RevealAnsweredView> {
+    let reveal = EntityId::from_hex(&input.reveal)
+        .map_err(|_| MemoryError::bad_request("reveal is not an entity id"))?;
+    let invalid = || MemoryError::bad_request("expected_digest must be 64 lowercase hex");
+    let text = input.expected_digest;
+    if text.len() != 64
+        || !text
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(invalid());
+    }
+    let mut digest = [0_u8; 32];
+    for (at, byte) in digest.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&text[at * 2..at * 2 + 2], 16).map_err(|_| invalid())?;
+    }
+    let answer = match input.outcome {
+        RevealOutcome::Once => crate::secret_custody::SecretRevealAnswer::Once,
+        RevealOutcome::Standing => crate::secret_custody::SecretRevealAnswer::Standing,
+        RevealOutcome::Deny => crate::secret_custody::SecretRevealAnswer::Deny,
+    };
+    let answered = vault.answer_secret_reveal(owner, &reveal, &digest, answer)?;
+    Ok(RevealAnsweredView {
+        reveal: answered.reveal.to_hex(),
+        outcome: answered.answer.as_str().to_owned(),
+        receipt_ref: format!("gate:{}", answered.decision.to_hex()),
+        grant_ref: answered.grant_ref,
+    })
+}

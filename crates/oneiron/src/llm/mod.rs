@@ -35,9 +35,10 @@ pub(crate) use oneiron_model::llm::{
     DreamerFailurePrecedence, DreamerFailureRule, decide_failure, fallback_failure_class,
     parse_failure_rules,
 };
-pub mod manifest;
-pub mod model_trials;
 pub mod catalog_doors;
+pub mod manifest;
+pub mod model_stream;
+pub mod model_trials;
 pub mod registry;
 pub mod routing;
 pub mod run_admission;
@@ -88,7 +89,7 @@ pub use self::autocheck::{
     AutoCheckSignals, BoundedAutoChecker,
 };
 pub use self::role_defaults::RoleModelDefaults;
-pub(crate) use self::step::{ExecutedModelWitness, terminal_step_identity};
+pub(crate) use self::step::{ExecutedModelWitness, committed_steps_in_txn, terminal_step_identity};
 pub(crate) use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::limit;
 pub use oneiron_model::llm::{

@@ -47,7 +47,8 @@ use crate::sync::manager::WindowManager;
 use crate::sync::queue::SyncQueue;
 pub use crate::sync::types::LocalUpdate;
 use crate::sync::types::parse_window_key_str;
-pub use home_search::HomeSearch;
+pub(crate) use home_search::HomeSearchSlot;
+pub use home_search::{DeviceResidence, HomeSearch};
 pub use topology::HomeNodeTopology;
 
 /// Configuration for the connection manager.
@@ -401,6 +402,20 @@ impl SyncConnection {
             ));
         }
         self.client()?.catch_up_authority().await
+    }
+
+    /// Grants `recipient` access to every pad object the home keeps, with
+    /// the owner's kit `seed` for this call alone (FIX 4271, 4564). See
+    /// [`crate::sync::SyncClient::grant_sealed_bundle_pad_access_with_kit`].
+    pub async fn grant_sealed_bundle_pad_access_with_kit(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        seed: &crate::world_keys::RecoveryRootSeed,
+        recipient: crate::world_keys::PadAdmissionTarget,
+    ) -> Result<crate::sync::client::PadAdmissionReport, crate::sync::TransportError> {
+        self.client()?
+            .grant_sealed_bundle_pad_access_with_kit(owner, seed, recipient)
+            .await
     }
 
     /// The thin index this device holds.

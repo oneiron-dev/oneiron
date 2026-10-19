@@ -18,15 +18,21 @@ MANIFEST = json.loads((Path(__file__).with_name('agent-verbs.json')).read_text()
 HOST_ROWS = [row for row in MANIFEST['verbs'] if 'host' in row]
 HOST_RUN_ROWS = [row for row in HOST_ROWS if row.get('context') == 'run']
 HOST_BROWSER_ROWS = [row for row in HOST_ROWS if row.get('context') == 'browser']
+# A board row keeps its MCP/code-mode shape in ROWS (its board fn, tool
+# schema and run door read the original input); its host projection is a
+# facade-only row beside it (BOARD_HOST_ROWS), never a replacement.
+HOST_BOARD_ROWS = [row for row in HOST_ROWS if row.get('context') == 'board']
 BROWSER_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'browser']
 for row in HOST_ROWS:
     host = row['host']
-    if (row.get('context') not in ('run', 'browser') or not {'input', 'description'} <= set(host)
-            or set(host) - {'input', 'description', 'host_door_caller', 'host_door_session', 'host_door_lists', 'openapi'}
+    if (row.get('context') not in ('run', 'browser', 'board') or not {'input', 'description'} <= set(host)
+            or set(host) - {'input', 'output', 'description', 'host_door_caller', 'host_door_session', 'host_door_lists', 'openapi'}
+            or ('output' in host and row.get('context') != 'board')
             or any(not isinstance(host[key], bool) for key in ('host_door_caller', 'host_door_session', 'host_door_lists', 'openapi') if key in host)):
         raise ValueError(f'{row["name"]}: a host projection names the public input and description, with optional caller, session, lists and OpenAPI flags')
-ROWS = [row for row in MANIFEST['verbs'] if 'call' in row and row not in HOST_BROWSER_ROWS] + [
-    {'name': row['name'], 'input': row['host']['input'], 'output': row['output'],
+def host_synthetic(row):
+    return {'name': row['name'], 'input': row['host']['input'],
+     'output': row['host'].get('output', row['output']),
      'description': row['host']['description'], 'scope': row['scope'],
      'call': f'crate::task_verb::sdk::host_only(memory, "{row["name"]}", &input)?',
      'host_door': True, 'host_door_session': row['host'].get('host_door_session', True),
@@ -37,13 +43,17 @@ ROWS = [row for row in MANIFEST['verbs'] if 'call' in row and row not in HOST_BR
      'host_door_lists': row.get('context') == 'browser' or row['host'].get('host_door_lists', False),
      'openapi': row['host'].get('openapi', False),
      'admission': {'unrestricted_record_scope': True}, 'section': False}
-    for row in HOST_ROWS
+ROWS = [row for row in MANIFEST['verbs'] if 'call' in row and row not in HOST_BROWSER_ROWS] + [
+    host_synthetic(row) for row in HOST_ROWS if row.get('context') != 'board'
 ]
+BOARD_HOST_ROWS = [dict(host_synthetic(row), board_host=True, board_input=row['input'])
+                   for row in HOST_BOARD_ROWS]
+BOARD_HOST_NAMES = {row['name'] for row in BOARD_HOST_ROWS}
 DEFINITIONS = [row for row in MANIFEST['verbs'] if 'call' not in row and 'host' not in row]
 if len({row['name'] for row in MANIFEST['verbs']}) != len(MANIFEST['verbs']): raise ValueError('duplicate SDK verb')
 RUN_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'run']
 # Code mode always reads the run/browser input; the served schema reads its host input.
-CODE_MODE_ROWS = [row for row in ROWS if row['name'] not in {r['name'] for r in HOST_ROWS}] + HOST_BROWSER_ROWS + RUN_ROWS
+CODE_MODE_ROWS = [row for row in ROWS if row['name'] not in {r['name'] for r in HOST_ROWS}] + HOST_BROWSER_ROWS + HOST_BOARD_ROWS + RUN_ROWS
 SCHEMA_ROWS = ROWS + [row for row in RUN_ROWS if 'host' not in row]
 for row in RUN_ROWS:
     if set(row) - {'output', 'outputs_by_input', 'host'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
@@ -120,6 +130,13 @@ for row in ROWS:
     # unowned, as every HTTP call and direct tool call does.
     if row.get('host_door_lens_owner') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door takes a lens owner')
+    # `host_door_surface` hands an owner-setting door where the owner's say-so
+    # reached this install, for his act's audit record (FIX 4625): the facade
+    # call's request-derived surface (`FacadeCall::surface`, a linked machine
+    # its headers prove), or the header-less rule for an MCP row
+    # (`owner_binding::act_surface`). Never a field of its input.
+    if row.get('host_door_surface') and not row.get('host_door'):
+        raise ValueError(f'{row["name"]}: only a host door takes an act surface')
     # Rule 5: `task_work` marks a row whose run is one piece of task work. The
     # server's dispatch and its MCP dispatch take one turn for it
     # (`SyncServer::admit_task_work`, never refused) before the engine call,
@@ -136,6 +153,11 @@ for row in ROWS:
     # that route.
     if row.get('openapi') and row.get('context', 'memory') != 'memory':
         raise ValueError(f'{row["name"]}: only a facade row is published in OpenAPI')
+    # A JSON attachment keeps the row's typed body and its declared filename.
+    if 'attachment' in row and (row.get('context', 'memory') != 'memory'
+            or not isinstance(row['attachment'], str)
+            or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', row['attachment'])):
+        raise ValueError(f'{row["name"]}: an attachment names a facade JSON response file')
     # DOOR-127: `no_record` marks a facade row no transport keeps a call
     # receipt of (`NO_RECORD_ROWS`): an off-record session's own rows, as
     # ARCH-0052 keeps no wire receipt that a session ran. Every reply states
@@ -205,7 +227,7 @@ def mcp_rows():
     'The rows the MCP doors serve as tools: every row but a browser row.'
     return [row for row in ROWS if row.get('mcp') != 'none']
 HEADER = '// Generated by scripts/sdk/generate.py; edit agent-verbs.json instead.\n'
-FACADE_ROWS = [row for row in ROWS if row.get('context', 'memory') == 'memory']
+FACADE_ROWS = [row for row in ROWS if row.get('context', 'memory') == 'memory'] + BOARD_HOST_ROWS
 # OF-246: the wire types every facade row's input and result reach, read from
 # the Rust sources the rows name. Every TypeScript and Python projection below
 # names its types from here; there is no second table of shapes.
@@ -223,7 +245,10 @@ def rust_type(value):
     if value in RUST_PRIMITIVES or value == 'serde_json::Value': return value
     return value.replace('crate::', 'oneiron::') if value.startswith('crate::') else 'oneiron::task_verb::sdk::' + value
 
-SERVER_RECALL_DOC = "/// `vault.recall` → `SyncServer::recall_off_runtime_listing`, the recall door\n/// every server transport shares (`POST /v1/core/facade/vault.recall`, and\n/// the held socket's `rpc.req`): it embeds the query whenever the vault's\n/// embedder is serving.\n///\n/// The lease is not a client input, and a bearer slip is not one. At high,\n/// xhigh and max the door admits the recall on a line of its own and\n/// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,\n/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no\n/// reranker route the recall runs unreranked and reports\n/// `skipped / no_reranker` in `retrieval_meta.rerank`.\n"
+SERVER_RECALL_DOC = "/// `vault.recall` → `SyncServer::recall_home_listing`, the recall door\n/// every server transport shares (`POST /v1/core/facade/vault.recall`, and\n/// the held socket's `rpc.req`): it embeds the query whenever the vault's\n/// embedder is serving.\n///\n/// The lease is not a client input, and a bearer slip is not one. At high,\n/// xhigh and max the door admits the recall on a line of its own and\n/// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,\n/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no\n/// reranker route the recall runs unreranked and reports\n/// `skipped / no_reranker` in `retrieval_meta.rerank`.\n///\n/// On a device that syncs only what it opened, the door then asks the home\n/// under the call's own caller (FIX 2905): its references ride in\n/// `residence`, apart from the local items; without them the pack is\n/// local-only and `partial`.\n"
+# FIX 2905: the server doors that also ask an opened device's home, by row,
+# with the caller the call (or the MCP actor) admitted as the last argument.
+HOME_SERVER_DOORS = {'vault.recall': 'recall_home_listing'}
 
 # Boundary codecs are selected by argument/result type, never by verb name.
 ARGUMENTS = {
@@ -723,10 +748,12 @@ def mcp_input_dispatch(row):
                  '// A host credential resolves first (FIX 2222): a hosted operator root gets the typed refusal, and a self-hosted root or the explicit dev mode exports as the owner it acts as.\n'
                  'let action = crate::api::host_action::host_action_of(server.vault(), auth).transpose().map_err(|error| mcp_engine_error("host action failed", error))?;\n'
                  '// The person path lists through its surface; the host paths beside their archive. A slip keeps its own path; a host action with no slip (the dev mode) takes the host-action export.\n'
+                 '// Each arm records the owner act with where he spoke from: an MCP row carries no request headers (FIX 4625, 4626).\n'
+                 'let surface = crate::api::facade::owner_binding::act_surface(auth);\n'
                  'let output = match (auth.verified_slip(), action) {\n'
-                 '    (Some(proof), _) if proof.claims().holder_ref == "host" => server.vault.export_with_verified_host_owner_listing(&input, proof, actor.locality()).map(|(output, listed)| { served.extend(listed); output }),\n'
-                 '    (Some(proof), _) => memory.export_with_verified_owner(&input, proof),\n'
-                 '    (None, Some(action)) => server.vault.export_with_host_action_listing(&input, &action, actor.locality()).map(|(output, listed)| { served.extend(listed); output }),\n'
+                 '    (Some(proof), _) if proof.claims().holder_ref == "host" => server.vault.export_with_verified_host_owner_listing(&input, proof, surface, actor.locality()).map(|(output, listed)| { served.extend(listed); output }),\n'
+                 '    (Some(proof), _) => memory.export_with_verified_owner(&input, proof, surface),\n'
+                 '    (None, Some(action)) => server.vault.export_with_host_action_listing(&input, &action, surface, actor.locality()).map(|(output, listed)| { served.extend(listed); output }),\n'
                  '    (None, None) => return Err(McpGatewayError::new(-32020, "forbidden", "full-vault export requires verified owner authority")),\n'
                  '}.map_err(mcp_facade_error)?;\n')
     elif row.get('host_door'):
@@ -734,7 +761,8 @@ def mcp_input_dispatch(row):
         # credential the REST facade passes it.
         session_arg = 'actor.off_record_session.as_deref().map(oneiron::EntityId::from_hex).transpose().map_err(|_| invalid())?, ' if row.get('host_door_session') else ''
         lens_arg = 'owner, ' if row.get('host_door_lens_owner') else ''
-        door = f'crate::api::facade::host_doors::{method}(server, auth, {session_arg}{"(actor.actor_ref, actor.actor_class), memory.invocation(), " if row.get("host_door_caller") else ""}{lens_arg}input).await'
+        surface_arg = 'crate::api::facade::owner_binding::act_surface(auth), ' if row.get('host_door_surface') else ''
+        door = f'crate::api::facade::host_doors::{method}(server, auth, {session_arg}{"(actor.actor_ref, actor.actor_class), memory.invocation(), " if row.get("host_door_caller") else ""}{lens_arg}{surface_arg}input).await'
         # The card's owner names the request as the row runs it, before it decodes.
         lens_owner = f'let owner = surface.lens_owner({json.dumps(name)}, &input);\n' if row.get('host_door_lens_owner') else ''
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
@@ -746,9 +774,12 @@ def mcp_input_dispatch(row):
                   f'let output = {door}.map_err(mcp_facade_error)?;\n'))
     elif row.get('server_door'):
         # A server door runs the verb with the host's execution inputs, as on REST.
+        home_door = HOME_SERVER_DOORS.get(name)
+        door_call = (f'{home_door}(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input, actor.home_caller())'
+                     if home_door else f'{row["server_door"]}_listing(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input)')
         body += (f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
                  'let proof = actor.auth.as_ref().and_then(crate::auth::CoreAuth::verified_slip).cloned();\n'
-                 f'let (output, listed) = server.{row["server_door"]}_listing(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input).await;\n'
+                 f'let (output, listed) = server.{door_call}.await;\n'
                  '// Derived from these rows too, though it names none of them.\n'
                  'served.extend(listed);\n'
                  'let output = output.map_err(mcp_facade_error)?;\n')
@@ -1195,7 +1226,22 @@ def facade_dispatch(facade_rows):
     routes = HEADER + 'use super::*;\npub(super) fn routes() -> Router<Arc<SyncServer>> { Router::new()\n'
     # G10: anonymous chat uses the existing standalone handler, never the
     # facade's invocation claim, hook chains or retained call-receipt layer.
-    routes += ''.join(f'.route("/{r["name"]}", post(facade_route))\n' for r in facade_rows if r['name'] != 'ai.anonymous_chat') + '}\n'
+    for r in facade_rows:
+        if r['name'] == 'ai.anonymous_chat': continue
+        handler = r['name'].replace('.', '_') + '_attachment' if 'attachment' in r else 'facade_route'
+        routes += f'.route("/{r["name"]}", post({handler}))\n'
+    routes += '}\n'
+    for r in facade_rows:
+        if 'attachment' not in r: continue
+        handler = r['name'].replace('.', '_') + '_attachment'
+        disposition = json.dumps(f'attachment; filename="{r["attachment"]}"')
+        routes += f'''async fn {handler}(
+            auth: CoreAuth, State(server): State<Arc<SyncServer>>, uri: axum::http::Uri,
+            headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>,
+        ) -> Result<impl IntoResponse, FacadeApiError> {{
+            let answer = facade_route(auth, State(server), uri, headers, payload).await?;
+            Ok(([(axum::http::header::CONTENT_DISPOSITION, {disposition})], answer))
+        }}\n'''
     routes += 'pub(super) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> { Router::new().route("/v1/core/facade/ai.anonymous_chat", post(crate::api::anonymous_chat::chat)) }\n'
     dispatch = HEADER + DISPATCH_DOC + 'use super::*;\n'
     for r in facade_rows:
@@ -1246,22 +1292,22 @@ def facade_dispatch(facade_rows):
                 // its own path; a host action with no slip (the dev mode)
                 // takes the engine's host-action export; the attested owner
                 // takes the engine's request-proof export, at its own
-                // locality.
+                // locality. Each arm's receipt records the owner's act, with
+                // where he spoke from as this request proved it (audit only;
+                // FIX 4625, 4626).
+                let surface = call.surface();
                 let (output, rows) = match (proof, action, owner) {{
                     (Some(proof), _, _) if proof.claims().holder_ref == "host" => {{
-                        server.vault.export_with_verified_host_owner_listing(&input, proof, auth.locality())?
+                        server.vault.export_with_verified_host_owner_listing(&input, proof, surface, auth.locality())?
                     }}
                     (Some(proof), _, _) => {{
                         let (actor, class) = facade_actor(server, auth)?;
                         let producers = oneiron::memory::ProducerRows::default();
-                        let output = server.vault.memory(actor, class).at(auth.locality()).listing_producers(&producers).export_with_verified_owner(&input, proof)?;
+                        let output = server.vault.memory(actor, class).at(auth.locality()).listing_producers(&producers).export_with_verified_owner(&input, proof, surface)?;
                         (output, producers.take())
                     }}
-                    (None, Some(action), _) => server.vault.export_with_host_action_listing(&input, &action, auth.locality())?,
+                    (None, Some(action), _) => server.vault.export_with_host_action_listing(&input, &action, surface, auth.locality())?,
                     (None, None, Some(owner)) => {{
-                        // Its receipt records the owner's act, with where
-                        // he spoke from (audit only).
-                        let surface = super::owner_binding::act_surface(auth);
                         server.vault.export_with_authenticated_owner_listing(&input, &owner, surface, auth.locality())?
                     }}
                     (None, None, None) => {{
@@ -1285,7 +1331,8 @@ def facade_dispatch(facade_rows):
             landed = " server.ai.turn_landed_by(server.vault(), landed_by.0, landed_by.1);" if lands else ""
             session_arg = 'call.session()?, ' if r.get('host_door_session') else ''
             lens_arg = 'call.lens_owner(), ' if r.get('host_door_lens_owner') else ''
-            door = f'super::host_doors::{method}(server, auth, {session_arg}{"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}{lens_arg}facade_input(hooks.args.clone())?).await'
+            surface_arg = 'call.surface(), ' if r.get('host_door_surface') else ''
+            door = f'super::host_doors::{method}(server, auth, {session_arg}{"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}{lens_arg}{surface_arg}facade_input(hooks.args.clone())?).await'
             answer = (f'''let (output, listed) = {door};
                 let output = facade_output(output?)?;{landed}
                 Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
@@ -1344,7 +1391,10 @@ def facade_dispatch(facade_rows):
         # runtime, inside the room turn the call names, if any, and lists the
         # rows its answer is derived from without naming them.
         if r.get('server_door'):
-            result = (f'let (output, listed) = server.{r["server_door"]}_listing(actor, class, auth.verified_slip().cloned(), auth.locality(), call.room_turn()?, facade_input(value)?).await;\n'
+            home_door = HOME_SERVER_DOORS.get(name)
+            door_call = (f'{home_door}(actor, class, auth.verified_slip().cloned(), auth.locality(), call.room_turn()?, facade_input(value)?, call.home_caller())'
+                         if home_door else f'{r["server_door"]}_listing(actor, class, auth.verified_slip().cloned(), auth.locality(), call.room_turn()?, facade_input(value)?)')
+            result = (f'let (output, listed) = server.{door_call}.await;\n'
                       'let output = facade_output(output?)?;\nlet rows = Some(listed);')
         landed = ''
         if r.get('lands_turn'):
@@ -1413,13 +1463,13 @@ pub(crate) async fn call_verb(server: &Arc<SyncServer>, call: &FacadeCall<'_>, v
 match verb {{
 '''
     dispatch += ''.join(f'{json.dumps(r["name"])} => {r["name"].replace(".", "_")}(server, call, input).await,\n' for r in facade_rows)
-    for context, rows in [('Board', [r for r in ROWS if r.get('context') == 'board']), ('Browser', [r for r in BROWSER_ROWS if 'host' not in r]), ('Run', [r for r in RUN_ROWS if 'host' not in r])]:
+    for context, rows in [('Board', [r for r in ROWS if r.get('context') == 'board' and 'host' not in r]), ('Browser', [r for r in BROWSER_ROWS if 'host' not in r]), ('Run', [r for r in RUN_ROWS if 'host' not in r])]:
         if rows: dispatch += ' | '.join(json.dumps(r['name']) for r in rows) + f' => Err(context_required(verb, VerbContext::{context})),\n'
     dispatch += '_ => Err(unknown_verb(verb)),\n}\n}\n'
     return routes, dispatch
 
 def outputs():
-    facade_rows = [r for r in ROWS if r.get("context", "memory") == "memory"]
+    facade_rows = [r for r in ROWS if r.get("context", "memory") == "memory"] + BOARD_HOST_ROWS
     core = HEADER
     # A count default is stated once, on its manifest argument. The engine
     # reads it from here, and every binding signature is generated from the
@@ -1438,7 +1488,7 @@ def outputs():
     core += "])); SCHEMAS.get(verb) }\n"
     # DOOR-115: the rows the OpenAPI document publishes, and each one's answer
     # schema, read from its `output` type as `input_schema` reads its input.
-    openapi_rows = [r for r in ROWS if r.get('openapi')]
+    openapi_rows = [r for r in ROWS if r.get('openapi')] + [r for r in BOARD_HOST_ROWS if r.get('openapi')]
     core += "/// The facade rows the server's OpenAPI document publishes, each beside its\n/// [`input_schema`] and [`output_schema`].\n"
     core += "pub const OPENAPI_ROWS: &[&str] = &[" + ''.join(f'{json.dumps(r["name"])},' for r in openapi_rows) + "];\n"
     core += "/// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.\n"
@@ -1446,6 +1496,14 @@ def outputs():
     for r in openapi_rows:
         core += f'{json.dumps(r["name"])} => crate::code_run::vault_read::request_schema::<{r["output"]}>(),\n'
     core += "_ => return None, }) }\n"
+    # A board row's facade door takes its host projection, not the board
+    # shape `input_schema` states for MCP and code mode: the OpenAPI
+    # document reads the facade shape from here.
+    core += "/// The JSON schema of the input a verb's facade route takes; a board\n/// verb's host projection where it has one, else [`input_schema`].\n"
+    core += "pub fn facade_input_schema(verb: &str) -> Option<serde_json::Value> { Some(match verb {\n"
+    for r in BOARD_HOST_ROWS:
+        core += f'{json.dumps(r["name"])} => crate::code_run::vault_read::request_schema::<{r["input"]}>(),\n'
+    core += "_ => return input_schema(verb).cloned(), }) }\n"
     # DOOR-127: the rows whose calls keep no call receipt on any transport.
     core += "/// The facade rows no transport keeps a call receipt of (DOOR-127): an\n/// off-record session's own rows.\n"
     core += "pub const NO_RECORD_ROWS: &[&str] = &[" + ''.join(f'{json.dumps(r["name"])},' for r in ROWS if r.get('no_record')) + "];\n"
@@ -1461,10 +1519,17 @@ def outputs():
         core += '&' + json.dumps(list(r.get('mcp_required_fields', r['mcp_fields']))) + '},\n'
     core += '_ => return None, }; Some(serde_json::json!({"type": "object", "additionalProperties": false, "required": required, "properties": properties})) }\n'
     core += "pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> { match verb {\n"
+    board_host_input = {r['name']: r['input'] for r in BOARD_HOST_ROWS}
     for r in ROWS:
         checks = r.get('admission', {}).get('validate', '')
         binding = 'input' if checks else '_input'
-        core += f'{json.dumps(r["name"])} => {{ let {binding}: {r["input"]} = decode(value.clone())?; {checks} }},\n'
+        if r['name'] in board_host_input:
+            # One verb, two served shapes: the board/MCP shape and the
+            # facade's host projection. Either admits; each door decodes
+            # its own shape after this check.
+            core += f'{json.dumps(r["name"])} => {{ if decode::<{r["input"]}>(value.clone()).is_err() {{ let _host: {board_host_input[r["name"]]} = decode(value.clone())?; }} }},\n'
+        else:
+            core += f'{json.dumps(r["name"])} => {{ let {binding}: {r["input"]} = decode(value.clone())?; {checks} }},\n'
     core += '_ => return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))), } Ok(()) }\n'
     # Code mode binds its own guest, so a rewrite there validates the original
     # browser input, never the public live-run attachment wrapper.
@@ -1483,7 +1548,12 @@ def outputs():
     core += "crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {\n"
     for r in facade_rows:
         method = r['name'].replace('.', '_')
-        core += f'{json.dumps(r["name"])} => encode({method}(memory, decode(value)?)?),\n'
+        if r.get('board_host'):
+            # No memory fn of this name: it is the board fn's. An embedded
+            # handle answers the host-only refusal, as other host rows do.
+            core += f'{json.dumps(r["name"])} => encode(crate::task_verb::sdk::host_only::<{r["output"]}, {r["input"]}>(memory, {json.dumps(r["name"])}, &decode(value)?)?),\n'
+        else:
+            core += f'{json.dumps(r["name"])} => encode({method}(memory, decode(value)?)?),\n'
     core += '_ => Err(MemoryError::bad_request("unknown SDK agent verb")),\n})\n}\n'
     # A browser row's one door: code mode hands its whole input to the run's
     # browser session and takes the verb's whole output back.
@@ -1591,7 +1661,7 @@ def outputs():
     catalog += "pub const fn as_str(self) -> &'static str { match self {\n"
     catalog += ''.join('Self::' + variants[r['name']] + ' => ' + json.dumps(r['name']) + ',\n' for r in ROWS) + '} }\n'
     for method, select in [
-        ('is_facade', lambda r: r.get('context', 'memory') == 'memory'),
+        ('is_facade', lambda r: r.get('context', 'memory') == 'memory' or r['name'] in BOARD_HOST_NAMES),
         ('is_browser', lambda r: r['name'] in {row['name'] for row in BROWSER_ROWS}),
         ('is_mcp', lambda r: r.get('mcp') != 'none'),
         ('is_section', lambda r: r['section']),

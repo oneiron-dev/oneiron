@@ -30,6 +30,12 @@ mod artifact_hosting_doors;
 mod asset_doors;
 mod asset_resolve;
 mod authorship;
+mod critical_confirm;
+pub use critical_confirm::{
+    CriticalWriteConfirmAnswer, CriticalWriteConfirmPending, CriticalWriteConfirmPendingRequest,
+    CriticalWriteConfirmReceipt, CriticalWriteConfirmReceiptRequest, CriticalWriteConfirmRequest,
+    CriticalWriteConfirmSettlement,
+};
 mod birth_position;
 mod booking;
 mod claim_admission;
@@ -39,16 +45,19 @@ pub mod clustering;
 pub mod commitment_doors;
 mod conflict_settle;
 pub mod consolidation;
+pub mod consolidation_frontier;
 pub mod coping_doors;
 mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
 mod people_verbs;
+mod plugin_sections;
 pub mod run_review;
 mod skill_authoring;
 pub mod wellness_doors;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
+pub(crate) use outbound::parse_job_ref;
 pub(crate) mod booking_publication;
 mod campaign;
 mod campaign_actions;
@@ -72,7 +81,9 @@ mod export;
 mod expression_preference;
 pub mod extraction;
 pub mod foreign_code;
+pub mod graph_fs_doors;
 pub mod hook_regen_doors;
+pub mod identity_doors;
 mod inspection;
 mod key_value;
 mod lifted_view;
@@ -192,7 +203,14 @@ pub use people_verbs::{
     GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
     PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
 };
-pub use search_vector::{VectorSearchHit, VectorSearchRequest};
+pub use plugin_sections::{
+    PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest,
+    PluginSectionGrantState, PluginSectionListRequest, PluginSectionPackRow,
+    PluginSectionPendingRow, PluginSectionProposal, PluginSectionProposeRequest,
+    PluginSectionRevokeRequest, PluginSectionRevoked, PluginSectionSuggestRequest,
+    PluginSectionSuggestion, PluginSectionSuggestionState, PluginSectionTargetInput,
+    PluginSectionsView, PluginSuggestionsSetRequest, PluginSuggestionsView,
+};
 pub use signal_extraction::{
     ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest,
     SignalExtractionResult, SignalExtractionResultRequest, SignalExtractionSource,
@@ -219,13 +237,19 @@ pub use outbound::{
 };
 pub use read_selection::RecallWorlds;
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
+#[cfg(feature = "sync")]
+pub(crate) use recall::RecallKinds;
 pub(crate) use recall::check_recall_request;
 pub use recall::{
-    CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, MEMORY_PACK_VERSION,
-    MemoryItem, MemoryPack, MemoryProvenance, MemoryStaleStamp, RecallEffort, RecallRerank,
-    RecallRerankHost, RecallScope, RerankDocument, RerankEgress, RerankReport, RerankScores,
-    RerankSkip, RetrievalMeta, ScopeHonesty, resolve_recall_dial,
+    CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, HOME_RECALL_MERGE_ORDER,
+    HomeRecallCaller, HomeRecallMergeOrder, MEMORY_PACK_VERSION, MemoryItem, MemoryPack,
+    MemoryProvenance, MemoryStaleStamp, RecallEffort, RecallRerank, RecallRerankHost,
+    RecallResidence, RecallResidenceHit, RecallResidenceSource, RecallScope, RerankDocument,
+    RerankEgress, RerankReport, RerankScores, RerankSkip, RetrievalMeta, ScopeHonesty,
+    resolve_recall_dial,
 };
+#[cfg(feature = "sync")]
+pub use recall::{HomeRecallAsk, complete_with_home};
 pub use result_attachment::{
     MESSAGE_RESULT_METADATA_KEY, MessageResultAttachment, MessageResultSource,
 };
@@ -240,6 +264,10 @@ pub use search_hybrid::{
 };
 pub use search_temporal::{
     TemporalSearchHit, TemporalSearchRange, TemporalSearchRequest, TemporalSearchResult,
+};
+pub use search_vector::{
+    VectorPutReceipt, VectorPutRequest, VectorSearchConfig, VectorSearchHit, VectorSearchLane,
+    VectorSearchRequest, VectorSearchResult,
 };
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};

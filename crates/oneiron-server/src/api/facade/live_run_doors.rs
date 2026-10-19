@@ -188,7 +188,7 @@ where
         let mut dispatcher = HostSelfDispatcher::for_live_run(server.vault(), writer, &binding)?;
         let (settings, model) = run.planner();
         if let Some(settings) = settings {
-            if let Some(planner) = seated_planner(
+            if let Some(mut planner) = seated_planner(
                 server.vault(),
                 settings,
                 model,
@@ -196,6 +196,9 @@ where
             )
             .map_err(MemoryError::bad_request)?
             {
+                // DOOR-111 S4c-4: its planned team's start is written on the
+                // run's own seat and line, as its entries' are.
+                planner.pattern_runner = run.pattern_runner(&server);
                 dispatcher = dispatcher.with_planner(planner);
             }
         }

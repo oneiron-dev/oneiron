@@ -42,3 +42,39 @@ pub fn mesh_path_receipts_as_owner(
     memory.embedded_owner("vault.mesh.path_receipts")?;
     Ok(memory.vault().mesh_path_receipts(input.bound())?)
 }
+
+use crate::EntityId;
+use crate::authority::MeshMachineAddress;
+pub use crate::authority::{MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding};
+
+/// The MACHINE whose address/key binding just committed, initially without grants.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MeshMachineBound {
+    pub machine: EntityId,
+    pub endpoint_key: [u8; 32],
+}
+
+/// The MACHINE whose mesh admission the owner withdraws permanently.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MeshMachineRevokeRequest {
+    pub machine: EntityId,
+}
+
+/// The MACHINE whose mesh admission was revoked.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MeshMachineRevoked {
+    pub machine: EntityId,
+}
+
+/// An actual explicit-address dial, including before the peer pairs this
+/// install. It carries no application payload and returns no usable stream.
+/// ALPN is its wire bytes (for sync, the UTF-8 bytes of `oneiron/sync/1`).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MeshDialRequest {
+    pub address: MeshMachineAddress,
+    pub alpn: Vec<u8>,
+}

@@ -1,8 +1,8 @@
 //! Stateless field editor and capability-scoped ceremony presentation adapters.
 use super::*;
 use oneiron::blob_artifact::esign::render::{self, PageGeometry};
-use serde::Deserialize;
 use oneiron::blob_artifact::esign::{EsignField, FieldValue};
+use serde::Deserialize;
 use std::collections::BTreeMap;
 
 #[derive(Deserialize)]

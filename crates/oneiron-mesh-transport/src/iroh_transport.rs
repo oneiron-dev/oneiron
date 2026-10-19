@@ -30,6 +30,8 @@ use crate::{
     PathReceipts, transport_key::TransportKey,
 };
 
+mod dial;
+
 const MAX_MESSAGE: usize = 1024 * 1024;
 
 /// How long the refused or failed attempts from one machine, or from keys no
@@ -364,6 +366,12 @@ impl ProtocolHandler for GateHandler {
                 return Err(n0_error::e!(AcceptError::NotAllowed));
             }
         };
+        let mut acknowledgement = connection.open_uni().await.map_err(AcceptError::from_err)?;
+        acknowledgement
+            .write_all(dial::ADMISSION)
+            .await
+            .map_err(AcceptError::from_err)?;
+        acknowledgement.finish().map_err(AcceptError::from_err)?;
         if let Some(receipts) = &self.receipts {
             let receipt = admission(MeshPathDirection::Inbound, &self.alpn, machine, key);
             receipts.admitted(receipt, &connection);
@@ -447,6 +455,7 @@ pub struct IrohTransport {
     /// The accept loop; dropping the transport stops it.
     accepting: AbortOnDropHandle<()>,
     policy: AcceptPolicy,
+    allowed_relays: RelayMap,
     accepted: Mutex<mpsc::Receiver<(MachineId, Vec<u8>, Connection)>>,
     alpns: Vec<Vec<u8>>,
     receipts: Option<PathRecorder>,
@@ -486,7 +495,7 @@ impl IrohTransport {
             .clear_address_lookup()
             .address_lookup(RosterLookup {
                 roster: Arc::clone(&policy.roster),
-                allowed_relays,
+                allowed_relays: allowed_relays.clone(),
             })
             .relay_mode(relay_mode)
             .secret_key(secret)
@@ -524,6 +533,7 @@ impl IrohTransport {
             endpoint,
             accepting: AbortOnDropHandle::new(accepting),
             policy,
+            allowed_relays,
             accepted: Mutex::new(rx),
             alpns,
             receipts,
@@ -576,108 +586,6 @@ impl IrohTransport {
             receipts.flush().await;
         }
         Ok(())
-    }
-}
-impl MeshTransport for IrohTransport {
-    fn dial(&self, machine: MachineId, alpn: &[u8]) -> MeshFuture<'_, Box<dyn MeshConnection>> {
-        let alpn = alpn.to_vec();
-        Box::pin(async move {
-            if !self.alpns.contains(&alpn) {
-                return Err(MeshError::Refused);
-            }
-            let row = match self.policy.outbound(machine, &alpn) {
-                Ok(row) => row,
-                Err(error) => {
-                    let receipt = attempt(
-                        MeshPathDirection::Outbound,
-                        MeshPathOutcome::Refused,
-                        &alpn,
-                        None,
-                        &error,
-                    );
-                    self.dial_refused(machine, receipt, None);
-                    return Err(error);
-                }
-            };
-            let key =
-                EndpointId::from_bytes(&row.endpoint_key).map_err(|_| MeshError::InvalidRoster)?;
-            // Key only: addresses must be resolved by our private roster lookup.
-            let connection = match self.endpoint.connect(EndpointAddr::new(key), &alpn).await {
-                Ok(connection) => connection,
-                Err(error) => {
-                    let error = MeshError::Io(error.to_string());
-                    let receipt = attempt(
-                        MeshPathDirection::Outbound,
-                        MeshPathOutcome::Failed,
-                        &alpn,
-                        Some(row.endpoint_key),
-                        &error,
-                    );
-                    self.dial_refused(machine, receipt, None);
-                    return Err(error);
-                }
-            };
-            if connection.remote_id() != key {
-                let receipt = attempt(
-                    MeshPathDirection::Outbound,
-                    MeshPathOutcome::Refused,
-                    &alpn,
-                    Some(*connection.remote_id().as_bytes()),
-                    &MeshError::Refused,
-                );
-                self.dial_refused(machine, receipt, Some(&connection));
-                return Err(MeshError::Refused);
-            }
-            let admitted = IrohConnection {
-                machine,
-                alpn,
-                inner: connection,
-                policy: self.policy.clone(),
-                incoming: false,
-            };
-            if let Err(error) = admitted.check() {
-                let receipt = attempt(
-                    MeshPathDirection::Outbound,
-                    MeshPathOutcome::Refused,
-                    &admitted.alpn,
-                    Some(row.endpoint_key),
-                    &error,
-                );
-                self.dial_refused(machine, receipt, Some(&admitted.inner));
-                return Err(error);
-            }
-            if let Some(receipts) = &self.receipts {
-                let receipt = admission(
-                    MeshPathDirection::Outbound,
-                    &admitted.alpn,
-                    machine,
-                    row.endpoint_key,
-                );
-                receipts.admitted(receipt, &admitted.inner);
-            }
-            Ok(Box::new(admitted) as Box<dyn MeshConnection>)
-        })
-    }
-    fn accept(&self) -> MeshFuture<'_, Box<dyn MeshConnection>> {
-        Box::pin(async move {
-            let (machine, alpn, inner) = self
-                .accepted
-                .lock()
-                .await
-                .recv()
-                .await
-                .ok_or(MeshError::Unavailable)?;
-            let admitted = IrohConnection {
-                machine,
-                alpn,
-                inner,
-                policy: self.policy.clone(),
-                incoming: true,
-            };
-            // A queued connection does not outlive a grant revoke.
-            admitted.check()?;
-            Ok(Box::new(admitted) as Box<dyn MeshConnection>)
-        })
     }
 }
 

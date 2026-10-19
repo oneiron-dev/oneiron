@@ -1,4 +1,5 @@
-//! Home-node gate, atomic admission, and the private wake-budget ledger.
+//! Home-node gate, atomic admission, and the private wake-budget ledger. The
+//! election itself is [`super::home`]'s.
 //!
 //! Admission is ONE `RwTxn` chain: ready-scan, budget read/top-up, queue
 //! lease, and the optional durable started-milestone claim co-commit.
@@ -8,7 +9,7 @@ mod settlement;
 mod validation;
 use self::validation::validate_admission_input;
 
-use std::collections::HashSet;
+use std::ops::Bound;
 
 use crate::Vault;
 use crate::attempt_queue::{
@@ -40,9 +41,8 @@ use super::types::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt,
     DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerBudgetRecord, DreamerBudgetReservation,
     DreamerBudgetReserveOutcome, DreamerBudgetSettlement, DreamerBudgetSettlementOutcome,
-    DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerHomeNodeCandidate,
-    DreamerHomeNodeDesignation, DreamerMilestoneKind, DreamerReservedBudget, ParkDreamerAttempt,
-    ReserveDreamerBudget, SettleDreamerBudget,
+    DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerMilestoneKind,
+    DreamerReservedBudget, ParkDreamerAttempt, ReserveDreamerBudget, SettleDreamerBudget,
 };
 
 /// Private wake-budget counter, keyed by budget id (the rest of the key).
@@ -57,9 +57,6 @@ pub(super) const BUDGET_RESERVATION: SideTable<
 /// Exact attempt/step memo charged by one wake checkpoint.
 const BUDGET_STEP_CHARGE: SideTable<(AttemptId, [u8; 32]), [u8; 1], Raw> =
     SideTable::new(&side_table::DREAMER_BUDGET_STEP_CHARGE);
-/// The single elected MACRO home-node designation.
-pub(super) const HOME_NODE: SideTable<(), DreamerHomeNodeDesignation, Raw> =
-    SideTable::new(&side_table::DREAMER_HOME_NODE);
 
 /// `dreamer:budget_reservation:` row key: a big-endian u16 length, the budget
 /// id's own bytes, then the reserving child attempt id — not a
@@ -95,80 +92,6 @@ struct DreamerKindAdmissionResult {
 }
 
 impl DreamerRunnerStore<'_> {
-    /// Builds a local candidate from the vault's stable sync device identity.
-    pub fn local_home_node_candidate(
-        &self,
-        attached: bool,
-        always_on_local: bool,
-        primary_device: bool,
-    ) -> Result<DreamerHomeNodeCandidate> {
-        let node_id = crate::identity::load_or_mint_client_id(self.vault)?;
-        Ok(DreamerHomeNodeCandidate {
-            node_id,
-            cloud: false,
-            attached,
-            always_on_local,
-            primary_device,
-        })
-    }
-
-    /// Elects and persists the single MACRO home-node designation.
-    ///
-    /// Election is deterministic over the supplied current candidate set:
-    /// attached cloud > always-on local > primary device, with node id as a
-    /// stable tie-breaker inside a tier.
-    pub fn elect_home_node(
-        &self,
-        candidates: &[DreamerHomeNodeCandidate],
-        now: u64,
-    ) -> Result<Option<DreamerHomeNodeDesignation>> {
-        let designation = elect_home_node_designation(candidates, now)?;
-        let mut wtxn = self.vault.store.env.write_txn()?;
-        let previous = self.home_node_designation_in_txn(&wtxn)?;
-        if previous.as_ref().map(|home| (home.node_id, home.class))
-            == designation.as_ref().map(|home| (home.node_id, home.class))
-        {
-            return Ok(previous);
-        }
-        if let Some(designation) = designation {
-            HOME_NODE.put(&self.vault.store, &mut wtxn, &(), &designation)?;
-        } else {
-            HOME_NODE.delete(&self.vault.store, &mut wtxn, &())?;
-        }
-        wtxn.commit()?;
-        // The deadline lane re-reads at once: a node that gained the home
-        // arms its queued Macro work, and one that lost it stops arming.
-        self.vault.store.notify_proactivity_changes();
-        Ok(designation)
-    }
-
-    /// Re-elects when the topology owner supplies a changed candidate set.
-    ///
-    /// This is an explicit topology update, not a socket liveness signal:
-    /// each cloud candidate's `attached` bit comes from the host-authorized
-    /// topology. A transport outage never revokes the current MACRO home.
-    /// An empty set clears the old designation after an explicit detach.
-    pub fn sync_topology_changed(
-        &self,
-        candidates: &[DreamerHomeNodeCandidate],
-        now: u64,
-    ) -> Result<Option<DreamerHomeNodeDesignation>> {
-        self.elect_home_node(candidates, now)
-    }
-
-    /// Reads the persisted MACRO home-node designation, if one exists.
-    pub(crate) fn home_node_designation_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> Result<Option<DreamerHomeNodeDesignation>> {
-        HOME_NODE.get(&self.vault.store, txn, &())
-    }
-
-    pub fn home_node_designation(&self) -> Result<Option<DreamerHomeNodeDesignation>> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        self.home_node_designation_in_txn(&rtxn)
-    }
-
     /// Atomically admits the next queued Dreamer attempt.
     ///
     /// A successful admission leases one queue row, mutates the private budget
@@ -340,6 +263,7 @@ impl DreamerRunnerStore<'_> {
 
         // One grouped write, so what admission writes (a highway Accept's
         // TASK update among it) is announced at its commit.
+        let mut home_moved = false;
         let outcome = self.vault.with_write_txn_grouped(
             |wtxn| -> Result<DreamerConsolidationAdmissionOutcome> {
                 if input.scope == DreamerConsolidationScope::Macro {
@@ -351,8 +275,15 @@ impl DreamerRunnerStore<'_> {
                         ));
                     }
 
-                    let Some(designation) = home_node_designation_in_txn(self.vault, &*wtxn)?
-                    else {
+                    // A home pick that landed re-elects here first, so an
+                    // old home stops admitting new MACRO work at its own
+                    // election; what it admitted keeps its lease and budget.
+                    home_moved = super::home::reelect_home_in_txn(
+                        &self.vault.store,
+                        wtxn,
+                        self.vault.privacy_posture(),
+                    );
+                    let Some(designation) = self.home_node_designation_in_txn(wtxn)? else {
                         return Ok(DreamerConsolidationAdmissionOutcome::NoHomeNode);
                     };
                     if designation.node_id != local_node_id {
@@ -406,6 +337,9 @@ impl DreamerRunnerStore<'_> {
             },
         )?;
         self.vault.store.notify_attempt_observers();
+        if home_moved {
+            self.vault.store.notify_proactivity_changes();
+        }
         Ok(outcome)
     }
 
@@ -702,9 +636,19 @@ impl DreamerRunnerStore<'_> {
 
     /// Reads a private Dreamer budget row.
     pub fn budget(&self, budget_id: &str) -> Result<Option<DreamerBudgetRecord>> {
-        validate_budget_id(budget_id)?;
         let rtxn = self.vault.store.env.read_txn()?;
-        BUDGET.get(&self.vault.store, &rtxn, &budget_id.to_owned())
+        self.budget_in_txn(&rtxn, budget_id)
+    }
+
+    /// Reads a private Dreamer budget row in the caller's snapshot. A read
+    /// never initializes the row.
+    pub(crate) fn budget_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        budget_id: &str,
+    ) -> Result<Option<DreamerBudgetRecord>> {
+        validate_budget_id(budget_id)?;
+        BUDGET.get(&self.vault.store, txn, &budget_id.to_owned())
     }
 
     /// Reads the remaining units in a private Dreamer budget row.
@@ -730,52 +674,46 @@ impl DreamerRunnerStore<'_> {
             },
         )
     }
-}
 
-fn home_node_designation_in_txn(
-    vault: &Vault,
-    txn: &heed::RwTxn<'_>,
-) -> Result<Option<DreamerHomeNodeDesignation>> {
-    HOME_NODE.get(&vault.store, txn, &())
-}
-
-fn elect_home_node_designation(
-    candidates: &[DreamerHomeNodeCandidate],
-    now: u64,
-) -> Result<Option<DreamerHomeNodeDesignation>> {
-    let mut seen = HashSet::with_capacity(candidates.len());
-    let mut best: Option<(u8, u64, DreamerHomeNodeDesignation)> = None;
-
-    for candidate in candidates {
-        if candidate.node_id == 0 {
-            return Err(invalid_dreamer_runner(
-                "dreamer home node_id must be nonzero",
-            ));
-        }
-        if !seen.insert(candidate.node_id) {
-            return Err(invalid_dreamer_runner(
-                "duplicate dreamer home node candidate",
-            ));
-        }
-
-        let Some(class) = candidate.designation_class() else {
-            continue;
+    /// The child reservations held against one private budget row in the
+    /// caller's snapshot, in attempt-id order, strictly after `after` and at
+    /// most `take` of them. Each row's key and body must name this budget
+    /// and the same child.
+    pub(crate) fn budget_reservations_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        budget_id: &str,
+        after: Option<AttemptId>,
+        take: usize,
+    ) -> Result<Vec<DreamerBudgetReservation>> {
+        validate_budget_id(budget_id)?;
+        let reservation_key = |attempt_id| BudgetReservationKey {
+            budget_id: budget_id.to_owned(),
+            attempt_id,
         };
-        let rank = class.rank();
-        let designation = DreamerHomeNodeDesignation {
-            node_id: candidate.node_id,
-            class,
-            elected_at: now,
-        };
-        match best.as_ref() {
-            Some((best_rank, best_node_id, _))
-                if rank > *best_rank
-                    || (rank == *best_rank && candidate.node_id > *best_node_id) => {}
-            _ => best = Some((rank, candidate.node_id, designation)),
-        }
+        let first = reservation_key(AttemptId::from_bytes(&[0; 16])?);
+        let last = reservation_key(AttemptId::from_bytes(&[u8::MAX; 16])?);
+        let after = after.map(reservation_key);
+        let start = after
+            .as_ref()
+            .map_or(Bound::Included(&first), Bound::Excluded);
+        BUDGET_RESERVATION
+            .iter_range(&self.vault.store, txn, start, Bound::Included(&last))?
+            .take(take)
+            .map(|row| {
+                let (key, reservation) = row?;
+                if key.budget_id != budget_id
+                    || reservation.budget_id != budget_id
+                    || reservation.attempt_id != key.attempt_id
+                {
+                    return Err(invalid_dreamer_runner(
+                        "dreamer budget reservation key/body mismatch",
+                    ));
+                }
+                Ok(reservation)
+            })
+            .collect()
     }
-
-    Ok(best.map(|(_, _, designation)| designation))
 }
 
 fn read_or_initialize_budget_in_txn(

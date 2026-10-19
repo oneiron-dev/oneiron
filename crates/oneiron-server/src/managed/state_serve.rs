@@ -38,6 +38,18 @@ use oneiron_vault_contract::host::{Host, HostLimits};
 /// different outage and means a different response from the caller.
 pub const WRITES_FROZEN_TAG: &str = "writes_frozen";
 
+/// What a vault frozen for reap says (K18), served and logged: a temporary
+/// pause under the service's vault lifecycle allocation, what it holds back,
+/// how it lifts, and that a self-hosted vault has no such limit. It names no
+/// duration: this process knows none.
+pub(super) const WRITES_FROZEN_MESSAGE: &str = "This hosted vault is paused while the service prepares to reap it under its vault lifecycle allocation. New effects, requests other than GET, HEAD and OPTIONS (POST reads included) and connection upgrades are refused, and background passes wait, until the reap is aborted or the vault wakes again; the same request then succeeds. The same action works on a self-hosted vault, which has no such service reap limit; its storage and authorization checks still apply.";
+
+/// The bound a reap pause names: the service's capacity, as its vault
+/// lifecycle allocation, in the phase that prepares a reap.
+const REAP_PAUSE_BOUND_KIND: &str = "capacity";
+const REAP_PAUSE_RESOURCE: &str = "vault_lifecycle_allocation";
+const REAP_PAUSE_PHASE: &str = "reap_prepare";
+
 /// An alarm the supervisor pushed, as the reconciler hook saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservedAlarm {
@@ -133,6 +145,9 @@ pub struct ManagedState {
     last_sync_upgrade: AtomicU64,
     alarms: Mutex<Vec<ObservedAlarm>>,
     ledger: WakeLedger,
+    /// Whether a background pass the freeze refused has logged why since
+    /// the last unfreeze: the pending reason is logged once per freeze.
+    background_waiting: AtomicBool,
     /// The voice hello attestations already taken, each kept until its
     /// `issued_at` leaves the skew window (FIX 2391).
     voice_actions: std::sync::Mutex<std::collections::HashMap<String, UnixTs>>,
@@ -220,6 +235,7 @@ impl ManagedState {
             last_sync_upgrade: AtomicU64::new(0),
             alarms: Mutex::new(Vec::new()),
             ledger,
+            background_waiting: AtomicBool::new(false),
             voice_actions: std::sync::Mutex::default(),
         }
     }
@@ -269,6 +285,33 @@ impl ManagedState {
         Ok(admission)
     }
 
+    /// A background pass's admission, taken as a served write's and held on
+    /// the pass's own thread until its last write. A refused pass logs the
+    /// pause's typed reason, once per freeze, and asks again later.
+    fn admit_background(self: &Arc<Self>) -> Option<Box<dyn Send>> {
+        match self.admit_http_mutation() {
+            Ok(admission) => Some(Box::new(admission)),
+            Err(_) => {
+                if !self.background_waiting.swap(true, Ordering::SeqCst) {
+                    tracing::info!(
+                        reason = WRITES_FROZEN_TAG,
+                        bound_kind = REAP_PAUSE_BOUND_KIND,
+                        bound_resource = REAP_PAUSE_RESOURCE,
+                        bound_phase = REAP_PAUSE_PHASE,
+                        "background passes wait: the vault is paused for reap preparation until the reap is aborted or the vault wakes again"
+                    );
+                }
+                None
+            }
+        }
+    }
+
+    /// [`Self::admit_background`] as the admission a background worker takes.
+    fn background_admission(self: &Arc<Self>) -> crate::server::HousekeepingAdmission {
+        let state = Arc::clone(self);
+        Arc::new(move || state.admit_background())
+    }
+
     pub fn vault_name(&self) -> &str {
         &self.vault_name
     }
@@ -297,6 +340,9 @@ impl ManagedState {
             .unfreeze()
             .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
         self.frozen.store(false, Ordering::SeqCst);
+        if self.background_waiting.swap(false, Ordering::SeqCst) {
+            tracing::info!("the reap pause lifted; background passes run again");
+        }
         Ok(())
     }
 
@@ -641,11 +687,23 @@ fn is_read_only(request: &Request) -> bool {
 ///
 /// The message is the error's own `Display`, so the served refusal and the
 /// object-level one cannot drift apart. 503 because the refusal is temporary by
-/// construction: `reap_abort` lifts it and the same request succeeds.
+/// construction: `reap_abort` lifts it and the same request succeeds. The
+/// fields beside it name the bound (K18): the service's vault lifecycle
+/// allocation while it prepares a reap, what waits, what lifts it, and that a
+/// self-hosted vault has no such limit.
 fn writes_frozen_response(error: &ManagedError) -> Response {
     let body = serde_json::json!({
         "error": WRITES_FROZEN_TAG,
         "message": error.to_string(),
+        "bound": {
+            "kind": REAP_PAUSE_BOUND_KIND,
+            "resource": REAP_PAUSE_RESOURCE,
+            "phase": REAP_PAUSE_PHASE,
+        },
+        "temporary": true,
+        "affected": ["effects", "non_safe_method_requests", "upgrades", "background_passes"],
+        "resumes_on": ["reap_abort", "wake"],
+        "self_hosted": {"supported": true, "condition": "no_service_reap_limit"},
     });
     (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
 }
@@ -681,10 +739,12 @@ fn escrow_vault_key(vault: &oneiron::Vault, managed: &ManagedArgs) -> anyhow::Re
 
 /// The page seal a managed vault opens with (OF-570 maximum tier), from the
 /// data key its supervisor delivered: a sealed vault's, reopened from the
-/// mirror beside it; a new one where no vault is yet and `--maximum-tier`
-/// opted in; none for a plain vault, which stays plain (no converter).
+/// mirror beside it; a new one where no vault is yet and `maximum_tier`
+/// (`--maximum-tier`, else the settings file's) opted in; none for a plain
+/// vault, which stays plain (no converter).
 fn managed_page_seal(
     managed: &ManagedArgs,
+    maximum_tier: bool,
     dek: &[u8; 32],
 ) -> anyhow::Result<Option<oneiron::VaultPageSeal>> {
     let path = &managed.data_dir;
@@ -693,12 +753,12 @@ fn managed_page_seal(
             path, dek,
         )?));
     }
-    if !managed.maximum_tier {
+    if !maximum_tier {
         return Ok(None);
     }
     if path.join("data.mdb").exists() {
         tracing::warn!(
-            "--maximum-tier is chosen when a vault is created; this plain vault opens plain"
+            "the maximum tier is chosen when a vault is created; this plain vault opens plain"
         );
         return Ok(None);
     }
@@ -760,10 +820,10 @@ fn spool_vault_key_escrow(vault: &oneiron::Vault, managed: &ManagedArgs) {
 /// happened.
 pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Result<()> {
     let mut config = managed.serve_config(args);
-    // The supervisor's models table, read and checked before anything opens.
-    config.models = managed.models()?;
-    // Its embedder and batch pods too (FIX 777).
-    managed.embedder(&mut config)?;
+    // The owner's settings file, refused leaf by leaf and settled once,
+    // before anything reads the configuration: its `[oneironer]` arms the
+    // write-time marker in `vault_config` below.
+    super::settings::settle(&managed, args, &mut config)?;
     let cors = crate::commands::build_cors_layer(&config.sync_server_config())?;
     init_managed_tracing(&config.log_level);
     tracing::info!(
@@ -794,11 +854,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         token: host.secret("spawn_token")?.as_slice().try_into()?,
     };
     let mut vault_config = config.vault_config();
+    // Our cloud hosts this vault. The owner's "Help improve Oneiron" and
+    // training choices stand as the supervisor passed them; an unset export
+    // takes the managed default.
     vault_config.failure_signals.deployment =
         oneiron::config::failure_signals::DeploymentTier::Managed;
-    vault_config.failure_signals.training_opt_in = args.failure_signal_training.unwrap_or(false);
     // Set before the open: LMDB takes the page key with the environment.
-    vault_config.page_seal = managed_page_seal(&managed, &credentials.dek)?;
+    vault_config.page_seal = managed_page_seal(&managed, config.maximum_tier, &credentials.dek)?;
     let vault = Arc::new(open_managed_vault(
         &managed.data_dir,
         vault_config,
@@ -827,14 +889,36 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     spool_vault_key_escrow(&vault, &managed);
     // A sealed vault serves only once its mirror reopens it at the next start.
     vault.check_page_custody()?;
+    // The owner's embedding spaces and kind slots, as plain serve applies them.
+    if let Some(embedding) = &config.embedding {
+        embedding.apply_to(&vault)?;
+    }
     // The embedder slot and the pods' health poller, as plain serve builds
     // them; the worker that fills the slot starts under the write admission.
     let (embedder, gpu_poller) = crate::commands::build_embedder(&vault, &config).await?;
-    // Managed mode reads no environment, so the destination carries no
-    // bearer: our inbox takes none.
+    // The tagger slot `[oneironer]` names, as plain serve builds it; its
+    // worker starts under the write admission too.
+    let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone()).await?;
+    // The browser and desktop guests, as plain serve attaches them: each
+    // section's own checks decide, and a run with no guest is refused.
+    // Managed mode reads no environment, so the feedback destination carries
+    // no bearer: our inbox takes none.
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
+        .with_tagger(tagger)
+        .with_browser_guest(
+            config
+                .browser
+                .as_ref()
+                .map(crate::config::BrowserConfig::guest),
+        )
+        .with_desktop_guest(
+            config
+                .desktop
+                .as_ref()
+                .map(crate::config::DesktopConfig::guest),
+        )
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,
@@ -855,14 +939,12 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let reap_gate = Arc::new(std::sync::OnceLock::<Arc<ManagedState>>::new());
     ai.bind_pass_admission({
         let gate = Arc::clone(&reap_gate);
-        Arc::new(move || {
-            gate.get()?
-                .admit_http_mutation()
-                .ok()
-                .map(|admission| Box::new(admission) as Box<dyn Send>)
-        })
+        Arc::new(move || gate.get()?.admit_background())
     });
     let sync_server = Arc::new(sync_server);
+    // An answered code consent wait's effect runs on this server, as plain
+    // serve installs it, before the connector settler starts (DOOR-079 1a).
+    crate::code_consent_host::ServerCodeConsentHost::install(&sync_server);
     // The skill-edit gate's replay judge, on the ladder just built (OF-495).
     crate::replay_judge::register(&sync_server, config.skills.live_pulls_per_axis);
 
@@ -908,7 +990,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let oversight = sync_server
         .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, {
             let state = Arc::clone(&state);
-            move || state.admit_http_mutation().ok()
+            move || state.admit_background()
         })
         .await?;
     // Fact hooks (ARCH-0080) and the settled verb-ask drain on their runner,
@@ -917,18 +999,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let (hooks_stop, hooks_stopped) = watch::channel(false);
     #[cfg(feature = "code-sandbox-wasmtime")]
     let fact_hooks = if config.hooks {
-        let state = Arc::clone(&state);
-        crate::commands::spawn_fact_hooks(
-            &sync_server,
-            Arc::new(move || {
-                state
-                    .admit_http_mutation()
-                    .ok()
-                    .map(|admission| Box::new(admission) as Box<dyn Send>)
-            }),
-            hooks_stopped,
-        )
-        .await
+        crate::commands::spawn_fact_hooks(&sync_server, state.background_admission(), hooks_stopped)
+            .await
     } else {
         None
     };
@@ -972,45 +1044,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // Housekeeping passes are admitted like a served write: a vault frozen
     // for reap sweeps nothing, and a pass in flight keeps it from reading
     // quiescent.
-    let background = sync_server.spawn_serve_background({
-        let state = Arc::clone(&state);
-        Arc::new(move || {
-            state
-                .admit_http_mutation()
-                .ok()
-                .map(|admission| Box::new(admission) as Box<dyn Send>)
-        })
-    });
+    let background = sync_server.spawn_serve_background(state.background_admission());
     // Surface events drain under the same admission (OF-218).
-    let connector_events = sync_server.spawn_connector_event_worker({
-        let state = Arc::clone(&state);
-        Arc::new(move || {
-            state
-                .admit_http_mutation()
-                .ok()
-                .map(|admission| Box::new(admission) as Box<dyn Send>)
-        })
-    });
+    let connector_events = sync_server.spawn_connector_event_worker(state.background_admission());
     // Approved sends leave under the same admission (OF-187).
-    let connector_sends = sync_server.spawn_connector_send_worker({
-        let state = Arc::clone(&state);
-        Arc::new(move || {
-            state
-                .admit_http_mutation()
-                .ok()
-                .map(|admission| Box::new(admission) as Box<dyn Send>)
-        })
-    });
+    let connector_sends = sync_server.spawn_connector_send_worker(state.background_admission());
     // Checked built-in channels, under the same admission (OF-519).
-    let builtin_host = crate::builtin_host::spawn(&sync_server, {
-        let state = Arc::clone(&state);
-        Arc::new(move || {
-            state
-                .admit_http_mutation()
-                .ok()
-                .map(|admission| Box::new(admission) as Box<dyn Send>)
-        })
-    });
+    let builtin_host = crate::builtin_host::spawn(&sync_server, state.background_admission());
     // Failure signals reach our collector under the same admission (OF-380).
     // Managed mode reads no environment, so the send carries no bearer.
     let failure_signals = crate::ai_host::failure_signals::spawn(
@@ -1020,33 +1060,30 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             true,
             None,
         ),
-        {
-            let state = Arc::clone(&state);
-            Arc::new(move || {
-                state
-                    .admit_http_mutation()
-                    .ok()
-                    .map(|admission| Box::new(admission) as Box<dyn Send>)
-            })
-        },
+        state.background_admission(),
     );
     // The ladder's workers plain serve runs. Wire health and the standing
     // pump pass under the same admission.
-    let admitted = || -> crate::server::HousekeepingAdmission {
-        let state = Arc::clone(&state);
-        Arc::new(move || {
-            state
-                .admit_http_mutation()
-                .ok()
-                .map(|admission| Box::new(admission) as Box<dyn Send>)
-        })
-    };
+    let admitted = || state.background_admission();
     // The nightly Coach jobs that need the host's model or rules (OF-420).
     let coach_host = crate::ai_host::coach_host::spawn(&sync_server, admitted());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     let mut ladder_workers = vec![crate::wire_health::spawn(&sync_server, admitted())];
+    // An accepted Coach person-threshold row goes live on the ladder (Q3).
+    ladder_workers.extend(crate::decision_host::spawn_person_threshold_admitted(
+        &sync_server,
+        admitted(),
+    ));
     // Pending vectors are filled while the vault admits writes (FIX 777).
     ladder_workers.extend(sync_server.spawn_embedding_worker_admitted(admitted()));
+    // Witnessed turns' tagging markers drain under the same admission.
+    ladder_workers.extend(sync_server.spawn_tagging_worker_admitted(admitted()));
+    // Stored media is embedded under the same admission (OF-370).
+    ladder_workers.extend(sync_server.spawn_media_embedding_worker_admitted(admitted()));
+    // Queued and resumed agent runs, each admitted with its permit (OF-533).
+    ladder_workers.extend(sync_server.spawn_resident_pump_admitted(admitted()));
+    // Held and answered connector calls settle (ONE-2510).
+    ladder_workers.push(sync_server.spawn_connector_settler_admitted(admitted()));
     ladder_workers.extend(gpu_poller);
     // Sensitive imported topics ask the owner who sees their later imports (OF-492).
     ladder_workers.push(crate::import_audience::spawn(&sync_server, admitted()));

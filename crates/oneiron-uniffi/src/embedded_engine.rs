@@ -11,7 +11,18 @@
 //! instead, bound to the embedded owner actor; neither opens the path again.
 //! [`EmbeddedEngine::request`] sends the server one buffered HTTP/1.1
 //! request, and [`EmbeddedEngine::open_connection`] opens an
-//! [`EngineConnection`] the app holds, for `/ws` and streamed replies.
+//! [`EngineConnection`] the app holds, for `/ws` and streamed replies. The
+//! artifact app (`/a/`) keeps its own origin, which
+//! [`EmbeddedEngine::artifact_request`] and
+//! [`EmbeddedEngine::open_artifact_connection`] reach. A served handle's
+//! `vault.export` streams its reply, so no buffered cap bounds it.
+//!
+//! Every engine failure raises `OneironError.Failure` with its cause's
+//! stable code (`ENGINE_STOPPED`, `ENGINE_CLOSED`, `ENGINE_RELAY_REFUSED`,
+//! `ENGINE_WRONG_THREAD`, `ENGINE_CONFIG`, `ENGINE_VAULT_OPEN`,
+//! `ENGINE_START_FAILED`, `ENGINE_CONNECTION_ENDED`,
+//! `ENGINE_REPLY_TOO_LARGE`, `ENGINE_BAD_REQUEST`), or
+//! `INTERNAL_SERVER_ERROR` when no cause is named.
 //!
 //! The engine owns a multi-thread Tokio runtime and blocks on it from the
 //! calling thread. Call its methods from app threads, never from inside an
@@ -25,10 +36,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use oneiron_remote::{InProcessReply, InProcessRequest, InProcessTransport};
+use oneiron::MemoryError;
+use oneiron_remote::{InProcessReply, InProcessRequest, InProcessStream, InProcessTransport};
 use oneiron_server::embedded::{
-    BlockingConnection, BlockingEngine, EmbeddedRequest, embedded_serve_config, host_limits,
-    unix_millis,
+    BlockingConnection, BlockingEngine, EmbeddedReply, EmbeddedRequest, embedded_serve_config,
+    engine_memory_error, host_limits, unix_millis,
 };
 use oneiron_vault_contract::host_adapters::AppHost;
 use zeroize::Zeroizing;
@@ -206,31 +218,37 @@ impl EmbeddedEngine {
         }))
     }
 
-    /// Sends one request and returns the whole reply. Streaming and `/ws`
-    /// are not served through it; open a connection for those.
+    /// [`Self::open_connection`] on the artifact app's own origin (`/a/`),
+    /// apart from the API's: the connector an app's web view loads artifacts
+    /// through, never the API's channel. Refused while stopped.
+    pub fn open_artifact_connection(
+        self: Arc<Self>,
+    ) -> Result<Arc<EngineConnection>, OneironError> {
+        let connection = self.engine.connect_artifact().map_err(engine_failure)?;
+        Ok(Arc::new(EngineConnection {
+            connection,
+            _engine: self,
+        }))
+    }
+
+    /// Sends one request and returns the whole reply. `/ws` is not served
+    /// through it, and a reply body over 64 MiB refuses
+    /// `ENGINE_REPLY_TOO_LARGE`; open a connection for those.
     pub fn request(&self, request: EngineRequest) -> Result<EngineReply, OneironError> {
         let reply = self
             .engine
-            .request(EmbeddedRequest {
-                method: request.method,
-                path: request.path,
-                headers: request
-                    .headers
-                    .into_iter()
-                    .map(|header| (header.name, header.value))
-                    .collect(),
-                body: request.body,
-            })
+            .request(embedded_request(request))
             .map_err(engine_failure)?;
-        Ok(EngineReply {
-            status: reply.status,
-            headers: reply
-                .headers
-                .into_iter()
-                .map(|(name, value)| EngineHeader { name, value })
-                .collect(),
-            body: reply.body,
-        })
+        Ok(engine_reply(reply))
+    }
+
+    /// [`Self::request`] on the artifact app's own origin (`/a/`).
+    pub fn artifact_request(&self, request: EngineRequest) -> Result<EngineReply, OneironError> {
+        let reply = self
+            .engine
+            .request_artifact(embedded_request(request))
+            .map_err(engine_failure)?;
+        Ok(engine_reply(reply))
     }
 
     /// The app's timer fired, or a push arrived: run what is due. A stopped
@@ -290,12 +308,40 @@ impl EngineConnection {
     }
 }
 
+/// The foreign request as the engine sends it.
+fn embedded_request(request: EngineRequest) -> EmbeddedRequest {
+    EmbeddedRequest {
+        method: request.method,
+        path: request.path,
+        headers: request
+            .headers
+            .into_iter()
+            .map(|header| (header.name, header.value))
+            .collect(),
+        body: request.body,
+    }
+}
+
+/// The engine's reply as the foreign side reads it.
+fn engine_reply(reply: EmbeddedReply) -> EngineReply {
+    EngineReply {
+        status: reply.status,
+        headers: reply
+            .headers
+            .into_iter()
+            .map(|(name, value)| EngineHeader { name, value })
+            .collect(),
+        body: reply.body,
+    }
+}
+
 /// The engine's own server as a served handle's transport: each exchange is
-/// one buffered request through the engine, as `request` sends it.
+/// one request through the engine, buffered as `request` sends it, or
+/// streamed for a long call.
 struct EngineTransport(Arc<EmbeddedEngine>);
 
 impl InProcessTransport for EngineTransport {
-    fn exchange(&self, request: InProcessRequest) -> Result<InProcessReply, String> {
+    fn exchange(&self, request: InProcessRequest) -> Result<InProcessReply, MemoryError> {
         let reply = self
             .0
             .engine
@@ -305,21 +351,35 @@ impl InProcessTransport for EngineTransport {
                 headers: request.headers,
                 body: request.body,
             })
-            .map_err(|error| format!("{error:#}"))?;
+            .map_err(|error| engine_memory_error(&error))?;
         Ok(InProcessReply {
             status: reply.status,
             headers: reply.headers,
             body: reply.body,
         })
     }
+
+    fn exchange_streamed(&self, request: InProcessRequest) -> Result<InProcessStream, MemoryError> {
+        let reply = self
+            .0
+            .engine
+            .request_streamed(EmbeddedRequest {
+                method: request.method,
+                path: request.path,
+                headers: request.headers,
+                body: request.body,
+            })
+            .map_err(|error| engine_memory_error(&error))?;
+        Ok(InProcessStream {
+            status: reply.status,
+            headers: reply.headers,
+            body: Box::new(reply.body),
+        })
+    }
 }
 
-/// An engine failure, as the one error this surface raises.
+/// An engine failure, as the one error this surface raises: its cause's
+/// stable code, never read from its words.
 fn engine_failure(error: anyhow::Error) -> OneironError {
-    oneiron::MemoryError::new(
-        oneiron::memory::MEMORY_CODE_INTERNAL,
-        format!("{error:#}"),
-        &[],
-    )
-    .into()
+    engine_memory_error(&error).into()
 }

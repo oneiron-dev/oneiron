@@ -34,17 +34,18 @@ use axum::routing::{get, post};
 use oneiron::connector_key::{
     ConnectorCallClass, ConnectorCatalogEntry, ConnectorGrantSlate, ConnectorKeyRecord,
     ConnectorKeySpec, ConnectorKeyStatus, ConnectorQualificationError, ConnectorSlateDrafter,
-    ProbeManifestQualifier, SlateDisposition, SlateManifest, SlateOwnerOverride,
-    SlateToolManifest,
+    ProbeManifestQualifier, SlateDisposition, SlateManifest, SlateOwnerOverride, SlateToolManifest,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::decision::DecisionRung;
 use oneiron::retrieval_depth::RetrievalDeadline;
-use oneiron::{EntityId, Vault};
-pub(crate) use oneiron::task_verb::sdk::{ConnectorKeyView as KeyView, ConnectorSlateView as SlateView};
+pub(crate) use oneiron::task_verb::sdk::{
+    ConnectorKeyView as KeyView, ConnectorSlateView as SlateView,
+};
 use oneiron::task_verb::sdk::{
     ProxyConnectorAdmitRequest, ProxyConnectorRegistration, ProxyConnectorRevokeWriteRequest,
 };
+use oneiron::{EntityId, Vault};
 use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
 
@@ -762,10 +763,16 @@ async fn proxy(
     let request = json_payload(payload)?;
     let reply = blocking(move || -> OwnerResult<ProxyConnectorRegistration> {
         let actor = entity_id("actor", &request.actor)?;
-        let admitted = server.vault()
-            .admit_proxy_connector(&owner, actor, unix_seconds_now()).map_err(engine)?;
-        Ok(ProxyConnectorRegistration::from_registration(server.vault(), admitted)?)
-    }).await?;
+        let admitted = server
+            .vault()
+            .admit_proxy_connector(&owner, actor, unix_seconds_now())
+            .map_err(engine)?;
+        Ok(ProxyConnectorRegistration::from_registration(
+            server.vault(),
+            admitted,
+        )?)
+    })
+    .await?;
     Ok(Json(reply))
 }
 
@@ -779,11 +786,16 @@ async fn revoke_proxy_write(
     let reply = blocking(move || -> OwnerResult<ProxyConnectorRegistration> {
         let actor = entity_id("actor", &request.actor)?;
         let key = entity_id("key", &request.key)?;
-        let registration = server.vault().revoke_proxy_connector_write(
-            &owner, actor, key, request.revision, unix_seconds_now(),
-        ).map_err(engine)?;
-        Ok(ProxyConnectorRegistration::from_registration(server.vault(), registration)?)
-    }).await?;
+        let registration = server
+            .vault()
+            .revoke_proxy_connector_write(&owner, actor, key, request.revision, unix_seconds_now())
+            .map_err(engine)?;
+        Ok(ProxyConnectorRegistration::from_registration(
+            server.vault(),
+            registration,
+        )?)
+    })
+    .await?;
     Ok(Json(reply))
 }
 

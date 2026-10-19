@@ -15,6 +15,11 @@
 //! The summary takes a withdrawal dependency on each home part it wore, as
 //! on any source (Engine 10-19), and its landing declares the Dreamer's
 //! check, which never rewrites it.
+//!
+//! FIX 4465 C: a pass whose row reads the live context forks the run's live
+//! request on the rung that admitted it, the prefix unchanged, and lands,
+//! files and is checked as any other self-written pass. A flight that cannot
+//! fork it keeps its window and names why.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -37,9 +42,25 @@ use crate::vault::Vault;
 /// cheap writer instead, and the run's report names this reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelfCompactionUnavailable {
-    /// The policy row reads the live context, which needs the live fork
-    /// this host does not cut yet.
-    LiveForkNotBuilt,
+    /// The policy row reads the live context, and the flight carries no
+    /// capture of the run's live request from its breakpoint (FIX 4465 C):
+    /// its host bound none there, or the row turned to the live context
+    /// after the breakpoint.
+    LiveForkNotCaptured,
+    /// At the breakpoint the live route bound no rung to take the run's
+    /// request: the route refused it, or every rung of its ladder rested or
+    /// was held.
+    LiveRungUnbound,
+    /// The live request and the reply's reserve leave the live model no
+    /// room for the window: the prefix is never cut to make room.
+    LivePrefixTooLong,
+    /// The run's driver did not admit the capture: the profile's writer is
+    /// not `self`, the row it was captured under is not the live fork, or it
+    /// was captured for another actor.
+    LiveForkNotAdmitted,
+    /// The captured rung is no longer what the live route admits for its
+    /// model and offer, so the fork is not sent.
+    LiveForkStale,
     /// The run's actor names no home: it is not an agent, or its agent is
     /// anchored to no PERSON.
     NoIdentity,
@@ -61,7 +82,11 @@ impl SelfCompactionUnavailable {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::LiveForkNotBuilt => "live_fork_not_built",
+            Self::LiveForkNotCaptured => "live_fork_not_captured",
+            Self::LiveRungUnbound => "live_rung_unbound",
+            Self::LivePrefixTooLong => "live_prefix_too_long",
+            Self::LiveForkNotAdmitted => "live_fork_not_admitted",
+            Self::LiveForkStale => "live_fork_stale",
             Self::NoIdentity => "no_identity",
             Self::IdentityUnreadable => "identity_unreadable",
             Self::PolicyUnreadable => "policy_unreadable",
@@ -228,17 +253,25 @@ pub struct CompactionStepRef {
     pub step_hash: String,
 }
 
-/// The retained evidence a self-written summary was cut from, by revision
-/// (FIX 4465 B): its run's committed steps `first..=last`, pinned by the
-/// chained state hash the span's last checkpoint committed. A later read
-/// that finds another hash there reads other evidence.
+/// The retained evidence a self-written summary was cut from, by revision.
+/// An executor run's (FIX 4465 B) is its committed steps `first..=last`,
+/// pinned by the chained state hash the span's last checkpoint committed; a
+/// conversation's (FIX 4465 D) is its SESSION, conversation and branch and
+/// the ordered retained turns of the span, each pinned by its projection's
+/// fingerprint. A later read that finds another pin reads other evidence.
+/// Each source keeps its own fields, so an executor receipt reads as it was
+/// written.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompactionEvidence {
-    pub run: EntityId,
-    pub first: u64,
-    pub last: u64,
-    /// Hex of the last step's committed state hash.
-    pub revision: String,
+#[serde(untagged)]
+pub enum CompactionEvidence {
+    Executor {
+        run: EntityId,
+        first: u64,
+        last: u64,
+        /// Hex of the last step's committed state hash.
+        revision: String,
+    },
+    Conversation(super::ConversationEvidence),
 }
 
 /// Where a self-written summary landed.
@@ -393,6 +426,24 @@ pub(crate) fn admit_self_landing_on(
 ) -> Result<SelfLanding> {
     land_packet(gated, execution, |packet, expected| {
         admit_host_log_record(packet, log, record, Some(expected))
+    })
+}
+
+/// [`admit_self_landing`] for a conversation's window (FIX 4465 D): the
+/// packet admits through the door's conversation binding, each of its turns
+/// proven a member of the window's SESSION by the witnessed membership rows.
+pub(crate) fn admit_self_conversation_landing(
+    vault: &Vault,
+    gated: &GatedCompaction,
+    execution: CompactionExecution,
+) -> Result<SelfLanding> {
+    land_packet(gated, execution, |packet, expected| {
+        admit_compaction_source(
+            vault,
+            packet,
+            CompactionSource::Conversation,
+            Some(expected),
+        )
     })
 }
 

@@ -2,7 +2,9 @@
 
 use super::*;
 use crate::claim::CallerLocality;
-use crate::llm::decision::questions::{answer_records_in_txn, calibration_pairs_in_txn, read_question_in_txn};
+use crate::llm::decision::questions::{
+    answer_records_in_txn, calibration_pairs_in_txn, read_question_in_txn,
+};
 use crate::llm::decision::{AnswerContract, DecisionAnswer};
 use crate::llm::registry::invalid;
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,7 +29,8 @@ pub(super) fn freeze_cases(
         ));
     }
     let answers = answer_records_in_txn(vault, txn, request.principal, request.question)?;
-    let pairs = calibration_pairs_in_txn(vault, txn, request.principal, request.question, locality)?;
+    let pairs =
+        calibration_pairs_in_txn(vault, txn, request.principal, request.question, locality)?;
     let mut seen = BTreeSet::new();
     request
         .held_out

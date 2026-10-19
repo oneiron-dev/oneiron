@@ -68,8 +68,9 @@ pub enum ActSurface {
     HostedConsole,
 }
 
-/// What an owner act changes. Closed: every kind the mesh contract names,
-/// so no lane adds a variant.
+/// What an owner act changes: every kind the mesh contract names, and the
+/// kinds an Engine ruling added since (each says which on its variant). A
+/// new kind needs such a ruling.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -94,6 +95,9 @@ pub enum OwnerActKind {
     /// A whole-vault export the owner made (Engine 10-19 02:4x). It changes
     /// nothing, so its `seen` is zero.
     Export,
+    /// The owner's pick of the vault's home node (`HomeNodePick`; DOOR-101
+    /// PR2a). Its `seen` is over the vault's live picks.
+    HomeNodePick,
 }
 
 impl OwnerActKind {
@@ -113,6 +117,7 @@ impl OwnerActKind {
             Self::GrantTravel => "grant_travel",
             Self::PolicySetting => "policy_setting",
             Self::Export => "export",
+            Self::HomeNodePick => "home_node_pick",
         }
     }
 
@@ -132,6 +137,7 @@ impl OwnerActKind {
             "grant_travel" => Self::GrantTravel,
             "policy_setting" => Self::PolicySetting,
             "export" => Self::Export,
+            "home_node_pick" => Self::HomeNodePick,
             _ => return None,
         })
     }

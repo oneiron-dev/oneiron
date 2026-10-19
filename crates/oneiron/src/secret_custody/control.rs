@@ -1,10 +1,26 @@
-//! Custody control on the shared owner-work request (WILL L04 row 04): the
-//! owner's revoke of a portable secret reaches every replica as main-log
-//! metadata, with no byte.
+//! Custody control on the shared owner-work request (WILL L04 row 04): every
+//! change to a portable secret's custody is the owner's request, carried by
+//! a live linked install and done by the one install it names.
 //!
-//! The revoke door records a custody revoke request naming this install,
-//! its carrier, as executor, and in the same writer transaction revokes the
-//! record and its leases here and appends the enacted result
+//! An active change (register, rotate, rewrap) names its holder explicitly
+//! and the recipients the owner permits to hold its bytes ([`permits`]). The
+//! holder may be this install; it is never elected, and nobody takes over. A
+//! register or rotate hands the holder its metadata and value as a protected
+//! input sealed to the holder's key alone ([`input`]); the request names
+//! only its ciphertext digest. When the recorder is the holder it executes
+//! in the same commit ([`execute`]); any other holder opens the relayed
+//! input on its pickup and does the same. Either way the effect, the
+//! request-bound custody transition, the rotation receipt link and the
+//! enacted result commit together, and the receipt says what is true:
+//! recorded and awaiting the holder, enacted (committed by the holder, never
+//! "delivered everywhere": no machine acknowledges a transition, so delivery
+//! stays unknown), refused, or kept on this install and why.
+//!
+//! The owner's revoke reaches every replica as main-log metadata, with no
+//! byte. The revoke door records a custody revoke request naming this
+//! install, its carrier, as executor, and in the same writer transaction
+//! revokes the record and its leases here, appends the enacted result and
+//! writes the revoked transition bound to the request
 //! ([`Vault::revoke_secret_as_owner`]). Every replica that folds the request
 //! holds its id as terminal (`AuthorityFold::custody_revoked`): after an
 //! authority catch-up and on the served tick it revokes a portable record it
@@ -15,33 +31,45 @@
 //! fold's, never an empty record. Nothing recalls an export or a use made
 //! before the revoke arrived.
 //!
-//! An active change (register, rotate, rewrap) keeps today's path until its
-//! producers land: the selector names its holder, and the pickup leaves it
-//! pending unless its id is terminal.
+//! No custody path refuses on location: the carrier is any live linked
+//! install, `surface` is audit only, and the holder is whoever the owner
+//! names.
 
-use zeroize::Zeroize;
+mod doors;
+mod execute;
+pub(super) mod input;
+pub(super) mod permits;
+#[cfg(feature = "sync")]
+mod roster;
 
+use zeroize::{Zeroize, Zeroizing};
+
+pub use self::doors::{CustodyCandidate, SealedCustodyChange, SecretCustodyView};
+pub(crate) use self::execute::Material;
+use self::input::{InputBinding, RelayedInput, input_digest, keep_input_in_txn};
+use super::codec::encode_secret_custody_body;
 use super::doors::read_secret_custody_admission_in_txn;
-use super::transition::custody_portable;
+use super::transition::{Enactment, custody_portable, write_custody_transition_in_txn};
 use super::types::{CustodyClass, SecretCustodyStatus};
 use crate::authority::{
-    ActSurface, AuthorityFold, CustodyChange, OwnerWorkBody, OwnerWorkOutcome, OwnerWorkRefusal,
-    OwnerWorkRequest,
+    ActSurface, AuthorityEntryHash, AuthorityFold, CUSTODY_RECIPIENTS_MAX, CustodyChange,
+    CustodyRecipientPermit, OwnerWorkBody, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest,
+    invalid_authority,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_rotation::RotationReceipt;
 use crate::store::Store;
-use crate::world_keys::{OwnerWorkReceipt, OwnerWorkUnassigned};
+use crate::world_keys::{MachineSecret, OwnerWorkReceipt, OwnerWorkUnassigned};
 use crate::{EntityId, Vault};
 
 /// Which install a custody request names to do its work (CALLS
 /// CUSTODY_EXECUTOR).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CustodyExecutor {
-    /// An active change goes to the holder it names, a linked install whose
-    /// proof key stands here: never elected, and no takeover. A revoke goes
-    /// to the install that records it, its carrier.
+    /// An active change goes to the holder it names, a live linked install
+    /// with an encryption key that imports: never elected, and no takeover.
+    /// A revoke goes to the install that records it, its carrier.
     ExplicitHolderOrRevokeCarrier,
 }
 
@@ -58,6 +86,18 @@ enum CustodyCompletion {
 }
 
 const CUSTODY_COMPLETION: CustodyCompletion = CustodyCompletion::CommitNotDelivery;
+
+/// What a receipt says of the owner's other machines holding a change
+/// (CALLS CUSTODY_REPLICATION_WITHOUT_ACK).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CustodyReplicationWithoutAck {
+    /// No machine acknowledges a transition it took, so delivery is
+    /// reported as unknown: never "replicated everywhere".
+    Unknown,
+}
+
+const CUSTODY_REPLICATION_WITHOUT_ACK: CustodyReplicationWithoutAck =
+    CustodyReplicationWithoutAck::Unknown;
 
 /// The install a custody request names as executor (CALLS
 /// CUSTODY_EXECUTOR), or why none can be named.
@@ -76,7 +116,7 @@ pub(crate) fn custody_work_executor(
             CustodyExecutor::ExplicitHolderOrRevokeCarrier,
             CustodyChange::Register | CustodyChange::Rotate | CustodyChange::Rewrap,
         ) => holder
-            .filter(|holder| fold.machine_proof_key(*holder).is_some())
+            .filter(|holder| permits::holder_key(fold, *holder).is_some())
             .ok_or(OwnerWorkUnassigned::NoCustodyHolder),
     }
 }
@@ -86,6 +126,137 @@ pub(crate) fn custody_work_executor(
 fn enacted() -> OwnerWorkOutcome {
     match CUSTODY_COMPLETION {
         CustodyCompletion::CommitNotDelivery => OwnerWorkOutcome::Enacted,
+    }
+}
+
+/// Who the owner names for an active custody change.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CustodyPlan {
+    /// The install that holds the value and does the change; `None` is this
+    /// install.
+    pub holder: Option<EntityId>,
+    /// The installs he permits to hold its bytes, each a live linked install
+    /// with an importable key, in any role. Empty: a register permits its
+    /// holder alone, a rotate keeps the permits of the secret's live change,
+    /// and a rewrap is refused. A machine he makes his is added by its
+    /// holders' own rewrap (CALLS CUSTODY_ROSTER_REWRAP); any other linked
+    /// machine only by his.
+    pub recipients: Vec<EntityId>,
+}
+
+/// Why a change to a portable secret stays on this install, recorded for no
+/// other machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CustodyKeptHere {
+    /// The record may not leave its device: device bound, cross-vault or
+    /// "this device only".
+    DeviceLocal,
+    /// This install has no live machine profile to carry the owner's act,
+    /// so no other machine learns of the change from here (FIX 4851).
+    NoCarrier,
+    /// This install, the holder, has no encryption key that imports, so no
+    /// request can name it (CALLS CUSTODY_EXECUTOR).
+    NoHolderKey,
+}
+
+impl CustodyKeptHere {
+    /// The wire tag.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DeviceLocal => "device_local",
+            Self::NoCarrier => "no_carrier",
+            Self::NoHolderKey => "no_holder_key",
+        }
+    }
+
+    /// The words a surface shows.
+    #[must_use]
+    pub fn text(self) -> &'static str {
+        match self {
+            Self::DeviceLocal => "kept on this device: this secret never leaves it",
+            Self::NoCarrier => {
+                "kept on this install only: it has no live machine profile to carry your act \
+                 to your other machines"
+            }
+            Self::NoHolderKey => {
+                "kept on this install only: it has no encryption key to hold the secret for \
+                 your other machines"
+            }
+        }
+    }
+}
+
+/// Whether the owner's other machines hold a change yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CustodyDelivery {
+    /// A request was recorded or enacted: whether each permitted recipient
+    /// holds it is not known here (CALLS CUSTODY_REPLICATION_WITHOUT_ACK).
+    Unknown,
+    /// Nothing was sent: the change stays on this install.
+    NotSent,
+}
+
+impl CustodyDelivery {
+    /// The wire tag.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::NotSent => "not_sent",
+        }
+    }
+}
+
+/// What the owner's change to a secret's custody did beyond this install:
+/// the shared receipt of the custody request recorded for his machines, or
+/// why it stays here, and what is known of its delivery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretCustodyWork {
+    /// The custody request: awaiting its holder, enacted (committed by the
+    /// holder, never delivered everywhere) or refused, or naming no holder
+    /// when nothing was recorded. `None` when the change stays here.
+    pub work: Option<OwnerWorkReceipt>,
+    /// Why the change stays on this install; `None` once recorded.
+    pub kept_here: Option<CustodyKeptHere>,
+    pub delivery: CustodyDelivery,
+}
+
+impl SecretCustodyWork {
+    pub(crate) fn kept(why: CustodyKeptHere) -> Self {
+        Self {
+            work: None,
+            kept_here: Some(why),
+            delivery: CustodyDelivery::NotSent,
+        }
+    }
+
+    pub(crate) fn recorded(receipt: OwnerWorkReceipt) -> Self {
+        let delivery = if receipt.request.is_some() {
+            match CUSTODY_REPLICATION_WITHOUT_ACK {
+                CustodyReplicationWithoutAck::Unknown => CustodyDelivery::Unknown,
+            }
+        } else {
+            CustodyDelivery::NotSent
+        };
+        Self {
+            work: Some(receipt),
+            kept_here: None,
+            delivery,
+        }
+    }
+
+    /// The words a surface shows: the request's state, why no holder was
+    /// named, or why the change stays here.
+    #[must_use]
+    pub fn text(&self) -> &'static str {
+        match (&self.work, self.kept_here) {
+            (Some(receipt), _) => receipt
+                .unassigned
+                .map_or_else(|| receipt.status.text(), OwnerWorkUnassigned::text),
+            (None, Some(why)) => why.text(),
+            (None, None) => "not recorded",
+        }
     }
 }
 
@@ -105,21 +276,208 @@ pub struct SecretRevoked {
     pub work: Option<OwnerWorkReceipt>,
 }
 
+/// What the owner's rotation of a secret did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretRotated {
+    /// The rotation receipt, when this install rotated the record in this
+    /// commit; `None` while another holder has the rotation to do.
+    pub rotation: Option<RotationReceipt>,
+    pub custody: SecretCustodyWork,
+}
+
+/// One active change a door records for a portable secret.
+pub(crate) struct ActiveChange<'a> {
+    pub(crate) change: CustodyChange,
+    pub(crate) id: EntityId,
+    /// The generation the change approves.
+    pub(crate) generation: u32,
+    pub(crate) plan: &'a CustodyPlan,
+    /// What this install, when it is the holder, executes from.
+    pub(crate) material: Material<'a>,
+    /// The protected input the owner's surface sealed itself; `None` has the
+    /// door seal `material` to the holder.
+    pub(crate) sealed: Option<&'a [u8]>,
+    /// The custody revision that surface showed, which its input binds.
+    pub(crate) seen: Option<[u8; 32]>,
+    /// The exact permits that surface bound; `None` takes the plan's.
+    pub(crate) permits: Option<&'a [CustodyRecipientPermit]>,
+}
+
+/// What a door recorded.
+pub(crate) struct Recorded {
+    pub(crate) custody: SecretCustodyWork,
+    /// The rotation receipt a rotate this install held wrote.
+    pub(crate) rotation: Option<RotationReceipt>,
+}
+
+impl Recorded {
+    fn kept(why: CustodyKeptHere) -> Self {
+        Self {
+            custody: SecretCustodyWork::kept(why),
+            rotation: None,
+        }
+    }
+}
+
+fn refused(reason: impl Into<String>) -> Error {
+    Error::InvalidConfig(format!("{}; nothing was written", reason.into()))
+}
+
+fn recipient_refused(machine: EntityId) -> Error {
+    refused(format!(
+        "recipient {} is not a linked install with an importable encryption key",
+        machine.to_hex()
+    ))
+}
+
 impl Vault {
+    /// Mirrors a committed custody change into the live windows: its
+    /// transition, or the input relayed to its holder.
+    pub(crate) fn mirror_custody_change(&self, custody: &SecretCustodyWork) {
+        #[cfg(feature = "sync")]
+        if custody.work.is_some() {
+            self.refresh_custody_in_live_windows();
+        }
+        #[cfg(not(feature = "sync"))]
+        let _ = custody;
+    }
+
+    /// Records the owner's active custody change in the door's write
+    /// transaction, carried by this install for `actor`, a live vault owner
+    /// the caller checked in it: a custody request whose
+    /// executor is the holder the plan names, this install by default, with
+    /// the permits he gave and the digest of its protected input. When this
+    /// install is the holder it executes the change in the same commit, and
+    /// a refusal there refuses the transaction, so nothing is recorded that
+    /// did not happen. Any other holder gets the input relayed. With no live
+    /// machine profile here, or no importable key on this install as holder,
+    /// nothing is recorded and the result says the change stays here; the
+    /// door then keeps it locally.
+    pub(crate) fn record_custody_change_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: EntityId,
+        surface: ActSurface,
+        change: ActiveChange<'_>,
+        at: u64,
+    ) -> Result<Recorded> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let Some((machine, _)) = self.owner_work_carrier_in_txn(txn, &fold)? else {
+            return Ok(Recorded::kept(CustodyKeptHere::NoCarrier));
+        };
+        let holder = change.plan.holder.unwrap_or(machine);
+        let Some(holder_key) = permits::holder_key(&fold, holder) else {
+            if holder == machine {
+                return Ok(Recorded::kept(CustodyKeptHere::NoHolderKey));
+            }
+            return Err(refused(
+                "the holder named is not a linked install with an importable encryption key",
+            ));
+        };
+        let permits = change_permits(&fold, &change, holder)?;
+        let seen = fold.custody_work_revision(change.id);
+        if change.seen.is_some_and(|stated| stated != seen) {
+            return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
+                "the secret's custody changed since the surface read it; read it again",
+            )));
+        }
+        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+        let binding = InputBinding {
+            vault_id,
+            id: change.id,
+            change: change.change,
+            generation: change.generation,
+            seen,
+            holder,
+            permits: &permits,
+        };
+        let envelope = match (change.change, change.sealed) {
+            (CustodyChange::Rewrap | CustodyChange::Revoke, _) => None,
+            (_, Some(sealed)) => Some(sealed.to_vec()),
+            (_, None) => Some(binding.seal(&holder_key, &plaintext(&change.material)?)?),
+        };
+        let input = envelope.as_deref().map(input_digest);
+        // CALLS CUSTODY_RETRY: the same protected input again is the request
+        // that already names it, never a second change.
+        if let Some(input) = input
+            && let Some((hash, _)) = fold.custody_heads(change.id).into_iter().find(|(_, live)| {
+                matches!(&live.work, OwnerWorkBody::Custody { input: named, .. } if *named == Some(input))
+            })
+        {
+            let receipt = OwnerWorkReceipt::of(&fold, hash).ok_or_else(invalid_authority)?;
+            return Ok(Recorded {
+                custody: SecretCustodyWork::recorded(receipt),
+                rotation: None,
+            });
+        }
+        let work = OwnerWorkBody::Custody {
+            change: change.change,
+            generation: change.generation,
+            input,
+            holder: Some(holder),
+            recipients: permits,
+        };
+        let receipt =
+            self.record_owner_work_for_in_txn(txn, actor, surface, change.id, seen, work)?;
+        let Some(hash) = receipt.request_entry() else {
+            return Ok(Recorded {
+                custody: SecretCustodyWork::recorded(receipt),
+                rotation: None,
+            });
+        };
+        let mut rotation = None;
+        if let (Some(envelope), true) = (envelope, holder != machine || change.sealed.is_some()) {
+            keep_input_in_txn(
+                self,
+                txn,
+                &RelayedInput {
+                    sealed_at: at,
+                    request: hash,
+                    envelope,
+                },
+            )?;
+        }
+        if holder == machine {
+            let request = self
+                .authority_view_readonly_in_txn(txn)?
+                .owner_work_request(&hash)
+                .cloned()
+                .ok_or_else(invalid_authority)?;
+            if let Some(done) =
+                self.enact_custody_change_in_txn(txn, hash, &request, change.material, at)?
+            {
+                if let OwnerWorkOutcome::Refused { reason } = done.outcome {
+                    return Err(refused(format!(
+                        "this install, the holder, refused the change: {}",
+                        reason.as_str()
+                    )));
+                }
+                self.append_owner_work_result_in_txn(txn, hash, machine, done.outcome)?;
+                rotation = done.rotation;
+            }
+        }
+        let after = self.authority_view_readonly_in_txn(txn)?;
+        Ok(Recorded {
+            custody: SecretCustodyWork::recorded(receipt.refreshed(&after)),
+            rotation,
+        })
+    }
+
     /// Records the owner's revoke of the record `secret_ref` names for his
     /// other machines, in the revoke door's write transaction, after the
     /// record and its leases were revoked here: a custody revoke request
     /// naming this install, its carrier, as executor (CALLS
-    /// CUSTODY_EXECUTOR), then its enacted result. Its `seen` is the
-    /// secret's custody revision here (CALLS CUSTODY_REVISION). `None`, and
-    /// nothing recorded, for a record that stays on this device or when this
-    /// install cannot carry the act.
+    /// CUSTODY_EXECUTOR), its enacted result, then the revoked transition
+    /// bound to the request. Its `seen` is the secret's custody revision here
+    /// (CALLS CUSTODY_REVISION). `None`, and nothing recorded, for a record
+    /// that stays on this device or when this install cannot carry the act.
     pub(crate) fn carry_custody_revoke_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
         surface: ActSurface,
         secret_ref: &str,
+        at: u64,
     ) -> Result<Option<OwnerWorkReceipt>> {
         let Some(id) = super::resolve_secret_ref_in_txn(&self.store, txn, secret_ref)? else {
             return Ok(None);
@@ -145,36 +503,54 @@ impl Vault {
             return Ok(Some(receipt));
         };
         self.append_owner_work_result_in_txn(txn, request, executor, enacted())?;
+        let enactment = Enactment {
+            request,
+            input: None,
+            permits: &[],
+        };
+        write_custody_transition_in_txn(self, txn, id, &record, enactment, at)?;
         let after = self.authority_view_readonly_in_txn(txn)?;
         Ok(Some(receipt.refreshed(&after)))
     }
 
-    /// The pickup's arm for a custody request naming this install. A revoke
-    /// is settled here, byte-free, and answered enacted: it is terminal from
-    /// its admission (CALLS CUSTODY_CONCURRENT_ACTIVE), so its executor never
-    /// refuses it. An active change whose secret an admitted revoke names is
-    /// refused as stale; any other stays pending (`None`) until its
-    /// producers and executor land.
+    /// The pickup's arm for a custody request naming this install, signed as
+    /// entry `hash`. A revoke is settled here, byte-free, and answered
+    /// enacted: it is terminal from its admission (CALLS
+    /// CUSTODY_CONCURRENT_ACTIVE), so its executor never refuses it. An
+    /// active change whose secret an admitted revoke names is refused as
+    /// stale; any other is executed from its protected input, opened with
+    /// `secret`, or for a rewrap from the record held here ([`execute`]).
+    /// `None` leaves it pending: no secret, input or record here yet.
     pub(crate) fn custody_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
+        hash: AuthorityEntryHash,
         request: &OwnerWorkRequest,
-        change: CustodyChange,
+        secret: Option<&MachineSecret>,
     ) -> Result<Option<OwnerWorkOutcome>> {
+        let OwnerWorkBody::Custody { change, .. } = &request.work else {
+            return Ok(None);
+        };
         let id = request.act.target;
-        Ok(match change {
-            CustodyChange::Revoke => {
-                let at = self.instant_in_txn(txn)?.secs();
-                settle_revoked_in_txn(self, txn, &id, at)?;
-                Some(enacted())
-            }
-            CustodyChange::Register | CustodyChange::Rotate | CustodyChange::Rewrap => fold
-                .custody_revoked(&id)
-                .then_some(OwnerWorkOutcome::Refused {
-                    reason: OwnerWorkRefusal::StaleRevision,
-                }),
-        })
+        let at = self.instant_in_txn(txn)?.secs();
+        if *change == CustodyChange::Revoke {
+            settle_revoked_in_txn(self, txn, &id, at)?;
+            return Ok(Some(enacted()));
+        }
+        if fold.custody_revoked(&id) {
+            return Ok(Some(OwnerWorkOutcome::Refused {
+                reason: OwnerWorkRefusal::StaleRevision,
+            }));
+        }
+        let material = match (change, secret) {
+            (CustodyChange::Rewrap, _) => Material::Held,
+            (_, Some(secret)) => Material::Input(secret),
+            (_, None) => return Ok(None),
+        };
+        Ok(self
+            .enact_custody_change_in_txn(txn, hash, request, material, at)?
+            .map(|done| done.outcome))
     }
 
     /// Settles every admitted custody revoke this vault has not met yet,
@@ -208,6 +584,82 @@ impl Vault {
             }
             Ok(settled)
         })
+    }
+}
+
+/// The permits a change records: the exact ones a sealing surface bound,
+/// each still standing; the machines the plan names; or, when it names
+/// none, the holder alone for a register and the permits of the secret's
+/// one live active change for a rotate. A rewrap names its own.
+fn change_permits(
+    fold: &AuthorityFold,
+    change: &ActiveChange<'_>,
+    holder: EntityId,
+) -> Result<Vec<CustodyRecipientPermit>> {
+    let permits = if let Some(bound) = change.permits {
+        if permits::permitted_keys(fold, bound).is_none() {
+            return Err(refused(
+                "a recipient's permit no longer stands: its install was removed or its key changed",
+            ));
+        }
+        bound.to_vec()
+    } else if !change.plan.recipients.is_empty() {
+        permits::permits_for(fold, &change.plan.recipients).map_err(recipient_refused)?
+    } else {
+        match change.change {
+            CustodyChange::Rotate => {
+                let mut live: Vec<_> =
+                    fold.custody_heads(change.id)
+                        .into_iter()
+                        .filter_map(|(_, request)| match &request.work {
+                            OwnerWorkBody::Custody {
+                                change:
+                                    CustodyChange::Register
+                                    | CustodyChange::Rotate
+                                    | CustodyChange::Rewrap,
+                                recipients,
+                                ..
+                            } => Some(recipients.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                if live.len() == 1
+                    && let Some(kept) = live.pop()
+                {
+                    kept
+                } else {
+                    vec![
+                        permits::permit_for(fold, holder)
+                            .ok_or_else(|| recipient_refused(holder))?,
+                    ]
+                }
+            }
+            CustodyChange::Register => {
+                vec![permits::permit_for(fold, holder).ok_or_else(|| recipient_refused(holder))?]
+            }
+            CustodyChange::Rewrap | CustodyChange::Revoke => {
+                return Err(refused("a rewrap names the installs it permits"));
+            }
+        }
+    };
+    let ascending = permits
+        .windows(2)
+        .all(|pair| pair[0].machine < pair[1].machine);
+    if permits.is_empty() || permits.len() > CUSTODY_RECIPIENTS_MAX || !ascending {
+        return Err(refused(
+            "a custody change permits 1 to 64 installs, ascending by machine, one each",
+        ));
+    }
+    Ok(permits)
+}
+
+/// The body a door seals to a holder that is not this install: a register's
+/// whole record, value in it, or a rotate's new value.
+fn plaintext(material: &Material<'_>) -> Result<Zeroizing<Vec<u8>>> {
+    match material {
+        Material::Record(record) => encode_secret_custody_body(record).map(Zeroizing::new),
+        Material::Value(value) => Ok(Zeroizing::new(value.to_vec())),
+        Material::Input(_) | Material::Held => Err(invalid_authority()),
     }
 }
 
@@ -254,8 +706,8 @@ pub(crate) fn custody_revoked_in_txn(
 
 /// Refuses a use of the record `id` of class `class`, named `name`, once an
 /// admitted custody revoke names it, though this vault has not settled it
-/// yet: the value door, a reveal's lease and the door check read it in their
-/// own transaction.
+/// yet: the value door, a reveal's lease, the door check, a rotation and a
+/// binding read it in their own transaction.
 pub(crate) fn refuse_revoked_use_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

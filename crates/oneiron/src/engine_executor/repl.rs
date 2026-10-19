@@ -1191,6 +1191,9 @@ impl EngineNativeExecutor<'_> {
         if let Some(seat) = self.seat {
             seat.bind(&mut request);
         }
+        // FIX 4930: the step's own call marks where its prefix ends, so the
+        // fork a compaction sends after it names the same block.
+        crate::code_run::main_prefix_boundary(&mut request)?;
         Ok(request)
     }
 }

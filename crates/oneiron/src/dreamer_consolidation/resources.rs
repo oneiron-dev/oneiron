@@ -20,7 +20,7 @@ mod write;
 use super::partition::ConsolidationPartitionKey;
 use super::provenance::{ConsolidationSink, PromotionCandidate};
 use super::support::invalid_consolidation;
-use super::turn_text::{MessageSpan, TurnText, cited_evidence_bytes};
+use super::turn_text::{MessageSpan, TurnText};
 use super::watermark::{TurnBodyFacts, decode_turn_body};
 use crate::attempt_queue::AttemptId;
 use crate::claim::{
@@ -602,12 +602,13 @@ impl<'a> BranchResources<'a> {
                 let text = text
                     .map(|text| text.readable_text(&self.scope))
                     .transpose()?;
-                let bytes = cited_evidence_bytes(*entry, &body, text.flatten())?;
-                Ok(VerifiedSwarmEvidence {
-                    source_id: entry.source_id,
-                    content_hash: swarm_evidence_content_hash(&bytes),
+                super::conflict::verify_swarm_evidence_bytes(
+                    *entry,
+                    kind,
+                    &body,
+                    text.flatten(),
                     trust_class,
-                })
+                )
             })
             .collect()
     }

@@ -8,8 +8,10 @@ mod admission;
 mod claim_authoring;
 mod codec;
 mod constants;
+mod home;
 mod milestone;
 pub mod observation;
+mod owner_doors;
 #[cfg(feature = "sync")]
 mod progress;
 mod recipe;
@@ -36,7 +38,9 @@ pub use crate::dreamer_plugin_suggest::DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE;
 pub use self::claim_authoring::*;
 pub use self::codec::*;
 pub use self::constants::*;
+pub(crate) use self::home::reelect_home_in_txn;
 pub use self::milestone::*;
+pub use self::owner_doors::*;
 #[cfg(feature = "sync")]
 pub use self::progress::*;
 pub use self::recipe::*;

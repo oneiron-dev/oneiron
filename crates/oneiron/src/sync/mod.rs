@@ -51,6 +51,7 @@ pub mod manager;
 pub mod mesh_path;
 pub(crate) mod message_docs;
 pub(crate) mod note;
+pub(crate) mod origin_claims;
 pub(crate) mod pack_sync;
 pub mod quarantine;
 pub mod queue;
@@ -82,8 +83,8 @@ pub use client::{
     SyncResidenceMode, SyncStatus, SyncTransportCredential, ThinItem,
 };
 pub use connection::{
-    ConnectionConfig, HomeNodeTopology, HomeSearch, LocalUpdate, ResidenceModeChange,
-    SyncConnection,
+    ConnectionConfig, DeviceResidence, HomeNodeTopology, HomeSearch, LocalUpdate,
+    ResidenceModeChange, SyncConnection,
 };
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,

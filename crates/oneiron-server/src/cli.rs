@@ -7,7 +7,9 @@ use crate::config::ServeArgs;
 
 mod deployment_args;
 pub use deployment_args::HostRelayArgs;
+mod graph_fs_args;
 mod hook_args;
+pub use graph_fs_args::GraphFsCommand;
 mod learning_setting_args;
 mod owner_args;
 mod recovery_kit_args;
@@ -35,7 +37,9 @@ pub use owner_args::{
     EmbeddingSpaceProbePutArgs, EmbeddingSpaceProbesCommand, EmbeddingSpacesCommand,
     SecretAnchorSignArgs,
 };
-pub use owner_args::{GuestRevokeArgs, GuestsCommand, SecretRevealArgs, SecretRevokeArgs};
+pub use owner_args::{
+    GuestRevokeArgs, GuestsCommand, SecretRevealArgs, SecretRevokeArgs, SecretRewrapArgs,
+};
 pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
     LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs,
@@ -682,6 +686,9 @@ pub struct ApiArgs {
 /// catalog: anything not shaped below is still one `raw METHOD PATH` away.
 #[derive(Subcommand, Clone, Debug, PartialEq, Eq)]
 pub enum ApiCommand {
+    /// Typed actor-scoped mount and file-face reads over the facade.
+    #[command(subcommand)]
+    GraphFs(GraphFsCommand),
     /// GET the vault capability discovery document.
     Discover,
     /// GET the BM25 text-search route.

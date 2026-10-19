@@ -1,5 +1,5 @@
 //! `reveal`, `reveal.wait` and `reveal.describe`: an agent asks for a
-//! secret's value by its handle (OF-560; ARCH-0069 #reveal-check, the code-mode
+//! secret or person's value by its handle (OF-560; ARCH-0069 #reveal-check, the code-mode
 //! SDK's `reveal`). The doors are [`crate::Vault`]'s reveal doors under the
 //! caller's own agent actor; the project and run come from the host's binding,
 //! never from the input. `reveal` returns a pending reveal every time, and
@@ -32,7 +32,7 @@ use crate::secret_custody::{
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RevealRequest {
-    /// The secret's handle, such as `sc12`, as the text or field holds it.
+    /// A custody or PERSON handle, such as `sc12` or `pr12`.
     pub handle: String,
     /// Why, one line of 1..=512 bytes; the owner reads it, and the receipt
     /// keeps it.
@@ -103,7 +103,7 @@ impl std::fmt::Debug for RevealWaitAnswer {
 pub struct RevealReceipt {
     pub reveal: String,
     pub handle: String,
-    /// The custody class, such as `custody-portable`.
+    /// The disclosure class, such as `names` or `custody-portable`.
     pub class: String,
     pub why: String,
     /// The model connection the value went to.
@@ -125,7 +125,7 @@ pub struct RevealReceipt {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RevealDescribeRequest {
-    /// The secret's handle, such as `sc12`.
+    /// A custody or PERSON handle, such as `sc12` or `pr12`.
     pub handle: String,
 }
 
@@ -140,8 +140,7 @@ pub struct RevealHandleCard {
     pub class: String,
     /// `active`, `suspended` or `revoked`.
     pub status: String,
-    /// Always `restricted`: a secret sits above every model's read ceiling,
-    /// and only a reveal reaches it.
+    /// The claim band; custody is always `restricted`.
     pub band: String,
     /// Where a mask on write found it, when one did.
     pub provenance: Option<RevealProvenance>,
@@ -153,7 +152,7 @@ pub struct RevealHandleCard {
     pub refusal: Option<String>,
 }
 
-/// Where a mask on write found a secret.
+/// The stored source of a handle: a masked secret or a PERSON claim.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RevealProvenance {
@@ -163,7 +162,10 @@ pub struct RevealProvenance {
     pub place: String,
     /// The key's kind, such as `openai_key`.
     pub kind: String,
-    pub masked_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub masked_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learned_at: Option<u64>,
 }
 
 /// `reveal` on a handle: an agent's ask for a secret's value for its model.
@@ -216,14 +218,33 @@ pub fn describe_secret_as_caller(
     input: RevealDescribeRequest,
 ) -> MemoryResult<RevealHandleCard> {
     let asker = memory.reveal_asker()?;
+    if input.handle.trim().starts_with("pr") {
+        let card = memory
+            .vault()
+            .describe_person_handle(&asker, &input.handle)?;
+        let (reveal, grant_ref, refusal) = reveal_effect(card.reveal);
+        return Ok(RevealHandleCard {
+            label: card.handle.clone(),
+            handle: card.handle,
+            class: "names".to_owned(),
+            status: "active".to_owned(),
+            band: card.band.as_str().to_owned(),
+            provenance: Some(RevealProvenance {
+                record: card.claim.to_hex(),
+                place: "claim".to_owned(),
+                kind: "names".to_owned(),
+                masked_at: None,
+                learned_at: Some(card.learned_at),
+            }),
+            reveal: reveal.to_owned(),
+            grant_ref,
+            refusal,
+        });
+    }
     let card: SecretHandleCard = memory
         .vault()
         .describe_secret_handle(&input.handle, Some(&asker))?;
-    let (reveal, grant_ref, refusal) = match card.reveal {
-        HandleReveal::Hydrates { grant_ref } => ("hydrates", Some(grant_ref), None),
-        HandleReveal::Asks => ("asks", None, None),
-        HandleReveal::Refused { reason } => ("refused", None, Some(reason)),
-    };
+    let (reveal, grant_ref, refusal) = reveal_effect(card.reveal);
     Ok(RevealHandleCard {
         handle: card.handle,
         label: card.label,
@@ -234,12 +255,21 @@ pub fn describe_secret_as_caller(
             record: origin.record.to_hex(),
             place: origin.place,
             kind: origin.kind,
-            masked_at: origin.masked_at,
+            masked_at: Some(origin.masked_at),
+            learned_at: None,
         }),
         reveal: reveal.to_owned(),
         grant_ref,
         refusal,
     })
+}
+
+fn reveal_effect(effect: HandleReveal) -> (&'static str, Option<String>, Option<String>) {
+    match effect {
+        HandleReveal::Hydrates { grant_ref } => ("hydrates", Some(grant_ref), None),
+        HandleReveal::Asks => ("asks", None, None),
+        HandleReveal::Refused { reason } => ("refused", None, Some(reason)),
+    }
 }
 
 /// The answer of a `reveal.wait` as a run's record keeps it: without the
@@ -402,15 +432,16 @@ impl Memory<'_> {
             origin.as_ref().and_then(|origin| origin.project_ref()),
             origin.and_then(|origin| origin.run_id()),
         )
-        .with_provider(self.model_provider()))
+        .with_provider(self.model_provider())
+        .with_reader(self.read_key()?))
     }
 }
 
-fn reveal_receipt(receipt: SecretRevealReceipt) -> RevealReceipt {
+pub(crate) fn reveal_receipt(receipt: SecretRevealReceipt) -> RevealReceipt {
     RevealReceipt {
         reveal: receipt.reveal.to_hex(),
         handle: receipt.handle,
-        class: receipt.class.as_str().to_owned(),
+        class: receipt.class,
         why: receipt.why,
         connection: receipt.connection,
         provider: receipt.provider,

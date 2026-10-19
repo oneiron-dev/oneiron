@@ -7,9 +7,10 @@ use ed25519_dalek::SigningKey;
 
 use super::{OWNER_WORK_NO_EXECUTOR, OwnerWorkReceipt, OwnerWorkUnassigned};
 use crate::authority::{
-    ActSurface, AuthorityFold, AuthorityKey, AuthorityOp, MAX_PARENTS, OwnerAct, OwnerWorkBody,
-    OwnerWorkRequest, WrapRecipient, authority_entry_hash, invalid_authority, next_sequence,
-    owner_act_signer_admits, sign_side_entry,
+    ActSurface, AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityOp, MAX_PARENTS,
+    OwnerAct, OwnerWorkBody, OwnerWorkRequest, WorldKeyMode, WorldPrivacyWorkBasis, WrapRecipient,
+    authority_entry_hash, invalid_authority, next_sequence, owner_act_signer_admits,
+    sign_side_entry, stored_authority_row,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -30,6 +31,11 @@ fn no_carrier() -> Error {
             .to_owned(),
     )
 }
+
+/// The PERSON key work after a settings edit binds the world's key to is no
+/// live owner of the vault. Nothing was written.
+const NO_KEY_OWNER: &str = "the person this world's key binds is no live owner of the vault; \
+                            nothing was written";
 
 /// The request would name more rows than one authority entry may: the log's
 /// encoding bound, never a possession test. Nothing was written.
@@ -156,6 +162,72 @@ impl Vault {
         work: OwnerWorkBody,
     ) -> Result<OwnerWorkReceipt> {
         let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        self.record_owner_work_for_in_txn(txn, actor, surface, target, seen, work)
+    }
+
+    /// [`Self::record_owner_work_in_txn`] for `actor`, the owner PERSON the
+    /// act is by, whom the caller revalidated, or checked a live vault owner,
+    /// in this same transaction.
+    pub(crate) fn record_owner_work_for_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: EntityId,
+        surface: ActSurface,
+        target: EntityId,
+        seen: [u8; 32],
+        work: OwnerWorkBody,
+    ) -> Result<OwnerWorkReceipt> {
+        let act = OwnerAct::by_owner(actor, work.kind().act(), target, surface, seen);
+        self.sign_owner_work_in_txn(txn, act, work, None)
+    }
+
+    /// Records the key work the world settings edit signed as entry `edit`
+    /// left a holder, in the edit's own write transaction (FIX 4704): Ensure
+    /// work for the world's revision `after`, right after the edit, binding
+    /// the key to `key_owner`, a live vault owner. The request carries the
+    /// edit's own act exactly as its stored entry signed it, whoever's it is
+    /// (a holder who owns no vault, or an agent within its Grant): no proof,
+    /// and no act made for someone who did not act. The edit is one of its
+    /// parents. The fold judges its basis (CALLS "FIX 4704 derived key work
+    /// authority"); a request it did not admit refuses the transaction.
+    pub(crate) fn record_world_privacy_work_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        edit: AuthorityEntryHash,
+        key_owner: EntityId,
+        after: [u8; 32],
+    ) -> Result<OwnerWorkReceipt> {
+        let source = stored_authority_row(&self.store, txn, &edit)?;
+        let Some(AuthorityOp::WorldPrivacy(source)) = source.map(|entry| entry.op) else {
+            return Err(Error::InvariantViolation(
+                "world privacy key work names no stored settings edit",
+            ));
+        };
+        if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, &key_owner)? {
+            return Err(Error::InvalidConfig(NO_KEY_OWNER.to_owned()));
+        }
+        let basis = WorldPrivacyWorkBasis {
+            edit,
+            after,
+            key_owner,
+        };
+        let work = OwnerWorkBody::WorldKey {
+            mode: WorldKeyMode::Ensure,
+        };
+        self.sign_owner_work_in_txn(txn, source.act, work, Some(basis))
+    }
+
+    /// Signs and lands one request for `act`'s work in `txn`, carried by
+    /// this install, then reads it back from the fold. `act` is exactly the
+    /// act the request carries; its target is the work's.
+    fn sign_owner_work_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        act: OwnerAct,
+        work: OwnerWorkBody,
+        privacy_basis: Option<WorldPrivacyWorkBasis>,
+    ) -> Result<OwnerWorkReceipt> {
+        let target = act.target;
         let fold = self.authority_view_readonly_in_txn(txn)?;
         // Key possession: this install carries the act with its own install
         // key, under a live profile of any role (mesh contract §3).
@@ -168,13 +240,19 @@ impl Vault {
             Ok(executor) => executor,
             Err(why) => return Ok(OwnerWorkReceipt::unassigned(kind, target, why)),
         };
+        let mut parents = fold.owner_work_request_parents(machine, executor, kind, target);
+        // The settings edit key work follows is its direct parent, so its
+        // ancestor, whatever the heads are by now.
+        if let Some(basis) = &privacy_basis {
+            parents.insert(basis.edit);
+        }
         let request = OwnerWorkRequest {
             carrier: machine,
-            act: OwnerAct::by_owner(actor, kind.act(), target, surface, seen),
+            act,
             executor,
             work,
+            privacy_basis,
         };
-        let parents = fold.owner_work_request_parents(machine, executor, kind, target);
         if parents.len() > MAX_PARENTS {
             return Err(parent_bound(parents.len()));
         }

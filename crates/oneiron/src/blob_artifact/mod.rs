@@ -26,6 +26,7 @@
 mod body;
 mod born_from;
 mod create;
+pub mod deck_creation;
 mod deck_doors;
 mod family;
 mod holders;
@@ -69,11 +70,11 @@ pub(crate) use self::references::{readmit_held_asset_in_txn, release_fenced_only
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 pub use self::verbs::{
-    ArtifactAskOutcome, ArtifactAskSubmit, ArtifactAskUnits, ArtifactExportFile,
-    ArtifactExportRequest, ArtifactRefRequest, BornFromRequest, BornFromView, DeckProposeOutcome,
-    DeckProposeRequest, DiscardedProposal, FolderItemInput, KeptProposal, NativeOutputRequest,
-    ProposalSettleRequest, ReleasedWait, SlideReviewOutcome, SlideReviewSubmit,
-    SlideReviewUnitInput, SlideUnitRefused, UndoneKeep,
+    ArtifactAdmitSubmit, ArtifactAskOutcome, ArtifactAskSubmit, ArtifactAskUnits,
+    ArtifactExportFile, ArtifactExportRequest, ArtifactRefRequest, BornFromRequest, BornFromView,
+    DeckProposeOutcome, DeckProposeRequest, DiscardedProposal, FolderItemInput, KeptProposal,
+    NativeOutputRequest, ProposalSettleRequest, ReleasedWait, SlideReviewOutcome,
+    SlideReviewSubmit, SlideReviewUnitInput, SlideUnitRefused, UndoneKeep,
 };
 pub(crate) use self::versions::archive_version_tables;
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;

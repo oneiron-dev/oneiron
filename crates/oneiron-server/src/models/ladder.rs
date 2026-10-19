@@ -16,6 +16,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+mod live_fork;
 mod step_attempt;
 
 use futures_util::StreamExt;
@@ -80,6 +81,7 @@ impl LadderRung {
                     }],
                 },
             );
+            oneiron::code_run::shift_cache_boundaries(&mut request);
         }
         request
     }

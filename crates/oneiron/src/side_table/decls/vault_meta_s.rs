@@ -40,9 +40,19 @@ side_tables! {
     SCOPE_SUMMARY_PURPOSE: VaultMeta b"scope_summary:purpose:v1:" Named;
     /// Atomic summary/landing result of one queued declaration. Key: AttemptId.
     SCOPE_SUMMARY_RESULT: VaultMeta b"scope_summary:result:v1:" Named;
+    /// The encrypted input of one active custody change (WILL L04 row 04): the metadata and value
+    /// sealed to the change's holder, with the second it was sealed at and the request it is for,
+    /// kept to relay until its holder answers. Holds no plaintext. Key: hash32 (the ciphertext
+    /// digest the request names).
+    SECRET_CUSTODY_INPUT: VaultMeta b"secret_custody:input:v1:" Raw Ciphertext;
     /// Name index mapping a live secret-custody record's name to its EntityId. Key: string (secret
     /// name).
     SECRET_CUSTODY_NAME_INDEX: VaultMeta b"secret_custody:name:v1:" Raw Custody;
+    /// What one custody request's executor committed (WILL L04 row 04): the digest of the custody
+    /// transition it signed and the rotation receipt it wrote, immutable once written, beside the
+    /// latest transition by id. A retry finds it and changes nothing. Key: hash32 (the request's
+    /// entry hash).
+    SECRET_CUSTODY_OUTPUT: VaultMeta b"secret_custody:output:v1:" Raw Engine;
     /// The latest owner-signed custody transition this vault signed of one portable credential
     /// (OF-422): the record without its value, the value sealed to each machine mine here. Key:
     /// hex32(entity id).
@@ -69,7 +79,8 @@ side_tables! {
     SECRET_KNOWN_VALUE: VaultMeta b"secret_known:value:v1:" Named Custody;
     /// T1/T2 secret-materialization lease row (escalation ladder to local registration). Key:
     /// hex32(lease id).
-    SECRET_LEASE: VaultMeta b"secret_lease:v1:" Raw;
+    SECRET_LEASE: VaultMeta b"secret_lease:v1:" Raw
+        => crate::secret_lease::erase_lease_actor_in_txn;
     /// A value-free grant a secret lease's holder redeems (FIX 4313): the custody record, the
     /// value generation it pins, the holder principal and run, the effector, the target and the
     /// expiry, and for a T1/T2 grant the lease it rides. Key: id16 (grant id).
@@ -77,7 +88,8 @@ side_tables! {
         => crate::secret_lease::erase_secret_grant_actor_in_txn;
     /// Durable receipt written before a secret value is returned from materialization. Key:
     /// hex32(receipt id).
-    SECRET_MATERIALIZATION_RECEIPT: VaultMeta b"secret_lease_receipt:v1:" Raw;
+    SECRET_MATERIALIZATION_RECEIPT: VaultMeta b"secret_lease_receipt:v1:" Raw
+        => crate::secret_lease::erase_receipt_actor_in_txn;
     /// A carrier row the historical lift sweep marked (OF-067): the bytes it marked, by their
     /// hash, the detector's reason and the parts its readers withhold. The carrier keeps its
     /// bytes. Holds no value. Key: the carrier table's name, a colon, then its row key.

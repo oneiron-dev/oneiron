@@ -18,6 +18,20 @@ export type OpenOptions = {
   dimensions?: number
 }
 
+/** What {@link Oneiron.startEngine} takes besides the path (OF-237). */
+export type EngineOptions = {
+  /** Embedding vector dimensions; omitted takes the config's. */
+  dimensions?: number
+  /** The `oneiron serve --config` file the engine resolves; omitted resolves none. */
+  configFile?: string
+  /** The host keychain by exact name (`auth_secret`, `vault_password`), each value UTF-8. */
+  secrets?: Record<string, string>
+  /** Memory the engine may size its bounds from, in bytes; omitted is unbounded. */
+  memoryBytes?: number
+  /** CPU time per second, in milliseconds; omitted is unbounded. */
+  cpuMillisPerSecond?: number
+}
+
 /** An authority key's signature suite. */
 export type CheckpointPinSuite = "ed25519" | "p256"
 
@@ -379,6 +393,29 @@ export type MemoryPack = {
   narrowing: ReadReceipt
   /** Finalized serving-run id bytes; absent when local capture is off. */
   retrievalRunId?: number[]
+  /** What a device that syncs only what it opened says of the windows it does not hold; absent when it holds every window or runs no sync. */
+  residence?: RecallResidence
+}
+
+/** What an opened device's recall says of the windows it does not hold (FIX 2905): the home's hits are separate references the local pack does not hold, and a hit's window opens it. */
+export type RecallResidence = {
+  source: "home" | "local_only"
+  /** The home answered in full; false also marks the pack partial. */
+  complete: boolean
+  /** The home was asked for no more than the residence `search_limit`. */
+  capped: boolean
+  /** The home's references, in its order, each entity once. */
+  hits: RecallResidenceHit[]
+}
+
+/** One reference the home holds that the local pack does not. */
+export type RecallResidenceHit = {
+  /** The entity's full id, 32 lowercase hex. */
+  id: string
+  /** The home's own score, never compared with a local item's. */
+  score: number
+  /** The month window (`YYYY-MM`) that holds the hit. */
+  window: string
 }
 
 /** One governance receipt: a gate decision, or a receipt of another family. */

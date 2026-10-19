@@ -4,16 +4,11 @@ use std::os::fd::RawFd;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::Context as _;
-use serde::Deserialize;
-
 use oneiron::federation::derivation::DerivationOwner;
 use oneiron_vault_contract::{CONTRACT_VERSION, valid_vault_name};
 
 use crate::config::embedder::EmbedderConfigOverride;
-use crate::config::models::{ModelsConfig, ModelsFile};
-use crate::config::{EmbedderProvider, KeystoreBackend, KeystoreConfig, ServeArgs, ServeConfig};
-use crate::runtime::GpuPoolConfig;
+use crate::config::{KeystoreBackend, KeystoreConfig, ServeArgs, ServeConfig};
 
 use super::listener::HYPNOS_LISTEN_FD;
 
@@ -60,6 +55,15 @@ pub enum ManagedError {
     #[error("--{flag} must be an absolute path")]
     RelativeRecipientFile { flag: &'static str },
 
+    /// One leaf of the owner's settings file that a managed vault does not
+    /// take, named by its dotted field and never by its value.
+    #[error("--settings-file sets `{field}`, which a managed vault refuses: {reason}")]
+    SettingsRefused {
+        section: String,
+        field: String,
+        reason: SettingsRefusal,
+    },
+
     #[error("--artifact-http-socket must be an absolute path")]
     RelativeArtifactSocket,
 
@@ -99,17 +103,24 @@ pub enum ManagedError {
     #[error("credentials fd rejected: {reason}")]
     CredentialsRejected { reason: String },
 
+    /// The real-tenant tripwire: `missing` names each isolation facility the
+    /// probe did not find, so the operator knows what to provision.
     #[error(
-        "refusing to open vault {vault:?} in managed mode: vault_meta carries no `{marker}` marker, and the hardened real-tenant preconditions are absent (managed mode requires a probed fscrypt policy AND a dedicated non-root UID owning the data directory). Without both, only explicitly marked synthetic canaries are admitted; this refusal is the real-tenant tripwire."
+        "refusing to open vault {vault:?} in managed mode, and it was not opened: vault_meta carries no `{marker}` marker, and this host has not provisioned the isolation a real tenant needs. Missing: {}. Provision them and start the vault again; only an explicitly marked synthetic canary opens without them, and marking a real tenant as one is no workaround.",
+        missing.join("; ")
     )]
-    ManagedRealTenantRefused { vault: String, marker: &'static str },
+    ManagedRealTenantRefused {
+        vault: String,
+        marker: &'static str,
+        missing: Vec<&'static str>,
+    },
 
     #[error(
         "managed vault {vault:?} DEK MAC mismatch at `{key}`: the delivered DEK does not match the one this vault was sealed under. Refused before reading any content."
     )]
     DekMacMismatch { vault: String, key: &'static str },
 
-    #[error("vault is frozen for reap; new writes are refused")]
+    #[error("{}", super::state_serve::WRITES_FROZEN_MESSAGE)]
     WritesFrozen,
 
     #[error("ctl line of {len} bytes exceeds the {cap}-byte cap; rejected whole")]
@@ -126,6 +137,28 @@ pub enum ManagedError {
 
     #[error("managed serve io: {0}")]
     Io(#[from] std::io::Error),
+}
+
+/// Why a managed vault refuses one leaf of its settings file. Presence alone
+/// refuses: an empty value, `false` or the supervisor's own value does too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum SettingsRefusal {
+    /// A binding the supervisor owns: the listener, ingress and auth, the
+    /// tenant's identity and custody, the broker and voice sockets, and the
+    /// key directory.
+    #[error("the supervisor owns this binding, so the owner's settings never set it")]
+    SupervisorOwned,
+    /// A key named by an environment variable, which managed mode never reads.
+    #[error("it names a key in the environment, which managed mode never reads")]
+    EnvironmentSecret,
+    /// A path that does not lie in this vault's own storage.
+    #[error(
+        "an owner path must be absolute, hold no `~` or `..`, exist, and lie under the vault's data directory or the settings file's own directory"
+    )]
+    OutsideVault,
+    /// A key the server's config schema does not have.
+    #[error("the server's config schema has no such field")]
+    UnknownField,
 }
 
 /// The managed argv group, validated. Reaching this type means every required
@@ -148,7 +181,8 @@ pub struct ManagedArgs {
     /// The process is a Firecracker vault VM's engine (`--vsock-guest`).
     pub vsock_guest: bool,
     /// Where this install keeps its this-device-only key slots, a place the
-    /// supervisor chose. Without it managed mode installs no keystore.
+    /// supervisor chose. Without it managed mode installs no keystore, and a
+    /// settings file that asks for one is refused.
     pub keystore_dir: Option<PathBuf>,
     /// The node's managed escrow recipient's public key file
     /// (`--escrow-recipient-file`).
@@ -160,8 +194,8 @@ pub struct ManagedArgs {
     /// (`--escrow-outbox-dir`).
     pub escrow_outbox: Option<PathBuf>,
     /// A vault created at this start seals its pages under the delivered
-    /// data key (`--maximum-tier`, `MANAGED_MAXIMUM_TIER_DEFAULT` unless
-    /// given).
+    /// data key (`--maximum-tier`). Unless given, the settings file's
+    /// `maximum_tier` decides, then `MANAGED_MAXIMUM_TIER_DEFAULT`.
     pub maximum_tier: bool,
     /// The artifact origin's socket (`--artifact-http-socket`), when the
     /// supervisor gave the vault one.
@@ -169,10 +203,13 @@ pub struct ManagedArgs {
     /// The domains the artifact origin answers under, as the cloud named
     /// them: `<vault>.<domain>` and `<app>--<vault>.<domain>`.
     pub artifact_domains: Vec<String>,
-    /// The supervisor's `[models]` file (`--models-file`).
-    pub models_file: Option<PathBuf>,
-    /// The supervisor's `[embedder]` and `[gpu]` file (`--embedder-file`).
-    pub embedder_file: Option<PathBuf>,
+    /// The owner's settings file (`--settings-file`), in the server's own
+    /// config schema (`managed::settings`).
+    pub settings_file: Option<PathBuf>,
+    /// Where the server's voice loop listens (`--voice-socket`): a binding
+    /// the supervisor owns, taken when the settings file's `[models.voice]`
+    /// turns the loop on.
+    pub voice_socket: Option<PathBuf>,
     /// This vault's e-sign seal key file (`--seal-key-file`).
     pub seal_key: Option<PathBuf>,
     /// Its certificate chain file (`--seal-chain-file`).
@@ -185,22 +222,6 @@ pub struct ManagedArgs {
     pub seal_signing_url: Option<String>,
     /// The seal organ's program (`--seal-organ`).
     pub seal_organ: Option<PathBuf>,
-}
-
-/// A `--models-file`: the `[models]` table alone, as a config file writes it.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ManagedModelsFile {
-    models: ModelsFile,
-}
-
-/// A `--embedder-file`: the `[embedder]` table and an optional `[gpu]`, as a
-/// config file writes them.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ManagedEmbedderFile {
-    embedder: EmbedderConfigOverride,
-    gpu: Option<GpuPoolConfig>,
 }
 
 impl ManagedArgs {
@@ -302,8 +323,8 @@ impl ManagedArgs {
                 })
                 .filter(|domain| !domain.is_empty())
                 .collect(),
-            models_file: args.models_file.clone(),
-            embedder_file: args.embedder_file.clone(),
+            settings_file: args.settings_file.clone(),
+            voice_socket: args.voice_socket.clone(),
             seal_key: args.seal_key_file.clone(),
             seal_chain: args.seal_chain_file.clone(),
             seal_trust: args.seal_trust_file.clone(),
@@ -332,8 +353,8 @@ impl ManagedArgs {
             ("escrow-recipient-file", &managed.escrow_recipient),
             ("break-glass-recipient-file", &managed.break_glass_recipient),
             ("escrow-outbox-dir", &managed.escrow_outbox),
-            ("models-file", &managed.models_file),
-            ("embedder-file", &managed.embedder_file),
+            ("settings-file", &managed.settings_file),
+            ("voice-socket", &managed.voice_socket),
             ("seal-key-file", &managed.seal_key),
             ("seal-chain-file", &managed.seal_chain),
             ("seal-trust-file", &managed.seal_trust),
@@ -378,101 +399,6 @@ impl ManagedArgs {
         )
     }
 
-    /// The models table `--models-file` holds, resolved; `None` without one.
-    /// Managed mode reads no environment, so a provider that names its key by
-    /// `key_env`, or a System One seat (whose bearer is an environment
-    /// variable), is refused: a key reaches a managed vault only as a vault
-    /// secret its provider's `key_secret` names, which the credential broker
-    /// sends.
-    pub fn models(&self) -> anyhow::Result<Option<ModelsConfig>> {
-        let Some(path) = &self.models_file else {
-            return Ok(None);
-        };
-        let raw = std::fs::read_to_string(path)
-            .with_context(|| format!("read models file {}", path.display()))?;
-        let file: ManagedModelsFile = toml::from_str(&raw)
-            .with_context(|| format!("parse models file {}", path.display()))?;
-        let models = file
-            .models
-            .resolve(path.parent())
-            .with_context(|| format!("models file {}", path.display()))?;
-        if let Some(name) = models
-            .providers
-            .iter()
-            .find_map(|(name, provider)| provider.key_env.is_some().then_some(name))
-        {
-            anyhow::bail!(
-                "models file {}: provider {name:?} names its key with key_env, but managed mode reads no environment; hold the key in the vault and name it with key_secret",
-                path.display()
-            );
-        }
-        if models.decisions.system_one.is_some() {
-            anyhow::bail!(
-                "models file {}: [models.decisions.system_one] reads its bearer from the environment, which managed mode never reads",
-                path.display()
-            );
-        }
-        Ok(Some(models))
-    }
-
-    /// Settles the `[embedder]` and `[gpu]` tables `--embedder-file` holds
-    /// onto `config`, as serve settles a config file's (FIX 777); nothing
-    /// without one. Managed mode reads no environment and no HOME, so a key
-    /// named by `api_key_env` (the endpoint's, the remote rung's or the
-    /// pods') is refused, and a local provider names its files with an
-    /// absolute `model_dir` or `models_dir` rather than find them under the
-    /// XDG data root.
-    pub fn embedder(&self, config: &mut ServeConfig) -> anyhow::Result<()> {
-        let Some(path) = &self.embedder_file else {
-            return Ok(());
-        };
-        let raw = std::fs::read_to_string(path)
-            .with_context(|| format!("read embedder file {}", path.display()))?;
-        let file: ManagedEmbedderFile = toml::from_str(&raw)
-            .with_context(|| format!("parse embedder file {}", path.display()))?;
-        let names_env_key = file.embedder.api_key_env.is_some()
-            || file
-                .embedder
-                .remote
-                .as_ref()
-                .is_some_and(|remote| remote.api_key_env.is_some())
-            || file
-                .gpu
-                .as_ref()
-                .is_some_and(|gpu| gpu.api_key_env.is_some());
-        if names_env_key {
-            anyhow::bail!(
-                "embedder file {}: api_key_env names a key in the environment, which managed mode never reads",
-                path.display()
-            );
-        }
-        let dirs = [&file.embedder.model_dir, &file.embedder.models_dir];
-        if dirs.into_iter().flatten().any(|dir| dir.is_relative()) {
-            anyhow::bail!(
-                "embedder file {}: model_dir and models_dir must be absolute paths",
-                path.display()
-            );
-        }
-        crate::config::merge::settle_embedder_section(config, file.embedder)
-            .with_context(|| format!("embedder file {}", path.display()))?;
-        if let Some(embedder) = &config.embedder
-            && embedder.provider == EmbedderProvider::Local
-            && embedder.local.model_dir.is_none()
-            && embedder.local.models_dir.is_none()
-        {
-            anyhow::bail!(
-                "embedder file {}: a local provider needs model_dir or models_dir, because managed mode never reads HOME or XDG_DATA_HOME",
-                path.display()
-            );
-        }
-        if let Some(gpu) = &file.gpu {
-            gpu.validate()
-                .with_context(|| format!("embedder file {}", path.display()))?;
-        }
-        config.gpu = file.gpu;
-        Ok(())
-    }
-
     /// The vault's own e-sign seal settings, from its argv alone (FIX 3487).
     #[cfg(unix)]
     pub(crate) fn seal_config(&self) -> crate::api::EsignSealConfig {
@@ -487,13 +413,16 @@ impl ManagedArgs {
         }
     }
 
-    /// Serve configuration for managed mode, built from argv alone.
+    /// Serve configuration for managed mode as argv builds it, the base the
+    /// owner's settings file is settled over (`managed::settings`).
     ///
     /// Outside the managed group, the argv allowlist permits exactly the
-    /// fields read here: dimensions, map size, dictionary roots, log level
-    /// and `--no-hooks`.
-    /// Everything else on `ServeArgs` is refused before this runs, so nothing
-    /// reaches here to be quietly dropped.
+    /// fields read here: dimensions, the MRL prefix, map size, dictionary
+    /// roots, log level, `--no-hooks`, the maximum tier and the owner's
+    /// failure-signal export and training choices. Each of them, given,
+    /// stands over the settings file's own value. Everything else on
+    /// `ServeArgs` is refused before this runs, so nothing reaches here to be
+    /// quietly dropped.
     ///
     /// `auth_secret` stays `None` and unauthenticated requests are allowed:
     /// bearer auth terminates at the supervisor, which owns the listening
@@ -509,6 +438,7 @@ impl ManagedArgs {
             // Browser origins are argv policy too, for the external shared UI.
             allowed_origins: args.allowed_origins.clone().unwrap_or_default(),
             dimensions: args.dimensions.unwrap_or(defaults.dimensions),
+            fast_dims: args.fast_dims,
             map_size: args.map_size.unwrap_or(defaults.map_size),
             // Argv only: the usual resolver probes HOME and the XDG roots,
             // which managed mode does not get to read.
@@ -516,6 +446,7 @@ impl ManagedArgs {
             assistant_display_names: args.assistant_display_names.clone().unwrap_or_default(),
             // Fact and verb hooks run unless the supervisor passes `--no-hooks`.
             hooks: !args.no_hooks,
+            maximum_tier: self.maximum_tier,
             // The supervisor's key directory or none: the platform default
             // lies under HOME and the XDG roots, which managed mode never reads.
             keystore: KeystoreConfig {
@@ -527,9 +458,16 @@ impl ManagedArgs {
                 dir: self.keystore_dir.clone(),
                 service: None,
             },
-            // Our cloud sends feedback to our own inbox unless told otherwise
-            // (ARCH-0056 r6); every send still asks the owner first.
+            // Our cloud sends feedback to our own inbox unless the settings
+            // file chooses otherwise (ARCH-0056 r6); every send still asks the
+            // owner first.
             feedback: crate::config::FeedbackConfig::cloud_default(),
+            // The owner's "Help improve Oneiron" choice as the supervisor
+            // passes it, either way; unset, the settings file's, then the
+            // managed default.
+            failure_signal_export: args.failure_signal_export,
+            // Training is its own explicit yes, off unless passed or set.
+            failure_signal_training: args.failure_signal_training.unwrap_or(false),
             ..defaults
         };
         if let Some(log_level) = args.log_level.clone() {
@@ -594,20 +532,22 @@ const VSOCK_BOOT_REASON: &str =
 const NO_HOST_PORT_REASON: &str =
     "managed mode serves the supervisor's socket, never a host:port bind";
 
-const NO_CONFIG_LAYER_REASON: &str = "managed mode reads its whole configuration from argv; config files, ONEIRON_* environment and XDG layers are never consulted";
+const NO_CONFIG_LAYER_REASON: &str = "managed mode reads its configuration from argv and the one settings file --settings-file names; other config files, ONEIRON_* environment and XDG layers are never consulted";
 
 const NO_AUTH_LAYER_REASON: &str = "bearer auth terminates at the supervisor, which owns the listening socket inside an owner-only directory; a managed child holds no second opinion about who may talk to it";
 
 const NO_EMBEDDER_FLAGS_REASON: &str =
-    "managed mode reads its embedder from the one file --embedder-file names";
+    "managed mode reads its embedder from the settings file's [embedder] (--settings-file)";
 
-const NO_TUNING_LAYER_REASON: &str = "managed mode builds its whole ServeConfig from the vault, dimension, dictionary and log-level flags; this one would be parsed and then dropped";
+const NO_TUNING_LAYER_REASON: &str = "managed mode reads the owner's settings from the one file --settings-file names; this flag would be a second layer nothing reads";
+
+const NO_TENANT_LAYER_REASON: &str = "the supervisor binds the vault's tenant identity, privacy posture and key custody; contract v1 has no managed override for them";
 
 /// What managed mode does with one `ServeArgs` field.
 #[derive(Debug, Clone, Copy)]
 enum ArgvUse {
-    /// Read: either part of the managed group itself or one of the four
-    /// fields [`ManagedArgs::serve_config`] consults.
+    /// Read: either part of the managed group itself or one of the fields
+    /// [`ManagedArgs::serve_config`] consults.
     Read,
     /// Belongs to a layer managed mode never consults, and is refused with
     /// this reason rather than accepted and dropped.
@@ -715,16 +655,16 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Read,
     ),
     (
-        "models-file",
-        |args| args.models_file.is_some(),
+        "settings-file",
+        |args| args.settings_file.is_some(),
         ArgvUse::Read,
     ),
     (
-        "embedder-file",
-        |args| args.embedder_file.is_some(),
+        "voice-socket",
+        |args| args.voice_socket.is_some(),
         ArgvUse::Read,
     ),
-    // The embedder's layered flags: managed mode reads its one file.
+    // The embedder's layered flags: managed mode reads its settings file.
     (
         "embedder-*",
         |args| !EmbedderConfigOverride::from(&args.embedder).is_empty(),
@@ -827,33 +767,40 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.trusted_proxies.is_some(),
         ArgvUse::Refused(NO_AUTH_LAYER_REASON),
     ),
+    // The owner's own choices, which the supervisor passes on (FIX 4488).
     (
         "failure-signal-export",
         |args| args.failure_signal_export.is_some(),
-        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+        ArgvUse::Read,
+    ),
+    (
+        "failure-signal-training",
+        |args| args.failure_signal_training.is_some(),
+        ArgvUse::Read,
     ),
     // Contract v1 has no managed privacy override: refuse instead of dropping it.
     (
         "privacy-posture",
         |args| args.privacy_posture.is_some(),
-        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+        ArgvUse::Refused(NO_TENANT_LAYER_REASON),
     ),
     (
         "hosted-kms-key-ref",
         |args| args.hosted_kms_key_ref.is_some(),
-        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+        ArgvUse::Refused(NO_TENANT_LAYER_REASON),
     ),
-    // The tuning layer: defaults, except the four fields below.
     (
         "lease-vault-id",
         |args| args.lease_vault_id.is_some(),
-        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+        ArgvUse::Refused(NO_TENANT_LAYER_REASON),
     ),
+    // The tuning layer: the settings file's, except the fields read below.
     (
         "dimensions",
         |args| args.dimensions.is_some(),
         ArgvUse::Read,
     ),
+    ("fast-dims", |args| args.fast_dims.is_some(), ArgvUse::Read),
     ("map-size", |args| args.map_size.is_some(), ArgvUse::Read),
     ("log-level", |args| args.log_level.is_some(), ArgvUse::Read),
     ("no-hooks", |args| args.no_hooks, ArgvUse::Read),
@@ -937,7 +884,7 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.max_bulk_decompressed.is_some(),
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),
     ),
-    // The runtime routing layer: a managed child routes nothing on its own.
+    // The runtime routing layer: the settings file's `[runtime]`.
     (
         "runtime-mode",
         |args| args.runtime_mode.is_some(),
@@ -993,7 +940,7 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.runtime_summarizer_model.is_some(),
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),
     ),
-    // The tagger slot's section: a managed child serves no tagger.
+    // The tagger slot's flags: the settings file's `[oneironer]`.
     (
         "oneironer-provider",
         |args| args.oneironer.oneironer_provider.is_some(),
