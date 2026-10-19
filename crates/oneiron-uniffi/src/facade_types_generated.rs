@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1049 facade rows, 3508 generated types.
+// UniFFI census: 1049 facade rows, 3509 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1001.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -23950,6 +23950,24 @@ pub struct LegalHold {
         skip_serializing_if = "Option::is_none"
     )]
     pub matter_ref: Option<String>,
+    #[serde(
+        rename = "legal_basis_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub legal_basis_ref: Option<String>,
+    #[serde(
+        rename = "jurisdiction",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub jurisdiction: Option<String>,
+    #[serde(
+        rename = "issuing_authority_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issuing_authority_ref: Option<String>,
     #[serde(rename = "lifted_at", default, skip_serializing_if = "Option::is_none")]
     pub lifted_at: Option<u64>,
     #[serde(
@@ -23958,6 +23976,12 @@ pub struct LegalHold {
         skip_serializing_if = "Option::is_none"
     )]
     pub owner_told: Option<bool>,
+    #[serde(
+        rename = "requires_non_use",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub requires_non_use: Option<bool>,
 }
 
 /// `oneiron::task_verb::sdk_legal_hold::LegalHoldWidenRequest`.
@@ -24064,6 +24088,50 @@ pub struct LegalHoldLiftAndEraseRequest {
     pub records: Vec<String>,
 }
 
+/// `oneiron::deletion::legal_hold::types::ErasePendingReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ErasePendingReason {
+    #[serde(rename = "historical_sweep")]
+    HistoricalSweep,
+}
+
+/// `oneiron_contracts::error::legal_hold::LegalHoldBoundKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LegalHoldBoundKind {
+    #[serde(rename = "law")]
+    Law,
+}
+
+/// `oneiron_contracts::error::legal_hold::LegalHoldBound`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LegalHoldBound {
+    #[serde(rename = "kind")]
+    pub kind: LegalHoldBoundKind,
+    #[serde(rename = "order_ref", default, skip_serializing_if = "Option::is_none")]
+    pub order_ref: Option<String>,
+    #[serde(
+        rename = "legal_basis_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub legal_basis_ref: Option<String>,
+    #[serde(
+        rename = "jurisdiction",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub jurisdiction: Option<String>,
+    #[serde(
+        rename = "issuing_authority_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issuing_authority_ref: Option<String>,
+    #[serde(rename = "ends_at", default, skip_serializing_if = "Option::is_none")]
+    pub ends_at: Option<u64>,
+}
+
 /// `oneiron::task_verb::sdk_legal_hold::LegalHoldEraseState`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "state")]
@@ -24078,9 +24146,25 @@ pub enum LegalHoldEraseState {
         receipt_ref: Option<String>,
     },
     #[serde(rename = "completion_pending")]
-    CompletionPending,
-    #[serde(rename = "kept_by_legal_order")]
-    KeptByLegalOrder,
+    CompletionPending {
+        #[serde(
+            rename = "receipt_ref",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        receipt_ref: Option<String>,
+        #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+        reason: Option<ErasePendingReason>,
+    },
+    #[serde(rename = "retained_for_law")]
+    RetainedForLaw {
+        #[serde(rename = "bound")]
+        bound: LegalHoldBound,
+        #[serde(rename = "works_self_hosted")]
+        works_self_hosted: bool,
+        #[serde(rename = "self_hosted_note")]
+        self_hosted_note: String,
+    },
     #[serde(rename = "failed")]
     Failed {
         #[serde(rename = "message")]
@@ -33527,6 +33611,8 @@ pub enum CriticAssociation {
     BranchAttempt,
     #[serde(rename = "canonical_run_ref")]
     CanonicalRunRef,
+    #[serde(rename = "declared_spawn_attempt")]
+    DeclaredSpawnAttempt,
 }
 
 /// `oneiron::team::doors::CriticObservation`.
@@ -33538,6 +33624,12 @@ pub struct CriticObservation {
     pub branch_attempt_ref: String,
     #[serde(rename = "association")]
     pub association: CriticAssociation,
+    #[serde(
+        rename = "declared_attempt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub declared_attempt_ref: Option<String>,
     #[serde(rename = "artifact_id")]
     pub artifact_id: String,
     #[serde(rename = "target_ref")]
@@ -34845,6 +34937,12 @@ pub struct CriticReviewSubmit {
     pub catalog: crate::WireJson,
     #[serde(rename = "critics")]
     pub critics: Vec<CriticBinding>,
+    #[serde(
+        rename = "spawn_attempt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub spawn_attempt_ref: Option<String>,
 }
 
 /// `oneiron::critic::CritiqueTriageScores`.
@@ -34996,6 +35094,12 @@ pub struct CriticReviewOutcome {
     pub artifacts: Vec<CritiqueArtifact>,
     #[serde(rename = "receipts")]
     pub receipts: Vec<DecisionReceipt>,
+    #[serde(
+        rename = "spawn_attempt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub spawn_attempt_ref: Option<String>,
 }
 
 /// `oneiron::blob_artifact::deck_creation::outline::OutlineCommunication`.
@@ -36300,54 +36404,33 @@ pub struct DeckProposeRequest {
     pub made_by: Option<MadeBy>,
 }
 
-/// `oneiron::edit_roundtrip::address::OfficeFormat`.
+/// `oneiron_docedit::edit::wire::DeckInspection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeckInspection {
+    #[serde(rename = "slides")]
+    pub slides: Vec<DeckSlideInspection>,
+    #[serde(rename = "ambiguities")]
+    pub ambiguities: Vec<DeckIdentityAmbiguity>,
+    #[serde(rename = "marks")]
+    pub marks: IdMarks,
+}
+
+/// `oneiron::edit_roundtrip::deck::DeckRejectionInspection`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum OfficeFormat {
-    #[serde(rename = "xlsx")]
-    Xlsx,
-    #[serde(rename = "docx")]
-    Docx,
-    #[serde(rename = "pptx")]
-    Pptx,
-}
-
-/// `oneiron::blob_artifact::deck_doors::DeckRejectionSheet`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct DeckRejectionSheet {
-    #[serde(rename = "name")]
-    pub name: String,
-    #[serde(rename = "index")]
-    pub index: u32,
-}
-
-/// `oneiron::blob_artifact::deck_doors::DeckRejectionSheetDependency`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct DeckRejectionSheetDependency {
-    #[serde(rename = "from_sheet")]
-    pub from_sheet: String,
-    #[serde(rename = "to_sheet")]
-    pub to_sheet: String,
-}
-
-/// `oneiron::blob_artifact::deck_doors::DeckRejectionSummary`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct DeckRejectionSummary {
-    #[serde(rename = "format")]
-    pub format: OfficeFormat,
-    #[serde(rename = "sheets")]
-    pub sheets: Vec<DeckRejectionSheet>,
-    #[serde(rename = "defined_names")]
-    pub defined_names: Vec<String>,
-    #[serde(rename = "has_pivots")]
-    pub has_pivots: bool,
-    #[serde(rename = "has_charts")]
-    pub has_charts: bool,
-    #[serde(rename = "has_macros")]
-    pub has_macros: bool,
-    #[serde(rename = "cross_sheet_dependencies")]
-    pub cross_sheet_dependencies: Vec<DeckRejectionSheetDependency>,
-    #[serde(rename = "unknown_parts")]
-    pub unknown_parts: Vec<String>,
+#[serde(tag = "state")]
+pub enum DeckRejectionInspection {
+    #[serde(rename = "inspected")]
+    Inspected {
+        #[serde(rename = "deck")]
+        deck: DeckInspection,
+        #[serde(rename = "parts")]
+        parts: Vec<String>,
+    },
+    #[serde(rename = "unreadable")]
+    Unreadable {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
 }
 
 /// `oneiron::blob_artifact::deck_doors::DeckRejectionCheck`.
@@ -36600,7 +36683,7 @@ pub enum DeckTransactionRefusal {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DeckProposeRejection {
     #[serde(rename = "inspection")]
-    pub inspection: DeckRejectionSummary,
+    pub inspection: DeckRejectionInspection,
     #[serde(rename = "report")]
     pub report: DeckRejectionReport,
     #[serde(rename = "refusal")]

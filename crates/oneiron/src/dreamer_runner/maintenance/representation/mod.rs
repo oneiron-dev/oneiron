@@ -71,10 +71,50 @@ impl RepresentationCitation {
     }
 }
 
+/// A request as its packet keeps it: everything but the owner, so neither
+/// the packet's hash nor the claim it lands as names them (FIX 4512). The
+/// owner stands in the plan's envelope, which an erase scrubs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PacketRequest {
+    kind: RepresentationKind,
+    verb: String,
+    channel: String,
+    target: String,
+    evidence: Vec<RepresentationSourceRef>,
+    voice: Vec<RepresentationSourceRef>,
+}
+impl RepresentationRequest {
+    fn packet(&self) -> PacketRequest {
+        PacketRequest {
+            kind: self.kind,
+            verb: self.verb.clone(),
+            channel: self.channel.clone(),
+            target: self.target.clone(),
+            evidence: self.evidence.clone(),
+            voice: self.voice.clone(),
+        }
+    }
+}
+impl PacketRequest {
+    /// The request again, for the live `owner` its envelope names.
+    fn with_owner(&self, owner: EntityId) -> RepresentationRequest {
+        RepresentationRequest {
+            owner,
+            kind: self.kind,
+            verb: self.verb.clone(),
+            channel: self.channel.clone(),
+            target: self.target.clone(),
+            evidence: self.evidence.clone(),
+            voice: self.voice.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Packet {
-    request: RepresentationRequest,
+    request: PacketRequest,
     content: OutputRef,
     evidence: Vec<RepresentationCitation>,
     voice: Vec<RepresentationCitation>,
@@ -121,4 +161,5 @@ fn invalid() -> Error {
 pub(crate) use approval::{
     erase_approval_actor_in_txn, representation_approval_is_live_in_txn, validate_dispatch,
 };
+pub(crate) use proposal::erase_proposal_actor_in_txn;
 pub(super) use proposal::{review_revision, run, withdraw_follow_ups_in_txn};

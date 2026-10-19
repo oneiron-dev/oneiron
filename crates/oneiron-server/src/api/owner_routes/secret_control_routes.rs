@@ -260,6 +260,10 @@ struct SealedBody {
     recipients: Vec<PermitBody>,
     /// The envelope sealed to the holder's key, as standard base64.
     input_base64: String,
+    /// For a register, the `manifest_ref` its sealed record names: this
+    /// install attaches the manifest it resolves for it.
+    #[serde(default)]
+    manifest_ref: Option<String>,
 }
 
 /// `POST /v1/owner/secrets/custody`: records a register or rotate whose
@@ -300,6 +304,7 @@ async fn sealed_change(
             &owner,
             surface,
             &SealedCustodyChange {
+                manifest_ref: request.manifest_ref.as_deref(),
                 change,
                 secret_id: entity_id("secret_id", &request.secret_id)?,
                 generation: request.generation,

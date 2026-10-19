@@ -3,8 +3,8 @@
 //! send-review receipt; a plan the Gate held, by their bundle approval.
 use super::super::applied::{self, MaintenanceTarget};
 use super::context::validate_packet;
-use super::proposal::{StoredProposal, read_proposal};
-use super::{CONTENT_PREFIX, Packet, RepresentationCitation, invalid};
+use super::proposal::{LiveProposal, read_proposal};
+use super::{CONTENT_PREFIX, RepresentationCitation, invalid};
 use crate::compaction::output::OutputRef;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{
@@ -34,7 +34,7 @@ const SEND_REVIEW_REASON: &str = "gate.dreamer.representation_send_reviewed";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepresentationReview {
     id: EntityId,
-    record: StoredProposal,
+    record: LiveProposal,
     basis: ReviewBasis,
 }
 /// What one review stands on.
@@ -51,7 +51,7 @@ impl RepresentationReview {
         self.id
     }
     pub fn request(&self) -> &super::RepresentationRequest {
-        &self.record.packet.request
+        &self.record.request
     }
     pub const fn content(&self) -> OutputRef {
         self.record.packet.content
@@ -70,17 +70,18 @@ struct ApprovalRecord {
     revision: [u8; 32],
     owner: ApprovalOwner,
 }
-/// The owner an arm names: an actor, or no one once that actor was erased
-/// (FIX 3520), and then the arm stands on no receipt. It reads and writes as
-/// the actor's hex id, or as [`ERASED_CALL_IDENTITY`].
+/// The owner an arm or a plan's envelope names: an actor, or no one once
+/// that actor was erased (FIX 3520, 4512), and then the arm stands on no
+/// receipt and the plan reviews nothing. It reads and writes as the actor's
+/// hex id, or as [`ERASED_CALL_IDENTITY`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ApprovalOwner {
+pub(super) enum ApprovalOwner {
     Actor(EntityId),
     Erased,
 }
 impl ApprovalOwner {
     /// Whether this is `actor`.
-    fn is(self, actor: EntityId) -> bool {
+    pub(super) fn is(self, actor: EntityId) -> bool {
         self == Self::Actor(actor)
     }
 }
@@ -122,7 +123,7 @@ enum OwnerWitness {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApprovedRepresentation {
     id: EntityId,
-    record: StoredProposal,
+    record: LiveProposal,
     actor: EntityId,
     approval: ApprovalRecord,
 }
@@ -141,8 +142,8 @@ impl Vault {
         id: &EntityId,
     ) -> Result<RepresentationReview> {
         let (record, body) = read_proposal(self, id)?;
-        require_recipient(self, owner, &record.packet)?;
-        validate_packet(self, &record.packet)?;
+        require_recipient(self, owner, &record)?;
+        validate_packet(self, &record.packet, record.request.owner)?;
         let basis = match body.approval {
             ClaimApprovalStatus::Auto if saved(self, *id)? => ReviewBasis::Saved,
             ClaimApprovalStatus::Proposed => {
@@ -170,12 +171,12 @@ impl Vault {
         review: &RepresentationReview,
         now: u64,
     ) -> Result<ApprovedRepresentation> {
-        require_owner(self, owner, &review.record.packet)?;
+        require_owner(self, owner, &review.record)?;
         let (record, body) = read_proposal(self, &review.id)?;
         if record != review.record {
             return Err(invalid());
         }
-        validate_packet(self, &record.packet)?;
+        validate_packet(self, &record.packet, record.request.owner)?;
         let ReviewBasis::Bundle(bundle_id) = review.basis else {
             self.arm_saved_plan(owner, review, now)?;
             return self.approved_representation(&review.id);
@@ -200,7 +201,7 @@ impl Vault {
         if current != record || body.approval != ClaimApprovalStatus::Approved {
             return Err(invalid());
         }
-        validate_packet(self, &current.packet)?;
+        validate_packet(self, &current.packet, current.request.owner)?;
         self.with_write_txn_grouped(|txn| {
             let approval = ApprovalRecord {
                 witness: OwnerWitness::Bundle(bundle_id),
@@ -234,7 +235,7 @@ impl Vault {
         review: &RepresentationReview,
         now: u64,
     ) -> Result<()> {
-        require_owner(self, owner, &review.record.packet)?;
+        require_owner(self, owner, &review.record)?;
         let (record, body) = read_proposal(self, &review.id)?;
         if record != review.record {
             return Err(invalid());
@@ -308,7 +309,7 @@ impl Vault {
     /// send review.
     pub fn approved_representation(&self, id: &EntityId) -> Result<ApprovedRepresentation> {
         let (record, body) = read_proposal(self, id)?;
-        validate_packet(self, &record.packet)?;
+        validate_packet(self, &record.packet, record.request.owner)?;
         let approval: ApprovalRecord = {
             let txn = self.store.env.read_txn()?;
             let approval = APPROVAL.get(&self.store, &txn, id)?.ok_or_else(invalid)?;
@@ -325,7 +326,7 @@ impl Vault {
             }
             approval
         };
-        if !approval.owner.is(record.packet.request.owner) || approval.revision != record.revision {
+        if !approval.owner.is(record.request.owner) || approval.revision != record.revision {
             return Err(invalid());
         }
         Ok(ApprovedRepresentation {
@@ -346,25 +347,25 @@ impl Vault {
         crate::compaction::output::restore_output(self, approved.record.packet.content)
     }
 }
-fn require_owner(vault: &Vault, owner: &AuthenticatedOwner, packet: &Packet) -> Result<()> {
+fn require_owner(vault: &Vault, owner: &AuthenticatedOwner, plan: &LiveProposal) -> Result<()> {
     // Revalidate the supplied proof itself against this vault's store truth
     // and lifecycle: a handle minted before its PERSON became a merged/split
     // shell, or a proof another vault authenticated for the same PERSON id,
     // never reviews or arms here.
     let txn = vault.store.env.read_txn()?;
     if crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, &txn, owner)?
-        != packet.request.owner
+        != plan.request.owner
     {
         return Err(invalid());
     }
     Ok(())
 }
-/// [`require_owner`] for reading the review addressed to the packet's
+/// [`require_owner`] for reading the review addressed to the plan's
 /// person, which approves and arms nothing: the person tier.
-fn require_recipient(vault: &Vault, owner: &AuthenticatedOwner, packet: &Packet) -> Result<()> {
+fn require_recipient(vault: &Vault, owner: &AuthenticatedOwner, plan: &LiveProposal) -> Result<()> {
     let txn = vault.store.env.read_txn()?;
     if crate::dreamer_runner::maintenance::validate_person_in_txn(vault, &txn, owner)?
-        != packet.request.owner
+        != plan.request.owner
     {
         return Err(invalid());
     }
@@ -487,7 +488,7 @@ fn expected_intent(approved: &ApprovedRepresentation) -> Result<OutboundIntent> 
             packet.request.channel.clone(),
             packet.request.target.clone(),
         )
-        .on_behalf_of(packet.request.owner.to_hex())
+        .on_behalf_of(approved.record.request.owner.to_hex())
         .content_ref(packet.content_ref()?)
         .idempotency_key(format!("representation:{}", approved.id.to_hex())),
         OutboundIntentTrigger::gap_queue(packet.trigger_ref()?),

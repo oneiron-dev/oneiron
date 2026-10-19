@@ -18,7 +18,7 @@ use crate::write_envelope::WriteActor;
 /// One critic review's binding: the target, the session its verdict is
 /// tagged with, the lens catalog and, for every lens, its stored skill and
 /// the actor executing it. The same binding under the same run replays the
-/// review already written.
+/// review already written, whatever spawn attempt it declares.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CriticReviewSubmit {
@@ -44,6 +44,13 @@ pub struct CriticReviewSubmit {
     pub catalog: serde_json::Value,
     /// Each lens's stored skill and the actor executing it.
     pub critics: Vec<CriticBinding>,
+    /// The launched agent run the review is for, by its attempt, 32-hex: the
+    /// owner's spawn read (`vault.agents.spawn.get`) then lists its critiques
+    /// under that run as a declared association, whatever `run_ref` names.
+    /// The caller's word, not proof the review judged that run's output. A
+    /// replayed review keeps the run first declared for it.
+    #[serde(default)]
+    pub spawn_attempt_ref: Option<String>,
 }
 
 /// One lens's stored skill and the actor executing it.
@@ -69,12 +76,17 @@ pub struct CriticReviewOutcome {
     pub triage: CritiqueTriage,
     pub artifacts: Vec<CritiqueArtifact>,
     pub receipts: Vec<DecisionReceipt>,
+    /// The spawn attempt the stored review is declared for, 32-hex: the first
+    /// one declared. `None` when none is recorded; a declaration this does
+    /// not name is not found from that spawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawn_attempt_ref: Option<String>,
 }
 
 impl CriticReviewSubmit {
     /// The review `actor` asks for at `at`, and its lens catalog. The run's
     /// branch attempt is derived from `run_ref`, so a repeated binding keys
-    /// the same review.
+    /// the same review; the declared spawn attempt is no part of that key.
     pub fn bind(&self, actor: WriteActor, at: u64) -> Result<(ReviewRequest, LensCatalog)> {
         let kind = match self.kind.as_str() {
             "document" => ReviewArtifactKind::Document,
@@ -99,6 +111,11 @@ impl CriticReviewSubmit {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        let spawn_attempt = self
+            .spawn_attempt_ref
+            .as_deref()
+            .map(EntityId::from_hex)
+            .transpose()?;
         let digest = blake3::hash(self.run_ref.as_bytes());
         let request = ReviewRequest {
             actor,
@@ -115,6 +132,7 @@ impl CriticReviewSubmit {
             axis: self.axis.clone(),
             critics,
             at,
+            spawn_attempt,
         };
         Ok((request, catalog))
     }
@@ -127,6 +145,7 @@ impl From<ReviewResult> for CriticReviewOutcome {
             triage: result.triage,
             artifacts: result.artifacts,
             receipts: result.receipts,
+            spawn_attempt_ref: result.spawn_attempt.map(|spawn| spawn.to_hex()),
         }
     }
 }
