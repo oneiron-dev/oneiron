@@ -1,4 +1,5 @@
 //! Commit-hash keyed LEDGER change identities. Trailers are hints, never keys.
+use super::actor_erase::{ClaimRewrite, ORIGIN_ACTOR_ERASE_PROOF, OriginProofErase};
 use super::publication::{OriginActor, OriginPublicationRecord, origin_published_commit_id};
 use crate::Vault;
 use crate::claim::{
@@ -12,8 +13,8 @@ use crate::git_wire::GitOid;
 use crate::side_table::{self, Raw, SideTable};
 use rmpv::Value;
 
-/// Tamper-detection proof hash pinning one repo.change claim's exact byte content at publication
-/// time. Key: change claim id.
+/// Tamper-detection proof hash pinning one repo.change claim's exact byte content: at publication
+/// time, or the erased form an actor's erase re-hashed (FIX 3877). Key: change claim id.
 const CHANGE_RECEIPTS: SideTable<EntityId, [u8; 32], Raw> =
     SideTable::new(&side_table::ORIGIN_CHANGE_RECEIPT);
 
@@ -58,10 +59,11 @@ impl Vault {
         commit: &GitOid,
     ) -> Result<Option<OriginChange>> {
         let id = claim_id(repo, commit)?;
-        let Some(body) = self.get_claim(&id)? else {
+        // Body and proof come from one snapshot: an erase rewrites both at once.
+        let txn = self.store.env.read_txn()?;
+        let Some(body) = self.get_claim_in_txn(&txn, &id)? else {
             return Ok(None);
         };
-        let txn = self.store.env.read_txn()?;
         let proof = CHANGE_RECEIPTS
             .get(&self.store, &txn, &id)?
             .ok_or(Error::CorruptedIndex(
@@ -181,5 +183,31 @@ impl Vault {
             blake3::hash(&encode_claim_body(&body)?).as_bytes(),
         )?;
         Ok(change)
+    }
+
+    /// Rewrites one change claim in place as its actor-erased form (FIX
+    /// 3877). A proof that holds the stored bytes is re-hashed over the
+    /// rewritten body in the same transaction ([`ORIGIN_ACTOR_ERASE_PROOF`]).
+    /// A peer's copy with no proof gets none, and a proof that no longer
+    /// holds the stored bytes stays as it is: its reader keeps refusing that
+    /// claim, and the erase still lands.
+    pub(in crate::origin) fn redact_origin_change_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        rewrite: &ClaimRewrite<'_>,
+    ) -> Result<()> {
+        let held = CHANGE_RECEIPTS
+            .get(&self.store, txn, rewrite.id)?
+            .is_some_and(|proof| proof == *blake3::hash(rewrite.held).as_bytes());
+        rewrite.put_in_txn(self, txn)?;
+        match ORIGIN_ACTOR_ERASE_PROOF {
+            OriginProofErase::RehashRedactedBody if held => CHANGE_RECEIPTS.put(
+                &self.store,
+                txn,
+                rewrite.id,
+                blake3::hash(&encode_claim_body(rewrite.erased)?).as_bytes(),
+            ),
+            OriginProofErase::RehashRedactedBody => Ok(()),
+        }
     }
 }
