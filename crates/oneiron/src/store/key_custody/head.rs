@@ -64,7 +64,9 @@ impl CompartmentScope {
     /// Each kind's scope; a later kind names its own.
     pub(crate) fn of(kind: CustodyKind) -> Self {
         match kind {
-            CustodyKind::ClaimDecision | CustodyKind::TrainingLink => Self::HostReadable,
+            CustodyKind::ClaimDecision
+            | CustodyKind::CheckpointPayload
+            | CustodyKind::TrainingLink => Self::HostReadable,
         }
     }
 

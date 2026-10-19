@@ -62,7 +62,7 @@ impl CustodyVaultId {
 /// | `0x04` | `KnownValueEntry`   | reserved: KS-3 known-value holder entries |
 /// | `0x05` | `WorldPad`          | reserved: KS-5 world pads                |
 /// | `0x06` | `CredentialValue`   | reserved: KS-6 credential values         |
-/// | `0x07` | `CheckpointPayload` | reserved: KS-7 checkpoint payloads       |
+/// | `0x07` | `CheckpointPayload` | KS-7 checkpoint payload compartments     |
 /// | `0x08` | `TrainingLink`      | the vault's training link key K (TRAINING-LINK = C) |
 ///
 /// A later client adds its variant with its reserved tag, its item width and
@@ -72,10 +72,14 @@ pub(crate) enum CustodyKind {
     /// The per-claim key of claim-bound Gate decision rows: item = claim id
     /// (16 bytes), secret = AES-256-GCM key (32 bytes).
     ClaimDecision,
+    /// One owner's compartment of a checkpoint's ordinary payload (KS-7):
+    /// item = subtype (1) | canonical owner (32) | incarnation (16), secret
+    /// = the compartment's sealing key (32 bytes).
+    CheckpointPayload,
     /// The vault's training link key K (TRAINING-LINK = C, TL-2): one per
     /// vault, so its item is empty and it lives at one fixed generation;
-    /// secret = the 32-byte HMAC-SHA256 key its publisher training codes are
-    /// made under.
+    /// secret = the 32-byte key its publisher training codes are derived
+    /// from (keyed BLAKE3).
     TrainingLink,
 }
 
@@ -83,6 +87,7 @@ impl CustodyKind {
     pub(crate) const fn tag(self) -> u8 {
         match self {
             Self::ClaimDecision => 0x01,
+            Self::CheckpointPayload => 0x07,
             Self::TrainingLink => 0x08,
         }
     }
@@ -90,6 +95,7 @@ impl CustodyKind {
     pub(crate) fn from_tag(tag: u8) -> Option<Self> {
         match tag {
             0x01 => Some(Self::ClaimDecision),
+            0x07 => Some(Self::CheckpointPayload),
             0x08 => Some(Self::TrainingLink),
             _ => None,
         }
@@ -99,6 +105,7 @@ impl CustodyKind {
     pub(crate) const fn item_len(self) -> usize {
         match self {
             Self::ClaimDecision => 16,
+            Self::CheckpointPayload => 49,
             Self::TrainingLink => 0,
         }
     }
@@ -107,7 +114,7 @@ impl CustodyKind {
     /// is damaged, never replaced.
     pub(crate) const fn secret_len(self) -> usize {
         match self {
-            Self::ClaimDecision | Self::TrainingLink => 32,
+            Self::ClaimDecision | Self::CheckpointPayload | Self::TrainingLink => 32,
         }
     }
 
@@ -116,6 +123,7 @@ impl CustodyKind {
     pub(crate) fn corrupt(self) -> Error {
         match self {
             Self::ClaimDecision => Error::CorruptedIndex("gate decision ORCB"),
+            Self::CheckpointPayload => Error::CorruptedIndex("checkpoint payload custody"),
             Self::TrainingLink => Error::CorruptedIndex("training link key"),
         }
     }

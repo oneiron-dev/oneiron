@@ -957,6 +957,7 @@ pub enum AgentVerb {
     VaultTurnProgramsAdmission,
     VaultRunsProgram,
     VaultRunsProgramStep,
+    VaultRunsProgramCheckpoint,
     VaultConsolidationHomeGet,
     VaultConsolidationHomePick,
     VaultConsolidationLineage,
@@ -2051,6 +2052,7 @@ impl AgentVerb {
         Self::VaultTurnProgramsAdmission,
         Self::VaultRunsProgram,
         Self::VaultRunsProgramStep,
+        Self::VaultRunsProgramCheckpoint,
         Self::VaultConsolidationHomeGet,
         Self::VaultConsolidationHomePick,
         Self::VaultConsolidationLineage,
@@ -3170,6 +3172,7 @@ impl AgentVerb {
             Self::VaultTurnProgramsAdmission => "vault.turn_programs.admission",
             Self::VaultRunsProgram => "vault.runs.program",
             Self::VaultRunsProgramStep => "vault.runs.program_step",
+            Self::VaultRunsProgramCheckpoint => "vault.runs.program_checkpoint",
             Self::VaultConsolidationHomeGet => "vault.consolidation.home.get",
             Self::VaultConsolidationHomePick => "vault.consolidation.home.pick",
             Self::VaultConsolidationLineage => "vault.consolidation.lineage",
@@ -4250,6 +4253,7 @@ impl AgentVerb {
                 | Self::VaultTurnProgramsAdmission
                 | Self::VaultRunsProgram
                 | Self::VaultRunsProgramStep
+                | Self::VaultRunsProgramCheckpoint
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
@@ -5371,6 +5375,7 @@ impl AgentVerb {
                 | Self::VaultTurnProgramsAdmission
                 | Self::VaultRunsProgram
                 | Self::VaultRunsProgramStep
+                | Self::VaultRunsProgramCheckpoint
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
@@ -6581,6 +6586,7 @@ impl AgentVerb {
                 | Self::VaultTurnProgramsAdmission
                 | Self::VaultRunsProgram
                 | Self::VaultRunsProgramStep
+                | Self::VaultRunsProgramCheckpoint
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
@@ -8351,6 +8357,7 @@ impl AgentVerb {
             Self::VaultTurnProgramsAdmission => &["spec"],
             Self::VaultRunsProgram => &["spec"],
             Self::VaultRunsProgramStep => &["spec"],
+            Self::VaultRunsProgramCheckpoint => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
@@ -9446,6 +9453,7 @@ impl AgentVerb {
             Self::VaultTurnProgramsAdmission => &["spec"],
             Self::VaultRunsProgram => &["spec"],
             Self::VaultRunsProgramStep => &["spec"],
+            Self::VaultRunsProgramCheckpoint => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
@@ -12357,6 +12365,9 @@ impl AgentVerb {
             }
             Self::VaultRunsProgramStep => {
                 "Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body."
+            }
+            Self::VaultRunsProgramCheckpoint => {
+                "Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it."
             }
             Self::VaultConsolidationHomeGet => {
                 "The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything."

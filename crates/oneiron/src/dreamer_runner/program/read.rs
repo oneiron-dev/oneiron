@@ -1,6 +1,7 @@
 //! A turn program's reads (DOOR-141 PR3a, FIX 4382): what admitting a
 //! landed turn's wakes decided, where one program's run stands, and one
-//! settled step's exact result.
+//! settled step's exact result; PR3b adds the resume checkpoint its
+//! restarter reads (`checkpoint`).
 //!
 //! Each reads as its caller, on the caller's own verified read key: a
 //! program's rows read for its waking actor or the verified owner, and
@@ -12,6 +13,7 @@
 //! admits, resumes or leases. Each side-table snapshot closes before the
 //! lane reads.
 
+mod checkpoint;
 mod views;
 
 use std::collections::BTreeSet;
@@ -26,21 +28,23 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, ErrorKind, Result};
 use crate::llm::{CallerSettledStep, settled_step_for_caller};
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::run_tree::{RunTreeAdapter, RunTreeNode, RunTreeStatus};
 use crate::{EdgeActorClass, Vault};
 
 use super::run::{
-    RunState, StepIssue, StepState, TurnProgramRun, TurnProgramStep, program_run_in_txn,
-    program_step_in_txn, program_steps_page_in_txn, turn_program_code_run,
+    RunState, StepIssue, StepState, TurnProgramRun, TurnProgramStep, actor_gone_in_txn,
+    program_run_in_txn, program_step_in_txn, program_steps_page_in_txn, turn_program_code_run,
 };
 use super::types::{ProgramRecipePin, TurnProgramAdmissionRecord, TurnProgramAttemptStamp, run_id};
 use super::{ADMISSION, ATTEMPT};
 
+pub use self::checkpoint::program_checkpoint;
 pub use self::views::{
-    ProgramAdmissionOutcomeView, ProgramFrontierView, ProgramHeldView, ProgramQueueView,
-    ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView,
-    ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
+    ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointHeadView,
+    ProgramCheckpointRequest, ProgramCheckpointView, ProgramCheckpointWaitView,
+    ProgramFrontierView, ProgramHeldView, ProgramQueueView, ProgramResultAvailability,
+    ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView, ProgramRunView,
+    ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
     SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
     TurnProgramAdmissionRequest, TurnProgramAdmissionView,
 };
@@ -191,9 +195,10 @@ pub fn program_run(
 /// on the caller's own lane (never a response made up from progress), a
 /// write's receipt with the rows its answer was served from, a send's body
 /// as the side-row wall admitted it. A step's body is withheld, never
-/// refused, once the program's actor is erased or deleted (FIX 5710, FIX
-/// 5738). `None` for an issued or uncertain step (the run read shows those),
-/// an unknown one, or a caller who is neither the waking actor nor the owner.
+/// refused, once the program's actor is soft-deleted, hard-deleted or erased
+/// (FIX 5710, FIX 5738); an archived actor's bodies still read. `None` for an
+/// issued or uncertain step (the run read shows those), an unknown one, or a
+/// caller who is neither the waking actor nor the owner.
 ///
 /// # Errors
 ///
@@ -220,7 +225,7 @@ pub fn settled_program_step(
     else {
         return Ok(None);
     };
-    let deleted = actor_deleted_in_txn(vault, &txn, &program.actor);
+    let deleted = actor_gone_in_txn(vault, &txn, &program.actor);
     let answer = match &row.issued {
         StepIssue::Write { receipt, .. } => receipt_answer_in_txn(vault, &txn, receipt)?,
         StepIssue::Model { .. } | StepIssue::Outbound { .. } => ReceiptAnswer::Absent,
@@ -662,20 +667,6 @@ fn receipt_answer_in_txn(
     };
     Ok(agent_verb_rows_of(std::slice::from_ref(first))
         .map_or(ReceiptAnswer::Unlisted, ReceiptAnswer::Rows))
-}
-
-/// Whether `actor` is erased (FIX 5710) or deleted (FIX 5738) in `txn`: a
-/// step's body is then withheld from every read. A marker or a deletion state
-/// that cannot be read withholds it too.
-fn actor_deleted_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> bool {
-    let deleted = vault
-        .store
-        .port_deletion_state(txn, actor)
-        .map(|state| state.deleted);
-    let erased = vault
-        .store
-        .port_deletion_marked(txn, DeletionMarker::HardDelete, actor);
-    !matches!((deleted, erased), (Ok(false), Ok(false)))
 }
 
 /// Of `ids`, the ones that read on the caller's own lane, each read listed

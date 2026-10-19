@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1071 facade rows, 3663 declarations.
-Inputs: 1006 of 1071 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 960 of 1071 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1072 facade rows, 3669 declarations.
+Inputs: 1007 of 1072 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 961 of 1072 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
@@ -1962,6 +1962,7 @@ class RunnerBudgetReservationsView(TypedDict):
     local_only: bool
 class RunSettlementsRequest(TypedDict):
     run: str
+UsageEventOrigin = Literal["engine", "posted"]
 class RunRungSettlement(TypedDict):
     instance: str
     lease: str
@@ -1971,6 +1972,7 @@ class RunRungSettlement(TypedDict):
     offer: str
     route: str
     purpose: NotRequired[str | None]
+    source: UsageEventOrigin
     agent: NotRequired[str | None]
     cycle: NotRequired[str | None]
     item: NotRequired[str | None]
@@ -16550,6 +16552,44 @@ class SettledProgramStepView(TypedDict):
     availability: ProgramResultAvailability
     model_step: NotRequired[SettledStepView | None]
     body_base64: NotRequired[str | None]
+class ProgramCheckpointRequest(TypedDict):
+    root: str
+    cursor: NotRequired[str | None]
+    limit: NotRequired[int | None]
+class ProgramCheckpointWaitView(TypedDict):
+    row: int
+    wait_id: str
+    generation: int
+    delivered: bool
+class ProgramCheckpointHeadView(TypedDict):
+    committed_by: str
+    content_hash: str
+    contract_digest: str
+    entries: int
+    entry_start: int
+    bridge_calls: int
+    state_hash: str
+    applied: int
+    injected: int
+    wait: NotRequired[ProgramCheckpointWaitView | None]
+    at: int
+class ProgramCheckpointCallView(TypedDict):
+    index: int
+    result_ref: str
+    row: int
+    request_digest: str
+    answered_by_wait: NotRequired[str | None]
+    injected: bool
+class ProgramCheckpointView(TypedDict):
+    root: str
+    actor: EntityId
+    code_run: str
+    definition: NotRequired[ProgramRecipePin | None]
+    checkpoint: NotRequired[ProgramCheckpointHeadView | None]
+    frontier: NotRequired[ProgramFrontierView | None]
+    calls: list[ProgramCheckpointCallView]
+    next_cursor: NotRequired[str | None]
+    withheld: list[str]
 ConsolidationHomeNode = TypedDict("ConsolidationHomeNode", {"node_id": str, "class": str, "elected_at": int})
 ConsolidationHomeCandidate = TypedDict("ConsolidationHomeCandidate", {"node_id": str, "class": NotRequired[str | None], "cloud": bool, "attached": bool, "always_on_local": bool, "primary_device": bool})
 class ConsolidationHomePickHead(TypedDict):
