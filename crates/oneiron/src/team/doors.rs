@@ -387,6 +387,11 @@ pub enum CriticAssociation {
     /// A review whose run reference is the run's canonical id: it names the
     /// run, which does not prove it reviewed the run's work.
     CanonicalRunRef,
+    /// A review its caller declared for the run (`spawn_attempt_ref` on
+    /// `vault.critic.review`), under whatever run reference it chose. The
+    /// declaration is the caller's word: it does not prove the review judged
+    /// the run's output.
+    DeclaredSpawnAttempt,
 }
 
 /// One critique artifact and its calibration stamp, as stored.
@@ -395,6 +400,10 @@ pub struct CriticObservation {
     pub run_ref: String,
     pub branch_attempt_ref: EntityId,
     pub association: CriticAssociation,
+    /// The launched run's attempt a declared association names; `None` for
+    /// the others, whose branch or run reference names the run.
+    #[serde(default)]
+    pub declared_attempt_ref: Option<EntityId>,
     pub artifact_id: String,
     pub target_ref: String,
     pub type_ref: TypeStamp,
@@ -503,9 +512,12 @@ pub struct PlannedSpawnObservation {
     #[serde(default)]
     pub receipt: Option<TeamReceiptView>,
     pub routes: Vec<RouteObservation>,
-    /// Critiques keyed under a launched attempt or under a review run that
-    /// names one. Not exhaustive: a review under a run reference the caller
-    /// chose is not discoverable from an attempt.
+    /// Critiques keyed under a launched attempt, under a review run that
+    /// names one, or of a review its caller declared for one. A declaration
+    /// is not proof the review judged that run's output. Not exhaustive: a
+    /// review under a run reference the caller chose, declared for no run,
+    /// is not discoverable from an attempt, and a stored review that does
+    /// not read is an issue rather than a critique.
     pub critics: Vec<CriticObservation>,
     pub learning: Vec<LearningObservation>,
     pub issues: Vec<ObservationIssue>,
@@ -604,7 +616,8 @@ pub fn read_tree_as(
 /// `input.spawn_ref` runs: its dispatch's type stamp and frozen plan, the
 /// one team it started with the members that launched and the team's
 /// receipt, each launched run's seat route, the critiques found for those
-/// runs and the receipt-backed learning read. Every stamp reads as stored.
+/// runs and the receipt-backed learning read, all in one snapshot. Every
+/// stamp reads as stored.
 ///
 /// # Errors
 ///

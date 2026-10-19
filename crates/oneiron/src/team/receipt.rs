@@ -12,11 +12,14 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::agent_dispatch::CoordinationPattern;
+use crate::agent_dispatch::{
+    CoordinationPattern, load_team_type_tree_at_in_txn, load_team_type_tree_in_txn,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning::{Anchor, EvidenceSource, LearningEvidence, Observation, TypeRef};
 use crate::side_table::{self, Named, SideTable};
+use crate::task_type::TypeTree;
 
 use super::pattern::{TeamAxis, TeamPattern, model_mix, pattern_cell};
 
@@ -294,9 +297,18 @@ fn feed_pattern_payoff_in_txn(
     }
     let cell = pattern_cell(skill, &receipt.executor_mix(), &receipt.type_ref);
     // The planner card read this cell with parent/carried backoff; its first
-    // own result keeps that borrowed prior (ARCH-0053 `#executor-swaps`).
-    let tree = crate::agent_dispatch::load_team_type_tree_in_txn(vault, wtxn, receipt.project)?;
-    let parents = crate::task_type::TypeTree::from(tree).ancestors(&receipt.type_ref);
+    // own result keeps that borrowed prior (ARCH-0053 `#executor-swaps`). The
+    // parents are the stamp's in the tree it was placed in, the chain the
+    // owner's spawn read backs off through. A placed tree no longer kept, or
+    // one that does not read, borrows through the tree in force instead, so
+    // settlement never fails on it.
+    let parents = match placed_ancestry_in_txn(vault, wtxn, receipt) {
+        (parents, None) => parents,
+        (_, Some(_)) => {
+            let tree = load_team_type_tree_in_txn(vault, wtxn, receipt.project)?;
+            TypeTree::from(tree).ancestors(&receipt.type_ref)
+        }
+    };
     let evidence = LearningEvidence {
         receipt: outcome.receipt.clone(),
         at: outcome.at,
@@ -318,6 +330,32 @@ fn feed_pattern_payoff_in_txn(
     )?;
     crate::learning::record_evidence_in_txn(vault, wtxn, &cell, &evidence, outcome.at)?;
     Ok(())
+}
+
+/// The parent chain of `receipt`'s stamp in the tree it was placed in: its
+/// project's kept tree at the stamp's version, read in `txn`. Settlement and
+/// the owner's spawn read take learning parents from this one chain. The
+/// reason is given when there is none: no kept tree is at that version, or
+/// the kept tree does not read.
+pub(super) fn placed_ancestry_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt: &TeamReceipt,
+) -> (Vec<TypeRef>, Option<String>) {
+    let version = u64::from(receipt.type_ref.tree_version);
+    match load_team_type_tree_at_in_txn(vault, txn, receipt.project, version) {
+        Ok(Some(tree)) => (TypeTree::from(tree).ancestors(&receipt.type_ref), None),
+        Ok(None) => (
+            Vec::new(),
+            Some(format!("no kept task-type tree is at version {version}")),
+        ),
+        Err(error) => (
+            Vec::new(),
+            Some(format!(
+                "the kept task-type tree at version {version} does not read: {error}"
+            )),
+        ),
+    }
 }
 
 /// One team's receipt.

@@ -33611,6 +33611,8 @@ pub enum CriticAssociation {
     BranchAttempt,
     #[serde(rename = "canonical_run_ref")]
     CanonicalRunRef,
+    #[serde(rename = "declared_spawn_attempt")]
+    DeclaredSpawnAttempt,
 }
 
 /// `oneiron::team::doors::CriticObservation`.
@@ -33622,6 +33624,12 @@ pub struct CriticObservation {
     pub branch_attempt_ref: String,
     #[serde(rename = "association")]
     pub association: CriticAssociation,
+    #[serde(
+        rename = "declared_attempt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub declared_attempt_ref: Option<String>,
     #[serde(rename = "artifact_id")]
     pub artifact_id: String,
     #[serde(rename = "target_ref")]
@@ -34929,6 +34937,12 @@ pub struct CriticReviewSubmit {
     pub catalog: crate::WireJson,
     #[serde(rename = "critics")]
     pub critics: Vec<CriticBinding>,
+    #[serde(
+        rename = "spawn_attempt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub spawn_attempt_ref: Option<String>,
 }
 
 /// `oneiron::critic::CritiqueTriageScores`.
@@ -35080,6 +35094,12 @@ pub struct CriticReviewOutcome {
     pub artifacts: Vec<CritiqueArtifact>,
     #[serde(rename = "receipts")]
     pub receipts: Vec<DecisionReceipt>,
+    #[serde(
+        rename = "spawn_attempt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub spawn_attempt_ref: Option<String>,
 }
 
 /// `oneiron::blob_artifact::deck_creation::outline::OutlineCommunication`.
