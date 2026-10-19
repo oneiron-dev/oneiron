@@ -16743,6 +16743,147 @@ async fn vault_skills_outcomes_get(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_models_manifest_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.models.manifest.read")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.models.manifest.read", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.models.manifest.read", value).await?;
+    let (output, listed) = super::host_doors::vault_models_manifest_read(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_models_manifest_replace(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.models.manifest.replace")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.models.manifest.replace", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.models.manifest.replace", value).await?;
+    let (output, listed) = super::host_doors::vault_models_manifest_replace(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_models_routes_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.models.routes.read")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.models.routes.read", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.models.routes.read", value).await?;
+    let (output, listed) = super::host_doors::vault_models_routes_read(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_models_routes_replace(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.models.routes.replace")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.models.routes.replace", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.models.routes.replace", value).await?;
+    let (output, listed) = super::host_doors::vault_models_routes_replace(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_models_roles_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.models.roles.read")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.models.roles.read", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.models.roles.read", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_models_roles_read(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_models_roles_invoke(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.models.roles.invoke")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.models.roles.invoke", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.models.roles.invoke", value).await?;
+    let (output, listed) = super::host_doors::vault_models_roles_invoke(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_skills_attribution_settle(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -25372,6 +25513,12 @@ pub(crate) async fn call_verb(
         "vault.skills.pack_receipt" => vault_skills_pack_receipt(server, call, input).await,
         "vault.skills.outcomes.project" => vault_skills_outcomes_project(server, call, input).await,
         "vault.skills.outcomes.get" => vault_skills_outcomes_get(server, call, input).await,
+        "vault.models.manifest.read" => vault_models_manifest_read(server, call, input).await,
+        "vault.models.manifest.replace" => vault_models_manifest_replace(server, call, input).await,
+        "vault.models.routes.read" => vault_models_routes_read(server, call, input).await,
+        "vault.models.routes.replace" => vault_models_routes_replace(server, call, input).await,
+        "vault.models.roles.read" => vault_models_roles_read(server, call, input).await,
+        "vault.models.roles.invoke" => vault_models_roles_invoke(server, call, input).await,
         "vault.skills.attribution.settle" => {
             vault_skills_attribution_settle(server, call, input).await
         }

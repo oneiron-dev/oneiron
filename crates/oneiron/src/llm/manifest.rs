@@ -18,6 +18,7 @@ const RESIDENT_ROUTES: SideTable<(), BTreeMap<ModelSlot, ModelLocality>, LegacyJ
 /// The passing extraction-teacher probe approval behind the pinned teacher. Key: ().
 const TEACHER_APPROVAL: SideTable<(), TeacherProbeApproval, LegacyJson> =
     SideTable::new(&side_table::LLM_EXTRACTION_TEACHER_PROBE);
+pub mod doors;
 mod encoder_export;
 mod teacher_probe;
 pub use encoder_export::{
@@ -210,7 +211,7 @@ impl CalibratedVerdict {
         Ok(())
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelManifest {
     pub version: u8,
@@ -499,19 +500,26 @@ impl Vault {
         let Some(manifest) = read_manifest(&self.store, &txn)? else {
             return Ok(None);
         };
-        let route = read_routes(&self.store, &txn)?
-            .get(&slot)
-            .copied()
-            .unwrap_or(manifest.routes[&slot]);
-        if route_rank(route) > route_rank(manifest.routes[&slot]) {
-            return Err(invalid("resident route cannot widen manifest pin"));
-        }
-        Ok(Some(route))
+        Ok(Some(effective_route(
+            &manifest,
+            &read_routes(&self.store, &txn)?,
+            slot,
+        )?))
     }
     pub fn set_model_route(&self, slot: ModelSlot, route: ModelLocality) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
+        self.set_model_route_in_txn(&mut txn, slot, route)?;
+        txn.commit()?;
+        Ok(())
+    }
+    fn set_model_route_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        slot: ModelSlot,
+        route: ModelLocality,
+    ) -> Result<()> {
         let manifest =
-            read_manifest(&self.store, &txn)?.ok_or_else(|| invalid("manifest not configured"))?;
+            read_manifest(&self.store, txn)?.ok_or_else(|| invalid("manifest not configured"))?;
         if route_rank(route) > route_rank(manifest.routes[&slot]) {
             return Err(invalid("resident route cannot widen manifest pin"));
         }
@@ -520,12 +528,22 @@ impl Vault {
                 model_for_route(binding, route, manifest.routes[&slot])?;
             }
         }
-        let mut routes = read_routes(&self.store, &txn)?;
+        let mut routes = read_routes(&self.store, txn)?;
         routes.insert(slot, route);
-        RESIDENT_ROUTES.put(&self.store, &mut txn, &(), &routes)?;
-        txn.commit()?;
-        Ok(())
+        RESIDENT_ROUTES.put(&self.store, txn, &(), &routes)
     }
+}
+fn effective_route(
+    manifest: &ModelManifest,
+    routes: &BTreeMap<ModelSlot, ModelLocality>,
+    slot: ModelSlot,
+) -> Result<ModelLocality> {
+    let pin = manifest.routes[&slot];
+    let route = routes.get(&slot).copied().unwrap_or(pin);
+    if route_rank(route) > route_rank(pin) {
+        return Err(invalid("resident route cannot widen manifest pin"));
+    }
+    Ok(route)
 }
 pub(super) fn read_routes(
     store: &Store,

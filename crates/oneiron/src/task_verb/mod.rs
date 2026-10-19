@@ -317,6 +317,7 @@ mod sdk_identity_topology;
 mod sdk_legal_hold;
 mod sdk_live_run;
 mod sdk_live_voice;
+mod sdk_model_manifest;
 mod sdk_mesh;
 mod sdk_note_history;
 mod sdk_off_record;
