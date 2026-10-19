@@ -110,6 +110,9 @@ pub(super) fn validate_cli_sandbox(spec: &CliSandboxSpec) -> ByoaResult<()> {
     if spec.credential_handles.len() > MAX_CREDENTIAL_HANDLES {
         return Err(invalid(ERR_CREDENTIAL_HANDLES));
     }
+    if let Some(pin) = &spec.staged_input {
+        super::staged_input::validate_staged_input(pin)?;
+    }
     Ok(())
 }
 

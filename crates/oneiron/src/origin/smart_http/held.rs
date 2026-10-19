@@ -23,6 +23,13 @@ use std::sync::Arc;
 pub trait SpillFloor: Send + Sync {
     /// Whether `bytes` more may be written and still leave the floor free.
     fn has_room_for(&self, bytes: u64) -> bool;
+
+    /// A directory on the disk this floor measures, for a spool that names
+    /// none of its own; `None` names none, and such a spool goes in the
+    /// host's temp dir.
+    fn spool_dir(&self) -> Option<PathBuf> {
+        None
+    }
 }
 
 /// Why a write to a holder's file was refused: the disk is at its host's
