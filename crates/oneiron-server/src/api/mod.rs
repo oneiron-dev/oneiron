@@ -92,6 +92,7 @@ mod discover;
 mod entity;
 mod error_map;
 mod esign;
+pub(crate) use self::esign::delivery_outbox::spawn as spawn_esign_delivery_outbox;
 pub(crate) use self::esign::hold_worker::spawn as spawn_esign_hold_worker;
 pub(crate) use self::esign::hold_worker::spawn_admitted as spawn_esign_hold_worker_admitted;
 #[cfg(unix)]
