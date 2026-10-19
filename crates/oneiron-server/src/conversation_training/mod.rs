@@ -6,9 +6,8 @@
 //! The flag is argv only in both serve paths, with no default: plain serve
 //! takes it from the operator, managed serve from the supervisor (which
 //! gives `<vault>/training-outbox`), and a managed settings file that names
-//! it is refused as the supervisor's. Without it no worker runs, and
-//! `oneiron::feedback::share_for_publisher_training` keeps refusing with
-//! `NO_PUBLISHER_TRAINING_INTAKE`, as before.
+//! it is refused as the supervisor's. Without it no worker runs, and no
+//! conversation text goes toward training.
 //!
 //! The engine decides everything: which words count, the release, the
 //! reconciliation, the seal and the signature. This module only supplies

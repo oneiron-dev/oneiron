@@ -21,11 +21,11 @@
 //!   text through ([`TextFilter`], [`apply_recognised_spans`],
 //!   [`FilteredFeedback`]).
 //! - The "Learn from my conversations" egress check ([`eligible`]) and the
-//!   two doors that hand conversation text toward training the models
-//!   Oneiron ships: [`share_for_publisher_training`], over a sink its caller
-//!   supplies, and the publisher training outbox
+//!   one door that hands conversation text toward training the models
+//!   Oneiron ships: the publisher training outbox
 //!   ([`Vault::offer_conversation_training`](crate::Vault::offer_conversation_training)),
-//!   which publishes only what a release lets through.
+//!   which publishes only what a release lets through and names no vault,
+//!   source, person or world, only monthly scopes and codes.
 //! - Per-bundle, per-destination consent over the existing
 //!   [`ConsentAskCard`](crate::genui::ConsentAskCard) surface ([`feedback_approval_card`],
 //!   [`validate_feedback_approval`]).
@@ -128,14 +128,12 @@ pub use self::consent::{
     feedback_logical_send_ref, prepare_feedback_preview, validate_feedback_approval,
 };
 pub use self::conversation_training::{
-    ConversationSource, ConversationText, ConversationTrainingChoice, Eligibility,
-    IntakeReceiptKey, IntakeRecipient, NO_PUBLISHER_TRAINING_INTAKE, NoChoicesYet,
-    PersonTrainingReceipts, PersonTrainingSubmission, PublisherTrainingLifecycle,
-    PublisherTrainingSink, ReceiptCursor, ReceivedTrainingReceipt, ReleaseDecision,
-    SealedTrainingOffer, ShareOutcome, ShareWithheld, SignedTrainingControl, TrainingControlId,
-    TrainingCustody, TrainingOfferPass, TrainingQueued, TrainingReceiptPage,
-    TrainingReceiptsCursor, TrainingSubmissionId, TrainingUnavailable, TrainingUpkeep,
-    TrainingUsedRun, TrainingWithheld, Withheld, eligible, share_for_publisher_training,
+    ConversationSource, ConversationTrainingChoice, Eligibility, IntakeReceiptKey, IntakeRecipient,
+    NoChoicesYet, PersonTrainingReceipts, PersonTrainingSubmission, PublisherTrainingLifecycle,
+    ReceiptCursor, ReceivedTrainingReceipt, ReleaseDecision, SealedTrainingOffer,
+    SignedTrainingControl, TrainingControlId, TrainingCustody, TrainingOfferPass, TrainingQueued,
+    TrainingReceiptPage, TrainingReceiptsCursor, TrainingScope, TrainingSubmissionId,
+    TrainingUnavailable, TrainingUpkeep, TrainingUsedRun, TrainingWithheld, Withheld, eligible,
 };
 pub use self::dispatch::{
     FEEDBACK_RECEIPT_FIELD_APPROVAL_RECEIPT_REF, FEEDBACK_RECEIPT_FIELD_BUNDLE_DIGEST,

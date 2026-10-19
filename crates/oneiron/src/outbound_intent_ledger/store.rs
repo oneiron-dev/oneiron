@@ -12,6 +12,8 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
 use crate::side_table::{self, Raw, SideKey, SideTable};
 
+pub(super) mod pending;
+
 /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting.
 /// Key: hash32 (the intent id).
 const LEDGER: SideTable<[u8; 32], IntentLedgerRecord, Raw> =

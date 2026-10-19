@@ -1,4 +1,4 @@
-//! The Dreamer's turn program runtime (DOOR-141 PR2, FIX 4382).
+//! The Dreamer's turn program runtime (DOOR-141 PR2 and PR3b, FIX 4382).
 //!
 //! [`TurnProgramExecutor`] wraps a host's executor: every other kind runs on
 //! the wrapped one as before, and a turn program attempt runs here, on the
@@ -6,19 +6,25 @@
 //! fixed. Each entry binds the attempt to its waking actor's live authority
 //! and its pin first; a lapse runs nothing new. The host lends the runtime,
 //! its verb door and the backend ([`TurnProgramRuntime`]); a host that lends
-//! none for an actor parks that program alone.
+//! none for an actor holds that program alone.
 //!
-//! Every model call of the run is one durable step through `call_as_step`,
-//! on the program's own actor meter, which borrows from the pass's shared
-//! meter and never reserves twice. Identical requests at two places of the
-//! run are two steps: each carries its logical occurrence. Each write and
-//! send settles into the program's step (`dreamer_runner::program`).
+//! Each entry runs the pinned entry itself, through the executor's pinned
+//! entry (`run_pinned_program`): the stored, pinned source on the same
+//! attempt and code run, with no model writing its call. An entry after the
+//! first replays that source, and each call an earlier entry settled is
+//! answered from its checkpoint, never issued again (PR3b). Every model call
+//! of the run is one durable step through `call_as_step`, on the program's
+//! own actor meter, which borrows from the pass's shared meter and never
+//! reserves twice. Each write and send settles into the program's step
+//! (`dreamer_runner::program`).
 //!
-//! Waits, yields and parks are honest. A run that finished with its pinned
-//! entry finished completes, its result attached under its lease in one
-//! commit. A run that stops short parks, and an entry that finds a run an
-//! earlier entry left unsettled parks too: resuming it lands with DOOR-141
-//! PR3. Nothing restarts it from scratch, and nothing reports it complete.
+//! Waits and holds are honest. A run whose pinned entry finished completes,
+//! its result attached under its lease in one commit. A run that stops short
+//! is held by the program runtime: a wait until its reply is delivered, an
+//! uncertain effect until nothing it did is unsettled, a lapsed authority
+//! until it stands again, each resumed as the same try before a selection
+//! (`dreamer_runner::program`'s resumer). Nothing restarts it from scratch,
+//! and nothing reports it complete.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -28,13 +34,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::code_run::{AgentVerbDoor, HostSelfDispatcher};
 use crate::dreamer_runner::{
-    DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
-    DreamerRunnerStore, PROGRAM_PARK_OWNER, ParkDreamerAttempt, ProgramRecipePin,
-    TurnProgramBinding, TurnProgramBound, TurnProgramEntered,
+    DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause, ProgramHold,
+    ProgramRecipePin, TurnProgramBinding, TurnProgramBound, TurnProgramEntered,
 };
 use crate::engine_executor::{
-    EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorResult, EngineExecutorStatus,
-    EngineNativeExecutor, JsCodeModeRuntime,
+    EngineExecutorConfig, EngineExecutorResult, EngineExecutorStatus, EngineNativeExecutor,
+    JsCodeModeRuntime, PinnedProgramEntry, PinnedProgramRun,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -56,12 +61,10 @@ const OCCURRENCE_NAMESPACE: &str = "oneiron";
 const OCCURRENCE_KEY: &str = "turn_program_step";
 const RESPONSE_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-response:v1";
 
-const UNBOUND_REASON: &str = "this host binds no turn program runtime for the program's actor";
-const LAPSED_PREFIX: &str = "the turn program runs nothing new: ";
-const CUT_REASON: &str = "an earlier entry of the turn program stopped before it settled; its resume lands with DOOR-141 PR3";
-const UNFINISHED_REASON: &str =
-    "the turn program's run ended without its pinned entry finishing; it is not complete";
 const TRAPPED_REASON: &str = "durable step trapped for resume";
+/// Why a program's entry stopped short of a hold: the next entry resumes it
+/// from its pinned entry.
+const RESUMES: &str = "its next entry resumes it from its pinned entry";
 
 /// The host's own runtime for one program entry's model steps: the Dreamer's
 /// thread never enters it, so each step runs on a thread of its own and
@@ -136,7 +139,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for TurnProgramExecutor<'
         }
         match self.runtime.as_deref_mut() {
             Some(runtime) => run_program(runtime, self.shared, attempt, ctx).await,
-            None => hold(ctx, &attempt.status.attempt, UNBOUND_REASON.to_owned()),
+            None => hold(ctx, &attempt.status.attempt, ProgramHold::Unbound),
         }
     }
 
@@ -154,26 +157,24 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for TurnProgramExecutor<'
 }
 
 /// Parks `attempt` as the program runtime's own hold: it stays parked until
-/// its runtime resumes it, never on a pass's or a boot's own sweep.
+/// the program kind's resumer finds `held`'s condition met, never on a
+/// pass's or a boot's own sweep.
 fn hold(
     ctx: &WakeAttemptContext<'_>,
     attempt: &AttemptRecord,
-    reason: String,
+    held: ProgramHold,
 ) -> Result<DreamerAttemptExecution> {
-    DreamerRunnerStore::new(ctx.vault).park_attempt(ParkDreamerAttempt {
-        attempt_id: attempt.id,
-        reason: reason.clone(),
-        cause: DreamerParkCause::Other,
-        park_owner: PROGRAM_PARK_OWNER.to_owned(),
-        now: ctx.now_ms / 1_000,
-    })?;
+    ctx.vault
+        .hold_turn_program(attempt.id, held, ctx.now_ms / 1_000)?;
     Ok(DreamerAttemptExecution::Park {
-        reason,
+        reason: held.reason().to_owned(),
         cause: DreamerParkCause::Other,
     })
 }
 
-/// The program's task: run its pinned callable entry, exactly as pinned.
+/// The program's task, as its host binds its run's config and seat from it:
+/// its pinned callable entry, exactly as pinned. The entry runs as pinned
+/// with no model writing its call.
 fn program_task(pin: &ProgramRecipePin) -> String {
     format!(
         "Run this turn program and nothing else. Call `self.skills.call` exactly once, with the \
@@ -198,9 +199,7 @@ async fn run_program(
     let attempt = &admitted.status.attempt;
     let binding = match vault.bind_turn_program_execution(attempt.id)? {
         TurnProgramBound::Bound(binding) => binding,
-        TurnProgramBound::Lapsed(why) => {
-            return hold(ctx, attempt, format!("{LAPSED_PREFIX}{why}"));
-        }
+        TurnProgramBound::Lapsed(held) => return hold(ctx, attempt, held),
     };
     let task = program_task(&binding.pin);
     let request = TurnProgramRequest {
@@ -210,7 +209,7 @@ async fn run_program(
         task: &task,
     };
     let Some(host) = runtime.bind(vault, &request) else {
-        return hold(ctx, attempt, UNBOUND_REASON.to_owned());
+        return hold(ctx, attempt, ProgramHold::Unbound);
     };
     // The program's own actor meter, lent under the pass's shared cap: the
     // loan reserves its limit on the shared meter, and settles there with
@@ -255,10 +254,19 @@ async fn run_program(
             repay(shared, &loan.lease, 0);
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
-        Ok(TurnProgramEntered::Cut) => {
-            repay(shared, &loan.lease, 0);
-            return hold(ctx, attempt, CUT_REASON.to_owned());
-        }
+        // A cut run resumes from its pinned entry as this same try, unless an
+        // effect of it is not settled or its actor is gone (DOOR-141 PR3b).
+        Ok(TurnProgramEntered::Cut) => match vault.turn_program_resume_preflight(attempt.id) {
+            Ok(None) => enter(host, &binding, attempt, ctx, &meter, &loan.lease).await,
+            Ok(Some(held)) => {
+                repay(shared, &loan.lease, 0);
+                return hold(ctx, attempt, held);
+            }
+            Err(error) => {
+                repay(shared, &loan.lease, 0);
+                return Err(error);
+            }
+        },
         Err(error) => {
             repay(shared, &loan.lease, 0);
             return Err(error);
@@ -282,14 +290,14 @@ fn repay(shared: &BudgetGuard, loan: &BudgetLease, used: u64) {
 /// How one entry's run ended, and why the program's model seam stopped it,
 /// when it did.
 struct Ran {
-    outcome: EngineExecutorResult<EngineExecutorOutcome>,
+    outcome: EngineExecutorResult<PinnedProgramRun>,
     stop: Option<SeamStop>,
     pinned_finished: bool,
 }
 
 /// Runs one entry of the program's code run on the host's runtime, through
-/// the engine executor's own loop: a yield goes on in the same entry while
-/// the pass has time.
+/// the engine executor's pinned entry: the pinned callable, from its stored
+/// source, resumed past every call an earlier entry settled.
 async fn enter(
     host: TurnProgramHost,
     binding: &TurnProgramBinding,
@@ -313,6 +321,7 @@ async fn enter(
             "a turn program's host config names another code run".to_owned(),
         ));
     }
+    let entry = pinned_entry(binding, attempt, ctx)?;
     if let Some(seat) = &seat {
         config.model = seat.model().clone();
         config.model_locality = seat.locality();
@@ -345,18 +354,11 @@ async fn enter(
     if let Some(seat) = &seat {
         executor = executor.with_model_seat(seat);
     }
-    let outcome = loop {
-        let outcome = executor.run(&config).await;
-        let yielded = outcome
-            .as_ref()
-            .is_ok_and(|done| matches!(done.status, EngineExecutorStatus::Yielded { .. }));
-        if !yielded || ctx.deadline.expired() {
-            break outcome;
-        }
-    };
-    let pinned_finished = outcome
-        .as_ref()
-        .is_ok_and(|done| dispatcher.pinned_entry_finished(&done.replay_record));
+    let outcome = executor.run_pinned_program(&config, &entry);
+    let pinned_finished = matches!(
+        &outcome,
+        Ok(PinnedProgramRun::Ran(done)) if dispatcher.pinned_entry_finished(&done.replay_record)
+    );
     Ok(Ran {
         outcome,
         stop: seam.stop(),
@@ -364,7 +366,31 @@ async fn enter(
     })
 }
 
-/// What one entry's end means for the program's try.
+/// The entry the program's pin names, for its try.
+fn pinned_entry(
+    binding: &TurnProgramBinding,
+    attempt: &AttemptRecord,
+    ctx: &WakeAttemptContext<'_>,
+) -> Result<PinnedProgramEntry> {
+    let pin = &binding.pin;
+    let args: serde_json::Value = serde_json::from_str(&pin.args).map_err(|_| {
+        Error::InvalidConfig("a turn program's pinned arguments are not JSON".to_owned())
+    })?;
+    Ok(PinnedProgramEntry {
+        code_run: binding.code_run,
+        skill: pin.skill,
+        args,
+        content_hash: pin.content_hash.clone(),
+        contract_digest: pin.contract_digest,
+        executor: pin.executor.clone(),
+        attempt: *attempt.id.as_bytes(),
+        at: ctx.now_ms / 1_000,
+    })
+}
+
+/// What one entry's end means for the program's try. An entry that stops
+/// short is held by the program runtime, its spend settled on the pass's
+/// meter all the same.
 fn settle(
     vault: &Vault,
     binding: &TurnProgramBinding,
@@ -379,12 +405,25 @@ fn settle(
         completed_units: used,
         step_hashes: Vec::new(),
     };
+    let held = |kind: ProgramHold| -> Result<DreamerAttemptExecution> {
+        vault.hold_turn_program(attempt.id, kind, ctx.now_ms / 1_000)?;
+        Ok(DreamerAttemptExecution::ParkWithSpend {
+            reason: kind.reason().to_owned(),
+            cause: DreamerParkCause::Other,
+            completed_units: used,
+            step_hashes: Vec::new(),
+        })
+    };
     let ran = match ran {
         Ok(ran) => ran,
         Err(error) => return Ok(stopped(format!("the turn program did not enter: {error}"))),
     };
     let outcome = match ran.outcome {
-        Ok(outcome) => outcome,
+        Ok(PinnedProgramRun::Ran(outcome)) => outcome,
+        Ok(PinnedProgramRun::Held(why)) => {
+            tracing::warn!(why, "a turn program's entry holds; it ran nothing new");
+            return held(ProgramHold::Diverged);
+        }
         Err(error) => {
             return Ok(match ran.stop {
                 // The step layer parked the try in its trap's own commit.
@@ -393,15 +432,15 @@ fn settle(
                     cause: DreamerParkCause::Signal,
                 },
                 Some(SeamStop::Deadline) => stopped(format!(
-                    "the pass's deadline cut the turn program; {CUT_REASON}"
+                    "the pass's deadline cut the turn program; {RESUMES}"
                 )),
-                Some(SeamStop::Failed) | None => {
-                    stopped(format!("the turn program's run stopped: {error}"))
-                }
+                Some(SeamStop::Failed) | None => stopped(format!(
+                    "the turn program's run stopped: {error}; {RESUMES}"
+                )),
             });
         }
     };
-    Ok(match outcome.status {
+    match outcome.status {
         EngineExecutorStatus::Complete if ran.pinned_finished => {
             let generation = outcome.replay_record.generation()?;
             vault.settle_turn_program_run(
@@ -410,24 +449,17 @@ fn settle(
                 &generation,
                 ctx.now_ms / 1_000,
             )?;
-            DreamerAttemptExecution::Completed {
+            Ok(DreamerAttemptExecution::Completed {
                 completed_units: used,
-            }
+            })
         }
-        EngineExecutorStatus::Complete => stopped(UNFINISHED_REASON.to_owned()),
-        EngineExecutorStatus::Yielded { next_step_seq } => stopped(format!(
-            "the turn program yielded at step {next_step_seq} as the pass ended; its resume \
-             lands with DOOR-141 PR3"
-        )),
-        EngineExecutorStatus::Waiting(_) => stopped(
-            "the turn program waits on a durable wait; its resume lands with DOOR-141 PR3"
-                .to_owned(),
-        ),
-        EngineExecutorStatus::WindowFull { next_step_seq, .. } => stopped(format!(
-            "the turn program's window filled at step {next_step_seq}; its resume lands with \
-             DOOR-141 PR3"
-        )),
-    })
+        EngineExecutorStatus::Complete => held(ProgramHold::Unfinished),
+        EngineExecutorStatus::Waiting(_) => held(ProgramHold::Wait),
+        EngineExecutorStatus::Yielded { next_step_seq }
+        | EngineExecutorStatus::WindowFull { next_step_seq, .. } => Ok(stopped(format!(
+            "the turn program stopped at step {next_step_seq} as the pass ended; {RESUMES}"
+        ))),
+    }
 }
 
 /// Why the program's model seam stopped the run.
