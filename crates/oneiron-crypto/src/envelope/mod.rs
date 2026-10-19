@@ -100,6 +100,11 @@ pub enum Purpose {
     /// data key. The owner binds the format version, the instance, the chunk's index
     /// and whether it is the last in `key_id`.
     BodyFileChunk = 18,
+    /// One chunk of a publisher training offer, sealed to the publisher's intake.
+    /// The vault binds the submission and the chunk's part in `key_id`, and the
+    /// offer's recipient label as the recipient, so no other envelope opens as an
+    /// offer's and no offer chunk opens as an export (FIX 5371).
+    PublisherTrainingOffer = 19,
 }
 
 impl Purpose {
@@ -123,6 +128,7 @@ impl Purpose {
             16 => Self::SealedPadAdmission,
             17 => Self::BodyFileKey,
             18 => Self::BodyFileChunk,
+            19 => Self::PublisherTrainingOffer,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }

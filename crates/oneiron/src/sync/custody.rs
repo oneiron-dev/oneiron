@@ -69,7 +69,12 @@ enum CustodyInputPrune {
     /// invalid). A row whose request this vault has not folded, or whose
     /// signer it does not know yet, stays, so an input that arrives before
     /// its request still reaches its holder: no time, count or frontier
-    /// drops one.
+    /// drops one. So does a row whose witness a key no machine of this vault
+    /// ever holds signed: the witness proves the row self-consistent, not
+    /// its signer the vault's, so the request never folds and the row stays
+    /// until its base window retires (FIX 5405, reported, not narrowed). The
+    /// relay logs how many rows a window keeps whose request is not folded
+    /// here, by count alone.
     WitnessedTerminalOrInvalid,
 }
 
@@ -338,21 +343,36 @@ fn mirror_custody_inputs(
     if holds {
         let map = doc.get_map(CUSTODY_MAP);
         let mut done = Vec::new();
+        let mut unfolded = 0_usize;
         map.for_each(|map_key, value| {
             if !map_key.starts_with(INPUT_ROW_PREFIX) {
                 return;
             }
-            // A row whose request this vault has not folded yet may still be
-            // its holder's, and stays.
-            if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value
-                && RelayedInput::decode(&bytes).is_some_and(|input| input_row_done(fold, &input))
-            {
+            let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value else {
+                return;
+            };
+            let Some(input) = RelayedInput::decode(&bytes) else {
+                return;
+            };
+            if input_row_done(fold, &input) {
                 done.push(map_key.to_owned());
+            } else if fold.owner_work_request(&input.request).is_none() {
+                // A row whose request this vault has not folded yet may still
+                // be its holder's, and stays (FIX 5405).
+                unfolded += 1;
             }
         });
         for row in done {
             map_delete(&map, &row)?;
             wrote = true;
+        }
+        if unfolded > 0 {
+            tracing::debug!(
+                window = %key,
+                unfolded,
+                "custody input rows kept whose request this vault has not folded: not here yet, \
+                 or signed by a key no machine of this vault holds (CALLS CUSTODY_INPUT_PRUNE)"
+            );
         }
     }
     Ok(wrote)

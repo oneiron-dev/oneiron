@@ -167,7 +167,7 @@ pub(super) fn seal_training_text(
         key_id[16..].copy_from_slice(&part.to_be_bytes());
         let params = SealParams {
             suite: AEAD,
-            purpose: Purpose::ExportBundle,
+            purpose: Purpose::PublisherTrainingOffer,
             epoch: SEAL_EPOCH,
             key_id: &key_id,
             recipient: TRAINING_SEAL_RECIPIENT,
