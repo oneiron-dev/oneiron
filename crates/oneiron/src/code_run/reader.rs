@@ -358,7 +358,8 @@ pub struct SelfReaderReportCall {
 }
 
 /// `tasks.wait({tasks, all?, n_of?, until?, step_key})`, as the guest wrote
-/// it; the dispatcher normalises it against the run's children.
+/// it; the dispatcher normalises it against the run's children. One naming
+/// `request` waits on that world-privacy request instead (FIX 4706).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskWaitSetCall {
@@ -370,6 +371,8 @@ pub struct TaskWaitSetCall {
     #[serde(default)]
     pub until: Option<u64>,
     pub step_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<String>,
 }
 
 /// What a spawn answers: the child's task, the attempt its spend is keyed

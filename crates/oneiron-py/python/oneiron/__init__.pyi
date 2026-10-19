@@ -418,7 +418,7 @@ class Oneiron:
     @overload
     def ask(self, spec_or_who: str | list[str] | set[str] | tuple[str, ...] | dict[str, Any] | None, what: dict[str, Any], until: int | None = None, default: str = "ask_me") -> Facade.TaskAskReceipt: ...
     def wait(self, handle: Facade.TaskAskHandle, step_key: str = "sdk.wait") -> Facade.TaskAskWait:
-        """Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode."""
+        """Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode."""
     @property
     def connector(self) -> "Oneiron._ConnectorVerbs": ...
     @property

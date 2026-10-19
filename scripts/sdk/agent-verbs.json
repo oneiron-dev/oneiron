@@ -10578,7 +10578,7 @@
     },
     {
       "name": "wait",
-      "description": "Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode.",
+      "description": "Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode.",
       "input": "crate::task_verb::sdk::TaskWaitRequest",
       "output": "crate::task_verb::TaskAskWait",
       "mcp_served": "[input.handle.group_ref]",
@@ -17218,8 +17218,8 @@
     },
     {
       "name": "tasks.wait",
-      "input": "crate::code_run::TaskWaitSetRequest",
-      "output": "crate::code_run::TaskWaitSetResult",
+      "input": "crate::code_run::TaskWaitInput",
+      "output": "crate::code_run::TaskWaitOutput",
       "scope": "Read",
       "context": "run",
       "effect": "TasksWaitSet"
