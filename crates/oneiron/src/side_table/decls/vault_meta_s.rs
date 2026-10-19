@@ -182,6 +182,10 @@ side_tables! {
     SESSION_TURN_MEMBERSHIP: VaultMeta b"session_lifecycle:v0:turn_session:" Raw;
     /// SESSION to TURN membership index. Key: id16 + id16.
     SESSION_TURNS: VaultMeta b"session_turns:v1:" Raw;
+    /// The owner's backup setting (FIX 5621): whether a running server backs up on its own, the
+    /// hours between and the newest kept, one row for the whole choice. Absent is no choice, and
+    /// the deployment's `[backup]` section decides. Key: ().
+    BACKUP_POLICY: VaultMeta b"settings:backup:v1:policy" Named;
     /// One client-readable customization-settings change-notification event. Key: u64be (sequence).
     CUSTOMIZATION_EVENT: VaultMeta b"settings:customization:v1:event:" Named Authored;
     /// Monotonic sequence counter for customization change-notification events. Key: ().

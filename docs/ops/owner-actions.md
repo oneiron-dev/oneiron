@@ -73,7 +73,7 @@ The install that takes a backup signs it, and a restore checks that signature fi
 legal hold stands, no backup is pruned, whatever `keep` says.
 
 `oneiron serve` can take backups on its own. The schedule is opt-in; turn it on in the config
-file or environment:
+file or environment, or with the owner's backup setting (below):
 
 ```toml
 [backup]
@@ -86,13 +86,36 @@ keep = 7              # ONEIRON_BACKUP_KEEP — newest kept; older ones are dele
 The schedule is off by default because erasing a record does not yet reach backup files (see
 *Limits*). With it on, the server checks every minute whether the newest backup is older than
 `every_hours`. The newest file on disk is its only state, so a restart or a manual backup is
-counted. The schedule and on-demand backups run on every privacy posture, under the owner's
-`[backup]` policy. A vault our cloud hosts (managed serve) keeps its backups in
+counted. The schedule and on-demand backups run on every privacy posture, under the policy in
+force: the owner's backup setting, else `[backup]`. A vault our cloud hosts (managed serve)
+keeps its backups in
 `<data_dir>.backups` and makes each rehearsal's scratch copy in `<data_dir>.rehearsals`, both
 private and on the vault's own disk (`/vault/data.backups` and `/vault/data.rehearsals` in the
 vault VM); one it cannot create or write is logged at start (`owner_storage_unavailable`). The
 server also takes a backup on demand: `POST /v1/owner/backups`. `GET /v1/owner/backups` lists the
 backups.
+
+### The owner's backup setting
+
+The owner sets the schedule from any of his surfaces as a setting stored in the vault, so a
+managed vault's console reaches it as he does: `GET /v1/owner/settings/backup` reads it, and
+`PUT /v1/owner/settings/backup` with `{"enabled": true, "every_hours": 24, "keep": 7}` stores it.
+Both answer `{"stored": ..., "effective": ...}`. `stored` is his choice, or `null` while he has
+made none. `effective` is what the schedule follows now, and is `null` only on a server started
+without its vault's backup storage. A PUT takes the whole `{enabled, every_hours, keep}`, held to
+the `[backup]` rules: `every_hours` and `keep` each greater than zero, and nothing else. A stored
+choice replaces the config's three keys whole, so `"enabled": false` is a choice too: it stops
+scheduled backups even where the config turns them on, and is never the same as no choice. With
+none stored, the config and its environment keys decide, and with neither, the schedule is off,
+one a day, the newest seven kept. The setting takes no directory: `dir` stays the deployment's.
+
+The server reads the setting at its next minute tick, once any backup being written has finished.
+A PUT prunes nothing and stops nothing already writing; a smaller `keep` prunes after the next
+backup. `enabled` gates only the schedule, and `keep` applies to every backup the running server
+takes, `POST /v1/owner/backups` included. `GET /v1/owner/status` reports the backups under the
+policy in force. `oneiron backup` and `oneiron doctor` on a stopped vault keep reading the config
+and their flags. The routes take the owner door every owner setting takes; a hosted operator's
+root alone acts as nobody here (FIX 2222).
 
 ## Rehearse a restore
 
