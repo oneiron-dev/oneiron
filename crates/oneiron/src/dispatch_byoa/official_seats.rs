@@ -44,6 +44,7 @@ use super::connector::{
 use super::error::{
     ByoaError, ByoaResult, ERR_PKCE_VERIFIER, ERR_SEAT_ROUTE, ERR_SEAT_SPEC, invalid,
 };
+use super::seat::{SeatIdentity, hosted_seat_bound};
 
 /// Sign in with ChatGPT authorize endpoint (OpenAI's public OAuth host).
 pub const SIWC_AUTHORIZE_ENDPOINT: &str = "https://auth.openai.com/oauth/authorize";
@@ -192,51 +193,44 @@ pub struct SeatPlacementApproval {
 }
 
 /// Whether `route` may run under `posture`. This is the P4 placement table:
-/// each vendor's terms set where its login runs, never ours alone.
+/// each vendor's terms set where its login runs, never ours alone. Where a
+/// login may run hosted is [`hosted_seat_bound`]'s, the same rule the
+/// generic login door applies.
 ///
 /// # Errors
 /// Refuses with the typed reason the terms demand: unsupported route,
-/// missing vendor approval, a modified binary, or a cloud login refusal.
+/// missing vendor approval, a modified binary, or a hosted-only bound.
 pub fn check_seat_placement(
     route: OfficialSeatRoute,
     posture: HostingPrivacyPosture,
     approvals: SeatPlacementApproval,
     unmodified_binary: bool,
 ) -> ByoaResult<()> {
-    let hosted = posture == HostingPrivacyPosture::Hosted;
     match route {
-        // An API key runs on any runtime; it is not a login seat.
-        OfficialSeatRoute::VendorApiKey => Ok(()),
         // No Grok subscription bridge exists; use an API key seat instead.
         OfficialSeatRoute::GrokSubscription => {
             Err(ByoaError::SeatRouteUnsupported(route.as_str().to_owned()))
         }
         // The unmodified binary, signed in by the person, runs anywhere —
         // cloud included. A modified binary voids that permission.
-        OfficialSeatRoute::ClaudeCodeBinary => {
-            if unmodified_binary {
-                Ok(())
-            } else {
-                Err(ByoaError::SeatModifiedBinaryRefused)
-            }
+        OfficialSeatRoute::ClaudeCodeBinary if !unmodified_binary => {
+            Err(ByoaError::SeatModifiedBinaryRefused)
         }
         // "Unless previously approved", no Claude.ai login through the SDK.
-        OfficialSeatRoute::ClaudeAgentSdkSubscription => {
-            if approvals.anthropic_agent_sdk {
-                Ok(())
-            } else {
-                Err(ByoaError::SeatLoginNotApproved(route.as_str().to_owned()))
-            }
+        OfficialSeatRoute::ClaudeAgentSdkSubscription if !approvals.anthropic_agent_sdk => {
+            Err(ByoaError::SeatLoginNotApproved(route.as_str().to_owned()))
         }
-        // ChatGPT-plan logins stay on the person's own runtime until
-        // OpenAI approves hosted plan use.
-        OfficialSeatRoute::CodexAppServerChatGptPlan | OfficialSeatRoute::SignInWithChatGpt => {
-            if hosted && !approvals.openai_hosted_plan {
-                Err(ByoaError::CloudLoginRefused)
-            } else {
-                Ok(())
-            }
-        }
+        // An API key runs on any runtime; it is not a login seat. ChatGPT-plan
+        // logins stay off a hosted node until OpenAI approves hosted plan use.
+        _ => match hosted_seat_bound(
+            Some(SeatIdentity::OfficialRoute(route)),
+            route.is_user_login(),
+            posture,
+            Some(approvals),
+        ) {
+            Some(bound) => Err(ByoaError::CloudLoginRefused { bound }),
+            None => Ok(()),
+        },
     }
 }
 

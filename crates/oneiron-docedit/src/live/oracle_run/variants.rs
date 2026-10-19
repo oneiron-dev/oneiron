@@ -93,15 +93,31 @@ fn probe_ext(prefix: &str, ns: &str, name: &str) -> String {
 /// Splice whole `p:ext` elements into the slide's `p:extLst`, making one at
 /// the end of `p:sld` (its last child in the schema) when it has none.
 fn slide_exts(tree: &XmlTree, exts: &str) -> Res<(Range<usize>, String)> {
+    ext_list(tree, false, exts)
+}
+
+/// Splice whole `p:ext` elements into an extension list: the slide's own
+/// (the last child of `p:sld`) or, when `common`, the one closing
+/// `p:cSld`, where the engine's comment writer puts a slide creation id
+/// and where `DeckView` reads it. The list is made at the end of its parent
+/// (its last child in the schema) when there is none.
+fn ext_list(tree: &XmlTree, common: bool, exts: &str) -> Res<(Range<usize>, String)> {
     let root = &tree.nodes[0];
     if !root.is(P, "sld") {
         return Err("the part is not a slide".to_owned());
     }
+    let (at, parent) = if common {
+        tree.child(0, P, "cSld")
+            .map_err(text)?
+            .ok_or("the slide has no p:cSld")?
+    } else {
+        (0, root)
+    };
     let whole = format!("<p:extLst xmlns:p=\"{P}\">{exts}</p:extLst>");
-    Ok(match tree.child(0, P, "extLst").map_err(text)? {
+    Ok(match tree.child(at, P, "extLst").map_err(text)? {
         Some((_, list)) if !list.empty => (list.content.end..list.content.end, exts.to_owned()),
         Some((_, list)) => (list.span.clone(), whole),
-        None => (root.content.end..root.content.end, whole),
+        None => (parent.content.end..parent.content.end, whole),
     })
 }
 
@@ -181,16 +197,23 @@ pub(super) fn commented(package: &Package, slide: &CommentSlide<'_>) -> Res<Vec<
     let rid = next.relate(slide.part, COMMENT_REL, &file).map_err(text)?;
     let xml = part_text(&next, slide.part)?;
     let tree = xml_tree(&next, &xml)?;
-    let mut exts = String::new();
+    // The creation id goes where the comment writer puts it (`common: true`,
+    // under `p:cSld`); the comment relationship stays under the slide root.
+    let mut edits = vec![slide_exts(
+        &tree,
+        &format!(
+            "<p:ext xmlns:p=\"{P}\" uri=\"{COMMENT_EXT}\"><p188:commentRel xmlns:p188=\"{P188}\" xmlns:r=\"{DOCUMENT_RELATIONSHIPS}\" r:id=\"{rid}\"/></p:ext>"
+        ),
+    )?];
     if slide.creation_id.is_none() {
-        exts.push_str(&format!(
-            "<p:ext xmlns:p=\"{P}\" uri=\"{SLIDE_ID_EXT}\"><p14:creationId xmlns:p14=\"{P14}\" val=\"{creation}\"/></p:ext>"
-        ));
+        edits.push(ext_list(
+            &tree,
+            true,
+            &format!(
+                "<p:ext xmlns:p=\"{P}\" uri=\"{SLIDE_ID_EXT}\"><p14:creationId xmlns:p14=\"{P14}\" val=\"{creation}\"/></p:ext>"
+            ),
+        )?);
     }
-    exts.push_str(&format!(
-        "<p:ext xmlns:p=\"{P}\" uri=\"{COMMENT_EXT}\"><p188:commentRel xmlns:p188=\"{P188}\" xmlns:r=\"{DOCUMENT_RELATIONSHIPS}\" r:id=\"{rid}\"/></p:ext>"
-    ));
-    let edits = vec![slide_exts(&tree, &exts)?];
     rewrite(next, slide.part, splice(&xml, edits))
 }
 

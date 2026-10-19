@@ -11,18 +11,23 @@
 //! word replaced in a linked or bold run stays linked or bold, and nothing
 //! outside the change is rewritten. A field's text is computed: a change
 //! that cuts into one or writes text in its place is refused (deleting it
-//! whole is allowed), as is new text holding a line break. Extra paragraphs
-//! copy the `a:pPr`, first run properties and `a:endParaRPr` of the
-//! paragraph before them; surplus ones are removed.
+//! whole is allowed). A line break (U+000B) in new text is written as an
+//! `a:br` with the properties of the run it lands in, or of the
+//! paragraph's end for a new run. Extra paragraphs copy the `a:pPr`, first
+//! run properties and `a:endParaRPr` of the paragraph before them; surplus
+//! ones are removed.
 use super::check::Declared;
 use super::xml::{self, A, P, Splice};
 use super::{EditRefusal, FitUnverified, RunProps, Written};
 use crate::deck::{ShapeView, SlideView, TargetRole, TextRange};
 use crate::ooxml::{XmlTree, escape_text};
 use crate::retained_opc::Package;
+use build::{broken_run, insert_paragraphs, new_run, run_bytes};
+
+mod build;
 
 /// U+000B: an `a:br` in paragraph text, as PowerPoint writes it.
-pub(super) const BREAK: char = '\u{b}';
+pub(crate) const BREAK: char = '\u{b}';
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -110,11 +115,45 @@ pub(super) fn set_text(
     shape: &ShapeView,
     text: &str,
 ) -> Result<Written, EditRefusal> {
+    write_body(next, slide, shape, || split(text))
+}
+
+/// The whole body as paragraphs of characters, given whole rather than
+/// split from one string: a line feed inside a paragraph is text in its
+/// run, never a paragraph break. U+000B is an `a:br`, as in `set_text`,
+/// whose mapping, refusals and animation checks this shares.
+pub(super) fn set_paragraphs(
+    next: &mut Package,
+    slide: &SlideView,
+    shape: &ShapeView,
+    paragraphs: &[Vec<char>],
+) -> Result<Written, EditRefusal> {
+    write_body(next, slide, shape, || {
+        for paragraph in paragraphs {
+            let text: String = paragraph.iter().filter(|c| **c != BREAK).collect();
+            if text.contains('\r') || !xml::writable(&text) {
+                return Err(EditRefusal::Invalid(
+                    "text holds a character XML cannot carry",
+                ));
+            }
+        }
+        Ok(paragraphs.to_vec())
+    })
+}
+
+/// One whole-body write: the requested paragraphs mapped onto the body,
+/// checked against its animation, and written.
+fn write_body(
+    next: &mut Package,
+    slide: &SlideView,
+    shape: &ShapeView,
+    requested: impl FnOnce() -> Result<Vec<Vec<char>>, EditRefusal>,
+) -> Result<Written, EditRefusal> {
     let id = shape.id.ok_or(EditRefusal::Missing("shape id"))?;
     let (bytes, tree) = xml::read(next, &slide.part)?;
     let body = xml::child(&tree, shape.node.index, P, "txBody")
         .ok_or(EditRefusal::Missing("text body"))?;
-    let new = split(text)?;
+    let new = requested()?;
     let (edits, structure) = rewrite_body(&bytes, &tree, body, &new)?;
     let old = paragraphs(&tree, body);
     let lengths = structure.is_some()
@@ -481,10 +520,8 @@ fn rewrite_paragraph(
         b += 1;
     }
     let (s, e) = (a, old.len() - b);
+    // A U+000B in the new text is written as an `a:br` (see `build`).
     let inserted: String = new[a..new.len() - b].iter().collect();
-    if inserted.contains(BREAK) {
-        return Err(EditRefusal::TextMapping("new text holds a line break"));
-    }
     let text = |from: usize, to: usize| -> String { old[from..to].iter().collect() };
     let mut actions = Vec::with_capacity(paragraph.items.len());
     for item in &paragraph.items {
@@ -567,7 +604,7 @@ fn rewrite_paragraph(
             (Action::Trim(head, tail), false) => format!("{head}{tail}"),
         };
         if !written.is_empty() {
-            out.extend(run_bytes(bytes, tree, child, &written)?);
+            out.extend(broken_run(bytes, tree, child, &written)?);
         }
     }
     if let Some(run) = pending {
@@ -583,136 +620,6 @@ fn rewrite_paragraph(
         out.extend_from_slice(&bytes[cursor..node.span.end]);
     }
     Ok(Some((node.span.clone(), out)))
-}
-
-/// A run's bytes with its `a:t` text replaced.
-fn run_bytes(bytes: &[u8], tree: &XmlTree, run: usize, text: &str) -> Result<Vec<u8>, EditRefusal> {
-    let node = &tree.nodes[run];
-    let t = xml::child(tree, run, A, "t").ok_or(EditRefusal::TextMapping("a run without text"))?;
-    let t_node = &tree.nodes[t];
-    let escaped = escape_text(text);
-    let mut out = bytes[node.span.start..t_node.span.start].to_vec();
-    if t_node.empty {
-        out.extend(xml::open_tag(bytes, t_node));
-        out.extend(format!("{escaped}</{}>", t_node.qualified).into_bytes());
-    } else {
-        out.extend_from_slice(&bytes[t_node.span.start..t_node.content.start]);
-        out.extend(escaped.into_bytes());
-        out.extend_from_slice(&bytes[t_node.content.end..t_node.span.end]);
-    }
-    out.extend_from_slice(&bytes[t_node.span.end..node.span.end]);
-    Ok(out)
-}
-
-/// A new run carrying the paragraph's end properties as its own.
-fn new_run(bytes: &[u8], tree: &XmlTree, paragraph: &Paragraph, text: &str) -> String {
-    let node = &tree.nodes[paragraph.node];
-    let prefix = xml::prefix(node);
-    let properties = xml::child(tree, paragraph.node, A, "endParaRPr")
-        .map_or_else(String::new, |end| {
-            renamed(bytes, &tree.nodes[end], &xml::qualify(prefix, "rPr"))
-        });
-    format!(
-        "<{r}>{properties}<{t}>{}</{t}></{r}>",
-        escape_text(text),
-        r = xml::qualify(prefix, "r"),
-        t = xml::qualify(prefix, "t"),
-    )
-}
-
-/// An element's bytes under another qualified name (`a:endParaRPr` as
-/// `a:rPr`: both are `CT_TextCharacterProperties`).
-fn renamed(bytes: &[u8], node: &crate::ooxml::Node, name: &str) -> String {
-    let text = String::from_utf8_lossy(&bytes[node.span.clone()]).into_owned();
-    let open = format!("<{}", node.qualified);
-    let close = format!("</{}>", node.qualified);
-    let mut out = text.replacen(&open, &format!("<{name}"), 1);
-    if out.ends_with(&close) {
-        out.truncate(out.len() - close.len());
-        out.push_str(&format!("</{name}>"));
-    }
-    out
-}
-
-/// New paragraphs at index `at`, shaped like the paragraph before them.
-fn insert_paragraphs(
-    bytes: &[u8],
-    tree: &XmlTree,
-    body: usize,
-    old: &[Paragraph],
-    at: usize,
-    added: &[&[char]],
-) -> Result<Splice, EditRefusal> {
-    if added.iter().any(|p| p.contains(&BREAK)) {
-        return Err(EditRefusal::TextMapping("new text holds a line break"));
-    }
-    let template = at
-        .checked_sub(1)
-        .or((!old.is_empty()).then_some(0))
-        .map(|i| &old[i]);
-    let mut out = String::new();
-    for text in added {
-        let text: String = text.iter().collect();
-        out.push_str(&match template {
-            Some(template) => paragraph_like(bytes, tree, template, &text),
-            None => {
-                let prefix = xml::child(tree, body, A, "bodyPr")
-                    .map(|at| xml::prefix(&tree.nodes[at]).to_owned())
-                    .ok_or(EditRefusal::Missing("text body properties"))?;
-                bare_paragraph(&prefix, &text)
-            }
-        });
-    }
-    let position = match at.checked_sub(1) {
-        Some(before) => tree.nodes[old[before].node].span.end,
-        None => match old.first() {
-            Some(first) => tree.nodes[first.node].span.start,
-            None => return Ok(xml::insert_last(bytes, &tree.nodes[body], &out)),
-        },
-    };
-    Ok((position..position, out.into_bytes()))
-}
-
-fn paragraph_like(bytes: &[u8], tree: &XmlTree, template: &Paragraph, text: &str) -> String {
-    let node = &tree.nodes[template.node];
-    let prefix = xml::prefix(node);
-    let element = |name| {
-        xml::child(tree, template.node, A, name).map_or_else(String::new, |at| {
-            String::from_utf8_lossy(&bytes[tree.nodes[at].span.clone()]).into_owned()
-        })
-    };
-    let run_properties = template
-        .items
-        .iter()
-        .find(|item| item.kind == Kind::Run)
-        .and_then(|item| xml::child(tree, item.node, A, "rPr"))
-        .map(|at| String::from_utf8_lossy(&bytes[tree.nodes[at].span.clone()]).into_owned())
-        .or_else(|| {
-            xml::child(tree, template.node, A, "endParaRPr")
-                .map(|at| renamed(bytes, &tree.nodes[at], &xml::qualify(prefix, "rPr")))
-        })
-        .unwrap_or_default();
-    let run = if text.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "<{r}>{run_properties}<{t}>{}</{t}></{r}>",
-            escape_text(text),
-            r = xml::qualify(prefix, "r"),
-            t = xml::qualify(prefix, "t"),
-        )
-    };
-    format!(
-        "<{p}>{}{run}{}</{p}>",
-        element("pPr"),
-        element("endParaRPr"),
-        p = xml::qualify(prefix, "p"),
-    )
-}
-
-fn bare_paragraph(prefix: &str, text: &str) -> String {
-    let p = xml::qualify(prefix, "p");
-    format!("<{p}>{}</{p}>", bare_runs(prefix, text))
 }
 
 /// A property-less run, or nothing for empty text.
