@@ -210,36 +210,62 @@ impl Vault {
     ) -> Result<()> {
         let parsed = super::folder::package_from_files(package.files.clone())?;
         self.with_write_txn_grouped(|txn| {
-            let mut record = self.read_skill_record_in_txn(txn, fork)?;
-            if record.forked_from.is_none()
-                || record.lifecycle_status != SkillLifecycle::Candidate
-                || record.skill_id != parsed.record.skill_id
-            {
-                return Err(invalid("edited package must name an open local fork"));
-            }
-            record.desc = parsed.record.desc;
-            record.version = parsed.record.version;
-            record.role = parsed.record.role;
-            record.call = parsed.record.call;
-            record.content_hash = parsed.record.content_hash;
-            let saved = HubPackage::new(record.clone(), parsed.files, parsed.capabilities);
-            super::folder::package_from_source(
-                &record,
-                saved.files.clone(),
-                super::SkillPackageFormat::Folder,
-            )?;
-            self.put_skill_record_in_txn(txn, fork, &record, occurred, learned_at)?;
-            self.persist_hub_package_in_txn(txn, fork, &saved)?;
-            self.scan_and_ingest_on_import_in_txn(
-                txn,
-                fork,
-                saved.content_hash()?,
-                &saved,
-                occurred,
-                learned_at,
-            )?;
-            Ok(())
+            self.write_parsed_fork_package_in_txn(txn, fork, parsed, occurred, learned_at)
         })
+    }
+
+    /// [`Self::write_shared_skill_fork_package`] in the caller's write, so
+    /// what the package carries can be chosen in the transaction that
+    /// stores it.
+    pub(crate) fn write_shared_skill_fork_package_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fork: &EntityId,
+        package: &HubPackage,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let parsed = super::folder::package_from_files(package.files.clone())?;
+        self.write_parsed_fork_package_in_txn(txn, fork, parsed, occurred, learned_at)
+    }
+
+    fn write_parsed_fork_package_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fork: &EntityId,
+        parsed: HubPackage,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let mut record = self.read_skill_record_in_txn(txn, fork)?;
+        if record.forked_from.is_none()
+            || record.lifecycle_status != SkillLifecycle::Candidate
+            || record.skill_id != parsed.record.skill_id
+        {
+            return Err(invalid("edited package must name an open local fork"));
+        }
+        record.desc = parsed.record.desc;
+        record.version = parsed.record.version;
+        record.role = parsed.record.role;
+        record.call = parsed.record.call;
+        record.content_hash = parsed.record.content_hash;
+        let saved = HubPackage::new(record.clone(), parsed.files, parsed.capabilities);
+        super::folder::package_from_source(
+            &record,
+            saved.files.clone(),
+            super::SkillPackageFormat::Folder,
+        )?;
+        self.put_skill_record_in_txn(txn, fork, &record, occurred, learned_at)?;
+        self.persist_hub_package_in_txn(txn, fork, &saved)?;
+        self.scan_and_ingest_on_import_in_txn(
+            txn,
+            fork,
+            saved.content_hash()?,
+            &saved,
+            occurred,
+            learned_at,
+        )?;
+        Ok(())
     }
     pub fn shared_skill_delta(&self, candidate: &EntityId) -> Result<Option<SharedSkillDelta>> {
         let txn = self.store.env.read_txn()?;

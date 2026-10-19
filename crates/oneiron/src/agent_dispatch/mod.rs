@@ -123,10 +123,12 @@ pub use self::planner::{
     resolve_care, top_shapes,
 };
 pub use self::planner_live::{LivePlanRequest, PlannerSeat, PlannerSkills};
-pub(crate) use self::task_type_tree::load_team_type_tree_in_txn;
 pub use self::task_type_tree::{
     TASK_TYPE_TREE_FILE, load_team_type_tree, load_team_type_tree_at, store_team_type_tree,
     team_shape_skill_in_force,
+};
+pub(crate) use self::task_type_tree::{
+    load_team_type_tree_at_in_txn, load_team_type_tree_in_txn, team_shape_skill_in_force_in_txn,
 };
 pub use self::team_shape::{
     CoordinationPattern, TEAM_SHAPE_LESSONS, TEAM_SHAPE_SKILL_NAME, TeamShape, team_shape_skill,
