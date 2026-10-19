@@ -391,6 +391,18 @@ pub(crate) fn settle_code_consent_wait_in_txn(
     wait_id: EntityId,
     outcome: &ConnectorCallOutcome,
 ) -> Result<bool> {
+    settle_code_consent_wait_listing_in_txn(vault, txn, wait_id, outcome, None)
+}
+
+/// [`settle_code_consent_wait_in_txn`], its reply delivered beside `rows`,
+/// the rows the call's passes picked (FIX 5455), when they are known.
+pub(crate) fn settle_code_consent_wait_listing_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    wait_id: EntityId,
+    outcome: &ConnectorCallOutcome,
+    rows: Option<&[EntityId]>,
+) -> Result<bool> {
     let Some(mut row) = read_code_consent_wait_in_txn(vault, txn, wait_id)? else {
         return Ok(false);
     };
@@ -408,7 +420,7 @@ pub(crate) fn settle_code_consent_wait_in_txn(
     ))
     .map_err(|_| Error::InvalidConfig("a code consent reply is not JSON".to_owned()))?;
     let now = now_ms();
-    crate::code_run::deliver_wait_in_txn(vault, txn, wait_id, &reply, now)?;
+    crate::code_run::deliver_wait_listing_in_txn(vault, txn, wait_id, &reply, rows, now)?;
     let delivered = crate::code_run::settled_wait_reply_in_txn(vault, txn, wait_id)?.ok_or(
         Error::InvariantViolation("a settled code consent wait kept no reply"),
     )?;

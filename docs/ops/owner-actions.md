@@ -98,7 +98,7 @@ sealed in its own format. A running server's backup written to a `dir` on anothe
 free-space reserve (`limits.disk_reserve_bytes`) on that disk as well as on the vault's, as a
 rehearsal's copy does. The
 server also takes a backup on demand: `POST /v1/owner/backups`. `GET /v1/owner/backups` lists the
-backups.
+backups. The vault's key custody publishes beside them: [Key custody beside your backups](key-custody.md).
 
 ### The owner's backup setting
 

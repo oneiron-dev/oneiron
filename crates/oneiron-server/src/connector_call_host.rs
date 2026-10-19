@@ -126,6 +126,8 @@ pub struct ServedConnectorCallHost {
     caller: Option<ConnectorCallCaller>,
     /// The questions the last send's connector asked, kept for the caller.
     awaiting: Option<ConnectorAwaitingInput>,
+    /// The custody record the last send presented, as its door resolved it.
+    presented: Option<EntityId>,
 }
 
 impl ServedConnectorCallHost {
@@ -171,10 +173,11 @@ impl ServedConnectorCallHost {
             elicitations,
             caller: None,
             awaiting: None,
+            presented: None,
         })
     }
 
-    fn send_call(&self, call: &FrozenOutboundCall) -> Sent {
+    fn send_call(&self, call: &FrozenOutboundCall, presented: &mut Option<EntityId>) -> Sent {
         let Ok(view) = FrozenToolCallView::read(call) else {
             return Sent::not_sent(OutboundFailureKind::InvalidRequest, None);
         };
@@ -205,23 +208,25 @@ impl ServedConnectorCallHost {
             sent = Some(exchange.run(Some(header)));
             Ok(())
         };
-        let _door = match (self.grant, self.credential, route.secret_ref.as_deref()) {
+        let door = match (self.grant, self.credential, route.secret_ref.as_deref()) {
             (Some(grant), _, _) => {
                 let target = SecretGrantTarget::Connector { name: route.name };
                 self.vault
                     .redeem_secret_grant_at_door(&grant, &target, &mut present)
-                    .map(drop)
+                    .map(|_| self.credential)
             }
             (None, Some(custody), _) => self
                 .vault
                 .inject_secret_record_at_door(&custody, &effector, &mut present)
-                .map(drop),
+                .map(|_| Some(custody)),
             (None, None, Some(secret_ref)) => self
                 .vault
-                .inject_secret_at_door(secret_ref, &effector, &mut present)
-                .map(drop),
+                .inject_secret_at_door_resolved(secret_ref, &effector, &mut present)
+                .map(|(custody, _)| Some(custody)),
             (None, None, None) => return exchange.run(None),
         };
+        // The record a door that presented its value resolved (FIX 5455).
+        *presented = door.ok().flatten();
         // Once the exchange ran, what the connector said is the delivery
         // fact, whatever the door reports after it.
         sent.unwrap_or_else(|| Sent::not_sent(OutboundFailureKind::TransportNotStarted, None))
@@ -272,7 +277,9 @@ impl OutboundResultSender for ServedConnectorCallHost {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundTransportResult {
         self.reply = None;
         self.awaiting = None;
-        let sent = self.send_call(call);
+        let mut presented = None;
+        let sent = self.send_call(call, &mut presented);
+        self.presented = presented;
         self.reply = sent.reply;
         self.awaiting = sent.awaiting;
         OutboundTransportResult {
@@ -305,6 +312,10 @@ impl ConnectorCallHost for ServedConnectorCallHost {
 
     fn bind_caller(&mut self, caller: Option<ConnectorCallCaller>) {
         self.caller = caller;
+    }
+
+    fn take_sent_custody(&mut self) -> Option<Vec<EntityId>> {
+        Some(self.presented.take().into_iter().collect())
     }
 
     fn take_awaiting_input(&mut self) -> Option<ConnectorAwaitingInput> {
