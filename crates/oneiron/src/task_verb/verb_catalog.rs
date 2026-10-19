@@ -159,6 +159,13 @@ pub enum AgentVerb {
     VaultPacksConnectorGrantsGet,
     VaultPacksConnectorGrantsPut,
     VaultPacksRemove,
+    VaultPacksSectionsPropose,
+    VaultPacksSectionsList,
+    VaultPacksSectionsGrant,
+    VaultPacksSectionsRevoke,
+    VaultPacksSectionsSuggest,
+    VaultPacksSectionsSuggestionsGet,
+    VaultPacksSectionsSuggestionsSet,
     VaultConnectorsSubscriptionsPut,
     VaultConnectorsSubscriptionsList,
     VaultConnectorsSubscriptionsRevoke,
@@ -938,6 +945,13 @@ impl AgentVerb {
         Self::VaultPacksConnectorGrantsGet,
         Self::VaultPacksConnectorGrantsPut,
         Self::VaultPacksRemove,
+        Self::VaultPacksSectionsPropose,
+        Self::VaultPacksSectionsList,
+        Self::VaultPacksSectionsGrant,
+        Self::VaultPacksSectionsRevoke,
+        Self::VaultPacksSectionsSuggest,
+        Self::VaultPacksSectionsSuggestionsGet,
+        Self::VaultPacksSectionsSuggestionsSet,
         Self::VaultConnectorsSubscriptionsPut,
         Self::VaultConnectorsSubscriptionsList,
         Self::VaultConnectorsSubscriptionsRevoke,
@@ -1720,6 +1734,13 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => "vault.packs.connector.grants.get",
             Self::VaultPacksConnectorGrantsPut => "vault.packs.connector.grants.put",
             Self::VaultPacksRemove => "vault.packs.remove",
+            Self::VaultPacksSectionsPropose => "vault.packs.sections.propose",
+            Self::VaultPacksSectionsList => "vault.packs.sections.list",
+            Self::VaultPacksSectionsGrant => "vault.packs.sections.grant",
+            Self::VaultPacksSectionsRevoke => "vault.packs.sections.revoke",
+            Self::VaultPacksSectionsSuggest => "vault.packs.sections.suggest",
+            Self::VaultPacksSectionsSuggestionsGet => "vault.packs.sections.suggestions.get",
+            Self::VaultPacksSectionsSuggestionsSet => "vault.packs.sections.suggestions.set",
             Self::VaultConnectorsSubscriptionsPut => "vault.connectors.subscriptions.put",
             Self::VaultConnectorsSubscriptionsList => "vault.connectors.subscriptions.list",
             Self::VaultConnectorsSubscriptionsRevoke => "vault.connectors.subscriptions.revoke",
@@ -2520,6 +2541,13 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsList
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsGet
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -3326,6 +3354,13 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsList
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsGet
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -4199,6 +4234,13 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsList
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsGet
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -4882,6 +4924,11 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorUpdate
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultPacksSectionsPropose
+                | Self::VaultPacksSectionsGrant
+                | Self::VaultPacksSectionsRevoke
+                | Self::VaultPacksSectionsSuggest
+                | Self::VaultPacksSectionsSuggestionsSet
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsRevoke
                 | Self::VaultPacksSetupPrepare
@@ -5456,6 +5503,13 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => &["spec"],
             Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
+            Self::VaultPacksSectionsPropose => &["spec"],
+            Self::VaultPacksSectionsList => &["spec"],
+            Self::VaultPacksSectionsGrant => &["spec"],
+            Self::VaultPacksSectionsRevoke => &["spec"],
+            Self::VaultPacksSectionsSuggest => &["spec"],
+            Self::VaultPacksSectionsSuggestionsGet => &["spec"],
+            Self::VaultPacksSectionsSuggestionsSet => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
             Self::VaultConnectorsSubscriptionsList => &["spec"],
             Self::VaultConnectorsSubscriptionsRevoke => &["spec"],
@@ -6236,6 +6290,13 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => &["spec"],
             Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
+            Self::VaultPacksSectionsPropose => &["spec"],
+            Self::VaultPacksSectionsList => &["spec"],
+            Self::VaultPacksSectionsGrant => &["spec"],
+            Self::VaultPacksSectionsRevoke => &["spec"],
+            Self::VaultPacksSectionsSuggest => &["spec"],
+            Self::VaultPacksSectionsSuggestionsGet => &["spec"],
+            Self::VaultPacksSectionsSuggestionsSet => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
             Self::VaultConnectorsSubscriptionsList => &["spec"],
             Self::VaultConnectorsSubscriptionsRevoke => &["spec"],
@@ -7318,6 +7379,27 @@ impl AgentVerb {
             }
             Self::VaultPacksRemove => {
                 "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."
+            }
+            Self::VaultPacksSectionsPropose => {
+                "The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing."
+            }
+            Self::VaultPacksSectionsList => {
+                "Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project."
+            }
+            Self::VaultPacksSectionsGrant => {
+                "The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent."
+            }
+            Self::VaultPacksSectionsRevoke => {
+                "The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild."
+            }
+            Self::VaultPacksSectionsSuggest => {
+                "Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal."
+            }
+            Self::VaultPacksSectionsSuggestionsGet => {
+                "The owner's plugin suggestion knob: whether workflow-pattern suggestion passes may run at all."
+            }
+            Self::VaultPacksSectionsSuggestionsSet => {
+                "The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted."
             }
             Self::VaultConnectorsSubscriptionsPut => {
                 "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."

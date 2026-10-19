@@ -1342,6 +1342,69 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_packs_sections_propose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.propose", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.grant", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.revoke", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_suggest(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.suggest", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_suggestions_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.suggestions.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_sections_suggestions_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.sections.suggestions.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_connectors_subscriptions_put(
         &self,
         input: serde_json::Value,

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 789 code-mode rows (767 host rows, 22 run rows), 2699 declarations.
-// Replies: 705 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 796 code-mode rows (774 host rows, 22 run rows), 2721 declarations.
+// Replies: 712 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 97; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -760,6 +760,28 @@ declare namespace Sdk {
   type ConnectorPackGrantRow = { tool: string; ceiling: DataClass; headers?: boolean };
   type ConnectorPackGrantsPutRequest = { basis: ConnectorPackBasis; endpoint: string; actor?: string | null; rows: ConnectorPackGrantRow[] };
   type PackRemoveRequest = { pack: string };
+  type SectionId = string;
+  type SectionManifestProvenance = { pack_id: string; skill_id: string; skill_version: string; content_hash_hex: string };
+  type SectionManifest = { section_id: SectionId; name: string; state_family: StateFamilyRef; verbs: SectionVerbRef[]; authority_lane: AuthorityLaneRef; budget_policy: BudgetPolicyRef; provenance: SectionManifestProvenance };
+  type SectionManifestEnvelope = { schema_version: number; manifest: SectionManifest };
+  type PluginSectionTargetInput = { kind: "existing_skill"; skill_ref: EntityId } | { kind: "hub_package"; hub_ref: HubRef; target_skill_ref: EntityId };
+  type PluginSectionProposeRequest = { manifest: SectionManifestEnvelope; target: PluginSectionTargetInput; turn_ref: string };
+  type PluginSectionProposal = { claim_ref: string; pending_ref: string; manifest_digest: string; section_id: string; manifest: SectionManifestEnvelope };
+  type PluginSectionListRequest = { limit?: number | null };
+  type PluginSectionPendingRow = { claim_ref: string; pack_id: string; section_id: string; label: string; origin: string; awaiting_owner_consent: boolean };
+  type PluginSectionAdmittedRow = { claim_ref: string; section_id: string; manifest: SectionManifestEnvelope };
+  type PluginSectionPackRow = { section_id: string; pack_name: string; source_id: string; content_hash: string; section: PackSection };
+  type PluginSectionsView = { pending: PluginSectionPendingRow[]; admitted: PluginSectionAdmittedRow[]; pack_sections: PluginSectionPackRow[]; rendered_pack_sections: string[] };
+  type PluginSectionGrantRequest = { claim_ref: string; review_id?: string | null };
+  type PluginSectionGrantState = "admitted" | "pending_activation";
+  type PluginSectionGrant = { claim_ref: string; state: PluginSectionGrantState; section_id?: string | null; skill_ref: string; settlement_receipt_ref?: string | null; manifest: SectionManifestEnvelope };
+  type PluginSectionRevokeRequest = { claim_ref?: string | null; section_id?: string | null };
+  type PluginSectionRevoked = { section_id?: string | null; claim_refs: string[]; revoked: number };
+  type PluginSectionSuggestRequest = { hub_ref: HubRef; run_id: string; digest_window: string; pattern_key: string; summary: string; evidence_refs: EntityId[]; observed_at: number };
+  type PluginSectionSuggestionState = "disabled" | "no_match" | "suppressed_duplicate" | "proposed";
+  type PluginSectionSuggestion = { state: PluginSectionSuggestionState; suggestion_key?: string | null; claim_ref?: string | null; pack_id?: string | null; section_id?: string | null; label?: string | null };
+  type PluginSuggestionsView = { enabled: boolean };
+  type PluginSuggestionsSetRequest = { enabled: boolean };
   type ChannelSubscriptionRequest = { agent: string; channel: string };
   type ChannelMessageSubscription = { subscription: string; connector_key: string; connector: string; agent: string; existing: boolean };
   type ChannelSubscriptionsRequest = { agent: string };
@@ -4015,6 +4037,24 @@ declare const vault: Sdk.VaultHost & {
     put(input: Sdk.PackPutRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
     /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
     remove(input: Sdk.PackRemoveRequest): Promise<Sdk.PackInstallReceipt | StoredResult>;
+    sections: {
+      /** The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent. */
+      grant(input: Sdk.PluginSectionGrantRequest): Promise<Sdk.PluginSectionGrant | StoredResult>;
+      /** Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project. */
+      list(input: Sdk.PluginSectionListRequest): Promise<Sdk.PluginSectionsView | StoredResult>;
+      /** The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing. */
+      propose(input: Sdk.PluginSectionProposeRequest): Promise<Sdk.PluginSectionProposal | StoredResult>;
+      /** The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild. */
+      revoke(input: Sdk.PluginSectionRevokeRequest): Promise<Sdk.PluginSectionRevoked | StoredResult>;
+      /** Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal. */
+      suggest(input: Sdk.PluginSectionSuggestRequest): Promise<Sdk.PluginSectionSuggestion | StoredResult>;
+      suggestions: {
+        /** The owner's plugin suggestion knob: whether workflow-pattern suggestion passes may run at all. */
+        get(input: Sdk.EmptyRequest): Promise<Sdk.PluginSuggestionsView | StoredResult>;
+        /** The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted. */
+        set(input: Sdk.PluginSuggestionsSetRequest): Promise<Sdk.PluginSuggestionsView | StoredResult>;
+      };
+    };
     setup: {
       /** The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here. */
       answer(input: Sdk.PackSetupAnswerRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;

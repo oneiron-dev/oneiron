@@ -39,6 +39,7 @@ pub mod consolidation;
 mod diary_read;
 mod dreamer_revert;
 mod people_verbs;
+mod plugin_sections;
 mod skill_authoring;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
@@ -170,6 +171,14 @@ pub use oneiron_contracts::memory::{
     MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MEMORY_CODE_WRONG_ROOT,
     MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult,
     MemoryWrongRoot,
+};
+pub use plugin_sections::{
+    PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest,
+    PluginSectionGrantState, PluginSectionListRequest, PluginSectionPackRow,
+    PluginSectionPendingRow, PluginSectionProposal, PluginSectionProposeRequest,
+    PluginSectionRevokeRequest, PluginSectionRevoked, PluginSectionSuggestRequest,
+    PluginSectionSuggestion, PluginSectionSuggestionState, PluginSectionTargetInput,
+    PluginSectionsView, PluginSuggestionsSetRequest, PluginSuggestionsView,
 };
 pub use people_verbs::{
     GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,

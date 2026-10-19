@@ -774,6 +774,46 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<PackRemoveRequest>(),
             ),
             (
+                "vault.packs.sections.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::PluginSectionProposeRequest,
+                >(),
+            ),
+            (
+                "vault.packs.sections.list",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::PluginSectionListRequest,
+                >(),
+            ),
+            (
+                "vault.packs.sections.grant",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::PluginSectionGrantRequest,
+                >(),
+            ),
+            (
+                "vault.packs.sections.revoke",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::PluginSectionRevokeRequest,
+                >(),
+            ),
+            (
+                "vault.packs.sections.suggest",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::PluginSectionSuggestRequest,
+                >(),
+            ),
+            (
+                "vault.packs.sections.suggestions.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.packs.sections.suggestions.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::PluginSuggestionsSetRequest,
+                >(),
+            ),
+            (
                 "vault.connectors.subscriptions.put",
                 crate::code_run::vault_read::request_schema::<ChannelSubscriptionRequest>(),
             ),
@@ -4345,6 +4385,13 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.packs.connector.update",
     "vault.packs.connector.grants.get",
     "vault.packs.connector.grants.put",
+    "vault.packs.sections.propose",
+    "vault.packs.sections.list",
+    "vault.packs.sections.grant",
+    "vault.packs.sections.revoke",
+    "vault.packs.sections.suggest",
+    "vault.packs.sections.suggestions.get",
+    "vault.packs.sections.suggestions.set",
     "vault.authority.history.export",
     "vault.authority.history.import",
     "vault.slim.policy",
@@ -4942,6 +4989,27 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.packs.connector.grants.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ConnectorPackGrants,
         >(),
+        "vault.packs.sections.propose" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::PluginSectionProposal>()
+        }
+        "vault.packs.sections.list" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::PluginSectionsView>()
+        }
+        "vault.packs.sections.grant" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::PluginSectionGrant>()
+        }
+        "vault.packs.sections.revoke" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::PluginSectionRevoked>()
+        }
+        "vault.packs.sections.suggest" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::PluginSectionSuggestion>()
+        }
+        "vault.packs.sections.suggestions.get" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::PluginSuggestionsView>()
+        }
+        "vault.packs.sections.suggestions.set" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::PluginSuggestionsView>()
+        }
         "vault.authority.history.export" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SignedAuthorityHistory,
         >(),
@@ -7072,6 +7140,55 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.packs.remove" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.sections.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.sections.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.sections.grant" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.sections.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.sections.suggest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.sections.suggestions.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.sections.suggestions.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -11759,6 +11876,27 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.remove" => {
             let _input: PackRemoveRequest = decode(value.clone())?;
         }
+        "vault.packs.sections.propose" => {
+            let _input: crate::memory::PluginSectionProposeRequest = decode(value.clone())?;
+        }
+        "vault.packs.sections.list" => {
+            let _input: crate::memory::PluginSectionListRequest = decode(value.clone())?;
+        }
+        "vault.packs.sections.grant" => {
+            let _input: crate::memory::PluginSectionGrantRequest = decode(value.clone())?;
+        }
+        "vault.packs.sections.revoke" => {
+            let _input: crate::memory::PluginSectionRevokeRequest = decode(value.clone())?;
+        }
+        "vault.packs.sections.suggest" => {
+            let _input: crate::memory::PluginSectionSuggestRequest = decode(value.clone())?;
+        }
+        "vault.packs.sections.suggestions.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.packs.sections.suggestions.set" => {
+            let _input: crate::memory::PluginSuggestionsSetRequest = decode(value.clone())?;
+        }
         "vault.connectors.subscriptions.put" => {
             let _input: ChannelSubscriptionRequest = decode(value.clone())?;
         }
@@ -14196,6 +14334,25 @@ pub fn invoke(
             encode(vault_packs_connector_grants_put(memory, decode(value)?)?)
         }
         "vault.packs.remove" => encode(vault_packs_remove(memory, decode(value)?)?),
+        "vault.packs.sections.propose" => {
+            encode(vault_packs_sections_propose(memory, decode(value)?)?)
+        }
+        "vault.packs.sections.list" => encode(vault_packs_sections_list(memory, decode(value)?)?),
+        "vault.packs.sections.grant" => encode(vault_packs_sections_grant(memory, decode(value)?)?),
+        "vault.packs.sections.revoke" => {
+            encode(vault_packs_sections_revoke(memory, decode(value)?)?)
+        }
+        "vault.packs.sections.suggest" => {
+            encode(vault_packs_sections_suggest(memory, decode(value)?)?)
+        }
+        "vault.packs.sections.suggestions.get" => encode(vault_packs_sections_suggestions_get(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.packs.sections.suggestions.set" => encode(vault_packs_sections_suggestions_set(
+            memory,
+            decode(value)?,
+        )?),
         "vault.connectors.subscriptions.put" => {
             encode(vault_connectors_subscriptions_put(memory, decode(value)?)?)
         }
@@ -16825,6 +16982,59 @@ pub fn vault_packs_remove(
     input: PackRemoveRequest,
 ) -> MemoryResult<crate::skill_hub::pack_catalog::PackInstallReceipt> {
     crate::task_verb::sdk::remove_pack_embedded(memory, input)
+}
+pub fn vault_packs_sections_propose(
+    memory: &Memory<'_>,
+    input: crate::memory::PluginSectionProposeRequest,
+) -> MemoryResult<crate::memory::PluginSectionProposal> {
+    memory.plugin_section_propose(&input)
+}
+pub fn vault_packs_sections_list(
+    memory: &Memory<'_>,
+    input: crate::memory::PluginSectionListRequest,
+) -> MemoryResult<crate::memory::PluginSectionsView> {
+    memory.plugin_sections_list(&input)
+}
+pub fn vault_packs_sections_grant(
+    memory: &Memory<'_>,
+    input: crate::memory::PluginSectionGrantRequest,
+) -> MemoryResult<crate::memory::PluginSectionGrant> {
+    memory.plugin_section_grant_as_owner(
+        &memory.embedded_owner("vault.packs.sections.grant")?,
+        &input,
+    )
+}
+pub fn vault_packs_sections_revoke(
+    memory: &Memory<'_>,
+    input: crate::memory::PluginSectionRevokeRequest,
+) -> MemoryResult<crate::memory::PluginSectionRevoked> {
+    memory.plugin_section_revoke_as_owner(
+        &memory.embedded_owner("vault.packs.sections.revoke")?,
+        &input,
+    )
+}
+pub fn vault_packs_sections_suggest(
+    memory: &Memory<'_>,
+    input: crate::memory::PluginSectionSuggestRequest,
+) -> MemoryResult<crate::memory::PluginSectionSuggestion> {
+    memory.plugin_section_suggest(&input)
+}
+pub fn vault_packs_sections_suggestions_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::memory::PluginSuggestionsView> {
+    memory.plugin_suggestions_as_owner(
+        &memory.embedded_owner("vault.packs.sections.suggestions.get")?,
+    )
+}
+pub fn vault_packs_sections_suggestions_set(
+    memory: &Memory<'_>,
+    input: crate::memory::PluginSuggestionsSetRequest,
+) -> MemoryResult<crate::memory::PluginSuggestionsView> {
+    memory.plugin_suggestions_set_as_owner(
+        &memory.embedded_owner("vault.packs.sections.suggestions.set")?,
+        &input,
+    )
 }
 pub fn vault_connectors_subscriptions_put(
     memory: &Memory<'_>,

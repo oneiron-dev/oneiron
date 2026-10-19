@@ -522,6 +522,27 @@ impl OneironClient {
                 "vault.packs.remove" => remote_agent_verb_output::<
                     oneiron::skill_hub::pack_catalog::PackInstallReceipt,
                 >(client, verb, &input),
+                "vault.packs.sections.propose" => remote_agent_verb_output::<
+                    oneiron::memory::PluginSectionProposal,
+                >(client, verb, &input),
+                "vault.packs.sections.list" => remote_agent_verb_output::<
+                    oneiron::memory::PluginSectionsView,
+                >(client, verb, &input),
+                "vault.packs.sections.grant" => remote_agent_verb_output::<
+                    oneiron::memory::PluginSectionGrant,
+                >(client, verb, &input),
+                "vault.packs.sections.revoke" => remote_agent_verb_output::<
+                    oneiron::memory::PluginSectionRevoked,
+                >(client, verb, &input),
+                "vault.packs.sections.suggest" => remote_agent_verb_output::<
+                    oneiron::memory::PluginSectionSuggestion,
+                >(client, verb, &input),
+                "vault.packs.sections.suggestions.get" => remote_agent_verb_output::<
+                    oneiron::memory::PluginSuggestionsView,
+                >(client, verb, &input),
+                "vault.packs.sections.suggestions.set" => remote_agent_verb_output::<
+                    oneiron::memory::PluginSuggestionsView,
+                >(client, verb, &input),
                 "vault.connectors.subscriptions.put" => remote_agent_verb_output::<
                     oneiron::connector_key::ChannelMessageSubscription,
                 >(client, verb, &input),
@@ -4334,6 +4355,90 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.packs.remove", value)
+    }
+    pub fn vault_packs_sections_propose(
+        &self,
+        input: &oneiron::memory::PluginSectionProposeRequest,
+    ) -> Result<oneiron::memory::PluginSectionProposal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.sections.propose", value)
+    }
+    pub fn vault_packs_sections_list(
+        &self,
+        input: &oneiron::memory::PluginSectionListRequest,
+    ) -> Result<oneiron::memory::PluginSectionsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.sections.list", value)
+    }
+    pub fn vault_packs_sections_grant(
+        &self,
+        input: &oneiron::memory::PluginSectionGrantRequest,
+    ) -> Result<oneiron::memory::PluginSectionGrant, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.sections.grant", value)
+    }
+    pub fn vault_packs_sections_revoke(
+        &self,
+        input: &oneiron::memory::PluginSectionRevokeRequest,
+    ) -> Result<oneiron::memory::PluginSectionRevoked, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.sections.revoke", value)
+    }
+    pub fn vault_packs_sections_suggest(
+        &self,
+        input: &oneiron::memory::PluginSectionSuggestRequest,
+    ) -> Result<oneiron::memory::PluginSectionSuggestion, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.sections.suggest", value)
+    }
+    pub fn vault_packs_sections_suggestions_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::memory::PluginSuggestionsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.sections.suggestions.get", value)
+    }
+    pub fn vault_packs_sections_suggestions_set(
+        &self,
+        input: &oneiron::memory::PluginSuggestionsSetRequest,
+    ) -> Result<oneiron::memory::PluginSuggestionsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.sections.suggestions.set", value)
     }
     pub fn vault_connectors_subscriptions_put(
         &self,
