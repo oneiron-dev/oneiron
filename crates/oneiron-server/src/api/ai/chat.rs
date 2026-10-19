@@ -69,7 +69,9 @@ use crate::voice_host::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 
 mod compaction;
 
-pub(crate) use compaction::{AnswerBreakpoint, ChatReuse, reuse_chat_breakpoint};
+pub(crate) use compaction::{
+    AnswerBreakpoint, ChatReuse, live_fork_unavailable, reuse_chat_breakpoint,
+};
 
 /// The seeded definition that speaks when a request names no agent.
 const DEFAULT_AGENT: &str = "sys.default";

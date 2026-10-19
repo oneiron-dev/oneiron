@@ -251,6 +251,11 @@ pub(super) fn open_stream(
         || Arc::new(AtomicBool::new(true)),
         |pending| Arc::clone(&pending.live),
     );
+    if let Err(reason) = live_attempt_headroom(run) {
+        live.store(false, Ordering::Release);
+        live_fork_unavailable(reason);
+        return today.ladder.stream(run, today.request, None);
+    }
     match admitted.ladder.stream(run, admitted.request, None) {
         Ok(stream) => Ok(first_or_today(stream, run.clone(), today, live)),
         Err(_) => {
@@ -258,6 +263,29 @@ pub(super) fn open_stream(
             today.ladder.stream(run, today.request, None)
         }
     }
+}
+
+/// `live_attempt_headroom`: whether the reply's budget line, as its run
+/// reads now, covers the kept rung's reservation and today's first one
+/// beside it, each the line's own per-call reservation the ladder admits a
+/// rung with. A line that cannot cover both skips the live attempt: today's
+/// call goes alone, as it always did, and the live fork is unavailable.
+fn live_attempt_headroom(run: &RunAdmission) -> Result<(), &'static str> {
+    let reserve = run.declaration().budget().reserve_units;
+    if run.read().remaining_units >= reserve.saturating_mul(2) {
+        Ok(())
+    } else {
+        Err("budget_headroom")
+    }
+}
+
+/// Reports a turn action's live fork unavailable, typed by `reason`: the
+/// action runs as it always did.
+pub(crate) fn live_fork_unavailable(reason: &'static str) {
+    tracing::info!(
+        reason,
+        "a turn action's live fork is unavailable; the action runs as it always did"
+    );
 }
 
 /// One leg of a reused prefix's stream.

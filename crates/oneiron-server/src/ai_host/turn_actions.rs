@@ -32,8 +32,8 @@ use super::payer_funding::room_launch_funding;
 use super::{AiHandle, CHAT_ROLE};
 use crate::api::ai::chat::{
     Answer, AnswerOpen, AnswerRefused, CONTINUE_INSTRUCTION, ChatReuse, TurnCredential, after_turn,
-    begin_answer, chat_request, keepalive_every, reuse_chat_breakpoint, text_message,
-    turn_generate_pre, witness_turn,
+    begin_answer, chat_request, keepalive_every, live_fork_unavailable, reuse_chat_breakpoint,
+    text_message, turn_generate_pre, witness_turn,
 };
 use crate::server::blocking;
 
@@ -192,10 +192,7 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
             (reused.live, Some(admitted), Some(reused.breakpoint))
         }
         ChatReuse::Unavailable(reason) => {
-            tracing::info!(
-                reason,
-                "a turn action's live fork is unavailable; the action runs as it always did"
-            );
+            live_fork_unavailable(reason);
             (admitted, None, None)
         }
         ChatReuse::Today => (admitted, None, None),
