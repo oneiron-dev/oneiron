@@ -1321,6 +1321,7 @@ fn media_rung(
         wire_model: model.model.clone(),
         prompt: None,
         offer: ServedOffer {
+            endpoint: super::OfferEndpoint::configured(binding.locality),
             binding,
             backend: Arc::new(NoChat),
         },

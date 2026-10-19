@@ -30,6 +30,7 @@ use std::time::Duration;
 use oneiron::agent_def::birth_under_inherited_list;
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use oneiron::claim::CallerLocality;
+use oneiron::settings::ReadDestination;
 use oneiron::code_run::{
     AgentVerbDoor, ClaimOutcome, DEFAULT_READER_WINDOW_TOKENS, HostSelfDispatcher, ReaderJob,
     ReaderJobKind, ReaderJobRunner, ReaderJobWake, ReaderJobs, ReaderRunEnd, ReaderSpend,
@@ -77,9 +78,10 @@ const SUMMARY_PURPOSE_NAME: &str = "code-reader-summary";
 pub(crate) const READER_CHILD_READ_ONLY: &str = "reader_child_read_only";
 
 /// The seats hosts lend their runs to spawn readers under, and where each
-/// parent run's caller sits, as its host noted it at the run's last entry.
+/// parent run's caller's rows go, as its host noted it at the run's last
+/// entry: its locality, with the machine its connection proved (FIX 4937).
 pub(crate) struct ReaderSeats {
-    callers: Mutex<HashMap<EntityId, (CallerLocality, u64)>>,
+    callers: Mutex<HashMap<EntityId, (ReadDestination, u64)>>,
     /// The memory one running child may hold: its run's memory share over
     /// the children one parent runs at once.
     child_memory_bytes: u64,
@@ -106,11 +108,11 @@ impl ReaderSeats {
         &self,
         run: EntityId,
         scope: Option<SpendScopeId>,
-        caller: CallerLocality,
+        caller: impl Into<ReadDestination>,
         window_tokens: Option<u64>,
     ) -> SpawnHostSeat {
         let now = unix_millis_now();
-        lock(&self.callers).insert(run, (caller, now));
+        lock(&self.callers).insert(run, (caller.into(), now));
         SpawnHostSeat {
             spend: ReaderSpend::for_run_scope(scope),
             deadline: RunDeadline::with_default_reserve(
@@ -128,12 +130,14 @@ impl ReaderSeats {
         }
     }
 
-    /// Where `parent`'s caller sits: as its host last noted it, else off
-    /// this device, the rule that withholds the most.
-    fn caller(&self, parent: EntityId) -> CallerLocality {
-        lock(&self.callers)
-            .get(&parent)
-            .map_or(CallerLocality::OffDevice, |(caller, _)| *caller)
+    /// Where `parent`'s caller's rows go: as its host last noted it, else a
+    /// destination nobody proved, the rule that withholds the most. A child
+    /// gets a copy of that destination, never its parent's credential.
+    fn caller(&self, parent: EntityId) -> ReadDestination {
+        lock(&self.callers).get(&parent).map_or_else(
+            || CallerLocality::OffDevice.into(),
+            |(caller, _)| caller.clone(),
+        )
     }
 
     /// Forgets every parent last noted more than two windows before `now`.

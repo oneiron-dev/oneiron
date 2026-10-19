@@ -32,6 +32,7 @@ use oneiron::memory::{
     MemoryResult, ProducerRows, RecallEffort, complete_with_home,
 };
 use oneiron::retrieval_depth::RecallQueryVectors;
+use oneiron::settings::ReadDestination;
 use oneiron::task_verb::sdk::{RecallDoor, RecallRequest};
 use oneiron::{EdgeActorClass, EntityId};
 
@@ -279,13 +280,15 @@ impl SyncServer {
     /// without naming it (a reaction claim a line counts) as recall read it,
     /// for a door that judges the pack again before it leaves this device
     /// (DEC-0005). A pack cut at its deadline comes with the rows read by then.
-    /// It asks no home: an opened device's pack says it answered alone.
+    /// It asks no home: an opened device's pack says it answered alone. Its
+    /// reads go to `destination` (FIX 4937): a locality alone is a
+    /// destination nobody proved, as before.
     pub(crate) async fn recall_off_runtime_listing(
         self: &Arc<Self>,
         actor: EntityId,
         class: EdgeActorClass,
         proof: Option<VerifiedSlip>,
-        locality: CallerLocality,
+        destination: impl Into<ReadDestination>,
         room: Option<EntityId>,
         input: RecallRequest,
     ) -> (MemoryResult<MemoryPack>, Vec<EntityId>) {
@@ -293,7 +296,7 @@ impl SyncServer {
             actor,
             class,
             proof,
-            locality,
+            destination,
             room,
             input,
             HomeRecallCaller::none(),
@@ -320,11 +323,12 @@ impl SyncServer {
         actor: EntityId,
         class: EdgeActorClass,
         proof: Option<VerifiedSlip>,
-        locality: CallerLocality,
+        destination: impl Into<ReadDestination>,
         room: Option<EntityId>,
         input: RecallRequest,
         home: HomeRecallCaller,
     ) -> (MemoryResult<MemoryPack>, Vec<EntityId>) {
+        let destination: ReadDestination = destination.into();
         let producers = Arc::new(ProducerRows::default());
         let listing = Arc::clone(&producers);
         let pack: MemoryResult<MemoryPack> = async move {
@@ -343,7 +347,7 @@ impl SyncServer {
             let task = tokio::task::spawn_blocking(move || {
                 let publish = move |pack| publish.put(pack);
                 let memory = reader(&server.vault, actor, class, proof.as_ref())
-                    .at(locality)
+                    .for_destination(&destination)
                     .listing_producers(&listing);
                 let hyde = server.hyde_host.expander(
                     &memory,

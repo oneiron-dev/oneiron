@@ -35,13 +35,13 @@ pub(crate) async fn vault_personas_preview(
     input: PersonaSnapshotPreviewRequest,
 ) -> MaybeListed<PersonaSnapshotPreview> {
     const VERB: &str = "vault.personas.preview";
-    let locality = auth.locality();
+    let destination = auth.destination();
     as_person_naming(
         server,
         VERB,
         owner_proof(auth, server, VERB),
         move |server, owner| {
-            sdk::preview_persona_snapshot_as(server.vault(), &owner, input, locality)
+            sdk::preview_persona_snapshot_as(server.vault(), &owner, input, destination)
         },
         // The compile reads claims as well as its subject. The owner's existing
         // persona surface owns that projection; it is not a one-row listing.
@@ -56,13 +56,13 @@ pub(crate) async fn vault_personas_export(
     input: PersonaSnapshotCopyRequest,
 ) -> MaybeListed<PersonaSnapshotExportedCopy> {
     const VERB: &str = "vault.personas.export";
-    let locality = auth.locality();
+    let destination = auth.destination();
     as_person_naming(
         server,
         VERB,
         owner_proof(auth, server, VERB),
         move |server, owner| {
-            sdk::export_persona_snapshot_copy_as(server.vault(), &owner, input, locality)
+            sdk::export_persona_snapshot_copy_as(server.vault(), &owner, input, destination)
         },
         |_| None,
     )
@@ -75,13 +75,13 @@ pub(crate) async fn vault_personas_edit(
     input: PersonaSnapshotCopyEditRequest,
 ) -> MaybeListed<PersonaSnapshotExportedCopy> {
     const VERB: &str = "vault.personas.edit";
-    let locality = auth.locality();
+    let destination = auth.destination();
     as_person_naming(
         server,
         VERB,
         owner_proof(auth, server, VERB),
         move |server, owner| {
-            sdk::edit_persona_snapshot_copy_as(server.vault(), &owner, input, locality)
+            sdk::edit_persona_snapshot_copy_as(server.vault(), &owner, input, destination)
         },
         |_| None,
     )

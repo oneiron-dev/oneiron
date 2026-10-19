@@ -187,7 +187,7 @@ pub(crate) async fn execute_mcp_read_result(
 ) -> Result<Value, McpGatewayError> {
     let run_id = crate::mcp::mcp_code_run_id(&args.run_ref, actor);
     let facet = args.facet.and_then(crate::mcp::McpResultFacet::facet);
-    let locality = actor.locality();
+    let destination = actor.destination();
     let vault = Arc::clone(&server.vault);
     let reference = args.reference.clone();
     let input = Value::Object(args.input.clone().unwrap_or_default());
@@ -197,11 +197,11 @@ pub(crate) async fn execute_mcp_read_result(
         let mut served = None;
         let reply = vault.read_code_run_result(run_id, &reference, facet, input, |rows| {
             served = Some(rows.map(<[oneiron::EntityId]>::to_vec));
-            if locality == oneiron::claim::CallerLocality::OnDevice {
+            if !destination.is_off_device() {
                 return Ok(false);
             }
             rows.map_or(Ok(true), |rows| {
-                crate::device_local::withholds_retained(&vault, locality, rows, &[])
+                crate::device_local::withholds_retained(&vault, &destination, rows, &[])
             })
         });
         reply.map(|reply| (reply, served))

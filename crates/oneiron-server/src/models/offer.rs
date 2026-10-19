@@ -2,20 +2,73 @@
 //! route it goes out on, who pays for it and where its key sits.
 use std::sync::Arc;
 
-use oneiron::ModelId;
+use oneiron::authority::PeerMachine;
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::media::AiOperation;
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferBinding, OfferRoute, PaidConnector};
+use oneiron::settings::ReadDestination;
+use oneiron::{ModelId, ModelLocality};
+use oneiron_llm_own_server::MeshPeerProof;
 
 use crate::config::models::{ProviderConfig, ProviderKind};
 
 /// One model at one provider, as this server serves it: the offer a run
-/// admits the call under, and the single-route backend that offer's gate
-/// wraps.
+/// admits the call under, the single-route backend that offer's gate wraps,
+/// and where that backend sends the call.
 #[derive(Clone)]
 pub struct ServedOffer {
     pub binding: OfferBinding,
     pub backend: Arc<dyn SingleRouteBackend>,
+    pub endpoint: OfferEndpoint,
+}
+
+impl ServedOffer {
+    /// Where a call to this offer goes now (FIX 4938): the model is a
+    /// recipient of its own, so a judge reads the world settings for this
+    /// destination, never for the requester's proof.
+    #[must_use]
+    pub fn destination(&self) -> ReadDestination {
+        self.endpoint.destination()
+    }
+}
+
+/// Where a served offer's backend sends its calls (FIX 4938, CALLS `FIX 4938
+/// endpoint carrier`), held at run time beside that backend and never stored
+/// or sent as authority. Only an authenticated mesh handshake proves a
+/// machine; a configured or injected remote is a destination nobody proved,
+/// as it always was.
+#[derive(Clone)]
+pub enum OfferEndpoint {
+    /// A model on this device: nothing leaves it.
+    OnDevice,
+    /// A remote no handshake proves.
+    Unproved,
+    /// One of the owner's other nodes, as the last authenticated handshake
+    /// with it proved it; unproved until one did.
+    Mesh(MeshPeerProof),
+}
+
+impl OfferEndpoint {
+    /// A configured offer's endpoint: on this device for a model its
+    /// binding places here, else a destination nobody proved.
+    pub(super) fn configured(locality: ModelLocality) -> Self {
+        if locality == ModelLocality::OnDevice {
+            Self::OnDevice
+        } else {
+            Self::Unproved
+        }
+    }
+
+    /// The destination a call goes to: each judge revalidates a mesh proof
+    /// in its own snapshot.
+    #[must_use]
+    pub fn destination(&self) -> ReadDestination {
+        match self {
+            Self::OnDevice => ReadDestination::on_device(),
+            Self::Unproved => ReadDestination::toward(PeerMachine::Unknown),
+            Self::Mesh(proof) => ReadDestination::toward(proof.peer()),
+        }
+    }
 }
 
 /// The offer `[models]` binds for `model` on `provider`. Unless the host
