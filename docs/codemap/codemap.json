@@ -66127,11 +66127,13 @@
       "BrowserAnswer",
       "DesktopAnswer",
       "TakeoverRecord",
-      "WindowSwitch"
+      "WindowSwitch",
+      "WindowSwitchCause"
      ],
      "path": "src/answer.rs",
      "purpose": "What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and…",
      "surface": {
+      "enum": 1,
       "fn": 2,
       "struct": 4
      }
