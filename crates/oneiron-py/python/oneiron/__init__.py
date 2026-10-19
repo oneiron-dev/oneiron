@@ -1520,6 +1520,9 @@ class Oneiron:
         def disarm(self, spec):
             """Disarms one of the caller's own armed turn programs; true when it was armed."""
             return json.loads(_translate(lambda: self._client.vault_turn_programs_disarm(json.dumps(spec))))
+        def admission(self, spec):
+            """Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential."""
+            return json.loads(_translate(lambda: self._client.vault_turn_programs_admission(json.dumps(spec))))
     class _VaultWeaveVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3821,6 +3824,12 @@ class Oneiron:
         def checkpoint(self, spec):
             """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
             return json.loads(_translate(lambda: self._client.vault_runs_checkpoint(json.dumps(spec))))
+        def program(self, spec):
+            """Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it."""
+            return json.loads(_translate(lambda: self._client.vault_runs_program(json.dumps(spec))))
+        def program_step(self, spec):
+            """Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body."""
+            return json.loads(_translate(lambda: self._client.vault_runs_program_step(json.dumps(spec))))
         def review(self, spec):
             """The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."""
             return json.loads(_translate(lambda: self._client.vault_runs_review(json.dumps(spec))))

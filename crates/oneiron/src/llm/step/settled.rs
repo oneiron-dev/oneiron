@@ -108,6 +108,73 @@ pub fn settled_step_as_owner(
     }))
 }
 
+/// One settled step as a caller's own lane reads it (DOOR-141 PR3a).
+pub(crate) enum CallerSettledStep {
+    /// The terminal claim, and the response artifact it pins, read on the
+    /// caller's lane: the step as stored.
+    Readable(Box<SettledStepView>),
+    /// The terminal claim stands; it, or the artifact it pins, does not read
+    /// on the caller's lane.
+    Withheld { claim: EntityId },
+}
+
+/// Reads one settled step of `attempt` for `memory`'s own caller, with no
+/// owner proof (DOOR-141 PR3a): the terminal claim and any response artifact
+/// it pins must read on the caller's own lane and locality, each listed as a
+/// producer, or the step reads as withheld and no response is loaded. `None`
+/// when no terminal claim records exactly this step: never a response
+/// synthesized from a progression row or a queue row. Who may ask is the
+/// calling read's own judgment; this only projects.
+pub(crate) fn settled_step_for_caller(
+    memory: &Memory<'_>,
+    attempt: AttemptId,
+    step_hash: [u8; 32],
+) -> MemoryResult<Option<CallerSettledStep>> {
+    let vault = memory.vault();
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    let Some(claim_id) = step_index_lookup_in_txn(vault, &txn, attempt, &step_hash)? else {
+        return Ok(None);
+    };
+    let Some(body) = vault.get_claim_in_txn(&txn, &claim_id)? else {
+        return Ok(None);
+    };
+    let Some((bound_attempt, bound_hash, model)) = terminal_step_identity(&body) else {
+        return Ok(None);
+    };
+    if bound_attempt != attempt || bound_hash != step_hash {
+        return Ok(None);
+    }
+    let decoded = decode_step_claim_value(&body.value)?;
+    // The lane opens its own snapshots: this one closes first.
+    drop(txn);
+    let mut sources = vec![claim_id];
+    sources.extend(response_artifact(&decoded));
+    for source in &sources {
+        if memory
+            .get_entity_tolerant(&source.to_hex())?
+            .value
+            .is_none()
+        {
+            return Ok(Some(CallerSettledStep::Withheld { claim: claim_id }));
+        }
+    }
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    let response = load_step_response_in_txn(vault, &txn, &decoded).map_err(step_error)?;
+    drop(txn);
+    Ok(Some(CallerSettledStep::Readable(Box::new(
+        SettledStepView {
+            job_ref: bytes_to_hex_lower(attempt.as_bytes()),
+            run_id: recorded_run_id(&body),
+            claim_ref: claim_id.to_hex(),
+            step_hash: bytes_to_hex_lower(&step_hash),
+            model,
+            purpose: decoded.purpose,
+            params_hash: decoded.params_hash,
+            response,
+        },
+    ))))
+}
+
 /// One page of `attempt`'s committed steps in the caller's snapshot: its
 /// memo-index rows in step-hash order from `from_step` (64-hex, inclusive),
 /// each kept only while its claim is still the runner's finished record of

@@ -8338,6 +8338,30 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_turn_programs_admission(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.turn_programs.admission")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.turn_programs.admission", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_runs_program(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.runs.program")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.runs.program", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_runs_program_step(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.runs.program_step")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.runs.program_step", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_consolidation_home_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.consolidation.home.get")?;
         let output = py

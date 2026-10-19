@@ -962,6 +962,9 @@ vaultConsolidationStatus(input: unknown): unknown
 vaultConsolidationWakeStatus(input: unknown): unknown
 vaultRunsStep(input: unknown): unknown
 vaultRunsCheckpoint(input: unknown): unknown
+vaultTurnProgramsAdmission(input: unknown): unknown
+vaultRunsProgram(input: unknown): unknown
+vaultRunsProgramStep(input: unknown): unknown
 vaultConsolidationHomeGet(input: unknown): unknown
 vaultConsolidationHomePick(input: unknown): unknown
 vaultConsolidationLineage(input: unknown): unknown

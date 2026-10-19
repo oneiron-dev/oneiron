@@ -5157,6 +5157,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.turn_programs.admission",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::TurnProgramAdmissionRequest,
+                >(),
+            ),
+            (
+                "vault.runs.program",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::ProgramRunRequest,
+                >(),
+            ),
+            (
+                "vault.runs.program_step",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::SettledProgramStepRequest,
+                >(),
+            ),
+            (
                 "vault.consolidation.home.get",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -6619,6 +6637,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.consolidation.wake.status",
     "vault.runs.step",
     "vault.runs.checkpoint",
+    "vault.turn_programs.admission",
+    "vault.runs.program",
+    "vault.runs.program_step",
     "vault.consolidation.home.get",
     "vault.consolidation.home.pick",
     "vault.consolidation.lineage",
@@ -8576,6 +8597,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.runs.checkpoint" => crate::code_run::vault_read::request_schema::<
             Option<crate::engine_executor::checkpoint_read::CheckpointView>,
+        >(),
+        "vault.turn_programs.admission" => crate::code_run::vault_read::request_schema::<
+            Option<crate::dreamer_runner::TurnProgramAdmissionView>,
+        >(),
+        "vault.runs.program" => crate::code_run::vault_read::request_schema::<
+            Option<crate::dreamer_runner::ProgramRunView>,
+        >(),
+        "vault.runs.program_step" => crate::code_run::vault_read::request_schema::<
+            Option<crate::dreamer_runner::SettledProgramStepView>,
         >(),
         "vault.consolidation.home.get" => crate::code_run::vault_read::request_schema::<
             crate::dreamer_runner::ConsolidationHomeView,
@@ -15521,6 +15551,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.turn_programs.admission" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runs.program" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runs.program_step" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.consolidation.home.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19623,6 +19674,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::engine_executor::checkpoint_read::CheckpointReadRequest =
                 decode(value.clone())?;
         }
+        "vault.turn_programs.admission" => {
+            let _input: crate::dreamer_runner::TurnProgramAdmissionRequest = decode(value.clone())?;
+        }
+        "vault.runs.program" => {
+            let _input: crate::dreamer_runner::ProgramRunRequest = decode(value.clone())?;
+        }
+        "vault.runs.program_step" => {
+            let _input: crate::dreamer_runner::SettledProgramStepRequest = decode(value.clone())?;
+        }
         "vault.consolidation.home.get" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -21926,6 +21986,11 @@ pub fn invoke(
         }
         "vault.runs.step" => encode(vault_runs_step(memory, decode(value)?)?),
         "vault.runs.checkpoint" => encode(vault_runs_checkpoint(memory, decode(value)?)?),
+        "vault.turn_programs.admission" => {
+            encode(vault_turn_programs_admission(memory, decode(value)?)?)
+        }
+        "vault.runs.program" => encode(vault_runs_program(memory, decode(value)?)?),
+        "vault.runs.program_step" => encode(vault_runs_program_step(memory, decode(value)?)?),
         "vault.consolidation.home.get" => {
             encode(vault_consolidation_home_get(memory, decode(value)?)?)
         }
@@ -30351,6 +30416,24 @@ pub fn vault_runs_checkpoint(
         &memory.embedded_owner("vault.runs.checkpoint")?,
         &input,
     )
+}
+pub fn vault_turn_programs_admission(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::TurnProgramAdmissionRequest,
+) -> MemoryResult<Option<crate::dreamer_runner::TurnProgramAdmissionView>> {
+    crate::dreamer_runner::turn_program_admission(memory, &input)
+}
+pub fn vault_runs_program(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::ProgramRunRequest,
+) -> MemoryResult<Option<crate::dreamer_runner::ProgramRunView>> {
+    crate::dreamer_runner::program_run(memory, &input)
+}
+pub fn vault_runs_program_step(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::SettledProgramStepRequest,
+) -> MemoryResult<Option<crate::dreamer_runner::SettledProgramStepView>> {
+    crate::dreamer_runner::settled_program_step(memory, &input)
 }
 pub fn vault_consolidation_home_get(
     memory: &Memory<'_>,

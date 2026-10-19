@@ -830,6 +830,8 @@ export class Oneiron {
       arm: (input: Facade.ArmTurnProgram): Facade.TurnProgramRegistration => this.#call(() => this.#client.vaultTurnProgramsArm(input) as Facade.TurnProgramRegistration),
       /** Disarms one of the caller's own armed turn programs; true when it was armed. */
       disarm: (input: Facade.DisarmTurnProgram): boolean => this.#call(() => this.#client.vaultTurnProgramsDisarm(input) as boolean),
+      /** Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential. */
+      admission: (input: Facade.TurnProgramAdmissionRequest): Facade.TurnProgramAdmissionView | null => this.#call(() => this.#client.vaultTurnProgramsAdmission(input) as Facade.TurnProgramAdmissionView | null),
     },
     weave: {
       /** The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role. */
@@ -2145,6 +2147,10 @@ export class Oneiron {
       step: (input: Facade.SettledStepRequest): Facade.SettledStepView | null => this.#call(() => this.#client.vaultRunsStep(input) as Facade.SettledStepView | null),
       /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
       checkpoint: (input: Facade.CheckpointReadRequest): Facade.CheckpointView | null => this.#call(() => this.#client.vaultRunsCheckpoint(input) as Facade.CheckpointView | null),
+      /** Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it. */
+      program: (input: Facade.ProgramRunRequest): Facade.ProgramRunView | null => this.#call(() => this.#client.vaultRunsProgram(input) as Facade.ProgramRunView | null),
+      /** Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body. */
+      program_step: (input: Facade.SettledProgramStepRequest): Facade.SettledProgramStepView | null => this.#call(() => this.#client.vaultRunsProgramStep(input) as Facade.SettledProgramStepView | null),
       /** The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer. */
       review: (input: Facade.RunReviewRequest): Facade.RunReview => this.#call(() => this.#client.vaultRunsReview(input) as Facade.RunReview),
       /** The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle. */

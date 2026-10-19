@@ -15622,6 +15622,54 @@
       "openapi": true
     },
     {
+      "name": "vault.turn_programs.admission",
+      "description": "Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential.",
+      "input": "crate::dreamer_runner::TurnProgramAdmissionRequest",
+      "output": "Option<crate::dreamer_runner::TurnProgramAdmissionView>",
+      "call": "crate::dreamer_runner::turn_program_admission(memory, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.runs.program",
+      "description": "Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it.",
+      "input": "crate::dreamer_runner::ProgramRunRequest",
+      "output": "Option<crate::dreamer_runner::ProgramRunView>",
+      "call": "crate::dreamer_runner::program_run(memory, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.runs.program_step",
+      "description": "Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body.",
+      "input": "crate::dreamer_runner::SettledProgramStepRequest",
+      "output": "Option<crate::dreamer_runner::SettledProgramStepView>",
+      "call": "crate::dreamer_runner::settled_program_step(memory, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.consolidation.home.get",
       "description": "The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything.",
       "input": "EmptyRequest",

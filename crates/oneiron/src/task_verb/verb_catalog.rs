@@ -954,6 +954,9 @@ pub enum AgentVerb {
     VaultConsolidationWakeStatus,
     VaultRunsStep,
     VaultRunsCheckpoint,
+    VaultTurnProgramsAdmission,
+    VaultRunsProgram,
+    VaultRunsProgramStep,
     VaultConsolidationHomeGet,
     VaultConsolidationHomePick,
     VaultConsolidationLineage,
@@ -2045,6 +2048,9 @@ impl AgentVerb {
         Self::VaultConsolidationWakeStatus,
         Self::VaultRunsStep,
         Self::VaultRunsCheckpoint,
+        Self::VaultTurnProgramsAdmission,
+        Self::VaultRunsProgram,
+        Self::VaultRunsProgramStep,
         Self::VaultConsolidationHomeGet,
         Self::VaultConsolidationHomePick,
         Self::VaultConsolidationLineage,
@@ -3161,6 +3167,9 @@ impl AgentVerb {
             Self::VaultConsolidationWakeStatus => "vault.consolidation.wake.status",
             Self::VaultRunsStep => "vault.runs.step",
             Self::VaultRunsCheckpoint => "vault.runs.checkpoint",
+            Self::VaultTurnProgramsAdmission => "vault.turn_programs.admission",
+            Self::VaultRunsProgram => "vault.runs.program",
+            Self::VaultRunsProgramStep => "vault.runs.program_step",
             Self::VaultConsolidationHomeGet => "vault.consolidation.home.get",
             Self::VaultConsolidationHomePick => "vault.consolidation.home.pick",
             Self::VaultConsolidationLineage => "vault.consolidation.lineage",
@@ -4238,6 +4247,9 @@ impl AgentVerb {
                 | Self::VaultConsolidationWakeStatus
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
+                | Self::VaultTurnProgramsAdmission
+                | Self::VaultRunsProgram
+                | Self::VaultRunsProgramStep
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
@@ -5356,6 +5368,9 @@ impl AgentVerb {
                 | Self::VaultConsolidationWakeStatus
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
+                | Self::VaultTurnProgramsAdmission
+                | Self::VaultRunsProgram
+                | Self::VaultRunsProgramStep
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
@@ -6563,6 +6578,9 @@ impl AgentVerb {
                 | Self::VaultConsolidationWakeStatus
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
+                | Self::VaultTurnProgramsAdmission
+                | Self::VaultRunsProgram
+                | Self::VaultRunsProgramStep
                 | Self::VaultConsolidationHomeGet
                 | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
@@ -8330,6 +8348,9 @@ impl AgentVerb {
             Self::VaultConsolidationWakeStatus => &["spec"],
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
+            Self::VaultTurnProgramsAdmission => &["spec"],
+            Self::VaultRunsProgram => &["spec"],
+            Self::VaultRunsProgramStep => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
@@ -9422,6 +9443,9 @@ impl AgentVerb {
             Self::VaultConsolidationWakeStatus => &["spec"],
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
+            Self::VaultTurnProgramsAdmission => &["spec"],
+            Self::VaultRunsProgram => &["spec"],
+            Self::VaultRunsProgramStep => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
             Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
@@ -12324,6 +12348,15 @@ impl AgentVerb {
             }
             Self::VaultRunsCheckpoint => {
                 "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."
+            }
+            Self::VaultTurnProgramsAdmission => {
+                "Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential."
+            }
+            Self::VaultRunsProgram => {
+                "Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it."
+            }
+            Self::VaultRunsProgramStep => {
+                "Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body."
             }
             Self::VaultConsolidationHomeGet => {
                 "The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything."

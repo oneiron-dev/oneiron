@@ -8344,6 +8344,30 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_turn_programs_admission(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.turn_programs.admission", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_runs_program(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.runs.program", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_runs_program_step(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.runs.program_step", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_consolidation_home_get(
         &self,
         input: serde_json::Value,
