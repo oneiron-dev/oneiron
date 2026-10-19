@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use oneiron::EntityId;
+use oneiron::agent_dispatch::budget_doors::UsageEventOrigin;
 use oneiron::llm::run_admission::{Payer, PayerAccount, PermitFacts, RunEvent, RunReceipt};
 
 use crate::usage::{
@@ -245,7 +246,11 @@ impl VaultUsage {
                         settlement_refused: error.is_some(),
                     }),
                 };
-                if self.ledger.record_event(event, source).is_err() {
+                if self
+                    .ledger
+                    .record_event(event, source, UsageEventOrigin::Engine)
+                    .is_err()
+                {
                     tracing::error!("served run usage could not be persisted");
                 }
             }

@@ -151,7 +151,8 @@ impl UsageCostInput {
         Ok(money)
     }
 }
-/// Attribution for one admitted physical call, supplied by the serving host.
+/// Attribution for one admitted physical call: the serving host's own on a
+/// record its engine wrote, the poster's on a posted one (FIX 5724).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageRun {
@@ -177,9 +178,10 @@ pub struct UsageRun {
     /// connector call on an unbound run.
     #[serde(default)]
     pub purpose: Option<String>,
-    /// The free-time cycle, item and spend scope a bound run's call served,
-    /// as the engine stamped them before the run began; `None` on every
-    /// unbound run.
+    /// The free-time cycle, item and spend scope a bound run's call served:
+    /// as the engine stamped them before the run began on a record it wrote,
+    /// as the poster stamped them on a posted one; `None` on every unbound
+    /// run.
     #[serde(default)]
     pub cycle: Option<String>,
     #[serde(default)]

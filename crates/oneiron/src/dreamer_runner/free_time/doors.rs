@@ -197,8 +197,9 @@ pub struct FreeTimeLabelSpend {
     /// The label its calls carried; `None` for a record that named none.
     pub purpose: Option<String>,
     /// Each settled physical call, oldest first, with its run, item and
-    /// scope refs, its reserved and settled quantities and unit, and its
-    /// stamped provider cost when it was priced. An unpriced call has no
+    /// scope refs, its reserved and settled quantities and unit, its
+    /// stamped provider cost when it was priced, and its `source`: `engine`
+    /// or `posted`, the path that wrote its record. An unpriced call has no
     /// cost; it is never zero.
     pub settlements: Vec<RunRungSettlement>,
 }

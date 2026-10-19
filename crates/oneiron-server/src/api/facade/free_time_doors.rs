@@ -5,10 +5,11 @@
 //! doors. Each takes the vault owner's proof as `/v1/owner` takes it, and
 //! each engine door rechecks it in its own read or write.
 //!
-//! A cycle's sheet joins this server's trusted usage records: the settled
-//! calls whose run the engine bound to that cycle before it began, matched
-//! on the stamp, never on a run's name. No door here reads a response, a
-//! prompt or the agent's diary.
+//! A cycle's sheet joins this server's usage records: the settled calls
+//! stamped with that cycle, matched on the stamp, never on a run's name,
+//! whether the engine stamped the run before it began or a poster stamped
+//! the event. Each entry's `source` says which (FIX 5724); both count
+//! alike. No door here reads a response, a prompt or the agent's diary.
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::{
