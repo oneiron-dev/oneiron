@@ -73,8 +73,8 @@ const SEALED_BUNDLE_NONSTALE_REFUSAL_RETRIES_PER_SLOT: usize = 0;
 /// What a slot does when no capsule of the newest generation opens here, as on
 /// a machine added since (CALLS: SEALED_BUNDLE_NO_CAPSULE_ACTION).
 enum NoCapsuleAction {
-    /// The slot is finished, nothing taken or uploaded and no error: a later
-    /// slot takes a generation sealed to this machine (FIX 4274).
+    /// The slot is finished and the relay fails, nothing taken or uploaded (FIX
+    /// 4410): a later slot takes a generation sealed to this machine (FIX 4274).
     DeferSlot,
 }
 
@@ -375,8 +375,8 @@ impl SlotRelay<'_> {
     /// home refused the upload on an unchanged parent past
     /// [`SEALED_BUNDLE_NONSTALE_REFUSAL_RETRIES_PER_SLOT`]; a machine waiting
     /// for the turn, or whose upload did not reach the home, tries again next
-    /// tick. A take no capsule here opens is no error
-    /// ([`SEALED_BUNDLE_NO_CAPSULE_ACTION`]).
+    /// tick. A take no capsule here opens fails, after a publisher gives up its
+    /// turn ([`SEALED_BUNDLE_NO_CAPSULE_ACTION`]).
     async fn run(
         &self,
         rpc: &mut ResidenceRpc,
@@ -425,7 +425,7 @@ impl SlotRelay<'_> {
                                 if self.publisher {
                                     let _ = turn::ask_turn(rpc, true).await;
                                 }
-                                return Ok(());
+                                return Err(storage(error));
                             }
                         }
                     }

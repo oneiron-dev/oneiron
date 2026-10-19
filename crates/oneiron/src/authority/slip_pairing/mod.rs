@@ -51,6 +51,9 @@ pub struct PairingLink {
     /// and the joining device checks the pin redeem returns against them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin: Option<PairingPinRef>,
+    /// Whom the slip this link pairs may message (FIX 3899): the reach the
+    /// owner fixed on the link, `vault` when he named none.
+    pub comm: super::CommReach,
 }
 /// What an owner-delivered link says of the checkpoint pin the link keeps: the
 /// link's fresh single-use challenge and the pin's digest.

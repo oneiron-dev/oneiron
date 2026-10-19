@@ -945,6 +945,24 @@ impl PolicyManifestResolution {
             .collect()
     }
 
+    /// What a trusted-contact tier may name (FIX 4330): `None` when no owner
+    /// row carries `row_ref`, else whether one of its rows, under any scope,
+    /// is active and routes to help. A fail-closed or dropped table carries
+    /// no row.
+    #[must_use]
+    pub(crate) fn owner_policy_row_routes_to_help(&self, row_ref: &str) -> Option<bool> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() || self.owner_policy_rows_dropped {
+            return None;
+        }
+        let mut rows = self
+            .owner_policy_rows
+            .iter()
+            .filter(|row| row.row_ref == row_ref)
+            .peekable();
+        rows.peek()?;
+        Some(rows.any(|row| row.active && row.action == OwnerRowAction::RouteToHelp))
+    }
+
     #[must_use]
     pub(crate) fn has_scoped_read_grants(&self) -> bool {
         self.scoped_grants()

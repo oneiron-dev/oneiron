@@ -524,6 +524,7 @@ impl Vault {
                         &mut wtxn,
                         person,
                         row_ref,
+                        config,
                         crate::unix_seconds_now(),
                     )?;
                     let at = system_notices

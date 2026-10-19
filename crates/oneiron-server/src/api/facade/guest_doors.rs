@@ -6,7 +6,8 @@
 //! (`owner_routes::owner`). The engine rechecks that proof in its own
 //! writer. It signs each pact disconnect with the host's slip issuer, the one
 //! `api/pairing.rs` builds for its own slip doors. With `peer` it then
-//! queues the courtesy deletes the route queues (`owner::guest_revoke`).
+//! queues the courtesy deletes the route queues (`owner::guest_revoke`); a
+//! malformed `peer` refuses before the revoke commits.
 //!
 //! It lists its rows (`host_door_lists`): the grant it withdrew and the
 //! guest it conferred on. The pact standing its answer reports is the
@@ -45,6 +46,8 @@ pub(crate) async fn vault_guests_revoke(
     let server = Arc::clone(server);
     let answer = tokio::task::spawn_blocking(move || -> MemoryResult<GuestRevokeResponse> {
         let peer = input.peer.clone();
+        guest_revoke::check_peer(peer.as_deref())
+            .map_err(|error| MemoryError::bad_request(error.to_string()))?;
         let mut revoked = crate::api::pairing::with_issuer(&server, |issuer| {
             Ok(sdk::revoke_guest_as(server.vault(), &owner, issuer, input))
         })
