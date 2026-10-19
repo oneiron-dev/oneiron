@@ -515,8 +515,8 @@ impl Vault {
 
     /// The owner's answer to one frozen contact-disclosure offer.
     ///
-    /// One write transaction revalidates the owner, refuses the lineage that
-    /// opened the offer, requires the offer to be this holder's, unexpired,
+    /// One write transaction revalidates the owner, refuses the opener's
+    /// lineage and forks, requires the offer to be this holder's, unexpired,
     /// unsettled and byte-identical to `expected_delta`, requires the contact
     /// to be live and active, and requires its clearance to be exactly the one
     /// the offer was filed against. Then `standing` writes the canonical

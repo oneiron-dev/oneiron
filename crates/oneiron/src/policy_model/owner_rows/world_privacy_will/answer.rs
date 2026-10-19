@@ -12,9 +12,11 @@ use crate::error::{Error, GateError, Result};
 use crate::inbox::NotificationKind;
 use crate::{EntityId, Vault};
 
-use super::super::world_privacy_switch::{WorldPrivacyReceipt, hex32};
+use super::super::world_privacy_switch::WorldPrivacyReceipt;
 use super::agent::CHANGED_NOTICE;
-use super::record::{WorldPrivacyRequest, WorldPrivacyRequestKind, WorldPrivacyRequestStatus};
+use super::record::{
+    WorldPrivacyRequest, WorldPrivacyRequestKind, WorldPrivacyRequestStatus, parse_revision,
+};
 use super::{key_owner_in_txn, not_holder, unanimity, world_holders_in_txn};
 
 /// What a holder's answer came to.
@@ -29,7 +31,8 @@ pub enum WorldPrivacyAnswer {
     Declined(WorldPrivacyRequest),
 }
 
-/// A request already settled, or one its opener's own lineage answers.
+/// A request already settled, or one its opener's lineage or a fork of it
+/// answers.
 const SETTLED: &str = "this world-privacy request was already settled";
 const OWN_LINEAGE: &str = "the lineage that opened a world-privacy request cannot settle it";
 
@@ -43,7 +46,8 @@ impl Vault {
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] for a non-holder or the
-    /// opener's own lineage; [`Error::EntityNotFound`] for no such request;
+    /// opener's lineage or a fork of it (FIX 5064);
+    /// [`Error::EntityNotFound`] for no such request;
     /// [`Error::InvalidConfig`] for one already settled;
     /// [`Error::ConcurrentWrite`] when the world's settings changed since it
     /// was opened.
@@ -80,11 +84,15 @@ impl Vault {
             if !holders.contains(&actor) || !went_to {
                 return Err(not_holder());
             }
-            let lineage = owner.credential_lineage();
-            if lineage
+            // The opener's lineage and its forks never settle their own
+            // proposal (DEC-0006, FIX 5064): checked before a decline, a
+            // collected yes or an apply.
+            let opener: Vec<[u8; 32]> = stored
+                .opener_lineage
                 .iter()
-                .any(|slip| stored.opener_lineage.contains(&hex32(slip)))
-            {
+                .filter_map(|slip| parse_revision(slip).map(|id| id.0))
+                .collect();
+            if owner.answers_from_slip_lineage_in_txn(self, txn, &opener)? {
                 return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                     OWN_LINEAGE,
                 )));
