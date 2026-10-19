@@ -16594,10 +16594,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConsentRegistry",
+      "ConsentRegistryAgentGrant",
       "ConsentRegistryDelegation",
       "ConsentRegistryQuery",
       "ConsentRegistryRow",
@@ -16606,10 +16607,10 @@
      "path": "src/consent/registry.rs",
      "purpose": "—",
      "surface": {
-      "const": 2,
-      "crate-vis": 3,
+      "const": 3,
+      "crate-vis": 4,
       "fn": 1,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -22307,7 +22308,7 @@
      "path": "src/dreamer_runner/program/run.rs",
      "purpose": "Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -25875,6 +25876,16 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/federation/agent_grant.rs",
+     "purpose": "The owner's grant of an explicit verb list to a named agent (FIX 5628): `vault.agents.grants.mint` and…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "ConnectGrantMinted"
      ],
@@ -25967,7 +25978,7 @@
      "purpose": "Federation grant record, role/preset policy, and grant body MessagePack codec",
      "surface": {
       "const": 4,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 3,
       "fn": 19,
       "struct": 2
@@ -26057,7 +26068,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "mod": 2,
       "re-export": 18
      }
@@ -50371,13 +50382,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/checkpoint_custody/destination.rs",
+     "purpose": "The directory a restore makes for its copy, held under the copy's writer lease until the restore commits…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -50401,14 +50422,24 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 28,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/ledger/custody.rs",
+     "purpose": "The ledger's side of the claim custody client: a row decrypted under its claim's key, a new row sealed under…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -50428,18 +50459,18 @@
      "path": "src/store/gate_decision/mod.rs",
      "purpose": "The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 15,
       "re-export": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/orcb.rs",
-     "purpose": "ORCB v1: schema-only dictionary, per-claim hot-value AEAD and exterior key custody",
+     "purpose": "ORCB v1: schema-only dictionary and per-claim hot-value AEAD, keyed by the claim's typed custody entry…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 8
      }
     },
     {
@@ -50447,9 +50478,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/retention.rs",
-     "purpose": "Opt-in gate-decision age sweep over the actual ORCB custody unit",
+     "purpose": "Opt-in gate-decision age sweep over the actual ORCB custody unit, and the claim client's retirement policy…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 7,
       "fn": 7
      }
     },
@@ -50538,6 +50569,56 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/files.rs",
+     "purpose": "The local exterior backend: one owner-only directory tree beside the vault root, never inside it, so…",
+     "surface": {
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/fork.rs",
+     "purpose": "Restore planning and the fork a copy served beside its source takes (ARCH-0038 #erasure-completeness, \"Key…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/identity.rs",
+     "purpose": "Typed custody identities and their codecs: who a custody entry belongs to (vault, kind, item, generation)…",
+     "surface": {
+      "crate-vis": 35
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/mod.rs",
+     "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
+     "surface": {
+      "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/retirement.rs",
+     "purpose": "Durable retirement intents and the one finisher that carries them out",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -50615,7 +50696,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 1,
       "re-export": 13
      }
@@ -55221,7 +55302,7 @@
      "surface": {
       "enum": 1,
       "fn": 10,
-      "re-export": 74,
+      "re-export": 75,
       "struct": 39
      }
     },
@@ -55238,6 +55319,25 @@
       "enum": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentGrantMintRequest",
+      "AgentGrantMinted",
+      "AgentGrantRevokeRequest",
+      "AgentGrantRevoked",
+      "AgentGrantView",
+      "BaseAgentList",
+      "BaseAgentPrincipal"
+     ],
+     "path": "src/task_verb/sdk_agent_grant.rs",
+     "purpose": "The inputs and answers of the owner's agent grant rows (FIX 5628): `vault.agents.grants.mint` and `.revoke`…",
+     "surface": {
+      "fn": 3,
+      "struct": 7
      }
     },
     {
@@ -55703,7 +55803,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1094
+      "fn": 1097
      }
     },
     {
@@ -62793,7 +62893,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63472,7 +63572,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 79,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63528,7 +63628,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 198,
+     "files": 199,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63696,9 +63796,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 195,
+   "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3920,
+   "source_files": 3929,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72664,7 +72764,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1065
+      "fn": 1068
      }
     },
     {
@@ -73803,7 +73903,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1066
+      "fn": 1069
      }
     },
     {
@@ -76915,6 +77015,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/agent_grant_doors.rs",
+     "purpose": "The host doors of the owner's agent grant rows (FIX 5628): `vault.agents.grants.mint` and `.revoke`, and…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -77551,7 +77661,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 172
+      "crate-vis": 173
      }
     },
     {
@@ -78992,6 +79102,16 @@
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/agent_grant_routes.rs",
+     "purpose": "`/v1/owner/agent-grants`: the owner grants a named agent (the seeded Coach included) an explicit verb list…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -86191,7 +86311,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 463,
+     "files": 465,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -86641,7 +86761,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 851,
+   "source_files": 853,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -86874,6 +86994,11 @@
       "AgentDreamingRequest",
       "AgentDreamingSetRequest",
       "AgentDreamingView",
+      "AgentGrantMintRequest",
+      "AgentGrantMinted",
+      "AgentGrantRevokeRequest",
+      "AgentGrantRevoked",
+      "AgentGrantView",
       "AgentHealthApplicationState",
       "AgentHealthCard",
       "AgentHealthCardView",
@@ -87068,6 +87193,8 @@
       "AxisScores",
       "B2bExemption",
       "BandMode",
+      "BaseAgentList",
+      "BaseAgentPrincipal",
       "BatchInput",
       "BatchOutput",
       "BatchState",
@@ -87609,6 +87736,7 @@
       "ConsentNeed",
       "ConsentPart",
       "ConsentRegistry",
+      "ConsentRegistryAgentGrant",
       "ConsentRegistryDelegation",
       "ConsentRegistryQuery",
       "ConsentRegistryRow",
@@ -90451,7 +90579,7 @@
      "purpose": "—",
      "surface": {
       "enum": 864,
-      "struct": 2744
+      "struct": 2752
      }
     },
     {
