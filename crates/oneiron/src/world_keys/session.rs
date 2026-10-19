@@ -13,8 +13,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron_keystore::DeviceKeystore;
 
+use super::owner_work::PublishObserved;
 use super::{WorldKey, WorldKeyId};
-use crate::authority::MAX_PARENTS;
+use crate::authority::{AuthorityEntryHash, MAX_PARENTS};
 use crate::entity_id::EntityId;
 use crate::vault::Vault;
 
@@ -68,6 +69,12 @@ pub(crate) struct WorldKeySession {
     pub(crate) checkpoint_countersign: Mutex<BTreeMap<EntityId, CountersignStage>>,
     /// Each world's question, at its latest crossing.
     frontier: Mutex<BTreeMap<EntityId, WorldKeyFrontierCheck>>,
+    /// What this install's relay last observed of each bundle publication
+    /// it is asked to make, by the home the pass reached (FIX 4784, 4785):
+    /// in memory only, until the handle closes or the request leaves the
+    /// pending list.
+    pub(crate) publications:
+        Mutex<BTreeMap<(AuthorityEntryHash, Option<EntityId>), PublishObserved>>,
     /// Held while a sealed window's mirror is read, extended and written back.
     #[cfg(feature = "sync")]
     pub(crate) sealing: Mutex<()>,
@@ -96,6 +103,15 @@ impl WorldKeySession {
                 "a world's live settings edits outgrew one key record"
             );
         }
+    }
+
+    /// Whether a door on this handle raised `world`'s question: its key's
+    /// record would name more rows than one record may (FIX 4686).
+    pub(crate) fn frontier_raised(&self, world: EntityId) -> bool {
+        self.frontier
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains_key(&world)
     }
 }
 
