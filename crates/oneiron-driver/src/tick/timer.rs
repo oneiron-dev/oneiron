@@ -140,6 +140,13 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
             let Some(scope) = scope_for_attempt_kind(&attempt.kind) else {
                 continue;
             };
+            // A turn program its runtime holds parked arms nothing: only a
+            // ready one is due (DOOR-141 PR2). Program rows alone are read.
+            if attempt.kind == oneiron::dreamer_runner::DREAMER_TURN_PROGRAM_ATTEMPT_KIND
+                && program_held(self.vault, &attempt)
+            {
+                continue;
+            }
             if scope == DreamerConsolidationScope::Macro {
                 let eligible = match macro_admissible {
                     Some(value) => value,
@@ -459,6 +466,21 @@ impl DeadlineSource for CommitmentDueDeadlines<'_> {
     }
 }
 
+/// Whether a queued turn program holds a park, so no pass is due for it.
+/// Read-only and best-effort: an unreadable park arms nothing for it.
+fn program_held(vault: &Vault, attempt: &oneiron::attempt_queue::AttemptRecord) -> bool {
+    match DreamerRunnerStore::new(vault).parked_attempt(attempt.id) {
+        Ok(park) => park.is_some(),
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a turn program's park was unreadable; its deadline is not armed"
+            );
+            true
+        }
+    }
+}
+
 fn scope_for_attempt_kind(kind: &str) -> Option<DreamerConsolidationScope> {
     if kind == DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
         || kind == oneiron::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND
@@ -466,10 +488,12 @@ fn scope_for_attempt_kind(kind: &str) -> Option<DreamerConsolidationScope> {
         || kind == oneiron::dreamer_runner::connector_event::CONNECTOR_EVENT_QUEUE_KIND
         || kind == oneiron::dreamer_runner::DREAMER_TASK_REALIZE_ATTEMPT_KIND
         || kind == oneiron::dreamer_runner::DREAMER_WEAVE_LENS_ATTEMPT_KIND
+        || kind == oneiron::dreamer_runner::DREAMER_TURN_PROGRAM_ATTEMPT_KIND
     {
         // Maintenance, the wake policy's recipe receipts, connector wakes
-        // (OF-218), a Dreamer-lane TASK's realization and a weave lens
-        // render are vault-local and do not need Macro home election.
+        // (OF-218), a Dreamer-lane TASK's realization, a weave lens render
+        // and a turn-woken program (DOOR-141 PR2), queued or reclaimed, are
+        // vault-local and do not need Macro home election.
         Some(DreamerConsolidationScope::Micro)
     } else if kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND {
         Some(DreamerConsolidationScope::Meso)

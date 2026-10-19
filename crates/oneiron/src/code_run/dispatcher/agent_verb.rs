@@ -124,16 +124,22 @@ impl HostSelfDispatcher<'_> {
         // past one whose kept answer the door refused, so no later call
         // reaches this door.
         let (ordinal, receipt_id, kept) = self.write_receipt(site)?;
+        // A turn program's write is one of its steps (DOOR-141 PR2): bound
+        // before it runs, settled with its answer, never sent again.
+        let program = self.program_write(site, ordinal, receipt_id, &call)?;
         let stopped = match kept {
             KeptWrite::Ran(receipt) => {
+                if let Some(write) = &program
+                    && receipt.bridge_calls.is_empty()
+                {
+                    self.note_program_write_uncertain(write);
+                }
                 return self.kept_write_answer(Some(&**door), *receipt, call);
             }
             KeptWrite::Fresh(stopped) => stopped,
         };
         let mut receipt = CodeRunReplayRecord::new(receipt_id, CodeRunDeterminism::new(0, [0; 32]));
-        let generation = self
-            .storage
-            .put_code_run_replay_record_if_generation_with_heal(&receipt, stopped, None)?;
+        let generation = self.put_write_receipt(&receipt, stopped, program.as_ref(), false)?;
         // A call a code consent wait may bind carries its place in the run
         // (DOOR-079 1a), so a hold for consent alone binds the wait to it.
         let consent_site = self.code_consent_site(&call, site, ordinal, receipt_id)?;
@@ -199,8 +205,7 @@ impl HostSelfDispatcher<'_> {
             0,
             0,
         )?);
-        self.storage
-            .put_code_run_replay_record_if_generation_with_heal(&receipt, Some(generation), None)?;
+        self.put_write_receipt(&receipt, Some(generation), program.as_ref(), true)?;
         Ok(outcome)
     }
 

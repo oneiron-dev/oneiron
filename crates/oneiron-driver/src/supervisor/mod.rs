@@ -34,6 +34,7 @@ mod budget_ids;
 mod config;
 mod factory;
 mod pass;
+mod program_factory;
 #[path = "loop.rs"]
 mod run;
 mod shutdown;
@@ -45,6 +46,7 @@ pub use self::config::{NowSeconds, RestartBackoffConfig, WakeSupervisorConfig};
 pub use self::factory::{
     ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan, WaveReadyDispatcher,
 };
+pub use self::program_factory::ProgramExecutorFactory;
 pub use self::run::{WakeSupervisor, WakeSupervisorReport};
 pub use self::shutdown::ShutdownHandle;
 

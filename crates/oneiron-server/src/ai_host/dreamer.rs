@@ -33,9 +33,10 @@ use oneiron::{
 };
 use oneiron_driver::{
     AttachedPassFuture, AttemptQueueDeadlines, ConsolidationExecutorFactory, HintPusher,
-    HybridTick, IdleSample, PassAttachment, PassExecutorFactory, PushTick, SessionLifecycleConfig,
-    SessionLifecycleDriver, SessionTicks, ShutdownHandle, SkillOptimizerLoan, TimerTick,
-    WakePassFuture, WakePolicyTicks, WakeSupervisor, WakeSupervisorConfig, WakeSupervisorReport,
+    HybridTick, IdleSample, PassAttachment, PassExecutorFactory, ProgramExecutorFactory, PushTick,
+    SessionLifecycleConfig, SessionLifecycleDriver, SessionTicks, ShutdownHandle,
+    SkillOptimizerLoan, TimerTick, WakePassFuture, WakePolicyTicks, WakeSupervisor,
+    WakeSupervisorConfig, WakeSupervisorReport,
 };
 
 use super::policy::extraction_egress;
@@ -235,7 +236,13 @@ async fn supervise(
         ) {
             tracing::warn!(%error, "dreamer tuning config not recorded");
         }
-        let factory = ObservedFactory {
+        // Its executors also run the turn programs landed turns wake
+        // (DOOR-141 PR2), each as its waking agent on this host's code mode.
+        let programs = super::turn_program_host::ServerTurnPrograms::new(
+            Arc::clone(&question_timer),
+            serve.clone(),
+        );
+        let observed = ObservedFactory {
             vault: Arc::clone(&vault),
             runtime,
             seat,
@@ -259,6 +266,7 @@ async fn supervise(
             admission,
             settle_after: None,
         };
+        let factory = ProgramExecutorFactory::new(observed, Some(Box::new(programs)));
         let lifecycle = SessionLifecycleDriver::new(
             &vault,
             SessionLifecycleConfig::new(settings.idle_floor_secs, settings.session_ceiling_secs),

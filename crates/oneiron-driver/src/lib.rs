@@ -52,9 +52,9 @@ pub use session::{
 };
 pub use supervisor::{
     AttachedPassFuture, ConsolidationExecutorFactory, LinkedShutdown, NowSeconds, PassAttachment,
-    PassAttachmentSource, PassExecutorFactory, RestartBackoffConfig, ShutdownHandle,
-    SkillOptimizerLoan, WakePassFuture, WakeSupervisor, WakeSupervisorConfig, WakeSupervisorReport,
-    WaveReadyDispatcher,
+    PassAttachmentSource, PassExecutorFactory, ProgramExecutorFactory, RestartBackoffConfig,
+    ShutdownHandle, SkillOptimizerLoan, WakePassFuture, WakeSupervisor, WakeSupervisorConfig,
+    WakeSupervisorReport, WaveReadyDispatcher,
 };
 pub use tick::{
     ArmedLane, AttemptQueueDeadlines, CommitmentDeadline, CommitmentDueDeadlines, DeadlineSource,

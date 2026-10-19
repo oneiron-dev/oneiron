@@ -170,8 +170,9 @@ impl Vault {
     }
 
     /// [`Self::put_code_run_replay_record_if_generation_with_heal`], with
-    /// `also`'s rows written in the same transaction after the record's.
-    pub(super) fn put_code_run_replay_record_if_generation_with_heal_and(
+    /// `also`'s rows written in the same transaction after the record's: a
+    /// turn program's verb write binds and settles its step here (DOOR-141).
+    pub(crate) fn put_code_run_replay_record_if_generation_with_heal_and(
         &self,
         record: &CodeRunReplayRecord,
         expected: Option<CodeRunReplayGeneration>,
