@@ -198,13 +198,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "CraftNote"
+     ],
      "path": "src/actor_claims/craft_read.rs",
      "purpose": "A resident's own craft as its runs read it (OF-490): the lessons and failure modes the system learned about…",
      "surface": {
-      "fn": 1
+      "const": 1,
+      "fn": 10,
+      "struct": 1
      }
     },
     {
@@ -11887,7 +11891,7 @@
      "purpose": "The Coach's changes to an owner's digest settings (FIX 5495; DEC-0005 policy residence)",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4
      }
     },
@@ -11915,7 +11919,7 @@
      "path": "src/claim/scoped_read/weave_digest/settings.rs",
      "purpose": "The owner's own digest settings record (FIX 5495): the generation every change to his Owner schedule bumps…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 1,
       "struct": 5
      }
@@ -22298,7 +22302,7 @@
      "path": "src/dreamer_runner/program/arm.rs",
      "purpose": "DOOR-141 setup: an actor arms a pinned callable SKILL entry for its own future turns",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -22341,7 +22345,7 @@
      "path": "src/dreamer_runner/program/run.rs",
      "purpose": "Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -42904,7 +42908,7 @@
      "path": "src/receipt/context_emit.rs",
      "purpose": "Frozen context on text emits, retained on the existing outbound receipt spine",
      "surface": {
-      "fn": 2,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -75651,7 +75655,7 @@
      "path": "src/ai_host/dreamer.rs",
      "purpose": "The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -75764,7 +75768,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "fn": 22,
       "re-export": 1,
       "struct": 2
@@ -75786,6 +75790,26 @@
      "notable": [],
      "path": "src/ai_host/policy.rs",
      "purpose": "The Dreamer's extraction route: what vault policy must already allow before a pass may send a transcript to…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/question_timer.rs",
+     "purpose": "The hand-off of a bound Dreamer's timer work (OF-506, FIX 1149)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/resident_craft.rs",
+     "purpose": "A resident's craft on the surfaces it speaks on besides its pumped runs (OF-490): a workflow leaf and a wave…",
      "surface": {
       "crate-vis": 5
      }
@@ -76045,7 +76069,7 @@
      "path": "src/api/ai/chat/compaction.rs",
      "purpose": "A self agent's chat turn on its own live fork (FIX 4465 D)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -86497,7 +86521,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 55,
+     "files": 57,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86954,7 +86978,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 860,
+   "source_files": 862,
    "test_files": 182
   },
   "oneiron-spawn": {

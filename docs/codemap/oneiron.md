@@ -29,7 +29,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/actor_claims/archive.rs` | src | s | 3 crate-vis | — | Domain-owned inert restore of learned actor rows |
 | `src/actor_claims/archive_references.rs` | src | s | 2 crate-vis | — | Typed actor evidence references for credential-safe archive serialization |
 | `src/actor_claims/candidate.rs` | src | m | 5 struct · 1 enum · 2 fn · 6 crate-vis | CraftCandidateAnswer, CraftCandidateView, CraftCandidatesRequest, CraftCandidatesView, CraftVerdict, CraftVerdictView | The resident-dreaming candidate inlet (OF-490): a resident's own dreaming proposes craft notes about itself… |
-| `src/actor_claims/craft_read.rs` | src | s | 1 fn | — | A resident's own craft as its runs read it (OF-490): the lessons and failure modes the system learned about… |
+| `src/actor_claims/craft_read.rs` | src | m | 1 struct · 10 fn · 1 const | CraftNote | A resident's own craft as its runs read it (OF-490): the lessons and failure modes the system learned about… |
 | `src/actor_claims/distill.rs` | src | m | 3 struct · 1 trait · 3 fn · 3 crate-vis | SessionActorDistiller, SessionDistillBrief, SessionDistillTurn, SessionDistillUtterance | CHAT lane: session-end distill jobs, turn readers, and the distill run |
 | `src/actor_claims/evidence.rs` | src | s | 1 struct · 3 fn · 5 crate-vis | ActorClaimEvidence | Typed evidence inlets for the `actor.*` write door |
 | `src/actor_claims/mod.rs` | src | s | 8 re-export · 8 crate-vis | — | ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR… |
@@ -946,9 +946,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/visibility.rs` | src | m | 3 fn · 12 crate-vis | — | — |
 | `src/claim/scoped_read/weave_correction.rs` | src | L | 2 struct · 1 enum · 5 fn · 3 crate-vis | WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection | Authenticated wrong labels emitted by the live weave report: one on a link, and one on a claim, project or… |
 | `src/claim/scoped_read/weave_digest.rs` | src | L | 3 struct · 2 enum · 10 fn · 1 const · 2 re-export · 9 crate-vis | StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader, WeaveDigestSchedule, WeaveScheduleHold | Per-reader report schedules (OF-499) |
-| `src/claim/scoped_read/weave_digest/changes.rs` | src | m | 4 fn · 1 const · 1 crate-vis | — | The Coach's changes to an owner's digest settings (FIX 5495; DEC-0005 policy residence) |
+| `src/claim/scoped_read/weave_digest/changes.rs` | src | m | 4 fn · 1 const · 2 crate-vis | — | The Coach's changes to an owner's digest settings (FIX 5495; DEC-0005 policy residence) |
 | `src/claim/scoped_read/weave_digest/coach.rs` | src | s | 4 crate-vis | — | The Coach's rule for an owner's digest settings (FIX 5495): closed-form, no model call, over the owner's own… |
-| `src/claim/scoped_read/weave_digest/settings.rs` | src | m | 5 struct · 1 enum · 16 crate-vis | WeaveDigestFeedback, WeaveDigestSettingAnswer, WeaveDigestSettingChange, WeaveDigestSettingChangeStatus, WeaveDigestSettingUndo, WeaveDigestSettings | The owner's own digest settings record (FIX 5495): the generation every change to his Owner schedule bumps… |
+| `src/claim/scoped_read/weave_digest/settings.rs` | src | m | 5 struct · 1 enum · 17 crate-vis | WeaveDigestFeedback, WeaveDigestSettingAnswer, WeaveDigestSettingChange, WeaveDigestSettingChangeStatus, WeaveDigestSettingUndo, WeaveDigestSettings | The owner's own digest settings record (FIX 5495): the generation every change to his Owner schedule bumps… |
 | `src/claim/scoped_read/weave_digest/tests.rs` | test | m | — | — | — |
 | `src/claim/scoped_read/weave_lens.rs` | src | L | 6 struct · 4 fn · 5 const · 13 crate-vis | WeaveLensPlan, WeaveLensPlanLine, WeaveLensPlanSection, WeaveLensRefusal, WeaveLensRender, WeaveLiveLens | The weave lens's generate step (OF-499, ARCH-0063 §6): "Its render is a generate step, a skill with its own… |
 | `src/claim/scoped_read/weave_report.rs` | src | m | 3 struct · 3 enum · 2 fn · 8 crate-vis | WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec | Live weave data for a reader, not a saved digest or a rendered section recipe |
@@ -1723,11 +1723,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/observation.rs` | src | s | 5 struct · 2 fn | WakeRecipeJobView, WakeSettlementRequest, WakeSettlementView, WakeSettlementsPage, WakeSettlementsRequest | Owner reads of recipe receipts and their Dreamer/Coach descendants |
 | `src/dreamer_runner/owner_doors.rs` | src | m | 10 struct · 4 fn · 1 crate-vis | ConsolidationHomeCandidate, ConsolidationHomeNode, ConsolidationHomePickHead, ConsolidationHomePickReceipt, ConsolidationHomePickRequest, ConsolidationHomeView, ConsolidationLineageRequest, ConsolidationLineageView +2 | The owner's doors over the private Dreamer runner (DOOR-101): which node this runner holds as the elected… |
 | `src/dreamer_runner/program/admit.rs` | src | s | 1 crate-vis | — | DOOR-141 admission: one writer judges a wake against the live vault and, in one commit, records its Gate… |
-| `src/dreamer_runner/program/arm.rs` | src | s | 4 crate-vis | — | DOOR-141 setup: an actor arms a pinned callable SKILL entry for its own future turns |
+| `src/dreamer_runner/program/arm.rs` | src | s | 5 crate-vis | — | DOOR-141 setup: an actor arms a pinned callable SKILL entry for its own future turns |
 | `src/dreamer_runner/program/authority.rs` | src | m | 1 fn · 17 crate-vis | — | The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as… |
 | `src/dreamer_runner/program/lease.rs` | src | s | 1 fn · 1 crate-vis | — | The program kind's own lease and reservation (DOOR-141): the runner's one admission chain over program… |
 | `src/dreamer_runner/program/mod.rs` | src | s | 1 re-export · 5 crate-vis | — | Turn-woken programs (DOOR-141, FIX 4382) |
-| `src/dreamer_runner/program/run.rs` | src | m | 12 crate-vis | — | Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority |
+| `src/dreamer_runner/program/run.rs` | src | m | 13 crate-vis | — | Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority |
 | `src/dreamer_runner/program/types.rs` | src | m | 7 struct · 1 enum · 1 fn · 13 crate-vis | ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin, TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain, TurnProgramRegistration | The DOOR-141 vocabulary: the pinned program, its arming, the wake a landed turn owes it, and what admitting… |
 | `src/dreamer_runner/program/wake.rs` | src | s | 3 crate-vis | — | The wake a landed turn owes its actor's armed programs (DOOR-141 §4): it is recorded in the turn's own… |
 | `src/dreamer_runner/progress.rs` | src | m | 4 struct · 1 enum · 12 fn · 4 const · 4 crate-vis | DreamerAttemptProgressProducer, DreamerAttemptProgressSnapshot, DreamerAttemptProgressSource, DreamerAttemptProgressUpdate, DreamerProgressed | The live Dreamer progress lane on the ephemeral sync keyspace |
@@ -3323,7 +3323,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/authority_audit/agent_grant_act.rs` | src | s | 1 crate-vis | — | An owner's agent Grant act in the audit (FIX 5628): a mint is a grant and a revoke a revoke |
 | `src/receipt/brief_share.rs` | src | s | 1 crate-vis | — | The brief-share projection |
 | `src/receipt/call.rs` | src | m | 4 struct · 2 enum · 12 fn · 5 const · 2 crate-vis | ActionInputs, CallOutcome, CallReceipt, CallReceiptInput, CallReceiptRequest, CallTransport | OF-538: one lasting receipt per wire call, reads included |
-| `src/receipt/context_emit.rs` | src | s | 1 struct · 2 fn | ContextEmitReceipt | Frozen context on text emits, retained on the existing outbound receipt spine |
+| `src/receipt/context_emit.rs` | src | s | 1 struct · 4 fn | ContextEmitReceipt | Frozen context on text emits, retained on the existing outbound receipt spine |
 | `src/receipt/decision_asks.rs` | src | s | 2 struct | DecisionAskAnswerRequest, DecisionAskClimbRequest | OF-493's role-holder doors (Q3 by role): the wire shapes a person or a bound agent uses to answer a decision… |
 | `src/receipt/direct_dispatch.rs` | src | s | 3 crate-vis | — | Ordinary outbound receipts for hosts that call dispatch directly |
 | `src/receipt/dispatch_observation.rs` | src | s | 9 crate-vis | — | Passive OF-327 per-try audit observations; never resend authority |
