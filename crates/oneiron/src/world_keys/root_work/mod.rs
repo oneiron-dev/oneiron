@@ -9,8 +9,10 @@
 //! enrolment code, prepared root or carry list enters it, a receipt or the
 //! log. Its `seen` is the revision of the owner roots and of the target's
 //! standing ([`AuthorityFold::root_work_revision`], CALLS ROOT_WORK_REVISION),
-//! which the target computes again in its own writer transaction: a moved
-//! revision refuses the request as stale, and a removed owner as not live.
+//! which the target computes again in its own writer transaction: another
+//! revision refuses the request as a root revision mismatch, which says the
+//! target may need to sync before the owner asks again (FIX 4738), and a
+//! removed owner as not live.
 //!
 //! A pin needs nothing the target lacks, so the target's pickup makes it
 //! (`super::owner_work`). Every other change needs the root's seed or kit,
@@ -95,6 +97,14 @@ enum RootCompletion {
 }
 
 const ROOT_WORK_COMPLETION: RootCompletion = RootCompletion::ExactTargetCommit;
+
+/// The refusal a root request gets when its target computes another revision
+/// than the act's `seen` (CALLS ROOT_WORK_REVISION, FIX 4738). Typed apart
+/// from a stale settings act: the inequality does not say whether the target
+/// has not yet folded a root record or mark the recorder held, or the roots
+/// moved since. The refusal stands and nothing is replayed; the owner reviews
+/// where the target stands and asks again.
+const ROOT_REVISION_REFUSAL: OwnerWorkRefusal = OwnerWorkRefusal::RootRevisionMismatch;
 
 /// The install that makes a root change on `target` (CALLS
 /// ROOT_WORK_EXECUTOR), or why the recorder can name none: the target is the
@@ -330,7 +340,8 @@ impl Vault {
 
     /// The first recheck a root request fails in this transaction: its owner
     /// is no longer a live vault owner, or the roots' and the target's
-    /// revision moved past the act's `seen` (CALLS ROOT_WORK_REVISION).
+    /// revision here differs from the act's `seen` (CALLS ROOT_WORK_REVISION,
+    /// [`ROOT_REVISION_REFUSAL`]).
     fn root_work_refusal(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -343,7 +354,7 @@ impl Vault {
             if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, owner)? {
                 Some(OwnerWorkRefusal::OwnerNotLive)
             } else if fold.root_work_revision(request.act.target, change) != request.act.seen {
-                Some(OwnerWorkRefusal::StaleRevision)
+                Some(ROOT_REVISION_REFUSAL)
             } else {
                 None
             },

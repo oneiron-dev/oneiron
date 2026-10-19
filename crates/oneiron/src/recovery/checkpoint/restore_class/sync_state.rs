@@ -98,9 +98,13 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_RESIDENCE_BUNDLE_ACCESS, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_GENERATION, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_PART, LIVE),
+    // So do the home's record of each asked commit and this machine's
+    // unresolved publication attempts (FIX 4787).
+    (&t::SYNC_RESIDENCE_BUNDLE_COMMIT_RECEIPT, LIVE),
     // The publisher turn's queue is the home's record of whose turn is
     // next across slots, so it follows the live vault too (FIX 3351).
     (&t::SYNC_RESIDENCE_BUNDLE_TURN, LIVE),
+    (&t::SYNC_RESIDENCE_BUNDLE_ATTEMPT, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_SWEPT, LIVE),
     (&t::SYNC_RESIDENCE_BUNDLE_CURSOR, LIVE),
     (&t::SYNC_ROOM_FACT_DIRTY, CONTENT),

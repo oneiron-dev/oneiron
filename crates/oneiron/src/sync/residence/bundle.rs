@@ -23,19 +23,21 @@
 //! serves it one. A phone still lists the generations and rewrites their pad
 //! objects, so an erase made on it sweeps them.
 
+mod commit_receipt;
 mod publication;
 
+pub use self::commit_receipt::{SealedBundleCommitReceipt, sealed_bundle_commit_receipt};
 pub(super) use self::publication::{Asked, asked_of};
 
-use super::bundle_turn::{hold_turn_in, published_in};
+use super::bundle_turn::hold_turn_in;
 use crate::Vault;
 use crate::authority::{AuthorityEntryHash, MachineDeviceClass, PeerMachine};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::side_table::{self, Raw, SideTable};
 use crate::world_keys::{
-    RecoveryRootId, SealedBundleGeneration, SealedKeyPads, SealedVaultBundle,
-    retired_bundle_generations, sealed_bundle_slot,
+    RecoveryRootId, SealedBundleGeneration, SealedKeyPads, retired_bundle_generations,
+    sealed_bundle_slot,
 };
 
 /// The most object bytes one upload part carries (CALLS:
@@ -525,6 +527,12 @@ fn staged_whole(
 /// keeps it, with its anchor from the root's record here, and the kit door
 /// serves the generation to that root alone.
 ///
+/// `request` is the owner's bundle publication request the commit is for,
+/// when the machine publishes on his ask: once it counts here naming this
+/// home and that machine as its executor, the home records the commit in the
+/// same transaction ([`sealed_bundle_commit_receipt`], FIX 4787). A request
+/// that does not check refuses nothing.
+///
 /// # Errors
 ///
 /// A refused peer, parent, slot or turn; no whole stage of either object, or
@@ -536,95 +544,9 @@ pub fn commit_sealed_bundle(
     generation: SealedBundleGeneration,
     parent: Option<SealedBundleGeneration>,
     root: Option<RecoveryRootId>,
+    request: Option<AuthorityEntryHash>,
 ) -> Result<SealedBundleEntry> {
-    let machine = owner_machine(vault, peer, true, Asked::Any)?;
-    let kit = match root {
-        None => None,
-        Some(root) => {
-            let (_, record) = vault
-                .owner_root_records()?
-                .remove(&root)
-                .ok_or_else(denied)?;
-            Some(SealedBundleKitRoot {
-                root,
-                anchor_key: record.anchor_key,
-            })
-        }
-    };
-    let (bundle, pads) = {
-        let txn = vault.store.env.read_txn()?;
-        (
-            staged_whole(vault, &txn, machine, SealedBundleObject::Bundle)?,
-            staged_whole(vault, &txn, machine, SealedBundleObject::Pads)?,
-        )
-    };
-    let (Some((bundle_stage, bundle_bytes)), Some((pads_stage, pads_bytes))) = (bundle, pads)
-    else {
-        return Err(denied());
-    };
-    let bundle = SealedVaultBundle::from_bytes(&bundle_bytes).map_err(|_| denied())?;
-    drop(bundle_bytes);
-    let pads = SealedKeyPads::from_bytes(&pads_bytes).map_err(|_| denied())?;
-    drop(pads_bytes);
-    if [
-        bundle_stage.generation,
-        pads_stage.generation,
-        bundle.generation(),
-        pads.generation(),
-    ]
-    .iter()
-    .any(|staged| *staged != generation)
-    {
-        return Err(denied());
-    }
-    let entry = SealedBundleEntry {
-        generation,
-        bundle_len: bundle_stage.total,
-        bundle_digest: bundle_stage.digest,
-        pads_len: pads_stage.total,
-        pads_digest: pads_stage.digest,
-        kit,
-    };
-    vault.with_write_txn_grouped(|wtxn| {
-        let latest = entries_in(vault, wtxn)?
-            .last()
-            .map(|entry| entry.generation);
-        let now = vault.instant_in_txn(wtxn)?.secs();
-        let now_slot = sealed_bundle_slot(now);
-        if latest != parent
-            || latest.is_some_and(|latest| generation.slot <= latest.slot)
-            || generation.slot > now_slot
-            || !hold_turn_in(vault, wtxn, machine, now)?
-        {
-            return Err(denied());
-        }
-        put_object_in(
-            vault,
-            wtxn,
-            &generation,
-            SealedBundleObject::Bundle,
-            bundle.as_bytes(),
-        )?;
-        put_object_in(
-            vault,
-            wtxn,
-            &generation,
-            SealedBundleObject::Pads,
-            pads.as_bytes(),
-        )?;
-        GENERATIONS.put(
-            &vault.store,
-            wtxn,
-            &sealed_generation_hex(&generation),
-            &entry.encode(),
-        )?;
-        for object in [SealedBundleObject::Bundle, SealedBundleObject::Pads] {
-            drop_stage_in(vault, wtxn, &stage_key(machine, object))?;
-        }
-        published_in(vault, wtxn, machine, now)?;
-        retire_in(vault, wtxn, now_slot)?;
-        Ok(entry)
-    })
+    commit_receipt::commit(vault, peer, generation, parent, root, request)
 }
 
 /// Erase's rewrite of one kept generation's pad object

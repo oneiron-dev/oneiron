@@ -310,6 +310,12 @@ side_tables! {
     /// One stored part of a kept generation's bundle ("b") or pad object ("k"). Key: hex48 (the
     /// generation) ":" b|k ":" hex16 (offset).
     SYNC_RESIDENCE_BUNDLE_PART: SyncState b"rb:p:" Raw;
+    /// The commit the home recorded for one owner's bundle publication request (FIX 4787), in the
+    /// commit's own transaction, once the request counted here naming this home and the committing
+    /// machine as its executor: that machine (16) ‖ the generation (24) ‖ the bundle's digest
+    /// (32), a ciphertext digest. It outlives the generation's retirement and goes once the
+    /// request has its result here. Key: hex64 (the request's entry hash).
+    SYNC_RESIDENCE_BUNDLE_COMMIT_RECEIPT: SyncState b"rb:r:" Raw;
     /// An upload of a bundle ("b") or pad object ("k") the home stages from parts until its
     /// commit: u64be vault second of its latest part ‖ generation (24) ‖ u64be total ‖ digest
     /// (32) ‖ u64be bytes staged. Key: hex32 (the uploading machine) ":" b|k.
@@ -322,6 +328,12 @@ side_tables! {
     /// One part of a staged upload. Key: hex32 (the uploading machine) ":" b|k ":" hex16
     /// (offset).
     SYNC_RESIDENCE_BUNDLE_STAGE_PART: SyncState b"rb:u:" Raw;
+    /// The exact attempt this machine made to publish the vault's sealed bundle for one owner's
+    /// request (FIX 4787), persisted before its commit: the home (16) ‖ this machine, the
+    /// executor (16) ‖ the generation (24) ‖ the bundle's digest (32), a ciphertext digest. It
+    /// stays, with no expiry and no count bound, until the request has its result here. Key:
+    /// hex64 (the request's entry hash).
+    SYNC_RESIDENCE_BUNDLE_ATTEMPT: SyncState b"rbc:" Raw;
     /// A world erased here whose pads this machine stripped from every pad object the home
     /// keeps (FIX 922): empty, or the u64be slot a pad object that did not open here held it
     /// back in. Key: hex32 (the world).
