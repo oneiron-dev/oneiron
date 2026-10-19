@@ -32,8 +32,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 
 /// `POST /v1/owner/guests/revoke` with `{"grant_ref": "<hex>"}` and an
 /// optional `"peer": "https://host"`: an unknown or non-guest grant is not
-/// found, and a disconnect the fold refuses fails the whole revoke. An ask
-/// that does not queue fails only its own target.
+/// found, a malformed `peer` is a bad request before anything is written,
+/// and a disconnect the fold refuses fails the whole revoke. An ask that
+/// does not queue fails only its own target.
 async fn revoke(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -48,6 +49,7 @@ async fn revoke(
             "vault.guests.revoke",
             request,
             |request: GuestRevokeRequest| -> OwnerResult<GuestRevokeResponse> {
+                guest_revoke::check_peer(request.peer.as_deref())?;
                 let outcome = crate::api::pairing::with_issuer(&server, |issuer| {
                     Ok(server
                         .vault()

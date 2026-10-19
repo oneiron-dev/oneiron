@@ -108,8 +108,10 @@ pub struct TrustedContactNotice {
 }
 
 /// Stages one notice from `relation` in the transaction that fired it, under
-/// `authorization`. While one waits for this naming, another collapses into
-/// it; a notice for an earlier naming never stands in for it.
+/// `authorization`, and answers the fire that will deliver it. While one
+/// waits for this naming, another collapses into it: the answer is then the
+/// waiting notice's fire, the one with a fire row, and `fire` stages nothing
+/// (FIX 4423). A notice for an earlier naming never stands in for it.
 pub(super) fn stage_notice_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -117,7 +119,7 @@ pub(super) fn stage_notice_in_txn(
     fire: EntityId,
     authorization: TrustedContactNoticeAuthorization,
     now: u64,
-) -> Result<()> {
+) -> Result<EntityId> {
     let notice = TrustedContactNotice {
         fire: fire.to_hex(),
         person: relation.person.to_hex(),
@@ -144,10 +146,13 @@ pub(super) fn stage_notice_in_txn(
             now,
         },
     )?;
-    if let EnqueueOutcome::Enqueued(_) = staged {
-        FIRES.put(&vault.store, wtxn, &fire, &notice)?;
+    match staged {
+        EnqueueOutcome::Enqueued(_) => {
+            FIRES.put(&vault.store, wtxn, &fire, &notice)?;
+            Ok(fire)
+        }
+        EnqueueOutcome::Existing(pending) => Ok(EntityId::from_hex(&decode(&pending)?.fire)?),
     }
-    Ok(())
 }
 
 /// Tells `relation`'s person and the agent that speaks for them (its
