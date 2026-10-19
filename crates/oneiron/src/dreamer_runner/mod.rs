@@ -10,6 +10,7 @@ mod codec;
 mod constants;
 mod milestone;
 pub mod observation;
+mod owner_doors;
 #[cfg(feature = "sync")]
 mod progress;
 mod recipe;
@@ -37,6 +38,7 @@ pub use self::claim_authoring::*;
 pub use self::codec::*;
 pub use self::constants::*;
 pub use self::milestone::*;
+pub use self::owner_doors::*;
 #[cfg(feature = "sync")]
 pub use self::progress::*;
 pub use self::recipe::*;

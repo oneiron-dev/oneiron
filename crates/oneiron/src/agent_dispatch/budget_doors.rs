@@ -1,4 +1,5 @@
-//! Typed doors over launch spend leases, budget holds and the local runner counter.
+//! Typed doors over launch spend leases, budget holds and the local runner
+//! counter with its reservations.
 //! Owner controls take the same proof as the owner routes. `self.budget`
 //! reads only the attempt whose stored dispatch actor is the caller.
 
@@ -10,7 +11,7 @@ use crate::attempt_queue::{
     AttemptResumePoint, LandingTrigger,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::dreamer_runner::DreamerRunnerStore;
+use crate::dreamer_runner::{DreamerBudgetRecord, DreamerRunnerStore, owner_read_page_limit};
 use crate::llm::run_admission::{DeclaredMaximum, LeaseUnit, MaximumShown};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Result, Vault};
@@ -116,6 +117,49 @@ pub struct LocalRunnerBudgetCounter {
     pub total_units: u64,
     pub remaining_units: u64,
     pub reserved_units: u64,
+    /// `total_units - remaining_units - reserved_units`: what settled.
+    pub spent_units: u64,
+    pub updated_at: u64,
+}
+
+/// One page of a device-local runner counter's live reservations.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunnerBudgetReservationsRequest {
+    pub budget_id: String,
+    /// The previous page's `next`; this page starts after that job ref.
+    #[serde(default)]
+    pub after: Option<String>,
+    /// Reservations in this page: `vault.runs.checkpoint`'s default when
+    /// absent, at most its ceiling. Must be positive.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// The counter and one page of the reservations held against it, read in
+/// one snapshot. `counter: None` means this device has not initialized the
+/// counter; a read never creates one.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RunnerBudgetReservationsView {
+    pub budget_id: String,
+    pub counter: Option<LocalRunnerBudgetCounter>,
+    /// In job-ref order.
+    pub reservations: Vec<RunnerBudgetReservation>,
+    /// The `after` of the next page; none past the last reservation.
+    pub next: Option<String>,
+    /// Always true: the counter is this device's private runner row, not a
+    /// replicated vault budget (ARCH-0026), and its reservations are this
+    /// device's runner's own.
+    pub local_only: bool,
+}
+
+/// Units one child attempt holds against the counter until it settles.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RunnerBudgetReservation {
+    /// 32-hex id of the reserving child attempt.
+    pub job_ref: String,
+    pub reserved_units: u64,
+    pub created_at: u64,
     pub updated_at: u64,
 }
 
@@ -242,15 +286,87 @@ pub fn local_runner_budget_as_owner(
     owner.revalidate(vault)?;
     let counter = DreamerRunnerStore::new(vault)
         .budget(&input.budget_id)?
-        .map(|row| LocalRunnerBudgetCounter {
-            total_units: row.total_units,
-            remaining_units: row.remaining_units,
-            reserved_units: row.reserved_units,
-            updated_at: row.updated_at,
-        });
+        .as_ref()
+        .map(runner_counter)
+        .transpose()?;
     Ok(LocalRunnerBudgetView {
         budget_id: input.budget_id.clone(),
         counter,
+    })
+}
+
+/// Reads, in one snapshot, a device-local runner counter and one page of the
+/// child reservations held against it, in job-ref order. A read never
+/// creates, initializes or refills the counter.
+pub fn runner_budget_reservations_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &RunnerBudgetReservationsRequest,
+) -> Result<RunnerBudgetReservationsView> {
+    let txn = vault.store.env.read_txn()?;
+    owner.revalidate_in_txn(vault, &txn)?;
+    let limit =
+        owner_read_page_limit(input.limit).ok_or_else(|| invalid("limit must be positive"))?;
+    let after = input
+        .after
+        .as_deref()
+        .map(|after| {
+            attempt_id(after.trim())
+                .map_err(|_| invalid("after must be the job ref a previous page named as next"))
+        })
+        .transpose()?;
+    let store = DreamerRunnerStore::new(vault);
+    let counter = store.budget_in_txn(&txn, &input.budget_id)?;
+    if counter
+        .as_ref()
+        .is_some_and(|row| row.budget_id != input.budget_id)
+    {
+        return Err(crate::Error::InvariantViolation(
+            "runner budget row names another budget",
+        ));
+    }
+    let mut rows =
+        store.budget_reservations_in_txn(&txn, &input.budget_id, after, limit.saturating_add(1))?;
+    let more = rows.len() > limit;
+    rows.truncate(limit);
+    let reservations: Vec<_> = rows
+        .into_iter()
+        .map(|row| RunnerBudgetReservation {
+            job_ref: crate::entity_id::bytes_to_hex_lower(row.attempt_id.as_bytes()),
+            reserved_units: row.reserved_units,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        })
+        .collect();
+    Ok(RunnerBudgetReservationsView {
+        budget_id: input.budget_id.clone(),
+        counter: counter.as_ref().map(runner_counter).transpose()?,
+        next: reservations
+            .last()
+            .filter(|_| more)
+            .map(|row| row.job_ref.clone()),
+        reservations,
+        local_only: true,
+    })
+}
+
+/// The counter as the owner reads it, with what settled as spent. A row
+/// whose remaining and reserved units exceed its total refuses: the runner
+/// never writes one.
+fn runner_counter(row: &DreamerBudgetRecord) -> Result<LocalRunnerBudgetCounter> {
+    let spent_units = row
+        .total_units
+        .checked_sub(row.remaining_units)
+        .and_then(|free| free.checked_sub(row.reserved_units))
+        .ok_or(crate::Error::InvariantViolation(
+            "dreamer budget counter is inconsistent",
+        ))?;
+    Ok(LocalRunnerBudgetCounter {
+        total_units: row.total_units,
+        remaining_units: row.remaining_units,
+        reserved_units: row.reserved_units,
+        spent_units,
+        updated_at: row.updated_at,
     })
 }
 

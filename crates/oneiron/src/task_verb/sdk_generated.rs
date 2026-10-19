@@ -358,6 +358,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.budgets.reservations",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest,
+                >(),
+            ),
+            (
                 "vault.budgets.settlements",
                 crate::code_run::vault_read::request_schema::<
                     crate::agent_dispatch::budget_doors::RunSettlementsRequest,
@@ -4588,6 +4594,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.consolidation.home.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.consolidation.lineage",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::ConsolidationLineageRequest,
+                >(),
+            ),
+            (
                 "vault.consolidation.promote",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::consolidation::ConsolidationPromoteRequest,
@@ -5415,6 +5431,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.hold",
     "vault.budgets.hold.resume",
     "vault.budgets.local",
+    "vault.budgets.reservations",
     "vault.budgets.settlements",
     "vault.budgets.rsi.configure",
     "vault.budgets.rsi",
@@ -5883,6 +5900,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.consolidation.status",
     "vault.runs.step",
     "vault.runs.checkpoint",
+    "vault.consolidation.home.get",
+    "vault.consolidation.lineage",
     "vault.consolidation.promote",
     "vault.sieve.evidence",
     "vault.sieve.evidence.replay",
@@ -6096,6 +6115,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.budgets.local" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::LocalRunnerBudgetView,
+        >(),
+        "vault.budgets.reservations" => crate::code_run::vault_read::request_schema::<
+            crate::agent_dispatch::budget_doors::RunnerBudgetReservationsView,
         >(),
         "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::RunSettlementsView,
@@ -7517,6 +7539,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.runs.checkpoint" => crate::code_run::vault_read::request_schema::<
             Option<crate::engine_executor::checkpoint_read::CheckpointView>,
         >(),
+        "vault.consolidation.home.get" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_runner::ConsolidationHomeView,
+        >(),
+        "vault.consolidation.lineage" => crate::code_run::vault_read::request_schema::<
+            Option<crate::dreamer_runner::ConsolidationLineageView>,
+        >(),
         "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
             crate::memory::consolidation::ConsolidationPromotion,
         >(),
@@ -8400,6 +8428,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.budgets.local" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.reservations" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -13729,6 +13764,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.consolidation.home.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consolidation.lineage" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.consolidation.promote" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -14853,6 +14902,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.budgets.local" => {
             let _input: crate::agent_dispatch::budget_doors::LocalRunnerBudgetRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.reservations" => {
+            let _input: crate::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest =
                 decode(value.clone())?;
         }
         "vault.budgets.settlements" => {
@@ -17428,6 +17481,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::engine_executor::checkpoint_read::CheckpointReadRequest =
                 decode(value.clone())?;
         }
+        "vault.consolidation.home.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.consolidation.lineage" => {
+            let _input: crate::dreamer_runner::ConsolidationLineageRequest = decode(value.clone())?;
+        }
         "vault.consolidation.promote" => {
             let _input: crate::memory::consolidation::ConsolidationPromoteRequest =
                 decode(value.clone())?;
@@ -18104,6 +18163,7 @@ pub fn invoke(
         "vault.budgets.hold" => encode(vault_budgets_hold(memory, decode(value)?)?),
         "vault.budgets.hold.resume" => encode(vault_budgets_hold_resume(memory, decode(value)?)?),
         "vault.budgets.local" => encode(vault_budgets_local(memory, decode(value)?)?),
+        "vault.budgets.reservations" => encode(vault_budgets_reservations(memory, decode(value)?)?),
         "vault.budgets.settlements" => encode(vault_budgets_settlements(memory, decode(value)?)?),
         "vault.budgets.rsi.configure" => {
             encode(vault_budgets_rsi_configure(memory, decode(value)?)?)
@@ -19463,6 +19523,12 @@ pub fn invoke(
         "vault.consolidation.status" => encode(vault_consolidation_status(memory, decode(value)?)?),
         "vault.runs.step" => encode(vault_runs_step(memory, decode(value)?)?),
         "vault.runs.checkpoint" => encode(vault_runs_checkpoint(memory, decode(value)?)?),
+        "vault.consolidation.home.get" => {
+            encode(vault_consolidation_home_get(memory, decode(value)?)?)
+        }
+        "vault.consolidation.lineage" => {
+            encode(vault_consolidation_lineage(memory, decode(value)?)?)
+        }
         "vault.consolidation.promote" => {
             encode(vault_consolidation_promote(memory, decode(value)?)?)
         }
@@ -20468,6 +20534,17 @@ pub fn vault_budgets_local(
     crate::agent_dispatch::budget_doors::local_runner_budget_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.budgets.local")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_reservations(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::RunnerBudgetReservationsView> {
+    crate::agent_dispatch::budget_doors::runner_budget_reservations_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.reservations")?,
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
@@ -26870,6 +26947,25 @@ pub fn vault_runs_checkpoint(
         memory,
         &memory.embedded_owner("vault.runs.checkpoint")?,
         &input,
+    )
+}
+pub fn vault_consolidation_home_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::dreamer_runner::ConsolidationHomeView> {
+    crate::dreamer_runner::consolidation_home_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.consolidation.home.get")?,
+    )
+}
+pub fn vault_consolidation_lineage(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::ConsolidationLineageRequest,
+) -> MemoryResult<Option<crate::dreamer_runner::ConsolidationLineageView>> {
+    crate::dreamer_runner::consolidation_lineage_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.consolidation.lineage")?,
+        input,
     )
 }
 pub fn vault_consolidation_promote(
