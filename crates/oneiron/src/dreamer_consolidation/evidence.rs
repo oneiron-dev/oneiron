@@ -167,6 +167,75 @@ impl VerifiedEvidenceSet {
         }
         Ok(Self::from_rows(rows, inherited_meet))
     }
+    /// Binds a stored citation set again in the caller's transaction, as the
+    /// Dreamer reads each source there (FIX 496): a TURN range must still
+    /// hash to the words it cited and cover the same MESSAGE slices, a claim
+    /// must still be admissible and hash the same, and each source's trust is
+    /// read again. The meet folds onto `inherited_meet`, so it never rises.
+    pub(super) fn reverify_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        stored: &[super::provenance::VerifiedLocator],
+        inherited_meet: ClaimSource,
+    ) -> Result<Self> {
+        if stored.is_empty() {
+            return Err(invalid_consolidation("empty retained evidence"));
+        }
+        let read = super::turn_text::dreamer_read(vault)?;
+        let mut rows = Vec::with_capacity(stored.len());
+        for (reference, hash, messages) in stored {
+            let locator = match (reference.claim_id, reference.byte_range) {
+                (Some(claim), None) => EvidenceLocator::claim(reference.source_id, claim)?,
+                (None, Some((start, end))) => {
+                    EvidenceLocator::turn_range(reference.source_id, start, end)?
+                }
+                _ => {
+                    return Err(invalid_consolidation(
+                        "retained evidence is neither a text range nor a claim",
+                    ));
+                }
+            };
+            let (kind, _, body) = read
+                .get_entities_parts_in_txn(txn, &[reference.source_id])?
+                .pop()
+                .flatten()
+                .ok_or_else(|| invalid_consolidation("retained evidence is not readable"))?;
+            let (trust, text) = if kind == crate::registry::ENTITY_TYPE_CLAIM {
+                let claim = crate::claim::decode_claim_body(&body, true)?;
+                if !crate::claim::claim_evidence_admissible(&claim) {
+                    return Err(invalid_consolidation("generated claim cannot corroborate"));
+                }
+                (super::provenance::evidence_source_from_claim(&claim), None)
+            } else {
+                let trust = super::resources::native_turn_source(vault, &body)?;
+                let text =
+                    super::turn_text::collect_in(&read, txn, &reference.source_id, &body, &mut 0)?;
+                (trust, Some(text))
+            };
+            let verified = super::conflict::verify_swarm_evidence_bytes(
+                *reference,
+                kind,
+                &body,
+                text.as_ref().and_then(super::turn_text::TurnText::text),
+                trust,
+            )?;
+            let live = match &text {
+                Some(text) => text.spans(reference.byte_range)?,
+                None => Vec::new(),
+            };
+            if verified.content_hash != *hash || live != *messages {
+                return Err(invalid_consolidation("retained evidence changed"));
+            }
+            rows.push(VerifiedCitation {
+                locator,
+                hash: *hash,
+                version: super::resources::document_version(reference.source_id, &body),
+                trust,
+                messages: live,
+            });
+        }
+        Ok(Self::from_rows(rows, inherited_meet))
+    }
     fn from_rows(rows: Vec<VerifiedCitation>, inherited_meet: ClaimSource) -> Self {
         let collapsed = super::conflict::collapse_verified_evidence(
             rows.iter()

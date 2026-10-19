@@ -76,19 +76,25 @@ pub(super) struct CandidateFacts {
     pub(super) topic: Option<Vec<u8>>,
 }
 
-pub(super) fn candidate_facts(candidate: &ClaimCandidate) -> Result<CandidateFacts> {
-    // A throwaway envelope: into_claim_body only stamps envelope-owned
-    // metadata; the identity fields we read are candidate-owned.
+/// `candidate` as a stored body under a throwaway envelope: into_claim_body
+/// only stamps envelope-owned metadata, so every candidate-owned field reads
+/// as the candidate holds it. A facet the candidate does not name reads as
+/// the probe's, never the vault's.
+pub(super) fn candidate_probe_body(candidate: &ClaimCandidate) -> Result<ClaimBody> {
     let envelope = WriteEnvelope::new(
         WriteActor::new(candidate_probe_actor(), crate::edge::EdgeActorClass::Agent),
         ClaimSource::Generated,
         WriteProvenance::new(Value::from("dreamer-consolidation-probe"))?,
         ClaimApprovalStatus::Proposed,
     );
-    let body = candidate.clone().into_claim_body(
+    candidate.clone().into_claim_body(
         &envelope,
         crate::claim::substrate_facet_id(candidate_probe_actor())?,
-    )?;
+    )
+}
+
+pub(super) fn candidate_facts(candidate: &ClaimCandidate) -> Result<CandidateFacts> {
+    let body = candidate_probe_body(candidate)?;
     let ClaimSubject::Entity(subject) = body.subject else {
         return Err(invalid_consolidation(
             "consolidation candidates must have entity subjects",

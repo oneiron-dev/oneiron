@@ -333,6 +333,7 @@ fn revert_claim_in_txn(
         let settled = revert_settlement_in_txn(vault, txn, claim, reverter, now)?;
         let mut reverted = RevertedDreamerChange::of(DreamerChangeKind::Settlement);
         reverted.retracted.push(claim);
+        reverted.retracted.extend(settled.retracted);
         reverted.reopened.push(settled.marker);
         reverted.restored = settled.restored;
         reverted.copied = settled.copied;

@@ -49,7 +49,6 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::{
     DurableStepContext, DurableStepError, ScopeResource, StepOutcome, call_as_step_checked,
 };
-use crate::note::ExtractionDefault;
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::side_table::{self, Named, SideTable};
 use crate::temporal::TimeRange;
@@ -394,40 +393,24 @@ fn readable_notes(
         if kind != ENTITY_TYPE_NOTE {
             continue;
         }
-        let Ok(decoded) = crate::note::decode_note_body_in_txn(&vault.store, &txn, &body) else {
+        // The one NOTE projection (FIX 907): Allowed reads whole, AfterSeal
+        // once sealed (a sealed pad through its marks); a diary, a Disabled
+        // NOTE and an empty one are never read.
+        let Some(projected) = super::note_text::note_text_in(vault, &txn, id, &body)? else {
             continue;
         };
-        // A NOTE whose extraction default, its kind's or its own override,
-        // is Allowed is read. An AfterSeal NOTE is read once it is sealed. A
-        // diary stays private strategy, and a Disabled NOTE is never read.
-        let extraction = crate::note::note_defaults_in_txn(
-            &vault.store,
-            &txn,
-            id,
-            decoded.kind.as_str().as_ref(),
-        )?
-        .extraction;
-        let (markdown, sealed_pad, keep) = if extraction == ExtractionDefault::Allowed {
-            (decoded.markdown.clone(), None, Vec::new())
-        } else if extraction == ExtractionDefault::AfterSeal
-            && crate::note::note_sealed_in_txn(&vault.store, &txn, *id)?
-        {
-            if vault.scratchpad_sealed_in_txn(&txn, *id)? {
-                let (text, keep) = crate::context_board::sealed_pad_review_text(&decoded.markdown);
-                let ask = PadAsk::First {
-                    keep: !keep.is_empty(),
-                };
-                (text, Some(ask), keep)
-            } else {
-                (decoded.markdown.clone(), None, Vec::new())
-            }
-        } else {
-            continue;
-        };
-        if markdown.trim().is_empty() {
-            continue;
-        }
-        let fingerprint = *blake3::hash(decoded.markdown.as_bytes()).as_bytes();
+        let super::note_text::NoteText {
+            markdown: stored,
+            text: markdown,
+            sealed_pad,
+            keep,
+            version,
+            ..
+        } = projected;
+        let sealed_pad = sealed_pad.then_some(PadAsk::First {
+            keep: !keep.is_empty(),
+        });
+        let fingerprint = *blake3::hash(stored.as_bytes()).as_bytes();
         let seen = SEEN
             .get(&vault.store, &txn, id)?
             .filter(|seen| seen.fingerprint == fingerprint);
@@ -440,7 +423,7 @@ fn readable_notes(
                     && seen.attempt != attempt =>
             {
                 let missed = seen.keep_missed.clone();
-                let text = crate::context_board::sealed_pad_reask_text(&decoded.markdown, &missed);
+                let text = crate::context_board::sealed_pad_reask_text(&stored, &missed);
                 (text, Some(PadAsk::Missed), missed, Some(seen))
             }
             Some(_) => continue,
@@ -455,7 +438,7 @@ fn readable_notes(
         };
         notes.push(Note {
             id: *id,
-            version: super::resources::document_version(*id, &body),
+            version,
             markdown,
             sealed_pad,
             keep,

@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use crate::attempt_queue::AttemptId;
 use crate::claim::ScopedReadActorKey;
 use crate::dreamer_runner::{
-    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
+    DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope, DreamerRunnerStore,
 };
 use crate::llm::{Scope, ScopeResource};
 use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
@@ -181,7 +181,7 @@ pub(crate) fn spend_consumed_in_txn(
 pub(crate) fn enqueue_rungs_in_txn(
     store: &DreamerRunnerStore<'_>,
     txn: &mut heed::RwTxn<'_>,
-    parent: &DreamerAdmittedAttempt,
+    parent: &DreamerAttemptStatus,
     span: &SieveSpan,
     audit: bool,
     now: u64,
@@ -196,7 +196,7 @@ pub(crate) fn enqueue_rungs_in_txn(
     let key = if audit {
         format!(
             "sieve:audit:{}:{}",
-            crate::entity_id::bytes_to_hex_lower(parent.status.attempt.id.as_bytes()),
+            crate::entity_id::bytes_to_hex_lower(parent.attempt.id.as_bytes()),
             crate::entity_id::bytes_to_hex_lower(&span.id)
         )
     } else {
@@ -208,10 +208,10 @@ pub(crate) fn enqueue_rungs_in_txn(
         DreamerAttemptPayload {
             attempt_type: RUNG_ATTEMPT.into(),
             input: Value::from(input),
-            parent_attempt: Some(parent.status.attempt.id),
+            parent_attempt: Some(parent.attempt.id),
         },
         Some(key),
-        parent.status.attempt.run_id.clone(),
+        parent.attempt.run_id.clone(),
         now,
     )?;
     Ok(())

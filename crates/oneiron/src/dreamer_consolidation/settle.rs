@@ -10,7 +10,10 @@
 //!
 //! A responder keeps one member, holds them all, or dismisses the marker.
 //! Keeping one supersedes each other live member with it, so the winner is
-//! the ordinary `supersedes` edge and no Conflict entity exists. Holding them
+//! the ordinary `supersedes` edge and no Conflict entity exists. A candidate
+//! the marker's round dropped is retained on the marker (FIX 496): keeping
+//! it lands it first, in the settlement's transaction and under the current
+//! Gate, and a revert retracts the winner that settlement landed. Holding them
 //! all leaves every member active: the observed-versus-stated answer, where
 //! `observed` never outranks `user_stated`. The open marker is never edited;
 //! it stays as audit evidence beside the claim that answers it.
@@ -26,6 +29,7 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 use serde_json::json;
 
+use super::retained_conflict::RetainedAlternative;
 use super::support::invalid_consolidation;
 use super::value_projection::rmpv_to_json;
 use crate::claim::{
@@ -54,6 +58,8 @@ const REPO_CONFLICT_KIND: &str = "repo_branch";
 /// The most members one ladder question offers to keep, under the Choice
 /// contract's 64 options with hold-both, dismiss and escalate beside them.
 const MAX_KEEP_OPTIONS: usize = 61;
+/// The resolution key naming the retained alternative a Keep landed.
+const MATERIALIZED_KEY: &str = "materialized";
 
 /// A responder's answer to one open conflict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +99,9 @@ pub struct OpenConflict {
     /// The stored claims the marker names, in its own order. An id it names
     /// that is no stored claim (a candidate its round dropped) is left out.
     pub members: Vec<EntityId>,
+    /// The candidates the marker's round dropped, retained on it whole (FIX
+    /// 496): none is a stored claim or active truth. Keeping one lands it.
+    pub alternatives: Vec<RetainedAlternative>,
     /// The contested predicates, as the marker records them.
     pub predicates: Vec<String>,
     /// The marker itself, still Proposed while it waits in its own review.
@@ -123,14 +132,16 @@ pub struct ConflictSettleReceipt {
 
 /// What reverting one settlement did (OF-023, owner ruling 10-18): the marker
 /// it reopened, the members standing again in place, the Dreamer's fresh
-/// copies of its own MACHINE members as (member, copy), and the members a
-/// later write closed, left as they are.
+/// copies of its own MACHINE members as (member, copy), the members a later
+/// write closed, left as they are, and the retained alternative the
+/// settlement landed, retracted when it still stood (FIX 496).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RevertedSettlement {
     pub marker: EntityId,
     pub restored: Vec<EntityId>,
     pub copied: Vec<(EntityId, EntityId)>,
     pub left_closed: Vec<EntityId>,
+    pub retracted: Option<EntityId>,
 }
 
 /// One standing settlement an owner may revert: its answer, the marker it
@@ -256,10 +267,16 @@ fn open_conflict_from(
             members.push(id);
         }
     }
+    // A retained candidate that is now a stored claim reads as a member.
+    let alternatives = super::retained_conflict::retained_alternatives(&body.value)
+        .into_iter()
+        .filter(|alternative| !members.contains(&alternative.id))
+        .collect();
     Ok(Some(OpenConflict {
         marker,
         subject,
         members,
+        alternatives,
         predicates: contested_predicates(&body),
         body,
         reverted,
@@ -367,7 +384,9 @@ pub(crate) fn open_conflict_in_txn(
 
 /// Writes `settlement` for `conflict` in the caller's transaction, after the
 /// caller has checked the responder's authority. `Keep` needs a standing
-/// member on the conflict's own subject; each other Active member on that
+/// member on the conflict's own subject, or one of its retained alternatives,
+/// which lands first under the current Gate (FIX 496) and must then stand,
+/// and the answer records it as landed; each other Active member on that
 /// subject is superseded by it (a staged replacement that lost drops its
 /// binding, and a pending review tray closes), under the claim lifecycle's
 /// own guards: a generated claim still never supersedes user-stated truth.
@@ -388,8 +407,18 @@ pub(crate) fn apply_settlement_in_txn(
     let on_subject =
         |body: &ClaimBody| matches!(body.subject, ClaimSubject::Entity(s) if s == conflict.subject);
     let mut superseded = Vec::new();
+    let mut materialized = None;
     if let ConflictSettlement::Keep(winner) = settlement {
-        if !conflict.members.contains(&winner) {
+        // A retained alternative lands first, as its round proposed it and
+        // under the current Gate (FIX 496); a refusal leaves the marker open.
+        if let Some(alternative) = conflict
+            .alternatives
+            .iter()
+            .find(|alternative| alternative.id == winner)
+        {
+            super::retained_conflict::land_in_txn(vault, txn, alternative, now)?;
+            materialized = Some(winner);
+        } else if !conflict.members.contains(&winner) {
             return Err(invalid_consolidation(
                 "the kept claim is not a member of the conflict",
             ));
@@ -459,6 +488,12 @@ pub(crate) fn apply_settlement_in_txn(
             ),
         ));
     }
+    if let Some(born) = materialized {
+        resolution.push((
+            Value::from(MATERIALIZED_KEY),
+            Value::Binary(born.as_bytes().to_vec()),
+        ));
+    }
     let candidate = super::persistence::resolved_candidate(
         &conflict.body,
         conflict.marker,
@@ -470,6 +505,7 @@ pub(crate) fn apply_settlement_in_txn(
     let birth = {
         let inputs: Vec<EntityId> = std::iter::once(conflict.marker)
             .chain(conflict.members.iter().copied())
+            .chain(materialized)
             .collect();
         RowBirth::written(
             envelope.actor(),
@@ -558,8 +594,10 @@ pub(crate) fn settled_answers_in_txn(
 /// one, the owner's to answer. Each member the kept one superseded stands
 /// again: in place, its `supersedes` link gone; a Dreamer-born MACHINE
 /// member, whose signed history never reopens, as the Dreamer's fresh copy
-/// born of it. A member some later write closed stays as it is. Nothing is
-/// deleted: the answer and every closed row stay as history.
+/// born of it. A member some later write closed stays as it is. A winner
+/// the settlement landed from a retained alternative is retracted while it
+/// still stands. Nothing is deleted: the answer and every closed row stay as
+/// history.
 pub(crate) fn revert_settlement_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -581,12 +619,14 @@ pub(crate) fn revert_settlement_in_txn(
         .ok_or(invalid_consolidation("not a settlement's answer"))?;
     let kept = marker_ids(resolution, "kept").next();
     let superseded: Vec<EntityId> = marker_ids(resolution, "superseded").collect();
+    let born = marker_ids(resolution, MATERIALIZED_KEY).next();
     vault.retract_claim_in_txn_as(txn, &resolved, now, Some(reverter))?;
     let mut reverted = RevertedSettlement {
         marker,
         restored: Vec::new(),
         copied: Vec::new(),
         left_closed: Vec::new(),
+        retracted: None,
     };
     let Some(kept) = kept else {
         return Ok(reverted);
@@ -597,6 +637,17 @@ pub(crate) fn revert_settlement_in_txn(
             MemberRestore::Copied(copy) => reverted.copied.push((loser, copy)),
             MemberRestore::LeftClosed => reverted.left_closed.push(loser),
         }
+    }
+    // A winner this settlement landed from its marker's retained candidates
+    // is retracted with it (FIX 496), unless a later write already closed
+    // it. A winner that stood before the settlement keeps standing.
+    if born == Some(kept)
+        && vault
+            .get_claim_in_txn(txn, &kept)?
+            .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active)
+    {
+        vault.retract_claim_in_txn_as(txn, &kept, now, Some(reverter))?;
+        reverted.retracted = Some(kept);
     }
     Ok(reverted)
 }
@@ -845,6 +896,27 @@ impl ConflictSettleDecisions<'_> {
             }));
         }
         drop(txn);
+        // A candidate the round dropped rides as retained, never as a stored
+        // claim; keeping it lands it (FIX 496).
+        for alternative in &conflict.alternatives {
+            let keep_option = if keepable.len() < MAX_KEEP_OPTIONS {
+                keepable.push(alternative.id);
+                Some(format!("{KEEP_PREFIX}{}", alternative.id.to_hex()))
+            } else {
+                None
+            };
+            let value = rmpv_to_json(&alternative.value);
+            values.push((alternative.id.to_hex(), value.to_string()));
+            members.push(json!({
+                "id": alternative.id.to_hex(),
+                "keep_option": keep_option,
+                "retained": true,
+                "predicate": alternative.predicate,
+                "value": value,
+                "source": alternative.source.as_str(),
+                "confidence": alternative.confidence,
+            }));
+        }
         // Whole, each member rides with its claim's fields; past the bound, by
         // id with its value's canonical text cut to fit, never one left out.
         let whole = json!({

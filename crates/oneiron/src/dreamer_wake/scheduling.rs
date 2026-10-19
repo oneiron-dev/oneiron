@@ -23,6 +23,8 @@ use super::types::WakeTrigger;
 /// Timer/Macro also enqueues vault cleanup in the SAME transaction. Other
 /// triggers and narrower scopes enqueue consolidation only. The returned
 /// outcome remains the consolidation outcome; cleanup has its own queue kind.
+/// A Timer/Macro wake whose payload input is Nil names no partition: its
+/// outcome is the typed plan parent its Nightly spending is planned under.
 pub fn request_wake(
     store: &DreamerRunnerStore<'_>,
     trigger: WakeTrigger,
@@ -127,6 +129,20 @@ pub(crate) fn request_wake_in_txn(
             run_id.clone(),
             now,
         )?;
+        // A Timer wake that names no partition plans the existing Nightly
+        // spending under one typed parent in this commit (FIX 336), never a
+        // consolidation with nothing to read; an explicit partition keeps
+        // its own consolidation below.
+        if payload.input.is_nil() {
+            return super::nightly::enqueue_timer_plan_in_txn(
+                store,
+                txn,
+                payload.parent_attempt,
+                dedupe_key,
+                run_id,
+                now,
+            );
+        }
     }
     store.enqueue_consolidation_in_txn(
         txn,
