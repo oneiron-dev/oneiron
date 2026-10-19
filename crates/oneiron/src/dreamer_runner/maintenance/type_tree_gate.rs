@@ -13,13 +13,14 @@ use serde_json::{Value, json};
 
 use super::type_tree_upkeep::{
     TEAM_SHAPE_CHARGES_FAILED_TEAMS, TEAM_SHAPE_GATE_ADMITS, TeamShapeReserve, TreeGateOutcome,
+    TypeEvidence, recount,
 };
 use crate::agent_dispatch::{TASK_TYPE_TREE_FILE, TEAM_SHAPE_SKILL_NAME, load_team_type_tree};
 use crate::attempt_queue::{AttemptId, ManifestEntry};
 use crate::autoreason_campaign::coverage::CoverageFloorComparison;
 use crate::claim::ClaimApprovalStatus;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
-use crate::error::ArtifactError;
+use crate::error::{ArtifactError, ErrorKind};
 use crate::llm::decision::{DecisionQuestion, TypedDecision};
 use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::skill_optimize::{
@@ -205,6 +206,19 @@ impl<'a> TreeReplayScorer<'a> {
         })
     }
 
+    /// The proposal's picks counted on `eligible` (the vault tree's receipts
+    /// less every reserved leader's teams) in place of the counts its
+    /// package stores, which read every receipt, a reserved run's own
+    /// outcome among them. The in-force tree keeps its counts: they were
+    /// written when that version was proposed, before any run could load
+    /// it, and the gate reserves only runs that loaded it.
+    fn proposal_counted_on(mut self, eligible: &[TypeEvidence]) -> Self {
+        let rows: Vec<&TypeEvidence> = eligible.iter().collect();
+        let (_, tree) = &mut self.arms[1];
+        *tree = recount(tree, &rows).0;
+        self
+    }
+
     /// What `tree` places and picks for each of `receipts`' teams. No
     /// outcome is read: the judge never sees a success label.
     fn view(&self, tree: &TaskTypeTree, receipts: &[String]) -> Value {
@@ -370,10 +384,31 @@ fn open_revision(vault: &Vault) -> Result<Option<(EntityId, EntityId)>> {
     }
 }
 
+/// Whether `head` reads as a skill record. Gone, purged, another kind of
+/// entity and a body that does not decode are the one stale-target fact the
+/// gate reads them as; any other error propagates.
+fn head_reads(vault: &Vault, head: &EntityId) -> Result<bool> {
+    match vault.get_skill_record(head) {
+        Ok(record) => Ok(record.is_some()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::EntityNotFound | ErrorKind::InvalidSkillBody
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Puts the open team-shape revision to the held-out gate under the
-/// upkeep's own attempt, with `scorer` reading both trees. An empty reserve
-/// or a moved snapshot is [`TreeGateOutcome::Retry`]. A scored verdict is a
-/// held-out outcome for the Coach's own edit record; an admitting one, when
+/// upkeep's own attempt, with `scorer` reading both trees, the revision's
+/// picks counted on `eligible`, which holds no reserved team. A revision
+/// whose head no longer reads goes to the gate with no tree read, and the
+/// gate's stale-target refusal closes it. An empty reserve or a moved
+/// snapshot is [`TreeGateOutcome::Retry`]. A scored verdict is a held-out
+/// outcome for the Coach's own edit record; an admitting one, when
 /// [`TEAM_SHAPE_GATE_ADMITS`], admits the revision and supersedes the head
 /// in one transaction. `None` when no revision is open.
 ///
@@ -386,17 +421,28 @@ pub(super) fn drive(
     attempt: &DreamerAdmittedAttempt,
     scorer: &dyn HeldOutReplayNotes,
     receipts: &[TeamReceipt],
+    eligible: &[TypeEvidence],
     now: u64,
 ) -> Result<Option<TreeGateOutcome>> {
     let Some((proposal, predecessor)) = open_revision(vault)? else {
         return Ok(None);
     };
-    let in_force = load_team_type_tree(vault, None)?;
-    let scorer = TreeReplayScorer::new(vault, scorer, &proposal, &predecessor, in_force, receipts)?;
+    // A head that no longer reads leaves no incumbent tree: the gate rules on
+    // its own read of it and closes the revision before anything is scored.
+    let tree_judge;
+    let judge: &dyn HeldOutReplayNotes = if head_reads(vault, &predecessor)? {
+        let in_force = load_team_type_tree(vault, None)?;
+        let built =
+            TreeReplayScorer::new(vault, scorer, &proposal, &predecessor, in_force, receipts)?;
+        tree_judge = built.proposal_counted_on(eligible);
+        &tree_judge
+    } else {
+        scorer
+    };
     let verdict = match score_gate_skill_edit_in_cycle(
         vault,
         &proposal,
-        &scorer,
+        judge,
         attempt.status.attempt.id,
         now,
     ) {

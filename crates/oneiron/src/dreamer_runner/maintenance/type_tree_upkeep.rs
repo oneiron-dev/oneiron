@@ -17,14 +17,16 @@
 //! when the gate admits it.
 //!
 //! Each settled team fills the reserve of the in-force team-shape revision
-//! its leader loaded, and the reshape never fits on a run that reserve holds.
-//! When the host lends a judge, the pass puts the open revision to the gate
-//! with a judge that reads both versions' trees, and an admitting verdict
-//! puts it in force.
+//! its leader loaded. Every team of a leader that reserve holds leaves before
+//! any decision is read, so the reshape never fits on a reserved run and no
+//! other run's decision rests on one's outcome. When the host lends a judge,
+//! the pass puts the open revision to the gate with a judge that reads both
+//! versions' trees, the revision's picks counted without the reserved teams,
+//! and an admitting verdict puts it in force.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::coach::COACH_TYPE_TREE_UPKEEP_FACET;
-use super::type_tree_gate::{ReserveWrite, drive, record_team_shape_outcomes};
+use super::type_tree_gate::{drive, record_team_shape_outcomes, team_leader};
 use crate::agent_dispatch::{
     TASK_TYPE_TREE_FILE, load_team_type_tree, team_shape_skill, team_shape_skill_in_force,
 };
@@ -33,8 +35,8 @@ use crate::entity_id::EntityId;
 use crate::limit_ask::EngineLimit;
 use crate::skill_hub::HubFile;
 use crate::skill_optimize::{
-    HeldOutReplayNotes, SkillEditDisposition, SkillRepairStamp, propose_skill_package_revision,
-    proven_cycle, receipt_is_held_out,
+    HeldOutReplayNotes, SkillEditDisposition, SkillRepairStamp, held_out_receipts,
+    propose_skill_package_revision, proven_cycle, receipt_is_held_out,
 };
 use crate::task_type::{
     DecisionAxis, DecisionObservation, TaskTypeNode, TaskTypeRef, TaskTypeTree,
@@ -254,6 +256,19 @@ pub fn recount(tree: &TaskTypeTree, evidence: &[&TypeEvidence]) -> (TaskTypeTree
     (tree, skipped)
 }
 
+/// `pool`'s rows as the tree is fit on them: the held-out tasks' rows that
+/// carry a decision, which the reshape is checked on, then the fit rest.
+fn fit_split(pool: &[TypeEvidence]) -> Result<(Vec<&TypeEvidence>, Vec<&TypeEvidence>)> {
+    let skill = team_shape_skill()?;
+    Ok(pool.iter().partition(|row| {
+        !row.decisions.is_empty()
+            && row
+                .task
+                .as_deref()
+                .is_some_and(|task| receipt_is_held_out(&skill, task))
+    }))
+}
+
 /// Splits and merges one pass made.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Reshape {
@@ -413,9 +428,11 @@ impl Vault {
     /// merge on the fit tasks' decisions, keep the new shape only when it
     /// reads the held-out tasks' decisions no worse, name new split types
     /// through `namer` (outside any vault transaction), and propose a changed
-    /// tree as a revision of the in-force team-shape skill. With a `scorer`,
-    /// the open revision then goes to the held-out gate, and an admitting
-    /// verdict puts it in force.
+    /// tree as a revision of the in-force team-shape skill. Every team of a
+    /// leader in the head's gate reserve leaves before any decision is read.
+    /// With a `scorer`, the open revision then goes to the held-out gate, its
+    /// picks counted without the reserved teams, and an admitting verdict
+    /// puts it in force.
     ///
     /// # Errors
     ///
@@ -431,45 +448,43 @@ impl Vault {
     ) -> Result<TypeTreeUpkeepReport> {
         self.require_coach_attempt(attempt, COACH_TYPE_TREE_UPKEEP_FACET)?;
         let receipts = team_receipts(self, None)?;
-        let reserve = match team_shape_skill_in_force(self, None)? {
+        let (reserve, reserved) = match team_shape_skill_in_force(self, None)? {
             Some(head) => {
                 let record = self.get_skill_record(&head)?.ok_or(Error::EntityNotFound)?;
-                record_team_shape_outcomes(self, &head, &record, &receipts)?
+                let write = record_team_shape_outcomes(self, &head, &record, &receipts)?;
+                // The leader receipts the gate reads as the head's reserve.
+                let reserved: BTreeSet<String> =
+                    held_out_receipts(self, &head)?.into_iter().collect();
+                (write.report, reserved)
             }
-            None => ReserveWrite::default(),
+            None => (TeamShapeReserve::default(), BTreeSet::new()),
         };
+        let (evidence, eligible) = self.vault_type_evidence(&receipts, &reserved)?;
+        let (held_out, fit) = fit_split(&eligible)?;
         let mut report =
-            self.reshape_and_propose(attempt, namer, &receipts, &reserve.held_out_teams, now)?;
-        report.reserve = reserve.report;
+            self.reshape_and_propose(attempt, namer, &evidence, &held_out, &fit, now)?;
+        report.reserve = reserve;
         if let Some(scorer) = scorer {
-            report.gate = drive(self, attempt, scorer, &receipts, now)?;
+            report.gate = drive(self, attempt, scorer, &receipts, &eligible, now)?;
         }
         Ok(report)
     }
 
     /// The recount, reshape and proposal of [`Self::run_coach_type_tree_upkeep`]
-    /// over `teams`. A run whose team `reserved` names (the gate's reserve)
-    /// is never fit on.
+    /// over `evidence`, every receipt placed in the vault tree. The reshape
+    /// fits on `fit` and is checked on `held_out`, neither of which holds a
+    /// reserved team; the proposed tree counts every receipt, and the judge
+    /// reads only its shape, recounted without the reserved teams.
     fn reshape_and_propose(
         &self,
         attempt: &DreamerAdmittedAttempt,
         namer: &dyn TypeNamer,
-        teams: &[TeamReceipt],
-        reserved: &BTreeSet<String>,
+        evidence: &[TypeEvidence],
+        held_out: &[&TypeEvidence],
+        fit: &[&TypeEvidence],
         now: u64,
     ) -> Result<TypeTreeUpkeepReport> {
         let base = load_team_type_tree(self, None)?;
-        let evidence = self.vault_type_evidence(teams)?;
-        let skill = team_shape_skill()?;
-        let (held_out, mut fit): (Vec<&TypeEvidence>, Vec<&TypeEvidence>) =
-            evidence.iter().partition(|row| {
-                !row.decisions.is_empty()
-                    && row
-                        .task
-                        .as_deref()
-                        .is_some_and(|task| receipt_is_held_out(&skill, task))
-            });
-        fit.retain(|row| !reserved.contains(&row.team_ref));
         let mut report = TypeTreeUpkeepReport {
             receipts: u32::try_from(evidence.len()).unwrap_or(u32::MAX),
             decisions: u32::try_from(
@@ -481,13 +496,13 @@ impl Vault {
             .unwrap_or(u32::MAX),
             ..TypeTreeUpkeepReport::default()
         };
-        let (in_force, _) = recount(&base, &fit);
+        let (in_force, _) = recount(&base, fit);
         let mut shaped = in_force.clone();
         let changes = reshape(&mut shaped);
         if changes != Reshape::default() {
             let hits = (
-                held_out_hits(&in_force, &held_out),
-                held_out_hits(&shaped, &held_out),
+                held_out_hits(&in_force, held_out),
+                held_out_hits(&shaped, held_out),
             );
             report.held_out_hits = Some(hits);
             if hits.1 < hits.0 {
@@ -498,6 +513,9 @@ impl Vault {
                 report.merges = changes.merges;
             }
         }
+        // The stored tree counts every receipt, for the runs it places once in
+        // force; the gate's judge reads its shape recounted without the
+        // reserved teams.
         let all: Vec<&TypeEvidence> = evidence.iter().collect();
         let (mut tree, skipped) = recount(&shaped, &all);
         report.skipped = skipped;
@@ -553,8 +571,13 @@ impl Vault {
 
     /// Every team receipt in `teams` placed in the vault tree (no project, or
     /// a project with no team-shape fork of its own in force), with its
-    /// decisions.
-    fn vault_type_evidence(&self, teams: &[TeamReceipt]) -> Result<Vec<TypeEvidence>> {
+    /// decisions; then the same, less every team of a leader whose pack
+    /// receipt `reserved` holds, with the decisions read without them.
+    fn vault_type_evidence(
+        &self,
+        teams: &[TeamReceipt],
+        reserved: &BTreeSet<String>,
+    ) -> Result<(Vec<TypeEvidence>, Vec<TypeEvidence>)> {
         let vault_head = team_shape_skill_in_force(self, None)?;
         let mut shares: BTreeMap<EntityId, bool> = BTreeMap::new();
         let mut receipts = Vec::new();
@@ -574,6 +597,19 @@ impl Vault {
                 receipts.push(receipt.clone());
             }
         }
-        Ok(type_evidence(receipts, &team_run_tasks(self)?))
+        let tasks = team_run_tasks(self)?;
+        let eligible: Vec<TeamReceipt> = receipts
+            .iter()
+            .filter(|receipt| {
+                !team_leader(&receipt.team_ref).is_some_and(|leader| {
+                    reserved.contains(&crate::receipt::attempt_pack_receipt_id(&leader))
+                })
+            })
+            .cloned()
+            .collect();
+        Ok((
+            type_evidence(receipts, &tasks),
+            type_evidence(eligible, &tasks),
+        ))
     }
 }

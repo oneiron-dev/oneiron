@@ -497,7 +497,9 @@ pub(super) fn wake_in_txn(
 }
 
 /// Whether a blocked report the case's failing run filed has its own work
-/// row: that run replays the same failure, so the case queues none.
+/// row: that run replays the same failure and, unless it already settled,
+/// classes it with this case's ladder class and evidence joined onto the
+/// report (`code_fix_subject_in`), so the case queues none.
 fn run_report_has_work_in(vault: &Vault, txn: &heed::RoTxn<'_>, case_ref: &str) -> Result<bool> {
     let Some(case) = healer_case_in_txn(vault, txn, case_ref)? else {
         return Ok(false);
