@@ -16594,10 +16594,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConsentRegistry",
+      "ConsentRegistryAgentGrant",
       "ConsentRegistryDelegation",
       "ConsentRegistryQuery",
       "ConsentRegistryRow",
@@ -16606,10 +16607,10 @@
      "path": "src/consent/registry.rs",
      "purpose": "—",
      "surface": {
-      "const": 2,
-      "crate-vis": 3,
+      "const": 3,
+      "crate-vis": 4,
       "fn": 1,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -25875,6 +25876,16 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/federation/agent_grant.rs",
+     "purpose": "The owner's grant of an explicit verb list to a named agent (FIX 5628): `vault.agents.grants.mint` and…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "ConnectGrantMinted"
      ],
@@ -25967,7 +25978,7 @@
      "purpose": "Federation grant record, role/preset policy, and grant body MessagePack codec",
      "surface": {
       "const": 4,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 3,
       "fn": 19,
       "struct": 2
@@ -26057,7 +26068,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "mod": 2,
       "re-export": 18
      }
@@ -55221,7 +55232,7 @@
      "surface": {
       "enum": 1,
       "fn": 10,
-      "re-export": 74,
+      "re-export": 75,
       "struct": 39
      }
     },
@@ -55238,6 +55249,23 @@
       "enum": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentGrantMintRequest",
+      "AgentGrantMinted",
+      "AgentGrantRevokeRequest",
+      "AgentGrantRevoked",
+      "AgentGrantView"
+     ],
+     "path": "src/task_verb/sdk_agent_grant.rs",
+     "purpose": "The inputs and answers of the owner's agent grant rows (FIX 5628): `vault.agents.grants.mint` and `.revoke`…",
+     "surface": {
+      "fn": 2,
+      "struct": 5
      }
     },
     {
@@ -55703,7 +55731,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1094
+      "fn": 1096
      }
     },
     {
@@ -62793,7 +62821,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63528,7 +63556,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 198,
+     "files": 199,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63698,7 +63726,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3920,
+   "source_files": 3922,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72664,7 +72692,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1065
+      "fn": 1067
      }
     },
     {
@@ -73803,7 +73831,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1066
+      "fn": 1068
      }
     },
     {
@@ -76915,6 +76943,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/agent_grant_doors.rs",
+     "purpose": "The host doors of the owner's agent grant rows (FIX 5628): `vault.agents.grants.mint` and `.revoke`",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -77551,7 +77589,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 172
+      "crate-vis": 173
      }
     },
     {
@@ -78992,6 +79030,16 @@
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/agent_grant_routes.rs",
+     "purpose": "`/v1/owner/agent-grants`: the owner grants a named agent (the seeded Coach included) an explicit verb list…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -86191,7 +86239,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 463,
+     "files": 465,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -86641,7 +86689,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 851,
+   "source_files": 853,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -86874,6 +86922,11 @@
       "AgentDreamingRequest",
       "AgentDreamingSetRequest",
       "AgentDreamingView",
+      "AgentGrantMintRequest",
+      "AgentGrantMinted",
+      "AgentGrantRevokeRequest",
+      "AgentGrantRevoked",
+      "AgentGrantView",
       "AgentHealthApplicationState",
       "AgentHealthCard",
       "AgentHealthCardView",
@@ -87609,6 +87662,7 @@
       "ConsentNeed",
       "ConsentPart",
       "ConsentRegistry",
+      "ConsentRegistryAgentGrant",
       "ConsentRegistryDelegation",
       "ConsentRegistryQuery",
       "ConsentRegistryRow",
@@ -90451,7 +90505,7 @@
      "purpose": "—",
      "surface": {
       "enum": 864,
-      "struct": 2744
+      "struct": 2750
      }
     },
     {
