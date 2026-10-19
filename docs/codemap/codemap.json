@@ -17407,7 +17407,7 @@
      "path": "src/context_board/room_verbs.rs",
      "purpose": "The rooms.* facade family delegates to existing reads, witness and claim gates",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 15,
       "fn": 5
      }
     },
@@ -17417,6 +17417,16 @@
      "notable": [],
      "path": "src/context_board/room_verbs/live_audience.rs",
      "purpose": "What a room's live speakers add to its ceiling (FIX 1388/1389): their entry refs as audience terms beside…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/room_verbs/thread_readers.rs",
+     "purpose": "A thread's own reader and ceiling (OF-529, FIX 2951): who reads one thread of a room, and the ceiling that…",
      "surface": {
       "crate-vis": 2
      }
@@ -35525,7 +35535,7 @@
      "path": "src/memory/room_turn.rs",
      "purpose": "A room turn (ARCH-0067 §8): one actor's reads inside one room's Scope",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 14,
       "struct": 1
      }
@@ -62240,7 +62250,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -63397,7 +63407,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3897,
+   "source_files": 3898,
    "test_files": 902
   },
   "oneiron-android": {
