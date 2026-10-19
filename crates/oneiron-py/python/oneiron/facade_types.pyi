@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 769 facade rows, 2702 declarations.
-Inputs: 717 of 769 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 689 of 769 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 773 facade rows, 2710 declarations.
+Inputs: 721 of 773 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 693 of 773 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -11218,6 +11218,38 @@ SafeDeleteReason = Literal["user_delete", "user_hard_delete", "gdpr_delete", "po
 class SafeDeleteRequest(TypedDict):
     entity_ref: str
     reason: SafeDeleteReason
+class CriticalWriteConfirmPendingRequest(TypedDict):
+    pending_operation: str
+class CriticalWriteConfirmPending(TypedDict):
+    pending_operation: str
+    claim_ref: str
+    confirm_id: str
+    nonce: str
+    read_frontier_hash: str
+    effect_digest: str
+    expires_at: int
+    has_deadline: bool
+class CriticalWriteConfirmRequest(TypedDict):
+    pending_operation: str
+    nonce: str
+    read_frontier_hash: str
+CriticalWriteConfirmAnswer = Literal["clear", "decline"]
+class CriticalWriteConfirmReceipt(TypedDict):
+    receipt_ref: str
+    confirm_id: str
+    pending_operation: str
+    claim_ref: str
+    nonce: str
+    read_frontier_hash: str
+    effect_digest: str
+    expires_at: int
+    disposition: CriticalWriteConfirmAnswer
+CriticalWriteConfirmResolution = Literal["Cleared", "Retracted", "DemotedToProposed", "AlreadySettled"]
+class CriticalWriteConfirmSettlement(TypedDict):
+    receipt: CriticalWriteConfirmReceipt
+    resolution: CriticalWriteConfirmResolution
+class CriticalWriteConfirmReceiptRequest(TypedDict):
+    confirm_id: str
 class ReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
 class PendingWrite(TypedDict):

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 769 facade rows, 2666 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 725.
+// UniFFI census: 773 facade rows, 2674 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 729.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -34616,6 +34616,109 @@ pub struct ScopedReadResultOptionalClaimView {
     pub value: Option<WireClaimView>,
     #[serde(rename = "narrowing")]
     pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::memory::critical_confirm::CriticalWriteConfirmPendingRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CriticalWriteConfirmPendingRequest {
+    #[serde(rename = "pending_operation")]
+    pub pending_operation: String,
+}
+
+/// `oneiron::memory::critical_confirm::CriticalWriteConfirmPending`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CriticalWriteConfirmPending {
+    #[serde(rename = "pending_operation")]
+    pub pending_operation: String,
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "confirm_id")]
+    pub confirm_id: String,
+    #[serde(rename = "nonce")]
+    pub nonce: String,
+    #[serde(rename = "read_frontier_hash")]
+    pub read_frontier_hash: String,
+    #[serde(rename = "effect_digest")]
+    pub effect_digest: String,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+    #[serde(rename = "has_deadline")]
+    pub has_deadline: bool,
+}
+
+/// `oneiron::memory::critical_confirm::CriticalWriteConfirmRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CriticalWriteConfirmRequest {
+    #[serde(rename = "pending_operation")]
+    pub pending_operation: String,
+    #[serde(rename = "nonce")]
+    pub nonce: String,
+    #[serde(rename = "read_frontier_hash")]
+    pub read_frontier_hash: String,
+}
+
+/// `oneiron::memory::critical_confirm::CriticalWriteConfirmAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CriticalWriteConfirmAnswer {
+    #[serde(rename = "clear")]
+    Clear,
+    #[serde(rename = "decline")]
+    Decline,
+}
+
+/// `oneiron::memory::critical_confirm::CriticalWriteConfirmReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CriticalWriteConfirmReceipt {
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "confirm_id")]
+    pub confirm_id: String,
+    #[serde(rename = "pending_operation")]
+    pub pending_operation: String,
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "nonce")]
+    pub nonce: String,
+    #[serde(rename = "read_frontier_hash")]
+    pub read_frontier_hash: String,
+    #[serde(rename = "effect_digest")]
+    pub effect_digest: String,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+    #[serde(rename = "disposition")]
+    pub disposition: CriticalWriteConfirmAnswer,
+}
+
+/// `oneiron::gate::confirm::CriticalWriteConfirmResolution`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CriticalWriteConfirmResolution {
+    #[serde(rename = "Cleared")]
+    Cleared,
+    #[serde(rename = "Retracted")]
+    Retracted,
+    #[serde(rename = "DemotedToProposed")]
+    DemotedToProposed,
+    #[serde(rename = "AlreadySettled")]
+    AlreadySettled,
+}
+
+/// `oneiron::memory::critical_confirm::CriticalWriteConfirmSettlement`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CriticalWriteConfirmSettlement {
+    #[serde(rename = "receipt")]
+    pub receipt: CriticalWriteConfirmReceipt,
+    #[serde(rename = "resolution")]
+    pub resolution: CriticalWriteConfirmResolution,
+}
+
+/// `oneiron::memory::critical_confirm::CriticalWriteConfirmReceiptRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CriticalWriteConfirmReceiptRequest {
+    #[serde(rename = "confirm_id")]
+    pub confirm_id: String,
 }
 
 /// `oneiron::lens::record_ref::ResolveRecordRefRequest`.

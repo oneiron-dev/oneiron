@@ -29,6 +29,12 @@ mod archive_purge;
 mod artifact_hosting_doors;
 mod asset_resolve;
 mod authorship;
+mod critical_confirm;
+pub use critical_confirm::{
+    CriticalWriteConfirmAnswer, CriticalWriteConfirmPending, CriticalWriteConfirmPendingRequest,
+    CriticalWriteConfirmReceipt, CriticalWriteConfirmReceiptRequest, CriticalWriteConfirmRequest,
+    CriticalWriteConfirmSettlement,
+};
 mod birth_position;
 mod booking;
 mod claim_admission;

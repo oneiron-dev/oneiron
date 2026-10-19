@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 805 code-mode rows (782 host rows, 23 run rows), 2746 declarations.
-// Replies: 718 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 809 code-mode rows (786 host rows, 23 run rows), 2754 declarations.
+// Replies: 722 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2282,6 +2282,14 @@ declare namespace Sdk {
   type ClaimFilteredReadRequest = { claim_ref: string; filter?: ReadFilterInput | null };
   type SafeDeleteReason = "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete";
   type SafeDeleteRequest = { entity_ref: string; reason: SafeDeleteReason };
+  type CriticalWriteConfirmPendingRequest = { pending_operation: string };
+  type CriticalWriteConfirmPending = { pending_operation: string; claim_ref: string; confirm_id: string; nonce: string; read_frontier_hash: string; effect_digest: string; expires_at: number; has_deadline: boolean };
+  type CriticalWriteConfirmRequest = { pending_operation: string; nonce: string; read_frontier_hash: string };
+  type CriticalWriteConfirmAnswer = "clear" | "decline";
+  type CriticalWriteConfirmReceipt = { receipt_ref: string; confirm_id: string; pending_operation: string; claim_ref: string; nonce: string; read_frontier_hash: string; effect_digest: string; expires_at: number; disposition: CriticalWriteConfirmAnswer };
+  type CriticalWriteConfirmResolution = "Cleared" | "Retracted" | "DemotedToProposed" | "AlreadySettled";
+  type CriticalWriteConfirmSettlement = { receipt: CriticalWriteConfirmReceipt; resolution: CriticalWriteConfirmResolution };
+  type CriticalWriteConfirmReceiptRequest = { confirm_id: string };
   type ReceiptsRequest = { limit?: number | null };
   type PendingWrite = { claim_ref: string; decision_ref: string; created_at: number; reason_codes: string[]; dreamer_run_id?: string | null };
   type HydrateRequest = { refs: string[] };
@@ -4793,6 +4801,16 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   writes: {
+    critical_confirm: {
+      /** The owner clears exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt. */
+      clear(input: Sdk.CriticalWriteConfirmRequest): Promise<Sdk.CriticalWriteConfirmSettlement | StoredResult>;
+      /** The owner declines exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt. */
+      decline(input: Sdk.CriticalWriteConfirmRequest): Promise<Sdk.CriticalWriteConfirmSettlement | StoredResult>;
+      /** The owner reads a candidate's exact critical confirmation, with its nonce, effect digest, policy frontier and deadline. */
+      pending(input: Sdk.CriticalWriteConfirmPendingRequest): Promise<Sdk.CriticalWriteConfirmPending | null | StoredResult>;
+      /** The owner reads a critical confirmation's existing signed authority receipt without settling or rewriting the claim. */
+      receipt(input: Sdk.CriticalWriteConfirmReceiptRequest): Promise<Sdk.CriticalWriteConfirmReceipt | StoredResult>;
+    };
     /** Gated writes parked for consent, newest first. */
     pending(input: Sdk.ReceiptsRequest): Promise<Sdk.PendingWrite[] | StoredResult>;
   };

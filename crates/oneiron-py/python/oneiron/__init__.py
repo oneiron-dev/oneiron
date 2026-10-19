@@ -3157,9 +3157,27 @@ class Oneiron:
     class _VaultWritesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def critical_confirm(self) -> "Oneiron._VaultWritesCriticalConfirmVerbs":
+            return Oneiron._VaultWritesCriticalConfirmVerbs(self._client)
         def pending(self, input: dict[str, Any]) -> Any:
             """Gated writes parked for consent, newest first."""
             return json.loads(_translate(lambda: self._client.vault_writes_pending(json.dumps(input, allow_nan=False))))
+    class _VaultWritesCriticalConfirmVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def pending(self, spec):
+            """The owner reads a candidate's exact critical confirmation, with its nonce, effect digest, policy frontier and deadline."""
+            return json.loads(_translate(lambda: self._client.vault_writes_critical_confirm_pending(json.dumps(spec))))
+        def clear(self, spec):
+            """The owner clears exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt."""
+            return json.loads(_translate(lambda: self._client.vault_writes_critical_confirm_clear(json.dumps(spec))))
+        def decline(self, spec):
+            """The owner declines exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt."""
+            return json.loads(_translate(lambda: self._client.vault_writes_critical_confirm_decline(json.dumps(spec))))
+        def receipt(self, spec):
+            """The owner reads a critical confirmation's existing signed authority receipt without settling or rewriting the claim."""
+            return json.loads(_translate(lambda: self._client.vault_writes_critical_confirm_receipt(json.dumps(spec))))
     class _VaultRefsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

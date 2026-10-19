@@ -5441,6 +5441,62 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_writes_critical_confirm_pending(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.writes.critical_confirm.pending")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.writes.critical_confirm.pending", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_writes_critical_confirm_clear(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.writes.critical_confirm.clear")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.writes.critical_confirm.clear", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_writes_critical_confirm_decline(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.writes.critical_confirm.decline")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.writes.critical_confirm.decline", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_writes_critical_confirm_receipt(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.writes.critical_confirm.receipt")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.writes.critical_confirm.receipt", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_writes_pending(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.writes.pending")?;
         let output = py

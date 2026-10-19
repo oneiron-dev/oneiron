@@ -635,6 +635,10 @@ pub enum AgentVerb {
     VaultClaimsReadFiltered,
     VaultClaimsHistory,
     VaultDelete,
+    VaultWritesCriticalConfirmPending,
+    VaultWritesCriticalConfirmClear,
+    VaultWritesCriticalConfirmDecline,
+    VaultWritesCriticalConfirmReceipt,
     VaultWritesPending,
     VaultHydrate,
     VaultGet,
@@ -1430,6 +1434,10 @@ impl AgentVerb {
         Self::VaultClaimsReadFiltered,
         Self::VaultClaimsHistory,
         Self::VaultDelete,
+        Self::VaultWritesCriticalConfirmPending,
+        Self::VaultWritesCriticalConfirmClear,
+        Self::VaultWritesCriticalConfirmDecline,
+        Self::VaultWritesCriticalConfirmReceipt,
         Self::VaultWritesPending,
         Self::VaultHydrate,
         Self::VaultGet,
@@ -2246,6 +2254,10 @@ impl AgentVerb {
             Self::VaultClaimsReadFiltered => "vault.claims.read_filtered",
             Self::VaultClaimsHistory => "vault.claims.history",
             Self::VaultDelete => "vault.delete",
+            Self::VaultWritesCriticalConfirmPending => "vault.writes.critical_confirm.pending",
+            Self::VaultWritesCriticalConfirmClear => "vault.writes.critical_confirm.clear",
+            Self::VaultWritesCriticalConfirmDecline => "vault.writes.critical_confirm.decline",
+            Self::VaultWritesCriticalConfirmReceipt => "vault.writes.critical_confirm.receipt",
             Self::VaultWritesPending => "vault.writes.pending",
             Self::VaultHydrate => "vault.hydrate",
             Self::VaultGet => "vault.get",
@@ -3024,6 +3036,10 @@ impl AgentVerb {
                 | Self::VaultClaimsReadFiltered
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
+                | Self::VaultWritesCriticalConfirmPending
+                | Self::VaultWritesCriticalConfirmClear
+                | Self::VaultWritesCriticalConfirmDecline
+                | Self::VaultWritesCriticalConfirmReceipt
                 | Self::VaultWritesPending
                 | Self::VaultHydrate
                 | Self::VaultGet
@@ -3846,6 +3862,10 @@ impl AgentVerb {
                 | Self::VaultClaimsReadFiltered
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
+                | Self::VaultWritesCriticalConfirmPending
+                | Self::VaultWritesCriticalConfirmClear
+                | Self::VaultWritesCriticalConfirmDecline
+                | Self::VaultWritesCriticalConfirmReceipt
                 | Self::VaultWritesPending
                 | Self::VaultHydrate
                 | Self::VaultGet
@@ -4747,6 +4767,10 @@ impl AgentVerb {
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsDemote
                 | Self::VaultDelete
+                | Self::VaultWritesCriticalConfirmPending
+                | Self::VaultWritesCriticalConfirmClear
+                | Self::VaultWritesCriticalConfirmDecline
+                | Self::VaultWritesCriticalConfirmReceipt
                 | Self::VaultWritesPending
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
@@ -5273,6 +5297,8 @@ impl AgentVerb {
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsDemote
                 | Self::VaultDelete
+                | Self::VaultWritesCriticalConfirmClear
+                | Self::VaultWritesCriticalConfirmDecline
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
                 | Self::VaultProductivityCreate
@@ -6039,6 +6065,10 @@ impl AgentVerb {
             Self::VaultClaimsReadFiltered => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
+            Self::VaultWritesCriticalConfirmPending => &["spec"],
+            Self::VaultWritesCriticalConfirmClear => &["spec"],
+            Self::VaultWritesCriticalConfirmDecline => &["spec"],
+            Self::VaultWritesCriticalConfirmReceipt => &["spec"],
             Self::VaultWritesPending => &["spec"],
             Self::VaultHydrate => &["spec"],
             Self::VaultGet => &["spec"],
@@ -6835,6 +6865,10 @@ impl AgentVerb {
             Self::VaultClaimsReadFiltered => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
+            Self::VaultWritesCriticalConfirmPending => &["spec"],
+            Self::VaultWritesCriticalConfirmClear => &["spec"],
+            Self::VaultWritesCriticalConfirmDecline => &["spec"],
+            Self::VaultWritesCriticalConfirmReceipt => &["spec"],
             Self::VaultWritesPending => &["spec"],
             Self::VaultHydrate => &["spec"],
             Self::VaultGet => &["spec"],
@@ -8809,6 +8843,18 @@ impl AgentVerb {
             }
             Self::VaultDelete => {
                 "Deletes one entity under a named reason; an owner verb that only a verified human may call."
+            }
+            Self::VaultWritesCriticalConfirmPending => {
+                "The owner reads a candidate's exact critical confirmation, with its nonce, effect digest, policy frontier and deadline."
+            }
+            Self::VaultWritesCriticalConfirmClear => {
+                "The owner clears exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt."
+            }
+            Self::VaultWritesCriticalConfirmDecline => {
+                "The owner declines exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt."
+            }
+            Self::VaultWritesCriticalConfirmReceipt => {
+                "The owner reads a critical confirmation's existing signed authority receipt without settling or rewriting the claim."
             }
             Self::VaultWritesPending => "Gated writes parked for consent, newest first.",
             Self::VaultHydrate => {
