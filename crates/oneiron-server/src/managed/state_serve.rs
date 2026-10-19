@@ -1073,10 +1073,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let mut config = managed.serve_config(args);
     // The owner's settings file, refused leaf by leaf and settled once,
     // before anything reads the configuration: its `[oneironer]` arms the
-    // write-time marker in `vault_config` below.
-    super::settings::settle(&managed, args, &mut config)?;
+    // write-time marker in `vault_config` below. Tracing starts between its
+    // refusal and its settling, at the level the settled configuration runs
+    // at (argv over the file), so what settling decides is logged.
+    let settings = super::settings::prepare(&managed, args, &mut config)?;
+    init_managed_tracing(super::settings::log_level(settings.as_ref(), &config));
+    super::settings::settle(settings, &mut config)?;
     let cors = crate::commands::build_cors_layer(&config.sync_server_config())?;
-    init_managed_tracing(&config.log_level);
     tracing::info!(
         vault = %managed.vault_name,
         data_dir = %managed.data_dir.display(),

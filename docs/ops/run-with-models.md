@@ -245,7 +245,11 @@ needs the supervisor's `--keystore-dir`. Every embedding, tagging and other
 background pass runs under the vault's write admission, so a vault frozen for
 reap fills nothing until it thaws. Without the file a managed vault runs on the
 defaults: no model seats (its ladder is the rule table and the owner's asks),
-no embedder (lexical and graph recall only) and no tagger.
+no embedder (lexical and graph recall only) and no tagger. Its log starts
+before the file is settled, at the level it settles to (`--log-level` over the
+file's `log_level`). A file with `[models.voice]` and no `--voice-socket` runs
+no voice loop, logged once with the reason `voice_socket_missing`; live voice
+sessions still run.
 
 The supervisor gives a vault its publisher training outbox (OF-420, "Learn from
 my conversations") as `--publisher-training-outbox-dir <vault>/training-outbox`,
