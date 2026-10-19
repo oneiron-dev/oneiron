@@ -4651,6 +4651,21 @@ export_facade! {
     let output = client.vault_runs_checkpoint(&input)?;
     crate::codec::lift_record("vault.runs.checkpoint", &output)
 };
+"vault.turn_programs.admission" => fn vault_turn_programs_admission(&self, input: TurnProgramAdmissionRequest) -> Option<TurnProgramAdmissionView> = |client| {
+    let input: oneiron::dreamer_runner::TurnProgramAdmissionRequest = crate::codec::lower_record("vault.turn_programs.admission", input)?;
+    let output = client.vault_turn_programs_admission(&input)?;
+    crate::codec::lift_record("vault.turn_programs.admission", &output)
+};
+"vault.runs.program" => fn vault_runs_program(&self, input: ProgramRunRequest) -> Option<ProgramRunView> = |client| {
+    let input: oneiron::dreamer_runner::ProgramRunRequest = crate::codec::lower_record("vault.runs.program", input)?;
+    let output = client.vault_runs_program(&input)?;
+    crate::codec::lift_record("vault.runs.program", &output)
+};
+"vault.runs.program_step" => fn vault_runs_program_step(&self, input: SettledProgramStepRequest) -> Option<SettledProgramStepView> = |client| {
+    let input: oneiron::dreamer_runner::SettledProgramStepRequest = crate::codec::lower_record("vault.runs.program_step", input)?;
+    let output = client.vault_runs_program_step(&input)?;
+    crate::codec::lift_record("vault.runs.program_step", &output)
+};
 "vault.consolidation.home.get" => fn vault_consolidation_home_get(&self) -> ConsolidationHomeView = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.consolidation.home.get")?;
     let output = client.vault_consolidation_home_get(&input)?;

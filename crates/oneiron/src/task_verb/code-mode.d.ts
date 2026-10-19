@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1103 code-mode rows (1078 host rows, 25 run rows), 3697 declarations.
-// Replies: 986 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1106 code-mode rows (1081 host rows, 25 run rows), 3715 declarations.
+// Replies: 988 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -3302,6 +3302,24 @@ declare namespace Sdk {
   type CheckpointStepView = { step: number; label: string; state_hash: string; created_at_ms: number };
   type CheckpointResumeView = { step: number; wait_ref: string; effect: string; output_handle: string; reply?: unknown | null };
   type CheckpointView = { run_ref: string; completed_steps: number; steps: CheckpointStepView[]; resumed: CheckpointResumeView[]; next_step?: number | null };
+  type TurnProgramAdmissionRequest = { turn_ref: string; registration?: string | null; cursor?: string | null; limit?: number | null };
+  type ProgramAdmissionOutcomeView = { kind: "queued"; root: string; code_run: string } | { kind: "refused"; reason: string };
+  type TurnProgramAdmissionItem = { admission: string; registration: EntityId; actor: EntityId; actor_class: string; conversation?: EntityId | null; landed_at?: number | null; revision: string; definition?: ProgramRecipePin | null; sealed_scope?: string | null; gate_receipt: string; outcome: ProgramAdmissionOutcomeView; decided_at: number; withheld: string[] };
+  type TurnProgramAdmissionView = { turn_ref: string; admissions: TurnProgramAdmissionItem[]; next_cursor?: string | null };
+  type ProgramRunRequest = { root: string; cursor?: string | null; limit?: number | null };
+  type ProgramTryView = { attempt: string; status: string; result_ref?: string | null; created_at: number; updated_at: number };
+  type ProgramQueueView = { attempt: string; state: string; lease_generation: number; result_ref?: string | null; updated_at: number };
+  type ProgramHeldView = { attempt: string; cause: string; owner: string; reason: string; parked_at: number };
+  type ProgramRunLifecycle = "entered" | "settled";
+  type ProgramFrontierView = { bridge_calls: number; steps: number; outputs: number; state_hash: string };
+  type ProgramRunStateView = { entered_by: string; entered_at: number; lifecycle: ProgramRunLifecycle; result_ref?: string | null; settled_at?: number | null; frontier?: ProgramFrontierView | null };
+  type ProgramStepIssueView = { kind: "model"; occurrence: number; request_hash: string } | { kind: "write"; step_start: number; ordinal: number; receipt: string; call_digest: string } | { kind: "outbound"; intent: string; call_seq: number };
+  type ProgramStepState = "issued" | "settled" | "uncertain";
+  type ProgramStepView = { step_ref: string; attempt: string; issue: ProgramStepIssueView; state: ProgramStepState; result_digest?: string | null; uncertain?: string | null; at: number };
+  type ProgramRunView = { root: string; admission: string; actor: EntityId; actor_class: string; code_run: string; definition?: ProgramRecipePin | null; root_created_at?: number | null; tries: ProgramTryView[]; queue?: ProgramQueueView | null; held?: ProgramHeldView | null; run?: ProgramRunStateView | null; steps: ProgramStepView[]; undecodable_steps: number; next_cursor?: string | null; withheld: string[] };
+  type SettledProgramStepRequest = { root: string; step_ref: string };
+  type ProgramResultAvailability = "readable" | "withheld" | "absent";
+  type SettledProgramStepView = { root: string; attempt: string; actor: EntityId; code_run: string; step_ref: string; issue: ProgramStepIssueView; settled_at: number; result_digest: string; result_ref?: string | null; availability: ProgramResultAvailability; model_step?: SettledStepView | null; body_base64?: string | null };
   type ConsolidationHomeNode = { node_id: string; class: string; elected_at: number };
   type ConsolidationHomeCandidate = { node_id: string; class?: string | null; cloud: boolean; attached: boolean; always_on_local: boolean; primary_device: boolean };
   type ConsolidationHomePickHead = { act_ref: string; machine: EntityId; node_id?: string | null; at: number };
@@ -5955,6 +5973,10 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
     checkpoint(input: Sdk.CheckpointReadRequest): Promise<Sdk.CheckpointView | null | StoredResult>;
+    /** Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it. */
+    program(input: Sdk.ProgramRunRequest): Promise<Sdk.ProgramRunView | null | StoredResult>;
+    /** Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body. */
+    program_step(input: Sdk.SettledProgramStepRequest): Promise<Sdk.SettledProgramStepView | null | StoredResult>;
     /** The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer. */
     review(input: Sdk.RunReviewRequest): Promise<Sdk.RunReview | StoredResult>;
     /** The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle. */
@@ -6349,6 +6371,8 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   turn_programs: {
+    /** Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential. */
+    admission(input: Sdk.TurnProgramAdmissionRequest): Promise<Sdk.TurnProgramAdmissionView | null | StoredResult>;
     /** Arms a pinned callable skill entry for the caller's own future turns, in one conversation or any of its own; arming the same definition again returns the standing registration. */
     arm(input: Sdk.ArmTurnProgram): Promise<Sdk.TurnProgramRegistration | StoredResult>;
     /** Disarms one of the caller's own armed turn programs; true when it was armed. */

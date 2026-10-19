@@ -19,6 +19,7 @@
 //! its actor's erase, is not kept; the step settles all the same.
 
 use std::collections::BTreeSet;
+use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +30,7 @@ use crate::attempt_queue::{
 use crate::batch::secret_scan::{SidePart, admit_side_parts};
 use crate::code_run::{CodeRunReplayGeneration, CodeRunReplayRecord};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 use crate::outbound_intent_ledger::IntentLedgerRecord;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, Named, SideKey, SideTable};
@@ -61,16 +62,16 @@ fn invalid(why: &'static str) -> Error {
 /// it, where it stands, and the frontier its code run last committed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TurnProgramRun {
-    attempt: [u8; 16],
-    admission: [u8; 32],
-    entered_at: u64,
-    state: RunState,
-    frontier: Option<RunFrontier>,
+pub(super) struct TurnProgramRun {
+    pub(super) attempt: [u8; 16],
+    pub(super) admission: [u8; 32],
+    pub(super) entered_at: u64,
+    pub(super) state: RunState,
+    pub(super) frontier: Option<RunFrontier>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-enum RunState {
+pub(super) enum RunState {
     /// Entered and not settled: an entry that finds this again was cut.
     Entered,
     /// Finished: the code run's final committed state is its result, and
@@ -84,11 +85,11 @@ enum RunState {
 
 /// A code run's committed position: its counts and its last state hash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-struct RunFrontier {
-    bridge_calls: u64,
-    steps: u64,
-    outputs: u64,
-    state_hash: [u8; 32],
+pub(super) struct RunFrontier {
+    pub(super) bridge_calls: u64,
+    pub(super) steps: u64,
+    pub(super) outputs: u64,
+    pub(super) state_hash: [u8; 32],
 }
 
 impl From<&CodeRunReplayGeneration> for RunFrontier {
@@ -105,16 +106,16 @@ impl From<&CodeRunReplayGeneration> for RunFrontier {
 /// One step of a program's run: what issued it, and how it ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TurnProgramStep {
-    attempt: [u8; 16],
-    issued: StepIssue,
-    state: StepState,
-    at: u64,
+pub(super) struct TurnProgramStep {
+    pub(super) attempt: [u8; 16],
+    pub(super) issued: StepIssue,
+    pub(super) state: StepState,
+    pub(super) at: u64,
 }
 
 /// The issuing binding, committed before the effect runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-enum StepIssue {
+pub(super) enum StepIssue {
     /// A model step: its logical occurrence in the run and its request.
     Model {
         occurrence: u64,
@@ -132,7 +133,7 @@ enum StepIssue {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-enum StepState {
+pub(super) enum StepState {
     /// Bound and not ended.
     Issued,
     /// Ended, with its exact result's digest and, for a send, the body the
@@ -161,6 +162,80 @@ pub(crate) enum TurnProgramEntered {
 /// The code run an admission's program runs as.
 pub(crate) fn turn_program_code_run(admission: &[u8; 32]) -> Result<EntityId> {
     EntityId::from_bytes(code_run_bytes(admission))
+}
+
+/// A program's RUN row, for its reads (DOOR-141 PR3a). A row that does not
+/// decode reads as absent.
+pub(super) fn program_run_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    code_run: &EntityId,
+) -> Result<Option<TurnProgramRun>> {
+    RUN.get_lenient(vault, txn, code_run)
+}
+
+/// One STEP row of a program's run, for its reads. A row that does not
+/// decode reads as absent.
+pub(super) fn program_step_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &(EntityId, EntityId),
+) -> Result<Option<TurnProgramStep>> {
+    STEP.get_lenient(vault, txn, key)
+}
+
+/// One page of a program run's STEP rows, for its reads.
+pub(super) struct ProgramStepPage {
+    /// Each step by its ref, in key order.
+    pub(super) steps: Vec<(EntityId, TurnProgramStep)>,
+    /// Rows of the page that do not decode (FIX 5736): skipped, never a
+    /// refusal of the page.
+    pub(super) undecodable: u64,
+    /// Whether a row follows the page.
+    pub(super) more: bool,
+}
+
+/// Up to `limit` of `code_run`'s steps in key order, after the step `after`
+/// when one is named. Every step id lies between the least and the greatest
+/// id that is not reserved, so the range holds this run's rows alone.
+pub(super) fn program_steps_page_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    code_run: EntityId,
+    after: Option<EntityId>,
+    limit: usize,
+) -> Result<ProgramStepPage> {
+    let mut least = [0_u8; 16];
+    least[15] = 1;
+    let mut greatest = [u8::MAX; 16];
+    greatest[15] = u8::MAX - 1;
+    let from = match after {
+        Some(step) => (code_run, step),
+        None => (code_run, EntityId::from_bytes(least)?),
+    };
+    let to = (code_run, EntityId::from_bytes(greatest)?);
+    let start = if after.is_some() {
+        Bound::Excluded(&from)
+    } else {
+        Bound::Included(&from)
+    };
+    let mut page = ProgramStepPage {
+        steps: Vec::new(),
+        undecodable: 0,
+        more: false,
+    };
+    for row in STEP.iter_range(vault, txn, start, Bound::Included(&to))? {
+        if page.steps.len() >= limit {
+            page.more = true;
+            break;
+        }
+        match row {
+            Ok(((_, step), held)) => page.steps.push((step, held)),
+            Err(error) if error.kind() == ErrorKind::SideTableRow => page.undecodable += 1,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(page)
 }
 
 /// Whether `attempt` still holds the lease `owner` took at `generation`.

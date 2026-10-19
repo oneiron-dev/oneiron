@@ -93,6 +93,8 @@ pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
+// A turn program's reads (DOOR-141 PR3a), on the caller's own lane.
+pub(crate) use super::program_read_doors::*;
 pub(crate) use super::run_review_doors::*;
 pub(crate) use super::sieve_observation_doors::*;
 pub(crate) use super::skill_attribution_doors::*;

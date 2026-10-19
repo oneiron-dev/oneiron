@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1068 facade rows, 3644 declarations.
-Inputs: 1003 of 1068 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 958 of 1068 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1071 facade rows, 3662 declarations.
+Inputs: 1006 of 1071 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 960 of 1071 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
@@ -16423,6 +16423,129 @@ class CheckpointView(TypedDict):
     steps: list[CheckpointStepView]
     resumed: list[CheckpointResumeView]
     next_step: NotRequired[int | None]
+class TurnProgramAdmissionRequest(TypedDict):
+    turn_ref: str
+    registration: NotRequired[str | None]
+    cursor: NotRequired[str | None]
+    limit: NotRequired[int | None]
+class ProgramAdmissionOutcomeViewQueued(TypedDict):
+    kind: Literal["queued"]
+    root: str
+    code_run: str
+class ProgramAdmissionOutcomeViewRefused(TypedDict):
+    kind: Literal["refused"]
+    reason: str
+ProgramAdmissionOutcomeView = ProgramAdmissionOutcomeViewQueued | ProgramAdmissionOutcomeViewRefused
+class TurnProgramAdmissionItem(TypedDict):
+    admission: str
+    registration: EntityId
+    actor: EntityId
+    actor_class: str
+    conversation: NotRequired[EntityId | None]
+    landed_at: NotRequired[int | None]
+    revision: str
+    definition: NotRequired[ProgramRecipePin | None]
+    sealed_scope: NotRequired[str | None]
+    gate_receipt: str
+    outcome: ProgramAdmissionOutcomeView
+    decided_at: int
+    withheld: list[str]
+class TurnProgramAdmissionView(TypedDict):
+    turn_ref: str
+    admissions: list[TurnProgramAdmissionItem]
+    next_cursor: NotRequired[str | None]
+class ProgramRunRequest(TypedDict):
+    root: str
+    cursor: NotRequired[str | None]
+    limit: NotRequired[int | None]
+class ProgramTryView(TypedDict):
+    attempt: str
+    status: str
+    result_ref: NotRequired[str | None]
+    created_at: int
+    updated_at: int
+class ProgramQueueView(TypedDict):
+    attempt: str
+    state: str
+    lease_generation: int
+    result_ref: NotRequired[str | None]
+    updated_at: int
+class ProgramHeldView(TypedDict):
+    attempt: str
+    cause: str
+    owner: str
+    reason: str
+    parked_at: int
+ProgramRunLifecycle = Literal["entered", "settled"]
+class ProgramFrontierView(TypedDict):
+    bridge_calls: int
+    steps: int
+    outputs: int
+    state_hash: str
+class ProgramRunStateView(TypedDict):
+    entered_by: str
+    entered_at: int
+    lifecycle: ProgramRunLifecycle
+    result_ref: NotRequired[str | None]
+    settled_at: NotRequired[int | None]
+    frontier: NotRequired[ProgramFrontierView | None]
+class ProgramStepIssueViewModel(TypedDict):
+    kind: Literal["model"]
+    occurrence: int
+    request_hash: str
+class ProgramStepIssueViewWrite(TypedDict):
+    kind: Literal["write"]
+    step_start: int
+    ordinal: int
+    receipt: str
+    call_digest: str
+class ProgramStepIssueViewOutbound(TypedDict):
+    kind: Literal["outbound"]
+    intent: str
+    call_seq: int
+ProgramStepIssueView = ProgramStepIssueViewModel | ProgramStepIssueViewWrite | ProgramStepIssueViewOutbound
+ProgramStepState = Literal["issued", "settled", "uncertain"]
+class ProgramStepView(TypedDict):
+    step_ref: str
+    attempt: str
+    issue: ProgramStepIssueView
+    state: ProgramStepState
+    result_digest: NotRequired[str | None]
+    uncertain: NotRequired[str | None]
+    at: int
+class ProgramRunView(TypedDict):
+    root: str
+    admission: str
+    actor: EntityId
+    actor_class: str
+    code_run: str
+    definition: NotRequired[ProgramRecipePin | None]
+    root_created_at: NotRequired[int | None]
+    tries: list[ProgramTryView]
+    queue: NotRequired[ProgramQueueView | None]
+    held: NotRequired[ProgramHeldView | None]
+    run: NotRequired[ProgramRunStateView | None]
+    steps: list[ProgramStepView]
+    undecodable_steps: int
+    next_cursor: NotRequired[str | None]
+    withheld: list[str]
+class SettledProgramStepRequest(TypedDict):
+    root: str
+    step_ref: str
+ProgramResultAvailability = Literal["readable", "withheld", "absent"]
+class SettledProgramStepView(TypedDict):
+    root: str
+    attempt: str
+    actor: EntityId
+    code_run: str
+    step_ref: str
+    issue: ProgramStepIssueView
+    settled_at: int
+    result_digest: str
+    result_ref: NotRequired[str | None]
+    availability: ProgramResultAvailability
+    model_step: NotRequired[SettledStepView | None]
+    body_base64: NotRequired[str | None]
 ConsolidationHomeNode = TypedDict("ConsolidationHomeNode", {"node_id": str, "class": str, "elected_at": int})
 ConsolidationHomeCandidate = TypedDict("ConsolidationHomeCandidate", {"node_id": str, "class": NotRequired[str | None], "cloud": bool, "attached": bool, "always_on_local": bool, "primary_device": bool})
 class ConsolidationHomePickHead(TypedDict):

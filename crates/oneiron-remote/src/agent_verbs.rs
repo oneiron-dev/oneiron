@@ -2893,6 +2893,15 @@ impl OneironClient {
                 "vault.runs.checkpoint" => remote_agent_verb_output::<
                     Option<oneiron::engine_executor::checkpoint_read::CheckpointView>,
                 >(client, verb, &input),
+                "vault.turn_programs.admission" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::TurnProgramAdmissionView>,
+                >(client, verb, &input),
+                "vault.runs.program" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::ProgramRunView>,
+                >(client, verb, &input),
+                "vault.runs.program_step" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::SettledProgramStepView>,
+                >(client, verb, &input),
                 "vault.consolidation.home.get" => remote_agent_verb_output::<
                     oneiron::dreamer_runner::ConsolidationHomeView,
                 >(client, verb, &input),
@@ -14776,6 +14785,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.runs.checkpoint", value)
+    }
+    pub fn vault_turn_programs_admission(
+        &self,
+        input: &oneiron::dreamer_runner::TurnProgramAdmissionRequest,
+    ) -> Result<Option<oneiron::dreamer_runner::TurnProgramAdmissionView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.turn_programs.admission", value)
+    }
+    pub fn vault_runs_program(
+        &self,
+        input: &oneiron::dreamer_runner::ProgramRunRequest,
+    ) -> Result<Option<oneiron::dreamer_runner::ProgramRunView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runs.program", value)
+    }
+    pub fn vault_runs_program_step(
+        &self,
+        input: &oneiron::dreamer_runner::SettledProgramStepRequest,
+    ) -> Result<Option<oneiron::dreamer_runner::SettledProgramStepView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runs.program_step", value)
     }
     pub fn vault_consolidation_home_get(
         &self,
