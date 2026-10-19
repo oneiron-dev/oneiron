@@ -40,6 +40,11 @@ impl TravelAgent {
     pub(super) fn needs_world(&self) -> bool {
         matches!(self.projection.policy.scope, AgentPackScope::World { .. }) && self.world.is_none()
     }
+
+    /// The local world it binds to, where its knowledge lands (FIX 5493).
+    pub(super) fn world(&self) -> Option<EntityId> {
+        self.world
+    }
 }
 
 impl Vault {

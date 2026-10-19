@@ -504,6 +504,7 @@ pub use super::sdk_model_manifest::*;
 pub use super::sdk_note_history::*;
 pub use super::sdk_off_record::*;
 pub use super::sdk_off_record_rooms::*;
+pub use super::sdk_pack_preview::*;
 pub use super::sdk_persona::*;
 pub use super::sdk_proxy::*;
 pub use super::sdk_record_erase::*;

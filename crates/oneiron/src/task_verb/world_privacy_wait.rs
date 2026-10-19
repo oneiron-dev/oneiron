@@ -12,7 +12,11 @@
 //! wait bound to it and delivers its terminal state to every run parked on
 //! it, as an ask's settlement does, and a park after that commit, or the wake
 //! pass after a restart, reads the status again and delivers what is owed.
-//! None of it applies the settings again.
+//! None of it applies the settings again. The wait answers its author the
+//! request, its world and where it stands, never the frozen request whole
+//! ([`WorldPrivacyWaitResult`]).
+
+use serde::{Deserialize, Serialize};
 
 use crate::code_run::{SelfDurableWait, SelfDurableWaitReason, SelfEffect};
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -20,6 +24,53 @@ use crate::policy_model::{WorldPrivacyRequest, WorldPrivacyRequestStatus};
 use crate::{EntityId, Vault};
 
 use super::{TaskAskHandle, TaskAskStatus, TaskAskWait};
+
+/// What a wait on a world-privacy request answers its author (FIX 4706,
+/// redacted by the Engine 10-19 20:0x, CALLS `FIX 4706 wait result`): the
+/// request, its world and where it stands, with the outcome's content-free
+/// fields. No door shows the author the holders it went to, who said yes,
+/// who answered or the credential lineage that opened it, so none is here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorldPrivacyWaitResult {
+    /// The request's id, as hex: the wait's id.
+    pub request_id: String,
+    /// The WORLD row, as hex.
+    pub world: String,
+    pub status: WorldPrivacyWaitStatus,
+}
+
+/// Where a waited-on world-privacy request stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "state")]
+pub enum WorldPrivacyWaitStatus {
+    Pending,
+    /// A holder's yes applied it: the settings receipt.
+    Applied {
+        receipt_id: String,
+    },
+    /// A holder declined it, or cancelled it from its notice.
+    Declined,
+}
+
+impl WorldPrivacyWaitResult {
+    /// `request` as its author's wait reads it.
+    fn of(request: &WorldPrivacyRequest) -> Self {
+        Self {
+            request_id: request.request_id.clone(),
+            world: request.world.clone(),
+            status: match &request.status {
+                WorldPrivacyRequestStatus::Pending => WorldPrivacyWaitStatus::Pending,
+                WorldPrivacyRequestStatus::Applied { receipt_id, .. } => {
+                    WorldPrivacyWaitStatus::Applied {
+                        receipt_id: receipt_id.clone(),
+                    }
+                }
+                WorldPrivacyRequestStatus::Declined { .. } => WorldPrivacyWaitStatus::Declined,
+            },
+        }
+    }
+}
 
 /// A wait by any actor but the one that opened the request: the words an
 /// ask's own wait refuses with.
@@ -68,7 +119,7 @@ impl Memory<'_> {
             return Err(MemoryError::bad_request(NOT_THE_ASKER));
         }
         let status = if settled(&request) {
-            TaskAskStatus::WorldPrivacy(Box::new(request))
+            TaskAskStatus::WorldPrivacy(WorldPrivacyWaitResult::of(&request))
         } else {
             TaskAskStatus::Pending { hold: None }
         };
@@ -113,8 +164,10 @@ pub(crate) fn deliver_world_privacy_wait_in_txn(
     let now_ms = vault.store.clock.now_recorded_at().saturating_mul(1000);
     super::ask_facade::signal_waiters(vault, txn, id, now_ms)
         .map_err(|_| crate::Error::InvariantViolation("a world-privacy wait was not signalled"))?;
-    let reply = serde_json::to_value(TaskAskStatus::WorldPrivacy(Box::new(request.clone())))
-        .map_err(|_| crate::Error::InvariantViolation("a world-privacy request is not JSON"))?;
+    let reply = serde_json::to_value(TaskAskStatus::WorldPrivacy(WorldPrivacyWaitResult::of(
+        request,
+    )))
+    .map_err(|_| crate::Error::InvariantViolation("a world-privacy request is not JSON"))?;
     crate::code_run::deliver_wait_in_txn(vault, txn, id, &reply, now_ms).map(drop)
 }
 
