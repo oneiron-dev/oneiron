@@ -461,9 +461,14 @@ fn settle_tail(
     // row with no state here (a frontier row the image holds rejected, a
     // rejected tail row) is folded again with that row crossed
     // (`world_refold`), which only the whole history does (FIX 4881, 5463),
-    // as is a root request or the owner's cancel of one (FIX 5584).
+    // as is a root request, the owner's cancel of one or its result (FIX
+    // 5584, 5649), the request's kind read from the tail or the image.
+    let kind_of = |request: &AuthorityEntryHash| match judged.get(request) {
+        Some(asked) => super::world_refold::request_kind(asked),
+        None => super::world_refold::carried_request_kind(image, request),
+    };
     if judged.iter().any(|(hash, entry)| {
-        super::world_refold::refolds(&entry.op)
+        super::world_refold::refolds(&entry.op, kind_of)
             && !states.contains_key(hash)
             && entry
                 .parent_hashes
