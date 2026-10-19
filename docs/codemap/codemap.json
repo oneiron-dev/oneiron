@@ -24199,7 +24199,7 @@
      "path": "src/entity_doc/carried.rs",
      "purpose": "A MESSAGE's document between the owner's machines (FIX 853)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -50452,7 +50452,7 @@
      "path": "src/sync/document_pins.rs",
      "purpose": "FIX 853 (OF-460): document quote pins on the window plane",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -51454,7 +51454,7 @@
      "path": "src/sync/room_facts.rs",
      "purpose": "FIX 1794 (OF-522): a room's side rows on the window plane",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -51465,6 +51465,16 @@
      "purpose": "The room side rows a carrier holds that name an actor this vault erased (FIX 4227, 4228): each is rewritten…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/room_facts/turn_marks.rs",
+     "purpose": "The claims, responses and participation facts a turn door or a DAG append writes for a room or thread root…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -61541,7 +61551,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 194,
+     "files": 195,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61739,7 +61749,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3764,
+   "source_files": 3765,
    "test_files": 902
   },
   "oneiron-android": {
