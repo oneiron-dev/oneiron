@@ -39,9 +39,7 @@ use serde_json::Value as JsonValue;
 use zeroize::Zeroizing;
 
 use super::output_cap::OutputCap;
-use crate::config::models::{
-    BrokerConfig, ModelsConfig, ProviderConfig, ProviderKind, ResponseFormatWire,
-};
+use crate::config::models::{BrokerConfig, ProviderConfig, ProviderKind, ResponseFormatWire};
 
 /// The effector a `key_secret`'s custody binding names: the custody door
 /// hands the key to a model call's broker leg and to nothing else.
@@ -120,30 +118,15 @@ pub(super) struct BrokerBackend {
     keys: Arc<dyn KeyDoor>,
 }
 
-/// Where this server's `key_secret` providers send: a broker the host runs
-/// as its own user, or this server's same-user child
-/// (`#broker-same-user-open`), one for every provider.
+/// Where this server's vault-secret keys send: a broker the host runs as its
+/// own user, or this server's same-user child (`#broker-same-user-open`), one
+/// for the vault's [`super::BrokerContext`].
 pub(super) enum BrokerSite {
     User { socket: PathBuf, uid: u32 },
     Child(Arc<ChildBroker>),
 }
 
 impl BrokerSite {
-    /// The site `config` names. A child is not started here: its first call
-    /// starts it.
-    pub(super) fn new(config: &ModelsConfig) -> anyhow::Result<Self> {
-        // The child sends every provider's calls, under the longest of their
-        // timeouts.
-        let timeout = config
-            .providers
-            .values()
-            .filter(|provider| provider.key_secret.is_some())
-            .map(|provider| provider.timeout_secs)
-            .max()
-            .unwrap_or(1);
-        Self::with_timeout(&config.broker, Duration::from_secs(timeout))
-    }
-
     /// The site `broker` names, whose same-user child gives each send
     /// `timeout`. A child is not started here: its first call starts it.
     pub(super) fn with_timeout(broker: &BrokerConfig, timeout: Duration) -> anyhow::Result<Self> {

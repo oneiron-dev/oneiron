@@ -890,10 +890,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         embedding.apply_to(&vault)?;
     }
     // The one credential-broker context, built from the opened vault: the
-    // System One seat, the embedder and the GPU pods read their
-    // `key_secret` keys at its custody door, call by call. Its broker is the
-    // same-user child beside this binary; a missing broker or secret leaves
-    // those calls refused before they start, as on any host.
+    // `[models]` providers, the System One seat, the embedder and the GPU
+    // pods read their `key_secret` keys at its custody door, call by call.
+    // Its broker is the same-user child beside this binary; a missing broker
+    // or secret leaves those calls refused before they start, as on any host.
     let broker = crate::models::BrokerContext::for_serve(&vault, &config);
     // The embedder slot and the pods' health poller, as plain serve builds
     // them; the worker that fills the slot starts under the write admission.
