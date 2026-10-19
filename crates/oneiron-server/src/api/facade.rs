@@ -66,8 +66,10 @@ mod courtesy_delete_doors;
 mod craft_candidate_doors;
 mod credential_doors;
 mod critic_review_doors;
+mod critical_confirm_doors;
 mod decision_ask_doors;
 mod decision_band_doors;
+mod deck_creation_doors;
 pub(super) mod decision_role_asks;
 mod dispatch;
 mod embedding_space_doors;
@@ -146,6 +148,7 @@ mod wave_doors;
 mod weave_doors;
 mod web_fetch_doors;
 mod widen_proposal_doors;
+mod wire_health_doors;
 
 pub(crate) use admission_doors::{admission_observer, call_verb};
 pub(crate) use asr_doors::AsrSessions;
