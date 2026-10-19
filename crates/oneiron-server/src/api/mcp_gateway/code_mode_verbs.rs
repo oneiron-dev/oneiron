@@ -946,6 +946,37 @@ impl McpCodeModeVerbs {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
+
+    /// The lane of the credential `execute_code` was admitted on, from where
+    /// its caller sits: what a run's search and a session read read under.
+    fn credential_lane(&self) -> Result<ScopedReadActorKey, AgentVerbRefusal> {
+        let unauthenticated = || AgentVerbRefusal {
+            code: "mcp_auth_required".to_owned(),
+        };
+        let proof = self
+            .actor
+            .auth
+            .as_ref()
+            .and_then(crate::auth::CoreAuth::verified_slip)
+            .ok_or_else(unauthenticated)?;
+        // The one builder every door's credential key comes from. A host
+        // credential's refusal keeps its typed kind (FIX 2222).
+        self.server
+            .vault
+            .credential_read_key(proof)
+            .map_err(|error| AgentVerbRefusal {
+                code: match error.kind() {
+                    oneiron::ErrorKind::HostActionRequiresSupportGrant => {
+                        super::tasks_response::MCP_HOST_ACTION_REFUSED
+                    }
+                    oneiron::ErrorKind::ScopedReadOwnerNotLive => "forbidden",
+                    _ => "engine_error",
+                }
+                .to_owned(),
+            })?
+            .map(|reader| reader.at(self.actor.locality()))
+            .ok_or_else(unauthenticated)
+    }
 }
 
 impl AgentVerbDoor for McpCodeModeVerbs {
@@ -1026,32 +1057,20 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         ) {
             return Ok(None);
         }
-        let unauthenticated = || AgentVerbRefusal {
-            code: "mcp_auth_required".to_owned(),
-        };
-        let proof = self
-            .actor
-            .auth
-            .as_ref()
-            .and_then(crate::auth::CoreAuth::verified_slip)
-            .ok_or_else(unauthenticated)?;
-        // The one builder every door's credential key comes from. A host
-        // credential's refusal keeps its typed kind (FIX 2222).
-        self.server
-            .vault
-            .credential_read_key(proof)
+        self.credential_lane().map(Some)
+    }
+
+    /// A read a session-bound run serves through the room (WILL L11-01)
+    /// meets this connector's door as its run calls do: the verb's own
+    /// binding, the credential `execute_code` was admitted on, still live,
+    /// and that credential's lane, from where its caller sits.
+    fn admit_session_read(&self, verb: AgentVerb) -> Result<ScopedReadActorKey, AgentVerbRefusal> {
+        mcp_admit_host_verb(&self.actor, verb)
+            .and_then(|()| mcp_execute_code_gate(&self.server, &self.actor))
             .map_err(|error| AgentVerbRefusal {
-                code: match error.kind() {
-                    oneiron::ErrorKind::HostActionRequiresSupportGrant => {
-                        super::tasks_response::MCP_HOST_ACTION_REFUSED
-                    }
-                    oneiron::ErrorKind::ScopedReadOwnerNotLive => "forbidden",
-                    _ => "engine_error",
-                }
-                .to_owned(),
-            })?
-            .map(|reader| Some(reader.at(self.actor.locality())))
-            .ok_or_else(unauthenticated)
+                code: error.kind.to_owned(),
+            })?;
+        self.credential_lane()
     }
 
     /// A result the run retained leaves this device again only while every
