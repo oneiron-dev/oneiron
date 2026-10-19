@@ -8382,6 +8382,7 @@
      "path": "src/calendar/connectors/mod.rs",
      "purpose": "Shared calendar connector kernel (CAL-05, ONE-1787)",
      "surface": {
+      "crate-vis": 1,
       "mod": 1,
       "re-export": 4
      }
@@ -8459,7 +8460,7 @@
      "purpose": "Seat configs, cursors, kill switch, error type, and sync verbs",
      "surface": {
       "const": 4,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 8,
       "struct": 4
@@ -33899,7 +33900,7 @@
      "path": "src/memory/key_value/mod.rs",
      "purpose": "Exact actor-owned keyed facts over canonical CLAIMs",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "re-export": 1
      }
@@ -34042,7 +34043,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 25,
       "re-export": 53
      }
@@ -53194,7 +53195,7 @@
      "surface": {
       "crate-vis": 39,
       "fn": 1,
-      "mod": 3,
+      "mod": 4,
       "re-export": 26
      }
     },
@@ -53359,6 +53360,18 @@
      "purpose": "The per-attempt report journal (OF-220)",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/revoke_lands.rs",
+     "purpose": "The owner's revoke always lands (FIX 5076; Engine 10-19): what a verb hook may change on a revoke, erase or…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 3
      }
     },
     {
@@ -61616,7 +61629,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 187,
+     "files": 188,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61786,7 +61799,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3768,
+   "source_files": 3769,
    "test_files": 902
   },
   "oneiron-android": {
