@@ -127,6 +127,12 @@ pub enum AgentVerb {
     VaultRetrievalTrace,
     VaultRetrievalExport,
     VaultRetrievalReplay,
+    VaultRetrievalPolicyGet,
+    VaultRetrievalPolicyPin,
+    VaultRetrievalPolicyTrain,
+    VaultRetrievalPolicyEvaluate,
+    VaultRetrievalPolicyAdmit,
+    VaultRetrievalPolicyUpdate,
     VaultExport,
     SelfCredentialAttenuate,
     VaultScopePosition,
@@ -1132,6 +1138,12 @@ impl AgentVerb {
         Self::VaultRetrievalTrace,
         Self::VaultRetrievalExport,
         Self::VaultRetrievalReplay,
+        Self::VaultRetrievalPolicyGet,
+        Self::VaultRetrievalPolicyPin,
+        Self::VaultRetrievalPolicyTrain,
+        Self::VaultRetrievalPolicyEvaluate,
+        Self::VaultRetrievalPolicyAdmit,
+        Self::VaultRetrievalPolicyUpdate,
         Self::VaultExport,
         Self::SelfCredentialAttenuate,
         Self::VaultScopePosition,
@@ -2140,6 +2152,12 @@ impl AgentVerb {
             Self::VaultRetrievalTrace => "vault.retrieval.trace",
             Self::VaultRetrievalExport => "vault.retrieval.export",
             Self::VaultRetrievalReplay => "vault.retrieval.replay",
+            Self::VaultRetrievalPolicyGet => "vault.retrieval.policy.get",
+            Self::VaultRetrievalPolicyPin => "vault.retrieval.policy.pin",
+            Self::VaultRetrievalPolicyTrain => "vault.retrieval.policy.train",
+            Self::VaultRetrievalPolicyEvaluate => "vault.retrieval.policy.evaluate",
+            Self::VaultRetrievalPolicyAdmit => "vault.retrieval.policy.admit",
+            Self::VaultRetrievalPolicyUpdate => "vault.retrieval.policy.update",
             Self::VaultExport => "vault.export",
             Self::SelfCredentialAttenuate => "self.credential.attenuate",
             Self::VaultScopePosition => "vault.scope.position",
@@ -3173,6 +3191,12 @@ impl AgentVerb {
                 | Self::VaultRetrievalTrace
                 | Self::VaultRetrievalExport
                 | Self::VaultRetrievalReplay
+                | Self::VaultRetrievalPolicyGet
+                | Self::VaultRetrievalPolicyPin
+                | Self::VaultRetrievalPolicyTrain
+                | Self::VaultRetrievalPolicyEvaluate
+                | Self::VaultRetrievalPolicyAdmit
+                | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
                 | Self::VaultScopePosition
@@ -4205,6 +4229,12 @@ impl AgentVerb {
                 | Self::VaultRetrievalTrace
                 | Self::VaultRetrievalExport
                 | Self::VaultRetrievalReplay
+                | Self::VaultRetrievalPolicyGet
+                | Self::VaultRetrievalPolicyPin
+                | Self::VaultRetrievalPolicyTrain
+                | Self::VaultRetrievalPolicyEvaluate
+                | Self::VaultRetrievalPolicyAdmit
+                | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
                 | Self::VaultScopePosition
@@ -5343,6 +5373,12 @@ impl AgentVerb {
                 | Self::VaultRetrievalTrace
                 | Self::VaultRetrievalExport
                 | Self::VaultRetrievalReplay
+                | Self::VaultRetrievalPolicyGet
+                | Self::VaultRetrievalPolicyPin
+                | Self::VaultRetrievalPolicyTrain
+                | Self::VaultRetrievalPolicyEvaluate
+                | Self::VaultRetrievalPolicyAdmit
+                | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
                 | Self::VaultReceipts
                 | Self::VaultAssetsIngest
@@ -6242,6 +6278,10 @@ impl AgentVerb {
                 | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalOutcomesPut
                 | Self::VaultRetrievalOutcomesEnd
+                | Self::VaultRetrievalPolicyPin
+                | Self::VaultRetrievalPolicyTrain
+                | Self::VaultRetrievalPolicyAdmit
+                | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultAssetsIngest
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
@@ -6926,6 +6966,12 @@ impl AgentVerb {
             Self::VaultRetrievalTrace => &["spec"],
             Self::VaultRetrievalExport => &["spec"],
             Self::VaultRetrievalReplay => &["spec"],
+            Self::VaultRetrievalPolicyGet => &["spec"],
+            Self::VaultRetrievalPolicyPin => &["spec"],
+            Self::VaultRetrievalPolicyTrain => &["spec"],
+            Self::VaultRetrievalPolicyEvaluate => &["spec"],
+            Self::VaultRetrievalPolicyAdmit => &["spec"],
+            Self::VaultRetrievalPolicyUpdate => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopePosition => &["spec"],
@@ -7932,6 +7978,12 @@ impl AgentVerb {
             Self::VaultRetrievalTrace => &["spec"],
             Self::VaultRetrievalExport => &["spec"],
             Self::VaultRetrievalReplay => &["spec"],
+            Self::VaultRetrievalPolicyGet => &["spec"],
+            Self::VaultRetrievalPolicyPin => &["spec"],
+            Self::VaultRetrievalPolicyTrain => &["spec"],
+            Self::VaultRetrievalPolicyEvaluate => &["spec"],
+            Self::VaultRetrievalPolicyAdmit => &["spec"],
+            Self::VaultRetrievalPolicyUpdate => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopePosition => &["spec"],
@@ -9178,6 +9230,24 @@ impl AgentVerb {
             }
             Self::VaultRetrievalReplay => {
                 "The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."
+            }
+            Self::VaultRetrievalPolicyGet => {
+                "The owner reads the served retrieval policy: active blend weights with their origins, owner pins, the learned posterior and model routing pins."
+            }
+            Self::VaultRetrievalPolicyPin => {
+                "The owner pins one retrieval blend weight at a declared share, or clears its pin; learned updates may move only the unpinned remainder."
+            }
+            Self::VaultRetrievalPolicyTrain => {
+                "The owner trains a retrieval-policy candidate from gate-attributed outcomes, judged on held-out runs, without serving it."
+            }
+            Self::VaultRetrievalPolicyEvaluate => {
+                "The owner judges candidate blend weights against the active weights on the same held-out runs the tuner never trains on."
+            }
+            Self::VaultRetrievalPolicyAdmit => {
+                "The owner admits candidate blend weights judged on the named evidence manifest; owner pins and held-out regressions refuse admission."
+            }
+            Self::VaultRetrievalPolicyUpdate => {
+                "The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior."
             }
             Self::VaultExport => {
                 "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only."

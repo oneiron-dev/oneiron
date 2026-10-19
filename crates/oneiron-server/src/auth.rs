@@ -27,7 +27,7 @@ mod slips;
 pub(crate) use binding_admission::admit_http_binding;
 pub(crate) use client_address::ClientAddress;
 pub(crate) use left_notices::left_notice_routes;
-pub(crate) use locality::{Locality, caller_locality};
+pub(crate) use locality::{Locality, caller_locality, proved_peer};
 pub(crate) use machine_proof::required_machine_proof;
 pub(crate) use slips::{BindingProof, INVITEE_DOORS, parse_signature, parse_slip_id};
 
@@ -307,6 +307,11 @@ pub(crate) struct CoreAuth {
     /// device until the request's own connection says otherwise; see
     /// [`caller_locality`].
     locality: CallerLocality,
+    /// The machine the request's connection proved beside that locality
+    /// ([`PeerMachine`](oneiron::authority::PeerMachine), set by the binding
+    /// door), or `Unknown`: a TCP address or an owner principal alone is no
+    /// destination identity (mesh PR2b). See [`Self::destination`].
+    peer: oneiron::authority::PeerMachine,
     /// The slip's facet bounds leave its holder unbound: the vault owner's
     /// own credential, or a narrower one the owner still holds, judged by
     /// the engine's read-key rule when the proof verified. A door that
@@ -357,6 +362,7 @@ impl CoreAuth {
             invocation_slip: None,
             instrument: Some(verified.instrument),
             locality: CallerLocality::OffDevice,
+            peer: oneiron::authority::PeerMachine::Unknown,
             facets_owner_exempt: false,
             off_record_session: None,
             managed_owner: None,
@@ -432,6 +438,7 @@ impl CoreAuth {
             invocation_slip: None,
             instrument: None,
             locality: CallerLocality::OffDevice,
+            peer: oneiron::authority::PeerMachine::Unknown,
             facets_owner_exempt: false,
             off_record_session: None,
             managed_owner: None,
@@ -452,6 +459,7 @@ impl CoreAuth {
             invocation_slip: None,
             instrument: None,
             locality: CallerLocality::OffDevice,
+            peer: oneiron::authority::PeerMachine::Unknown,
             facets_owner_exempt: false,
             off_record_session: None,
             managed_owner: None,
@@ -714,6 +722,7 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
             })
             .map(|auth| {
                 auth.at(caller_locality(&parts.headers, &parts.extensions))
+                    .toward(proved_peer(&parts.headers, &parts.extensions))
                     .at_invitee_door(path)
                     .in_off_record_session(crate::api::call_receipt::request_session_ref(
                         &parts.headers,
@@ -856,6 +865,7 @@ fn core_auth_for_live_claims(
         invocation_slip: None,
         instrument: None,
         locality: CallerLocality::OffDevice,
+        peer: oneiron::authority::PeerMachine::Unknown,
         facets_owner_exempt: false,
         off_record_session: None,
         managed_owner: None,

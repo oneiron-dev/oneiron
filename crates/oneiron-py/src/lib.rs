@@ -1266,6 +1266,58 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_retrieval_policy_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.retrieval.policy.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.retrieval.policy.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_retrieval_policy_pin(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.retrieval.policy.pin")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.retrieval.policy.pin", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_retrieval_policy_train(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.retrieval.policy.train")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.retrieval.policy.train", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_retrieval_policy_evaluate(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.retrieval.policy.evaluate")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.retrieval.policy.evaluate", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_retrieval_policy_admit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.retrieval.policy.admit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.retrieval.policy.admit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_retrieval_policy_update(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.retrieval.policy.update")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.retrieval.policy.update", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_export(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.export")?;
         let output = py

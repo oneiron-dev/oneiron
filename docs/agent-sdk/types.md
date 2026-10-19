@@ -1301,6 +1301,8 @@ class Oneiron:
             """The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata."""
         def replay(self, spec: Facade.RetrievalDiagnosticRequest) -> Facade.RetrievalDiagnosticReplay:
             """The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."""
+        @property
+        def policy(self) -> "Oneiron._VaultRetrievalPolicyVerbs": ...
     class _VaultRetrievalAgingVerbs:
         def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.ClaimAgingProfilesView:
             """The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages."""
@@ -1327,6 +1329,19 @@ class Oneiron:
             """The owner attaches an explicit observation to one local serving run; raw reward stays telemetry, never a gated training label."""
         def end(self, spec: Facade.RetrievalEndOutcome) -> list[Facade.RetrievalRunEvidence]:
             """The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward."""
+    class _VaultRetrievalPolicyVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.RetrievalPolicyView:
+            """The owner reads the served retrieval policy: active blend weights with their origins, owner pins, the learned posterior and model routing pins."""
+        def pin(self, spec: Facade.RetrievalPolicyPinRequest) -> Facade.RetrievalPolicyView:
+            """The owner pins one retrieval blend weight at a declared share, or clears its pin; learned updates may move only the unpinned remainder."""
+        def train(self, spec: Facade.RetrievalPolicyTrainRequest) -> Facade.RetrievalPolicyCandidate:
+            """The owner trains a retrieval-policy candidate from gate-attributed outcomes, judged on held-out runs, without serving it."""
+        def evaluate(self, spec: Facade.RetrievalPolicyEvaluateRequest) -> Facade.RetrievalPolicyEvaluation:
+            """The owner judges candidate blend weights against the active weights on the same held-out runs the tuner never trains on."""
+        def admit(self, spec: Facade.RetrievalPolicyAdmitRequest) -> Facade.RetrievalPolicyAdmitReceipt:
+            """The owner admits candidate blend weights judged on the named evidence manifest; owner pins and held-out regressions refuse admission."""
+        def update(self, spec: Facade.RetrievalPolicyTrainRequest) -> Facade.RetrievalPolicyUpdateReceipt:
+            """The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior."""
     class _VaultAffectVerbs:
         @property
         def annotations(self) -> "Oneiron._VaultAffectAnnotationsVerbs": ...
@@ -1639,6 +1654,8 @@ class Oneiron:
             """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
         @property
         def outcomes(self) -> "Oneiron._VaultSkillsOutcomesVerbs": ...
+        @property
+        def attribution(self) -> "Oneiron._VaultSkillsAttributionVerbs": ...
     class _VaultSkillsRulesVerbs:
         def set(self, spec: Facade.SkillHashRuleRequest) -> Facade.HubConsentReceipt:
             """The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose."""
@@ -1692,6 +1709,27 @@ class Oneiron:
             """Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."""
         def get(self, spec: Facade.SkillPackCreditRequest) -> Facade.LateCreditReceipt | None:
             """Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."""
+    class _VaultSkillsAttributionVerbs:
+        def settle(self, spec: Facade.ProposalDeltaSettleRequest) -> Facade.ProposalDeltaSettlement:
+            """The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer."""
+        def read(self, spec: Facade.ProposalDeltaReadRequest) -> Facade.ProposalDeltaRead:
+            """The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows."""
+        @property
+        def evidence(self) -> "Oneiron._VaultSkillsAttributionEvidenceVerbs": ...
+        def project(self, spec: Facade.AttributionProjectRequest) -> Facade.AttributionProjection:
+            """The owner runs one attribution pass over recorded evidence, plus the positive lane, returning the judgments and positive proposals it minted."""
+        def judgments(self, spec: Facade.AttributionListRequest) -> Facade.AttributionJudgmentsView:
+            """The owner reads every persisted attribution judgment in both lanes, the projector cursor and the unclear ledger."""
+        def proposals(self, spec: Facade.AttributionListRequest) -> Facade.AttributionProposalsView:
+            """The owner reads the pending skill edit proposals, preference proposals and positive skill proposals attribution has minted."""
+        @property
+        def positive(self) -> "Oneiron._VaultSkillsAttributionPositiveVerbs": ...
+    class _VaultSkillsAttributionEvidenceVerbs:
+        def record(self, spec: Facade.AttributionEvidenceRequest) -> Facade.AttributionEvidenceReceipt:
+            """The owner records one attempt outcome as attribution evidence, grounded against its stamped pack receipt; recording never classifies it."""
+    class _VaultSkillsAttributionPositiveVerbs:
+        def retire(self, spec: Facade.PositiveRetireRequest) -> Facade.PositiveRetireReceipt:
+            """The owner retires one positive skill proposal once the optimizer has drafted from it or declined it."""
     class _VaultProjectsVerbs:
         @property
         def goal(self) -> "Oneiron._VaultProjectsGoalVerbs": ...

@@ -99,17 +99,41 @@ pub(super) fn agent_runner(
     seat: Option<&ModelSeat>,
     line: Option<(BudgetGuard, Option<PayerPerson>)>,
 ) -> Option<Arc<dyn PatternLaunchRunner>> {
+    agent_runner_for_attempt(
+        vault,
+        provider,
+        &status.attempt,
+        &status.input.definition,
+        actor,
+        seat,
+        line,
+    )
+}
+
+/// [`agent_runner`]'s runner from the leased try `attempt` and the frozen
+/// `definition` the run entered with, as a live run's action builds it
+/// between entries from what its run registered (OF-181), with the same
+/// `None` cases.
+pub(in crate::server) fn agent_runner_for_attempt(
+    vault: &Arc<Vault>,
+    provider: &dyn McpCodeModeProvider,
+    attempt: &AttemptRecord,
+    definition: &AgentDefinition,
+    actor: WriteActor,
+    seat: Option<&ModelSeat>,
+    line: Option<(BudgetGuard, Option<PayerPerson>)>,
+) -> Option<Arc<dyn PatternLaunchRunner>> {
     let seat = seat?.clone();
-    let lease_owner = status.attempt.lease_owner.clone()?;
+    let lease_owner = attempt.lease_owner.clone()?;
     let (guard, payer) = line?;
     let backend = provider.reader_backend(guard, payer)?;
     Some(Arc::new(AgentPatternLaunchRunner {
         vault: Arc::clone(vault),
         agent: actor.entity_ref(),
-        attempt: status.attempt.id,
+        attempt: attempt.id,
         lease_owner,
-        generation: status.attempt.attempt_count,
-        definition: status.input.definition.clone(),
+        generation: attempt.attempt_count,
+        definition: definition.clone(),
         seat,
         backend,
         lease: provider.lease().clone(),
