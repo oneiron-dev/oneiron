@@ -85303,7 +85303,7 @@
      "path": "src/protocol.rs",
      "purpose": "Custom Oneiron sync protocol — server-side extensions",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 32
      }
     },
     {
