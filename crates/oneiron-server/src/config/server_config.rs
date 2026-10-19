@@ -371,6 +371,10 @@ pub struct ServeConfig {
     /// it for the owner to approve; it is never read off the operating
     /// system. A computer unless the file says otherwise.
     pub device_class: oneiron::authority::MachineDeviceClass,
+    /// `--esign-delivery-outbox-dir`, argv only: where the e-sign delivery
+    /// outbox hands authorized mail to the host's sender (OF-415). Unset, no
+    /// outbox worker runs.
+    pub esign_delivery_outbox_dir: Option<PathBuf>,
 }
 
 impl Default for ServeConfig {
@@ -444,6 +448,7 @@ impl Default for ServeConfig {
             hooks: true,
             maximum_tier: false,
             device_class: vault.machine_device_class,
+            esign_delivery_outbox_dir: None,
         }
     }
 }
@@ -523,6 +528,7 @@ impl fmt::Debug for ServeConfig {
             .field("hooks", &self.hooks)
             .field("maximum_tier", &self.maximum_tier)
             .field("device_class", &self.device_class)
+            .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
             .finish()
     }
 }
