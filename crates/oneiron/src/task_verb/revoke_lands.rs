@@ -92,7 +92,10 @@ macro_rules! always {
 const ROWS: &[Row] = &[
     always!("vault.guests.revoke", [pin(&["grant_ref"], typed)]),
     always!("vault.support_grants.revoke", [pin(&["grant_ref"], hex32)]),
-    always!("vault.federation.connect.disconnect", [pin(&["pact"], hex32)]),
+    always!(
+        "vault.federation.connect.disconnect",
+        [pin(&["pact"], hex32)]
+    ),
     always!("vault.shares.revoke", [pin(&["share_ref"], entity)]),
     always!("vault.consent.revoke", [pin(&["grant"], hex32)]),
     always!(
@@ -148,7 +151,10 @@ const ROWS: &[Row] = &[
         ],
     ),
     always!("vault.claims.retract", [pin(&["claim_ref"], entity_ref)]),
-    always!("vault.notes.history_purge", [pin(&["note_ref"], entity_ref)]),
+    always!(
+        "vault.notes.history_purge",
+        [pin(&["note_ref"], entity_ref)]
+    ),
     always!(
         "vault.notes.history_purge_execute",
         [pin(&["act_id"], typed)],
