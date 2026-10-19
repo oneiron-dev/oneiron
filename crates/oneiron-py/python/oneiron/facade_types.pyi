@@ -12639,7 +12639,7 @@ class CallPurposeOtherBody(TypedDict):
     name: str
 class CallPurposeOther(TypedDict):
     other: CallPurposeOtherBody
-CallPurpose = Literal["extraction", "consolidation", "answer_gen", "auto_check", "tool_routing", "voice", "eval"] | CallPurposeOther
+CallPurpose = Literal["extraction", "consolidation", "answer_gen", "auto_check", "tool_routing", "voice", "eval", "autonomy.for_human", "autonomy.own_time"] | CallPurposeOther
 class DeterministicFallback(TypedDict):
     name: str
     config: NotRequired[Any | None]

@@ -5113,7 +5113,7 @@ export type ModelRoleRead = { role: ModelRole }
 /** `oneiron::llm::manifest::doors::ModelRoleReceipt` */
 export type ModelRoleReceipt = { role: ModelRole; model: ModelId; revision: string; provider: string; slot: ModelSlot; tier: ModelTierRef; route: ModelLocality; catalog_revision?: string | null }
 /** `oneiron_model::llm::call::CallPurpose` */
-export type CallPurpose = "extraction" | "consolidation" | "answer_gen" | "auto_check" | "tool_routing" | "voice" | "eval" | { other: { name: string } }
+export type CallPurpose = "extraction" | "consolidation" | "answer_gen" | "auto_check" | "tool_routing" | "voice" | "eval" | "autonomy.for_human" | "autonomy.own_time" | { other: { name: string } }
 /** `oneiron_model::llm::call::DeterministicFallback` */
 export type DeterministicFallback = { name: string; config?: unknown | null }
 /** `oneiron_model::llm::call::CallClass` */

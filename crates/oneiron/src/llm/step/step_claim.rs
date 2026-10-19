@@ -270,6 +270,8 @@ pub(super) fn call_purpose_str(purpose: &CallPurpose) -> String {
         CallPurpose::ToolRouting => "tool_routing".to_owned(),
         CallPurpose::Voice => "voice".to_owned(),
         CallPurpose::Eval => "eval".to_owned(),
+        CallPurpose::AutonomyForHuman => "autonomy.for_human".to_owned(),
+        CallPurpose::AutonomyOwnTime => "autonomy.own_time".to_owned(),
         CallPurpose::Other { name } => format!("other:{name}"),
     }
 }
