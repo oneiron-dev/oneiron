@@ -1,12 +1,16 @@
 //! The fold's per-entry scheduler.
 //!
 //! Each step applies the first pending entry, in (non-revocation, hash)
-//! order, whose transition does not wait. A transition reads only its own
-//! row and its parents' states, so an entry that waits keeps waiting until
-//! one of its parents lands. The queue therefore holds only the entries that
-//! may have changed since they last waited, and each step picks the entry a
-//! full rescan of every pending entry would pick: the same fold, without the
-//! rescan's quadratic work on a long chain (H72).
+//! order, whose transition does not wait. A transition reads its own row, its
+//! parents' states and, beside them, structural topology that never changes
+//! while it waits: whether a hash is beneath its parents (a world key
+//! record's request, `fold_engine::named_beneath`, FIX 5464). Authority comes
+//! from the parents' states alone; the topology only binds the row to its
+//! own past. So an entry that waits keeps waiting until one of its parents
+//! lands. The queue therefore holds only the entries that may have changed
+//! since they last waited, and each step picks the entry a full rescan of
+//! every pending entry would pick: the same fold, without the rescan's
+//! quadratic work on a long chain (H72).
 
 use std::collections::{BTreeMap, BTreeSet};
 
