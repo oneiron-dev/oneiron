@@ -333,11 +333,11 @@ pub(crate) fn core_list_limit(limit: usize) -> usize {
     limit.min(CORE_MAX_LIST_LIMIT)
 }
 
-/// One page of the live rows `fetch` reads in runs of edges that `admits`
-/// serves: `limit` of them and one more that proves a next page, or all
-/// that are left. A deleted shell or a row `admits` withholds takes no
-/// place, so the page reads on past it, however many (rule 5), and the
-/// cursor is always the last row served, never one withheld (FIX 5652).
+/// One page of the live rows `fetch` reads in one bounded run of edges, of
+/// those `admits` serves. Deleted shells are read too, and a page they leave
+/// short resumes where the run stopped (F13). A row `admits` withholds takes
+/// no place, and a run that stops on one reads on, so a cursor never names a
+/// withheld row (FIX 5652).
 pub(crate) fn collect_live_entity_page<F, A>(
     vault: &oneiron::Vault,
     after: Option<oneiron::EntityId>,
@@ -361,18 +361,23 @@ where
             if is_deleted_shell_for_core_list(vault, &id)? || !admits(&id)? {
                 continue;
             }
-            // A full page resumes after its last item, as the list always has.
             if ids.len() == limit {
                 let next_cursor = ids.last().map(oneiron::EntityId::to_hex);
                 return Ok((ids, next_cursor));
             }
             ids.push(id);
         }
-        // A run that stopped before the rows ran out is read on from where it
-        // stopped; that place is never handed out.
         let Some(resume_after) = fetched.resume_after else {
             return Ok((ids, None));
         };
+        // A full page resumes after its last item, as the list always has; a
+        // page the run left short resumes where the run stopped, unless that
+        // place is withheld, which is read on from and never handed out.
+        if admits(&resume_after)? {
+            let last_served = ids.last().filter(|_| ids.len() == limit);
+            let next_cursor = last_served.unwrap_or(&resume_after).to_hex();
+            return Ok((ids, Some(next_cursor)));
+        }
         resume = Some(resume_after);
     }
 }
