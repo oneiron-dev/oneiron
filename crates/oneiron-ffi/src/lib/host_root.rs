@@ -15,7 +15,9 @@ use super::types::{OneironByteSlice, OneironStatus, OneironVault};
 const HOST_ROOT_OPEN: &str = "oneiron_vault_open_with_host_root";
 
 /// `oneiron_vault_open`, then this install's own machine profile from the
-/// vault's host root secret, so the owner's acts carry from it.
+/// vault's host root secret, so the owner's acts carry from it. The profile
+/// carries the `device_class` the host declared, set before the vault opens
+/// (FIX 3833).
 ///
 /// `host_root_secret_ptr` and `host_root_secret_len` are the exact bytes of
 /// the server's configured `auth_secret`: null with length 0 names none, and
@@ -48,6 +50,7 @@ pub unsafe extern "C" fn oneiron_vault_open_with_host_root(
     dimensions: usize,
     dict_search_paths: *const OneironByteSlice,
     dict_search_paths_len: usize,
+    device_class: u8,
     host_root_secret_ptr: *const u8,
     host_root_secret_len: usize,
     initialize_root: u8,
@@ -71,6 +74,7 @@ pub unsafe extern "C" fn oneiron_vault_open_with_host_root(
                         dimensions,
                         dict_search_paths,
                         dict_search_paths_len,
+                        device_class,
                     )?;
                     let may_root =
                         Vault::host_root_open_may_root(Path::new(&path), initialize_root);

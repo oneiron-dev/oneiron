@@ -48,6 +48,7 @@ pub(crate) use directives::{
     finish_residence_directive_in_txn, pending_residence_directives, residence_refusal_reason,
 };
 pub use discover::discover_local_window_keys;
+pub(crate) use discover::retry_pending_tombstones;
 pub use kit_fetch::{
     KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,
     KitBundleFetch, kit_bundle_fetch_origin, kit_sealed_bundle_part,
