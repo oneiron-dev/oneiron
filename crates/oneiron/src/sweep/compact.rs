@@ -786,6 +786,11 @@ fn scrub_erased_ids_from_doc(
     for key in &doomed_edges {
         map_delete(&edges, key)?;
     }
+    // FIX 4550: a peer's origin for a removed row leaves with it.
+    let removed = doomed_entities
+        .iter()
+        .filter_map(|key| EntityId::from_hex(key).ok());
+    crate::sync::forget_stale_peer_origins(doc, removed)?;
     doc.commit();
     Ok(())
 }
