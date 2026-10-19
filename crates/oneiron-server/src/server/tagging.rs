@@ -16,6 +16,7 @@ use oneiron::memory::extraction::ExtractionEncoder;
 use oneiron::tagging::{TaggingBackoff, TaggingReconciler};
 
 use super::core::SyncServer;
+use super::housekeeping::{HousekeepingAdmission, admit_every_pass};
 use crate::oneironer::endpoint::ProbeOutcome;
 
 /// Ceiling on the worker's own backoff while the tagger is down.
@@ -42,16 +43,27 @@ impl SyncServer {
 
     /// Starts the worker, or returns `None` when no tagger is configured.
     pub(crate) fn spawn_tagging_worker(self: &Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
-        self.tagger.as_ref()?;
-        let server = Arc::clone(self);
-        Some(tokio::spawn(async move { server.tag_forever().await }))
+        self.spawn_tagging_worker_admitted(admit_every_pass())
     }
 
-    async fn tag_forever(self: Arc<Self>) {
+    /// Starts the worker on a host with a write freeze: the start that
+    /// releases stale leases and each drain pass are admitted through
+    /// `admit`, and hold that admission on their blocking thread through
+    /// every marker they settle. A refused pass tags nothing and waits.
+    pub(crate) fn spawn_tagging_worker_admitted(
+        self: &Arc<Self>,
+        admit: HousekeepingAdmission,
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        self.tagger.as_ref()?;
+        let server = Arc::clone(self);
+        Some(tokio::spawn(async move { server.tag_forever(admit).await }))
+    }
+
+    async fn tag_forever(self: Arc<Self>, admit: HousekeepingAdmission) {
         // Subscribed before the first pass, so a commit between that pass and
         // the first wait still wakes the loop.
         let mut wake = oneiron::attempt_queue::AttemptQueue::new(self.vault()).subscribe();
-        let Some(reconciler) = self.prepare_tagging().await else {
+        let Some(reconciler) = self.prepare_tagging(&admit).await else {
             return;
         };
         let idle = self.tagger.as_ref().map_or(MIN_IDLE, |slot| {
@@ -65,10 +77,15 @@ impl SyncServer {
             // Level-triggered: the pass reads what is ready, so every wake
             // queued before it is already answered by it.
             while wake.try_recv().is_ok() {}
+            let Some(admission) = admit() else {
+                tokio::time::sleep(idle).await;
+                continue;
+            };
             let started = reconciler.now();
             let pass = Arc::clone(&reconciler);
             let server = Arc::clone(&self);
             let outcome = tokio::task::spawn_blocking(move || {
+                let _admission = admission;
                 pass.drain_once_with(|trace| {
                     if let Some(slot) = server.tagger.as_ref() {
                         slot.log(trace);
@@ -121,12 +138,16 @@ impl SyncServer {
         }
     }
 
-    /// Waits until the tagger answers as the configured one, then builds the
-    /// reconciler and returns this worker's stale leases from a previous
-    /// process to the queue. `None` when the tagger is refused.
-    async fn prepare_tagging(self: &Arc<Self>) -> Option<Arc<TaggingReconciler>> {
+    /// Waits until the tagger answers as the configured one and `admit`
+    /// admits the start, then builds the reconciler and returns this
+    /// worker's stale leases from a previous process to the queue. `None`
+    /// when the tagger is refused.
+    async fn prepare_tagging(
+        self: &Arc<Self>,
+        admit: &HousekeepingAdmission,
+    ) -> Option<Arc<TaggingReconciler>> {
         let mut backoff = FIRST_BACKOFF;
-        loop {
+        let admission = loop {
             if !self.tagger_still_configured().await {
                 return None;
             }
@@ -134,14 +155,16 @@ impl SyncServer {
                 .tagger
                 .as_ref()
                 .is_some_and(|slot| slot.card().is_some())
+                && let Some(admission) = admit()
             {
-                break;
+                break admission;
             }
             tokio::time::sleep(backoff).await;
             backoff = (backoff * 2).min(MAX_BACKOFF);
-        }
+        };
         let server = Arc::clone(self);
         let built = tokio::task::spawn_blocking(move || {
+            let _admission = admission;
             let slot = server
                 .tagger
                 .as_ref()

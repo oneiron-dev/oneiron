@@ -1450,6 +1450,60 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_saved_query_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.create", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_saved_query_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_saved_query_update(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.update", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_saved_query_archive(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.archive", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_saved_query_members(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.members", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_saved_query_evaluate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.evaluate", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_weave_report(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.weave.report", js_json(input))
@@ -4315,6 +4369,51 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.disclosure.offer", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_disclosure_ceiling_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.ceiling.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_disclosure_ceiling_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.ceiling.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_disclosure_ceiling_clear(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.ceiling.clear", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_disclosure_reveals(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.reveals", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_disclosure_reveals_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.reveals.answer", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -7903,6 +8002,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.consolidation.home.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_home_pick(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.home.pick", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

@@ -17,8 +17,9 @@ use std::time::Duration;
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::saved_query::{
-    MatcherSpec, QueryScope, SWEEP_CANDIDATE_TYPE, SavedQueryEvaluator, SavedQueryJudgeBinding,
-    SavedQueryRecord, WakeEvaluationReport, reactive_saved_queries, saved_query_change_head,
+    EvaluationRequest, MatcherSpec, MembershipCause, QueryScope, SavedQueryEvaluation,
+    SWEEP_CANDIDATE_TYPE, SavedQueryEvaluator, SavedQueryJudgeBinding, SavedQueryRecord,
+    WakeEvaluationReport, reactive_saved_queries, saved_query_change_head,
     saved_query_changes_after, sweep_owner_read, sweep_saved_queries,
 };
 use oneiron::{
@@ -270,6 +271,67 @@ fn evaluate(
     page: &[EntityId],
     now: u64,
 ) -> oneiron::Result<WakeEvaluationReport> {
+    with_evaluator(server, record, read, now, |evaluator| {
+        block_on(crate::campaign_enrollment::wake(
+            evaluator, record, page, now,
+        ))
+    })
+}
+
+/// One bounded manual evaluation of `record`, using the sweep's own judge
+/// and owner read. Only unvisited candidates produce a continuation cursor.
+pub(crate) fn manual_evaluation(
+    server: &SyncServer,
+    record: &SavedQueryRecord,
+    read: &ScopedReadActorKey,
+    candidates: &[EntityId],
+    now: u64,
+) -> oneiron::Result<(Vec<(EntityId, SavedQueryEvaluation)>, Option<EntityId>)> {
+    if !record.definition.lifecycle.is_evaluable() {
+        return Err(oneiron::Error::InvalidConfig("saved query is not active".into()));
+    }
+    with_evaluator(server, record, read, now, |evaluator| {
+        block_on(async {
+            let mut visits = Vec::new();
+            let mut judges_run = 0_u32;
+            let mut resume_after = None;
+            for entity_ref in candidates {
+                if u32::try_from(visits.len()).unwrap_or(u32::MAX)
+                    >= record.definition.eval.max_entities_per_wake
+                    || judges_run >= record.definition.eval.max_judges_per_wake
+                {
+                    resume_after = visits.last().map(|(visited, _)| *visited);
+                    break;
+                }
+                let evaluated = evaluator
+                    .evaluate_entity_receipt(&EvaluationRequest {
+                        query_ref: record.query_ref,
+                        campaign_ref: record.query_ref,
+                        entity_ref: *entity_ref,
+                        definition: &record.definition,
+                        cause: MembershipCause::DataChange,
+                        valid_at: now,
+                        detected_at: now,
+                    })
+                    .await?;
+                if evaluated.visit.judge_ran {
+                    judges_run = judges_run.saturating_add(1);
+                }
+                visits.push((*entity_ref, evaluated));
+            }
+            Ok((visits, resume_after))
+        })
+    })
+}
+
+/// Runs `run` on the evaluator `record`'s matcher binds, read under `read`.
+fn with_evaluator<T>(
+    server: &SyncServer,
+    record: &SavedQueryRecord,
+    read: &ScopedReadActorKey,
+    now: u64,
+    run: impl FnOnce(&SavedQueryEvaluator<'_>) -> oneiron::Result<T>,
+) -> oneiron::Result<T> {
     let vault = server.vault();
     // The owner's read is the authority; the scope axes stay as declared.
     let reach = QueryScope::default();
@@ -280,9 +342,7 @@ fn evaluate(
             owner_read: read,
             judge: None,
         };
-        return block_on(crate::campaign_enrollment::wake(
-            &evaluator, record, page, now,
-        ));
+        return run(&evaluator);
     };
     let model = ModelId::new(model_id.clone()).map_err(|_| {
         oneiron::Error::InvalidConfig("the saved query names no valid model".into())
@@ -353,11 +413,9 @@ fn evaluate(
             decisions: &decisions,
         }),
     };
-    let report = block_on(crate::campaign_enrollment::wake(
-        &evaluator, record, page, now,
-    ));
+    let answer = run(&evaluator);
     let _ = carrier.abort(&lease);
-    report
+    answer
 }
 
 /// The run's backend with each request the judge builds admitted against the

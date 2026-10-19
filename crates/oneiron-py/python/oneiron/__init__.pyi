@@ -1992,6 +1992,22 @@ class Oneiron:
     class _VaultDisclosureVerbs:
         def offer(self, spec: Facade.DisclosureOfferRequest) -> Facade.DisclosureOffered:
             """An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."""
+        @property
+        def ceiling(self) -> "Oneiron._VaultDisclosureCeilingVerbs": ...
+        @property
+        def reveals(self) -> "Oneiron._VaultDisclosureRevealsVerbs": ...
+    class _VaultDisclosureCeilingVerbs:
+        def get(self, spec: Facade.DisclosureCeilingRequest) -> Facade.DisclosureCeilingView:
+            """Reads the owner registry dial for one model connection, optionally one data class."""
+        def set(self, spec: Facade.DisclosureCeilingSet) -> Facade.DisclosureCeilingView:
+            """The owner sets one connection or class disclosure ceiling; no read authority changes."""
+        def clear(self, spec: Facade.DisclosureCeilingRequest) -> Facade.DisclosureCeilingView:
+            """The owner clears one dial, restoring connection or actor-class inference."""
+    class _VaultDisclosureRevealsVerbs:
+        def __call__(self, spec: Facade.RevealAsksRequest) -> list[Facade.RevealAskView]:
+            """The owner reads model-disclosure asks and receipts, including PERSON handles, without values."""
+        def answer(self, spec: Facade.RevealAnswerRequest) -> Facade.RevealAnsweredView:
+            """The owner approves once, approves standing, or denies the exact frozen reveal ask."""
     class _VaultSharesVerbs:
         def create(self, spec: Facade.ShareCreateRequest) -> Facade.ShareCreated:
             """The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."""
@@ -2675,6 +2691,8 @@ class Oneiron:
     class _VaultConsolidationHomeVerbs:
         def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.ConsolidationHomeView:
             """The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything."""
+        def pick(self, spec: Facade.ConsolidationHomePickRequest) -> Facade.ConsolidationHomePickReceipt:
+            """The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget."""
     class _VaultSieveVerbs:
         @property
         def evidence(self) -> "Oneiron._VaultSieveEvidenceVerbs": ...
@@ -2881,6 +2899,8 @@ class Oneiron:
         @property
         def admission(self) -> "Oneiron._SelfAdmissionVerbs": ...
         @property
+        def saved_query(self) -> "Oneiron._SelfSavedQueryVerbs": ...
+        @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs": ...
         @property
         def consent(self) -> "Oneiron._SelfConsentVerbs": ...
@@ -2983,6 +3003,19 @@ class Oneiron:
             """Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work."""
         def receipts(self, spec: Facade.AdmissionReceiptsRequest) -> list[Facade.AdmissionReceipt]:
             """Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay."""
+    class _SelfSavedQueryVerbs:
+        def create(self, spec: Facade.SavedQueryCreateRequest) -> Facade.SavedQueryRecordView:
+            """Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller."""
+        def read(self, spec: Facade.SavedQueryReadRequest) -> Facade.SavedQueryReadResult:
+            """One saved query the caller owns; a query absent or not the caller's reads as not found."""
+        def update(self, spec: Facade.SavedQueryUpdateRequest) -> Facade.SavedQueryRecordView:
+            """Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check."""
+        def archive(self, spec: Facade.SavedQueryArchiveRequest) -> Facade.SavedQueryRecordView:
+            """Archives a saved query under a definition-version check: it stays readable and is never evaluated again."""
+        def members(self, spec: Facade.SavedQueryMembersRequest) -> Facade.SavedQueryMembershipPageView:
+            """One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved."""
+        def evaluate(self, spec: Facade.SavedQueryEvaluateRequest) -> Facade.SavedQueryEvaluationReceipt:
+            """Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity."""
     class _SelfOffRecordVerbs:
         def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
             """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
@@ -3155,11 +3188,11 @@ class Oneiron:
             """Stops a video job at its provider."""
     class _RevealVerbs:
         def __call__(self, spec: Facade.RevealRequest) -> Facade.RevealPending:
-            """Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""
+            """Asks for a custody or PERSON handle's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""
         def wait(self, spec: Facade.RevealWaitRequest) -> Facade.RevealWaitAnswer:
             """Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."""
         def describe(self, spec: Facade.RevealDescribeRequest) -> Facade.RevealHandleCard:
-            """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
+            """What a custody or PERSON handle names, where it was found and what a reveal of it would do now; never the value."""
     class _HostVerbs:
         def compact(self, spec: Facade.HostCompactRequest) -> Facade.HostCompactResult:
             """Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint."""

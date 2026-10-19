@@ -826,6 +826,36 @@ export_facade! {
     let output = client.vault_campaign_program_archive(&input)?;
     crate::codec::lift_record("vault.campaign.program.archive", &output)
 };
+"self.saved_query.create" => fn self_saved_query_create(&self, input: SavedQueryCreateRequest) -> SavedQueryRecordView = |client| {
+    let input: oneiron::campaign::surface::SavedQueryCreateRequest = crate::codec::lower_record("self.saved_query.create", input)?;
+    let output = client.self_saved_query_create(&input)?;
+    crate::codec::lift_record("self.saved_query.create", &output)
+};
+"self.saved_query.read" => fn self_saved_query_read(&self, input: SavedQueryReadRequest) -> SavedQueryReadResult = |client| {
+    let input: oneiron::campaign::surface::SavedQueryReadRequest = crate::codec::lower_record("self.saved_query.read", input)?;
+    let output = client.self_saved_query_read(&input)?;
+    crate::codec::lift_record("self.saved_query.read", &output)
+};
+"self.saved_query.update" => fn self_saved_query_update(&self, input: SavedQueryUpdateRequest) -> SavedQueryRecordView = |client| {
+    let input: oneiron::campaign::surface::SavedQueryUpdateRequest = crate::codec::lower_record("self.saved_query.update", input)?;
+    let output = client.self_saved_query_update(&input)?;
+    crate::codec::lift_record("self.saved_query.update", &output)
+};
+"self.saved_query.archive" => fn self_saved_query_archive(&self, input: SavedQueryArchiveRequest) -> SavedQueryRecordView = |client| {
+    let input: oneiron::campaign::surface::SavedQueryArchiveRequest = crate::codec::lower_record("self.saved_query.archive", input)?;
+    let output = client.self_saved_query_archive(&input)?;
+    crate::codec::lift_record("self.saved_query.archive", &output)
+};
+"self.saved_query.members" => fn self_saved_query_members(&self, input: SavedQueryMembersRequest) -> SavedQueryMembershipPageView = |client| {
+    let input: oneiron::campaign::surface::SavedQueryMembersRequest = crate::codec::lower_record("self.saved_query.members", input)?;
+    let output = client.self_saved_query_members(&input)?;
+    crate::codec::lift_record("self.saved_query.members", &output)
+};
+"self.saved_query.evaluate" => fn self_saved_query_evaluate(&self, input: SavedQueryEvaluateRequest) -> SavedQueryEvaluationReceipt = |client| {
+    let input: oneiron::campaign::surface::SavedQueryEvaluateRequest = crate::codec::lower_record("self.saved_query.evaluate", input)?;
+    let output = client.self_saved_query_evaluate(&input)?;
+    crate::codec::lift_record("self.saved_query.evaluate", &output)
+};
 "vault.weave.report" => fn vault_weave_report(&self, input: WeaveReportRequest) -> WeaveReportView = |client| {
     let input: oneiron::claim::WeaveReportRequest = crate::codec::lower_record("vault.weave.report", input)?;
     let output = client.vault_weave_report(&input)?;
@@ -2490,6 +2520,31 @@ export_facade! {
     let input: oneiron::task_verb::sdk::DisclosureOfferRequest = crate::codec::lower_record("vault.disclosure.offer", input)?;
     let output = client.vault_disclosure_offer(&input)?;
     crate::codec::lift_record("vault.disclosure.offer", &output)
+};
+"vault.disclosure.ceiling.get" => fn vault_disclosure_ceiling_get(&self, input: DisclosureCeilingRequest) -> DisclosureCeilingView = |client| {
+    let input: oneiron::disclosure::DisclosureCeilingRequest = crate::codec::lower_record("vault.disclosure.ceiling.get", input)?;
+    let output = client.vault_disclosure_ceiling_get(&input)?;
+    crate::codec::lift_record("vault.disclosure.ceiling.get", &output)
+};
+"vault.disclosure.ceiling.set" => fn vault_disclosure_ceiling_set(&self, input: DisclosureCeilingSet) -> DisclosureCeilingView = |client| {
+    let input: oneiron::disclosure::DisclosureCeilingSet = crate::codec::lower_record("vault.disclosure.ceiling.set", input)?;
+    let output = client.vault_disclosure_ceiling_set(&input)?;
+    crate::codec::lift_record("vault.disclosure.ceiling.set", &output)
+};
+"vault.disclosure.ceiling.clear" => fn vault_disclosure_ceiling_clear(&self, input: DisclosureCeilingRequest) -> DisclosureCeilingView = |client| {
+    let input: oneiron::disclosure::DisclosureCeilingRequest = crate::codec::lower_record("vault.disclosure.ceiling.clear", input)?;
+    let output = client.vault_disclosure_ceiling_clear(&input)?;
+    crate::codec::lift_record("vault.disclosure.ceiling.clear", &output)
+};
+"vault.disclosure.reveals" => fn vault_disclosure_reveals(&self, input: RevealAsksRequest) -> Vec<RevealAskView> = |client| {
+    let input: oneiron::task_verb::sdk::RevealAsksRequest = crate::codec::lower_record("vault.disclosure.reveals", input)?;
+    let output = client.vault_disclosure_reveals(&input)?;
+    crate::codec::lift_record("vault.disclosure.reveals", &output)
+};
+"vault.disclosure.reveals.answer" => fn vault_disclosure_reveals_answer(&self, input: RevealAnswerRequest) -> RevealAnsweredView = |client| {
+    let input: oneiron::task_verb::sdk::RevealAnswerRequest = crate::codec::lower_record("vault.disclosure.reveals.answer", input)?;
+    let output = client.vault_disclosure_reveals_answer(&input)?;
+    crate::codec::lift_record("vault.disclosure.reveals.answer", &output)
 };
 "reveal" => fn reveal(&self, input: RevealRequest) -> RevealPending = |client| {
     let input: oneiron::task_verb::sdk::RevealRequest = crate::codec::lower_record("reveal", input)?;
@@ -4395,6 +4450,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.consolidation.home.get")?;
     let output = client.vault_consolidation_home_get(&input)?;
     crate::codec::lift_record("vault.consolidation.home.get", &output)
+};
+"vault.consolidation.home.pick" => fn vault_consolidation_home_pick(&self, input: ConsolidationHomePickRequest) -> ConsolidationHomePickReceipt = |client| {
+    let input: oneiron::dreamer_runner::ConsolidationHomePickRequest = crate::codec::lower_record("vault.consolidation.home.pick", input)?;
+    let output = client.vault_consolidation_home_pick(&input)?;
+    crate::codec::lift_record("vault.consolidation.home.pick", &output)
 };
 "vault.consolidation.lineage" => fn vault_consolidation_lineage(&self, input: ConsolidationLineageRequest) -> Option<ConsolidationLineageView> = |client| {
     let input: oneiron::dreamer_runner::ConsolidationLineageRequest = crate::codec::lower_record("vault.consolidation.lineage", input)?;

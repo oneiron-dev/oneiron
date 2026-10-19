@@ -552,10 +552,13 @@ fn mcp_board_sections(
             .map_or(0, |elapsed| {
                 u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
             });
-        oneiron::context_board::People::load(&server.vault, now, &mut |person| {
+        let mut people = oneiron::context_board::People::load(&server.vault, now, &mut |person| {
             read.is_entity_readable(&person)
         })
-        .map_err(|error| mcp_engine_error("board people failed", error))?
+        .map_err(|error| mcp_engine_error("board people failed", error))?;
+        people.disclose_names(&server.vault, read.actor_key())
+            .map_err(|error| mcp_engine_error("board people disclosure failed", error))?;
+        people
     };
     let resident = std::collections::BTreeSet::new();
     rows.attach_people(
@@ -1354,10 +1357,13 @@ fn run_board_sections(
             .map_or(0, |elapsed| {
                 u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
             });
-        oneiron::context_board::People::load(&server.vault, now, &mut |person| {
+        let mut people = oneiron::context_board::People::load(&server.vault, now, &mut |person| {
             read.is_entity_readable(&person)
         })
-        .map_err(|error| mcp_engine_error("board people failed", error))?
+        .map_err(|error| mcp_engine_error("board people failed", error))?;
+        people.disclose_names(&server.vault, read.actor_key())
+            .map_err(|error| mcp_engine_error("board people disclosure failed", error))?;
+        people
     };
     let resident = std::collections::BTreeSet::new();
     rows.attach_people(
