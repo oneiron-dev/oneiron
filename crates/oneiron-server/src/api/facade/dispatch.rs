@@ -26047,6 +26047,7 @@ pub(crate) async fn call_verb(
         | "vault.claims.put"
         | "vault.edges.put"
         | "tasks.consult.result"
+        | "self.workflows.dispatch_bound"
         | "self.leader.advice"
         | "self.leader.pattern"
         | "self.team.start"

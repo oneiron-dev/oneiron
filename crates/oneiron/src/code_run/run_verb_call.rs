@@ -28,10 +28,11 @@ pub(crate) const MEMORY_RUN_VERBS: [RunVerb; 4] = [
 /// run's own log, at the step boundary its host serializes the action with
 /// (OF-181). A host serves them as actions only under that run's lease.
 /// `tasks.consult.result` lands as the run's actor, under its door's read
-/// lane. `self.skills.call`, `self.spawn`, `summarize` and `tasks.wait` need
-/// the running sandbox (its bridge, its results, its park). None of those is
-/// here.
-pub(crate) const LIVE_RUN_VERBS: [RunVerb; 13] = [
+/// lane, and `self.workflows.dispatch_bound` binds a TASK as that actor,
+/// under its lease and its door's read lane. `self.skills.call`,
+/// `self.spawn`, `summarize` and `tasks.wait` need the running sandbox (its
+/// bridge, its results, its park). None of those is here.
+pub(crate) const LIVE_RUN_VERBS: [RunVerb; 14] = [
     RunVerb::TasksConsultResult,
     RunVerb::TasksRefuse,
     RunVerb::SelfReportBlocked,
@@ -45,6 +46,7 @@ pub(crate) const LIVE_RUN_VERBS: [RunVerb; 13] = [
     RunVerb::SelfCompact,
     RunVerb::SelfUnfold,
     RunVerb::SelfFolds,
+    RunVerb::SelfWorkflowsDispatchBound,
 ];
 
 /// The typed `self.*` call a run row makes, `now` in unix seconds: the call,
@@ -211,6 +213,9 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         RunVerb::ConnectorAnswer => SelfCall::ConnectorAnswer(decode(input)?),
         // FIX 4480: the run's agent asks to change a world's settings.
         RunVerb::VaultWorldsPrivacySet => SelfCall::WorldPrivacySet(decode(input)?),
+        // FIX 5316: the run's agent binds a TASK to a saved workflow's run;
+        // the closed input names no parent, actor, payer or scope.
+        RunVerb::SelfWorkflowsDispatchBound => SelfCall::WorkflowDispatch(Box::new(decode(input)?)),
     })
 }
 

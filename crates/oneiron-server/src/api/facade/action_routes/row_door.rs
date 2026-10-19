@@ -223,8 +223,9 @@ impl AgentVerbDoor for FacadeRowDoor {
 
     /// The typed actions keep their own ceiling and owner proof; this door
     /// adds nothing to them. A search reads on the credential's lane, an
-    /// edge's target is placed only when that lane reads it, and a consult
-    /// lands only refs that lane reads (DEC-0005).
+    /// edge's target is placed only when that lane reads it, a consult
+    /// lands only refs that lane reads, and a TASK binding reads its TASK
+    /// and workflow there (DEC-0005, FIX 5316).
     fn admit_run_call(
         &self,
         call: RunCall,
@@ -232,7 +233,10 @@ impl AgentVerbDoor for FacadeRowDoor {
         Ok(matches!(
             call,
             RunCall::Bridge(
-                SelfEffect::MemorySearch | SelfEffect::MemoryPutEdge | SelfEffect::ConsultResult
+                SelfEffect::MemorySearch
+                    | SelfEffect::MemoryPutEdge
+                    | SelfEffect::ConsultResult
+                    | SelfEffect::WorkflowDispatch
             )
         )
         .then(|| self.read_key.clone()))
