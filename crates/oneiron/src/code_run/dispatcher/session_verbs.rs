@@ -12,8 +12,13 @@
 //!
 //! A verb hook bound to one of these reads cannot run in the room: its
 //! receipts would land on record, and the room keeps no hook receipt yet
-//! (S01-2). The read still answers, and the hook's skip is named: in the log,
-//! and on the read's answer ([`HOOK_OUTCOME_KEY`]).
+//! (S01-2). A hook the owner marks blocking hides a read's result when it
+//! cannot run (ARCH-0080, DEC-0006 invariant 8), and this lane cannot yet
+//! tell a blocking binding from one that fails open. So a read the room
+//! serves newly (these four, and the run's search on its door's key) answers
+//! only while no hook binds its verb; while one does, it keeps the refusal it
+//! had, named [`SESSION_HOOK_UNRECORDED`]. The run's search with no key
+//! answers as it always has, and its hooks' skip is named in the log.
 //!
 //! Nothing here asks where the caller or the vault runs: the door's key
 //! carries its caller's Grant and ceiling as the host's own judges made it.
@@ -31,12 +36,9 @@ use crate::task_verb::sdk::AgentVerb;
 use super::HostSelfDispatcher;
 
 /// What a verb hook bound to a run's read in a room did: it did not run,
-/// because the room keeps no receipt for it yet (S01-2). The read answers
-/// anyway; this names the skip, on the hook's log line and on the answer.
+/// because the room keeps no receipt for it yet (S01-2). It names the hook's
+/// log line, and the refusal of a read the room serves newly.
 const SESSION_HOOK_UNRECORDED: &str = "session_hook_unrecorded";
-
-/// The member a read's answer names its unrun hooks under.
-const HOOK_OUTCOME_KEY: &str = "hookOutcome";
 
 /// The code an image hydrate in a room answers until the room keeps
 /// served-form receipts (S01-2).
@@ -68,6 +70,9 @@ enum SessionReadRefusal {
     /// A hydrate that would serve an image in a resolved form, whose
     /// served-form receipt the room does not keep yet.
     ServedFormUnrecorded,
+    /// A read the room serves newly, whose verb a hook binds that cannot run
+    /// in the room.
+    HookUnrecorded,
 }
 
 impl SessionReadRefusal {
@@ -76,12 +81,13 @@ impl SessionReadRefusal {
             Self::Unbound => AGENT_VERB_DOOR_UNBOUND.to_owned(),
             Self::Door(code) | Self::Read(code) => code,
             Self::ServedFormUnrecorded => SESSION_SERVED_FORM_UNRECORDED.to_owned(),
+            Self::HookUnrecorded => SESSION_HOOK_UNRECORDED.to_owned(),
         }
     }
 
-    fn denied(self) -> SelfDispatchOutcome {
+    fn denied(self, effect: SelfEffect) -> SelfDispatchOutcome {
         SelfDispatchOutcome::Denied(SelfDeniedResult {
-            effect: SelfEffect::AgentVerb,
+            effect,
             outcome: self.code(),
             reason_codes: Vec::new(),
         })
@@ -110,29 +116,42 @@ impl HostSelfDispatcher<'_> {
         };
         let key = match key {
             Ok(key) => key,
-            Err(refused) => return Ok(refused.denied()),
+            Err(refused) => return Ok(refused.denied(SelfEffect::AgentVerb)),
         };
+        if let Some(refused) = hooked_read_refused(&binding.session, call.verb.as_str()) {
+            return Ok(refused.denied(SelfEffect::AgentVerb));
+        }
         // The run-entry route must still stand, as for the run's writes: a
         // search registers its run through it.
         binding.route.revalidate()?;
         let context = binding.session.read_context(&binding.route, key)?;
-        let (mut output, rows) = match context.answer(read, self.actor, &call.input) {
-            Ok(SessionAnswer::Answered { output, rows }) => (output, rows),
-            Ok(SessionAnswer::ServedFormUnrecorded) => {
-                return Ok(SessionReadRefusal::ServedFormUnrecorded.denied());
+        let refused = match context.answer(read, self.actor, &call.input) {
+            Ok(SessionAnswer::Answered { output, rows }) => {
+                return Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
+                    output,
+                    rows: Some(rows),
+                }));
             }
-            Err(refused) => return Ok(SessionReadRefusal::Read(refused.code).denied()),
+            Ok(SessionAnswer::ServedFormUnrecorded) => SessionReadRefusal::ServedFormUnrecorded,
+            Err(refused) => SessionReadRefusal::Read(refused.code),
         };
-        if note_unrun_hooks(&binding.session, call.verb.as_str())
-            && let serde_json::Value::Object(fields) = &mut output
-        {
-            fields.insert(HOOK_OUTCOME_KEY.to_owned(), SESSION_HOOK_UNRECORDED.into());
-        }
-        Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
-            output,
-            rows: Some(rows),
-        }))
+        Ok(refused.denied(SelfEffect::AgentVerb))
     }
+}
+
+/// The refusal of a read the room serves newly (a verb call, or the run's
+/// search on its door's key) while a verb hook binds `verb`: that hook cannot
+/// run in `session`'s room, and a blocking one would hide the result. `None`
+/// while no hook binds it.
+fn hooked_read_refused(session: &OffRecordSession<'_>, verb: &str) -> Option<SessionReadRefusal> {
+    note_unrun_hooks(session, verb).then_some(SessionReadRefusal::HookUnrecorded)
+}
+
+/// The run's search in `session`'s room on its door's key, refused while a
+/// verb hook binds it ([`hooked_read_refused`]); `None` while none does.
+pub(super) fn hooked_search_refused(session: &OffRecordSession<'_>) -> Option<SelfDispatchOutcome> {
+    hooked_read_refused(session, SelfEffect::MemorySearch.as_str())
+        .map(|refused| refused.denied(SelfEffect::MemorySearch))
 }
 
 /// Whether a verb hook bound to `verb` would run on a run's read in
