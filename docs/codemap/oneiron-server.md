@@ -890,7 +890,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/consult_settle.rs` | src | s | 1 crate-vis | — | Consult settlement on every housekeeping pass (DOOR-063), on every substrate |
 | `src/server/cooperative_deletion.rs` | src | s | 1 crate-vis | — | Delivers queued courtesy deletion asks and answers (OF-273) |
 | `src/server/core.rs` | src | L | 1 struct · 18 fn · 1 re-export · 18 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
-| `src/server/core/pattern_workflow.rs` | src | m | 1 fn · 7 crate-vis | — | The house pattern runner (DOOR-111 S4b): the start a planned team's pattern skill writes, run on the house… |
+| `src/server/core/pattern_workflow.rs` | src | m | 1 fn · 8 crate-vis | — | The house pattern runner (DOOR-111 S4b): the start a planned team's pattern skill writes, run on the house… |
 | `src/server/desktop_seats.rs` | src | m | 16 crate-vis | — | The run guests live on this host (CUA-001), so the owner's door can reach the same guest a run's door… |
 | `src/server/embedding.rs` | src | m | 7 crate-vis | — | The embedding worker: the one thing that drives the engine's reconciler |
 | `src/server/housekeeping.rs` | src | m | 13 crate-vis | — | The host's half of the engine's housekeeping |
