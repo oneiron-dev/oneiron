@@ -15633,10 +15633,31 @@
      "path": "src/consent/bypass.rs",
      "purpose": "The scoped catastrophe bypass (DEC-0006 invariant 7, `#bypass-grant`)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 7,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ActiveBypassGrantsRequest",
+      "BypassActionEnvelopeRequest",
+      "BypassActiveState",
+      "BypassGrantBoundRequest",
+      "BypassGrantWarningRequest",
+      "BypassGrantWarningView",
+      "BypassedEffectReceipt",
+      "BypassedEffectReceiptsRequest",
+      "CreateBypassGrantRequest"
+     ],
+     "path": "src/consent/bypass_lifecycle.rs",
+     "purpose": "Typed owner doors for the scoped catastrophe bypass (DEC-0006 #bypass-grant)",
+     "surface": {
+      "fn": 4,
+      "struct": 9
      }
     },
     {
@@ -15756,6 +15777,7 @@
      "path": "src/consent/lifecycle.rs",
      "purpose": "Typed public consent lifecycle calls",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 5,
       "struct": 9
@@ -15769,7 +15791,7 @@
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants",
      "surface": {
       "crate-vis": 4,
-      "mod": 2,
+      "mod": 3,
       "re-export": 10
      }
     },
@@ -52966,7 +52988,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 992
+      "fn": 996
      }
     },
     {
@@ -59492,7 +59514,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60670,7 +60692,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3700,
+   "source_files": 3701,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69302,7 +69324,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 963
+      "fn": 967
      }
     },
     {
@@ -70396,7 +70418,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 964
+      "fn": 968
      }
     },
     {
@@ -73630,7 +73652,7 @@
      "path": "src/api/facade/consent_doors.rs",
      "purpose": "Consent lifecycle host doors, on the same owner proof as Gate policy",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 9
      }
     },
     {
@@ -82909,8 +82931,15 @@
       "BundleVerdict",
       "BundledSkillPermissions",
       "ButtonControl",
+      "BypassActionEnvelopeRequest",
+      "BypassActiveState",
       "BypassExtent",
+      "BypassGrantBoundRequest",
+      "BypassGrantWarningRequest",
+      "BypassGrantWarningView",
       "BypassScope",
+      "BypassedEffectReceipt",
+      "BypassedEffectReceiptsRequest",
       "CadencePrecedence",
       "CalendarCheckInAnswer",
       "CalendarCheckInDue",
@@ -83022,6 +83051,7 @@
       "CareLevel",
       "CaseDecision",
       "CatalogSeed",
+      "CatastropheClass",
       "CellTypeRef",
       "ChangeKind",
       "ChannelCeiling",
@@ -83449,6 +83479,7 @@
       "CrawlPageFailure",
       "CrawlResult",
       "CrawlScope",
+      "CreateBypassGrantRequest",
       "CreateCampaignProgramRequest",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
@@ -85870,8 +85901,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 785,
-      "struct": 2450
+      "enum": 786,
+      "struct": 2458
      }
     },
     {
