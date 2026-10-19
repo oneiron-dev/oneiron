@@ -25,9 +25,10 @@ fn no_executor_key() -> Error {
 impl Vault {
     /// Appends `executor`'s result for the request signed as entry `request`
     /// in the caller's write transaction, after the work it reports, signed
-    /// with this install's key. Its parents are the request and the main-log
-    /// heads, never a key record. The fold is the judge: a result it does not
-    /// take as the request's one terminal state refuses the transaction.
+    /// with this install's key. Its parents are the main-log heads alone,
+    /// which carry the request in its causal past (FIX 4987), never a key
+    /// record. The fold is the judge: a result it does not take as the
+    /// request's one terminal state refuses the transaction.
     pub(crate) fn append_owner_work_result_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -41,7 +42,7 @@ impl Vault {
         if !owner_act_signer_admits(fold.machine(executor), &fold.roster, &public_key) {
             return Err(no_executor_key());
         }
-        let parents = fold.owner_work_result_parents(request, executor);
+        let parents = fold.owner_work_parents();
         if parents.len() > MAX_PARENTS {
             return Err(Error::InvalidConfig(format!(
                 "this owner work result would name {} parent rows, more than the {MAX_PARENTS} one \
