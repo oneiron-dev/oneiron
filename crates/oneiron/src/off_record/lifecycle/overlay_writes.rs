@@ -18,11 +18,9 @@ use crate::claim::{ClaimBody, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::{HostWriteOrigin, MemoryError, MemoryResult};
+use crate::memory::{HostWriteOrigin, MemoryError, MemoryResult, SessionReadContext};
 use crate::ports::EntityStoreRead;
-use crate::session_overlay::{
-    JournalEntry, JournalRole, JournalScope, RouteTarget, SessionWriteRoute,
-};
+use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, SessionWriteRoute};
 use crate::task_verb::sdk::{AgentVerb, CreateNoteRequest};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope};
@@ -59,6 +57,45 @@ impl OffRecordSession<'_> {
     ) -> Result<String> {
         route.require_recording(&self.session_ref)?;
         let conversation = self.overlay_conversation_shell()?;
+        self.overlay_write_routed(route, |wtxn, apply| {
+            self.stage_session_rows_in_txn(
+                wtxn,
+                apply,
+                conversation,
+                row,
+                occurred,
+                learned_at,
+                needs,
+                ops,
+            )
+        })
+    }
+
+    /// [`Self::stage_session_rows`]'s staging, inside a segment its writer
+    /// opened on its own captured route ([`Self::overlay_write_routed`]), so
+    /// the writer keeps what it keeps beside the rows in the same segment (a
+    /// run's write receipt, WILL L11-01 S01-2a). `conversation` is the
+    /// room's shell, read before the segment opened; `apply` is the
+    /// segment's own.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::stage_session_rows`], with nothing staged.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the segment's transaction and apply, the room's shell, then the one row's own staging axes"
+    )]
+    pub(crate) fn stage_session_rows_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        apply: &dyn Fn(&mut heed::RwTxn<'_>, JournalEntry) -> Result<()>,
+        conversation: EntityId,
+        row: EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        needs: &[EntityId],
+        ops: Vec<BatchOp>,
+    ) -> Result<String> {
         // The row's own id is its scope's turn: no TURN of the room has it,
         // so no promote or save plans it (`SESSION_WRITES_RIDE_NO_TURN`).
         let turn = if SESSION_WRITES_RIDE_NO_TURN {
@@ -77,43 +114,41 @@ impl OffRecordSession<'_> {
             } if *id == row => Some((*entity_type, data.clone())),
             _ => None,
         });
-        self.overlay_write_routed(route, |wtxn, apply| {
-            {
-                let view = self.read_view()?;
-                for id in needs {
-                    if view.port_entity_record(&*wtxn, id)?.is_none() {
-                        return Err(Error::EntityNotFound);
-                    }
+        {
+            let view = self.read_view()?;
+            for id in needs {
+                if view.port_entity_record(&*wtxn, id)?.is_none() {
+                    return Err(Error::EntityNotFound);
                 }
             }
-            for op in ops {
-                apply(
-                    wtxn,
-                    JournalEntry {
-                        scope: JournalScope::new(conversation, turn),
-                        role: JournalRole::TurnOwnedArtifact,
-                        learned_at,
-                        occurred,
-                        op,
-                    },
-                )?;
-            }
-            // Atomically beside the row, under the same route and budget
-            // (WILL L11-01): no authority row, nothing a save replays.
-            if let Some((kind, data)) = &put {
-                crate::federation::record_scope::stage_session_position(
-                    &self.read_view()?,
-                    wtxn,
-                    row,
-                    *kind,
-                    data,
-                )?;
-            }
-            let (short, _) = self
-                .overlay()
-                .alloc_session_short_id(&row, row.as_bytes())?;
-            Ok(short)
-        })
+        }
+        for op in ops {
+            apply(
+                wtxn,
+                JournalEntry {
+                    scope: JournalScope::new(conversation, turn),
+                    role: JournalRole::TurnOwnedArtifact,
+                    learned_at,
+                    occurred,
+                    op,
+                },
+            )?;
+        }
+        // Atomically beside the row, under the same route and budget
+        // (WILL L11-01): no authority row, nothing a save replays.
+        if let Some((kind, data)) = &put {
+            crate::federation::record_scope::stage_session_position(
+                &self.read_view()?,
+                wtxn,
+                row,
+                *kind,
+                data,
+            )?;
+        }
+        let (short, _) = self
+            .overlay()
+            .alloc_session_short_id(&row, row.as_bytes())?;
+        Ok(short)
     }
 
     /// Judges `body`'s write against base policy, as the write door would,
@@ -200,54 +235,85 @@ impl OffRecordSession<'_> {
     }
 
     /// Whether a run bound to a session writes `verb` into its room
-    /// ([`Self::forward_session_write`]): `vault.notes.create` and
+    /// ([`Self::prepare_session_write`]): `vault.notes.create` and
     /// `vault.claims.upsert`.
     pub(crate) fn writes_verb(verb: AgentVerb) -> bool {
         matches!(verb.as_str(), "vault.notes.create" | "vault.claims.upsert")
     }
 
-    /// A code-mode verb call of a run bound to this session, when it is one
-    /// the room keeps: `vault.notes.create` or `vault.claims.upsert`, while
-    /// the room is off record. Each writes through `actor`'s handle, under
-    /// the run's `origin`, into the overlay. `None` for every other verb and
-    /// for any verb once the room is on record: those forward through the
-    /// canonical vault, outside the session's route and its saver.
-    pub(crate) fn forward_session_write(
+    /// A code-mode verb call of a run bound to this session, prepared to
+    /// stage in its room: `vault.notes.create` or `vault.claims.upsert`,
+    /// written through `actor`'s handle under the run's `origin`, on `route`,
+    /// the run's captured route, never a fresh one (WILL L11-01, S01-2a).
+    /// `reader` is the room's view the run's door opened for its caller,
+    /// when the run binds a door: a claim's subject resolves in it. The
+    /// answer stages the write's rows inside a segment its writer opened on
+    /// `route`, and gives the verb's answer, encoded. `None` for every other
+    /// verb: those forward through the canonical vault, outside the
+    /// session's route and its saver.
+    pub(crate) fn prepare_session_write(
         &self,
+        route: &SessionWriteRoute,
         actor: WriteActor,
         origin: HostWriteOrigin,
         verb: AgentVerb,
         input: &serde_json::Value,
-    ) -> Option<MemoryResult<serde_json::Value>> {
-        let off_record = self
-            .write_route()
-            .is_ok_and(|route| route.target() == RouteTarget::Overlay);
-        if !off_record {
-            return None;
-        }
+        reader: Option<&SessionReadContext<'_>>,
+    ) -> Option<MemoryResult<SessionWriteStage<'_>>> {
         let memory = self
             .vault
             .memory(actor.entity_ref(), actor.actor_class())
             .with_host_origin(origin);
-        let encode = |value: std::result::Result<serde_json::Value, serde_json::Error>| {
-            value.map_err(|_| {
-                MemoryError::bad_request(format!("{} answer encoding failed", verb.as_str()))
-            })
-        };
         let decode =
             |what: &str| MemoryError::bad_request(format!("{} input is not {what}", verb.as_str()));
         Some(match verb.as_str() {
             "vault.notes.create" => serde_json::from_value::<CreateNoteRequest>(input.clone())
                 .map_err(|_| decode("a NOTE"))
-                .and_then(|note| memory.create_note_in_session(self, &note.kind, &note.markdown))
-                .and_then(|receipt| encode(serde_json::to_value(receipt))),
+                .and_then(|note| {
+                    memory.prepare_note_in_session(self, route, &note.kind, &note.markdown)
+                })
+                .map(|prepared| {
+                    staged(move |wtxn, apply| encoded(&prepared.stage_in_txn(self, wtxn, apply)?))
+                }),
             "vault.claims.upsert" => {
                 serde_json::from_value::<crate::memory::ScopedClaimInput>(input.clone())
                     .map_err(|_| decode("a claim"))
-                    .and_then(|claim| memory.claim_upsert_in_session(self, &claim))
-                    .and_then(|receipt| encode(serde_json::to_value(receipt)))
+                    .and_then(|claim| memory.prepare_claim_in_session(self, route, reader, &claim))
+                    .map(|prepared| {
+                        staged(move |wtxn, apply| {
+                            encoded(&prepared.stage_in_txn(self, wtxn, apply)?)
+                        })
+                    })
             }
             _ => return None,
         })
     }
+}
+
+/// The staging step of a prepared room write: inside the segment its writer
+/// opened, on the segment's transaction and apply, it stages the write's
+/// rows and answers the verb's answer, encoded.
+pub(crate) type SessionWriteStage<'s> = Box<
+    dyn FnOnce(
+            &mut heed::RwTxn<'_>,
+            &dyn Fn(&mut heed::RwTxn<'_>, JournalEntry) -> Result<()>,
+        ) -> Result<serde_json::Value>
+        + 's,
+>;
+
+/// `stage` as a prepared room write's [`SessionWriteStage`].
+fn staged<'s>(
+    stage: impl FnOnce(
+        &mut heed::RwTxn<'_>,
+        &dyn Fn(&mut heed::RwTxn<'_>, JournalEntry) -> Result<()>,
+    ) -> Result<serde_json::Value>
+    + 's,
+) -> SessionWriteStage<'s> {
+    Box::new(stage)
+}
+
+/// A staged room write's receipt, as its verb answers it.
+fn encoded(receipt: &impl serde::Serialize) -> Result<serde_json::Value> {
+    serde_json::to_value(receipt)
+        .map_err(|_| Error::InvariantViolation("a room write's answer did not encode"))
 }
