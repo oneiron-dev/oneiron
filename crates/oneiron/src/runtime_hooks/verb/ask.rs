@@ -13,6 +13,8 @@
 //! reads run on the task-work turn the calling operation holds
 //! ([`author_memory`]).
 
+pub(super) mod session;
+
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};

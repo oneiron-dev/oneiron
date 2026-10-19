@@ -105,9 +105,16 @@ pub(super) fn pre(
     // The owner's revoke always lands (FIX 5076): a restrictive call, judged
     // on its caller's own args, keeps them to fall back to.
     let mut landing = Landing::of(&call.verb, &args);
-    // A room keeps no ask, so no call there resumes one.
+    // A room keeps no ask, so no call there resumes one. A session-only
+    // call with no room overlay resumes from the in-memory keep (L13 PR-D).
     let saved = match storage {
-        VerbHookStorage::Session(_) => ask::Retry::Fresh,
+        VerbHookStorage::Session(hooks) => match hooks.kept_key() {
+            Some(key) => {
+                let _depth = HookDepth::enter();
+                ask::session::retry(vault, hooks, key, &call, turn.as_ref())?
+            }
+            None => ask::Retry::Fresh,
+        },
         VerbHookStorage::Canonical => {
             let _depth = HookDepth::enter();
             ask::retry(vault, &call, resume, turn.as_ref())?
@@ -821,6 +828,11 @@ impl<'c> Chain<'c> {
     ) -> Result<std::result::Result<VerbHookStop, String>> {
         if let Some(refusal) = self.room_ask_refusal() {
             return Ok(Err(refusal));
+        }
+        if let VerbHookStorage::Session(hooks) = self.storage
+            && let Some(key) = hooks.kept_key()
+        {
+            return self.ask_in_session(hooks, key, index, hook, args, label);
         }
         let opened = ask::open(
             self.vault,

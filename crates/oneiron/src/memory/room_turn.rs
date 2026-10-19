@@ -205,6 +205,7 @@ impl<'v> Memory<'v> {
                 owner_surface: crate::authority::ActSurface::ThisInstall,
                 host_slip_issuer: None,
                 invocation: self.invocation,
+                hook_ask: self.hook_ask,
                 invocation_slip: self.invocation_slip.clone(),
                 transport_invocation: self.transport_invocation,
                 task_grant: self.task_grant,

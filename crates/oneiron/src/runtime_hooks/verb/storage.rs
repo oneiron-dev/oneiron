@@ -10,7 +10,13 @@
 //! own store (`OffRecordSession::stage_hook_records`). A session-only call
 //! with no room overlay (a roomless anonymous session, a `no_record` row)
 //! reads the vault and keeps its records in RAM under its session or the
-//! process ([`SessionHookKeep`]). None of them reaches base.
+//! process ([`SessionHookKeep`]). None of them reaches base. Such a call's
+//! hook may ask (L13 PR-D, FIX 4283): the call it paused waits in the same
+//! keep, under the same key, and only its caller's retry there resumes it,
+//! using the answer up once; it goes with its session. While
+//! `KEPT_CALL_HOOK_CONSEQUENCES_RUN` holds (FIX 5525), its hooks' blocks,
+//! proposals, queued tasks and effects land in the vault as on any call;
+//! only their receipts and saved runs stay in the keep.
 //!
 //! A session-only call's records are held from its pre chain, riding the
 //! [`VerbHookPre`], through its post chain, and kept together once its own
@@ -31,9 +37,9 @@
 //! apply all the same and each hook's disposition says why the receipt was
 //! not kept.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use serde_json::Value;
 
@@ -48,9 +54,10 @@ use crate::runtime_hooks::runner::bounded;
 use crate::runtime_hooks::store::{self, RunKey};
 use crate::session_overlay::{SessionOverlay, TxnSegmentGuard};
 use crate::side_table::{RoutedDbs, SideTableDbs};
+use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::store::SessionStoreView;
 use crate::work_line::TaskWorkTurn;
-use crate::{Result, Vault};
+use crate::{EntityId, Result, Vault};
 
 use super::record::{self, HookVerbRunRecord};
 use super::{VerbArgsCheck, VerbCall, VerbHookPre, VerbHookStop, chain};
@@ -84,6 +91,11 @@ pub(crate) struct SessionHooks<'s> {
     /// Dispositions no receipt goes with: a phase whose hooks went unread.
     notes: RefCell<Vec<SessionHookDisposition>>,
     dispositions: RefCell<Vec<SessionHookDisposition>>,
+    /// The pause an explicit resume names, by its ask handle, on a call
+    /// with no room overlay ([`Self::resuming`]); `None` for a new call.
+    resume: Option<EntityId>,
+    /// Set once this call used its resumed answer up in the keep.
+    answer_taken: Cell<bool>,
 }
 
 /// Where one session-only call's hooks read and keep.
@@ -158,31 +170,82 @@ impl HookRecordsKept {
 
 /// What a session-only call with no room overlay keeps its hook records
 /// under (Engine 10-19): its session, or the process.
-#[expect(
-    dead_code,
-    reason = "L13 PR-D (FIX 4283) names the key of a roomless or no_record call; a room keeps its own"
-)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum SessionHookKey {
-    /// A session, by its ref and when it was entered: a ref entered again
-    /// keeps apart.
+    /// A session, by its registry key and when it was entered: a ref
+    /// entered again keeps apart.
     Session { key: String, entered_at: u64 },
     /// The process: kept until it ends.
     Process,
 }
 
-/// The in-memory keep of session-only hook records: per key, a standalone
-/// overlay that stages a call's records as a room's overlay does, under a
-/// room's byte budget, in RAM only. Nothing in it reaches base; it goes with
-/// its session's [`Self::drop_session`], or with the vault's process.
+impl SessionHookKey {
+    /// Whether this key's session is the live one: the process always is;
+    /// a session while the registry holds the stretch entered then, not
+    /// closing. Close publishes `closing` before it drops the key's keep, so
+    /// a writer that finds the key live under the keep's lock is dropped
+    /// with it, and one after finds it closing.
+    fn live(&self, vault: &Vault) -> bool {
+        match self {
+            Self::Process => true,
+            Self::Session { key, entered_at } => vault
+                .store
+                .off_record_sessions
+                .record(key)
+                .is_some_and(|record| record.entered_at == *entered_at && !record.closing),
+        }
+    }
+}
+
+/// The in-memory keep of session-only hook records and pauses: per key, a
+/// standalone overlay that stages a call's records as a room's overlay
+/// does, under a room's byte budget, and the calls its hooks' asks paused,
+/// in RAM only. Nothing in it reaches base; it goes with its session's
+/// [`Self::drop_session`], or with the vault's process. A key whose session
+/// is closing or gone is never kept again.
 #[derive(Default)]
 pub(crate) struct SessionHookKeep {
-    kept: Mutex<HashMap<SessionHookKey, Arc<SessionOverlay>>>,
+    kept: Mutex<HashMap<SessionHookKey, Kept>>,
+    /// The key that hides a session-only call's invocation in the intent
+    /// key of the ask its hook opens: drawn once per process, never stored.
+    hiding: OnceLock<[u8; 32]>,
+}
+
+/// What the keep holds under one key: its records and its paused calls.
+struct Kept {
+    overlay: Arc<SessionOverlay>,
+    /// The calls its hooks' asks paused, by invocation.
+    asks: HashMap<[u8; 16], SessionVerbAsk>,
+}
+
+/// A call a session-only call's hook ask paused (L13 PR-D, FIX 4283): what
+/// a retry of its invocation under the same key reads. Its args stay here,
+/// never in the vault's ask.
+#[derive(Debug, Clone)]
+pub(super) struct SessionVerbAsk {
+    pub(super) verb: String,
+    pub(super) actor: EntityId,
+    pub(super) class: HookActorClass,
+    /// The args the asking hook saw, re-validated.
+    pub(super) args: Value,
+    /// The asking hook's place in the pre chain.
+    pub(super) position: usize,
+    pub(super) binding: EntityId,
+    /// `<pack>/<hook>`.
+    pub(super) hook: String,
+    /// The hook's author, who asked and reads the answer.
+    pub(super) author: EntityId,
+    pub(super) author_class: HookActorClass,
+    /// The ask's group: its handle.
+    pub(super) ask: EntityId,
+    /// Set once a retry resumed the call on a proceed answer it used up.
+    pub(super) used: bool,
 }
 
 impl SessionHookKeep {
     /// Stages one call's records under `key`: `rows` reads through the
-    /// keep's composed view and puts or deletes in it, in one segment.
+    /// keep's composed view and puts or deletes in it, in one segment. A key
+    /// whose session closed meanwhile keeps none of them.
     ///
     /// # Errors
     ///
@@ -194,15 +257,9 @@ impl SessionHookKeep {
         key: &SessionHookKey,
         rows: impl FnOnce(&mut heed::RwTxn<'_>, RoutedDbs<'_>, RoutedDbs<'_>) -> Result<()>,
     ) -> Result<HookRecordsKept> {
-        let overlay = Arc::clone(
-            self.kept
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .entry(key.clone())
-                .or_insert_with(|| {
-                    SessionOverlay::new(vault.config.off_record_overlay_budget_bytes)
-                }),
-        );
+        let Some(overlay) = self.with_live(vault, key, |kept| Arc::clone(&kept.overlay)) else {
+            return Ok(HookRecordsKept::NotKept(SessionHookNotKept::NoRetention));
+        };
         HookRecordsKept::of(
             vault
                 .with_write_txn_grouped(|wtxn| {
@@ -214,15 +271,13 @@ impl SessionHookKeep {
                 .and_then(TxnSegmentGuard::commit),
         )
     }
-}
 
-#[expect(
-    dead_code,
-    reason = "L13 PR-D (FIX 4283) reads a session's kept hook records and drops them with it"
-)]
-impl SessionHookKeep {
     /// Reads `key`'s kept records through the keep's composed view; `None`
     /// while it keeps none.
+    #[expect(
+        dead_code,
+        reason = "a projector of a session's kept hook records reads them here; none does yet"
+    )]
     pub(crate) fn read<T>(
         &self,
         vault: &Vault,
@@ -234,7 +289,7 @@ impl SessionHookKeep {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(key)
-            .cloned()
+            .map(|kept| Arc::clone(&kept.overlay))
         else {
             return Ok(None);
         };
@@ -243,12 +298,104 @@ impl SessionHookKeep {
         f(&rtxn, RoutedDbs::Session(&view)).map(Some)
     }
 
-    /// Drops every record kept under `key`, as its session ends.
+    /// Drops every record and paused call kept under `key`, as its session
+    /// ends: nothing resumes a call it paused.
     pub(crate) fn drop_session(&self, key: &SessionHookKey) {
         self.kept
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(key);
+    }
+
+    /// Saves the call `invocation`'s hook ask paused under `key`, over any
+    /// earlier one: false, saving nothing, once its session is closing or
+    /// gone.
+    pub(super) fn save_ask(
+        &self,
+        vault: &Vault,
+        key: &SessionHookKey,
+        invocation: [u8; 16],
+        ask: SessionVerbAsk,
+    ) -> bool {
+        self.with_live(vault, key, |kept| {
+            kept.asks.insert(invocation, ask);
+        })
+        .is_some()
+    }
+
+    /// The call `invocation`'s hook ask paused under `key`, if this process
+    /// holds one.
+    pub(super) fn ask(&self, key: &SessionHookKey, invocation: [u8; 16]) -> Option<SessionVerbAsk> {
+        self.kept
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(key)
+            .and_then(|kept| kept.asks.get(&invocation).cloned())
+    }
+
+    /// Uses ask `ask`'s proceed answer up for `invocation` under `key`,
+    /// once: false when no unused call of that ask stands there (used
+    /// already, a newer ask's call, or its session gone).
+    pub(super) fn use_ask(
+        &self,
+        key: &SessionHookKey,
+        invocation: [u8; 16],
+        ask: EntityId,
+    ) -> bool {
+        let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        match kept
+            .get_mut(key)
+            .and_then(|kept| kept.asks.get_mut(&invocation))
+        {
+            Some(row) if row.ask == ask && !row.used => {
+                row.used = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The id that stands for `invocation` under `key` wherever the vault
+    /// would name a session-only call (FIX 5382, FIX 5383): a hash keyed by
+    /// this process's own key over the session, when it was entered and the
+    /// invocation, so the vault never carries the caller's invocation, and a
+    /// retry in this process meets the ask it opened.
+    pub(crate) fn hidden_invocation(&self, key: &SessionHookKey, invocation: [u8; 16]) -> [u8; 16] {
+        let mut hasher = blake3::Hasher::new_keyed(self.hiding.get_or_init(rand::random));
+        match key {
+            SessionHookKey::Session { key, entered_at } => {
+                hasher.update(b"session");
+                hasher.update(&u64::try_from(key.len()).unwrap_or(u64::MAX).to_le_bytes());
+                hasher.update(key.as_bytes());
+                hasher.update(&entered_at.to_le_bytes());
+            }
+            SessionHookKey::Process => {
+                hasher.update(b"process");
+            }
+        }
+        hasher.update(&invocation);
+        let mut id = [0; 16];
+        id.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+        id
+    }
+
+    /// Runs `f` on what `key` keeps, made empty when it keeps nothing yet,
+    /// while its session is live, under the keep's lock: `None` once it is
+    /// closing or gone, so a late writer never makes it again.
+    fn with_live<T>(
+        &self,
+        vault: &Vault,
+        key: &SessionHookKey,
+        f: impl FnOnce(&mut Kept) -> T,
+    ) -> Option<T> {
+        let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        if !key.live(vault) {
+            return None;
+        }
+        Some(f(kept.entry(key.clone()).or_insert_with(|| Kept {
+            overlay: SessionOverlay::new(vault.config.off_record_overlay_budget_bytes),
+            asks: HashMap::new(),
+        })))
     }
 }
 
@@ -261,10 +408,6 @@ impl<'s> SessionHooks<'s> {
 
     /// The hooks of a session-only call with no room overlay: they read
     /// `vault` and keep their records under `key` in its in-memory keep.
-    #[expect(
-        dead_code,
-        reason = "L13 PR-D (FIX 4283) passes a roomless or no_record call's hooks here"
-    )]
     pub(crate) fn session_only(vault: &'s Vault, key: SessionHookKey) -> Self {
         Self::on(HooksTarget::Kept { vault, key })
     }
@@ -277,7 +420,41 @@ impl<'s> SessionHooks<'s> {
             held: RefCell::new(Vec::new()),
             notes: RefCell::new(Vec::new()),
             dispositions: RefCell::new(Vec::new()),
+            resume: None,
+            answer_taken: Cell::new(false),
         }
+    }
+
+    /// These hooks, for a call that names `ask`, the handle of the pause it
+    /// resumes (L13 PR-D, FIX 4283): its retry reads that pause in the keep,
+    /// and one the keep no longer holds (its session ended, or the server
+    /// restarted) refuses, never running as a new call. `None` is a new
+    /// call. Only a call with no room overlay reads it.
+    #[must_use]
+    pub(crate) fn resuming(mut self, ask: Option<EntityId>) -> Self {
+        self.resume = ask;
+        self
+    }
+
+    /// The pause these hooks' call names as the one it resumes.
+    pub(super) fn resumed_ask(&self) -> Option<EntityId> {
+        self.resume
+    }
+
+    /// The in-memory keep's key of a call with no room overlay; `None` in a
+    /// room.
+    pub(super) fn kept_key(&self) -> Option<&SessionHookKey> {
+        match &self.target {
+            HooksTarget::Kept { key, .. } => Some(key),
+            HooksTarget::Room { .. } => None,
+        }
+    }
+
+    /// Whether this call used its resumed answer up already; marks it used
+    /// from now on, so a chain that commits twice (once before its ask
+    /// opens, once as it ends) uses it once.
+    pub(super) fn take_answer(&self) -> bool {
+        self.answer_taken.replace(true)
     }
 
     /// These hooks, for a call that answers when they cannot be read (the
@@ -405,10 +582,6 @@ impl VerbHookPre {
     /// The in-memory keep's key a session-only call's pre chain ran on, so
     /// its post chain, on whatever thread, keeps on the same store; `None`
     /// on the vault and in a room, whose caller holds its room.
-    #[expect(
-        dead_code,
-        reason = "L13 PR-D (FIX 4283) posts a roomless call's hooks from its pre alone"
-    )]
     pub(crate) fn session(&self) -> Option<&SessionHookKey> {
         self.session.as_ref().and_then(|carry| carry.key.as_ref())
     }

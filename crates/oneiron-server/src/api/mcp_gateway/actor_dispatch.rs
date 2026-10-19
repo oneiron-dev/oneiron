@@ -169,6 +169,7 @@ async fn registered_actor(
         request_id: request_id.to_owned(),
         landing,
         invocation: None,
+        hook_ask: None,
         off_record_session: session_ref,
         room_turn,
         drain: None,

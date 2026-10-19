@@ -923,6 +923,7 @@ impl McpCodeModeVerbs {
         // invocation.
         let asker = VerdictAsker::Connector(McpCallContext {
             invocation: None,
+            hook_ask: None,
             ..self.actor.clone()
         });
         self.guests.call(
@@ -998,8 +999,11 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         // server runtime, as a tool call would, and the worker waits for it.
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let server = Arc::clone(&self.server);
+        // A guest's verb is a call of its own: it resumes no hook pause
+        // its run's request named.
         let actor = McpCallContext {
             invocation: Some(invocation),
+            hook_ask: None,
             ..self.actor.clone()
         };
         let verb = call.verb.as_str();

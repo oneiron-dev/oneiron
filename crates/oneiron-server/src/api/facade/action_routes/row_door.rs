@@ -188,6 +188,9 @@ impl FacadeRowDoor {
         if let Ok(value) = HeaderValue::from_str(&invocation.to_hex()) {
             request.headers_mut().insert("x-oneiron-invocation", value);
         }
+        // A step is a call of its own: it resumes no hook pause its route's
+        // request named (L13 PR-D).
+        request.headers_mut().remove("x-oneiron-hook-ask");
         request.headers_mut().insert(
             header::CONTENT_TYPE,
             HeaderValue::from_static("application/json"),

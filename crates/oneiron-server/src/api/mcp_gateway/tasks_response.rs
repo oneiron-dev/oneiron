@@ -655,6 +655,12 @@ impl McpRowSurface {
         .with_birth_position(self.position)
         .listing_producers(producers)
         .with_invocation(self.invocation);
+        // The hook pause the request resumes beside the invocation it named
+        // (L13 PR-D): with no invocation named, it resumes nothing.
+        let memory = match actor.hook_ask.filter(|_| actor.invocation.is_some()) {
+            Some(ask) => memory.with_hook_ask(ask),
+            None => memory,
+        };
         let memory = match &self.run {
             Some(run) => memory.with_host_origin(run.origin.clone()),
             None => memory,
