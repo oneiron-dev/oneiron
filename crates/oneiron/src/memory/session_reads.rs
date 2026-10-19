@@ -343,6 +343,21 @@ impl<'s> SessionReadContext<'s> {
         Ok(id.map(|id| (id, mode)))
     }
 
+    /// The row a room write names as its subject (WILL L11-01, S01-2a): the
+    /// room's own alias for a row it staged, in this call's view of the
+    /// room, else what the ref names as the vault resolves it, with the
+    /// vault's refusals. Nothing is read on the key's lane here: whether the
+    /// row stands is the write's own check, in the transaction that stages
+    /// it.
+    pub(crate) fn write_subject(&self, reference: &str) -> MemoryResult<EntityId> {
+        if let Some((alias, hash)) = room_short_ref(reference.trim())
+            && let Some(id) = self.room_alias(alias, hash)?
+        {
+            return Ok(id);
+        }
+        resolve_entity_ref(self.vault, reference)
+    }
+
     /// The row the room's alias `alias` names at content hash `hash`, in this
     /// call's view of the room.
     fn room_alias(&self, alias: &str, hash: u8) -> MemoryResult<Option<EntityId>> {

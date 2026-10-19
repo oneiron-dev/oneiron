@@ -19,6 +19,7 @@ import type {
   ClaimInput,
   CommitReceipt,
   FacadeReceipt,
+  HostRootProfile,
   MemoryPack,
   QueryAffect,
   RecallMedia,
@@ -1086,6 +1087,8 @@ selfFocusUnsubscribe(input: unknown): unknown
   inRoomTurn(roomRef: string): NativeClient
   inOffRecordSession(sessionRef: string): NativeClient
   lastReceiptRef(): string | null
+  /** What `openWithHostRoot` did with its root; `null` on every other handle. */
+  hostRootProfile(): HostRootProfile | null
   retry(pending: unknown, verb: string, input: unknown): unknown
   lensFrameEvent(cardId: string, request: unknown): unknown
   closeLensFrame(cardId: string): unknown
@@ -1094,6 +1097,12 @@ selfFocusUnsubscribe(input: unknown): unknown
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */
 interface NativeClientConstructor {
   open(path: string | undefined, dimensions: number | undefined): NativeClient
+  /** `open`, then this install's machine profile from the host root's exact bytes (FIX 4730). */
+  openWithHostRoot(
+    path: string | undefined,
+    dimensions: number | undefined,
+    hostRootSecret: Uint8Array,
+  ): NativeClient
   connect(url: string, key: string): NativeClient
   /** `pin` is absent when the vault has no attested checkpoint. */
   pair(link: string): { url: string; credential: string; pin?: CheckpointPin }
