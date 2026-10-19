@@ -3216,6 +3216,11 @@ export_facade! {
     let output = client.vault_agents_grants_revoke(&input)?;
     crate::codec::lift_record("vault.agents.grants.revoke", &output)
 };
+"vault.agents.base" => fn vault_agents_base(&self) -> BaseAgentList = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.agents.base")?;
+    let output = client.vault_agents_base(&input)?;
+    crate::codec::lift_record("vault.agents.base", &output)
+};
 "vault.standing_blocks.configure" => fn vault_standing_blocks_configure(&self, input: StandingBlockConfigureRequest) -> StandingBlockView = |client| {
     let input: oneiron::task_verb::sdk::StandingBlockConfigureRequest = crate::codec::lower_record("vault.standing_blocks.configure", input)?;
     let output = client.vault_standing_blocks_configure(&input)?;

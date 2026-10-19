@@ -8,7 +8,8 @@
 //! A grant names one live agent principal and the owner's complete six-axis
 //! scope, stored exactly as given; its verbs axis is the explicit verb list
 //! (`{"kind":"some","values":["read","weave_digest_settings"]}` lets the
-//! Coach apply the digest settings it is granted). It stands until revoked,
+//! Coach apply the digest settings it is granted). `vault.agents.base` names
+//! the base agents' principal ids (the Coach's among them) for the owner. It stands until revoked,
 //! or until the expiry the owner set. Each grant shows in
 //! `vault.consent.registry` with its own one-tap revoke.
 use serde::{Deserialize, Serialize};
@@ -97,6 +98,41 @@ pub struct AgentGrantRevoked {
     /// when it changed nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub act_ref: Option<String>,
+}
+
+/// One base agent's principal, as `vault.agents.grants.mint` names it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BaseAgentPrincipal {
+    /// `coach` or `dreamer`.
+    pub name: String,
+    /// Its MACHINE principal (32 hex): a grant's `agent`.
+    pub id: EntityId,
+}
+
+/// `vault.agents.base`'s answer: the base agents, the Coach first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BaseAgentList {
+    pub agents: Vec<BaseAgentPrincipal>,
+}
+
+/// `vault.agents.base` under the owner's proof: the Coach's and the
+/// Dreamer's principal ids, so a surface can name one in a grant.
+pub fn read_base_agents_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+) -> MemoryResult<BaseAgentList> {
+    Ok(BaseAgentList {
+        agents: vault
+            .base_agent_principals(owner)?
+            .into_iter()
+            .map(|(name, id)| BaseAgentPrincipal {
+                name: name.to_owned(),
+                id,
+            })
+            .collect(),
+    })
 }
 
 /// `vault.agents.grants.mint` under the owner's proof, his act recording

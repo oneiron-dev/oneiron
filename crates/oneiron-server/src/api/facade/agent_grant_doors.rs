@@ -1,5 +1,6 @@
 //! The host doors of the owner's agent grant rows (FIX 5628):
-//! `vault.agents.grants.mint` and `.revoke`. `host_doors` re-exports them,
+//! `vault.agents.grants.mint` and `.revoke`, and `vault.agents.base`, the
+//! base agents' ids a grant names (FIX 5734). `host_doors` re-exports them,
 //! so the generated HTTP facade handler and the MCP dispatcher call them by
 //! the name every host door has, and a tool call, a code-mode call and an
 //! SDK call meet one admission: the vault owner's proof, as
@@ -13,6 +14,7 @@ use std::sync::Arc;
 use oneiron::authority::ActSurface;
 use oneiron::task_verb::sdk::{
     self, AgentGrantMintRequest, AgentGrantMinted, AgentGrantRevokeRequest, AgentGrantRevoked,
+    BaseAgentList, EmptyRequest,
 };
 
 use super::host_doors::Listed;
@@ -52,6 +54,23 @@ pub(crate) async fn vault_agents_grants_revoke(
         "vault.agents.grants.revoke",
         move |server, owner| sdk::revoke_agent_grant_as(server.vault(), owner, surface, input),
         |revoked| vec![revoked.grant_ref],
+    )
+    .await
+}
+
+/// `vault.agents.base`: the base agents' principal ids, for the owner,
+/// listing the principal rows it names.
+pub(crate) async fn vault_agents_base(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _input: EmptyRequest,
+) -> Listed<BaseAgentList> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.agents.base",
+        |server, owner| sdk::read_base_agents_as(server.vault(), owner),
+        |base| base.agents.iter().map(|agent| agent.id).collect(),
     )
     .await
 }

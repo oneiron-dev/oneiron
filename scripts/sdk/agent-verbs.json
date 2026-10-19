@@ -9899,6 +9899,22 @@
       "openapi": true
     },
     {
+      "name": "vault.agents.base",
+      "description": "The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent.",
+      "input": "EmptyRequest",
+      "output": "crate::task_verb::sdk::BaseAgentList",
+      "call": "crate::task_verb::sdk::read_base_agents_as(memory.vault(), &memory.embedded_owner(\"vault.agents.base\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.standing_blocks.configure",
       "description": "The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle.",
       "input": "crate::task_verb::sdk::StandingBlockConfigureRequest",

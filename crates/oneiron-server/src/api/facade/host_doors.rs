@@ -1368,6 +1368,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.legal_holds.lift_and_erase"
         | "vault.agents.grants.mint"
         | "vault.agents.grants.revoke"
+        | "vault.agents.base"
         | "vault.residence.mode"
         | "vault.residence.open"
         | "vault.residence.index"

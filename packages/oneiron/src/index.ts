@@ -2083,6 +2083,8 @@ export class Oneiron {
         /** The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing. */
         revoke: (input: Facade.AgentGrantRevokeRequest): Facade.AgentGrantRevoked => this.#call(() => this.#client.vaultAgentsGrantsRevoke(input) as Facade.AgentGrantRevoked),
       },
+      /** The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent. */
+      base: (input: Facade.EmptyRequest = {}): Facade.BaseAgentList => this.#call(() => this.#client.vaultAgentsBase(input) as Facade.BaseAgentList),
       /** The owner launches one reserved planned agent or team under an intent key on this host's planner: the type placed, the plan frozen at the root, then queued; the same key answers what it kept. */
       spawn: Object.assign((input: Facade.SpawnIntentRequest): Facade.SpawnIntentReply => this.#call(() => this.#client.vaultAgentsSpawn(input) as Facade.SpawnIntentReply), {
         /** The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning. */

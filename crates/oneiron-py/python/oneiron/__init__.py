@@ -3701,6 +3701,9 @@ class Oneiron:
         @property
         def grants(self) -> "Oneiron._VaultAgentsGrantsVerbs":
             return Oneiron._VaultAgentsGrantsVerbs(self._client)
+        def base(self, spec=None):
+            """The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent."""
+            return json.loads(_translate(lambda: self._client.vault_agents_base(json.dumps({} if spec is None else spec))))
         @property
         def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs":
             return Oneiron._VaultAgentsSpawnVerbs(self._client)

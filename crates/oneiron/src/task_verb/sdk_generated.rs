@@ -3543,6 +3543,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.agents.base",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
                 "vault.standing_blocks.configure",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::StandingBlockConfigureRequest,
@@ -6470,6 +6474,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.dreaming.set",
     "vault.agents.grants.mint",
     "vault.agents.grants.revoke",
+    "vault.agents.base",
     "vault.standing_blocks.configure",
     "vault.standing_blocks.reconfigure",
     "vault.standing_blocks.get",
@@ -8129,6 +8134,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.agents.grants.revoke" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AgentGrantRevoked,
         >(),
+        "vault.agents.base" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::BaseAgentList>()
+        }
         "vault.standing_blocks.configure" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::StandingBlockView,
         >(),
@@ -13484,6 +13492,7 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.agents.base" => &[],
         "vault.standing_blocks.configure" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -18634,6 +18643,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.agents.grants.revoke" => {
             let _input: crate::task_verb::sdk::AgentGrantRevokeRequest = decode(value.clone())?;
         }
+        "vault.agents.base" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
         "vault.standing_blocks.configure" => {
             let _input: crate::task_verb::sdk::StandingBlockConfigureRequest =
                 decode(value.clone())?;
@@ -21449,6 +21461,7 @@ pub fn invoke(
         "vault.agents.dreaming.set" => encode(vault_agents_dreaming_set(memory, decode(value)?)?),
         "vault.agents.grants.mint" => encode(vault_agents_grants_mint(memory, decode(value)?)?),
         "vault.agents.grants.revoke" => encode(vault_agents_grants_revoke(memory, decode(value)?)?),
+        "vault.agents.base" => encode(vault_agents_base(memory, decode(value)?)?),
         "vault.standing_blocks.configure" => {
             encode(vault_standing_blocks_configure(memory, decode(value)?)?)
         }
@@ -27759,6 +27772,15 @@ pub fn vault_agents_grants_revoke(
         &memory.embedded_owner("vault.agents.grants.revoke")?,
         crate::authority::ActSurface::ThisInstall,
         input,
+    )
+}
+pub fn vault_agents_base(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::BaseAgentList> {
+    crate::task_verb::sdk::read_base_agents_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.base")?,
     )
 }
 pub fn vault_standing_blocks_configure(
