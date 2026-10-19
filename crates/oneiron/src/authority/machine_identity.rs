@@ -178,6 +178,35 @@ fn serving_profile_stands(
         })
 }
 
+impl Vault {
+    /// This install's own MACHINE id while a profile of it names this
+    /// install's machine key, in any role and any standing (FIX 4728): the
+    /// one machine row an authority-preserving restore keeps live. Read in
+    /// `txn`'s snapshot alone: nothing is minted, loaded or ensured, and no
+    /// role selects it. `None` with no machine id, no signer loaded for it,
+    /// no profile of it naming that key, or a fold this snapshot cannot
+    /// answer: the restore then judges the row as it did before.
+    pub(crate) fn serving_machine_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Option<EntityId>> {
+        let Some(machine) = crate::identity::read_machine_id_in_txn(self, txn)? else {
+            return Ok(None);
+        };
+        let Some(signer) = self
+            .loaded_install_signer()
+            .filter(|signer| signer.machine == machine)
+        else {
+            return Ok(None);
+        };
+        let key = signer.machine_key.verifying_key().to_bytes();
+        let Ok(fold) = self.authority_view_readonly_in_txn(txn) else {
+            return Ok(None);
+        };
+        Ok(fold
+            .machine(machine)
+            .is_some_and(|folded| folded.names_key(&key))
+            .then_some(machine))
+    }
+}
+
 /// Why a profile under this install's id that does not stand is never
 /// enrolled over: the first of removed, conflicted, other keys and not live.
 fn serving_profile_refusal(
