@@ -138,8 +138,9 @@ impl Memory<'_> {
     // and history, neighbors) serve every claim status; the BM25 channel
     // serves surfaceable claims only.
 
-    /// Reads one entity as a typed view. `None` when absent or withheld; the
-    /// receipt says which.
+    /// Reads one entity as a typed view. `None` when absent or withheld, the
+    /// receipt says which; a legal order's refusal when it keeps from use a
+    /// row this caller otherwise reads (FIX 5226).
     pub fn get_entity(
         &self,
         entity_ref: &str,
@@ -159,7 +160,7 @@ impl Memory<'_> {
     ) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let target = self.read_target(entity_ref, mode)?;
-        Ok(self.read_views(&lane, &[target])?.single())
+        self.read_named_view(&lane, target)
     }
 
     /// Hydrates every ref through the same explicit read frontier.
@@ -219,7 +220,9 @@ impl Memory<'_> {
     }
 
     /// One hydrate read: every view, or `NOT_FOUND` naming the first ref that
-    /// is absent or withheld, under the read's receipt either way. An image
+    /// is absent or withheld (a legal order's refusal for a ref it keeps from
+    /// use, FIX 5226; a whole-body read omits it), under the read's receipt
+    /// either way. An image
     /// ASSET is served in its resolved form (OF-329), and every text form
     /// served is recorded as a served-form receipt before the views return.
     fn hydrated(
@@ -232,18 +235,21 @@ impl Memory<'_> {
     ) -> MemoryResult<ScopedReadResult<Vec<EntityView>>> {
         let ScopedReadResult { value, mut receipt } = if whole_body {
             self.read_views_whole_body(lane, targets)?
+                .map(|views| views.into_iter().map(Ok).collect())
         } else {
-            self.read_views(lane, targets)?
+            self.read_named_views(lane, targets)?
         };
         let mut views = Vec::with_capacity(value.len());
         for (reference, view) in refs.iter().zip(value) {
-            let Some(view) = view else {
-                return Err(
-                    MemoryError::not_found(format!("entity {reference:?} {unresolved}"))
-                        .with_read_receipt(receipt),
-                );
+            let refusal = match view {
+                Ok(Some(view)) => {
+                    views.push(view);
+                    continue;
+                }
+                Ok(None) => MemoryError::not_found(format!("entity {reference:?} {unresolved}")),
+                Err(refusal) => MemoryError::from(refusal),
             };
-            views.push(view);
+            return Err(refusal.with_read_receipt(receipt));
         }
         self.serve_hydrated_assets(lane, targets, &mut views, &mut receipt)?;
         Ok(ScopedReadResult {
@@ -699,8 +705,7 @@ impl Memory<'_> {
             scope: body.scope.as_ref().map(served),
             claim_scope: ClaimScope::of_body(body),
             made_by: self
-                .get_entity(&id.to_hex())?
-                .value
+                .collection_view(id)?
                 .and_then(|view| view.made_by),
             valid_from: body.valid_from,
             valid_to: body.valid_to,

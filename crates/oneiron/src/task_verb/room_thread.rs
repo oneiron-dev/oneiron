@@ -146,9 +146,9 @@ pub(crate) fn thread_tasks(
         .collect::<crate::Result<Vec<_>>>()?;
     vault.backfill_tasks_by_owner()?;
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
-    // Off this device a TASK a device-local world keeps is no match
-    // (DEC-0005).
-    let kept = crate::settings::device_local_worlds_at(vault, &txn, memory.locality())?;
+    // Off this device a TASK a world withholds from a machine the rows go
+    // to is no match (DEC-0005, mesh PR2b).
+    let kept = crate::settings::device_local_worlds_for(vault, &txn, memory.destination())?;
     // Every member's task is read, however many (rule 5); past the threshold
     // row the census raises the owner's check, scoped to the reader.
     let mut count = crate::scan_check::ScanCount::start(
@@ -288,7 +288,7 @@ pub(crate) fn thread_tasks(
         if !scoped.is_entity_readable(&id)? {
             continue;
         }
-        let Some(view) = memory.get_entity(&id.to_hex())?.value else {
+        let Some(view) = memory.get_entity_tolerant(&id.to_hex())?.value else {
             continue;
         };
         let terminal = body.terminal();
