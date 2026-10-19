@@ -115,6 +115,27 @@ fn raise(error: MemoryError) -> PyErr {
     PyRuntimeError::new_err(payload)
 }
 
+/// The class of machine a host declares on an embedded open (FIX 5591, as
+/// the napi opens read it; CALLS: HOST_OPEN_DEVICE_CLASS =
+/// ExplicitHostInput): `"computer"` or `"phone"`, and `None` when it gave
+/// none, which opens as a computer. Never read off the operating system;
+/// any other name is `BAD_REQUEST`.
+fn host_device_class(
+    device_class: Option<&str>,
+) -> PyResult<Option<oneiron::authority::MachineDeviceClass>> {
+    use oneiron::authority::MachineDeviceClass;
+    match device_class {
+        None => Ok(None),
+        Some("computer") => Ok(Some(MachineDeviceClass::Computer)),
+        Some("phone") => Ok(Some(MachineDeviceClass::Phone)),
+        Some(other) => Err(raise(MemoryError::new(
+            oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+            format!("unknown device_class {other:?}; pass \"computer\" or \"phone\""),
+            &["Pass device_class \"computer\" or \"phone\", or omit it for a computer."],
+        ))),
+    }
+}
+
 /// Refuses a body that is not the documented shape, in the same vocabulary.
 fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
     serde_json::from_str(json).map_err(|error| {
@@ -177,19 +198,21 @@ struct NativeClient {
 #[pymethods]
 impl NativeClient {
     /// Opens an embedded vault; `path` omitted resolves to `~/.oneiron/default`.
+    /// `device_class` is the host's declaration ([`host_device_class`]).
     #[staticmethod]
-    #[pyo3(signature = (path=None, dimensions=None))]
+    #[pyo3(signature = (path=None, dimensions=None, device_class=None))]
     fn open(
         py: Python<'_>,
         path: Option<std::path::PathBuf>,
         dimensions: Option<usize>,
+        device_class: Option<String>,
     ) -> PyResult<Self> {
         // Crash output never carries world text: the engine's hook goes in before
         // any vault opens (owner ruling 2026-10-14, fix 6).
         oneiron::panic_report::install_panic_hook();
         let options = oneiron_remote::OpenOptions {
             dimensions,
-            device_class: None,
+            device_class: host_device_class(device_class.as_deref())?,
         };
         let inner = py
             .detach(|| oneiron_remote::OneironClient::open(path.as_deref(), &options))
@@ -199,15 +222,18 @@ impl NativeClient {
 
     /// `open`, then this install's own machine profile from the vault's host
     /// root secret, its exact bytes borrowed for this call (FIX 5342).
+    /// `device_class` is `open`'s.
     #[staticmethod]
-    #[pyo3(signature = (path, host_root_secret, dimensions=None))]
+    #[pyo3(signature = (path, host_root_secret, dimensions=None, device_class=None))]
     fn open_with_host_root(
         py: Python<'_>,
         path: Option<std::path::PathBuf>,
         host_root_secret: &[u8],
         dimensions: Option<usize>,
+        device_class: Option<String>,
     ) -> PyResult<Self> {
-        let inner = host_root::open(py, path, host_root_secret, dimensions)?;
+        let device_class = host_device_class(device_class.as_deref())?;
+        let inner = host_root::open(py, path, host_root_secret, dimensions, device_class)?;
         Ok(Self { inner })
     }
 
