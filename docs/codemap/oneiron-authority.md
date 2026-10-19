@@ -15,7 +15,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/checkpoint_policy.rs` | src | s | 2 struct · 5 fn · 3 const · 2 crate-vis | CheckpointPolicySet, CheckpointRootChoice | The owner's choice of his vault's checkpoint root policy (mesh PR2c, §A 06, K06), and its wire codec |
 | `src/authority/comm_reach.rs` | src | s | 1 enum · 3 fn | CommReach | FIX 1380 / FIX 3899: the comm reach, whom an agent may address |
 | `src/authority/confirm.rs` | src | s | 3 struct · 3 enum · 6 fn · 2 const | AuthorityConfirmAction, AuthorityConfirmKind, CriticalWriteConfirmAction, CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState | Owner-confirm and critical-write-confirm action and state types |
-| `src/authority/constants.rs` | src | s | 1 type · 89 const · 1 re-export | — | Pinned AUTHORITY_LOG constant table |
+| `src/authority/constants.rs` | src | s | 1 type · 91 const · 1 re-export | — | Pinned AUTHORITY_LOG constant table |
 | `src/authority/conversation_training.rs` | src | s | 1 struct · 2 fn · 2 const · 2 crate-vis | ConversationTrainingSet | A person's own "Learn from my conversations" opt-out (FIX 4489, FIX 5502 owner rulings, OF-420), and its… |
 | `src/authority/conversation_training_vault.rs` | src | s | 1 struct · 3 fn · 2 const · 2 crate-vis | ConversationTrainingVaultSet | The vault's "Learn from my conversations" setting (FIX 5502 owner rulings, OF-420), and its wire codec |
 | `src/authority/crypto.rs` | src | s | 2 struct · 3 enum · 12 fn | AuthorityAttestation, AuthorityKey, AuthoritySignature, AuthoritySignatureSuite, AuthorityTier | Authority key material and signature verification |
@@ -26,9 +26,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/home_pick.rs` | src | s | 1 struct · 3 fn · 2 const · 2 crate-vis | HomeNodePick | The owner's pick of his vault's home node (DOOR-101 PR2a; ARCH-0026: "The owner picks the home node in… |
 | `src/authority/log_entry_op.rs` | src | m | 1 struct · 1 enum · 12 fn | AuthorityLogEntry, AuthorityOp | The authority op vocabulary and the signed log-entry envelope |
 | `src/authority/machine_profile.rs` | src | m | 2 struct · 3 enum · 8 fn · 5 const · 5 crate-vis | MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole | The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec |
-| `src/authority/mod.rs` | src | s | 28 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
+| `src/authority/mod.rs` | src | s | 29 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
 | `src/authority/owner_act.rs` | src | m | 1 struct · 3 enum · 7 fn · 1 const · 2 crate-vis | ActBy, ActSurface, OwnerAct, OwnerActKind | The owner's act as a signed op carries it (mesh contract §2): one provenance record, [`OwnerAct`], inside… |
 | `src/authority/owner_handover.rs` | src | s | 1 struct · 1 enum · 3 fn · 2 const · 2 crate-vis | OwnerHandover, OwnerHandoverCause | An Owner handover in a shared vault as a signed AUTHORITY_LOG Owner action (ARCH-0043, "Last-Owner successor… |
+| `src/authority/owner_key_enrollment.rs` | src | s | 1 struct · 6 fn · 4 const · 2 crate-vis | OwnerKeyEnroll | The owner's enrollment of one of his devices' own owner signing keys on the authority roster (FIX 4920… |
 | `src/authority/owner_root.rs` | src | s | 2 struct · 3 fn · 1 const · 3 crate-vis | OwnerRootRecord, RecoveryRootId | The owner's recovery root record and its wire codec (world privacy P6b) |
 | `src/authority/owner_work.rs` | src | m | 2 struct · 4 enum · 12 fn · 4 const · 3 re-export · 5 crate-vis | OwnerWorkBody, OwnerWorkKind, OwnerWorkRequest, RootChange, WorldKeyMode, WorldPrivacyWorkBasis | The owner's work requests and their results, and their wire codec: the key, custody or root work an owner… |
 | `src/authority/owner_work/cancel.rs` | src | s | 1 struct · 2 fn · 2 const · 3 crate-vis | OwnerWorkCancel | The owner's cancel of one pending root request, and its wire codec (FIX 4739, CALLS ROOT_WORK_CANCEL) |
@@ -39,8 +40,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/slip_claims.rs` | src | s | 2 struct · 4 fn · 1 const | SlipClaims, SlipMintAction | Capability-slip payloads as the authority log commits them: the claims a host mints and their shape and… |
 | `src/authority/slip_wire.rs` | src | m | 2 fn · 2 crate-vis | — | Field-by-field signed capability claims and six-axis Scope wire codec |
 | `src/authority/support_delegation.rs` | src | s | 1 struct · 3 fn · 4 const | SupportDelegation | OF-606: the support delegation a customer's support slip carries, signed in its claims beside `grant_ref`… |
-| `src/authority/wire_decode.rs` | src | m | 13 fn | — | `rmpv::Value` decoding for every authority type |
-| `src/authority/wire_encode.rs` | src | m | 7 fn | — | `rmpv::Value` encoding for every authority type |
+| `src/authority/wire_decode.rs` | src | m | 13 fn · 1 crate-vis | — | `rmpv::Value` decoding for every authority type |
+| `src/authority/wire_encode.rs` | src | m | 7 fn · 1 crate-vis | — | `rmpv::Value` encoding for every authority type |
 | `src/authority/world_key_wraps.rs` | src | m | 3 struct · 1 enum · 5 fn · 7 const · 3 crate-vis | PolicyRevision, WorldKeyId, WorldKeyWrapsRecord, WrapRecipient | A private world's key records and their wire codec (world privacy P6b) |
 | `src/authority/world_privacy.rs` | src | s | 2 struct · 4 enum · 3 fn · 3 const · 2 crate-vis | ModelOrder, PrivacyDirection, ReadLocation, SealedCopies, WorldPrivacy, WorldPrivacyEdit | A world's privacy settings and their wire codec: where the world may be read, where its sealed copies may… |
 | `src/credential_door.rs` | src | s | 1 fn · 1 const | — | Credential-door bounds the authority log's slip checks share with the door itself |
