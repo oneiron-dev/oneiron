@@ -527,6 +527,7 @@ pub(super) fn prepare_call(
         auth: auth.clone(),
         room: brain_room,
         instructions,
+        agent,
         payer,
         funding: funding.clone(),
         out,

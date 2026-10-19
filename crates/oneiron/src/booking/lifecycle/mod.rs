@@ -71,7 +71,9 @@ pub use self::claim::{
     claim_class_descriptors, is_booking_family_claim_predicate,
     is_booking_lifecycle_claim_predicate, validate_booking_family_claim,
 };
-pub(in crate::booking) use self::claim::{confirmed_booking_starts, confirmed_start_for_reminder};
+pub(in crate::booking) use self::claim::{
+    confirmed_booking_starts, confirmed_booking_starts_listed, confirmed_start_for_reminder,
+};
 pub use self::door::{
     BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest,
     enqueue_booking_verb, enqueue_booking_verb_with_publication, issue_checkout_lease,

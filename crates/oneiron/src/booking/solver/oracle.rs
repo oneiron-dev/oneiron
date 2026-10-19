@@ -9,13 +9,16 @@ use super::stages::{
     working_hours_mask,
 };
 use super::{BookingCounts, load_booking_counts};
-use crate::booking::config::{EventTypeConfig, RoutingMode, load_event_type_config};
+use crate::booking::config::{
+    EventTypeConfig, RoutingMode, load_event_type_config, load_event_type_config_listed,
+};
 use crate::booking::constraint::validate_visitor_tz;
 use crate::booking::{BookingError, SlotOracle, SolveRequest, SolveResult};
-use crate::calendar::freebusy::{BusyUnion, freebusy};
+use crate::calendar::freebusy::{BusyUnion, freebusy, freebusy_listing};
 use crate::calendar::query::CalendarSel;
 use crate::calendar::tz::utc_to_wall;
 use crate::entity_id::EntityId;
+use crate::memory::ProducerRows;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
@@ -85,7 +88,7 @@ impl SlotOracle for BookingSolver<'_> {
     }
 
     fn solve(&self, req: &SolveRequest) -> Result<SolveResult, BookingError> {
-        self.solve_excluding(req, None)
+        self.solve_excluding(req, None, None)
     }
 
     fn solve_moving(
@@ -93,17 +96,38 @@ impl SlotOracle for BookingSolver<'_> {
         req: &SolveRequest,
         moving: EntityId,
     ) -> Result<SolveResult, BookingError> {
-        self.solve_excluding(req, Some(moving))
+        self.solve_excluding(req, Some(moving), None)
     }
 }
 
 impl BookingSolver<'_> {
+    /// [`SlotOracle::solve`] (or [`SlotOracle::solve_moving`] for `moving`),
+    /// listing in `producers` every row the solve derived its slots from
+    /// (FIX 4777): the `booking.event_type` claim it configured from, each
+    /// busy EVENT free/busy kept and the claims on it, and each charged
+    /// booking's EVENT and claims. A synthetic configuration is its caller's,
+    /// and live holds are side-table rows: neither lists one.
+    ///
+    /// # Errors
+    ///
+    /// As [`SlotOracle::solve`].
+    pub fn solve_listing(
+        &self,
+        req: &SolveRequest,
+        moving: Option<EntityId>,
+        producers: &ProducerRows,
+    ) -> Result<SolveResult, BookingError> {
+        self.solve_excluding(req, moving, Some(producers))
+    }
+
     /// The pipeline. `moving` is a booking being moved: its own place does
-    /// not count against the caps its move is solved under.
+    /// not count against the caps its move is solved under. `producers`,
+    /// when given, lists the rows it reads.
     fn solve_excluding(
         &self,
         req: &SolveRequest,
         moving: Option<EntityId>,
+        producers: Option<&ProducerRows>,
     ) -> Result<SolveResult, BookingError> {
         // The visitor zone is validated at the calendar border, not guessed:
         // a malformed zone fails typed here rather than falling back to UTC.
@@ -114,9 +138,15 @@ impl BookingSolver<'_> {
         }
 
         let requested = half_open(req.window)?;
-        let config = match &self.synthetic_config {
-            Some(config) => config.clone(),
-            None => load_event_type_config(self.vault, self.page_ref, &req.event_type)?,
+        let config = match (&self.synthetic_config, producers) {
+            (Some(config), _) => config.clone(),
+            (None, Some(producers)) => {
+                let (config, claim) =
+                    load_event_type_config_listed(self.vault, self.page_ref, &req.event_type)?;
+                producers.list([claim]);
+                config
+            }
+            (None, None) => load_event_type_config(self.vault, self.page_ref, &req.event_type)?,
         };
         config.validate()?;
         if config.key != req.event_type {
@@ -146,6 +176,7 @@ impl BookingSolver<'_> {
                 start: window.start.saturating_sub(pad),
                 end: window.end.saturating_add(pad),
             },
+            producers,
         )?;
         // Counting reads every booking EVENT, so a page with no cap does not.
         let counts = if config.daily_cap.is_none() && config.weekly_cap.is_none() {
@@ -154,14 +185,20 @@ impl BookingSolver<'_> {
                 weekly: Vec::new(),
             }
         } else {
-            load_booking_counts(
+            let mut charged = producers.map(|_| Vec::new());
+            let counts = load_booking_counts(
                 self.vault,
                 self.page_ref,
                 &req.event_type,
                 inclusive(window),
                 &req.visitor_tz,
                 moving,
-            )?
+                charged.as_mut(),
+            )?;
+            if let (Some(producers), Some(charged)) = (producers, charged) {
+                producers.list(charged);
+            }
+            counts
         };
         let holds = self
             .holds
@@ -216,6 +253,7 @@ impl BookingSolver<'_> {
         &self,
         config: &EventTypeConfig,
         window: TimeRange,
+        producers: Option<&ProducerRows>,
     ) -> Result<Vec<(EntityId, BusyUnion)>, BookingError> {
         config
             .hosts
@@ -233,8 +271,19 @@ impl BookingSolver<'_> {
                             host.host_ref.to_hex()
                         ))
                     })?;
-                let union = freebusy(self.vault, selectors, inclusive(window))
-                    .map_err(|error| BookingError::SlotOracle(format!("freebusy: {error}")))?;
+                let freebusy_error =
+                    |error: crate::Error| BookingError::SlotOracle(format!("freebusy: {error}"));
+                let union = match producers {
+                    Some(producers) => {
+                        let (union, rows) =
+                            freebusy_listing(self.vault, selectors, inclusive(window))
+                                .map_err(freebusy_error)?;
+                        producers.list(rows);
+                        union
+                    }
+                    None => freebusy(self.vault, selectors, inclusive(window))
+                        .map_err(freebusy_error)?,
+                };
                 Ok((host.host_ref, union))
             })
             .collect()

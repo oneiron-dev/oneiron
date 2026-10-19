@@ -4,6 +4,7 @@ use std::sync::atomic::Ordering;
 use super::{ReportIssue, ReportReceipt, ReportRequest, ReportReview, ReportStatus, invalid};
 use crate::batch::{BatchOp, apply_ops};
 use crate::feedback::intake::FeedbackDedup;
+use crate::limit_ask::EngineLimit;
 use crate::registry::ENTITY_TYPE_ISSUE;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
@@ -93,6 +94,10 @@ impl Vault {
         dedup: FeedbackDedup,
     ) -> Result<ReportReceipt> {
         request.validate()?;
+        let _ = self.measure_limit(
+            EngineLimit::MaintenanceTextBytes,
+            request.longest_text() as u64,
+        );
         let id = issue_id(actor, &request)?;
         // Routing uses installed publisher provenance, not a caller-chosen destination.
         let artifact_route = self.report_artifact_route(&request.subject_ref)?;

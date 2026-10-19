@@ -114,7 +114,9 @@ pub struct DevRunnerDispatch {
     pub failure_corpus: ScopedReadResult<Vec<DevRunnerFailure>>,
 }
 
-// Kept in the connector's final task argument, so completion survives a host
+// Stored whole in the vault's artifact custody and pinned on the connector (its
+// length and BLAKE3), then staged as a file in the checkout before the run, so
+// no argv entry carries it. Completion reads the same pin, so it survives a host
 // restart without a parallel job store. Runner output cannot replace this input.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -129,6 +131,12 @@ struct DevRunnerTask {
     failure_corpus: ScopedReadResult<Vec<DevRunnerFailure>>,
 }
 
+/// The CLI's whole task argument: a host-supplied pointer to the staged job
+/// file, never the job itself.
+fn staged_task_pointer(name: &str) -> String {
+    format!("Your task is the JSON job in `{name}` in the working directory. Read it first.")
+}
+
 impl HealerRegistration<'_> {
     /// Dispatch a coding runner with only scoped, content-free diagnostic data.
     /// The host executes and captures this attempt through `execute_cli` and
@@ -136,10 +144,15 @@ impl HealerRegistration<'_> {
     /// egress, budget and exhaust rules of every other foreign runner.
     ///
     /// The adapter must produce a CLI connector with the supplied task as its
-    /// final argv member, as the standard named adapters do. The task JSON
-    /// rides that one argv entry whole: dispatch measures its length and never
-    /// refuses it for its bytes. Callers select the diagnostics for each job,
-    /// and their count is measured against `limits.repair_diagnostic_refs`.
+    /// final argv member, as the standard named adapters do. That task is a
+    /// short pointer to the job file: the job JSON is stored whole in the
+    /// vault's artifact custody, pinned on the connector and staged in the
+    /// checkout before the run, so it rides no argv entry. Its length is
+    /// measured against `limits.maintenance_text_bytes` and never refused, and
+    /// the dispatcher must have a stager installed
+    /// ([`ByoaDispatcher::with_input_stager`]). Callers select the diagnostics
+    /// for each job, and their count is measured against
+    /// `limits.repair_diagnostic_refs`.
     pub fn dispatch_dev_runner<B, E>(
         &self,
         dispatcher: &mut ByoaDispatcher<'_, B, E>,
@@ -156,6 +169,9 @@ impl HealerRegistration<'_> {
         crate::claim::validate_session_tag(&request.session_tag)?;
         crate::claim::validate_predicate(&request.target_predicate, true)?;
         request.target.validate()?;
+        if !dispatcher.stages_input() {
+            return Err(ByoaError::InputStagerUnavailable);
+        }
         let failure_corpus = self.dev_runner_corpus(&request.diagnostic_refs)?;
         let _ = dispatcher.vault().measure_limit(
             EngineLimit::RepairDiagnosticRefs,
@@ -171,20 +187,26 @@ impl HealerRegistration<'_> {
             target: request.target,
             failure_corpus: failure_corpus.clone(),
         };
-        let task_json = serde_json::to_string(&task)
+        let job = serde_json::to_vec(&task)
             .map_err(|_| Error::InvariantViolation("dev runner task encoding"))?;
-        input.task = task_json.clone();
-        let connector = provider.connector(input)?;
-        let ByoaConnectorSpec::CliSandbox(spec) = &connector else {
+        let _ = dispatcher
+            .vault()
+            .measure_limit(EngineLimit::MaintenanceTextBytes, job.len() as u64);
+        let pin = dispatcher.persist_staged_input(&job, &request.run_ref, request.now)?;
+        let pointer = staged_task_pointer(&pin.name);
+        input.task = pointer.clone();
+        let mut connector = provider.connector(input)?;
+        let ByoaConnectorSpec::CliSandbox(spec) = &mut connector else {
             return Err(ByoaError::Backend(
                 "dev runner requires a CLI connector".into(),
             ));
         };
-        if spec.argv.last() != Some(&task_json) {
+        if spec.argv.last() != Some(&pointer) {
             return Err(ByoaError::Backend(
                 "dev runner adapter replaced the task".into(),
             ));
         }
+        spec.staged_input = Some(pin);
         let dispatch = dispatcher.dispatch(DispatchByoa {
             user_login: request.user_login,
             connector,
@@ -201,7 +223,8 @@ impl HealerRegistration<'_> {
     }
 
     /// Convert a completed runner's captured diff into a review-only proposal.
-    /// Target, session and citations come from persisted engine input, never
+    /// Target, session and citations come from persisted engine input (the
+    /// pinned job, checked against its length and BLAKE3), never argv or
     /// stdout. Empty diffs and unsuccessful attempts cannot propose a patch.
     /// The artifact reference keeps the full diff available for human review.
     /// Only `Vault::review_patch_pr` records an owner-ratified release; neither
@@ -217,11 +240,10 @@ impl HealerRegistration<'_> {
     {
         let actor = self.require_dev_runner(dispatcher.vault())?;
         let (record, connector, exhaust) = dispatcher.completed_cli_exhaust(attempt_id)?;
-        let task: DevRunnerTask = connector
-            .argv
-            .last()
-            .and_then(|json| serde_json::from_str(json).ok())
-            .ok_or_else(|| Error::InvalidConfig("attempt is not a dev runner job".into()))?;
+        let not_a_job = || Error::InvalidConfig("attempt is not a dev runner job".into());
+        let pin = connector.staged_input.as_ref().ok_or_else(not_a_job)?;
+        let task: DevRunnerTask = serde_json::from_slice(&dispatcher.resolve_staged_input(pin)?)
+            .map_err(|_| not_a_job())?;
         if task.actor_ref != actor.entity_ref()
             || record.run_id.as_deref() != Some(task.run_ref.as_str())
         {

@@ -23,8 +23,10 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use futures_util::stream::FuturesUnordered;
+use oneiron::EntityId;
 use oneiron::llm::{BudgetGuard, LlmBackend, LlmStreamEvent, VoiceChunkPolicy, VoiceChunker};
 use oneiron::policy_model::PolicyModelConfig;
+use oneiron::store::GateSystemNoticeRecord;
 use oneiron::voice_cascade::{
     Brain, BrainEvent, CascadeControl, ControlEvent, GenerationEpoch, OutputStop, PcmFrame,
     Safeguard, SafeguardRequest, SentenceEnforcement, TtsCommand, TtsSeamClient, TurnMemories,
@@ -49,6 +51,47 @@ pub struct VoiceBrainOut {
     /// What the generation's memories read found and withheld, on its first
     /// event; the host sends it to the owner's client and never says it.
     pub memories: Option<TurnMemories>,
+    /// The rows the generation was made from, on its first event as
+    /// `memories` is (FIX 4778). The host keeps them beside the events it
+    /// serves; they never enter what is said.
+    pub sources: Option<TurnSources>,
+}
+
+/// The rows one generation was made from (FIX 4778).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TurnSources {
+    /// The rows its model input was read from: the answering agent's
+    /// definition its instructions came from, each history message it
+    /// heard (the person's words are none, an answer is its own turn's), the
+    /// memories it heard and the rows each tool context was read from.
+    /// What it says, and each verdict on what it says, derives from them.
+    /// `None` when one of them is unknown.
+    pub said: Option<Vec<EntityId>>,
+    /// The rows its memories read found, heard or withheld: what its
+    /// memories receipt counts.
+    pub found: Vec<EntityId>,
+}
+
+/// Adds `rows` to `into`: unknown rows, or an unknown `into`, leave it
+/// unknown.
+pub(super) fn add_rows(into: &mut Option<Vec<EntityId>>, rows: Option<&[EntityId]>) {
+    match (into.as_mut(), rows) {
+        (Some(into), Some(rows)) => into.extend_from_slice(rows),
+        _ => *into = None,
+    }
+}
+
+/// The policy row a safeguard notice names, when it names one by id (a
+/// decision receipt's part names its question). The policy plane read
+/// behind a verdict is its gate, not a source.
+pub(super) fn notice_rows(notice: &GateSystemNoticeRecord) -> Vec<EntityId> {
+    notice
+        .row_ref
+        .as_deref()
+        .and_then(|row| row.split('/').next())
+        .and_then(|row| EntityId::from_hex(row).ok())
+        .into_iter()
+        .collect()
 }
 
 /// What the host hands the owner's playout, in order.
@@ -220,6 +263,7 @@ impl VoiceHost {
             event,
             externally_tainted,
             memories,
+            sources: _,
         } = out;
         if let Some(memories) = memories
             && outputs
@@ -306,6 +350,7 @@ impl VoiceHost {
                 event: BrainEvent::Done,
                 externally_tainted,
                 memories: None,
+                sources: None,
             };
             return self.brain_out(done, bridge, outputs);
         }
