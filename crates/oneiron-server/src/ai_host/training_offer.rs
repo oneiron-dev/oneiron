@@ -39,7 +39,9 @@ use crate::usage::SeatUsage;
 
 mod cost;
 mod pilot;
+mod sources;
 use cost::{candidate_monthly, monthly, payback};
+use sources::Sources;
 
 const DAY_SECS: u64 = 24 * 60 * 60;
 /// The workload an offer is priced from, and the window its check reads.
@@ -241,6 +243,8 @@ struct Brief {
     prior: Vec<serde_json::Value>,
     /// The offer skill's own record: how its checked offers held.
     record: serde_json::Value,
+    /// The rows everything above was read from (FIX 5482).
+    sources: Sources,
 }
 
 impl Brief {
@@ -278,6 +282,10 @@ impl Brief {
             complete: usage.metered_since.is_some_and(|since| since <= from),
             receipt_refs: usage.refs.clone(),
         };
+        // The seat's metered calls are named by receipt key and the catalog's
+        // models by name, not by row (FIX 5482).
+        let mut sources = Sources::new();
+        sources.unknown();
         let baseline_monthly = monthly(current, &workload);
         let mut stock: Vec<Choice> = registry
             .iter()
@@ -358,6 +366,10 @@ impl Brief {
             .filter(|run| run.plan.role == role && run.plan.seat == seat)
             .collect();
         seat_runs.sort_by_key(|run| std::cmp::Reverse((run.created_at, run.id)));
+        // A training run keeps no set of the rows its plan and scores came from.
+        if !seat_runs.is_empty() {
+            sources.unknown();
+        }
         for run in &seat_runs {
             if recipes.len() == MAX_RECIPES {
                 break;
@@ -413,7 +425,7 @@ impl Brief {
         if choices.is_empty() {
             return Ok(None);
         }
-        pilot::brief(vault, &seat, &incumbent, &mut choices)?;
+        pilot::brief(vault, &seat, &incumbent, &mut choices, &mut sources)?;
         for (index, choice) in choices.iter_mut().enumerate() {
             choice.id = format!("option-{}", index + 1);
         }
@@ -422,6 +434,10 @@ impl Brief {
             .into_iter()
             .rev()
             .find(|cohort| cohort.retired_at.is_none());
+        // A cohort's cases name their receipts by key.
+        if cohort.is_some() {
+            sources.unknown();
+        }
         let cohort_data = cohort.as_ref().map_or(serde_json::Value::Null, |cohort| {
             serde_json::json!({
                 "rubric_revision": clip(&cohort.rubric_revision, REF_BYTES),
@@ -450,6 +466,10 @@ impl Brief {
         let mut prior = Vec::new();
         for (offer, answer) in earlier.iter().rev().take(PRIOR_OFFERS) {
             let checks = training_offer_checks(vault, &offer.id)?;
+            sources.set(offer.source_rows.as_deref());
+            for check in &checks {
+                sources.set(check.source_rows.as_deref());
+            }
             prior.push(serde_json::json!({
                 "offered_at": offer.offered_at,
                 "candidate": offered_model(offer),
@@ -461,6 +481,10 @@ impl Brief {
                     "observed_monthly_cost": check.observed_monthly_cost,
                 })).collect::<Vec<_>>(),
             }));
+        }
+        // The skill's record names the checks it learned from by key.
+        if !record.is_null() {
+            sources.unknown();
         }
         let incumbent_data = serde_json::json!({
             "model": incumbent.model,
@@ -482,6 +506,7 @@ impl Brief {
             previous,
             prior,
             record: record.clone(),
+            sources,
         }))
     }
 
@@ -581,6 +606,9 @@ impl Brief {
             .map(str::to_owned)
             .collect();
         evidence.risk = Some(risk);
+        // The offer skill whose body the Coach ran on this brief.
+        let mut sources = self.sources;
+        sources.row(offer_skill.0);
         Some(TrainingOfferDraft {
             seat: self.seat,
             offer_skill: Some(offer_skill),
@@ -595,6 +623,7 @@ impl Brief {
             previous: self.previous,
             what_changed: self.previous.and(what_changed),
             check_at: now.saturating_add(CHECK_AFTER_SECS),
+            source_rows: sources.rows(),
         })
     }
 }
@@ -723,6 +752,11 @@ pub(super) fn check(
         offer.cost.currency,
         COST_TOLERANCE * 100.0,
     );
+    // The check reads the offer, with its own set, and the seat's metered
+    // calls, named by receipt key only (FIX 5482).
+    let mut sources = Sources::new();
+    sources.set(offer.source_rows.as_deref());
+    sources.unknown();
     let check = vault.run_coach_offer_check(
         admitted,
         OfferCheckInput {
@@ -731,6 +765,7 @@ pub(super) fn check(
             observed_score: None,
             held,
             note: Some(note),
+            source_rows: sources.rows(),
         },
         now,
     )?;
