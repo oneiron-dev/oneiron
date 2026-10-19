@@ -1,10 +1,16 @@
 "use strict";
 let pack = {schema_version:1,fields:[]}, pages = [];
 const message = document.getElementById("status");
+// The shell's editor token: read once, removed from the document, kept only in memory and sent only in this header.
+const editorNode = document.getElementById("editor-capability"), editorToken = editorNode ? editorNode.content : "";
+if (editorNode) editorNode.remove();
+const editorHeaders = editorToken ? {"x-oneiron-esign-editor": editorToken} : {};
+function sessionEnded(response) { if (response.status === 401) throw new Error("This editor session has ended. Reload the editor to continue."); }
 async function renderEditor() {
   if (!pages.length) return;
   const selected=pack.fields.filter(f=>f.item===Number(document.getElementById("current-item").value));
-  const response = await fetch("/sign/layout", {method:"POST",credentials:"omit",cache:"no-store",headers:{"Content-Type":"application/json"},body:JSON.stringify({fields:selected,values:{},pages})});
+  const response = await fetch("/sign/layout", {method:"POST",credentials:"omit",cache:"no-store",headers:{"Content-Type":"application/json",...editorHeaders},body:JSON.stringify({fields:selected,values:{},pages})});
+  sessionEnded(response);
   if (!response.ok) throw new Error("The geography pack is invalid for this PDF.");
   const model = await response.json();
   EsignFieldRenderer.preview(document.getElementById("preview"),model);
@@ -23,8 +29,8 @@ async function renderEditor() {
     row.append(remove);rows.append(row);
   });
 }
-document.getElementById("pdf-file").onchange=async event=>{try{const file=event.target.files[0];if(!file)return;if(file.size>16*1024*1024)throw new Error("This browser upload is limited to 16 MiB.");const response=await fetch("/sign/geometry",{method:"POST",credentials:"omit",cache:"no-store",body:file});if(!response.ok)throw new Error("Cannot inspect this PDF safely.");pages=(await response.json()).pages;await renderEditor();}catch(error){message.textContent=error.message;}};
-document.getElementById("pack-file").onchange=async event=>{try{const file=event.target.files[0];if(!file)return;if(file.size>1024*1024)throw new Error("Pack is too large.");const candidate=JSON.parse(await file.text());if(candidate.schema_version!==1||!Array.isArray(candidate.fields))throw new Error("Invalid geography pack.");pack=candidate;await renderEditor();}catch(error){message.textContent=error.message;}};
+document.getElementById("pdf-file").onchange=async event=>{try{const file=event.target.files[0];if(!file)return;const response=await fetch("/sign/geometry",{method:"POST",credentials:"omit",cache:"no-store",headers:editorHeaders,body:file});sessionEnded(response);if(!response.ok)throw new Error("Cannot inspect this PDF safely.");pages=(await response.json()).pages;await renderEditor();}catch(error){message.textContent=error.message;}};
+document.getElementById("pack-file").onchange=async event=>{try{const file=event.target.files[0];if(!file)return;const candidate=JSON.parse(await file.text());if(candidate.schema_version!==1||!Array.isArray(candidate.fields))throw new Error("Invalid geography pack.");pack=candidate;await renderEditor();}catch(error){message.textContent=error.message;}};
 document.getElementById("save").onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(pack,null,2)],{type:"application/json"}));const link=document.createElement("a");link.href=url;link.download="field-geography.json";link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 
 document.getElementById("current-item").onchange=()=>renderEditor().catch(error=>message.textContent=error.message);
@@ -36,7 +42,7 @@ document.getElementById("add").onclick=async()=>{
     const id=Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,"0")).join("");
     const kind=document.getElementById("field-kind").value;
     const meta=kind==="text"?{kind,max_bytes:4096}:kind==="select"?{kind,options:document.getElementById("select-options").value.split("\n").map(value=>value.trim()).filter(Boolean)}:{kind};
-    if(kind==="select" && (!meta.options.length || meta.options.length>256 || new Set(meta.options).size!==meta.options.length)) throw new Error("Give 1–256 distinct select options, one per line.");
+    if(kind==="select" && (!meta.options.length || new Set(meta.options).size!==meta.options.length)) throw new Error("Give distinct, nonempty select options, one per line.");
     pack.fields.push({id,item:Number(document.getElementById("current-item").value),recipient,required:true,geometry:{page:1,x_percent:10,y_percent:10,width_percent:30,height_percent:8},meta});
     await renderEditor();
   } catch(error) {message.textContent=error.message;}

@@ -246,8 +246,14 @@ pub enum EngineLimit {
     /// Bytes of one request body a public signing door spools once its
     /// capability is admitted: an act, a PDF or preview read, a signature
     /// image or its read-back. Past it the envelope's sender is asked whether
-    /// everything is okay, and the body is read whole.
+    /// everything is okay, and the body is read whole. The owner's field
+    /// editor measures its admitted layout body here too (FIX 5618); past it
+    /// the vault owner is asked, and the layout is computed whole.
     EsignBodyBytes,
+    /// Bytes of one PDF the owner's field editor sends `POST /sign/geometry`
+    /// under its editor token (FIX 5618). Past it the vault owner is asked
+    /// whether everything is okay, and the PDF is spooled and inspected whole.
+    EsignGeometryBodyBytes,
     /// Bytes of one sealed PDF the seal host accepted. Past it the row asks
     /// whether everything is okay, and the sealed PDF is kept whole.
     SealOutputBytes,
@@ -290,7 +296,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 74] = [
+    pub const ALL: [Self; 75] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -355,6 +361,7 @@ impl EngineLimit {
         Self::EsignSignatureDocumentBytes,
         Self::EsignSignatureRecipientImages,
         Self::EsignBodyBytes,
+        Self::EsignGeometryBodyBytes,
         Self::SealOutputBytes,
         Self::SealGrowthBytes,
         Self::SealPdfObjects,
@@ -434,6 +441,7 @@ impl EngineLimit {
             Self::EsignSignatureDocumentBytes => "limits.esign_signature_document_bytes",
             Self::EsignSignatureRecipientImages => "limits.esign_signature_recipient_images",
             Self::EsignBodyBytes => "limits.esign_body_bytes",
+            Self::EsignGeometryBodyBytes => "limits.esign_geometry_body_bytes",
             Self::SealOutputBytes => "limits.seal_output_bytes",
             Self::SealGrowthBytes => "limits.seal_growth_bytes",
             Self::SealPdfObjects => "limits.seal_pdf_objects",
@@ -539,6 +547,9 @@ impl EngineLimit {
             // The 3 MiB the public signing doors refused a body past before
             // token-first ingress (FIX 3808).
             Self::EsignBodyBytes => 3 << 20,
+            // The 16 MiB the editor's geometry door and page refused a PDF
+            // past before FIX 5618.
+            Self::EsignGeometryBodyBytes => 16 << 20,
             // The output, growth, object, definition, frame, work, revision,
             // prefix and DSS-decode ceilings the seal refused past before
             // Rule 5. The reply frame's was 97 MiB on macOS, where outputs

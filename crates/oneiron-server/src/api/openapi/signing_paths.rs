@@ -213,3 +213,183 @@ fn ceremony_responses(ok: Value) -> Value {
     }
     Value::Object(responses)
 }
+
+/// The security scheme the owner's editor computation POSTs name (FIX 5618).
+const EDITOR_SCHEME: &str = "EsignEditorCapability";
+
+/// The owner's field editor (FIX 5618): its shell, `GET /sign/editor`,
+/// behind an owner-grade caller, and its two computation POSTs, which take
+/// the editor token the shell minted, or no credential at all.
+pub(super) fn merge_editor_paths(spec: &mut Value) {
+    add_editor_scheme(spec);
+    let Some(paths) = spec.get_mut("paths").and_then(Value::as_object_mut) else {
+        return;
+    };
+    paths.insert(
+        "/sign/editor".to_owned(),
+        json!({"get": {
+            "tags": ["signing"],
+            "operationId": "signing_editor",
+            "summary": "The owner's field geography editor page, which mints its editor token.",
+            "description": "Owner-grade callers only: a top-scope logged slip presented as CoreBearer with its holder proof in x-oneiron-binding, or a managed vault's attested owner. Owner grade is the authorization; the bearer scheme alone is not. The page is served no-store and carries a fresh random editor token; its script reads the token, removes it from the document, keeps it in memory and sends it only in the x-oneiron-esign-editor header of POST /sign/layout and POST /sign/geometry. The server keeps only the token's digest, purpose, caller and expiry. A token admits new requests for 3,600 seconds and is forgotten when the server restarts; the owner then reloads this page for a new one.",
+            "security": [{"CoreBearer": []}],
+            "responses": {
+                "200": {
+                    "description": "The editor page, served no-store.",
+                    "content": {"text/html": {"schema": {"type": "string"}}}
+                },
+                "401": {"description": "The caller is not owner-grade."}
+            }
+        }}),
+    );
+    paths.insert(
+        "/sign/layout".to_owned(),
+        json!({"post": {
+            "tags": ["signing"],
+            "operationId": "signing_editor_layout",
+            "summary": "Lays the editor's fields out on the PDF's pages, from caller data alone: no vault row is read or written.",
+            "description": editor_description("esign_body_bytes", "3 MiB"),
+            "security": editor_security(),
+            "requestBody": {"required": true, "content": {"application/json": {"schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["fields", "values", "pages"],
+                "properties": {
+                    "fields": {"type": "array", "items": {"type": "object"}, "description": "Field geography pack fields; every one is laid out against its page."},
+                    "values": {"type": "object", "description": "Field values by field id."},
+                    "pages": {"type": "array", "items": {"type": "object"}, "description": "Page geometry as POST /sign/geometry answers it."}
+                }
+            }}}},
+            "responses": editor_responses(json!({
+                "description": "The pages and the fields laid out on them.",
+                "content": {"application/json": {"schema": {
+                    "type": "object",
+                    "required": ["pages", "fields"],
+                    "properties": {
+                        "pages": {"type": "array", "items": {"type": "object"}},
+                        "fields": {"type": "array", "items": {"type": "object"}}
+                    }
+                }}}
+            }))
+        }}),
+    );
+    paths.insert(
+        "/sign/geometry".to_owned(),
+        json!({"post": {
+            "tags": ["signing"],
+            "operationId": "signing_editor_geometry",
+            "summary": "Inspects a PDF's pages for the editor: boxes and rotation, from the caller's bytes alone. No template is parsed, no blob is written and no effect is sent.",
+            "description": editor_description("esign_geometry_body_bytes", "16 MiB"),
+            "security": editor_security(),
+            "requestBody": {"required": true, "content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}}},
+            "responses": editor_responses(json!({
+                "description": "The PDF's page geometry.",
+                "content": {"application/json": {"schema": {
+                    "type": "object",
+                    "required": ["pages"],
+                    "properties": {"pages": {"type": "array", "items": {"type": "object"}}}
+                }}}
+            }))
+        }}),
+    );
+}
+
+/// Adds the header scheme the editor's computation POSTs name: the token
+/// the editor page was minted, never a recipient capability or a core
+/// credential.
+fn add_editor_scheme(spec: &mut Value) {
+    let Some(schemes) = spec
+        .get_mut("components")
+        .and_then(Value::as_object_mut)
+        .map(|components| {
+            components
+                .entry("securitySchemes")
+                .or_insert_with(|| json!({}))
+        })
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    schemes.insert(
+        EDITOR_SCHEME.to_owned(),
+        json!({
+            "type": "apiKey",
+            "in": "header",
+            "name": "x-oneiron-esign-editor",
+            "description": "The editor token GET /sign/editor minted for its owner-grade caller. It is checked before the request body is read: its digest, its editor-computation purpose and its expiry, and its caller's credential is re-consulted. It buys computation over the caller's own bytes only: no document read, recipient act or other door. It is never a URL, cookie or browser-storage carrier."
+        }),
+    );
+}
+
+/// The `security` an editor computation POST names: the editor token, or
+/// none (the capability-free door).
+fn editor_security() -> Value {
+    json!([{ EDITOR_SCHEME: [] }, {}])
+}
+
+/// How an editor computation POST is admitted and bounded, for its `row`
+/// and its capability-free door's `anonymous_limit`.
+fn editor_description(row: &str, anonymous_limit: &str) -> String {
+    format!(
+        "With an x-oneiron-esign-editor token, the request is admitted from its head before the body is read, then waits its turn for one of the editor's two computation slots; no queue length or wait refuses it. Its body spools whole under the vault's disk floor: past the [limits] {row} row the vault owner is asked whether everything is okay (GET /v1/owner/decisions/asks), and the work still runs. A token that is unknown or expired, or whose caller's credential no longer stands, is refused with 401 and the body unread; it is never served as an anonymous request. With no editor header the route is the public, capability-free door it was: a {anonymous_limit} body limit, and two slots taken only when free with 60 requests a minute, else 429 with Retry-After: 60."
+    )
+}
+
+/// An editor computation POST's answer beside its refusals.
+fn editor_responses(ok: Value) -> Value {
+    let refusal = json!({
+        "type": "object",
+        "required": ["error"],
+        "properties": {"error": {
+            "type": "object",
+            "required": ["code"],
+            "properties": {"code": {"type": "string"}}
+        }}
+    });
+    let mut responses = Map::new();
+    responses.insert("200".to_owned(), ok);
+    for (status, description, coded) in [
+        (
+            "400",
+            "An admitted body that is not the route's payload (signing_body_malformed) or did not arrive whole (signing_body_unread); without a token, a body the JSON extractor refuses.",
+            true,
+        ),
+        (
+            "401",
+            "The x-oneiron-esign-editor token is unknown or expired (editor_token_unadmitted), or its caller's credential no longer stands (editor_caller_not_live); the body is unread. Reload GET /sign/editor for a new token.",
+            true,
+        ),
+        (
+            "403",
+            "The fields do not lay out on the pages given, or the PDF cannot be inspected safely (signing_unavailable).",
+            true,
+        ),
+        (
+            "413",
+            "Without a token only: the body is past the route's body limit.",
+            false,
+        ),
+        (
+            "429",
+            "Without a token only: no free slot, or the minute's 60 requests are used. Retry-After: 60.",
+            false,
+        ),
+        (
+            "503",
+            "The editor's state is unavailable (signing_transport_unavailable).",
+            true,
+        ),
+        (
+            "507",
+            "With a token: the vault's disk is at its free-space reserve, limits.disk_reserve_bytes (signing_disk_floor). An admitted body's size alone is never refused.",
+            true,
+        ),
+    ] {
+        let mut response = json!({"description": description});
+        if coded {
+            response["content"] = json!({"application/json": {"schema": refusal}});
+        }
+        responses.insert(status.to_owned(), response);
+    }
+    Value::Object(responses)
+}

@@ -6,6 +6,7 @@
 //! is an automated sign act, whoever's link it holds.
 use crate::server::SyncServer;
 pub(crate) mod delivery_outbox;
+mod editor_auth;
 mod editor_budget;
 pub(crate) mod hold_worker;
 mod ingress;
@@ -21,7 +22,13 @@ use axum::{Json, Router};
 use ingress::SigningIngress;
 use oneiron::blob_artifact::esign::{EsignSigningImageView, SigningCaller};
 use std::sync::Arc;
+/// The owner's field editor. Its shell mints an editor token into its page
+/// (FIX 5618, `editor_auth`). A computation POST carrying one is admitted
+/// from its head, waits for one of two slots and spools its raw body, which
+/// no `DefaultBodyLimit` reads. A POST with no token is the capability-free
+/// door it was: those body limits and `EditorBudget`'s window still bound it.
 pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
+    let desk = editor_auth::EditorDesk::new();
     Router::new()
         .route("/sign/layout", post(presentation::layout))
         .route(
@@ -29,13 +36,14 @@ pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
             post(presentation::upload_geometry).layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
         )
         .route_layer(axum::middleware::from_fn_with_state(
-            editor_budget::EditorBudget::new(),
+            Arc::clone(&desk.budget),
             editor_budget::admit,
         ))
         .route("/sign/editor", get(presentation::editor))
         .route("/sign/field-renderer.js", get(presentation::field_script))
         .route("/sign/editor.js", get(presentation::editor_script))
         .layer(DefaultBodyLimit::max(3 * 1024 * 1024))
+        .layer(axum::Extension(desk))
         .layer(axum::middleware::from_fn(private_response))
 }
 
