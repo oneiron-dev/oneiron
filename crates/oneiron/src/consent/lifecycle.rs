@@ -181,7 +181,7 @@ pub fn revoke(
     Ok(vault.revoke_consent_grant(owner, &grant)?.into())
 }
 
-fn parse_digest(value: &str, field: &str) -> MemoryResult<EffectDigest> {
+pub(super) fn parse_digest(value: &str, field: &str) -> MemoryResult<EffectDigest> {
     let refused = || MemoryError::bad_request(format!("{field} must be a 64-hex digest"));
     if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(refused());

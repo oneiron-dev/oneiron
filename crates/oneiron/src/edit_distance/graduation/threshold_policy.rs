@@ -23,6 +23,9 @@ use crate::vault::Vault;
 /// built more evidence.
 pub const DEFAULT_POSTERIOR_GUARD: f32 = 0.8;
 
+/// The owner's default snooze schedule; the third decline pins the scope.
+pub const DEFAULT_SNOOZE_BACKOFF_SECONDS: [u64; 2] = [7 * 86_400, 30 * 86_400];
+
 /// The compiled policy table: patterns the engine ships believing.
 ///
 /// One row, deliberately. The catch-all is the FLOOR every scope falls back to
@@ -47,6 +50,8 @@ pub struct ThresholdRow {
     pub required_streak: u32,
     /// Minimum [`posterior_lower_bound`] of the scope's history.
     pub posterior_guard: f32,
+    /// Backoff after the first and second declines. Zero is a supported policy.
+    pub snooze_backoff_seconds: [u64; 2],
 }
 
 impl ThresholdRow {
@@ -83,6 +88,7 @@ impl ThresholdRow {
             scope_pattern,
             required_streak,
             posterior_guard,
+            snooze_backoff_seconds: DEFAULT_SNOOZE_BACKOFF_SECONDS,
         })
     }
 
@@ -148,6 +154,7 @@ pub(super) struct StoredThresholdRow {
     pub(super) scope_pattern: String,
     pub(super) required_streak: u32,
     pub(super) posterior_guard: f32,
+    pub(super) snooze_backoff_seconds: [u64; 2],
 }
 
 /// The 16-byte storage handle of a threshold pattern.
@@ -164,8 +171,11 @@ fn threshold_row_parts(row: StoredThresholdRow) -> Result<ThresholdRow> {
     if row.v != ROW_VERSION {
         return Err(Error::CorruptedIndex(THRESHOLD_ROW_LABEL));
     }
-    ThresholdRow::new(row.scope_pattern, row.required_streak, row.posterior_guard)
-        .map_err(|_| Error::CorruptedIndex(THRESHOLD_ROW_LABEL))
+    let mut threshold =
+        ThresholdRow::new(row.scope_pattern, row.required_streak, row.posterior_guard)
+            .map_err(|_| Error::CorruptedIndex(THRESHOLD_ROW_LABEL))?;
+    threshold.snooze_backoff_seconds = row.snooze_backoff_seconds;
+    Ok(threshold)
 }
 
 // ---------------------------------------------------------------------------
@@ -304,26 +314,33 @@ pub fn graduation_policy_rows(vault: &Vault) -> Result<Vec<ThresholdRow>> {
 /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the row's fields are not a legal
 /// threshold, plus storage failures.
 pub fn set_graduation_policy(vault: &Vault, row: &ThresholdRow) -> Result<()> {
+    vault.with_write_txn_grouped(|wtxn| set_graduation_policy_in_txn(vault, wtxn, row))
+}
+
+fn set_graduation_policy_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    input: &ThresholdRow,
+) -> Result<()> {
     let row = ThresholdRow::new(
-        row.scope_pattern.clone(),
-        row.required_streak,
-        row.posterior_guard,
+        input.scope_pattern.clone(),
+        input.required_streak,
+        input.posterior_guard,
     )?;
     let stored = StoredThresholdRow {
         v: ROW_VERSION,
         scope_pattern: row.scope_pattern.clone(),
         required_streak: row.required_streak,
         posterior_guard: row.posterior_guard,
+        snooze_backoff_seconds: input.snooze_backoff_seconds,
     };
-    vault.with_write_txn_grouped(|wtxn| {
-        THRESHOLD.put(
-            &vault.store,
-            wtxn,
-            &pattern_key(&row.scope_pattern),
-            &stored,
-        )?;
-        Ok(())
-    })
+    THRESHOLD.put(
+        &vault.store,
+        wtxn,
+        &pattern_key(&row.scope_pattern),
+        &stored,
+    )?;
+    Ok(())
 }
 
 /// Drops the runtime row on `pattern`, returning whether one was there. The
@@ -335,4 +352,33 @@ pub fn set_graduation_policy(vault: &Vault, row: &ThresholdRow) -> Result<()> {
 /// Storage failures.
 pub fn clear_graduation_policy(vault: &Vault, pattern: &str) -> Result<bool> {
     vault.with_write_txn_grouped(|wtxn| THRESHOLD.delete(&vault.store, wtxn, &pattern_key(pattern)))
+}
+
+/// Owner policy write, with the proof and row checked in the writing transaction.
+pub fn set_graduation_policy_as_owner(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    row: &ThresholdRow,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|wtxn| {
+        owner.revalidate_as_vault_owner_in_txn(vault, &*wtxn)?;
+        set_graduation_policy_in_txn(vault, wtxn, row)
+    })
+}
+
+/// Owner policy removal, checked in the deleting transaction.
+pub fn clear_graduation_policy_as_owner(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    pattern: &str,
+) -> Result<bool> {
+    vault.with_write_txn_grouped(|wtxn| {
+        owner.revalidate_as_vault_owner_in_txn(vault, &*wtxn)?;
+        if pattern_axes(pattern).is_none() {
+            return Err(Error::Gate(GateError::InvalidConsentBound(
+                "graduation scope pattern",
+            )));
+        }
+        THRESHOLD.delete(&vault.store, wtxn, &pattern_key(pattern))
+    })
 }

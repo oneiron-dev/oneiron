@@ -103,3 +103,31 @@ impl Vault {
         Ok(report)
     }
 }
+
+/// The owner wakes the existing Coach checker, without borrowing a Coach lease
+/// or running a model in the HTTP handler. The host's normal admission, Grant
+/// and budget remain the only way this job reaches `run_coach_seal_checks`.
+pub fn queue_seal_checks_as_owner(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    now: u64,
+) -> Result<crate::attempt_queue::AttemptId> {
+    vault.with_write_txn_grouped(|txn| {
+        super::validate_owner_in_txn(vault, txn, owner)?;
+        let outcome = crate::dreamer_runner::DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
+            txn,
+            super::coach::COACH_HOST_QUEUE_KIND,
+            crate::dreamer_runner::DreamerAttemptPayload {
+                attempt_type: COACH_SEAL_CHECKS_FACET.into(),
+                input: rmpv::Value::Nil,
+                parent_attempt: None,
+            },
+            Some(COACH_SEAL_CHECKS_FACET.into()),
+            None,
+            now,
+        )?;
+        let (crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Existing(status)) = outcome;
+        Ok(status.attempt.id)
+    })
+}

@@ -63,6 +63,7 @@ pub(crate) struct BigModel {
     meter: BudgetGuard,
     runtime: tokio::runtime::Handle,
     pin: ProviderPin,
+    trial_usage: Option<Arc<std::sync::Mutex<Vec<oneiron::LlmUsage>>>>,
 }
 
 impl BigModel {
@@ -90,6 +91,7 @@ impl BigModel {
                 BudgetExhaustionPolicy::Suspend,
             ),
             answerer: Answerer::Seat(settings.role),
+            trial_usage: None,
             wording: settings.wording.clone(),
             reply: settings.reply,
             models,
@@ -115,6 +117,7 @@ impl BigModel {
             models: Arc::clone(&self.models),
             vault: Arc::clone(&self.vault),
             answerer: Answerer::Model(model.clone()),
+            trial_usage: None,
             wording: self.wording.clone(),
             reply: self.reply,
             meter: self.meter.clone(),
@@ -139,6 +142,7 @@ impl BigModel {
             models: Arc::clone(&self.models),
             vault: Arc::clone(&self.vault),
             answerer: Answerer::Seat(role),
+            trial_usage: None,
             wording: self.wording.clone(),
             reply: self.reply,
             meter: self.meter.clone(),
@@ -149,6 +153,29 @@ impl BigModel {
                 version: self.pin.version.clone(),
             },
         })
+    }
+
+    /// An exact held-out arm, on the normal inference policy and meter.
+    /// The configured provider must be the backend the catalog pinned.
+    pub(crate) fn for_trial(
+        &self,
+        backend: &oneiron::llm::registry::ModelBackendPin,
+        usage: Arc<std::sync::Mutex<Vec<oneiron::LlmUsage>>>,
+    ) -> anyhow::Result<Self> {
+        let mut exact = self.for_model(&backend.model)?;
+        let (_, ladder) = self
+            .models
+            .router()
+            .and_then(|router| router.served(&backend.model))
+            .ok_or_else(|| anyhow::anyhow!("the trial model is not served"))?;
+        if ladder.first_provider() != Some(backend.backend.as_str())
+            || ladder.exact_prompt().is_none()
+        {
+            anyhow::bail!("the configured offer is not the trial's exact backend");
+        }
+        exact.pin.version = backend.model.revision().to_owned();
+        exact.trial_usage = Some(usage);
+        Ok(exact)
     }
 
     pub(crate) fn pin(&self) -> ProviderPin {
@@ -468,6 +495,12 @@ impl DecisionModel for BigModel {
                 }
             })
             .map_err(|error| failed(format!("the seat failed: {error}")))?;
+        if let Some(usage) = &self.trial_usage {
+            usage
+                .lock()
+                .map_err(|_| failed("model trial usage lock"))?
+                .push(response.usage.clone());
+        }
         let served = served.map(|model| ProviderPin {
             rung: self.pin.rung,
             model: model.to_string(),

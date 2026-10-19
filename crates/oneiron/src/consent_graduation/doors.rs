@@ -94,9 +94,9 @@ impl Vault {
         scope: &RampScope,
         outcome: ProposalOutcome,
     ) -> Result<ScopeOutcomeStats> {
-        scope.validate()?;
         let at = self.store.clock.now_recorded_at();
         let counters = self.with_write_txn_grouped(|wtxn| {
+            scope.validate()?;
             owner.revalidate_as_vault_owner_in_txn(self, &*wtxn)?;
             record_outcome_for_scope_in_txn(self, wtxn, scope, outcome, at, OutcomeWitness::Door)
         })?;
@@ -139,10 +139,9 @@ impl Vault {
     /// An offer is DERIVED, never a stored row — so it cannot outlive the
     /// evidence that produced it, and a demotion retracts it by construction.
     ///
-    /// The suppression consult is the whole of what snooze and pin do: they
-    /// remove a scope from this list and from nothing else. The offer stays
-    /// standing ([`RampState::Offered`]) and stays acceptable, because "stop
-    /// asking me" is not "take this away from me".
+    /// Snooze also resets the clean streak: another offer needs the whole
+    /// streak re-earned and the backoff elapsed. A manual pin suppresses asks
+    /// until the owner clears it in settings.
     ///
     /// # Errors
     ///
@@ -186,7 +185,8 @@ impl Vault {
     /// Answering here and answering through
     /// [`crate::edit_distance::graduation::answer_graduation_offer`] are the
     /// same act and leave the same durable state: both record the go-auto
-    /// answer, which clears whatever snooze or pin the scope was carrying.
+    /// answer, which clears a snooze. A manual pin must first be cleared
+    /// through the owner's settings unpin door.
     ///
     /// # Errors
     ///
@@ -229,9 +229,9 @@ impl Vault {
         scope: &RampScope,
         reason: DemotionReason,
     ) -> Result<()> {
-        scope.validate()?;
         let at = self.store.clock.now_recorded_at();
         self.with_write_txn_grouped(|wtxn| {
+            scope.validate()?;
             owner.revalidate_as_vault_owner_in_txn(self, &*wtxn)?;
             append_demotion_in_txn(self, wtxn, scope, reason, at)
         })
@@ -321,20 +321,18 @@ impl crate::memory::Memory<'_> {
     /// fails, plus the scope and storage errors of
     /// [`Vault::demote_scope_to_propose`].
     pub fn demote_own_ramp_scope(&self, scope: &RampScope) -> crate::memory::MemoryResult<()> {
-        scope.validate()?;
-        if scope.actor != self.actor().to_hex() {
-            return Err(crate::memory::MemoryError::new(
-                crate::memory::MEMORY_CODE_FORBIDDEN,
-                "an actor demotes only its own ramp scope",
-                &["Ask the owner to demote another actor's scope."],
-            ));
-        }
         let vault = self.vault();
         let at = vault.store.clock.now_recorded_at();
-        // Only the actor's own binding, never a content-write grant: a
-        // narrowly scoped member giving up its own standing grant is a
-        // restriction, and restrictions always land.
+        // Giving up one's own grant requires the actor binding, not a content-write grant.
         vault.write_txn_door(crate::store::Callback::Audited, |wtxn| {
+            scope.validate()?;
+            if scope.actor != self.actor().to_hex() {
+                return Err(crate::memory::MemoryError::new(
+                    crate::memory::MEMORY_CODE_FORBIDDEN,
+                    "an actor demotes only its own ramp scope",
+                    &["Ask the owner to demote another actor's scope."],
+                ));
+            }
             crate::memory::verify_actor_binding_in_txn(
                 vault,
                 wtxn,
@@ -368,6 +366,12 @@ pub(crate) fn accept_graduation_offer_in_txn(
     if !scope.is_graduatable() {
         return Err(Error::Gate(GateError::InvalidConsentBound(
             "op kind does not ride the propose lane; there is nothing to graduate",
+        )));
+    }
+    if crate::edit_distance::graduation::scope_is_manual_pinned_in_txn(&vault.store, &*wtxn, scope)?
+    {
+        return Err(Error::Gate(GateError::InvalidConsentBound(
+            "unpin this scope in settings before accepting graduation",
         )));
     }
     let bound = scope.to_grant_bound()?;

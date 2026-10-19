@@ -27,11 +27,14 @@ pub(crate) const MEMORY_RUN_VERBS: [RunVerb; 4] = [
 /// the planner the host lends beside the lease, and for the fold rows the
 /// run's own log, at the step boundary its host serializes the action with
 /// (OF-181). A host serves them as actions only under that run's lease.
-/// `self.skills.call`, `self.spawn`, `summarize` and `tasks.wait` need the
-/// running sandbox (its bridge, its results, its park). None of those is
+/// `tasks.consult.result` lands as the run's actor, under its door's read
+/// lane. `self.skills.call`, `self.spawn`, `summarize` and `tasks.wait` need
+/// the running sandbox (its bridge, its results, its park). None of those is
 /// here.
-pub(crate) const LIVE_RUN_VERBS: [RunVerb; 11] = [
+pub(crate) const LIVE_RUN_VERBS: [RunVerb; 13] = [
+    RunVerb::TasksConsultResult,
     RunVerb::TasksRefuse,
+    RunVerb::SelfReportBlocked,
     RunVerb::SelfAgentsSpawn,
     RunVerb::SelfTeamStart,
     RunVerb::SelfTeamRecord,
@@ -122,9 +125,15 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
             let _: crate::compaction::FoldsInput = decode(input)?;
             SelfCall::Fold(crate::compaction::SelfFoldCall::List)
         }
+        // DOOR-063: the addressed peer's answer or abstention, as given.
+        RunVerb::TasksConsultResult => SelfCall::ConsultResult(decode(input)?),
         RunVerb::TasksRefuse => {
             let args: crate::code_run::TaskRefuseInput = decode(input)?;
             SelfCall::TasksRefuse(args.into_call(now)?)
+        }
+        RunVerb::SelfReportBlocked => {
+            let args: crate::code_run::ReportBlockedInput = decode(input)?;
+            SelfCall::ReportBlocked(args.into_call())
         }
         RunVerb::SelfSkillsCall => {
             let args: crate::code_run::SkillCallInput = decode(input)?;
