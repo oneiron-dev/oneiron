@@ -91,6 +91,14 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DREAMER_STEWARDSHIP_DRAFTED, CONTENT),
     (&t::DREAMER_TOURNAMENT_EVIDENCE, CONTENT),
     (&t::DREAMER_TURN_REDIRTY, CONTENT),
+    // DOOR-141: a consumed wake stays consumed, as a spent one-shot does, so
+    // no restore re-admits a program its turn already woke.
+    (&t::DREAMER_TURN_PROGRAM_ADMISSION, LIVE),
+    // Arming is the actor's standing intent: kept as the live vault holds it,
+    // never resurrected or dropped by an image.
+    (&t::DREAMER_TURN_PROGRAM_ARM, LIVE),
+    (&t::DREAMER_TURN_PROGRAM_ATTEMPT, CONTENT),
+    (&t::DREAMER_TURN_PROGRAM_WAKE, CONTENT),
     (&t::DREAMER_WAKE_RECIPE_INPUT, CONTENT),
     (&t::DREAMER_WAKE_STATE, CONTENT),
     (&t::DREAMER_WAKE_PROJECTION, CONTENT),

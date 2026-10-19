@@ -168,7 +168,10 @@ impl Vault {
     /// enacted result and writes the revoked transition bound to it, and
     /// every replica that folds the request holds the id as terminal. The
     /// returned work receipt says it committed here, never that every
-    /// replica holds it (CALLS CUSTODY_COMPLETION).
+    /// replica holds it (CALLS CUSTODY_COMPLETION); with none recorded, the
+    /// custody work says exactly why the revoke stays here (FIX 4994). The
+    /// record's value is erased here in the same commit (CALLS
+    /// CUSTODY_REVOKE_ERASE).
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is no longer
@@ -190,13 +193,13 @@ impl Vault {
                 "only the vault owner revokes a secret",
             )));
         }
-        let rotation = self.revoke_secret_in_txn(&mut wtxn, secret_ref, at)?;
-        let work = self.carry_custody_revoke_in_txn(&mut wtxn, owner, surface, secret_ref, at)?;
+        let rotation =
+            self.revoke_secret_in_txn(&mut wtxn, secret_ref, super::RevokeCause::Revoked, at)?;
+        let custody =
+            self.carry_custody_revoke_in_txn(&mut wtxn, owner, surface, secret_ref, at)?;
         wtxn.commit()?;
-        if let Some(work) = &work {
-            self.mirror_custody_change(&SecretCustodyWork::recorded(work.clone()));
-        }
-        Ok(SecretRevoked { rotation, work })
+        self.mirror_custody_change(&custody);
+        Ok(SecretRevoked { rotation, custody })
     }
 
     /// A rotation's body, inside the caller's transaction: the owner door

@@ -14,7 +14,9 @@
 //! it and signs its transition to the recipients he permits, in this commit
 //! when this install is the holder. A record that stays on its device, or an
 //! install that carries no owner act, registers here alone, and the receipt
-//! says so.
+//! says so. Any other holder gets the manifest text this door read beside the
+//! record, and checks the record against it again (CALLS
+//! CUSTODY_MANIFEST_RECHECK).
 
 use std::fmt;
 
@@ -30,12 +32,41 @@ use super::types::{
     SecretCustodyRecord, SecretCustodyStatus,
 };
 use crate::Vault;
-use crate::authority::{ActSurface, CustodyChange};
+use crate::authority::{ActSurface, CustodyChange, OwnerWorkRefusal};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
 use crate::origin::secret_manifest::OriginSecretManifest;
-use crate::secret_manifest::{SecretManifestEntry, validate_secret_manifest};
+use crate::secret_manifest::{
+    SecretManifestEntry, parse_secret_manifest, validate_secret_manifest,
+};
+use crate::store::Store;
+
+/// What a holder that is not the recorder checks a register against (CALLS
+/// CUSTODY_MANIFEST_RECHECK).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CustodyManifestRecheck {
+    /// The register's protected input carries, beside the record, the text
+    /// of the manifest its recorder read and the owner approved. A register
+    /// the owner's surface sealed itself carries, beside its envelope and
+    /// under the digest the request names, the manifest the recorder
+    /// resolved for the `manifest_ref` the surface stated; a ref that does
+    /// not resolve there is refused at the door, by name. The holder takes a
+    /// snapshot only for the record's own `manifest_ref`, parses it again
+    /// and, in its committing transaction, checks that it still fits the
+    /// live floor, declares the record's name, holds its class and every
+    /// binding, and declares exactly its paths. That claims consistency with
+    /// the owner-approved snapshot only: never that the ref still names it,
+    /// nor anything the holder cannot read. No digest is taken of
+    /// `manifest_ref` or of the ciphertext. A register that carries no
+    /// snapshot (a sealed one whose surface stated no manifest) is not
+    /// checked against one, as before, and nothing asks where the holder
+    /// runs.
+    OwnerApprovedSnapshot,
+}
+
+const CUSTODY_MANIFEST_RECHECK: CustodyManifestRecheck =
+    CustodyManifestRecheck::OwnerApprovedSnapshot;
 
 /// Where a registration reads its manifest: a repository the vault serves as
 /// origin, at a ref the vault published.
@@ -248,7 +279,10 @@ impl Vault {
                     id,
                     generation: rec.0.rotation_generation,
                     plan,
-                    material: Material::Record(&rec.0),
+                    material: Material::Record(
+                        &rec.0,
+                        manifest.as_ref().map(|manifest| manifest.text.as_str()),
+                    ),
                     sealed: None,
                     seen: None,
                     permits: None,
@@ -302,6 +336,44 @@ fn wider(name: &str, reason: &'static str) -> Error {
         secret_ref: name.to_owned(),
         reason,
     })
+}
+
+/// Why a holder refuses `record`, a register opened from its protected
+/// input, against `snapshot`, the manifest text the input carries for the
+/// record's `manifest_ref`, in its committing transaction `txn` (CALLS
+/// CUSTODY_MANIFEST_RECHECK); `None` when they agree, or when there is no
+/// snapshot to check. A manifest wider than the live floor is
+/// [`OwnerWorkRefusal::WiderThanFloor`], any other disagreement
+/// [`OwnerWorkRefusal::InvalidInput`].
+pub(super) fn recheck_manifest_snapshot_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    record: &SecretCustodyRecord,
+    snapshot: Option<&str>,
+) -> Result<Option<OwnerWorkRefusal>> {
+    match CUSTODY_MANIFEST_RECHECK {
+        CustodyManifestRecheck::OwnerApprovedSnapshot => {}
+    }
+    let Some(text) = snapshot else {
+        return Ok(None);
+    };
+    let Ok(manifest) = parse_secret_manifest(text) else {
+        return Ok(Some(OwnerWorkRefusal::InvalidInput));
+    };
+    match validate_secret_manifest(&manifest, &SecretCustodyFloor::resolve(store, txn)?) {
+        Ok(()) => {}
+        Err(Error::Secret(SecretError::ManifestWidensFloor { .. })) => {
+            return Ok(Some(OwnerWorkRefusal::WiderThanFloor));
+        }
+        Err(_) => return Ok(Some(OwnerWorkRefusal::InvalidInput)),
+    }
+    let agrees = !record.manifest_ref.is_empty()
+        && manifest.secrets.iter().any(|entry| {
+            entry.name == record.name
+                && entry.declared_paths == record.declared_paths
+                && refuse_wider_than_entry(entry, record.class, &record.bindings).is_ok()
+        });
+    Ok((!agrees).then_some(OwnerWorkRefusal::InvalidInput))
 }
 
 /// The manifest's entry for `name`. Naming a repository whose manifest does

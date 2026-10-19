@@ -17,8 +17,11 @@
 //!   operation.
 //! - Reverse rematerialization mirrors the latest transition this vault holds
 //!   of each record, and drops from an older window the carrier it
-//!   supersedes; it relays each input this vault keeps while its request
-//!   awaits the holder, and drops an input row once the request is answered.
+//!   supersedes, and every carrier that still seals a value an admitted
+//!   revoke ended (CALLS CUSTODY_REVOKE_ERASE); it relays each input this
+//!   vault keeps while its request awaits the holder, and drops an input row
+//!   once its request is folded here and answered, uncounted, revoked or
+//!   naming another input (CALLS CUSTODY_INPUT_PRUNE).
 //! - Forward rematerialization and Observer B judge each transition against
 //!   this vault's fold as it is now: the request it enacts counts, its named
 //!   executor signed it, and it carries exactly the request's generation,
@@ -26,7 +29,8 @@
 //!   this vault's custody through the local door, judged again in the
 //!   committing transaction, with the value this machine opens. A machine
 //!   the value was not sealed to keeps the transition unread. The holder a
-//!   pending request names keeps the input it names.
+//!   pending request names keeps the input it names, rechecked in the
+//!   transaction that keeps it.
 //! - A machine the roster gains that is the owner's (mine under the holder's
 //!   pin) gets each portable value from a rewrap its holder records on its
 //!   own after the admission and on this upkeep (CALLS
@@ -36,8 +40,6 @@
 use loro::event::MapDelta;
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
-use std::collections::BTreeSet;
-
 use super::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 use super::types::WindowKey;
 use crate::Vault;
@@ -45,10 +47,25 @@ use crate::authority::{AuthorityFold, OwnerWorkBody};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::secret_custody::{
-    CustodyApplied, CustodyTransition, RelayedInput, apply_custody_transition_in_txn,
-    custody_transitions, held_input_in_txn, held_inputs, holds_custody_carrier_in_txn,
-    keep_input_in_txn, remember_custody_transition_in_txn,
+    CustodyApplied, CustodyTransition, RelayedInput, SecretCustodyStatus,
+    apply_custody_transition_in_txn, custody_transitions, held_input_in_txn, held_inputs,
+    holds_custody_carrier_in_txn, keep_input_in_txn, remember_custody_transition_in_txn,
 };
+
+/// Which input rows a window pass prunes (CALLS CUSTODY_INPUT_PRUNE).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CustodyInputPrune {
+    /// A row leaves the window once this vault folds the request it names
+    /// and that request is answered, valid without effect or not counted
+    /// here, is on a secret an admitted revoke ended, or names another input
+    /// digest or no input. A row whose request this vault has not folded
+    /// stays, so an input that arrives before its request still reaches its
+    /// holder; a row naming a request no machine ever sees stays until its
+    /// window retires, since nothing proves that request will never come.
+    KnownAnsweredOrMismatched,
+}
+
+const CUSTODY_INPUT_PRUNE: CustodyInputPrune = CustodyInputPrune::KnownAnsweredOrMismatched;
 
 /// The base window root map that carries custody transitions and inputs.
 pub(crate) const CUSTODY_MAP: &str = "custody";
@@ -65,6 +82,57 @@ fn input_row(digest: &[u8; 32]) -> String {
 fn input_open(fold: &AuthorityFold, input: &RelayedInput) -> bool {
     fold.owner_work_request(&input.request).is_some()
         && fold.owner_work_result(&input.request).is_none()
+}
+
+/// Whether a window's input row is due to leave it (CALLS
+/// CUSTODY_INPUT_PRUNE): its request is folded here and answered, without
+/// effect, uncounted, on a revoked secret, or names another input.
+fn input_row_done(fold: &AuthorityFold, input: &RelayedInput) -> bool {
+    match CUSTODY_INPUT_PRUNE {
+        CustodyInputPrune::KnownAnsweredOrMismatched => {
+            if fold.refused_owner_work().contains(&input.request) {
+                return true;
+            }
+            let Some(request) = fold.owner_work_request(&input.request) else {
+                return false;
+            };
+            let digest = input.digest();
+            fold.owner_work_result(&input.request).is_some()
+                || fold.counted_owner_work_request(&input.request).is_none()
+                || fold.custody_revoked(&request.act.target)
+                || !names_input(&request.work, &digest)
+        }
+    }
+}
+
+/// Whether `input` is the one a counted, unanswered request naming `machine`
+/// as executor names, by the request's own hash and the input's digest: what
+/// that holder keeps.
+fn input_awaits(fold: &AuthorityFold, machine: EntityId, input: &RelayedInput) -> bool {
+    let digest = input.digest();
+    fold.counted_owner_work_request(&input.request)
+        .is_some_and(|request| {
+            request.executor == machine
+                && fold.owner_work_result(&input.request).is_none()
+                && names_input(&request.work, &digest)
+        })
+}
+
+/// Whether `work` is a custody change whose protected input is `digest`.
+fn names_input(work: &OwnerWorkBody, digest: &[u8; 32]) -> bool {
+    matches!(
+        work,
+        OwnerWorkBody::Custody {
+            input: Some(named),
+            ..
+        } if named == digest
+    )
+}
+
+/// Whether `transition` still seals a value of a secret an admitted revoke
+/// ended: no window carries it (CALLS CUSTODY_REVOKE_ERASE).
+fn sealed_after_revoke(fold: &AuthorityFold, transition: &CustodyTransition) -> bool {
+    transition.status != SecretCustodyStatus::Revoked && fold.custody_revoked(&transition.id)
 }
 
 /// The window a transition rides: the base month it was signed in.
@@ -155,13 +223,20 @@ pub(crate) fn mirror_custody_transitions(
     if key.world().is_some() {
         return Ok(false);
     }
-    let mut wrote = mirror_custody_inputs(vault, doc, key)?;
+    let fold = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.authority_view_readonly_in_txn(&rtxn)?
+    };
+    let mut wrote = mirror_custody_inputs(vault, doc, key, &fold)?;
     let mut due = Vec::new();
     let mut elsewhere = Vec::new();
     for (_, carrier) in custody_transitions(vault)? {
         let Ok(latest) = CustodyTransition::decode(&carrier) else {
             continue;
         };
+        if sealed_after_revoke(&fold, &latest) {
+            continue;
+        }
         if transition_window(&latest) == *key {
             due.push((latest, carrier));
         } else {
@@ -197,29 +272,47 @@ pub(crate) fn mirror_custody_transitions(
             }
         }
     }
+    if holds_custody_map(doc) {
+        let map = doc.get_map(CUSTODY_MAP);
+        let mut sealed = Vec::new();
+        map.for_each(|map_key, value| {
+            if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value
+                && !map_key.starts_with(INPUT_ROW_PREFIX)
+                && CustodyTransition::decode(&bytes)
+                    .is_ok_and(|held| sealed_after_revoke(&fold, &held))
+            {
+                sealed.push(map_key.to_owned());
+            }
+        });
+        for row in sealed {
+            map_delete(&map, &row)?;
+            wrote = true;
+        }
+    }
     Ok(wrote)
 }
 
 /// Relays each input this vault keeps into window `key`, the base window of
 /// its sealing month, while its request awaits the holder, and drops from
-/// the window every input row whose request this vault folds as answered.
+/// the window every input row `fold` holds done ([`input_row_done`]).
 /// Returns whether it wrote any.
-fn mirror_custody_inputs(vault: &Vault, doc: &LoroDoc, key: &WindowKey) -> Result<bool> {
+fn mirror_custody_inputs(
+    vault: &Vault,
+    doc: &LoroDoc,
+    key: &WindowKey,
+    fold: &AuthorityFold,
+) -> Result<bool> {
     let kept = held_inputs(vault)?;
     let holds = holds_custody_map(doc);
     if kept.is_empty() && !holds {
         return Ok(false);
     }
-    let fold = {
-        let rtxn = vault.store.env.read_txn()?;
-        vault.authority_view_readonly_in_txn(&rtxn)?
-    };
     let mut wrote = false;
     for (digest, bytes) in kept {
         let Some(input) = RelayedInput::decode(&bytes) else {
             continue;
         };
-        if WindowKey::from_timestamp(input.sealed_at) != *key || !input_open(&fold, &input) {
+        if WindowKey::from_timestamp(input.sealed_at) != *key || !input_open(fold, &input) {
             continue;
         }
         let map = doc.get_map(CUSTODY_MAP);
@@ -231,21 +324,20 @@ fn mirror_custody_inputs(vault: &Vault, doc: &LoroDoc, key: &WindowKey) -> Resul
     }
     if holds {
         let map = doc.get_map(CUSTODY_MAP);
-        let mut answered = Vec::new();
+        let mut done = Vec::new();
         map.for_each(|map_key, value| {
             if !map_key.starts_with(INPUT_ROW_PREFIX) {
                 return;
             }
-            // Only an answered request's input leaves: one whose request
-            // this vault has not folded yet may still be its holder's.
+            // A row whose request this vault has not folded yet may still be
+            // its holder's, and stays.
             if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value
-                && RelayedInput::decode(&bytes)
-                    .is_some_and(|input| fold.owner_work_result(&input.request).is_some())
+                && RelayedInput::decode(&bytes).is_some_and(|input| input_row_done(fold, &input))
             {
-                answered.push(map_key.to_owned());
+                done.push(map_key.to_owned());
             }
         });
-        for row in answered {
+        for row in done {
             map_delete(&map, &row)?;
             wrote = true;
         }
@@ -390,52 +482,52 @@ fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>, ski
     }
 }
 
-/// Keeps each relayed input whose digest a pending request naming this
-/// install as its holder names, so its pickup can open it. Any other input
-/// row stays in the window, unread. A row that fails is logged and left.
+/// Keeps each relayed input that a counted, unanswered request naming this
+/// install as its holder names, by the request's hash and the input's
+/// digest, so its pickup can open it; the writer that keeps it checks that
+/// again against its own fold. Any other input row stays in the window,
+/// unread. A row that fails is logged and left.
 fn keep_relayed_inputs(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
     if rows.is_empty() {
         return;
     }
     let outcome = (|| -> Result<usize> {
-        let due: Vec<RelayedInput> = {
+        let (machine, due) = {
             let rtxn = vault.store.env.read_txn()?;
             let Some(machine) = crate::identity::read_machine_id_in_txn(vault, &rtxn)? else {
                 return Ok(0);
             };
             let fold = vault.authority_view_readonly_in_txn(&rtxn)?;
-            let wanted: BTreeSet<[u8; 32]> = fold
-                .pending_owner_work_for(machine)
-                .filter_map(|(_, request)| match &request.work {
-                    OwnerWorkBody::Custody {
-                        input: Some(input), ..
-                    } => Some(*input),
-                    _ => None,
-                })
-                .collect();
-            let mut due = Vec::new();
+            let mut due: Vec<RelayedInput> = Vec::new();
             for (map_key, bytes) in &rows {
                 let Some(input) = RelayedInput::decode(bytes) else {
                     continue;
                 };
                 let digest = input.digest();
                 if *map_key == input_row(&digest)
-                    && wanted.contains(&digest)
+                    && input_awaits(&fold, machine, &input)
                     && held_input_in_txn(&vault.store, &rtxn, &digest)?.is_none()
                 {
                     due.push(input);
                 }
             }
-            due
+            (machine, due)
         };
         if due.is_empty() {
             return Ok(0);
         }
         vault.with_write_txn_grouped(|wtxn| {
+            let fold = vault.authority_view_readonly_in_txn(wtxn)?;
+            let mut kept = 0;
             for input in &due {
-                keep_input_in_txn(vault, wtxn, input)?;
+                if input_awaits(&fold, machine, input)
+                    && held_input_in_txn(&vault.store, wtxn, &input.digest())?.is_none()
+                {
+                    keep_input_in_txn(vault, wtxn, input)?;
+                    kept += 1;
+                }
             }
-            Ok(due.len())
+            Ok(kept)
         })
     })();
     match outcome {

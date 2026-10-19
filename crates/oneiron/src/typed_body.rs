@@ -6,12 +6,12 @@
 //! record writes go on as before. A body names its shape by a schema tag, and
 //! every read and write names the tag it expects.
 //!
-//! Every commit runs under a fresh peer bound to its actor and carries its
-//! MadeBy in the commit message, so the operation log is the receipt ledger
-//! and a merged fork's operations bring their receipts with them. A fork is
-//! written only by its opener and lands only through a merge by someone else
-//! against the head that someone reviewed. Erasing the entity erases its body
-//! and every fork of it ([`erase_in_txn`]).
+//! Every commit runs under a fresh peer bound to its actor. Its message names
+//! no one; the peer keys its receipt row (the `receipts` module), so a merged
+//! fork's operations keep their receipts and an erase forgets who made them.
+//! A fork is written only by its opener and lands only through a merge by
+//! someone else against the head that someone reviewed. Erasing the entity
+//! erases its body, every fork of it and their receipts ([`erase_in_txn`]).
 
 use crate::Vault;
 use crate::edge::EdgeActorClass;
@@ -26,13 +26,14 @@ use crate::write_envelope::WriteActor;
 use heed::{RoTxn, RwTxn};
 use loro::{CommitOptions, ExportMode, Frontiers, LoroDoc};
 use serde::{Deserialize, Serialize};
-use std::ops::ControlFlow;
 
 mod body_actor;
 mod lift;
+mod receipts;
 pub use self::body_actor::BodyActor;
 pub(crate) use self::body_actor::{erase_fork_actor_in_txn, names_no_actor};
 pub(crate) use self::lift::{TypedBodyRows, lift_typed_body_in_txn, typed_body_lift_hit_in_txn};
+pub(crate) use self::receipts::{erase_receipt_actor_in_txn, receipt_actor_in_txn};
 
 const HEADS: SideTable<EntityId, TypedBodyHead, Named> =
     SideTable::new(&side_table::TYPED_BODY_HEAD);
@@ -41,9 +42,6 @@ const FORKS: SideTable<(EntityId, EntityId), TypedBodyFork, Named> =
     SideTable::new(&side_table::TYPED_BODY_FORK);
 const FORK_DOCS: SideTable<(EntityId, EntityId), Vec<u8>, Raw> =
     SideTable::new(&side_table::TYPED_BODY_FORK_DOC);
-
-const STAMP: &str = "oneiron.typed_body.v1";
-const RECEIPT_PREFIX: &str = "|made_by=";
 
 /// One entity's typed body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -412,14 +410,14 @@ pub(crate) fn discard_typed_body_fork_in_txn(
     Ok(record)
 }
 
-/// Removes `entity`'s typed body and every fork of it. Registered with the
-/// per-entity erasers in `deletion/derived_rows.rs`.
+/// Removes `entity`'s typed body, every fork of it and their receipts.
+/// Registered with the per-entity erasers in `deletion/derived_rows.rs`.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     HEADS.delete(store, txn, entity)?;
     DOCS.delete(store, txn, entity)?;
     FORKS.delete_from(store, txn, entity.as_bytes())?;
     FORK_DOCS.delete_from(store, txn, entity.as_bytes())?;
-    Ok(())
+    receipts::erase_in_txn(store, txn, entity)
 }
 
 impl Vault {
@@ -453,54 +451,10 @@ impl Vault {
     }
 
     /// Every commit's receipt on the head's history, oldest first. A commit
-    /// whose receipt is missing, malformed or not honored for its peer is
-    /// `None`, so a fold of the list fails closed.
+    /// whose receipt is missing, malformed, erased or not honored for its peer
+    /// is `None`, so a fold of the list fails closed.
     pub fn typed_body_receipts(&self, entity: &EntityId) -> Result<Vec<Option<TextCommitReceipt>>> {
-        let doc = {
-            let txn = self.store.env.read_txn()?;
-            require_live(&self.store, &txn, entity)?;
-            let head = HEADS
-                .get(&self.store, &txn, entity)?
-                .ok_or(Error::EntityNotFound)?;
-            load(DOCS.get(&self.store, &txn, entity)?, Some(&head.frontier))?
-        };
-        let mut metas = Vec::new();
-        doc.travel_change_ancestors(&doc.oplog_frontiers().to_vec(), &mut |meta| {
-            metas.push(meta);
-            ControlFlow::Continue(())
-        })
-        .map_err(|_| Error::CorruptedIndex("typed body change history"))?;
-        // Loro walks ancestors newest first.
-        metas.reverse();
-        let mut receipts = Vec::with_capacity(metas.len());
-        for meta in metas {
-            let Some((actor, made_by)) = parse_message(meta.message.as_deref()) else {
-                receipts.push(None);
-                continue;
-            };
-            let honored = u64::try_from(meta.timestamp).ok() == Some(made_by.at)
-                && made_by_names(actor, &made_by)
-                && crate::edit_distance::peer_actor_stamp_is_honored(
-                    self,
-                    meta.id.peer,
-                    made_by.at,
-                    &actor,
-                )?;
-            let end = i32::try_from(meta.len)
-                .ok()
-                .and_then(|len| meta.id.counter.checked_add(len));
-            receipts.push(match end {
-                Some(end) if honored => Some(TextCommitReceipt {
-                    document: *entity,
-                    peer: meta.id.peer,
-                    start: meta.id.counter,
-                    end,
-                    made_by,
-                }),
-                _ => None,
-            });
-        }
-        Ok(receipts)
+        receipts::receipts_in(self, entity)
     }
 
     /// The body's provenance folded from every receipt; `None` when any
@@ -591,7 +545,8 @@ impl Vault {
 }
 
 /// Runs one call's operations under a fresh peer bound to the writer's actor
-/// and commits them with the writer's receipt in the message.
+/// and commits them under a message naming no one; the peer's receipt row
+/// keeps the writer's receipt (FIX 4513).
 fn commit_as<T>(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -609,8 +564,6 @@ fn commit_as<T>(
     }
     validate_actor(vault, txn, actor)?;
     let at = i64::try_from(made_by.at).map_err(|_| invalid("typed body commit time"))?;
-    let encoded = serde_json::to_string(made_by)
-        .map_err(|_| Error::InvariantViolation("typed body receipt encoding"))?;
     // A fresh peer per call: the receipt covers exactly this call's
     // operations, and no two calls coalesce into one change.
     doc.set_peer_id(LoroDoc::new().peer_id())
@@ -618,11 +571,7 @@ fn commit_as<T>(
     let peer = doc.peer_id();
     let before = doc.state_frontiers();
     let value = edit(doc)?;
-    let message = format!(
-        "{STAMP} {verb} actor={}.{} {RECEIPT_PREFIX}{encoded}",
-        actor.entity_ref().to_hex(),
-        crate::edit_distance::actor_class_token(actor.actor_class()),
-    );
+    let message = receipts::commit_message(verb);
     doc.commit_with(CommitOptions::new().commit_msg(&message).timestamp(at));
     let end = doc.oplog_vv().get(&peer).copied().unwrap_or(0);
     if end <= 0 {
@@ -634,6 +583,7 @@ fn commit_as<T>(
         lift::remark_typed_body_in_txn(vault, txn, &entity, doc)?;
     }
     bind_peer(vault, txn, peer, actor, made_by.at)?;
+    receipts::record_in_txn(&vault.store, txn, entity, peer, actor, made_by)?;
     Ok((
         value,
         TextCommitReceipt {
@@ -678,19 +628,6 @@ fn made_by_names(actor: WriteActor, made_by: &MadeBy) -> bool {
         && made_by.process.is_valid()
         && (actor.actor_class() == EdgeActorClass::Human
             || made_by.process.class != MadeByClass::Stated)
-}
-
-fn parse_message(message: Option<&str>) -> Option<(WriteActor, MadeBy)> {
-    let rest = message?.strip_prefix(STAMP)?.strip_prefix(' ')?;
-    let (stamp, encoded) = rest.split_once(RECEIPT_PREFIX)?;
-    let mut tokens = stamp.split_whitespace();
-    let _verb = tokens.next()?;
-    let (id, class) = tokens.next()?.strip_prefix("actor=")?.split_once('.')?;
-    let actor = WriteActor::new(
-        EntityId::from_hex(id).ok()?,
-        crate::edit_distance::actor_class_from_token(class)?,
-    );
-    Some((actor, serde_json::from_str(encoded).ok()?))
 }
 
 /// Writes the `actor.peer_binding` claim that lets a reader honor `peer`'s
