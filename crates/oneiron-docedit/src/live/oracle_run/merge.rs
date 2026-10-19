@@ -57,51 +57,67 @@ pub(super) fn cases(
     animated: Option<&Deck>,
     cases: &[MergeCase],
 ) -> Res<()> {
-    let prepared = match prepare(run, base, anchor) {
+    let base_id = format!("{}.merge.base", base.id);
+    let prepared = match run.case(&base_id, |run| Ok(prepare(run, base, anchor)))? {
         Ok(prepared) => prepared,
         Err(why) => {
             for case in cases {
                 let id = format!("{}.merge.{}", base.id, case.name());
-                run.record(CONCURRENCY, &id, failed(format!("the merge base: {why}")));
+                run.case(&id, |run| {
+                    run.record(CONCURRENCY, &id, failed(format!("the merge base: {why}")));
+                    Ok(())
+                })?;
             }
             return Ok(());
         }
     };
     for case in cases {
         let id = format!("{}.merge.{}", base.id, case.name());
-        let result = match case {
-            MergeCase::TextAnimationRange => match animated {
-                Some(animated) => text_animation_range(animated, run.limits),
-                None => Err("the animated variant was not built".to_owned()),
-            },
-            _ => merge_case(*case, &prepared, run.limits),
-        };
-        let baseline = match (case, animated) {
-            (MergeCase::TextAnimationRange, Some(animated)) => animated.defects.clone(),
-            _ => prepared.defects.clone(),
-        };
-        match result {
-            Ok(Some(bytes)) => {
-                run.record(CONCURRENCY, &id, StepOutcome::Passed);
-                let slides = DeckView::read(&Package::open(&bytes, run.limits).map_err(text)?)
-                    .map_err(text)?
-                    .slides
-                    .len();
-                run.candidate(Emit {
-                    id: &id,
-                    bytes: &bytes,
-                    steps: &[ORACLE],
-                    lane: Lane::Core,
-                    checks: vec![
-                        OfficeCheck::Slides { count: slides },
-                        OfficeCheck::Pages { count: slides },
-                    ],
-                    baseline: &baseline,
-                })?;
-            }
-            Ok(None) => run.record(CONCURRENCY, &id, StepOutcome::Passed),
-            Err(why) => run.record(CONCURRENCY, &id, failed(why)),
+        run.case(&id, |run| merged_case(run, *case, &prepared, animated, &id))?;
+    }
+    Ok(())
+}
+
+/// One merge case over the prepared base, journaled as one case.
+fn merged_case(
+    run: &mut Run,
+    case: MergeCase,
+    prepared: &Prepared,
+    animated: Option<&Deck>,
+    id: &str,
+) -> Res<()> {
+    let result = match case {
+        MergeCase::TextAnimationRange => match animated {
+            Some(animated) => text_animation_range(animated, run.limits),
+            None => Err("the animated variant was not built".to_owned()),
+        },
+        _ => merge_case(case, prepared, run.limits),
+    };
+    let baseline = match (case, animated) {
+        (MergeCase::TextAnimationRange, Some(animated)) => animated.defects.clone(),
+        _ => prepared.defects.clone(),
+    };
+    match result {
+        Ok(Some(bytes)) => {
+            run.record(CONCURRENCY, id, StepOutcome::Passed);
+            let slides = DeckView::read(&Package::open(&bytes, run.limits).map_err(text)?)
+                .map_err(text)?
+                .slides
+                .len();
+            run.candidate(Emit {
+                id,
+                bytes: &bytes,
+                steps: &[ORACLE],
+                lane: Lane::Core,
+                checks: vec![
+                    OfficeCheck::Slides { count: slides },
+                    OfficeCheck::Pages { count: slides },
+                ],
+                baseline: &baseline,
+            })?;
         }
+        Ok(None) => run.record(CONCURRENCY, id, StepOutcome::Passed),
+        Err(why) => run.record(CONCURRENCY, id, failed(why)),
     }
     Ok(())
 }
@@ -124,7 +140,7 @@ fn prepare(run: &mut Run, base: &Deck, anchor: &Anchor) -> Res<Prepared> {
     run.record(
         FIXED_POINT,
         &id,
-        checks::fixed_point(&head, &outcome, run.limits),
+        checks::fixed_point(&head, &base.package, &outcome, run.limits),
     );
     head.rebind(&outcome)
         .map_err(|error| format!("it does not rebind: {error}"))?;

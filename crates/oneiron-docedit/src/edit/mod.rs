@@ -30,6 +30,7 @@ pub use structure::{
     ConnectorPreset, NewConnector, NewGroup, NewPicture, NewShape, Preset, StructureEdit,
     StructureReport, structure_patch,
 };
+pub(crate) use text::BREAK;
 pub use transaction::{
     AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets,
     PartChange, StepRefusal, TransactionError, run_transaction,
@@ -50,7 +51,7 @@ pub struct Target<'a> {
     pub expected: [u8; 32],
 }
 
-/// The nine value and text verbs.
+/// The ten value and text verbs.
 #[derive(Debug, Clone, Copy)]
 pub enum ValueEdit<'a> {
     /// The whole text body: `\n` separates paragraphs and U+000B is an
@@ -58,6 +59,13 @@ pub enum ValueEdit<'a> {
     /// changed paragraph, keep their runs, fields, breaks and links; changed
     /// text takes the properties of the run it lands in (see `text.rs`).
     SetText { target: Target<'a>, text: &'a str },
+    /// The whole text body as paragraphs of characters, mapped as `SetText`
+    /// maps its text but given whole: a line feed inside a paragraph stays
+    /// text in its run (`SetText` reads every `\n` as a paragraph break).
+    SetParagraphs {
+        target: Target<'a>,
+        paragraphs: &'a [Vec<char>],
+    },
     /// One run's text; `run` counts `a:r` and `a:fld` as [`DeckView`] does.
     ReplaceRunText {
         target: Target<'a>,
@@ -282,6 +290,10 @@ pub fn edit(deck: &mut Package, op: &ValueEdit<'_>) -> Result<EditReport, EditRe
         ValueEdit::SetText { target, text } => {
             let (index, shape) = locate(&before, &target)?;
             text::set_text(&mut next, &before.slides[index], shape, text)?
+        }
+        ValueEdit::SetParagraphs { target, paragraphs } => {
+            let (index, shape) = locate(&before, &target)?;
+            text::set_paragraphs(&mut next, &before.slides[index], shape, paragraphs)?
         }
         ValueEdit::ReplaceRunText {
             target,
