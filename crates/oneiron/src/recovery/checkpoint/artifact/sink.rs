@@ -78,11 +78,20 @@ impl Sealer<'_> {
     }
 }
 
+/// What one carried body's stream must be (FIX 5348).
+pub(in crate::recovery::checkpoint) struct ArtifactBody {
+    /// Its length as it rests: the body's own, or its envelope's.
+    pub(in crate::recovery::checkpoint) len: u64,
+    /// The BLAKE3 of a plain body's bytes. An envelope's stream checks each
+    /// of its frames, and the body they hold, as the artifact reads it.
+    pub(in crate::recovery::checkpoint) digest: Option<[u8; 32]>,
+}
+
 /// Writes the artifact at `path`, create-new and owner-only: the image, then
-/// each body `open_body` hands back, then the manifest, then the commitment
-/// `link` signs. Returns the image's BLAKE3 and the chain head the signed
-/// commitment makes. A write that fails removes the file, so no part of one is
-/// left.
+/// each body `open_body` hands back by its place in `bodies`, then the
+/// manifest, then the commitment `link` signs. Returns the image's BLAKE3 and
+/// the chain head the signed commitment makes. A write that fails removes the
+/// file, so no part of one is left.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::recovery::checkpoint) fn write_artifact(
     path: &Path,
@@ -92,8 +101,8 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
     link: &Link,
     created_at: u64,
     image: &[u8],
-    bodies: &[([u8; 32], u64)],
-    mut open_body: impl FnMut(&[u8; 32], u64) -> Result<File>,
+    bodies: &[ArtifactBody],
+    mut open_body: impl FnMut(usize) -> Result<Box<dyn Read + Send>>,
 ) -> Result<([u8; 32], ChainHead)> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -130,15 +139,15 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
     sink.put(&key_header)?;
     let image = sink.stream(IMAGE_STREAM, &mut &image[..])?;
     let mut sealed_bodies = Vec::with_capacity(bodies.len());
-    for (index, (digest, len)) in bodies.iter().enumerate() {
+    for (index, body) in bodies.iter().enumerate() {
         let stream = u32::try_from(index + 1)
             .ok()
             .filter(|stream| *stream != MANIFEST_STREAM)
             .ok_or_else(codec)?;
-        let entry = sink.stream(stream, &mut open_body(digest, *len)?)?;
+        let entry = sink.stream(stream, &mut open_body(index)?)?;
         // A body file is named by its digest; one that reads otherwise is
         // refused here, not found out at a restore.
-        if entry.len != *len || entry.digest != *digest {
+        if entry.len != body.len || body.digest.is_some_and(|digest| digest != entry.digest) {
             return Err(Error::CorruptedIndex("code-run result body file"));
         }
         sealed_bodies.push(entry);

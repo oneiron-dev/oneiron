@@ -14,6 +14,9 @@
 //! `off-record-bodies/`, never into `bodies/`. Closing the session removes
 //! it, and the next writer open of the vault sweeps whatever a crash left
 //! there and every unfinished temp file in `bodies/`.
+//!
+//! A sealed vault's directories write and read every body file as an
+//! envelope under a key of its own (`body_envelope`, FIX 5348).
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -51,9 +54,11 @@ pub(crate) fn body_file_name(digest: &[u8; 32]) -> String {
     crate::entity_id::bytes_to_hex_lower(digest)
 }
 
-/// One directory of body files, held open by descriptor.
+/// One directory of body files, held open by descriptor, and on a sealed
+/// vault the seal its files' keys wrap under.
 pub(crate) struct BodyDir {
     pub(crate) dir: File,
+    pub(crate) sealed: Option<super::DirSeal>,
 }
 
 impl BodyDir {
@@ -81,7 +86,7 @@ impl BodyDir {
                 "result bodies cross the vault filesystem".to_owned(),
             ));
         }
-        Ok(Some(Self { dir }))
+        Ok(Some(Self { dir, sealed: None }))
     }
 
     /// The body directory at `path`, outside any vault (a checkpoint's),
@@ -102,24 +107,32 @@ impl BodyDir {
         )
     }
 
-    /// The body with `digest`, checked to be `len` bytes. `None` when this
-    /// directory does not hold it.
+    /// The plain body with `digest`, checked to be `len` bytes. `None` when
+    /// this directory does not hold it.
     pub(crate) fn open_body(&self, digest: &[u8; 32], len: u64) -> Result<Option<File>> {
-        let file = match openat(
-            &self.dir,
-            body_file_name(digest),
-            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-            Mode::empty(),
-        ) {
-            Ok(fd) => File::from(fd),
-            Err(Errno::NOENT) => return Ok(None),
-            Err(error) => return Err(io(error)),
+        let Some(file) = self.open_named(&body_file_name(digest))? else {
+            return Ok(None);
         };
         let metadata = file.metadata()?;
         if !metadata.is_file() || metadata.len() != len {
             return Err(Error::CorruptedIndex("result body file length"));
         }
         Ok(Some(file))
+    }
+
+    /// The file `name` in this directory, opened read-only and no-follow.
+    /// `None` when it is absent.
+    pub(super) fn open_named(&self, name: &str) -> Result<Option<File>> {
+        match openat(
+            &self.dir,
+            name,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(fd) => Ok(Some(File::from(fd))),
+            Err(Errno::NOENT) => Ok(None),
+            Err(error) => Err(io(error)),
+        }
     }
 
     /// Free bytes on the filesystem this directory is on.
@@ -214,8 +227,14 @@ impl BodyDir {
     }
 
     /// Copies in the body with `digest` from `source`, checking its digest
-    /// and length, unless this directory holds it already.
+    /// and length, unless this directory holds it already. A sealed
+    /// directory takes bodies through its envelope only.
     pub(crate) fn import(&self, digest: &[u8; 32], len: u64, source: &mut impl Read) -> Result<()> {
+        if self.sealed.is_some() {
+            return Err(Error::InvariantViolation(
+                "a sealed body directory imports through its envelope",
+            ));
+        }
         if self.open_body(digest, len)?.is_some() {
             return Ok(());
         }
@@ -524,8 +543,12 @@ pub(crate) enum SunkBody {
     /// Within the inline bound: its bytes, for the LMDB row.
     Inline(Vec<u8>),
     /// Past it: a published body file, and the disk left free beside it
-    /// once it was written, when that could be read.
-    File { free_bytes: Option<u64> },
+    /// once it was written, when that could be read. A sealed directory's
+    /// file comes with the key row its body's row commits with.
+    File {
+        free_bytes: Option<u64>,
+        key: Option<super::StagedBodyKey>,
+    },
 }
 
 /// One body written as it streams: kept in memory up to the inline bound,
@@ -536,7 +559,7 @@ pub(crate) struct BodySink {
     inline_limit: u64,
     meter: Option<BodyMeter>,
     inline: Vec<u8>,
-    spill: Option<(File, String)>,
+    spill: Option<super::BodySpill>,
     /// A swept body's known values (OF-560 C): each is replaced by its
     /// custody handle before a byte is measured, kept or spilled.
     sweep: Option<KnownSweep>,
@@ -572,25 +595,22 @@ impl BodySink {
         if let Some(meter) = &mut self.meter {
             meter.feed(frame);
         }
-        if let Some((file, _)) = &mut self.spill {
-            file.write_all(frame)?;
-            return Ok(());
+        if let Some(spill) = &mut self.spill {
+            return spill.write(frame);
         }
         let inline_after = (self.inline.len() as u64).saturating_add(frame.len() as u64);
         if inline_after <= self.inline_limit {
             self.inline.extend_from_slice(frame);
             return Ok(());
         }
-        let (mut file, temp) = self.dir.create_temp()?;
-        let written = file
-            .write_all(&self.inline)
-            .and_then(|()| file.write_all(frame));
+        let mut spill = super::BodySpill::create(&self.dir)?;
+        let written = spill.write(&self.inline).and_then(|()| spill.write(frame));
         if let Err(error) = written {
-            self.dir.discard(&temp);
-            return Err(error.into());
+            self.dir.discard(spill.temp());
+            return Err(error);
         }
         self.inline = Vec::new();
-        self.spill = Some((file, temp));
+        self.spill = Some(spill);
         Ok(())
     }
 
@@ -621,21 +641,33 @@ impl BodySink {
             .take()
             .ok_or(Error::InvariantViolation("result body sink finished twice"))?
             .finish(preview_chars);
-        let Some((file, temp)) = self.spill.take() else {
+        let Some(spill) = self.spill.take() else {
             return Ok((facts, SunkBody::Inline(std::mem::take(&mut self.inline))));
         };
-        let name = body_file_name(&facts.digest);
-        self.dir.publish(file, &temp, &name)?;
-        self.dir.write_line_index(&name, &facts.line_index);
+        let temp = spill.temp().to_owned();
+        let spilled = match spill.finish(&facts.digest, facts.len) {
+            Ok(spilled) => spilled,
+            Err(error) => {
+                self.dir.discard(&temp);
+                return Err(error);
+            }
+        };
+        let key = spilled.publish(&self.dir)?;
+        match &key {
+            Some(key) => key.write_line_index(&self.dir, &facts.line_index),
+            None => self
+                .dir
+                .write_line_index(&body_file_name(&facts.digest), &facts.line_index),
+        }
         let free_bytes = self.dir.free_bytes().ok();
-        Ok((facts, SunkBody::File { free_bytes }))
+        Ok((facts, SunkBody::File { free_bytes, key }))
     }
 }
 
 impl Drop for BodySink {
     fn drop(&mut self) {
-        if let Some((_, temp)) = self.spill.take() {
-            self.dir.discard(&temp);
+        if let Some(spill) = self.spill.take() {
+            self.dir.discard(spill.temp());
         }
     }
 }
@@ -659,8 +691,10 @@ impl Store {
 
     /// This vault's `bodies/` directory, made when absent.
     pub(crate) fn body_dir(&self) -> Result<BodyDir> {
-        BodyDir::open_in(&self.body_root()?, BODIES_DIR, true)?
-            .ok_or(Error::InvariantViolation("result body directory missing"))
+        let mut dir = BodyDir::open_in(&self.body_root()?, BODIES_DIR, true)?
+            .ok_or(Error::InvariantViolation("result body directory missing"))?;
+        dir.sealed = self.dir_seal(super::KeyScope::Vault);
+        Ok(dir)
     }
 
     /// The body directory of the off-record session `session_ref`, made when
@@ -673,7 +707,14 @@ impl Store {
         let Some(spill) = BodyDir::open_in(&self.body_root()?, SPILL_ROOT, create)? else {
             return Ok(None);
         };
-        BodyDir::open_in(&spill.dir, &session_spill_name(session_ref), create)
+        Ok(
+            BodyDir::open_in(&spill.dir, &session_spill_name(session_ref), create)?.map(
+                |mut dir| {
+                    dir.sealed = self.dir_seal(super::KeyScope::OffRecord);
+                    dir
+                },
+            ),
+        )
     }
 
     /// Removes the off-record session's body directory and every body in it.

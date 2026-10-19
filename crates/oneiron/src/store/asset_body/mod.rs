@@ -17,10 +17,10 @@
 //! ([`asset_file_in_txn`]). An inline ASSET may hold any bytes, a manifest's
 //! included; the descriptor moves with every write of the row.
 //!
-//! Every other body stays in its row as before, and so does every body of a
-//! sealed (maximum-tier) vault until a per-file key envelope lands (FIX
-//! 3677, L04). The bound picks where a body lives and never refuses one
-//! (Rule 5).
+//! Every other body stays in its row as before. A sealed (maximum-tier)
+//! vault's body file is an envelope under a key of its own, whose key row
+//! commits with the row and descriptor (FIX 5348, `body_envelope`). The bound
+//! picks where a body lives and never refuses one (Rule 5).
 //!
 //! A crash before the rename leaves a `.tmp-` file, which the writer-open
 //! sweep removes. A crash or abort after it leaves a file no descriptor
@@ -36,12 +36,11 @@
 mod read;
 mod stage;
 
-use std::fs::File;
 use std::io::{self, Read, Write};
 
 use heed::{RoTxn, RwTxn};
 
-use super::{BodyDir, ManifestDbs, Store, body_file_name};
+use super::{BodyDir, BodyFile, BodyKeyRow, ManifestDbs, Store, body_file_name};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::{ASSET_BODY_FILE, ASSET_BODY_HELD};
@@ -209,15 +208,8 @@ fn held_occurrence(id: &EntityId, body: &BodyRef) -> Result<EntityId> {
 /// own (sync egress, scoped reads, blob holders, taint, federation export,
 /// codebase ingest) read a manifest's file; the PR's FIX lines name each one.
 /// Off, every ASSET body stays in its row exactly as before; on is this line.
+/// A sealed vault's files are envelopes (FIX 5348).
 pub(crate) const ASSET_FILE_PLANE: bool = false;
-
-/// Whether every ASSET body stays in its row: the file plane is off, or this
-/// store's pages are sealed (the maximum tier), which keeps bodies inline
-/// until a per-file key envelope makes a file's unlink a crypto-shred
-/// (FIX 3677, L04).
-fn keeps_bodies_inline(store: &Store) -> bool {
-    !ASSET_FILE_PLANE || heed::Env::is_sealed(&store.env)
-}
 
 /// Whether `body` is bytes no reader of ASSET bodies interprets: no UTF-8
 /// text and no body an owning adapter reads (the serializer would attach it
@@ -332,23 +324,25 @@ pub(crate) fn short_content_hash_in_txn(
 }
 
 /// FIX 3677: the body file a local ASSET put's `data` goes to when it is one
-/// ([`ASSET_INLINE_BODY_BYTES`], [`opaque_body`], an unsealed vault, a file
-/// the secret mask did not mark): the file is published from `data` as it
-/// is, no second copy, and the manifest the row keeps instead is returned
-/// with the body's facts. `None` keeps the body in its row.
+/// ([`ASSET_INLINE_BODY_BYTES`], [`opaque_body`], a file the secret mask did
+/// not mark): the file is published from `data` as it is, no second copy,
+/// and the manifest the row keeps instead is returned with the body's facts.
+/// On a sealed vault the file is a new envelope and its key row commits in
+/// `txn`, unless the digest has a committed pair already (FIX 5348). `None`
+/// keeps the body in its row.
 ///
 /// # Errors
 ///
 /// Storage and filesystem errors as they occur.
 pub(crate) fn file_put_body_in_txn(
     store: &Store,
-    txn: &RoTxn<'_>,
+    txn: &mut RwTxn<'_>,
     entity_type: u8,
     data: &[u8],
 ) -> Result<Option<(Vec<u8>, AssetBodyFacts)>> {
     if entity_type != ENTITY_TYPE_ASSET
         || data.len() as u64 <= ASSET_INLINE_BODY_BYTES
-        || keeps_bodies_inline(store)
+        || !ASSET_FILE_PLANE
         || !opaque_body(data)
     {
         return Ok(None);
@@ -359,7 +353,13 @@ pub(crate) fn file_put_body_in_txn(
     if crate::secret_custody::masked_file_in_txn(store, txn, &facts.blake3)?.is_some() {
         return Ok(None);
     }
-    store.body_dir()?.publish_asset_body(&facts, data)?;
+    let dir = store.body_dir()?;
+    if dir.sealed.is_none() {
+        dir.publish_asset_body(&facts, data)?;
+    } else if super::body_key_row_in_txn(store, txn, &facts.blake3)?.is_none() {
+        let staged = dir.publish_sealed_body(&facts.blake3, data)?;
+        super::bind_body_key_in_txn(store, txn, &staged)?;
+    }
     let manifest = AssetFileManifest {
         facts,
         kind: AssetFileKind::Opaque,
@@ -393,9 +393,14 @@ pub(crate) fn stage_asset_body_in_txn(
                     "an asset body file's row holds its own manifest",
                 ));
             }
-            // The bytes are durable before any row names them.
-            let dir = store.body_dir()?;
-            if dir.open_body(&facts.blake3, facts.len)?.is_none() {
+            // The bytes are durable before any row names them, and a sealed
+            // file's key row before the row naming it (FIX 5348).
+            let key = super::body_key_row_in_txn(store, txn, &facts.blake3)?;
+            if store
+                .body_dir()?
+                .open_reader(&facts.blake3, facts.len, key.as_ref())?
+                .is_none()
+            {
                 return Err(Error::InvariantViolation(
                     "an asset body file is published before its row",
                 ));
@@ -441,9 +446,15 @@ pub(crate) fn stage_asset_body_in_txn(
 }
 
 impl BodyDir {
-    /// Publishes `body`, whose facts are `facts`, as its file, unless this
-    /// directory holds it already.
+    /// Publishes `body`, whose facts are `facts`, as its plain file, unless
+    /// this directory holds it already. A sealed directory publishes an
+    /// envelope ([`BodyDir::publish_sealed_body`]).
     pub(crate) fn publish_asset_body(&self, facts: &AssetBodyFacts, body: &[u8]) -> Result<()> {
+        if self.sealed.is_some() {
+            return Err(Error::InvariantViolation(
+                "a sealed body directory publishes envelopes only",
+            ));
+        }
         if self.open_body(&facts.blake3, facts.len)?.is_some() {
             return Ok(());
         }
@@ -458,12 +469,18 @@ impl BodyDir {
     /// Copies in the ASSET body file with `digest` from `source`, checking
     /// its digest and length as it streams, unless this directory holds it
     /// already. Raw: no line index, no preview, no scan, whatever its size.
+    /// A sealed directory imports through its envelope.
     pub(crate) fn import_asset_body(
         &self,
         digest: &[u8; 32],
         len: u64,
         source: &mut impl Read,
     ) -> Result<()> {
+        if self.sealed.is_some() {
+            return Err(Error::InvariantViolation(
+                "a sealed body directory imports through its envelope",
+            ));
+        }
         if self.open_body(digest, len)?.is_some() {
             return Ok(());
         }
@@ -502,7 +519,7 @@ impl BodyDir {
 /// One ASSET body file read as it streams, checked against its manifest's
 /// length and BLAKE3: the read that reaches its end fails if either differs.
 pub(crate) struct CheckedAssetBody {
-    file: File,
+    file: BodyFile,
     facts: AssetBodyFacts,
     hasher: blake3::Hasher,
     read: u64,
@@ -510,15 +527,20 @@ pub(crate) struct CheckedAssetBody {
 }
 
 impl CheckedAssetBody {
-    /// The body file `facts` names in `dir`.
+    /// The body file `facts` names in `dir`, as `key`, its key row in the
+    /// snapshot that found its row, names it.
     ///
     /// # Errors
     ///
     /// [`Error::CorruptedIndex`] when the file is missing or of another
     /// length.
-    pub(crate) fn open(dir: &BodyDir, facts: &AssetBodyFacts) -> Result<Self> {
+    pub(crate) fn open(
+        dir: &BodyDir,
+        facts: &AssetBodyFacts,
+        key: Option<&BodyKeyRow>,
+    ) -> Result<Self> {
         let file = dir
-            .open_body(&facts.blake3, facts.len)?
+            .open_reader(&facts.blake3, facts.len, key)?
             .ok_or(Error::CorruptedIndex("asset body file missing"))?;
         Ok(Self {
             file,
@@ -545,8 +567,12 @@ impl CheckedAssetBody {
     /// # Errors
     ///
     /// As [`Self::open`], and the check's error.
-    pub(crate) fn read_all(dir: &BodyDir, facts: &AssetBodyFacts) -> Result<Vec<u8>> {
-        let mut reader = Self::open(dir, facts)?;
+    pub(crate) fn read_all(
+        dir: &BodyDir,
+        facts: &AssetBodyFacts,
+        key: Option<&BodyKeyRow>,
+    ) -> Result<Vec<u8>> {
+        let mut reader = Self::open(dir, facts, key)?;
         let mut bytes = Vec::with_capacity(
             usize::try_from(facts.len)
                 .map_err(|_| Error::InvariantViolation("asset body past this machine's memory"))?,

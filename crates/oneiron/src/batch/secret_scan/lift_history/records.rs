@@ -4,8 +4,10 @@
 //! masks its body and its index text with one plan; a NOTE through its
 //! document's door; a file through the batch door's file mark, which keeps
 //! its bytes. An entity document's text is its own op history, which no door
-//! rewrites.
+//! rewrites. A file-plane ASSET is read as its body, never its manifest, and
+//! its body is what a lift puts again (FIX 5395).
 
+use std::borrow::Cow;
 use std::ops::Bound;
 
 use heed::{RoTxn, RwTxn};
@@ -47,7 +49,7 @@ pub(super) fn census(vault: &Vault, txn: &RoTxn<'_>, after: &[u8], limit: usize)
         let (key, raw) = row?;
         read += 1;
         if let Some(id) = record_id(&key)
-            && hit(vault, txn, &id, &raw)?.is_some()
+            && hit(vault, txn, &id, &materialized(vault, txn, &id, &raw)?)?.is_some()
         {
             page.hits.push(key.to_vec());
         }
@@ -69,6 +71,7 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)? else {
         return Ok(Done::Clean);
     };
+    let raw = vault.materialized_row_in_txn(txn, &id, raw)?;
     // A record a writer has cleaned since the census read it is done.
     let Some(reason) = hit(vault, txn, &id, &raw)? else {
         return Ok(Done::Clean);
@@ -117,6 +120,26 @@ pub(super) fn path(key: &[u8]) -> String {
 
 pub(super) fn record_id(key: &[u8]) -> Option<EntityId> {
     EntityId::from_bytes(key.try_into().ok()?).ok()
+}
+
+/// The stored row `raw` of `id` as its readers read it: a file-plane ASSET
+/// with its body in place of its manifest (FIX 5395); any other row as it
+/// is.
+fn materialized<'r>(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    raw: &'r [u8],
+) -> Result<Cow<'r, [u8]>> {
+    if EntityMetadataHeader::parse(raw).is_none_or(|header| header.entity_type != ENTITY_TYPE_ASSET)
+    {
+        return Ok(Cow::Borrowed(raw));
+    }
+    Ok(Cow::Owned(vault.materialized_row_in_txn(
+        txn,
+        id,
+        raw.to_vec(),
+    )?))
 }
 
 /// The door's reason for a hit in `raw`'s body, in the text it was indexed
@@ -240,7 +263,7 @@ fn after_rewrite(
 ) -> Result<Done> {
     record_text::settle_staged(vault, txn, id)?;
     let left = match crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)? {
-        Some(raw) => hit(vault, txn, id, &raw)?,
+        Some(raw) => hit(vault, txn, id, &materialized(vault, txn, id, &raw)?)?,
         None => None,
     };
     Ok(match left {

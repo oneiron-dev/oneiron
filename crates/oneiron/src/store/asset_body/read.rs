@@ -14,15 +14,22 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_ASSET;
 
 impl crate::Vault {
-    /// The whole body `manifest` names, read from its file and checked.
+    /// The whole body `manifest` names, read from its file and checked, as
+    /// its key row in `txn`, the snapshot that found the manifest, names it
+    /// (FIX 5348).
     ///
     /// # Errors
     ///
     /// A missing file, one whose bytes disagree with the manifest, and
     /// filesystem errors.
-    pub(crate) fn asset_file_body(&self, manifest: &AssetFileManifest) -> Result<Vec<u8>> {
+    pub(crate) fn asset_file_body(
+        &self,
+        txn: &RoTxn<'_>,
+        manifest: &AssetFileManifest,
+    ) -> Result<Vec<u8>> {
         let _pin = self.pin_result_body(manifest.facts.blake3);
-        CheckedAssetBody::read_all(&self.store.body_dir()?, &manifest.facts)
+        let key = crate::store::body_key_row_in_txn(&self.store, txn, &manifest.facts.blake3)?;
+        CheckedAssetBody::read_all(&self.store.body_dir()?, &manifest.facts, key.as_ref())
     }
 
     /// `raw`, a stored row `id` read through a raw port, with a file-plane
@@ -41,7 +48,7 @@ impl crate::Vault {
         let Some(manifest) = asset_file_of_raw_in_txn(&self.store, txn, id, &raw)? else {
             return Ok(raw);
         };
-        let body = self.asset_file_body(&manifest)?;
+        let body = self.asset_file_body(txn, &manifest)?;
         let mut row = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
         row.extend_from_slice(&raw[..ENTITY_METADATA_HEADER_LEN]);
         row.extend_from_slice(&body);
@@ -114,7 +121,9 @@ impl crate::Vault {
             return Ok(None);
         }
         let _pin = self.pin_result_body(manifest.facts.blake3);
-        let mut body = CheckedAssetBody::open(&self.store.body_dir()?, &manifest.facts)?;
+        let key = crate::store::body_key_row_in_txn(&self.store, txn, &manifest.facts.blake3)?;
+        let mut body =
+            CheckedAssetBody::open(&self.store.body_dir()?, &manifest.facts, key.as_ref())?;
         let value = read(&mut body)?;
         body.finish()?;
         Ok(Some(value))

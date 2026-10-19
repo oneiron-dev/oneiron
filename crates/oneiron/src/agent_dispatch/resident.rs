@@ -527,9 +527,7 @@ impl AgentDispatcher<'_> {
                 if self
                     .vault
                     .store
-                    .body_dir()?
-                    .open_body(&output.raw_blake3, output.raw_len)?
-                    .is_some() =>
+                    .body_file_present(&output.raw_blake3, output.raw_len)? =>
             {
                 Some(OwnedBody {
                     owner: result_ref,

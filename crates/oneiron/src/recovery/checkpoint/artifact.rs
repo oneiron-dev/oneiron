@@ -40,7 +40,7 @@ use oneiron_crypto::{Kek, MAX_PLAINTEXT_LEN, Purpose, SuiteId};
 use serde::{Deserialize, Serialize};
 
 use self::sink::Sealer;
-pub(super) use self::sink::write_artifact;
+pub(super) use self::sink::{ArtifactBody, write_artifact};
 use super::commitment::{self, CheckpointSigner, Trust};
 use crate::world_keys::{
     CarriedVaultKey, OpenedDataKey, VaultKeyUnlock, VaultKeyWrapInfo, VaultPageSeal, refused,
@@ -108,6 +108,9 @@ impl ArtifactKind {
 pub struct CheckpointKey {
     vault_id: [u8; 32],
     kek: Kek,
+    /// The vault's body-file wrap key, which opens the sealed body files'
+    /// key rows the artifact's image carries (FIX 5348).
+    body_wrap: zeroize::Zeroizing<[u8; 32]>,
     trust: Trust,
     /// The data key a carried wrap opened to, kept opaque for a sealed vault
     /// restored from the artifact ([`Self::restored_page_seal`]); `None` for
@@ -163,6 +166,7 @@ impl CheckpointKey {
         Ok(Self {
             vault_id: prelude.vault_id,
             kek: Kek::from_bytes(*key),
+            body_wrap: opened.subkey(crate::store::BODY_FILE_WRAP_CONTEXT),
             trust: Trust::Nobody,
             opened: Some(opened),
         })
@@ -208,6 +212,11 @@ impl CheckpointKey {
             .map(OpenedDataKey::restored_page_seal)
             .transpose()
     }
+
+    /// The seal the artifact's sealed body files' key rows open under.
+    pub(super) fn body_seal(&self) -> crate::store::BodySeal {
+        crate::store::BodySeal::new(self.vault_id, &self.body_wrap)
+    }
 }
 
 impl Vault {
@@ -219,6 +228,7 @@ impl Vault {
         Ok(CheckpointKey {
             vault_id: *self.vault_id().as_bytes(),
             kek: Kek::from_bytes(*self.vault_subkey(SEAL_CONTEXT)?),
+            body_wrap: self.vault_subkey(crate::store::BODY_FILE_WRAP_CONTEXT)?,
             trust: Trust::Device(self.device_keystore()?),
             opened: None,
         })
@@ -236,6 +246,7 @@ impl Vault {
             CheckpointKey {
                 vault_id: *self.vault_id().as_bytes(),
                 kek: Kek::from_bytes(*key),
+                body_wrap: self.vault_subkey(crate::store::BODY_FILE_WRAP_CONTEXT)?,
                 trust: Trust::Nobody,
                 opened: None,
             },
@@ -474,7 +485,12 @@ fn read_at(file: &mut File, at: u64, len: u64) -> Result<Vec<u8>> {
 }
 
 impl<'k> SealedBodies<'k> {
-    /// Each body's BLAKE3 and length, in the manifest's order.
+    /// The key the artifact opened with.
+    pub(super) fn checkpoint_key(&self) -> &'k CheckpointKey {
+        self.sealer.key
+    }
+
+    /// Each body stream's BLAKE3 and length, in the manifest's order.
     pub(super) fn list(&self) -> Vec<([u8; 32], u64)> {
         self.streams
             .iter()
