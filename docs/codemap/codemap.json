@@ -12993,6 +12993,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/program_step.rs",
+     "purpose": "A turn program's code run (DOOR-141 PR2): the program's own leased try, lent to the one callable SKILL its…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -22229,13 +22239,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/program/authority.rs",
      "purpose": "The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 17,
       "fn": 1
      }
     },
@@ -22257,8 +22267,18 @@
      "path": "src/dreamer_runner/program/mod.rs",
      "purpose": "Turn-woken programs (DOOR-141, FIX 4382)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/run.rs",
+     "purpose": "Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -22277,7 +22297,7 @@
      "path": "src/dreamer_runner/program/types.rs",
      "purpose": "The DOOR-141 vocabulary: the pinned program, its arming, the wake a landed turn owes it, and what admitting…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 1,
       "struct": 7
@@ -22595,7 +22615,7 @@
      "surface": {
       "crate-vis": 14,
       "mod": 1,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -22726,6 +22746,24 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TurnProgramExecutor",
+      "TurnProgramHost",
+      "TurnProgramReactor",
+      "TurnProgramRequest",
+      "TurnProgramRuntime"
+     ],
+     "path": "src/dreamer_wake/program.rs",
+     "purpose": "The Dreamer's turn program runtime (DOOR-141 PR2, FIX 4382)",
+     "surface": {
+      "fn": 1,
+      "struct": 3,
+      "trait": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -22811,13 +22849,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/settlement.rs",
      "purpose": "What the driver does with an attempt once the executor returns: milestones, landing, complete, park, publish",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -39420,6 +39458,7 @@
      "path": "src/outbound_consent/result_scrub.rs",
      "purpose": "Result redaction types, sender trait, and transport hardening policy",
      "surface": {
+      "crate-vis": 1,
       "fn": 8,
       "struct": 6,
       "trait": 1
@@ -39645,7 +39684,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -62336,7 +62375,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 99,
+     "files": 100,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62602,7 +62641,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 88,
+     "files": 89,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62616,7 +62655,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63619,7 +63658,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3915,
+   "source_files": 3918,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69867,7 +69906,7 @@
      "path": "src/supervisor/mod.rs",
      "purpose": "The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps…",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -69878,6 +69917,19 @@
      "purpose": "Single wake-pass assembly and engine delegation",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProgramExecutorFactory"
+     ],
+     "path": "src/supervisor/program_factory.rs",
+     "purpose": "The turn program runtime around a host's executor factory (DOOR-141 PR2)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -70081,7 +70133,7 @@
      "purpose": "RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints"
     },
     "supervisor": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -70111,7 +70163,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 18,
+   "source_files": 19,
    "test_files": 10
   },
   "oneiron-ffi": {
@@ -75640,6 +75692,16 @@
      "purpose": "The host's half of DOOR-141: the wakes a landed turn's own commit owed its actor's armed programs, typed…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/turn_program_host.rs",
+     "purpose": "What this server lends one entry of a Dreamer turn program (DOOR-141 PR2): the engine-native code host's own…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -86049,7 +86111,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 53,
+     "files": 54,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86506,7 +86568,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 848,
+   "source_files": 849,
    "test_files": 182
   },
   "oneiron-spawn": {
