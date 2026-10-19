@@ -40,8 +40,8 @@ use crate::server::SyncServer;
 /// The largest sealed change body read: one input envelope at its codec's
 /// own bound (16 MiB of plaintext with its header and tag), in base64, with
 /// its binding fields. The engine carries an input past one row's bound in
-/// numbered parts and refuses none for its length (FIX 5445), so only the
-/// envelope codec bounds what a surface sends.
+/// numbered parts and refuses none for its length (FIX 5445). A frame of
+/// numbered envelopes (FIX 5521) past this bound is not read here yet.
 const SEALED_BODY_LIMIT: usize = 24 << 20;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -261,7 +261,14 @@ struct SealedBody {
     seen: String,
     holder: String,
     recipients: Vec<PermitBody>,
-    /// The envelope sealed to the holder's key, as standard base64.
+    /// The input sealed to the holder's key, as standard base64: one
+    /// envelope, or the frame of numbered envelopes, two or more, which a
+    /// body past one envelope's plaintext bound needs (FIX 5521): its label,
+    /// the envelope count as a big-endian `u32`, each envelope's length as a
+    /// big-endian `u32` and its bytes in order, then the closing mark. Each
+    /// numbered envelope seals the input label and the next run of the body
+    /// under the one-envelope key id, then its index and the count, each a
+    /// big-endian `u32` (`secret_custody::control::input::envelopes`).
     input_base64: String,
     /// For a register, the `manifest_ref` its sealed record names: this
     /// install attaches the manifest it resolves for it. Absent, it attaches

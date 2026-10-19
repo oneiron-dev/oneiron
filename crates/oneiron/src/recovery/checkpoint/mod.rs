@@ -26,6 +26,7 @@ mod rebuild;
 mod restore_class;
 mod tiers;
 mod write_budget;
+mod write_estimate;
 use crate::ports::{IndexRows, RetrievalIndexInventory};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody, MadeDestination};
@@ -892,7 +893,7 @@ impl Vault {
         // it: only a committed restore keeps them (C8). The config is checked
         // first, as an owned open checks it before it touches the disk.
         Self::check_open_config(&config)?;
-        let mut room = write_budget::RestoreRoom::new(budget, &image);
+        let mut room = write_budget::RestoreRoom::new(budget, &image, &config);
         room.admit()?;
         let mut made = MadeDestination::make(destination, home)?;
         // A sealed copy's open writes its page-seal mirror beside it, outside
@@ -976,7 +977,7 @@ impl Vault {
         })?;
         drop(vault);
         // Re-open through all ABI, model, analyzer and manifest gates before rebuilding.
-        room.admit_derived()?;
+        room.admit_derived(destination)?;
         let vault = Self::open_under_lease(destination, config, made.lease()?)?;
         #[cfg(test)]
         fail_at(RestoreStep::SecondOpen)?;
@@ -996,12 +997,12 @@ impl Vault {
             #[cfg(test)]
             fail_at(RestoreStep::ReceiptCheck)?;
         }
-        room.admit_derived()?;
+        room.admit_derived(destination)?;
         let (rebuilt_entities, rebuilt_text_documents, pending_embeddings) =
             rebuild::rebuild(&vault)?;
-        room.admit_derived()?;
+        room.admit_derived(destination)?;
         rebuild::rebuild_auxiliary(&vault, image.created_at)?;
-        room.admit_derived()?;
+        room.admit_derived(destination)?;
         let epoch = RestoreEpoch {
             checkpoint_id,
             restored_at,

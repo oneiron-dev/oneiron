@@ -130,10 +130,50 @@ impl std::fmt::Debug for AnalyzedText {
     }
 }
 
+/// One tree of the text index a document's rows go into.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TextTree {
+    Postings,
+    Forward,
+    FieldLengths,
+    Meta,
+}
+
 impl AnalyzedText {
     /// Whether this analysis was read from exactly `fields`.
     pub(crate) fn reads(&self, fields: &[(String, String)]) -> bool {
         self.source == fields
+    }
+
+    /// Each row [`index_analyzed_text`] writes for this analysis, by its tree
+    /// and its key's and value's lengths: a posting per term, then the
+    /// document's forward, field-length and meta rows; none for an analysis
+    /// with no term. A restore's copy claims them ahead (FIX 5613).
+    pub(crate) fn index_rows(&self, mut row: impl FnMut(TextTree, u64, u64)) -> Result<()> {
+        let per_term = &self.analysis.per_term;
+        if per_term.is_empty() {
+            return Ok(());
+        }
+        for (term, fields_tf) in per_term {
+            // As `encode_posting_entry` writes it: the id, a count byte, then
+            // each field's id and tf.
+            let entry = ENTITY_ID_LEN + 1 + fields_tf.len() * (2 + 4);
+            row(
+                TextTree::Postings,
+                posting_key(term).len() as u64,
+                entry as u64,
+            );
+        }
+        let id = ENTITY_ID_LEN as u64;
+        row(
+            TextTree::Forward,
+            id,
+            encode_forward(per_term)?.len() as u64,
+        );
+        let lengths = encode_field_lengths(&self.analysis.per_field_len);
+        row(TextTree::FieldLengths, id, lengths.len() as u64);
+        row(TextTree::Meta, id, DOC_META_LEN as u64);
+        Ok(())
     }
 }
 

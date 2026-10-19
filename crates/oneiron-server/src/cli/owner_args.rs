@@ -166,14 +166,15 @@ pub struct RestoreArgs {
     #[arg(long, value_name = "REPORT", conflicts_with_all = ["activate", "label"])]
     pub capsule: Option<PathBuf>,
 
-    /// With `--unlock kit`: a world kit piece file, a recovery code as text
-    /// or a piece export. Give two, or one and the kit passphrase, read from
-    /// stdin or `--secret-file`.
+    /// With `--unlock kit`: a world kit or data-key kit piece file, a
+    /// recovery code as text or a piece export. Give two, or one and the kit
+    /// passphrase, read from stdin or `--secret-file`.
     #[arg(long = "piece", value_name = "FILE")]
     pub pieces: Vec<PathBuf>,
 
-    /// With `--unlock kit`: the vault id the kit is bound to, 64 hex digits,
-    /// as `oneiron recovery-kit status` prints it.
+    /// With `--unlock kit`: the vault id the kit is bound to, 64 hex digits:
+    /// a world kit's as `oneiron recovery-kit status` prints it, a data-key
+    /// kit's as `recovery-kit issue-vault-key` and `--inspect` print it.
     #[arg(long, value_name = "HEX")]
     pub vault_id: Option<String>,
 
@@ -208,7 +209,9 @@ pub enum UnlockMethod {
     /// An escrow recipient's seed, from a recovery box or as a secret; with
     /// `--capsule`, a registry's capsule and its recipient's secret.
     Escrow,
-    /// The world recovery kit: its root opens the `world-kit` escrow wrap.
+    /// A recovery kit, by the kind its pieces carry: the world kit's root
+    /// opens the `world-kit` escrow wrap; the data-key kit's pieces rebuild
+    /// the vault key itself, checked against its commitment.
     Kit,
 }
 
@@ -296,8 +299,8 @@ pub struct VaultKeyArgs {
 pub struct VaultKeyAddDeviceArgs {
     /// How a sealed vault's pages unlock before it opens: `device` (this
     /// install's keystore), `password`, `passkey`, `escrow` or `kit` (the
-    /// world kit's `world-kit` escrow wrap), its secret read as `oneiron
-    /// restore --unlock` reads it.
+    /// world kit's `world-kit` escrow wrap, or the data-key kit's pieces),
+    /// its secret read as `oneiron restore --unlock` reads it.
     #[arg(long, value_enum, default_value_t = UnlockMethod::Device)]
     pub unlock: UnlockMethod,
 
@@ -309,15 +312,16 @@ pub struct VaultKeyAddDeviceArgs {
     #[arg(long, value_name = "NAME")]
     pub label: Option<String>,
 
-    /// With `--unlock kit`: a world kit piece file, a recovery code as text
-    /// or a piece export. Give two, or one and the kit passphrase, read from
-    /// stdin or `--secret-file`.
+    /// With `--unlock kit`: a world kit or data-key kit piece file, a
+    /// recovery code as text or a piece export. Give two, or one and the kit
+    /// passphrase, read from stdin or `--secret-file`.
     #[arg(long = "piece", value_name = "FILE")]
     pub pieces: Vec<PathBuf>,
 
-    /// With `--unlock kit`: the vault id the kit is bound to, 64 hex digits,
-    /// as `oneiron recovery-kit status` prints it. It is never read from the
-    /// vault's page-seal mirror, which names another id.
+    /// With `--unlock kit`: the vault id the kit is bound to, 64 hex digits:
+    /// a world kit's as `oneiron recovery-kit status` prints it, a data-key
+    /// kit's as `recovery-kit issue-vault-key` printed it. It is never read
+    /// from the vault's page-seal mirror.
     #[arg(long, value_name = "HEX")]
     pub vault_id: Option<String>,
 

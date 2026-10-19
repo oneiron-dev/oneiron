@@ -17,13 +17,23 @@
 //! - a rehearsal's copy, at the bytes of the bodies and rows its image
 //!   carries, claimed before the copy is made or opened, the rest set before
 //!   each body lands and before the rows do (the custody fork lands with
-//!   them). What the copy derives after them, its reopen, its index rebuild
-//!   and its epoch, is admitted at the floor before each step: it goes ahead
+//!   them);
+//! - with them, from the same start, the bound on everything the copy writes
+//!   past them (FIX 5613, `write_estimate`): its pages, the index rows it
+//!   stages, its reopen, its rebuilt indexes and projections, the pages its
+//!   later transactions copy, and its epoch. It stays claimed across the
+//!   reopen and every step; before each one the claim is set to what is left
+//!   of it, less what the copy's file has grown by past its rows, so pages
+//!   already landed are not claimed twice. Past the bound a step goes ahead
 //!   only while the disk still holds the floor past every other claim.
+
+use std::path::Path;
 
 use super::CheckpointImage;
 use super::carried_bodies::SealedFile;
-use crate::{Error, Result};
+use super::write_estimate::RestoreWriteEstimate;
+use crate::store::PageLayout;
+use crate::{Error, Result, VaultConfig};
 
 /// The free-space floor a host keeps under what it writes, lent to a backup
 /// or a rehearsal for its own writes. Each call replaces the claim the work
@@ -33,6 +43,12 @@ pub trait RecoveryWriteBudget: Send + Sync {
     /// `false`, the claim staying as it was, when they would take the disk
     /// below its floor past every other claim.
     fn hold(&self, bytes: u64) -> bool;
+
+    /// Whether this budget keeps a floor at all. Work under one that keeps
+    /// none claims nothing ahead, so a restore does not work out its bound.
+    fn floored(&self) -> bool {
+        true
+    }
 }
 
 /// Why a backup's or a rehearsal's write was refused: the disk is at the
@@ -72,6 +88,10 @@ impl RecoveryWriteBudget for Unfloored {
     fn hold(&self, _: u64) -> bool {
         true
     }
+
+    fn floored(&self) -> bool {
+        false
+    }
 }
 
 /// Claims `bytes` still to write on `budget`, or refuses at its floor.
@@ -93,40 +113,68 @@ pub(super) fn landing_len(len: u64, sealed: Option<&SealedFile>) -> u64 {
 }
 
 /// The room a restore's copy claims as it lands: the image's bodies and rows,
-/// less what has landed.
+/// less what has landed, and the bound on what it writes past them.
 pub(super) struct RestoreRoom<'b> {
     budget: &'b dyn RecoveryWriteBudget,
     /// The bodies' bytes still to land.
     bodies: u64,
     /// The rows' bytes still to land.
     rows: u64,
+    /// The bound on what the copy writes past its bodies and rows
+    /// (`write_estimate`); none under a budget that keeps no floor.
+    derived: u64,
+    /// The rows' bytes once they landed: the copy's file holds them, and
+    /// what it grows by past them is what the bound has spent.
+    landed_rows: u64,
 }
 
 impl<'b> RestoreRoom<'b> {
-    /// The room `image` takes as it lands, claimed on `budget`.
-    pub(super) fn new(budget: &'b dyn RecoveryWriteBudget, image: &CheckpointImage) -> Self {
+    /// The room `image` takes as it lands under `config`, claimed on
+    /// `budget`.
+    pub(super) fn new(
+        budget: &'b dyn RecoveryWriteBudget,
+        image: &CheckpointImage,
+        config: &VaultConfig,
+    ) -> Self {
         let bodies = image
             .bodies
             .iter()
             .enumerate()
             .map(|(index, (_, len))| landing_len(*len, image.sealed_bodies.get(&(index as u64))))
             .fold(0_u64, u64::saturating_add);
+        let derived = if budget.floored() {
+            RestoreWriteEstimate::of(image, config, PageLayout::for_new_env()).total()
+        } else {
+            0
+        };
         Self {
             budget,
             bodies,
             rows: rows_len(image),
+            derived,
+            landed_rows: 0,
         }
     }
 
     /// Claims the whole copy before anything of it is made or opened.
     pub(super) fn admit(&self) -> Result<()> {
-        hold(self.budget, self.bodies.saturating_add(self.rows))
+        hold(
+            self.budget,
+            self.bodies
+                .saturating_add(self.rows)
+                .saturating_add(self.derived),
+        )
     }
 
     /// Claims what is left before a body of `len` bytes lands, that body
     /// with it.
     pub(super) fn landing_body(&mut self, len: u64) -> Result<()> {
-        hold(self.budget, self.bodies.saturating_add(self.rows))?;
+        hold(
+            self.budget,
+            self.bodies
+                .saturating_add(self.rows)
+                .saturating_add(self.derived),
+        )?;
         self.bodies = self.bodies.saturating_sub(len);
         Ok(())
     }
@@ -136,14 +184,22 @@ impl<'b> RestoreRoom<'b> {
     pub(super) fn landing_rows(&mut self, image: &CheckpointImage) -> Result<()> {
         self.bodies = 0;
         self.rows = rows_len(image);
-        hold(self.budget, self.rows)
+        hold(self.budget, self.rows.saturating_add(self.derived))
     }
 
-    /// Admits one write the copy derives once its rows landed: nothing more
+    /// Claims, before one write the copy derives once its rows landed, what
+    /// the bound has left: the bound less what the copy's file at
+    /// `destination` has grown by past the rows. Past the bound nothing more
     /// is claimed, and the floor must still hold.
-    pub(super) fn admit_derived(&mut self) -> Result<()> {
-        self.rows = 0;
-        hold(self.budget, 0)
+    pub(super) fn admit_derived(&mut self, destination: &Path) -> Result<()> {
+        if self.rows > 0 {
+            self.landed_rows = self.rows;
+            self.rows = 0;
+        }
+        // A file that cannot be read has spent nothing: the bound stays.
+        let file = std::fs::metadata(destination.join("data.mdb")).map_or(0, |file| file.len());
+        let spent = file.saturating_sub(self.landed_rows);
+        hold(self.budget, self.derived.saturating_sub(spent))
     }
 }
 
