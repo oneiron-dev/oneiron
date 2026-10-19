@@ -8,6 +8,7 @@ use crate::skill::{SkillCallContract, SkillLifecycle, SkillRole};
 use crate::{EntityId, Vault};
 
 use super::authority::TurnProgramAuthority;
+use super::run::scrub_actor_step_bodies_in_txn;
 use super::types::{ArmTurnProgram, ProgramRecipePin, TurnProgramArming, TurnProgramRegistration};
 use super::{ARM, WAKE};
 
@@ -81,8 +82,9 @@ pub(crate) fn disarm_turn_program_in_txn(
 }
 
 /// An erased actor arms nothing and is owed nothing (FIX 3520): its armings
-/// and the wakes its turns left go in the erase's own writer. Admission
-/// receipts and attempt stamps stay, as every runner stamp does.
+/// and the wakes its turns left go in the erase's own writer, and so do the
+/// bodies its programs' steps keep (FIX 5710). Admission receipts, attempt
+/// stamps and each step's evidence stay, as every runner stamp does.
 pub(crate) fn erase_turn_program_actor_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -99,7 +101,7 @@ pub(crate) fn erase_turn_program_actor_in_txn(
     for key in owed {
         WAKE.delete(vault, txn, &key)?;
     }
-    Ok(())
+    scrub_actor_step_bodies_in_txn(vault, txn, actor)
 }
 
 /// Whether the SKILL `pin` names still is the program pinned: the same

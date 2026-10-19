@@ -11,6 +11,14 @@
 //! and request, a verb write's place and call, an outbound send's intent),
 //! then the terminal evidence and exact result after it. An effect whose
 //! end is unknown stays uncertain; nothing here resends one.
+//!
+//! A send's body is the one content a step keeps (FIX 5710). It is admitted
+//! as admitted text is, at the side-row wall, before it is kept, and the
+//! erase of the program's actor takes it out of every step, leaving the
+//! step's evidence whole. A body the wall refuses, or one that settles after
+//! its actor's erase, is not kept; the step settles all the same.
+
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
@@ -18,10 +26,12 @@ use crate::Vault;
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState, SetAttemptResult,
 };
+use crate::batch::secret_scan::{SidePart, admit_side_parts};
 use crate::code_run::{CodeRunReplayGeneration, CodeRunReplayRecord};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound_intent_ledger::IntentLedgerRecord;
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, Named, SideTable};
 
 use super::ATTEMPT;
@@ -29,10 +39,17 @@ use super::types::code_run_bytes;
 
 const STEP_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-step:v1";
 
+/// Where a send's body sits, as each custody record the wall mints from it
+/// names its origin (with the step's full key): one stable place for every
+/// step.
+const STEP_BODY_PLACE: &str = "side:DREAMER_TURN_PROGRAM_STEP:result";
+
 /// One program's code run, keyed by the code run.
 const RUN: SideTable<EntityId, TurnProgramRun, Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_RUN);
-/// One step of a program's run, keyed by the code run, then the step.
+/// One step of a program's run, keyed by the code run, then the step. A
+/// send's inline body is a KS-2 body-instance client (FIX 5710): until KS-2
+/// holds it, the actor's erase clears it here.
 const STEP: SideTable<(EntityId, EntityId), TurnProgramStep, Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_STEP);
 
@@ -119,7 +136,9 @@ enum StepState {
     /// Bound and not ended.
     Issued,
     /// Ended, with its exact result's digest and, for a send, the body the
-    /// transport returned.
+    /// transport returned as the side-row wall admitted it. The digest is
+    /// over the bytes returned; the body is absent when the wall refused it
+    /// or the program's actor is erased.
     Settled {
         result_digest: [u8; 32],
         result: Option<Vec<u8>>,
@@ -460,8 +479,11 @@ pub(crate) fn join_program_checkpoint_in_txn(
 
 /// Settles a program's outbound send into its step, in the transaction that
 /// records the send's terminal result, with the body its transport returned
-/// when it returned one. A send no program attempt made writes nothing, and
-/// nothing here can fail the send's own commit.
+/// when it returned one, as the side-row wall admits it (FIX 5710). A send no
+/// program attempt made writes nothing, and nothing here can fail the send's
+/// own commit. The step's digest is over the bytes returned, whatever is
+/// kept of them: a body the wall refuses, or one whose actor is erased by
+/// now, is not kept, and the step settles without it.
 pub(crate) fn settle_program_outbound_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -481,7 +503,7 @@ pub(crate) fn settle_program_outbound_in_txn(
             .update(body.unwrap_or_default())
             .finalize()
             .as_bytes();
-        let step = TurnProgramStep {
+        let skeleton = TurnProgramStep {
             attempt: *record.attempt_id.as_bytes(),
             issued: StepIssue::Outbound {
                 intent: record.id,
@@ -489,11 +511,22 @@ pub(crate) fn settle_program_outbound_in_txn(
             },
             state: StepState::Settled {
                 result_digest,
-                result: body.map(<[u8]>::to_vec),
+                result: None,
             },
             at: now,
         };
-        put_step_savepoint(vault, wtxn, &key, &step)
+        let erased = actor_erased(vault, &*wtxn, &stamp.actor);
+        let Some(body) = body.filter(|_| !erased) else {
+            return put_step_savepoint(vault, wtxn, &key, &skeleton);
+        };
+        if let Err(error) = put_admitted_step_savepoint(vault, wtxn, &key, &skeleton, body) {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a program's outbound step body was not kept; the step settles without it"
+            );
+            return put_step_savepoint(vault, wtxn, &key, &skeleton);
+        }
+        Ok(())
     })();
     if let Err(error) = settled {
         tracing::warn!(
@@ -501,6 +534,22 @@ pub(crate) fn settle_program_outbound_in_txn(
             "a program's outbound step was not settled; the send stands"
         );
     }
+}
+
+/// Whether `actor` is erased here: a step that settles after its actor's
+/// erase keeps no body, so a late answer cannot bring back one the erase
+/// scrubbed. A marker that cannot be read keeps no body either.
+fn actor_erased(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> bool {
+    vault
+        .store
+        .port_deletion_marked(txn, DeletionMarker::HardDelete, actor)
+        .unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a program step's actor erase marker was not read; its body is not kept"
+            );
+            true
+        })
 }
 
 /// One STEP row in a savepoint of `wtxn`, so a row that fails leaves the
@@ -514,5 +563,83 @@ fn put_step_savepoint(
     let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
     STEP.put(vault, &mut savepoint, key, step)?;
     savepoint.commit()?;
+    Ok(())
+}
+
+/// `skeleton`, settled, keeping `body` as the side-row wall admits it, in a
+/// savepoint of `wtxn`: a clean body is kept as returned, a masked one keeps
+/// its handles with the custody they name minted in the same savepoint. A
+/// body the wall refuses, or any failure, rolls the savepoint back whole,
+/// custody and all.
+fn put_admitted_step_savepoint(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &(EntityId, EntityId),
+    skeleton: &TurnProgramStep,
+    body: &[u8],
+) -> Result<()> {
+    let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+    let full = STEP.key_bytes(key);
+    let mut parts = [SidePart::Body(body.to_vec())];
+    admit_side_parts(
+        vault,
+        &mut savepoint,
+        (STEP_BODY_PLACE, full.as_slice()),
+        &mut parts,
+        |parts| matches!(parts, [SidePart::Body(_)]),
+    )?;
+    let [SidePart::Body(admitted)] = parts else {
+        return Err(Error::InvariantViolation(
+            "an admitted step body is no longer a body",
+        ));
+    };
+    let mut step = skeleton.clone();
+    if let StepState::Settled { result, .. } = &mut step.state {
+        *result = Some(admitted);
+    }
+    STEP.put(vault, &mut savepoint, key, &step)?;
+    savepoint.commit()?;
+    Ok(())
+}
+
+/// The erase of `actor` takes the body out of each of its programs' steps
+/// (FIX 5710), in the erase's own writer. Its programs are found by their
+/// attempt stamps, which a disarm leaves, and every try of one admission
+/// runs its one code run. A settled step keeps its key, try, issuing
+/// binding, digest and time; an issued or uncertain step stays as it is,
+/// and nothing is sent again.
+pub(super) fn scrub_actor_step_bodies_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let mut code_runs = BTreeSet::new();
+    for row in ATTEMPT.iter_from(vault, &*wtxn, &[])? {
+        let (_, stamp) = row?;
+        if stamp.actor == *actor {
+            code_runs.insert(turn_program_code_run(&stamp.admission)?);
+        }
+    }
+    for code_run in code_runs {
+        let mut bodied = Vec::new();
+        for row in STEP.iter_from(vault, &*wtxn, code_run.as_bytes())? {
+            let (key, step) = row?;
+            if matches!(
+                step.state,
+                StepState::Settled {
+                    result: Some(_),
+                    ..
+                }
+            ) {
+                bodied.push((key, step));
+            }
+        }
+        for (key, mut step) in bodied {
+            if let StepState::Settled { result, .. } = &mut step.state {
+                *result = None;
+            }
+            STEP.put(vault, wtxn, &key, &step)?;
+        }
+    }
     Ok(())
 }

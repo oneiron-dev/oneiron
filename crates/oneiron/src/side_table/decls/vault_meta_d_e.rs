@@ -291,8 +291,10 @@ side_tables! {
     /// Key: id16(code run).
     DREAMER_TURN_PROGRAM_RUN: VaultMeta b"dreamer:turn_program:run:v1:" Named;
     /// DOOR-141 PR2: one effect settled into a turn program's step: its issuing binding, then its
-    /// terminal evidence and exact result, or that its end is unknown. Key: id16(code run) +
-    /// id16(step).
+    /// terminal evidence and exact result, or that its end is unknown. FIX 5710: a send's inline
+    /// body (`state.Settled.result`) is a KS-2 body-instance client; the wall admits it as its
+    /// own part and the ARM entry's scrub clears it, so this entry names no class or scrub.
+    /// Key: id16(code run) + id16(step).
     DREAMER_TURN_PROGRAM_STEP: VaultMeta b"dreamer:turn_program:step:v1:" Named;
     /// DOOR-141: a wake a landed turn owes an armed program, recorded in that turn's own commit and
     /// consumed by its admission. Key: id16(turn) + id16(registration).
