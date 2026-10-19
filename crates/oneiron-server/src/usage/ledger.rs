@@ -1,5 +1,6 @@
 //! Durable idempotent provider-list meters, aggregated only per owner and vault.
 use super::{codec::*, keys::*, model::*};
+use oneiron::agent_dispatch::budget_doors::RunRungSettlement;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 #[derive(Clone)]
@@ -91,9 +92,7 @@ impl UsageLedger {
         owner: &str,
         vault_id: &str,
         run: &str,
-    ) -> Result<Vec<oneiron::agent_dispatch::budget_doors::RunRungSettlement>, UsageError> {
-        use oneiron::agent_dispatch::budget_doors::RunRungSettlement;
-
+    ) -> Result<Vec<RunRungSettlement>, UsageError> {
         validate_dimension("owner", owner, MAX_DIMENSION_LEN)?;
         validate_dimension("vaultId", vault_id, MAX_DIMENSION_LEN)?;
         validate_dimension("run", run, MAX_DIMENSION_LEN)?;
@@ -115,32 +114,72 @@ impl UsageLedger {
                         let Some(call) = event.run.as_ref().filter(|call| call.run == run) else {
                             return Ok(());
                         };
-                        rows.push(RunRungSettlement {
-                            instance: call.instance.clone(),
-                            lease: call.lease.clone(),
-                            revision: call.revision,
-                            model: event.model.clone(),
-                            offer: call.offer.clone(),
-                            route: call.route.clone(),
-                            reserved_units: call.reserved_units,
-                            settled_units: call.settled_units,
-                            unit: call.unit.clone(),
-                            usage_reported: call.usage_reported,
-                            settlement_refused: call.settlement_refused,
-                            occurred_at: event.occurred_at.unwrap_or(stored.recorded_at),
-                            cost_amount: stored.cost.as_ref().map(|cost| cost.amount),
-                            currency: stored.cost.as_ref().map(|cost| cost.currency.clone()),
-                            price_table_snapshot: stored
-                                .cost
-                                .as_ref()
-                                .map(|cost| cost.price_table_snapshot.clone()),
-                        });
+                        rows.push(settlement(&stored, call));
                         Ok(())
                     },
                 )
             })?;
         rows.sort_by(|a, b| (&a.instance, &a.lease).cmp(&(&b.instance, &b.lease)));
         Ok(rows)
+    }
+
+    /// The settled physical calls of one free-time cycle (FIX 4453), from
+    /// their stamped durable events, oldest first: every call whose run the
+    /// engine bound to `agent`'s `cycle` before it began, each retry,
+    /// fallback and late settlement included. A call no cycle bound never
+    /// matches. A stored event that does not decode leaves the read
+    /// incomplete and is never read as zero spend.
+    pub fn cycle_settlements(
+        &self,
+        owner: &str,
+        vault_id: &str,
+        agent: &str,
+        cycle: &str,
+    ) -> Result<CycleSettlements, UsageError> {
+        validate_dimension("owner", owner, MAX_DIMENSION_LEN)?;
+        validate_dimension("vaultId", vault_id, MAX_DIMENSION_LEN)?;
+        validate_dimension("agent", agent, MAX_DIMENSION_LEN)?;
+        validate_dimension("cycle", cycle, MAX_DIMENSION_LEN)?;
+        let mut read = CycleSettlements {
+            settlements: Vec::new(),
+            complete: true,
+        };
+        self.vault
+            .try_with_write_txn_grouped(|txn| -> Result<(), UsageError> {
+                self.vault.sync_state_visit_prefix_in_write_txn(
+                    txn,
+                    &usage_event_prefix(owner, vault_id),
+                    |key, raw| -> Result<(), UsageError> {
+                        let Ok(stored) = decode_entry(raw) else {
+                            read.complete = false;
+                            return Ok(());
+                        };
+                        let event = &stored.event;
+                        if event.owner != owner
+                            || event.vault_id != vault_id
+                            || usage_event_key(owner, vault_id, &event.idempotency_key) != key
+                        {
+                            return Err(oneiron::Error::CorruptedIndex("usage event scope").into());
+                        }
+                        if event.agent_id.as_deref() != Some(agent) {
+                            return Ok(());
+                        }
+                        let Some(call) = event
+                            .run
+                            .as_ref()
+                            .filter(|call| call.cycle.as_deref() == Some(cycle))
+                        else {
+                            return Ok(());
+                        };
+                        read.settlements.push(settlement(&stored, call));
+                        Ok(())
+                    },
+                )
+            })?;
+        read.settlements.sort_by(|a, b| {
+            (a.occurred_at, &a.instance, &a.lease).cmp(&(b.occurred_at, &b.instance, &b.lease))
+        });
+        Ok(read)
     }
 
     pub fn vault_rollup(
@@ -180,6 +219,48 @@ impl UsageLedger {
             })
     }
 }
+/// One free-time cycle's settled calls, as [`UsageLedger::cycle_settlements`]
+/// read them.
+#[derive(Clone, Debug)]
+pub struct CycleSettlements {
+    pub settlements: Vec<RunRungSettlement>,
+    /// False when a stored event did not decode: the records shown are then
+    /// some of the spend, never all of it.
+    pub complete: bool,
+}
+
+/// One stored call's settlement, with the safe spend dimensions its run
+/// was admitted with: run, label, agent, cycle, item and spend scope.
+fn settlement(stored: &StoredUsageEvent, call: &UsageRun) -> RunRungSettlement {
+    let event = &stored.event;
+    RunRungSettlement {
+        instance: call.instance.clone(),
+        lease: call.lease.clone(),
+        run: call.run.clone(),
+        revision: call.revision,
+        model: event.model.clone(),
+        offer: call.offer.clone(),
+        route: call.route.clone(),
+        purpose: call.purpose.clone(),
+        agent: event.agent_id.clone(),
+        cycle: call.cycle.clone(),
+        item: call.item.clone(),
+        spend_scope: call.spend_scope.clone(),
+        reserved_units: call.reserved_units,
+        settled_units: call.settled_units,
+        unit: call.unit.clone(),
+        usage_reported: call.usage_reported,
+        settlement_refused: call.settlement_refused,
+        occurred_at: event.occurred_at.unwrap_or(stored.recorded_at),
+        cost_amount: stored.cost.as_ref().map(|cost| cost.amount),
+        currency: stored.cost.as_ref().map(|cost| cost.currency.clone()),
+        price_table_snapshot: stored
+            .cost
+            .as_ref()
+            .map(|cost| cost.price_table_snapshot.clone()),
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct StoredUsageEvent {
