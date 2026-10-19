@@ -169,12 +169,12 @@ impl Memory<'_> {
         job_ref: &str,
     ) -> MemoryResult<Option<DreamerAttemptView>> {
         let id = parse_job_ref(job_ref)?;
-        let store = DreamerRunnerStore::new(self.vault);
-        let Some(status) = store.status(id)? else {
+        let Some((status, parked)) = DreamerRunnerStore::new(self.vault).status_with_park(id)?
+        else {
             return Ok(None);
         };
         let mut view = attempt_view_from_record(&status.attempt);
-        view.parked = store.parked_attempt(id)?.as_ref().map(parked_view);
+        view.parked = parked.as_ref().map(parked_view);
         Ok(Some(view))
     }
 

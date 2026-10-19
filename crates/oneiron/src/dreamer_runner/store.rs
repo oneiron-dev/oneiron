@@ -898,6 +898,31 @@ impl<'a> DreamerRunnerStore<'a> {
         PARKED.get(&self.vault.store, &rtxn, &attempt_id)
     }
 
+    /// Reads one Dreamer attempt and its parked row on one snapshot, so a
+    /// park cleared between two reads never reads absent beside a status
+    /// that still shows it parked.
+    pub fn status_with_park(
+        &self,
+        id: AttemptId,
+    ) -> Result<Option<(DreamerAttemptStatus, Option<DreamerParkedAttemptRecord>)>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        self.status_with_park_in_txn(&rtxn, id)
+    }
+
+    /// [`Self::status_with_park`] at `txn`'s revision.
+    pub(crate) fn status_with_park_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: AttemptId,
+    ) -> Result<Option<(DreamerAttemptStatus, Option<DreamerParkedAttemptRecord>)>> {
+        let Some(record) = self.attempts.get_in_txn(txn, id)? else {
+            return Ok(None);
+        };
+        let status = decode_dreamer_attempt_status(record)?;
+        let parked = PARKED.get(&self.vault.store, txn, &id)?;
+        Ok(Some((status, parked)))
+    }
+
     /// Whether `attempt_id` holds a parked row at `txn`'s revision.
     pub(crate) fn is_parked_in_txn(
         &self,
