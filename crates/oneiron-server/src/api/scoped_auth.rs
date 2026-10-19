@@ -73,7 +73,8 @@ fn managed_request_caller(
 
 /// A managed vault's attested owner stands only while the vault records the
 /// holder as its live owner (`owner_routes::managed_owner_proof`); every
-/// other caller passes. Refused as the owner door refuses.
+/// other caller passes. Refused as the owner door refuses, told to sign in
+/// again (FIX 5327).
 pub(crate) fn require_live_managed_owner(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -83,7 +84,7 @@ pub(crate) fn require_live_managed_owner(
     };
     super::owner_routes::managed_owner_proof(server, holder)?
         .map(drop)
-        .ok_or_else(|| ApiError::forbidden_scope("owner"))
+        .ok_or_else(ApiError::managed_owner_not_live)
 }
 
 /// [`check_request_auth`] for an OWNER ACT door (FIX 2222): the grade it

@@ -314,6 +314,8 @@ fn public_http_transport_context(
         credential: None,
         owner_grade: false,
         principal: None,
+        requires_publication: true,
+        payer_guard: None,
         transport: BookingTransport::AnonymousHttp,
     })
 }

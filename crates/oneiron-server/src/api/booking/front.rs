@@ -153,7 +153,7 @@ async fn run_constraint_turn_in(
         detected_visitor_tz: input.visitor_tz,
         free_text: input.free_text,
     };
-    let principal = transport.principal;
+    let payer = transport.clone();
     let turn_server = Arc::clone(server);
     // The ladder's model rungs block on the server's runtime.
     let (outcome, rows) = tokio::task::spawn_blocking(
@@ -170,6 +170,8 @@ async fn run_constraint_turn_in(
             let oracle = PublicSlotOracle(oracle);
             let mut state = session.lock().unwrap_or_else(PoisonError::into_inner);
             let (caps, copy) = (front.caps(), front.copy());
+            // Who pays, judged again just before the seat spends (FIX 5327).
+            let principal = payer.payer_now(turn_server.vault());
             let outcome = on_parse_seat(
                 &turn_server,
                 &settings,

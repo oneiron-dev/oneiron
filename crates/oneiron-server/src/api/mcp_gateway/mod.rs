@@ -3,6 +3,7 @@ mod actor_dispatch;
 mod admission;
 mod board_observations;
 mod board_setup;
+mod booking_call;
 mod call_meta;
 mod code_mode_verbs;
 mod device_release;

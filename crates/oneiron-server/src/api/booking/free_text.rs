@@ -41,9 +41,11 @@ pub(super) async fn parse_free_text(
 ) -> Result<(ConstraintObject, Option<String>), ApiError> {
     let settings = parse_seat_settings(server)?;
     let server = Arc::clone(server);
-    let principal = transport.principal;
+    let transport = transport.clone();
     // The ladder's model rungs block on the server's runtime.
     tokio::task::spawn_blocking(move || {
+        // Who pays, judged again just before the seat spends (FIX 5327).
+        let principal = transport.payer_now(server.vault());
         parse_on_seat(&server, &settings, principal, free_text, visitor_tz, now)
     })
     .await
@@ -169,8 +171,10 @@ pub(super) fn on_parse_seat<T>(
 /// the vault that published the page, as its embedded owner, on every
 /// substrate. It is the one hook a payer chosen at publication would
 /// replace. An authenticated caller, a managed vault's live attested owner
-/// included, pays as itself (`transport.rs`); an attested holder the vault
-/// does not record as its live owner pays here, as an anonymous visitor.
+/// included, pays as itself (`transport.rs`). An attested holder the vault
+/// no longer records as its live owner pays as himself while a live grant
+/// here names him, and here, as an anonymous visitor, otherwise or once
+/// that grant no longer stands (FIX 5327, `BookingAdmissionContext::payer_now`).
 fn anonymous_payer(vault: &oneiron::Vault) -> Result<WriteActor, oneiron::MemoryError> {
     let owner = vault.ensure_embedded_owner_actor()?;
     Ok(WriteActor::new(owner, EdgeActorClass::Human))

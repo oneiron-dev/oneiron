@@ -160,6 +160,17 @@ impl Vault {
         Ok(())
     }
 
+    /// Whether the owner withdrew guest grant `grant_ref` here (OF-232):
+    /// a withdrawn grant confers nothing, whatever its row says. A booking
+    /// payer's grant is judged by it too (FIX 5327).
+    pub(crate) fn guest_grant_withdrawn_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant_ref: &EntityId,
+    ) -> Result<bool> {
+        Ok(WITHDRAWN.get(&self.store, txn, grant_ref)?.is_some())
+    }
+
     /// Tombstones, in the caller's writer, every slip minted under
     /// `grant_ref` that no revoke names yet, expired ones included, and
     /// answers their ids.
