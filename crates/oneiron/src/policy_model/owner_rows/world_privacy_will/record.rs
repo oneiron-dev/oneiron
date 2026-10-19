@@ -128,8 +128,9 @@ impl WorldPrivacyRequest {
     }
 }
 
-/// A revision as its 64-hex form reads back; `None` for any other text.
-pub(super) fn parse_revision(hex: &str) -> Option<PolicyRevision> {
+/// A revision as its 64-hex form reads back; `None` for any other text. A
+/// receipt's entry hash reads back the same way.
+pub(in crate::policy_model::owner_rows) fn parse_revision(hex: &str) -> Option<PolicyRevision> {
     if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
     }

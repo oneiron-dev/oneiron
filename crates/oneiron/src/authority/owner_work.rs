@@ -32,11 +32,14 @@
 //! no say-so ([`super::owner_act::owner_live_at`], mesh contract §4), and the
 //! writer and the executor each check the owner live in their own
 //! transactions too. An agent's act is refused by its shape: key, custody and
-//! root work is owner-only until a Grant line names it. Neither op rides a
-//! side branch ([`super::world_privacy::side_world`] is `None`), so every
+//! root work is owner-only until a Grant line names it. Key work a settings
+//! edit left carries that edit's own act instead, and has effect only on the
+//! one judgment of its basis ([`privacy_basis`], FIX 4704). Neither op rides
+//! a side branch ([`super::world_privacy::side_world`] is `None`), so every
 //! proven linked machine folds both.
 
 mod custody;
+mod privacy_basis;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -330,9 +333,14 @@ fn apply_request(
     drop(standing);
     // A carrier the one rule does not admit, or an owner the request's
     // parents hold removed (mesh contract §4), records a valid request
-    // without effect; so does a custody change on a revision it did not see,
-    // or an active one after its secret's revoke.
-    let live = admitted && super::owner_act::owner_live_at(state, request.act.owner);
+    // without effect; so does key work whose settings edit basis the parents
+    // do not admit (FIX 4704), a custody change on a revision it did not
+    // see, or an active one after its secret's revoke.
+    let live = admitted
+        && match &request.privacy_basis {
+            None => super::owner_act::owner_live_at(state, request.act.owner),
+            Some(basis) => privacy_basis::privacy_key_work_basis_admits(state, request, basis),
+        };
     let work = &mut state.owner_work;
     if !live || !custody::custody_request_lands(work, request) {
         work.refused.insert(hash);

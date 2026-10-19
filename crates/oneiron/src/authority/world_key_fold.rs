@@ -293,8 +293,8 @@ fn requested_read(
     let named = asked.kind() == OwnerWorkKind::WorldKey
         && asked.executor == record.machine
         && asked.act.target == record.key.world
-        && asked.act.owner == record.owner
-        && asked.act.seen == record.policy.0;
+        && asked.key_owner() == record.owner
+        && asked.revision() == record.policy.0;
     if !named {
         return None;
     }

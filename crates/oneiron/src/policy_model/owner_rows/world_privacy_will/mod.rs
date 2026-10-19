@@ -35,6 +35,8 @@ pub use record::{WorldPrivacyRequest, WorldPrivacyRequestKind, WorldPrivacyReque
 pub use sdk::{WorldPrivacySetInput, WorldPrivacySetOutput, WorldReadInput, WorldSealedInput};
 pub use unanimity::{WidenUnanimity, WidenUnanimityOffRequest, WidenUnanimityOutcome};
 
+pub(super) use record::parse_revision;
+
 use crate::authority::{
     ActAuthority, ActSurface, PolicyRevision, PrivacyDirection, WorldEditAuthor, WorldPrivacy,
     privacy_direction,
@@ -243,8 +245,7 @@ impl Vault {
             let receipt =
                 self.write_world_privacy_in_txn(txn, author, world, settings, Some(current), None)?;
             let key_owner = key_owner_in_txn(self, txn, actor)?;
-            let receipt =
-                self.finish_world_key_work_in_txn(txn, Some(owner), key_owner, receipt, secret)?;
+            let receipt = self.finish_world_key_work_in_txn(txn, key_owner, receipt, secret)?;
             Ok(WorldPrivacyOutcome::Applied(receipt))
         })?;
         self.queue_if_asked(outcome)

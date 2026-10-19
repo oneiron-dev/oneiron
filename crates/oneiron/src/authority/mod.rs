@@ -161,6 +161,8 @@ pub use oneiron_authority::authority::{
 };
 // The custody work body's own types (WILL L04 row 04).
 pub use oneiron_authority::authority::{CustodyChange, CustodyRecipientPermit};
+// The settings edit a holder's key work follows (FIX 4704).
+pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
 

@@ -198,8 +198,9 @@ impl Vault {
         Ok(Ran::Answered(outcome))
     }
 
-    /// A world's key work, as the act's owner, each record naming the
-    /// request signed as entry `hash`. In Ensure mode: mint the world's
+    /// A world's key work, as the vault owner its key binds
+    /// ([`OwnerWorkRequest::key_owner`]), each record naming the request
+    /// signed as entry `hash`. In Ensure mode: mint the world's
     /// first key, or wrap its current key to every reader the settings
     /// allow. In Reassert mode: first wrap again each key this install
     /// wrapped itself, from its own records and keeping each id, then the
@@ -231,7 +232,7 @@ impl Vault {
         }
         match self.ensure_world_key_or_wide_in_txn(
             txn,
-            request.act.owner,
+            request.key_owner(),
             world,
             secret,
             Some(hash),
@@ -258,11 +259,12 @@ impl Vault {
         executor: EntityId,
     ) -> Result<Option<OwnerWorkRefusal>> {
         let world = request.act.target;
+        let key_owner = request.key_owner();
         Ok(if !self.world_row_live_in_txn(txn, world)? {
             Some(OwnerWorkRefusal::WorldNotLive)
-        } else if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, &request.act.owner)? {
+        } else if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, &key_owner)? {
             Some(OwnerWorkRefusal::OwnerNotLive)
-        } else if fold.world_policy_revision(world).0 != request.act.seen {
+        } else if fold.world_policy_revision(world).0 != request.revision() {
             Some(OWNER_WORK_STALE)
         } else if !eligible_readers(fold, world).any(|reader| reader == executor) {
             Some(OwnerWorkRefusal::ExecutorNotReader)

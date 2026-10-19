@@ -13,7 +13,11 @@
 //! nor carries a secret byte.
 //!
 //! Key, custody and root acts are the owner's own: every work kind refuses
-//! an agent's act until a Grant line names it (Engine 10-19 02:2x).
+//! an agent's act until a Grant line names it (Engine 10-19 02:2x). The one
+//! exception is the key work a world settings edit leaves a holder
+//! ([`WorldPrivacyWorkBasis`], FIX 4704): it carries that edit's own act,
+//! whoever's it is (a holder who owns no vault, or an agent within its
+//! Grant), never a new key act, and binds the key to a live vault owner.
 //!
 //! The first kind is a world's key work ([`OwnerWorkBody::WorldKey`]): ensure
 //! the world's key after a settings edit, or re-assert the executor's own
@@ -44,7 +48,15 @@ use super::*;
 
 pub const OP_KIND_OWNER_WORK_REQUEST: &str = "owner_work_request";
 pub const OP_KIND_OWNER_WORK_RESULT: &str = "owner_work_result";
-const REQUEST_KEYS: [&str; 5] = [OP_KEY_KIND, "carrier", OP_KEY_ACT, "executor", "work"];
+const REQUEST_KEYS: [&str; 6] = [
+    OP_KEY_KIND,
+    "carrier",
+    OP_KEY_ACT,
+    "executor",
+    "work",
+    "privacy_basis",
+];
+const PRIVACY_BASIS_KEYS: [&str; 3] = ["edit", "after", "key_owner"];
 const RESULT_KEYS: [&str; 4] = [OP_KEY_KIND, "request", "executor", "outcome"];
 const WORLD_KEY_WORK_KEYS: [&str; 2] = [OP_KEY_KIND, "mode"];
 const ROOT_WORK_KEYS: [&str; 4] = [OP_KEY_KIND, "change", "root", "machine"];
@@ -271,6 +283,25 @@ impl OwnerWorkBody {
     }
 }
 
+/// The world settings edit a request's key work follows (FIX 4704): what
+/// lets a holder who owns no vault, or an agent within its Grant, leave the
+/// key work its change needs to a holder. The request then carries that
+/// edit's own act, exactly as its entry signed it, and only Ensure work.
+/// `Clone`, never `Copy`, as the request is.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub struct WorldPrivacyWorkBasis {
+    /// The settings edit's signed entry, one of the request's parents.
+    pub edit: AuthorityEntryHash,
+    /// The world's `PolicyRevision` right after the edit: the revision the
+    /// key work is for.
+    pub after: [u8; 32],
+    /// The live vault owner PERSON the world's key binds: the edit's author
+    /// when he owns the vault, else the vault owner the key stays with.
+    pub key_owner: EntityId,
+}
+
 /// One owner work request, signed by the install key of `carrier`: a live
 /// machine of the vault, in any role, that carried the owner's act. It need
 /// not hold anything the work needs; `executor` does.
@@ -281,12 +312,15 @@ pub struct OwnerWorkRequest {
     pub carrier: EntityId,
     /// The owner's act: who decided, from which surface, on which revision
     /// of the target. Its kind is the work kind's act and its target is the
-    /// work's target.
+    /// work's target. With a `privacy_basis`, the settings edit's own act.
     pub act: OwnerAct,
     /// The one install that does the work: pinned, never elected, and only
     /// a new owner act names another.
     pub executor: EntityId,
     pub work: OwnerWorkBody,
+    /// The settings edit this key work follows, when a settings edit left
+    /// it; `None` for work the owner's own act asks for.
+    pub privacy_basis: Option<WorldPrivacyWorkBasis>,
 }
 
 impl OwnerWorkRequest {
@@ -295,7 +329,38 @@ impl OwnerWorkRequest {
         self.work.kind()
     }
 
+    /// The vault owner PERSON the work's key binds: the basis's key owner
+    /// for key work a settings edit left, else the act's owner.
+    #[must_use]
+    pub fn key_owner(&self) -> EntityId {
+        self.privacy_basis
+            .as_ref()
+            .map_or(self.act.owner, |basis| basis.key_owner)
+    }
+
+    /// The target revision the work is for: the world's revision right
+    /// after the settings edit for key work it left, else the act's `seen`.
+    #[must_use]
+    pub fn revision(&self) -> [u8; 32] {
+        self.privacy_basis
+            .as_ref()
+            .map_or(self.act.seen, |basis| basis.after)
+    }
+
     pub fn validate(&self) -> Result<()> {
+        // Key work a settings edit left carries that edit's act, a holder's
+        // or an agent's, and asks for Ensure alone (FIX 4704).
+        if let Some(basis) = &self.privacy_basis {
+            self.act
+                .validate_carried(OwnerActKind::WorldPrivacy, self.act.target)?;
+            let ensure = OwnerWorkBody::WorldKey {
+                mode: WorldKeyMode::Ensure,
+            };
+            if self.work != ensure || basis.edit == [0; 32] {
+                return Err(invalid_authority());
+            }
+            return Ok(());
+        }
         self.act
             .validate_carried(self.work.kind().act(), self.act.target)?;
         // Key, custody and root acts are owner-only until a Grant line names
@@ -479,10 +544,12 @@ impl OwnerWorkResult {
     }
 }
 
-/// Canonical field order: kind, carrier, act, executor, work; a world key
-/// work map is kind, then mode; a root work map is kind, change, root, then
-/// machine, each field the change does not state nil; a publication work map
-/// is kind, then home; a custody work map is `custody`'s.
+/// Canonical field order: kind, carrier, act, executor, work, privacy_basis;
+/// a world key work map is kind, then mode; a root work map is kind, change,
+/// root, then machine, each field the change does not state nil; a
+/// publication work map is kind, then home; a custody work map is
+/// `custody`'s. The basis is nil for work the owner's act asks for, else a
+/// map of edit, after, then key_owner.
 pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
     let work = match &request.work {
         OwnerWorkBody::WorldKey { mode } => Value::Map(vec![
@@ -544,6 +611,25 @@ pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
             Value::from(request.executor.to_hex()),
         ),
         (Value::from("work"), work),
+        (
+            Value::from("privacy_basis"),
+            request
+                .privacy_basis
+                .as_ref()
+                .map_or(Value::Nil, privacy_basis_value),
+        ),
+    ])
+}
+
+/// A basis's map: edit, after, then key_owner.
+fn privacy_basis_value(basis: &WorldPrivacyWorkBasis) -> Value {
+    Value::Map(vec![
+        (Value::from("edit"), binary_value(basis.edit)),
+        (Value::from("after"), binary_value(basis.after)),
+        (
+            Value::from("key_owner"),
+            Value::from(basis.key_owner.to_hex()),
+        ),
     ])
 }
 
@@ -591,11 +677,24 @@ pub(super) fn decode_owner_work_request(entries: &[(Value, Value)]) -> Result<Au
         }
         OwnerWorkKind::Custody => custody::decode_custody_work(work)?,
     };
+    let privacy_basis = match required(entries, "privacy_basis")? {
+        Value::Nil => None,
+        value => {
+            let basis = map_entries(value)?;
+            validate_keys(basis, &PRIVACY_BASIS_KEYS)?;
+            Some(WorldPrivacyWorkBasis {
+                edit: decode_hash(required(basis, "edit")?)?,
+                after: decode_hash(required(basis, "after")?)?,
+                key_owner: decode_canonical_id(required(basis, "key_owner")?)?,
+            })
+        }
+    };
     let request = OwnerWorkRequest {
         carrier: decode_canonical_id(required(entries, "carrier")?)?,
         act: super::owner_act::decode_owner_act(required(entries, OP_KEY_ACT)?)?,
         executor: decode_canonical_id(required(entries, "executor")?)?,
         work,
+        privacy_basis,
     };
     request.validate()?;
     Ok(AuthorityOp::OwnerWorkRequest(request))
