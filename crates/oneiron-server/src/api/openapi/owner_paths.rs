@@ -349,19 +349,31 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "get",
         path: "/conversation-learning",
-        summary: "The caller's own \"Learn from my conversations\" choice, as the person their proof names (the owner, or another live person on their own human slip): on, the worlds that count now, the worlds chosen, the revision to present back as seen, any conflict and the act in force.",
+        summary: "The vault's \"Learn from my conversations\" setting, for a live member, delegate or guest (the owner, or another live person on their own human slip): on, allow_opt_out, the revision to present back as seen, any conflict, the act in force, set_by (the admin, 32 hex) and the one line a member's surface shows while it is on. While on, everything in the vault counts, people, agents and guests alike; private worlds never do.",
         row: None,
     },
     OwnerRoute {
         method: "put",
         path: "/conversation-learning",
-        summary: "The caller says yes to training on the conversations of the listed worlds (worlds: 32-hex ids), or turns it off (worlds missing, null or empty), as their own act. Every world must be live and read everywhere or nothing is written (400 naming it); a stale seen (64 hex) is a conflict.",
+        summary: "The vault's admin (its live owner, or a shared vault's owner or admin holding the workspace-settings power) sets it: body {on, allow_opt_out, seen}, both flags required (a body missing one is a 400). Off until turned on; turning it off stops new sharing and withdraws nothing already shared. A stale seen (64 hex) is a conflict; anyone else is refused.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/conversation-learning/me",
+        summary: "The caller's own opt-out, as the person their proof names: leave_out, whether the vault allows opt-outs now (allowed), the revision to present back as seen, any conflict and the act in force.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "put",
+        path: "/conversation-learning/me",
+        summary: "The caller leaves their own messages out of training, or lets them back in: body {leave_out, seen}, leave_out required. Refused (409) while the vault does not allow opt-outs. It stops new sharing of their messages and withdraws nothing already shared. A stale seen (64 hex) is a conflict.",
         row: None,
     },
     OwnerRoute {
         method: "get",
         path: "/conversation-learning/receipts",
-        summary: "One page of the caller's own publisher training receipts, as the person their proof names: each withdrawal their choice recorded, and each submission of their words with its source, worlds, local custody, the intake's last receipt (stored, excluded, removal_pending, removed or rejected), the runs that used it, the withdrawal note and times. Never another person's rows. Pass the page's next back as after (34 hex) for the rest.",
+        summary: "One page of the caller's own publisher training receipts, as the person their proof names: each submission carrying their words with its source, worlds, local custody, the intake's last receipt (stored, excluded, removal_pending, removed or rejected), the runs that used it, the withdrawal note and times. Never another person's rows. Pass the page's next back as after (34 hex) for the rest.",
         row: None,
     },
     OwnerRoute {

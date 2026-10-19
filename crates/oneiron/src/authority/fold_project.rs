@@ -233,6 +233,13 @@ pub(super) fn project_once(
                 context.machine_standing,
             )
         }),
+        conversation_training_vault: merged.as_ref().map_or_else(Default::default, |state| {
+            super::conversation_training_vault::folded_conversation_training_vault(
+                state,
+                context.pin,
+                context.machine_standing,
+            )
+        }),
         owner_work: merged.as_ref().map_or_else(Default::default, |state| {
             super::owner_work::folded_owner_work(state, context.pin, context.machine_standing)
         }),

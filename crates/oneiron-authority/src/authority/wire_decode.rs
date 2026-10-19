@@ -223,6 +223,9 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_CONVERSATION_TRAINING => {
             super::conversation_training::decode_conversation_training(entries)
         }
+        OP_KIND_CONVERSATION_TRAINING_VAULT => {
+            super::conversation_training_vault::decode_conversation_training_vault(entries)
+        }
         _ => Err(invalid_authority()),
     }
 }
