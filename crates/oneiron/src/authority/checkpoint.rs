@@ -25,6 +25,11 @@
 //! owner chose have one to attest (FIX 4882). A host whose root that policy
 //! does not name writes the image and leaves it awaiting those roots
 //! (`checkpoint_root_status`): it never attests in their place.
+//!
+//! A write whose image is the head's in every byte but the parent link is a
+//! no-op (FIX 2795): it keeps no new image and adds no chain link, reuses
+//! the head's id, and attests the head only where an attestation is still
+//! owed. Nothing here prunes a kept image.
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -47,6 +52,11 @@ pub const AUTHORITY_CHECKPOINT_NEW_ENTRIES: u64 = 50_000;
 /// The canonical signed body bytes of those new rows at which a new image is
 /// written at once (the canon's default 64 MiB cutoff).
 pub const AUTHORITY_CHECKPOINT_NEW_BYTES: u64 = 64 * 1024 * 1024;
+/// The local second a no-op write records a reused head as kept at when no
+/// progress row of this install names it (a restored vault): its age is
+/// unknown, so the next growth is due at once, as it is today for a head
+/// with no progress row (FIX 2795).
+const REUSED_HEAD_UNKNOWN_KEPT_AT_SECS: u64 = 0;
 
 /// The id of the newest image of this vault's local checkpoint chain. Key: ().
 const CHECKPOINT_HEAD: SideTable<(), [u8; 32], Raw> =
@@ -97,17 +107,30 @@ struct CheckpointProgress {
     built_under: Option<[u8; 32]>,
 }
 
+/// What one checkpoint write did: kept a new image as the head, or built
+/// the head's own image again and reused the head (FIX 2795).
+enum CheckpointWrite {
+    Written([u8; 32]),
+    /// `attested` when this host's root attested the reused head now.
+    Reused {
+        id: [u8; 32],
+        attested: bool,
+    },
+}
+
 /// What one checkpoint upkeep did ([`Vault::upkeep_authority_checkpoint`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthorityCheckpointUpkeep {
-    /// No cutoff was due and no attestation owed.
+    /// No cutoff was due and no attestation owed, or a due write built the
+    /// head's own image again and owed it nothing (FIX 2795).
     Idle,
     /// A new image was written, and its attestations reached the policy.
     Written([u8; 32]),
     /// A new image was written and awaits its policy's roots
     /// ([`Vault::authority_checkpoint_roots`], FIX 4882).
     WrittenAwaitingRoots([u8; 32]),
-    /// The head, which this host's root had not attested, was attested.
+    /// The head, which this host's root had not attested, was attested,
+    /// with no new image written.
     Attested([u8; 32]),
 }
 
@@ -273,6 +296,20 @@ pub(super) fn checkpoint_head_coverage_in_txn(
     Ok(Some((head, covered)))
 }
 
+/// Whether writing `image` after the kept head `kept`, whose canonical bytes
+/// are `kept_bytes`, is a no-op (FIX 2795): linked as the head is, `image`
+/// encodes to the head's exact bytes. Leaves `image` so linked. Equal
+/// coverage alone is no no-op: a moved policy, posture, peer set, building
+/// pin, archive or unresolved closure makes a new image.
+fn no_op_write(
+    image: &mut AuthorityCheckpointV2,
+    kept: &AuthorityCheckpointV2,
+    kept_bytes: &[u8],
+) -> Result<bool> {
+    image.parent = kept.parent;
+    Ok(image.encode()? == kept_bytes)
+}
+
 impl Vault {
     /// Builds this vault's checkpoint v2 image, links it after the current
     /// head and keeps it as the new head, then attests it with `issuer`'s host
@@ -284,6 +321,13 @@ impl Vault {
     /// progress row records the totals the build snapshot read and the local
     /// second the head was kept.
     ///
+    /// A no-op write keeps nothing new (FIX 2795): when the image built is
+    /// the head's in every byte but the parent link, no image and no link is
+    /// added and the head's id is returned. The head compare still holds;
+    /// the progress row takes the build snapshot's totals and keeps the age
+    /// it records for the head; `issuer`'s root attests the head only when
+    /// it still owes it an attestation.
+    ///
     /// Two phases: the image is kept once its transaction commits, and an
     /// attesting failure after that returns the error with the image kept
     /// unattested; a later upkeep attests it again. The attested head moves
@@ -291,7 +335,18 @@ impl Vault {
     /// ([`Vault::host_attest_authority_checkpoint`]). A host root the policy
     /// in force does not name attests nothing.
     pub fn write_authority_checkpoint_v2(&self, issuer: &HostSlipIssuer) -> Result<[u8; 32]> {
-        let (image, head, accounted) = {
+        Ok(match self.write_or_reuse_authority_checkpoint(issuer)? {
+            CheckpointWrite::Written(id) | CheckpointWrite::Reused { id, .. } => id,
+        })
+    }
+
+    /// [`Vault::write_authority_checkpoint_v2`], saying whether it kept a new
+    /// image or reused the head.
+    fn write_or_reuse_authority_checkpoint(
+        &self,
+        issuer: &HostSlipIssuer,
+    ) -> Result<CheckpointWrite> {
+        let (image, head, accounted, reused) = {
             let txn = self.store.env.read_txn()?;
             let mut image = match super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(
                 &self.store,
@@ -306,6 +361,7 @@ impl Vault {
                 .get(&self.store, &txn, &())?
                 .unwrap_or_default();
             let head = CHECKPOINT_HEAD.get(&self.store, &txn, &())?;
+            let mut reused = false;
             if let Some(head) = head {
                 let bytes = CHECKPOINT_IMAGE
                     .get(&self.store, &txn, &head)?
@@ -320,9 +376,12 @@ impl Vault {
                 {
                     return Err(invalid_authority());
                 }
+                reused = no_op_write(&mut image, &parent, &bytes)?;
             }
-            image.parent = head;
-            (image, head, accounted)
+            if !reused {
+                image.parent = head;
+            }
+            (image, head, accounted, reused)
         };
         let built_under = image.root_policy.digest()?;
         let bytes = image.encode()?;
@@ -331,7 +390,19 @@ impl Vault {
         if CHECKPOINT_HEAD.get(&self.store, &txn, &())? != head {
             return Err(Error::ConcurrentWrite("authority checkpoint head moved"));
         }
-        keep_checkpoint_head_in_txn(&self.store, &mut txn, &id, bytes)?;
+        let kept_at_secs = if reused {
+            // The head stays as kept: no image is put, and its age is the
+            // one this install recorded for it.
+            CHECKPOINT_PROGRESS
+                .get(&self.store, &txn, &())?
+                .filter(|progress| progress.head == id)
+                .map_or(REUSED_HEAD_UNKNOWN_KEPT_AT_SECS, |progress| {
+                    progress.kept_at_secs
+                })
+        } else {
+            keep_checkpoint_head_in_txn(&self.store, &mut txn, &id, bytes)?;
+            crate::unix_seconds_now()
+        };
         CHECKPOINT_PROGRESS.put(
             &self.store,
             &mut txn,
@@ -339,23 +410,42 @@ impl Vault {
             &CheckpointProgress {
                 head: id,
                 accounted,
-                kept_at_secs: crate::unix_seconds_now(),
+                kept_at_secs,
                 built_under: Some(built_under),
             },
         )?;
         txn.commit()?;
+        if reused {
+            // A repeated no-op write signs nothing again: only an
+            // attestation still owed is made.
+            let owed = {
+                let txn = self.store.env.read_txn()?;
+                self.checkpoint_attestation_owed_in_txn(
+                    &txn,
+                    &issuer.public_key(),
+                    id,
+                    &built_under,
+                )?
+            };
+            if owed {
+                self.host_attest_authority_checkpoint(issuer, id)?;
+            }
+            return Ok(CheckpointWrite::Reused { id, attested: owed });
+        }
         // The owner's selected policy may name no host root (mesh PR2c): the
         // image then waits for the roots he named, and checkpointing goes on.
         if self.checkpoint_root_eligible(&issuer.public_key())? {
             self.host_attest_authority_checkpoint(issuer, id)?;
         }
-        Ok(id)
+        Ok(CheckpointWrite::Written(id))
     }
 
     /// The host's checkpoint upkeep (OF-469), run on every lifecycle tick:
     /// when a cutoff is due, or the root policy moved past the head's (FIX
     /// 4882), writes and host-attests a new image
-    /// ([`Vault::write_authority_checkpoint_v2`]); otherwise, when this
+    /// ([`Vault::write_authority_checkpoint_v2`]), or, when the build is the
+    /// head's own image, reuses the head and reports it idle or attested
+    /// (FIX 2795); otherwise, when this
     /// install built the head under the vault's current root policy and
     /// `issuer`'s root, eligible under it, has not attested it, attests it
     /// again without writing the image again
@@ -401,11 +491,20 @@ impl Vault {
             }
         };
         if due {
-            let id = self.write_authority_checkpoint_v2(issuer)?;
-            return Ok(if self.checkpoint_image_reached_policy(id)? {
-                AuthorityCheckpointUpkeep::Written(id)
-            } else {
-                AuthorityCheckpointUpkeep::WrittenAwaitingRoots(id)
+            return Ok(match self.write_or_reuse_authority_checkpoint(issuer)? {
+                CheckpointWrite::Written(id) => {
+                    if self.checkpoint_image_reached_policy(id)? {
+                        AuthorityCheckpointUpkeep::Written(id)
+                    } else {
+                        AuthorityCheckpointUpkeep::WrittenAwaitingRoots(id)
+                    }
+                }
+                CheckpointWrite::Reused { id, attested: true } => {
+                    AuthorityCheckpointUpkeep::Attested(id)
+                }
+                CheckpointWrite::Reused {
+                    attested: false, ..
+                } => AuthorityCheckpointUpkeep::Idle,
             });
         }
         let Some(head) = owed else {

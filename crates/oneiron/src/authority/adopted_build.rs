@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::adopted_fold::{AdoptedImageFold, AdoptedTail};
 use super::checkpoint_image::{
-    CheckpointAggregate, carries_body, local_archive_custodian_in_txn, local_archive_manifest,
+    CheckpointAggregate, local_archive_custodian_in_txn, local_archive_manifest,
 };
 use super::fold_resume::ImageFold;
 use super::*;
@@ -266,17 +266,7 @@ impl Vault {
         let mut rows = image.rows.clone();
         for hash in &closed {
             let (entry, body) = tail.get(hash).ok_or_else(invalid_authority)?;
-            rows.insert(
-                *hash,
-                AuthorityCheckpointRow {
-                    signer: entry.signer_key().clone(),
-                    seq: entry.seq,
-                    parents: entry.parent_hashes.clone(),
-                    world: super::world_privacy::side_world(&entry.op),
-                    slip_op: super::log_budget::is_slip_op(&entry.op),
-                    body: carries_body(&entry.op).then(|| body.clone()),
-                },
-            );
+            rows.insert(*hash, AuthorityCheckpointRow::of(entry, body));
         }
         let next = AuthorityCheckpointV2 {
             fold_schema: AUTHORITY_CHECKPOINT_FOLD_SCHEMA,
