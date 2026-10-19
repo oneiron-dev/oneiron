@@ -175,7 +175,7 @@ impl LinearConfig {
         let api_key = std::env::var(LINEAR_API_KEY_ENV).is_ok();
         if api_key || present(LINEAR_CONFIG_ENV) {
             anyhow::ensure!(
-                !present(LINEAR_BRIDGE_URL_ENV) && !present(LINEAR_BRIDGE_TOKEN_ENV),
+                !(present(LINEAR_BRIDGE_URL_ENV) || present(LINEAR_BRIDGE_TOKEN_ENV)),
                 "configure either direct Linear GraphQL or a Linear bridge, not both"
             );
             anyhow::ensure!(
