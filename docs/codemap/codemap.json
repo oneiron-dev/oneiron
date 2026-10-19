@@ -2268,7 +2268,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AbandonAttempt",
@@ -2304,7 +2304,6 @@
      "path": "src/attempt_queue/types.rs",
      "purpose": "Durable wire, verb-input, and outcome types for the attempt queue",
      "surface": {
-      "const": 1,
       "crate-vis": 11,
       "enum": 11,
       "fn": 26,
@@ -2328,7 +2327,7 @@
      "path": "src/attempt_queue/validate/field_validators.rs",
      "purpose": "Length caps, error literals, and per-field validators plus lease/manifest mutators",
      "surface": {
-      "crate-vis": 78
+      "crate-vis": 77
      }
     },
     {
@@ -26366,7 +26365,7 @@
      "path": "src/gate/record_references.rs",
      "purpose": "OF-063: one check that every record a write names resolves for its writer",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -53017,13 +53016,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/lifecycle_receipt.rs",
      "purpose": "The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -53161,7 +53160,7 @@
      "path": "src/task_verb/query_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 7
      }
     },
@@ -61639,7 +61638,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 200,
+   "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3758,
    "test_files": 902
