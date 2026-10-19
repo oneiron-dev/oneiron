@@ -31,7 +31,9 @@ use serde::{Deserialize, Serialize};
 use super::proposals;
 use crate::attempt_queue::AttemptId;
 use crate::code_run::ExecutorStorage;
-use crate::compaction::{CompactionExecution, CompactionLanding, CompactionStepRef};
+use crate::compaction::{
+    CompactionEvidence, CompactionExecution, CompactionLanding, CompactionStepRef,
+};
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause, DreamerRunnerStore};
 use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
@@ -48,6 +50,9 @@ use crate::llm::{
     TierPrecedence, call_as_step,
 };
 use crate::{EntityId, Error, Result, Vault};
+
+mod conversation;
+pub(crate) use conversation::declare_conversation_check_in_txn;
 
 /// The maintenance facet a self-written landing's check rides.
 pub const COMPACTION_CHECK_FACET: &str = "dreamer.compaction_check";
@@ -115,16 +120,24 @@ impl CompactionCheckDeclaration {
     fn of(landing: CompactionLanding, execution: &CompactionExecution) -> Result<Self> {
         let missing =
             || Error::InvariantViolation("a self-written landing carries no checkable receipt");
-        let evidence = execution.evidence.as_ref().ok_or_else(missing)?;
+        let Some(CompactionEvidence::Executor {
+            run,
+            first,
+            last,
+            revision,
+        }) = execution.evidence.as_ref()
+        else {
+            return Err(missing());
+        };
         Ok(Self {
-            run: evidence.run,
+            run: *run,
             landing,
-            first: evidence.first,
-            last: evidence.last,
+            first: *first,
+            last: *last,
             writer: execution.writer,
             artifact_hash: execution.snapshot_hash.clone().ok_or_else(missing)?,
             artifact_len: execution.snapshot_len.ok_or_else(missing)?,
-            evidence_revision: evidence.revision.clone(),
+            evidence_revision: revision.clone(),
             step: execution.step.clone(),
             receipt_digest: execution.receipt_digest_hex()?,
         })
@@ -229,6 +242,12 @@ pub async fn run_compaction_check(
             "not a compaction check attempt".into(),
         ));
     }
+    // A conversation's landing (FIX 4465 D) declares its own source.
+    if let Some(declaration) =
+        conversation::ConversationCheckDeclaration::from_input(&attempt.status.payload.input)?
+    {
+        return conversation::run_conversation_check(attempt, ctx, model, declaration).await;
+    }
     let declaration = CompactionCheckDeclaration::from_input(&attempt.status.payload.input)?;
     let attempt_id = attempt.status.attempt.id;
     let now = ctx.now_ms / 1_000;
@@ -239,11 +258,83 @@ pub async fn run_compaction_check(
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
     };
-    let locality = model
+    let request = judge_request(&model, &declaration, &read, judge_locality(&model)?)?;
+    let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
+        Ok(judging) => judging,
+        Err(parked) => return Ok(parked),
+    };
+    let Some(judged) = judgment(&judging.response, &declaration) else {
+        return Ok(judging.unjudged());
+    };
+    let settled = Settled {
+        verdict: judged.verdict,
+        reason: judged.reason,
+        conflicts: judged.conflicts,
+        evidence_now: Some(declaration.evidence_revision.clone()),
+        words_live: true,
+        judge: Some(judging.judge(&model)),
+    };
+    record(ctx.vault, attempt_id, &declaration, &settled, now)?;
+    Ok(DreamerAttemptExecution::Completed {
+        completed_units: judging.units,
+    })
+}
+
+/// Where the host's binding lets the judge's call be served.
+fn judge_locality(model: &CompactionCheckModel<'_>) -> Result<crate::llm::ModelLocality> {
+    model
         .inference
         .selected_locality()
-        .ok_or_else(|| Error::InvalidConfig("the check's host binding names no locality".into()))?;
-    let request = judge_request(&model, &declaration, &read, locality)?;
+        .ok_or_else(|| Error::InvalidConfig("the check's host binding names no locality".into()))
+}
+
+/// One judge call's answer, as a durable step of its attempt.
+struct Judging {
+    response: LlmResponse,
+    memoized: bool,
+    step_hash: [u8; 32],
+    /// What it spent: nothing when memoized, paid for by the pass that
+    /// asked it.
+    units: u64,
+}
+
+impl Judging {
+    /// The judge's model, step and usage, as a finding records them.
+    fn judge(&self, model: &CompactionCheckModel<'_>) -> serde_json::Value {
+        serde_json::json!({
+            "model": model.model.as_str(),
+            "step_hash": bytes_to_hex_lower(&self.step_hash),
+            "usage_in": self.response.usage.input.total,
+            "usage_out": self.response.usage.output.total,
+        })
+    }
+
+    /// The attempt parked, its spend kept, when the judge wrote no verdict.
+    fn unjudged(&self) -> DreamerAttemptExecution {
+        DreamerAttemptExecution::ParkWithSpend {
+            reason: "the check judge wrote no verdict".to_owned(),
+            cause: DreamerParkCause::Other,
+            completed_units: self.units,
+            step_hashes: if self.memoized {
+                Vec::new()
+            } else {
+                vec![self.step_hash]
+            },
+        }
+    }
+}
+
+/// Asks the judge `request` about `subject`, as a durable step of
+/// `attempt`, admitted on the host's role: its answer, or how the attempt
+/// waits for one.
+async fn ask_judge(
+    attempt: &DreamerAdmittedAttempt,
+    ctx: &WakeAttemptContext<'_>,
+    model: &CompactionCheckModel<'_>,
+    request: LlmRequest,
+    subject: EntityId,
+) -> Result<std::result::Result<Judging, DreamerAttemptExecution>> {
+    let attempt_id = attempt.status.attempt.id;
     let request = ctx
         .vault
         .authorize_model_role(model.role, request, &model.inference)?
@@ -256,16 +347,15 @@ pub async fn run_compaction_check(
         attempt_id,
         run_id: attempt.status.attempt.run_id.clone(),
         envelope_actor: ctx.vault.dreamer_actor_for_attempt(attempt_id)?,
-        subject: declaration.writer,
+        subject,
         deadline: Some(ctx.deadline),
         now_ms: ctx.now_ms,
     };
     let outcome = call_as_step(&step_ctx, model.backend, model.guard, request).await;
     let (response, memoized) = match step_answer(outcome)? {
         Ok(answer) => answer,
-        Err(parked) => return Ok(parked),
+        Err(parked) => return Ok(Err(parked)),
     };
-    // A memoized answer was paid for by the pass that asked it.
     let units = if memoized {
         0
     } else {
@@ -275,35 +365,12 @@ pub async fn run_compaction_check(
             .total
             .saturating_add(response.usage.output.total)
     };
-    let Some(judged) = judgment(&response, &declaration) else {
-        return Ok(DreamerAttemptExecution::ParkWithSpend {
-            reason: "the check judge wrote no verdict".to_owned(),
-            cause: DreamerParkCause::Other,
-            completed_units: units,
-            step_hashes: if memoized {
-                Vec::new()
-            } else {
-                vec![step_hash]
-            },
-        });
-    };
-    let settled = Settled {
-        verdict: judged.verdict,
-        reason: judged.reason,
-        conflicts: judged.conflicts,
-        evidence_now: Some(declaration.evidence_revision.clone()),
-        words_live: true,
-        judge: Some(serde_json::json!({
-            "model": model.model.as_str(),
-            "step_hash": bytes_to_hex_lower(&step_hash),
-            "usage_in": response.usage.input.total,
-            "usage_out": response.usage.output.total,
-        })),
-    };
-    record(ctx.vault, attempt_id, &declaration, &settled, now)?;
-    Ok(DreamerAttemptExecution::Completed {
-        completed_units: units,
-    })
+    Ok(Ok(Judging {
+        response,
+        memoized,
+        step_hash,
+        units,
+    }))
 }
 
 /// The judge's answer and whether it was memoized, or how the attempt
@@ -461,12 +528,25 @@ fn judge_request(
             "reason": {"type": "string"}
         }
     });
-    let input = serde_json::to_string(&serde_json::json!({
+    let input = serde_json::json!({
         "span": {"first": declaration.first, "last": declaration.last},
         "summary": read.summary,
         "evidence": read.evidence,
-    }))
-    .map_err(|_| Error::InvariantViolation("the check input did not encode"))?;
+    });
+    judge_call(model, schema, &input, locality)
+}
+
+/// The judge's call for `input` under `schema`: the host's rubric first,
+/// then the input. The span's retained words leave the vault as an
+/// extraction's do.
+fn judge_call(
+    model: &CompactionCheckModel<'_>,
+    schema: serde_json::Value,
+    input: &serde_json::Value,
+    locality: crate::llm::ModelLocality,
+) -> Result<LlmRequest> {
+    let input = serde_json::to_string(input)
+        .map_err(|_| Error::InvariantViolation("the check input did not encode"))?;
     Ok(LlmRequest {
         model: model.model.clone(),
         envelope: CallEnvelope {
@@ -557,7 +637,6 @@ fn record(
     settled: &Settled,
     now: u64,
 ) -> Result<EntityId> {
-    let envelope = proposals::run_tray_envelope(vault, COMPACTION_CHECK_FACET, attempt)?;
     let value = serde_json::json!({
         "verdict": settled.verdict.as_str(),
         "run": declaration.run.to_hex(),
@@ -585,29 +664,53 @@ fn record(
     {
         evidence.push(summary);
     }
+    emit_finding(
+        vault,
+        attempt,
+        declaration.writer,
+        &value,
+        &evidence,
+        settled.verdict,
+        now,
+    )
+}
+
+/// The Dreamer's finding about `writer`, `value` citing `evidence`; a
+/// mismatch also reaches the writer's own inbox. Recording twice finds the
+/// finding already landed.
+fn emit_finding(
+    vault: &Vault,
+    attempt: AttemptId,
+    writer: EntityId,
+    value: &serde_json::Value,
+    evidence: &[EntityId],
+    verdict: CompactionCheckVerdict,
+    now: u64,
+) -> Result<EntityId> {
+    let envelope = proposals::run_tray_envelope(vault, COMPACTION_CHECK_FACET, attempt)?;
     vault.with_write_txn_grouped(|txn| {
         let finding = proposals::emit_in_txn(
             vault,
             txn,
-            declaration.writer,
+            writer,
             COMPACTION_CHECK_PREDICATE,
-            &value,
-            &evidence,
+            value,
+            evidence,
             &envelope,
             now,
         )?;
-        if settled.verdict == CompactionCheckVerdict::Mismatch {
+        if verdict == CompactionCheckVerdict::Mismatch {
             vault.record_notification_in_txn(
                 txn,
                 &NotificationEvent {
                     kind: NotificationKind::Finding,
                     source: NotificationSource {
                         producer: NOTIFICATION_PRODUCER_FINDING.to_owned(),
-                        event: format!("{}:{}", finding.to_hex(), declaration.writer.to_hex()),
+                        event: format!("{}:{}", finding.to_hex(), writer.to_hex()),
                         ..NotificationSource::default()
                     },
-                    subject_refs: vec![finding, declaration.writer],
-                    recipient: Some(declaration.writer),
+                    subject_refs: vec![finding, writer],
+                    recipient: Some(writer),
                     created_at: now,
                     origin_conversation: None,
                 },
