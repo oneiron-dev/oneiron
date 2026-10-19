@@ -921,7 +921,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scope_stamp/tests.rs` | test | m | — | — | Observable Scope identity, codec, selector and replay acceptance |
 | `src/claim/scoped_read/access_gate.rs` | src | m | 12 crate-vis | — | Relationship access checks share the row read transaction with grant resolution |
 | `src/claim/scoped_read/actor_key.rs` | src | m | 1 struct · 1 enum · 10 fn · 39 crate-vis | CallerLocality, ScopedReadActorKey | Authenticated identity carried by a scoped read |
-| `src/claim/scoped_read/admission.rs` | src | L | 8 fn · 26 crate-vis | — | — |
+| `src/claim/scoped_read/admission.rs` | src | L | 8 fn · 27 crate-vis | — | — |
 | `src/claim/scoped_read/claim_admission.rs` | src | s | 1 fn · 5 crate-vis | — | Claim admission on the scoped lane: the lane's claim-status mode, then the reader, credential, ceiling… |
 | `src/claim/scoped_read/context_pack_filter.rs` | src | m | 2 fn · 1 crate-vis | — | Final actor-bound context-pack filtering before rendering and telemetry |
 | `src/claim/scoped_read/diagnostic_reads.rs` | src | s | 1 fn | — | The structured failure corpus, read through the actor's scoped door |
@@ -1443,7 +1443,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation_dag/quote.rs` | src | L | 1 struct · 1 enum · 31 crate-vis | QuoteAnchor, RoomQuote | Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's… |
 | `src/conversation_dag/quote_strips.rs` | src | m | 4 struct · 1 enum · 1 fn | QuoteReplyGroup, QuoteReplyStrip, QuoteStripStatus, ReplyStripsPage, ReplyStripsRequest | Reply strips by quoted MESSAGE over one selected thread chain, or, for a room turn, over the room's own… |
 | `src/conversation_dag/redacted.rs` | src | s | 6 crate-vis | — | Content-free, store-local DAG custody across soft and hard erasure |
-| `src/conversation_dag/reply.rs` | src | m | 3 struct · 8 fn · 3 crate-vis | ReplyStrip, Thread, ThreadMeta | Revision-bound reply strips |
+| `src/conversation_dag/reply.rs` | src | m | 3 struct · 9 fn · 3 crate-vis | ReplyStrip, Thread, ThreadMeta | Revision-bound reply strips |
 | `src/conversation_dag/reply/thread_reads.rs` | src | s | 1 fn | — | What a scoped read reaches of a DAG thread (FIX 5545): a record of a private thread its caller stands in now… |
 | `src/conversation_dag/retained_path.rs` | src | s | 8 crate-vis | — | Read-only selected topology over retained TURN and SESSION headers |
 | `src/conversation_dag/scopes.rs` | src | s | 1 fn · 1 crate-vis | — | Exact, capped scope resolution over a single transaction snapshot |
