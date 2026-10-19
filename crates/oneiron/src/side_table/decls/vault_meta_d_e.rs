@@ -115,6 +115,10 @@ side_tables! {
     /// Prior tuning-harness evaluation baseline for a config artifact, used to reject
     /// stale/regressive re-evaluation. Key: id16.
     DREAMER_HARNESS_EVAL_BASELINE: VaultMeta b"dreamer:harness:eval-baseline:v1:" LegacyJson;
+    /// The host's last MACRO home-node candidate set, as it supplied it, which an owner's home
+    /// pick re-elects over (DOOR-101 PR2a). Node-local; a restore never takes it from an image.
+    /// Key: ().
+    DREAMER_HOME_CANDIDATES: VaultMeta b"dreamer:home_candidates:v1" Named;
     /// Elected MACRO-scope home-node designation (node_id, class, elected_at). Key: ().
     DREAMER_HOME_NODE: VaultMeta b"dreamer:home_node_macro:v1" Raw;
     /// One open identity ask: a saved mention the Dreamer could not settle, or one an agent must

@@ -213,7 +213,7 @@ impl ArtifactAsk<'_> {
 
 /// A unit the ask left unanswered, with its receipt; none when the unit had
 /// no input to read or its state was past the call's bound.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct UnitAbstention {
     /// The unit, as the caller named it.
     pub unit: Value,
@@ -221,7 +221,7 @@ pub struct UnitAbstention {
 }
 
 /// A unit the ask will not read as given.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct UnitRefusal {
     pub unit: Value,
     pub reason: String,

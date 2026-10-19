@@ -187,6 +187,9 @@ pub enum AgentVerb {
     VaultWeaveDigestRender,
     VaultWeaveLinkCorrections,
     SelfInboxLens,
+    VaultSkillsBootstrap,
+    VaultSkillHubsDefaultGet,
+    VaultSkillsRestoredefaults,
     VaultSkillHubsPut,
     VaultSkillHubsGet,
     VaultSkillHubsPublishersAdmit,
@@ -266,6 +269,11 @@ pub enum AgentVerb {
     VaultSlimDropHeavy,
     VaultSlimResume,
     VaultMeshPathReceipts,
+    VaultMeshIdentity,
+    VaultMeshBindMachine,
+    VaultMeshSetAlpnGrant,
+    VaultMeshRevokeMachine,
+    VaultMeshDial,
     VaultInspectionResolve,
     VaultSharedProposeDelete,
     VaultSharedProposeTransfer,
@@ -635,6 +643,7 @@ pub enum AgentVerb {
     VaultArtifactsReleaseWait,
     VaultArtifactsReviewSlides,
     VaultArtifactsAsk,
+    VaultArtifactsAdmit,
     VaultCriticReview,
     VaultArtifactsProposeOutline,
     VaultArtifactsOutline,
@@ -750,6 +759,7 @@ pub enum AgentVerb {
     AiVideoCancel,
     AiVerdict,
     VaultGraphAsk,
+    VaultGraphAdmit,
     VaultQuestionsCreate,
     VaultQuestionsEdit,
     VaultQuestionsPause,
@@ -898,6 +908,7 @@ pub enum AgentVerb {
     VaultRunsStep,
     VaultRunsCheckpoint,
     VaultConsolidationHomeGet,
+    VaultConsolidationHomePick,
     VaultConsolidationLineage,
     VaultConsolidationPromote,
     VaultConsolidationPin,
@@ -1216,6 +1227,9 @@ impl AgentVerb {
         Self::VaultWeaveDigestRender,
         Self::VaultWeaveLinkCorrections,
         Self::SelfInboxLens,
+        Self::VaultSkillsBootstrap,
+        Self::VaultSkillHubsDefaultGet,
+        Self::VaultSkillsRestoredefaults,
         Self::VaultSkillHubsPut,
         Self::VaultSkillHubsGet,
         Self::VaultSkillHubsPublishersAdmit,
@@ -1295,6 +1309,11 @@ impl AgentVerb {
         Self::VaultSlimDropHeavy,
         Self::VaultSlimResume,
         Self::VaultMeshPathReceipts,
+        Self::VaultMeshIdentity,
+        Self::VaultMeshBindMachine,
+        Self::VaultMeshSetAlpnGrant,
+        Self::VaultMeshRevokeMachine,
+        Self::VaultMeshDial,
         Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
         Self::VaultSharedProposeTransfer,
@@ -1664,6 +1683,7 @@ impl AgentVerb {
         Self::VaultArtifactsReleaseWait,
         Self::VaultArtifactsReviewSlides,
         Self::VaultArtifactsAsk,
+        Self::VaultArtifactsAdmit,
         Self::VaultCriticReview,
         Self::VaultArtifactsProposeOutline,
         Self::VaultArtifactsOutline,
@@ -1779,6 +1799,7 @@ impl AgentVerb {
         Self::AiVideoCancel,
         Self::AiVerdict,
         Self::VaultGraphAsk,
+        Self::VaultGraphAdmit,
         Self::VaultQuestionsCreate,
         Self::VaultQuestionsEdit,
         Self::VaultQuestionsPause,
@@ -1927,6 +1948,7 @@ impl AgentVerb {
         Self::VaultRunsStep,
         Self::VaultRunsCheckpoint,
         Self::VaultConsolidationHomeGet,
+        Self::VaultConsolidationHomePick,
         Self::VaultConsolidationLineage,
         Self::VaultConsolidationPromote,
         Self::VaultConsolidationPin,
@@ -2248,6 +2270,9 @@ impl AgentVerb {
             Self::VaultWeaveDigestRender => "vault.weave.digest.render",
             Self::VaultWeaveLinkCorrections => "vault.weave.link.corrections",
             Self::SelfInboxLens => "self.inbox.lens",
+            Self::VaultSkillsBootstrap => "vault.skills.bootstrap",
+            Self::VaultSkillHubsDefaultGet => "vault.skill_hubs.default.get",
+            Self::VaultSkillsRestoredefaults => "vault.skills.restoreDefaults",
             Self::VaultSkillHubsPut => "vault.skill_hubs.put",
             Self::VaultSkillHubsGet => "vault.skill_hubs.get",
             Self::VaultSkillHubsPublishersAdmit => "vault.skill_hubs.publishers.admit",
@@ -2327,6 +2352,11 @@ impl AgentVerb {
             Self::VaultSlimDropHeavy => "vault.slim.drop_heavy",
             Self::VaultSlimResume => "vault.slim.resume",
             Self::VaultMeshPathReceipts => "vault.mesh.path_receipts",
+            Self::VaultMeshIdentity => "vault.mesh.identity",
+            Self::VaultMeshBindMachine => "vault.mesh.bind_machine",
+            Self::VaultMeshSetAlpnGrant => "vault.mesh.set_alpn_grant",
+            Self::VaultMeshRevokeMachine => "vault.mesh.revoke_machine",
+            Self::VaultMeshDial => "vault.mesh.dial",
             Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
             Self::VaultSharedProposeTransfer => "vault.shared.propose_transfer",
@@ -2714,6 +2744,7 @@ impl AgentVerb {
             Self::VaultArtifactsReleaseWait => "vault.artifacts.release_wait",
             Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
             Self::VaultArtifactsAsk => "vault.artifacts.ask",
+            Self::VaultArtifactsAdmit => "vault.artifacts.admit",
             Self::VaultCriticReview => "vault.critic.review",
             Self::VaultArtifactsProposeOutline => "vault.artifacts.propose_outline",
             Self::VaultArtifactsOutline => "vault.artifacts.outline",
@@ -2833,6 +2864,7 @@ impl AgentVerb {
             Self::AiVideoCancel => "ai.video.cancel",
             Self::AiVerdict => "ai.verdict",
             Self::VaultGraphAsk => "vault.graph.ask",
+            Self::VaultGraphAdmit => "vault.graph.admit",
             Self::VaultQuestionsCreate => "vault.questions.create",
             Self::VaultQuestionsEdit => "vault.questions.edit",
             Self::VaultQuestionsPause => "vault.questions.pause",
@@ -2981,6 +3013,7 @@ impl AgentVerb {
             Self::VaultRunsStep => "vault.runs.step",
             Self::VaultRunsCheckpoint => "vault.runs.checkpoint",
             Self::VaultConsolidationHomeGet => "vault.consolidation.home.get",
+            Self::VaultConsolidationHomePick => "vault.consolidation.home.pick",
             Self::VaultConsolidationLineage => "vault.consolidation.lineage",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
             Self::VaultConsolidationPin => "vault.consolidation.pin",
@@ -3305,6 +3338,9 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
+                | Self::VaultSkillsBootstrap
+                | Self::VaultSkillHubsDefaultGet
+                | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
                 | Self::VaultSkillHubsPublishersAdmit
@@ -3384,6 +3420,11 @@ impl AgentVerb {
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
+                | Self::VaultMeshIdentity
+                | Self::VaultMeshBindMachine
+                | Self::VaultMeshSetAlpnGrant
+                | Self::VaultMeshRevokeMachine
+                | Self::VaultMeshDial
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -3753,6 +3794,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
+                | Self::VaultArtifactsAdmit
                 | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeOutline
                 | Self::VaultArtifactsOutline
@@ -3868,6 +3910,7 @@ impl AgentVerb {
                 | Self::AiVideoCancel
                 | Self::AiVerdict
                 | Self::VaultGraphAsk
+                | Self::VaultGraphAdmit
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
@@ -3996,6 +4039,7 @@ impl AgentVerb {
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationHomeGet
+                | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
@@ -4361,6 +4405,9 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
+                | Self::VaultSkillsBootstrap
+                | Self::VaultSkillHubsDefaultGet
+                | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
                 | Self::VaultSkillHubsPublishersAdmit
@@ -4440,6 +4487,11 @@ impl AgentVerb {
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
+                | Self::VaultMeshIdentity
+                | Self::VaultMeshBindMachine
+                | Self::VaultMeshSetAlpnGrant
+                | Self::VaultMeshRevokeMachine
+                | Self::VaultMeshDial
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -4809,6 +4861,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
+                | Self::VaultArtifactsAdmit
                 | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeOutline
                 | Self::VaultArtifactsOutline
@@ -4924,6 +4977,7 @@ impl AgentVerb {
                 | Self::AiVideoCancel
                 | Self::AiVerdict
                 | Self::VaultGraphAsk
+                | Self::VaultGraphAdmit
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
@@ -5052,6 +5106,7 @@ impl AgentVerb {
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationHomeGet
+                | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
@@ -5220,6 +5275,8 @@ impl AgentVerb {
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultInboxGroups
                 | Self::VaultWeaveLinkCorrections
+                | Self::VaultSkillsBootstrap
+                | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillsOptimizeTradeoffAsks
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
@@ -5518,6 +5575,9 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
+                | Self::VaultSkillsBootstrap
+                | Self::VaultSkillHubsDefaultGet
+                | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
                 | Self::VaultSkillHubsPublishersAdmit
@@ -5596,6 +5656,11 @@ impl AgentVerb {
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
+                | Self::VaultMeshIdentity
+                | Self::VaultMeshBindMachine
+                | Self::VaultMeshSetAlpnGrant
+                | Self::VaultMeshRevokeMachine
+                | Self::VaultMeshDial
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
@@ -5953,6 +6018,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
+                | Self::VaultArtifactsAdmit
                 | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeOutline
                 | Self::VaultArtifactsOutline
@@ -6068,6 +6134,7 @@ impl AgentVerb {
                 | Self::AiVideoCancel
                 | Self::AiVerdict
                 | Self::VaultGraphAsk
+                | Self::VaultGraphAdmit
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
@@ -6193,6 +6260,7 @@ impl AgentVerb {
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationHomeGet
+                | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
@@ -6416,6 +6484,7 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
                 | Self::VaultWeaveDigestRender
+                | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
@@ -6468,6 +6537,10 @@ impl AgentVerb {
                 | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
+                | Self::VaultMeshBindMachine
+                | Self::VaultMeshSetAlpnGrant
+                | Self::VaultMeshRevokeMachine
+                | Self::VaultMeshDial
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -6694,6 +6767,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
+                | Self::VaultArtifactsAdmit
                 | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeOutline
                 | Self::VaultArtifactsKeepOutline
@@ -6764,6 +6838,7 @@ impl AgentVerb {
                 | Self::AiVideo
                 | Self::AiVideoCancel
                 | Self::VaultGraphAsk
+                | Self::VaultGraphAdmit
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
@@ -6841,6 +6916,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
+                | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
                 | Self::VaultConsolidationFrontier
@@ -6932,6 +7008,7 @@ impl AgentVerb {
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
                 | Self::VaultGraphAsk
+                | Self::VaultGraphAdmit
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsAdmit
@@ -7146,6 +7223,9 @@ impl AgentVerb {
             Self::VaultWeaveDigestRender => &["spec"],
             Self::VaultWeaveLinkCorrections => &["spec"],
             Self::SelfInboxLens => &["spec"],
+            Self::VaultSkillsBootstrap => &["spec"],
+            Self::VaultSkillHubsDefaultGet => &["spec"],
+            Self::VaultSkillsRestoredefaults => &["spec"],
             Self::VaultSkillHubsPut => &["spec"],
             Self::VaultSkillHubsGet => &["spec"],
             Self::VaultSkillHubsPublishersAdmit => &["spec"],
@@ -7225,6 +7305,11 @@ impl AgentVerb {
             Self::VaultSlimDropHeavy => &["spec"],
             Self::VaultSlimResume => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
+            Self::VaultMeshIdentity => &["spec"],
+            Self::VaultMeshBindMachine => &["spec"],
+            Self::VaultMeshSetAlpnGrant => &["spec"],
+            Self::VaultMeshRevokeMachine => &["spec"],
+            Self::VaultMeshDial => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
@@ -7594,6 +7679,7 @@ impl AgentVerb {
             Self::VaultArtifactsReleaseWait => &["spec"],
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
+            Self::VaultArtifactsAdmit => &["spec"],
             Self::VaultCriticReview => &["spec"],
             Self::VaultArtifactsProposeOutline => &["spec"],
             Self::VaultArtifactsOutline => &["spec"],
@@ -7709,6 +7795,7 @@ impl AgentVerb {
             Self::AiVideoCancel => &["spec"],
             Self::AiVerdict => &["spec"],
             Self::VaultGraphAsk => &["spec"],
+            Self::VaultGraphAdmit => &["spec"],
             Self::VaultQuestionsCreate => &["spec"],
             Self::VaultQuestionsEdit => &["spec"],
             Self::VaultQuestionsPause => &["spec"],
@@ -7857,6 +7944,7 @@ impl AgentVerb {
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
+            Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationPin => &["spec"],
@@ -8176,6 +8264,9 @@ impl AgentVerb {
             Self::VaultWeaveDigestRender => &["spec"],
             Self::VaultWeaveLinkCorrections => &["spec"],
             Self::SelfInboxLens => &["spec"],
+            Self::VaultSkillsBootstrap => &["spec"],
+            Self::VaultSkillHubsDefaultGet => &["spec"],
+            Self::VaultSkillsRestoredefaults => &["spec"],
             Self::VaultSkillHubsPut => &["spec"],
             Self::VaultSkillHubsGet => &["spec"],
             Self::VaultSkillHubsPublishersAdmit => &["spec"],
@@ -8255,6 +8346,11 @@ impl AgentVerb {
             Self::VaultSlimDropHeavy => &["spec"],
             Self::VaultSlimResume => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
+            Self::VaultMeshIdentity => &["spec"],
+            Self::VaultMeshBindMachine => &["spec"],
+            Self::VaultMeshSetAlpnGrant => &["spec"],
+            Self::VaultMeshRevokeMachine => &["spec"],
+            Self::VaultMeshDial => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
             Self::VaultSharedProposeTransfer => &["spec"],
@@ -8624,6 +8720,7 @@ impl AgentVerb {
             Self::VaultArtifactsReleaseWait => &["spec"],
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
+            Self::VaultArtifactsAdmit => &["spec"],
             Self::VaultCriticReview => &["spec"],
             Self::VaultArtifactsProposeOutline => &["spec"],
             Self::VaultArtifactsOutline => &["spec"],
@@ -8739,6 +8836,7 @@ impl AgentVerb {
             Self::AiVideoCancel => &["spec"],
             Self::AiVerdict => &["spec"],
             Self::VaultGraphAsk => &["spec"],
+            Self::VaultGraphAdmit => &["spec"],
             Self::VaultQuestionsCreate => &["spec"],
             Self::VaultQuestionsEdit => &["spec"],
             Self::VaultQuestionsPause => &["spec"],
@@ -8887,6 +8985,7 @@ impl AgentVerb {
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
+            Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationPin => &["spec"],
@@ -9567,6 +9666,15 @@ impl AgentVerb {
             Self::SelfInboxLens => {
                 "Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page."
             }
+            Self::VaultSkillsBootstrap => {
+                "Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills."
+            }
+            Self::VaultSkillHubsDefaultGet => {
+                "Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source."
+            }
+            Self::VaultSkillsRestoredefaults => {
+                "The owner explicitly re-imports missing or retired bootstrap and pinned first-hub defaults as fresh candidates, leaving unchanged defaults and local forks alone."
+            }
             Self::VaultSkillHubsPut => {
                 "The owner registers or revises a hub source; hub trust never grants activation authority."
             }
@@ -9799,6 +9907,21 @@ impl AgentVerb {
             }
             Self::VaultMeshPathReceipts => {
                 "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."
+            }
+            Self::VaultMeshIdentity => {
+                "This install's public mesh keys and both binding proofs, for the owner; no private key or grant is returned."
+            }
+            Self::VaultMeshBindMachine => {
+                "Bind a paired MACHINE's address and transport key using both possession proofs; the binding starts with no ALPN grants."
+            }
+            Self::VaultMeshSetAlpnGrant => {
+                "Allow or revoke one exact ALPN for a paired MACHINE and endpoint key, under the caller's own owner proof."
+            }
+            Self::VaultMeshRevokeMachine => {
+                "Permanently revoke a MACHINE's mesh admission and all its ALPN grants; a new enrollment needs a new MACHINE and pairing."
+            }
+            Self::VaultMeshDial => {
+                "Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream."
             }
             Self::VaultInspectionResolve => {
                 "Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item."
@@ -10883,6 +11006,9 @@ impl AgentVerb {
             Self::VaultArtifactsAsk => {
                 "Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard."
             }
+            Self::VaultArtifactsAdmit => {
+                "Admits the caller's own provider measurements for one artifact ask's units in place of the host ladder's, validating each decision and its provider-bound paired readings before holding the answers as one proposal for Keep or Discard."
+            }
             Self::VaultCriticReview => {
                 "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target."
             }
@@ -11206,6 +11332,9 @@ impl AgentVerb {
                 "The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."
             }
             Self::VaultGraphAsk => "",
+            Self::VaultGraphAdmit => {
+                "Admits the caller's own provider measurement for one graph unit in place of the host ladder's, validating the whole decision and its provider-bound paired readings before landing it as a proposed claim private to the caller."
+            }
             Self::VaultQuestionsCreate => "",
             Self::VaultQuestionsEdit => "",
             Self::VaultQuestionsPause => "",
@@ -11615,6 +11744,9 @@ impl AgentVerb {
             }
             Self::VaultConsolidationHomeGet => {
                 "The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything."
+            }
+            Self::VaultConsolidationHomePick => {
+                "The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget."
             }
             Self::VaultConsolidationLineage => {
                 "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."

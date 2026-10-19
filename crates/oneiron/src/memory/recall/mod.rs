@@ -13,6 +13,7 @@ mod items;
 mod paid;
 mod presentation;
 mod scope_honesty;
+mod selection;
 mod speculative;
 mod stale;
 pub use stale::MemoryStaleStamp;
@@ -30,6 +31,8 @@ pub use self::paid::{
     RecallRerank, RecallRerankHost, RerankDocument, RerankEgress, RerankReport, RerankScores,
     RerankSkip,
 };
+#[cfg(feature = "sync")]
+pub(crate) use self::selection::RecallKinds;
 
 use self::presentation::{hedge_bucket_for, value_text_of};
 pub(super) use self::presentation::{parse_pack_format, truncate_text};
@@ -46,7 +49,7 @@ use crate::context_pack::{DEFAULT_MAX_FIELD_CHARS, FieldProfile, PackFormat};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::llm::BudgetLease;
-use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode, WorldScope};
+use crate::pipeline::{DEFAULT_RECENCY_HALF_LIFE_DAYS, FacetMode};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::rerank::RerankOptions;
 use crate::retrieval_depth::RecallExecution;
@@ -644,7 +647,10 @@ impl Memory<'_> {
             (Some(session), Some(route)) => Some(session.retrieval_telemetry(route)?),
             _ => None,
         };
-        let worlds = self.recall_worlds(scope)?;
+        // Worlds, projects, facet and kinds, resolved once: an opened
+        // device's home narrows by these same values (FIX 2905).
+        let selection = self.recall_selection(scope)?;
+        let worlds = &selection.worlds;
         let canonical_lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let session_view = session
             .map(crate::off_record::OffRecordSession::read_view)
@@ -668,16 +674,12 @@ impl Memory<'_> {
             Some(worlds) => lane.within_worlds(worlds.clone()),
             None => lane,
         };
-        let projects = self.selected_projects(scope)?;
+        let projects = &selection.projects;
         let mut receipt = lane.read_receipt(None, 0)?;
         let (plan_filter, plan_policy) = lane.recall_plan()?;
         let effective = effort;
         let deep_pending = None;
-        let world_scope = match &worlds {
-            None => WorldScope::All,
-            Some(worlds) if worlds.include_base() && worlds.worlds().is_empty() => WorldScope::Base,
-            Some(worlds) => WorldScope::WorldSet(worlds.clone()),
-        };
+        let world_scope = selection.world_scope();
         let pack_format = format.map(parse_pack_format).transpose()?;
         if receipt.applied.deny_all {
             let mut pack = MemoryPack {
@@ -694,20 +696,13 @@ impl Memory<'_> {
                 retrieval_run_id: None,
                 residence: None,
             };
-            pack.stamp_residence(home::local_residence(self.vault));
+            pack.stamp_residence(home::local_residence(self.vault, None));
             return Ok(pack);
         }
-        let kinds = recall_kinds(scope)?;
+        let kinds = &selection.kinds;
         // A scope that names TURN but not MESSAGE still finds a turn by its
         // messages' words: each message comes back as its turn or not at all.
-        let messages_only_as_turns = kinds.as_ref().is_some_and(|kinds| {
-            kinds.contains(&ENTITY_TYPE_TURN) && !kinds.contains(&ENTITY_TYPE_MESSAGE)
-        });
-        let turn_fold = if messages_only_as_turns {
-            crate::pipeline::TurnFold::TurnsOnly
-        } else {
-            crate::pipeline::TurnFold::Fold
-        };
+        let turn_fold = kinds.turn_fold();
         // Admission runs in each candidate's retrieval transaction before ranking.
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
@@ -717,21 +712,14 @@ impl Memory<'_> {
                 }
                 // A caller's own filter already chose its kinds; otherwise the
                 // scope's kinds, or the default kinds, decide.
-                if kinds.is_some() || candidate_filter.is_none() {
+                if kinds.listed().is_some() || candidate_filter.is_none() {
                     let Some(kind) = store
                         .port_entity_record(txn, id)?
                         .map(|row| row.entity_type)
                     else {
                         return Ok(false);
                     };
-                    let wanted = match &kinds {
-                        Some(kinds) => {
-                            kinds.contains(&kind)
-                                || (messages_only_as_turns && kind == ENTITY_TYPE_MESSAGE)
-                        }
-                        None => !CONTAINER_KINDS.contains(&kind),
-                    };
-                    if !wanted {
+                    if !kinds.admits(kind) {
                         return Ok(false);
                     }
                 }
@@ -822,13 +810,12 @@ impl Memory<'_> {
             vector_completed,
             temporal_hints,
             retrieval_run_id,
-        ) = match &scope.facet {
-            Some(facet_ref) => {
+        ) = match selection.facet {
+            Some(facet_id) => {
                 // Facet-strict narrowing rides the raw retrieval pipeline:
                 // ContextPackBuilder exposes no facet passthrough and
                 // pipeline.rs/context_pack.rs are consume-only for this
                 // chain. No pack rendering on this path.
-                let facet_id = self.resolve_ref(facet_ref)?;
                 let mut pipeline = self
                     .vault
                     .query()
@@ -1132,14 +1119,15 @@ impl Memory<'_> {
             retrieval_run_id,
             residence: None,
         };
-        // An opened device's answer is its own items alone (FIX 2905).
-        pack.stamp_residence(home::local_residence(self.vault));
+        // An opened device's answer is its own items alone (FIX 2905); the
+        // stamp keeps what this recall narrowed by, for its home.
+        pack.stamp_residence(home::local_residence(self.vault, Some(&selection)));
         if let Some(on_cut) = execution.on_cut {
             // The items are ready. A door that stops waiting during the
             // census answers with them, the census marked unfinished.
             let mut ready = pack.clone();
             ready.scope_honesty.census_capped = true;
-            ready.retrieval_meta.partial = true;
+            ready.mark_cut();
             on_cut(ready);
         }
         if let Some(worlds) = &worlds {
@@ -1175,7 +1163,7 @@ fn cut_pack(vault: &crate::Vault, receipt: &ScopedReadReceipt) -> MemoryPack {
         retrieval_run_id: None,
         residence: None,
     };
-    pack.stamp_residence(home::local_residence(vault));
+    pack.stamp_residence(home::local_residence(vault, None));
     pack
 }
 

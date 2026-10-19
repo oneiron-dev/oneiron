@@ -189,6 +189,9 @@ both bindings and their export-census tests in one change.
 - `vault.weave.digest.render`
 - `vault.weave.link.corrections`
 - `self.inbox.lens`
+- `vault.skills.bootstrap`
+- `vault.skill_hubs.default.get`
+- `vault.skills.restoreDefaults`
 - `vault.skill_hubs.put`
 - `vault.skill_hubs.get`
 - `vault.skill_hubs.publishers.admit`
@@ -268,6 +271,11 @@ both bindings and their export-census tests in one change.
 - `vault.slim.drop_heavy`
 - `vault.slim.resume`
 - `vault.mesh.path_receipts`
+- `vault.mesh.identity`
+- `vault.mesh.bind_machine`
+- `vault.mesh.set_alpn_grant`
+- `vault.mesh.revoke_machine`
+- `vault.mesh.dial`
 - `vault.inspection.resolve`
 - `vault.shared.propose_delete`
 - `vault.shared.propose_transfer`
@@ -496,6 +504,11 @@ both bindings and their export-census tests in one change.
 - `vault.lenses.result_set.action`
 - `vault.lenses.default`
 - `vault.disclosure.offer`
+- `vault.disclosure.ceiling.get`
+- `vault.disclosure.ceiling.set`
+- `vault.disclosure.ceiling.clear`
+- `vault.disclosure.reveals`
+- `vault.disclosure.reveals.answer`
 - `reveal`
 - `reveal.wait`
 - `reveal.describe`
@@ -632,6 +645,7 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.release_wait`
 - `vault.artifacts.review_slides`
 - `vault.artifacts.ask`
+- `vault.artifacts.admit`
 - `vault.critic.review`
 - `vault.artifacts.propose_outline`
 - `vault.artifacts.outline`
@@ -747,6 +761,7 @@ both bindings and their export-census tests in one change.
 - `ai.video.cancel`
 - `ai.verdict`
 - `vault.graph.ask`
+- `vault.graph.admit`
 - `vault.questions.create`
 - `vault.questions.edit`
 - `vault.questions.pause`
@@ -875,6 +890,7 @@ both bindings and their export-census tests in one change.
 - `vault.runs.step`
 - `vault.runs.checkpoint`
 - `vault.consolidation.home.get`
+- `vault.consolidation.home.pick`
 - `vault.consolidation.lineage`
 - `vault.consolidation.promote`
 - `vault.consolidation.pin`
