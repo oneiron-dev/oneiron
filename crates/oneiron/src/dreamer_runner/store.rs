@@ -305,8 +305,10 @@ impl<'a> DreamerRunnerStore<'a> {
                 now,
             )
         })?;
-        // Timer work admits at Macro scope, which only the deadline lane drives.
+        // Timer work admits at Macro scope, which only the deadline lane drives;
+        // a plan's sieve rungs (FIX 336) ride the Micro lane's observers.
         self.vault.store.notify_proactivity_changes();
+        self.vault.store.notify_attempt_observers();
         Ok(outcome)
     }
 
