@@ -102,6 +102,17 @@ impl SecureEnclaveKeychain {
             .set_access_control(access);
         SecKey::new(&options).map_err(|e| enclave(e.code()))
     }
+
+    /// `secret` sealed to the enclave key's public half.
+    fn seal(&self, secret: &[u8; 32]) -> Result<Vec<u8>> {
+        let public = self
+            .enclave_key()?
+            .public_key()
+            .ok_or(KeystoreError::Corrupt("the enclave key has no public half"))?;
+        public
+            .encrypt_data(SEAL, secret)
+            .map_err(|e| enclave(e.code()))
+    }
 }
 
 impl DeviceKeystore for SecureEnclaveKeychain {
@@ -121,18 +132,18 @@ impl DeviceKeystore for SecureEnclaveKeychain {
     }
 
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()> {
-        let public = self
-            .enclave_key()?
-            .public_key()
-            .ok_or(KeystoreError::Corrupt("the enclave key has no public half"))?;
-        let sealed = public
-            .encrypt_data(SEAL, secret)
-            .map_err(|e| enclave(e.code()))?;
+        let sealed = self.seal(secret)?;
         self.items.add_item(slot, &sealed)
     }
 
     fn delete(&self, slot: &KeystoreSlot) -> Result<()> {
         self.items.delete(slot)
+    }
+
+    /// Sealed to the same enclave key, then the item's data updated in place.
+    fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool> {
+        let sealed = self.seal(secret)?;
+        self.items.update_item(slot, &sealed)
     }
 
     fn locality(&self) -> KeystoreLocality {

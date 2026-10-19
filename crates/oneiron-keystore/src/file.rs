@@ -64,6 +64,28 @@ impl LocalFileKeystore {
     fn sync_dir(&self) -> Result<()> {
         File::open(&self.dir).and_then(|d| d.sync_all()).map_err(io)
     }
+
+    /// A private temporary file holding `secret`, beside the slot's file.
+    fn write_temp(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> (PathBuf, std::io::Result<()>) {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let tmp = self.dir.join(format!(
+            ".{}.{}.{nanos}.tmp",
+            slot.name(),
+            std::process::id()
+        ));
+        let written = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)
+            .and_then(|mut file| {
+                file.write_all(secret)?;
+                file.sync_all()
+            });
+        (tmp, written)
+    }
 }
 
 impl DeviceKeystore for LocalFileKeystore {
@@ -100,23 +122,7 @@ impl DeviceKeystore for LocalFileKeystore {
     /// either no slot or a whole one, and the link never replaces a filled slot.
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()> {
         let path = self.path(slot);
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
-        let tmp = self.dir.join(format!(
-            ".{}.{}.{nanos}.tmp",
-            slot.name(),
-            std::process::id()
-        ));
-        let written = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&tmp)
-            .and_then(|mut file| {
-                file.write_all(secret)?;
-                file.sync_all()
-            });
+        let (tmp, written) = self.write_temp(slot, secret);
         let linked = written.and_then(|()| fs::hard_link(&tmp, &path));
         let _ = fs::remove_file(&tmp);
         match linked {
@@ -132,6 +138,28 @@ impl DeviceKeystore for LocalFileKeystore {
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
             Err(e) => Err(io(e)),
         }
+    }
+
+    /// Writes a private temporary file, then renames it over the filled slot:
+    /// one rename, so a reader opens the old file or the new one, never none.
+    /// An empty slot is `Ok(false)` and nothing is written; a delete racing
+    /// the rename may leave the slot holding `secret`.
+    fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool> {
+        let path = self.path(slot);
+        match fs::symlink_metadata(&path) {
+            Ok(meta) if meta.is_file() => {}
+            Ok(_) => return Err(KeystoreError::Corrupt("the slot is not a file")),
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(io(e)),
+        }
+        let (tmp, written) = self.write_temp(slot, secret);
+        let renamed = written.and_then(|()| fs::rename(&tmp, &path));
+        if renamed.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        renamed.map_err(io)?;
+        self.sync_dir()?;
+        Ok(true)
     }
 
     fn locality(&self) -> KeystoreLocality {

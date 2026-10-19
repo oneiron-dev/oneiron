@@ -87,6 +87,7 @@ mod install_fold;
 mod invitee_slip;
 mod invocation_slip;
 mod left_notices;
+mod local_host_root;
 mod local_open;
 mod log_budget;
 mod log_structure;
@@ -241,6 +242,7 @@ pub use host_action::HostActionAuthority;
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
+pub use local_host_root::{LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace};
 pub use local_open::LocalOpenProfile;
 pub use log_budget::{AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER};
 pub use machine_identity::{

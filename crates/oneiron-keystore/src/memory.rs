@@ -48,6 +48,15 @@ impl DeviceKeystore for MemoryKeystore {
         Ok(())
     }
 
+    fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool> {
+        let mut slots = self.slots.lock().map_err(|_| KeystoreError::Denied)?;
+        let Some(held) = slots.get_mut(slot) else {
+            return Ok(false);
+        };
+        **held = *secret;
+        Ok(true)
+    }
+
     fn locality(&self) -> KeystoreLocality {
         KeystoreLocality::ProcessOnly
     }

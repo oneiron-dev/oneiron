@@ -59,6 +59,22 @@ pub const SEGMENTS_EMPTY: &str = "No segments committed in this session yet.";
 /// wrong-root warning"). It names no secret, and nothing is re-keyed.
 pub const WRONG_ROOT_WARNING: &str = "The host root secret this Mac found is not your vault's root, so it was not used. Your vault opened as usual and recording works as before; this Mac keeps its existing standing in the vault.";
 
+/// The steps a re-key answers with when this Mac's host root secret comes
+/// from the config file `oneiron serve` reads, which the recorder never
+/// overwrites (FIX 5571). They name no secret.
+pub const REKEY_STEPS_SERVER_CONFIG: &[&str] = &[
+    "Set auth_secret in the config file oneiron serve reads to your vault's root secret.",
+    "Quit and reopen Oneiron Recorder, so its next open reads it.",
+];
+
+/// The steps a re-key answers with when this Mac's host root secret comes
+/// from the environment the recorder starts with, which it never overwrites
+/// (FIX 5571). They name no secret.
+pub const REKEY_STEPS_ENVIRONMENT: &[&str] = &[
+    "Set ONEIRON_AUTH_SECRET, in the environment Oneiron Recorder starts with, to your vault's root secret.",
+    "Quit and reopen Oneiron Recorder, so its next open reads it.",
+];
+
 /// Refusal shown when a start is attempted without an affirm. It is a product
 /// message about the gate, not an engine error.
 pub const START_REFUSED_WITHOUT_DISCLOSURE: &str =

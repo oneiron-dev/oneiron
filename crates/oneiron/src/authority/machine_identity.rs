@@ -171,7 +171,7 @@ pub(super) fn resident_genesis_vault_id_in_txn(
 /// Whether this install's own profile already stands as a carrier: the one
 /// carrier rule admits its install key, and a live chain names both its keys.
 /// The full predicate the owner-act writers ask, not the roster head alone.
-fn serving_profile_stands(
+pub(super) fn serving_profile_stands(
     fold: &AuthorityFold,
     folded: &FoldedMachine,
     request: &MachineEnrolmentRequest,
