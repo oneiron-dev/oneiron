@@ -176,7 +176,7 @@ impl StoreCore {
     /// handle on it may mint or retire a key there: it was archived when it
     /// opened, or a restore's swap has sealed it since.
     pub(in crate::store) fn gate_custody_archived(&self) -> bool {
-        self.gate_custody_archived_at_open || self.env.is_sealed()
+        self.key_custody.archived_at_open() || self.env.is_sealed()
     }
 
     /// The page size this store writes in: the creating host's, which LMDB
@@ -201,16 +201,11 @@ impl StoreCore {
 /// owner's always-on drop assertion enforces this at runtime; the session
 /// lifecycle drains leases before releasing its owner-bound handle.
 pub struct StoreCore {
-    /// Exterior key custody binding. On restore this remains the source vault's
-    /// canonical path; it is never reset to the new LMDB image's location.
-    pub(in crate::store) gate_custody_root: std::path::PathBuf,
-    /// The vault was archived when it opened: the custody it binds is its
-    /// replacement's, so from the first moment of its open no handle on it
-    /// mints or retires a key there. A vault archived later is sealed
-    /// ([`StoreCore::gate_custody_archived`]).
-    pub(in crate::store) gate_custody_archived_at_open: bool,
-    /// Exterior retirement cannot race a live snapshot's decision decrypt.
-    pub(in crate::store) gate_retirement_lock: std::sync::RwLock<()>,
+    /// Exterior key custody: its binding (on restore, the source vault's,
+    /// never reset to the new LMDB image's location), whether the vault was
+    /// archived when it opened, and the lock that keeps a retirement from
+    /// racing a live snapshot's decrypt.
+    pub(in crate::store) key_custody: crate::store::key_custody::KeyCustody,
     /// A device-only flag commits under the write side; a raw send's verdict
     /// reads the flags and accepts under the read side. A flag committed
     /// before a verdict reads is seen by it; one committed later finds the
@@ -615,7 +610,7 @@ macro_rules! manifest_dbs {
                 &self.base.core.pending_scan_checks
             }
             fn clock(&self) -> &crate::ports::StoreClock { &self.base.core.clock }
-            fn gate_key_root(&self) -> &std::path::Path { &self.base.core.gate_custody_root }
+            fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.base.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.base.core.gate_custody_archived() }
             fn is_union(&self) -> bool { self.room.is_some() }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
@@ -656,7 +651,7 @@ macro_rules! manifest_dbs {
             /// ([`crate::scan_check::ScanCount::defer`]).
             fn pending_scan_checks(&self) -> &crate::scan_check::PendingScanChecks;
             fn clock(&self) -> &crate::ports::StoreClock;
-            fn gate_key_root(&self) -> &std::path::Path;
+            fn key_custody(&self) -> &crate::store::key_custody::KeyCustody;
             fn gate_custody_archived(&self) -> bool;
             /// Whether reads see a room's overlay ∪ base rather than base
             /// alone. A cache keyed and validated by base versions cannot
@@ -674,7 +669,7 @@ macro_rules! manifest_dbs {
                 &self.core.pending_scan_checks
             }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
-            fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
+            fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
             fn is_union(&self) -> bool { false }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
@@ -690,7 +685,7 @@ macro_rules! manifest_dbs {
                 &self.core.pending_scan_checks
             }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
-            fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
+            fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
             fn is_union(&self) -> bool { true }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
