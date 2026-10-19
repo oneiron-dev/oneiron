@@ -97,7 +97,8 @@ pub use public_lens::{
 pub use publication::{
     BOOKING_PUBLIC_PAGE_PREDICATE, BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BookingPagePublication,
     PublicBookingAvailability, booking_config_hash, decode_public_booking_page_value,
-    encode_public_booking_page_value, load_public_booking_page, resolve_public_booking_token,
+    encode_public_booking_page_value, load_public_booking_page, load_public_booking_page_listing,
+    resolve_public_booking_token,
 };
 pub use reminder::{
     BOOKING_REMINDER_LEADS_SECS, BookingReminderStage, BookingReminderWake, NoShowEscalation,

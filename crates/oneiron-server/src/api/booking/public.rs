@@ -68,6 +68,23 @@ pub(crate) fn resolve_public_booking_page(
     Ok((page_ref, publication))
 }
 
+/// [`resolve_public_booking_page`], beside the rows the publication was read
+/// from (FIX 4777): the page, its publication claim and each event-type
+/// claim it validated, from that one read.
+pub(crate) fn resolve_public_booking_page_listing(
+    server: &SyncServer,
+    page_token: &str,
+) -> Result<(EntityId, BookingPagePublication, Vec<EntityId>), ApiError> {
+    let page_ref = oneiron::booking::resolve_public_booking_token(&server.vault, page_token)
+        .map_err(|_| public_booking_not_found())?
+        .ok_or_else(public_booking_not_found)?;
+    let (publication, rows) =
+        oneiron::booking::load_public_booking_page_listing(&server.vault, page_ref, now_secs()?)
+            .map_err(|_| public_booking_not_found())?
+            .ok_or_else(public_booking_not_found)?;
+    Ok((page_ref, publication, rows))
+}
+
 pub(crate) async fn render_public_booking_page(
     State(server): State<Arc<SyncServer>>,
     client: ClientAddress,

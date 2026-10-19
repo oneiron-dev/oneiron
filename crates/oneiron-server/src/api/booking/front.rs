@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use axum::extract::State;
-use oneiron::TimeRange;
+use oneiron::{EntityId, TimeRange};
 use oneiron::booking::agent_api::{
     BookingAvailabilityInput, BookingConstraintInput, BookingOperationRequest,
 };
@@ -32,6 +32,7 @@ use oneiron::booking::{
     BookingError, RungProjection, SessionKey, SlotOracle, SolveRequest, SolveResult,
     bounded_public_slots, slot_mask,
 };
+use oneiron::memory::ProducerRows;
 use oneiron::task_verb::sdk::BookingConstraintHoldContext as HoldContext;
 pub(super) use oneiron::task_verb::sdk::{
     BookingConstraintTurnInput as ConstraintTurnInput,
@@ -41,7 +42,7 @@ pub(super) use oneiron::task_verb::sdk::{
 use super::admission::{admission_facts, admission_short_circuit};
 use super::free_text::{on_parse_seat, parse_seat_settings};
 use super::helpers::{booking_error, now_secs};
-use super::lifecycle::{ServerBookingOracle, booking_oracle};
+use super::lifecycle::{ServerBookingOracle, booking_oracle, booking_oracle_listing};
 use super::subject::session_key;
 use super::validate::validate_operation_shape;
 use super::{BookingAdmissionContext, public_availability, turn};
@@ -75,6 +76,32 @@ pub(crate) async fn run_public_constraint_turn(
     input: ConstraintTurnInput,
     transport: &BookingAdmissionContext,
 ) -> Result<ConstraintTurnResponse, ApiError> {
+    run_constraint_turn_in(server, authority, input, transport, false)
+        .await
+        .map(|(response, _)| response)
+}
+
+/// [`run_public_constraint_turn`], beside the rows its solves read (FIX
+/// 4777): the page's live `booking.event_type` claims its calendar binding
+/// was read from, and every row the oracle listed. The visitor's sentence,
+/// the parse and the host-owned session counters are no rows; the
+/// publication the caller resolved lists its own.
+pub(crate) async fn run_public_constraint_turn_listing(
+    server: &Arc<SyncServer>,
+    authority: PublicBookingAuthority,
+    input: ConstraintTurnInput,
+    transport: &BookingAdmissionContext,
+) -> Result<(ConstraintTurnResponse, Vec<EntityId>), ApiError> {
+    run_constraint_turn_in(server, authority, input, transport, true).await
+}
+
+async fn run_constraint_turn_in(
+    server: &Arc<SyncServer>,
+    authority: PublicBookingAuthority,
+    input: ConstraintTurnInput,
+    transport: &BookingAdmissionContext,
+    list: bool,
+) -> Result<(ConstraintTurnResponse, Vec<EntityId>), ApiError> {
     let page_ref = authority.page_ref;
     let window = TimeRange {
         start: input.window.start,
@@ -113,7 +140,7 @@ pub(crate) async fn run_public_constraint_turn(
             transport = transport.transport.as_str(),
             "booking front admission answered without parsing or solving"
         );
-        return silent_answer(&input.session_ref, &front);
+        return silent_answer(&input.session_ref, &front).map(|answer| (answer, Vec::new()));
     }
 
     let session = front_sessions().checkout(session_key(page_ref, &input.session_ref), now);
@@ -129,12 +156,18 @@ pub(crate) async fn run_public_constraint_turn(
     let principal = transport.principal;
     let turn_server = Arc::clone(server);
     // The ladder's model rungs block on the server's runtime.
-    let outcome =
-        tokio::task::spawn_blocking(move || -> Result<ConstraintFrontOutcome, ApiError> {
-            let oracle = PublicSlotOracle(booking_oracle(&turn_server, page_ref, None, now)?);
+    let (outcome, rows) = tokio::task::spawn_blocking(
+        move || -> Result<(ConstraintFrontOutcome, Vec<EntityId>), ApiError> {
+            let producers = ProducerRows::default();
+            let (oracle, mut rows) = if list {
+                booking_oracle_listing(&turn_server, page_ref, None, now, &producers)?
+            } else {
+                (booking_oracle(&turn_server, page_ref, None, now)?, Vec::new())
+            };
+            let oracle = PublicSlotOracle(oracle);
             let mut state = session.lock().unwrap_or_else(PoisonError::into_inner);
             let (caps, copy) = (front.caps(), front.copy());
-            on_parse_seat(
+            let outcome = on_parse_seat(
                 &turn_server,
                 &settings,
                 principal,
@@ -145,13 +178,16 @@ pub(crate) async fn run_public_constraint_turn(
                     ))
                     .map_err(booking_error)
                 },
-            )
-        })
-        .await
-        .map_err(|_| ApiError::internal_server_error("booking constraint turn stopped"))??;
+            )?;
+            rows.extend(producers.take());
+            Ok((outcome, rows))
+        },
+    )
+    .await
+    .map_err(|_| ApiError::internal_server_error("booking constraint turn stopped"))??;
     // Never answer from a publication the owner revoked or edited meanwhile.
     public_availability::recheck(server, Some(&authority))?;
-    Ok(match outcome {
+    let response = match outcome {
         ConstraintFrontOutcome::Slots(reply) => ConstraintTurnResponse::Slots {
             card: reply.card,
             flex_used: reply.solve_result.flex_used,
@@ -168,7 +204,8 @@ pub(crate) async fn run_public_constraint_turn(
         ConstraintFrontOutcome::Deflect(deflect) => {
             ConstraintTurnResponse::Deflect { card: deflect.card }
         }
-    })
+    };
+    Ok((response, rows))
 }
 
 /// The answer a silently declined or quarantined turn gets: success-shaped,

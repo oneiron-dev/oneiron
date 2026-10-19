@@ -150,14 +150,14 @@ impl PublicLoop {
                             })();
                             let _ = reply.send(outcome);
                         }
-                        Command::Tool(result, reply) => {
+                        Command::Tool(result, rows, reply) => {
                             let outcome = (|| {
                                 let mut journal = self.journal.lock().map_err(|_| unavailable())?;
                                 if journal.ended || pending.is_some() || microphone.is_some() || !cuts.is_empty() || journal.epochs.values().any(|epoch| !epoch.finished) {
                                     return Err(invalid("tool context enters before the next voice utterance"));
                                 }
                                 let source = result.source.clone();
-                                self.outputs.brain.add_foreign(result);
+                                self.outputs.brain.add_foreign(result, rows);
                                 journal.context_sources.push(source.clone());
                                 journal.push(None, LiveVoiceEventKind::ToolContext { source });
                                 Ok(journal.processed())
@@ -228,7 +228,13 @@ impl PublicLoop {
                     match event {
                         MediaEvent::Stopped | MediaEvent::PlayoutClosed => return Err(unavailable()),
                         MediaEvent::In(input) => self.host.media_in(input, &mut self.bridge, &mut self.outputs),
-                        MediaEvent::Brain(out) => self.host.brain_out(out, &mut self.bridge, &mut self.outputs).map_err(|_| unavailable())?,
+                        MediaEvent::Brain(mut out) => {
+                            // The rows the generation was made from, kept for the events it serves before speech consumes it (FIX 4778).
+                            if let Some(sources) = out.sources.take() {
+                                self.journal.lock().map_err(|_| unavailable())?.record_sources(out.generation, sources);
+                            }
+                            self.host.brain_out(out, &mut self.bridge, &mut self.outputs).map_err(|_| unavailable())?;
+                        }
                         MediaEvent::Verdict(verdict) => self.host.verdict(verdict, &mut self.bridge, &mut self.outputs),
                         MediaEvent::Tick => self.host.speech_tick(&mut self.bridge, &mut self.outputs).map_err(|_| unavailable())?,
                         MediaEvent::Out(VoiceMediaOutput::Pcm { frame, .. }) => self.host.spoken(frame, &mut self.bridge).map_err(|_| unavailable())?,

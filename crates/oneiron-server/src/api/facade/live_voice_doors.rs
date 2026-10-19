@@ -50,9 +50,14 @@ pub(crate) async fn ai_voice_audio(
 }
 
 /// `ai.voice.events` (`host_door_lists`): a page serves PCM spoken from
-/// the brain's model input (the agent's instructions, history and heard
-/// memories) and notices, but the journal keeps no complete set of the rows
-/// those came from, so the list is unknown (`None`), never `[]`.
+/// the brain's model input, the safeguard verdicts and notices on it, and
+/// each turn's memories receipt. It lists the rows its served events were
+/// made from, as the journal kept them per generation from the brain's own
+/// turn (FIX 4778): the answering agent's definition, the history each turn
+/// heard, the memories it heard and its tool contexts' rows, the policy
+/// row a notice names and the rows a memories read found. The person's
+/// words and the control events list none. A page one of whose turns kept
+/// no complete set lists unknown (`None`), never `[]`.
 pub(crate) async fn ai_voice_events(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -61,7 +66,10 @@ pub(crate) async fn ai_voice_events(
     let answer = owner_proof(auth, server, "ai.voice.events")
         .and_then(|_| server.live_voice.get(auth, &input.session_ref))
         .and_then(|session| session.events(input));
-    (answer, None)
+    match answer {
+        Ok((page, rows)) => (Ok(page), rows),
+        Err(error) => (Err(error), None),
+    }
 }
 
 /// `ai.voice.ack` (`host_door_lists`): the reply is the processing cursor
@@ -128,7 +136,7 @@ pub(crate) async fn ai_voice_tool(
                 ConnectorCallReply::Delivered {
                     result: Some(result),
                     ..
-                } => session.tool(result.clone()).await,
+                } => session.tool(result.clone(), rows.clone()).await,
                 _ => session.processed(),
             };
             processed.map(|processed| LiveVoiceToolReply { processed, reply })

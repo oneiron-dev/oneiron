@@ -1,5 +1,5 @@
 //! Typed owner doors for Coach offers and counted pilot evidence.
-use super::host_doors::{Listed, internal, owner_proof};
+use super::host_doors::{Listed, MaybeListed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron::consent::AuthenticatedOwner;
@@ -23,9 +23,7 @@ async fn owned<T: Send + 'static>(
 /// [`owned`] for a door whose answer is ids and control metadata only: the
 /// pass's attempt, an answer's record, an undo's model, the owner's
 /// candidate setups and a pilot's counts, measurement and card. It lists
-/// complete and empty (`host_door_lists`). The offer reads, which serve the
-/// Coach's drafted text, and the pilot prepare, which serves eval cases,
-/// stay unlisted.
+/// complete and empty (`host_door_lists`).
 async fn owned_control<T: Send + 'static>(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -35,12 +33,27 @@ async fn owned_control<T: Send + 'static>(
     (owned(server, auth, verb, act).await, Vec::new())
 }
 
+/// [`owned`] for a door that serves drafted or derived content: the offer
+/// reads serve the Coach's drafted snapshot and its checks, and the pilot
+/// prepare serves the cohort's released eval cases. Each lists (`host_door_lists`)
+/// but its list is unknown (`None`), never `[]`: the snapshot keeps no set of
+/// the rows its draft and checks were read from, and a released case none of
+/// the rows its text derives from (FIX 4780).
+async fn owned_unlisted<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&oneiron::Vault, &AuthenticatedOwner) -> oneiron::Result<T> + Send + 'static,
+) -> MaybeListed<T> {
+    (owned(server, auth, verb, act).await, None)
+}
+
 pub(crate) async fn vault_coach_training_offers(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: offer_doors::OfferListRequest,
-) -> MemoryResult<Vec<oneiron::skill_optimize::offer_doors::OfferView>> {
-    owned(
+) -> MaybeListed<Vec<oneiron::skill_optimize::offer_doors::OfferView>> {
+    owned_unlisted(
         server,
         auth,
         "vault.coach.training_offers",
@@ -53,8 +66,8 @@ pub(crate) async fn vault_coach_training_offers_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: offer_doors::OfferRef,
-) -> MemoryResult<Option<oneiron::skill_optimize::offer_doors::OfferView>> {
-    owned(
+) -> MaybeListed<Option<oneiron::skill_optimize::offer_doors::OfferView>> {
+    owned_unlisted(
         server,
         auth,
         "vault.coach.training_offers.get",
@@ -81,8 +94,8 @@ pub(crate) async fn vault_coach_training_offers_result(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: offer_doors::OfferPassRef,
-) -> MemoryResult<Option<oneiron::skill_optimize::offer_doors::OfferPassResult>> {
-    owned(
+) -> MaybeListed<Option<oneiron::skill_optimize::offer_doors::OfferPassResult>> {
+    owned_unlisted(
         server,
         auth,
         "vault.coach.training_offers.result",
@@ -151,8 +164,8 @@ pub(crate) async fn vault_coach_training_offers_pilots_prepare(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: offer_pilot::OfferPilotPrepare,
-) -> MemoryResult<oneiron::skill_optimize::offer_pilot::OfferPilotPrepared> {
-    owned(
+) -> MaybeListed<oneiron::skill_optimize::offer_pilot::OfferPilotPrepared> {
+    owned_unlisted(
         server,
         auth,
         "vault.coach.training_offers.pilots.prepare",

@@ -441,6 +441,27 @@ pub(super) fn load_event_type_config_in_txn(
     page_ref: EntityId,
     key: &EventTypeKey,
 ) -> std::result::Result<EventTypeConfig, BookingError> {
+    load_event_type_config_listed_in_txn(vault, rtxn, page_ref, key).map(|(config, _)| config)
+}
+
+/// [`load_event_type_config`], beside the `booking.event_type` claim it
+/// decoded the configuration from (FIX 4777).
+pub(super) fn load_event_type_config_listed(
+    vault: &Vault,
+    page_ref: EntityId,
+    key: &EventTypeKey,
+) -> std::result::Result<(EventTypeConfig, EntityId), BookingError> {
+    let rtxn = vault.store.env.read_txn().map_err(storage_failure)?;
+    load_event_type_config_listed_in_txn(vault, &rtxn, page_ref, key)
+}
+
+/// [`load_event_type_config_in_txn`], beside the claim it decoded.
+pub(super) fn load_event_type_config_listed_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    page_ref: EntityId,
+    key: &EventTypeKey,
+) -> std::result::Result<(EventTypeConfig, EntityId), BookingError> {
     // A malformed shortcut is a cache miss like any other: the scan below is
     // always the authoritative fallback.
     let shortcut = EVENT_TYPE_SHORTCUT
@@ -449,7 +470,7 @@ pub(super) fn load_event_type_config_in_txn(
     if let Some(id) = shortcut
         && let Some(config) = live_config_in_txn(vault, rtxn, &id, page_ref, key)?
     {
-        return Ok(config);
+        return Ok((config, id));
     }
 
     let mut claims = vault
@@ -458,7 +479,7 @@ pub(super) fn load_event_type_config_in_txn(
     claims.sort_unstable();
     for id in &claims {
         if let Some(config) = live_config_in_txn(vault, rtxn, id, page_ref, key)? {
-            return Ok(config);
+            return Ok((config, *id));
         }
     }
     Err(BookingError::InvalidConfig(format!(

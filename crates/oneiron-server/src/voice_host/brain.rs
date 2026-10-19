@@ -37,6 +37,7 @@ use oneiron::{
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use super::speech::{TurnSources, add_rows, notice_rows};
 use super::{HostError, VoiceBrainOut};
 use crate::ai_host::{AiHandle, CHAT_ROLE};
 use crate::api::RoomAudience;
@@ -79,6 +80,9 @@ pub struct ChatBrainBindings {
     /// The answering agent's instructions, read under the call owner's
     /// credential; `None` answers with none.
     pub instructions: Option<String>,
+    /// The AGENT_DEF `instructions` were read from, which each turn lists
+    /// among the rows it was made from (FIX 4778).
+    pub agent: EntityId,
     /// The actor whose budget line each turn runs on.
     pub payer: WriteActor,
     /// Who each turn bills when a room pays for the call (FIX 805), which
@@ -93,7 +97,7 @@ pub struct ChatBrain {
     bindings: ChatBrainBindings,
     seat: Seat,
     /// This call's turns so far, the person's and the brain's.
-    history: Arc<Mutex<Vec<LlmMessage>>>,
+    history: Arc<Mutex<Vec<HistoryEntry>>>,
     /// The audience revision `history` was heard under.
     history_revision: Option<u64>,
     /// The room's live speakers `history` was heard under, for a call heard
@@ -101,8 +105,16 @@ pub struct ChatBrain {
     history_live: Option<RoomLiveSpeakerEntries>,
     turn: Option<Running>,
     retiring: Vec<JoinHandle<()>>,
-    foreign: Vec<oneiron::task_verb::sdk::ConnectorToolResult>,
+    /// Each tool context, beside the rows the connector call listed.
+    foreign: Vec<(oneiron::task_verb::sdk::ConnectorToolResult, Vec<EntityId>)>,
+    /// Every row this call's turns were made from so far: a safeguard
+    /// notice is not told which turn's sentence it judged.
+    said_ever: Option<Vec<EntityId>>,
 }
+
+/// One history message, beside the rows it was made from (FIX 4778);
+/// `None` when they are unknown.
+type HistoryEntry = (LlmMessage, Option<Vec<EntityId>>);
 
 /// The turn answering now.
 struct Running {
@@ -113,6 +125,10 @@ struct Running {
     said: Arc<Mutex<Option<String>>>,
     /// Its memories receipt until an event carries it, shared the same way.
     memories: Arc<Mutex<Option<TurnMemories>>>,
+    /// The rows it was made from until an event carries them.
+    sources: Arc<Mutex<Option<TurnSources>>>,
+    /// The rows what it says is made from, for its history entry.
+    said_from: Option<Vec<EntityId>>,
 }
 
 /// The turn's retrieved memories, as the brain hears them.
@@ -129,6 +145,15 @@ type TurnRead = (
     Option<Memories>,
     Option<TurnMemories>,
     Option<RoomLiveSpeakerEntries>,
+);
+
+/// What opening a turn gives: its stream, whether it heard outside context,
+/// its memories receipt and the rows its model input was read from.
+type OpenedTurn = (
+    LlmStream<'static>,
+    bool,
+    Option<TurnMemories>,
+    Option<Vec<EntityId>>,
 );
 
 impl ChatBrain {
@@ -148,6 +173,7 @@ impl ChatBrain {
             turn: None,
             retiring: Vec::new(),
             foreign: Vec::new(),
+            said_ever: Some(Vec::new()),
         })
     }
 
@@ -180,17 +206,21 @@ impl ChatBrain {
 
     /// The turn's admitted stream over its `memories`, opened before
     /// anything is spoken, whether the turn heard context from outside it,
-    /// and what its memories read found and withheld.
+    /// what its memories read found and withheld, and the rows its model
+    /// input was read from (FIX 4778): the answering agent's definition,
+    /// each history message it hears, the memories and each tool context's
+    /// rows. The person's transcript is no stored row.
     fn open(
         &self,
         request: &BrainRequest,
         memories: Option<Memories>,
         heard: Option<TurnMemories>,
-    ) -> oneiron::Result<(LlmStream<'static>, bool, Option<TurnMemories>)> {
+    ) -> oneiron::Result<OpenedTurn> {
         let ChatBrainBindings {
             ai,
             vault,
             instructions,
+            agent,
             payer,
             funding,
             ..
@@ -200,22 +230,28 @@ impl ChatBrain {
             .iter()
             .map(|text| text_message(LlmMessageRole::System, text.clone()))
             .collect();
+        let mut said_from = Some(vec![*agent]);
         {
             let history = self
                 .history
                 .lock()
                 .map_err(|_| refused("history poisoned"))?;
             let skip = history.len().saturating_sub(settings.history_turns);
-            messages.extend(history.iter().skip(skip).cloned());
+            for (message, rows) in history.iter().skip(skip) {
+                messages.push(message.clone());
+                add_rows(&mut said_from, rows.as_deref());
+            }
         }
         if let Some(memories) = &memories {
             messages.push(text_message(LlmMessageRole::User, memories.board.clone()));
+            add_rows(&mut said_from, Some(&memories.ids));
         }
-        for context in &self.foreign {
+        for (context, rows) in &self.foreign {
             // The connector's own source and foreign marker stay with every
             // field. They are task data, never a System instruction.
             let data = serde_json::to_string(context).map_err(refused)?;
             messages.push(text_message(LlmMessageRole::User, data));
+            add_rows(&mut said_from, Some(rows));
         }
         messages.push(text_message(
             LlmMessageRole::User,
@@ -243,7 +279,7 @@ impl ChatBrain {
             .stream(&run, admitted.request, None)
             .map_err(|error| refused(format!("{error:?}")))?;
         let Some(memories) = memories else {
-            return Ok((stream, !self.foreign.is_empty(), heard));
+            return Ok((stream, !self.foreign.is_empty(), heard, said_from));
         };
         // The rows are going out: a contact who heard one under standing
         // clearance gets its quiet receipt. The owner alone gets none.
@@ -255,7 +291,7 @@ impl ChatBrain {
                 &request.session_ref,
             )]),
         )?;
-        Ok((stream, !self.foreign.is_empty(), heard))
+        Ok((stream, !self.foreign.is_empty(), heard, said_from))
     }
 
     /// The rows the turn's retrieval found, read under the call's credential,
@@ -353,8 +389,13 @@ impl ChatBrain {
 
     /// Only a host that actually delivered a connector reply supplies this.
     /// Context stays foreign for every later turn that can still hear it.
-    pub(super) fn add_foreign(&mut self, result: oneiron::task_verb::sdk::ConnectorToolResult) {
-        self.foreign.push(result);
+    /// `rows` are the ones the connector call that delivered it listed.
+    pub(super) fn add_foreign(
+        &mut self,
+        result: oneiron::task_verb::sdk::ConnectorToolResult,
+        rows: Vec<EntityId>,
+    ) {
+        self.foreign.push((result, rows));
     }
 
     pub(super) fn producer_pending(&self, generation: GenerationEpoch) -> bool {
@@ -404,6 +445,11 @@ impl ChatBrain {
                     event: BrainEvent::TextDelta(String::new()),
                     externally_tainted: false,
                     memories: Some(memories),
+                    sources: running
+                        .sources
+                        .lock()
+                        .ok()
+                        .and_then(|mut sources| sources.take()),
                 })
                 .is_err()
         {
@@ -413,9 +459,12 @@ impl ChatBrain {
         if let Some(said) = said.filter(|said| !said.is_empty())
             && let Ok(mut history) = self.history.lock()
         {
-            history.push(text_message(
-                LlmMessageRole::Assistant,
-                format!("{said}{INTERRUPTED_MARK}"),
+            history.push((
+                text_message(
+                    LlmMessageRole::Assistant,
+                    format!("{said}{INTERRUPTED_MARK}"),
+                ),
+                running.said_from,
             ));
         }
     }
@@ -445,21 +494,34 @@ impl Brain for ChatBrain {
         self.abort();
         let (memories, heard, live) = self.memories(request)?;
         self.rebuild_history(request.audience_revision, live)?;
-        let (stream, tainted, memories) = self.open(request, memories, heard)?;
+        let (stream, tainted, memories, said_from) = self.open(request, memories, heard)?;
         let generation = request.generation;
+        // The person's words: no stored row.
         self.history
             .lock()
             .map_err(|_| refused("history poisoned"))?
-            .push(text_message(
-                LlmMessageRole::User,
-                request.transcript.clone(),
+            .push((
+                text_message(LlmMessageRole::User, request.transcript.clone()),
+                Some(Vec::new()),
             ));
+        add_rows(&mut self.said_ever, said_from.as_deref());
+        let sources = Arc::new(Mutex::new(Some(TurnSources {
+            said: said_from.clone(),
+            found: request
+                .retrieval
+                .result_refs
+                .iter()
+                .filter_map(|reference| EntityId::from_hex(reference).ok())
+                .collect(),
+        })));
         let said = Arc::new(Mutex::new(Some(String::new())));
         let memories = Arc::new(Mutex::new(memories));
         let turn = Turn {
             generation,
             tainted,
             memories: Arc::clone(&memories),
+            sources: Arc::clone(&sources),
+            said_from: said_from.clone(),
             out: self.bindings.out.clone(),
             history: Arc::clone(&self.history),
             said: Arc::clone(&said),
@@ -474,6 +536,8 @@ impl Brain for ChatBrain {
             handle,
             said,
             memories,
+            sources,
+            said_from,
         });
         Ok(())
     }
@@ -496,16 +560,23 @@ impl Brain for ChatBrain {
 
     /// The notice enters the call's history as System context, so the next
     /// turn hears it; a turn already answering is not interrupted.
+    /// It is heard as made from every turn so far, whose sentence it may
+    /// have judged, and the policy row it names.
     fn notice(&mut self, notice: &GateSystemNoticeRecord) -> oneiron::Result<()> {
+        let mut rows = self.said_ever.clone();
+        add_rows(&mut rows, Some(&notice_rows(notice)));
         self.history
             .lock()
             .map_err(|_| refused("history poisoned"))?
-            .push(text_message(
-                LlmMessageRole::System,
-                format!(
-                    "Safeguard notice said to the person ({}): {}",
-                    notice.notice_type, notice.body
+            .push((
+                text_message(
+                    LlmMessageRole::System,
+                    format!(
+                        "Safeguard notice said to the person ({}): {}",
+                        notice.notice_type, notice.body
+                    ),
                 ),
+                rows,
             ));
         Ok(())
     }
@@ -526,8 +597,13 @@ struct Turn {
     /// What its memories read found and withheld, sent with its first event;
     /// shared with its cancel, which sends it when no event did.
     memories: Arc<Mutex<Option<TurnMemories>>>,
+    /// The rows it was made from, sent with its first event, shared the
+    /// same way (FIX 4778).
+    sources: Arc<Mutex<Option<TurnSources>>>,
+    /// The rows what it says is made from, for its history entry.
+    said_from: Option<Vec<EntityId>>,
     out: mpsc::Sender<VoiceBrainOut>,
-    history: Arc<Mutex<Vec<LlmMessage>>>,
+    history: Arc<Mutex<Vec<HistoryEntry>>>,
     /// What the turn has handed the speech host, shared with its cancel.
     said: Arc<Mutex<Option<String>>>,
 }
@@ -572,7 +648,10 @@ impl Turn {
             && let Some(said) = said
             && let Ok(mut history) = self.history.lock()
         {
-            history.push(text_message(LlmMessageRole::Assistant, said));
+            history.push((
+                text_message(LlmMessageRole::Assistant, said),
+                self.said_from.clone(),
+            ));
         }
         self.send(event).await;
     }
@@ -585,12 +664,18 @@ impl Turn {
             .lock()
             .ok()
             .and_then(|mut memories| memories.take());
+        let sources = self
+            .sources
+            .lock()
+            .ok()
+            .and_then(|mut sources| sources.take());
         self.out
             .send(VoiceBrainOut {
                 generation: self.generation,
                 event,
                 externally_tainted: self.tainted,
                 memories,
+                sources,
             })
             .await
             .is_ok()

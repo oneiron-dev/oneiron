@@ -1,6 +1,7 @@
 //! Public event correlation and dequeue fencing, independent of transport.
-use super::speech::PlayoutGate;
+use super::speech::{PlayoutGate, TurnSources, add_rows, notice_rows};
 use super::{PlayoutFrame, VoiceHost};
+use oneiron::EntityId;
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::*;
 use oneiron::voice_cascade::GenerationEpoch;
@@ -24,7 +25,14 @@ pub(super) struct Journal {
     pub(super) context_sources: Vec<String>,
     events: VecDeque<(LiveVoiceEvent, Option<PlayoutGate>)>,
     floor: u64,
+    /// The rows each generation was made from, by generation, as its brain
+    /// handed them over before speech consumed its first event (FIX 4778).
+    sources: BTreeMap<u64, TurnSources>,
 }
+
+/// A page of events beside the rows they were made from, `None` when
+/// unknown.
+pub(crate) type ListedPage = (LiveVoiceEvents, Option<Vec<EntityId>>);
 
 impl Journal {
     pub(super) fn new(session_ref: String) -> Self {
@@ -36,6 +44,37 @@ impl Journal {
             context_sources: Vec::new(),
             events: VecDeque::new(),
             floor: 0,
+            sources: BTreeMap::new(),
+        }
+    }
+
+    /// Keeps the rows `generation` was made from for the events it serves.
+    pub(super) fn record_sources(&mut self, generation: GenerationEpoch, sources: TurnSources) {
+        self.sources.insert(generation.value(), sources);
+    }
+
+    /// The rows one served event was made from (FIX 4778). Its audio, and
+    /// each safeguard verdict and notice on what it said, come from its
+    /// generation's model input (a notice also from the policy row it
+    /// names); its memories receipt counts the rows the read found. Every
+    /// other event is control only: the cursor, epoch, playout, tool
+    /// source label, error and end events list none. A generation whose
+    /// rows were never handed over lists unknown.
+    fn event_rows(&self, event: &LiveVoiceEvent) -> Option<Vec<EntityId>> {
+        let sources = event
+            .generation
+            .and_then(|generation| self.sources.get(&generation));
+        match &event.event {
+            LiveVoiceEventKind::Pcm { .. } | LiveVoiceEventKind::Safeguard { .. } => {
+                sources.and_then(|sources| sources.said.clone())
+            }
+            LiveVoiceEventKind::Notice { notice } => {
+                let mut rows = sources.and_then(|sources| sources.said.clone());
+                add_rows(&mut rows, Some(&notice_rows(notice)));
+                rows
+            }
+            LiveVoiceEventKind::Memories { .. } => sources.map(|sources| sources.found.clone()),
+            _ => Some(Vec::new()),
         }
     }
 
@@ -174,7 +213,10 @@ impl Journal {
         }
     }
 
-    pub(super) fn page(&mut self, input: LiveVoiceEventsRequest) -> MemoryResult<LiveVoiceEvents> {
+    /// The page, beside the rows its served events were made from: their
+    /// union, unknown when one is (FIX 4778). An event the page skips as a
+    /// stale epoch's lists nothing.
+    pub(super) fn page(&mut self, input: LiveVoiceEventsRequest) -> MemoryResult<ListedPage> {
         if input.after < self.floor || input.after > self.cursor || input.limit == Some(0) {
             return Err(MemoryError::bad_request(
                 "invalid or released voice event cursor",
@@ -191,21 +233,24 @@ impl Journal {
         }
         let limit = input.limit.unwrap_or(64);
         let mut events = Vec::new();
+        let mut rows = Some(Vec::new());
         let mut cursor = input.after;
         for (event, guard) in &self.events {
             cursor = event.sequence;
             if guard.as_ref().is_none_or(PlayoutGate::is_current) {
+                add_rows(&mut rows, self.event_rows(event).as_deref());
                 events.push(event.clone());
             }
             if events.len() >= limit {
                 break;
             }
         }
-        Ok(LiveVoiceEvents {
+        let page = LiveVoiceEvents {
             session_ref: self.session_ref.clone(),
             cursor,
             ended: self.ended,
             events,
-        })
+        };
+        Ok((page, rows))
     }
 }

@@ -49,6 +49,9 @@ pub struct BookingCounts {
 /// falls on the period it is charged to. `moving` is a booking being moved,
 /// which never charges against its own move.
 ///
+/// `listed`, when given, receives the rows each charged booking was decided
+/// from (FIX 4777): its EVENT and the claims on it.
+///
 /// # Errors
 ///
 /// [`BookingError::SlotOracle`] when committed state cannot be read;
@@ -61,29 +64,39 @@ pub(super) fn load_booking_counts(
     window: TimeRange,
     visitor_tz: &str,
     moving: Option<EntityId>,
+    mut listed: Option<&mut Vec<EntityId>>,
 ) -> Result<BookingCounts, BookingError> {
     let first_week = week_of(local_day(window.start, visitor_tz).map_err(visitor_zone_error)?);
     let last_week = week_of(local_day(window.end, visitor_tz).map_err(visitor_zone_error)?);
     // A visitor-local week starts at most seven days plus the widest zone
     // offset before any instant in it, and ends as far after: eight days
     // either side reads every booking those weeks hold, whatever the zone.
-    let starts = crate::booking::lifecycle::confirmed_booking_starts(
-        vault,
-        page_ref,
-        event_type,
-        TimeRange {
-            start: window.start.saturating_sub(SCAN_MARGIN_SECS),
-            end: window.end.saturating_add(SCAN_MARGIN_SECS),
-        },
-        moving,
-    )?;
+    let scan = TimeRange {
+        start: window.start.saturating_sub(SCAN_MARGIN_SECS),
+        end: window.end.saturating_add(SCAN_MARGIN_SECS),
+    };
+    let starts: Vec<(u64, Vec<EntityId>)> = if listed.is_some() {
+        crate::booking::lifecycle::confirmed_booking_starts_listed(
+            vault, page_ref, event_type, scan, moving,
+        )?
+    } else {
+        crate::booking::lifecycle::confirmed_booking_starts(
+            vault, page_ref, event_type, scan, moving,
+        )?
+        .into_iter()
+        .map(|start| (start, Vec::new()))
+        .collect()
+    };
     let mut daily: BTreeMap<i64, BookingCountBucket> = BTreeMap::new();
     let mut weekly: BTreeMap<i64, BookingCountBucket> = BTreeMap::new();
-    for start in starts {
+    for (start, rows) in starts {
         let day = local_day(start, visitor_tz).map_err(visitor_zone_error)?;
         let week = week_of(day);
         if week < first_week || week > last_week {
             continue;
+        }
+        if let Some(listed) = listed.as_deref_mut() {
+            listed.extend(rows);
         }
         charge(daily.entry(day), start);
         charge(weekly.entry(week), start);

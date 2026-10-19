@@ -136,6 +136,35 @@ pub(in crate::booking) fn confirmed_booking_starts(
     starts: TimeRange,
     excluding: Option<EntityId>,
 ) -> Result<Vec<u64>, BookingError> {
+    Ok(
+        confirmed_booking_starts_in(vault, page_ref, event_type, starts, excluding, false)?
+            .into_iter()
+            .map(|(start, _)| start)
+            .collect(),
+    )
+}
+
+/// [`confirmed_booking_starts`], each start beside the rows that decided it
+/// in that snapshot (FIX 4777): the booking's EVENT and every claim on it,
+/// its page, event-type and status heads among them.
+pub(in crate::booking) fn confirmed_booking_starts_listed(
+    vault: &Vault,
+    page_ref: EntityId,
+    event_type: &EventTypeKey,
+    starts: TimeRange,
+    excluding: Option<EntityId>,
+) -> Result<Vec<(u64, Vec<EntityId>)>, BookingError> {
+    confirmed_booking_starts_in(vault, page_ref, event_type, starts, excluding, true)
+}
+
+fn confirmed_booking_starts_in(
+    vault: &Vault,
+    page_ref: EntityId,
+    event_type: &EventTypeKey,
+    starts: TimeRange,
+    excluding: Option<EntityId>,
+    list: bool,
+) -> Result<Vec<(u64, Vec<EntityId>)>, BookingError> {
     let rtxn = read_txn(vault)?;
     let mut found = Vec::new();
     for id in vault
@@ -170,7 +199,14 @@ pub(in crate::booking) fn confirmed_booking_starts(
             continue;
         }
         if is_confirmed_booking_in(vault, &rtxn, &id, page_ref, event_type)? {
-            found.push(start);
+            let rows = if list {
+                std::iter::once(id)
+                    .chain(claims_for_subject(vault, &rtxn, &id)?)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            found.push((start, rows));
         }
     }
     Ok(found)

@@ -243,12 +243,35 @@ pub fn load_public_booking_page(
     load_public_booking_page_in_txn(vault, &rtxn, page_ref, now)
 }
 
+/// [`load_public_booking_page`], beside the rows it was read from in that
+/// one snapshot (FIX 4777): the page, its `booking.public_page` claim and
+/// each `booking.event_type` claim whose configuration it validated. The
+/// owner check and the token index are authority, never a source.
+pub fn load_public_booking_page_listing(
+    vault: &Vault,
+    page_ref: EntityId,
+    now: u64,
+) -> Result<Option<(BookingPagePublication, Vec<EntityId>)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    load_public_booking_page_listed_in_txn(vault, &rtxn, page_ref, now)
+}
+
 fn load_public_booking_page_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     page_ref: EntityId,
     now: u64,
 ) -> Result<Option<BookingPagePublication>> {
+    Ok(load_public_booking_page_listed_in_txn(vault, rtxn, page_ref, now)?
+        .map(|(publication, _)| publication))
+}
+
+fn load_public_booking_page_listed_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    page_ref: EntityId,
+    now: u64,
+) -> Result<Option<(BookingPagePublication, Vec<EntityId>)>> {
     if !crate::vault::live_entity_row_in_txn(&vault.store, rtxn, &page_ref)?.is_live() {
         return Ok(None);
     }
@@ -282,11 +305,15 @@ fn load_public_booking_page_in_txn(
     if !value.published {
         return Ok(None);
     }
+    let mut rows = vec![page_ref, id];
     for card in &value.event_types {
-        let config = match crate::booking::config::load_event_type_config_in_txn(
+        let config = match crate::booking::config::load_event_type_config_listed_in_txn(
             vault, rtxn, page_ref, &card.key,
         ) {
-            Ok(config) => config,
+            Ok((config, claim)) => {
+                rows.push(claim);
+                config
+            }
             Err(BookingError::InvalidConfig(_)) => return Ok(None),
             Err(_) => {
                 return Err(Error::InvalidConfig(
@@ -300,7 +327,7 @@ fn load_public_booking_page_in_txn(
             return Ok(None);
         }
     }
-    Ok(Some(value))
+    Ok(Some((value, rows)))
 }
 
 mod mutation;

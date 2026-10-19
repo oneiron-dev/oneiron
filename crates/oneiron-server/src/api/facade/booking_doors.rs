@@ -13,8 +13,9 @@ use oneiron::task_verb::sdk::{
 use super::FacadeApiError;
 use super::host_doors::{Listed, MaybeListed, internal, refused};
 use crate::api::booking::{
-    booking_page_token, credential_transport_context, execute_booking_operation,
-    resolve_booking_page_listing, resolve_public_booking_page, run_public_constraint_turn,
+    booking_page_token, credential_transport_context, execute_booking_operation_listing,
+    resolve_booking_page_listing, resolve_public_booking_page_listing,
+    run_public_constraint_turn_listing,
 };
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -50,53 +51,76 @@ pub(crate) async fn vault_booking_page_token(
 
 /// The same live publication, admission, parser and oracle as the public front.
 /// The caller's own credential keys the wait and pays for its model call.
-/// Its list is unknown (`host_door_lists`, `None`), never `[]`: the answer
-/// copies the publication's text and derives slots from event-type
-/// configuration, free/busy, booking counts and holds, and those readers
-/// keep no complete set of the rows they read.
+/// It lists (`host_door_lists`) the rows its answer was derived from, from
+/// the same reads (FIX 4777): the page, its publication claim and the
+/// event-type claims it validated, whose text and configuration the card
+/// copies, and every row its solves read (the calendar binding's claims,
+/// the configuration claim, each busy EVENT and charged booking with the
+/// claims on it). The visitor's sentence, the parse, live holds (side-table
+/// rows) and the session counters list none, and no busy detail leaves
+/// through the answer. A refusal lists unknown.
 pub(crate) async fn vault_booking_constraint_turn(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: BookingConstraintTurnRequest,
 ) -> MaybeListed<BookingConstraintTurnResponse> {
-    let answer: MemoryResult<BookingConstraintTurnResponse> = async {
+    let answer: MemoryResult<(BookingConstraintTurnResponse, Vec<EntityId>)> = async {
         let transport = credential_transport_context(server, auth)
             .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
-        let (page_ref, publication) = resolve_public_booking_page(server, &input.page_token)
-            .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
+        let (page_ref, publication, mut rows) =
+            resolve_public_booking_page_listing(server, &input.page_token)
+                .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
         let authority = oneiron::booking::publication::PublicBookingAuthority {
             page_ref,
             publication,
         };
-        run_public_constraint_turn(server, authority, input.turn, &transport)
-            .await
-            .map_err(|error| FacadeApiError::from(error).into_memory_error())
+        let (response, solved) =
+            run_public_constraint_turn_listing(server, authority, input.turn, &transport)
+                .await
+                .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
+        rows.extend(solved);
+        Ok((response, rows))
     }
     .await;
-    (answer, None)
+    match answer {
+        Ok((response, rows)) => (Ok(response), Some(rows)),
+        Err(error) => (Err(error), None),
+    }
 }
 
 /// All lifecycle calls use the caller's own credential and the existing
 /// executor. It binds the live public page, admits once, checks action-token
 /// scope and runs the home-node writer; no transport invents a peer address.
+/// Each lists (`host_door_lists`) what the executor lists from the same
+/// execution (FIX 4781): an availability answer its publication's and its
+/// solve's rows, as the constraint turn does; a hold, confirm, reschedule or
+/// cancel unknown (`None`), since its writer and replay keep no set of the
+/// rows they read.
 async fn booking_operation(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     page_token: String,
     operation: BookingOperationRequest,
-) -> MemoryResult<BookingOperationResponse> {
-    let transport = credential_transport_context(server, auth)
-        .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
-    execute_booking_operation(server, &page_token, operation, &transport)
-        .await
-        .map_err(|error| FacadeApiError::from(error).into_memory_error())
+) -> MaybeListed<BookingOperationResponse> {
+    let answer: MemoryResult<(BookingOperationResponse, Option<Vec<EntityId>>)> = async {
+        let transport = credential_transport_context(server, auth)
+            .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
+        execute_booking_operation_listing(server, &page_token, operation, &transport)
+            .await
+            .map_err(|error| FacadeApiError::from(error).into_memory_error())
+    }
+    .await;
+    match answer {
+        Ok((response, rows)) => (Ok(response), rows),
+        Err(error) => (Err(error), None),
+    }
 }
 
 pub(crate) async fn vault_booking_availability(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     request: BookingAvailabilityRequest,
-) -> MemoryResult<BookingOperationResponse> {
+) -> MaybeListed<BookingOperationResponse> {
     let BookingAvailabilityRequest::Availability { page_token, input } = request;
     booking_operation(
         server,
@@ -111,7 +135,7 @@ pub(crate) async fn vault_booking_book(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     request: BookingBookRequest,
-) -> MemoryResult<BookingOperationResponse> {
+) -> MaybeListed<BookingOperationResponse> {
     let BookingBookRequest::Book { page_token, input } = request;
     booking_operation(
         server,
@@ -126,7 +150,7 @@ pub(crate) async fn vault_booking_reschedule(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     request: BookingRescheduleRequest,
-) -> MemoryResult<BookingOperationResponse> {
+) -> MaybeListed<BookingOperationResponse> {
     let BookingRescheduleRequest::Reschedule { page_token, input } = request;
     booking_operation(
         server,
@@ -141,7 +165,7 @@ pub(crate) async fn vault_booking_cancel(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     request: BookingCancelRequest,
-) -> MemoryResult<BookingOperationResponse> {
+) -> MaybeListed<BookingOperationResponse> {
     let BookingCancelRequest::Cancel { page_token, input } = request;
     booking_operation(
         server,
