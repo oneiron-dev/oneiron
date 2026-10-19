@@ -27,7 +27,7 @@
 //! routes a spent seat's work under it: park, next seat, or back to the
 //! Dreamer's own model roles. A vendor login never crosses this seam; it stays
 //! with the official CLI on a runtime its vendor's terms allow
-//! ([`login_placement`]).
+//! ([`hosted_seat_bound`]).
 //!
 //! Credentials cross this seam as [`SandboxCredentialHandle`](crate::code_sandbox::SandboxCredentialHandle) references and
 //! never as bytes. That is the whole redaction story: there is no secret in
@@ -53,8 +53,9 @@ pub use provider::{
 };
 mod seat;
 pub use seat::{
-    LoginPlacement, MAX_RUNNER_SEATS, OnSeatSpent, RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeat,
-    RunnerSeatPolicy, RunnerWork, SeatAuth, SeatRoute, SeatSpent, login_placement, spent_seat_in,
+    HostedSeatBound, MAX_RUNNER_SEATS, OnSeatSpent, RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeat,
+    RunnerSeatPolicy, RunnerWork, SeatAuth, SeatIdentity, SeatRoute, SeatSpent, SkippedRunnerSeat,
+    hosted_seat_bound, skipped_seats_note, spent_seat_in,
 };
 mod connector;
 mod dispatcher;
