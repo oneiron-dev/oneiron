@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/lib/artifact_origin.rs` | src | s | 1 struct · 1 enum · 5 fn · 1 const | ArtifactHost, ArtifactHostRead | The artifact origin's naming and forwarding contract (OF-356, ARCH-0078) |
 | `src/lib/commitment.rs` | src | s | 2 enum | QuotaWindow, Schedule | Shared recurrence vocabulary for commitments and ICS poll cadences |
-| `src/lib/conversation_training.rs` | src | m | 18 struct · 4 enum · 12 fn · 17 const | TrainingChunkV2, TrainingControlBodyV2, TrainingControlChangeV2, TrainingControlV2, TrainingFileName, TrainingFilterV2, TrainingForgetSourceV2, TrainingNoHumanReadV2 +14 | The publisher training outbox (OF-420, "Learn from my conversations"; TRAINING-LINK = C): the files a vault… |
+| `src/lib/conversation_training.rs` | src | m | 18 struct · 4 enum · 12 fn · 18 const | TrainingChunkV2, TrainingControlBodyV2, TrainingControlChangeV2, TrainingControlV2, TrainingFileName, TrainingFilterV2, TrainingForgetSourceV2, TrainingNoHumanReadV2 +14 | The publisher training outbox (OF-420, "Learn from my conversations"; TRAINING-LINK = C): the files a vault… |
 | `src/lib/ctl.rs` | src | m | 5 struct · 13 enum · 9 fn · 4 const | CtlBound, CtlBoundKind, CtlBoundPhase, CtlBoundResource, CtlRefusal, CtlRefusalKind, CtlRequest, CtlResponse +10 | Supervisor ctl request/response wire types and shed/slim validation |
 | `src/lib/escrow.rs` | src | s | 1 struct · 2 fn · 2 const | EscrowCapsuleReport | The vault's data-key escrow on its way to the registry (CROSS-ARCH-0022 #ov-custody, invariant 03: escrow is… |
 | `src/lib/host.rs` | src | s | 1 struct · 2 trait · 2 fn · 4 type | Host, HostLimits, PreviewPortHost | One vault-hosting contract |

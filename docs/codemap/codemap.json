@@ -91670,7 +91670,7 @@
      "path": "src/lib/conversation_training.rs",
      "purpose": "The publisher training outbox (OF-420, \"Learn from my conversations\"; TRAINING-LINK = C): the files a vault…",
      "surface": {
-      "const": 17,
+      "const": 18,
       "enum": 4,
       "fn": 12,
       "struct": 18
