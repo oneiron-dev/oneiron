@@ -231,17 +231,17 @@ fn release(claimed: &mut VecDeque<Claimed>, budget: Decoded) {
 }
 
 impl ImportQueue {
-    /// The queue when the owner turned it on. A hosted or relay node imports
-    /// through its host, not from files beside the vault.
+    /// The queue when the owner turned it on (`[import] queue = true`), on
+    /// every posture: the owner's policy and the roots it names decide, and
+    /// the serve that runs it lands as the vault's local owner. A managed
+    /// vault starts none: it keeps no standing import authority yet.
     pub(in crate::commands) fn from_config(config: &ServeConfig) -> Option<Self> {
-        (config.import.queue
-            && config.privacy_posture == oneiron::HostingPrivacyPosture::SelfHostLocal)
-            .then(|| Self {
-                dir: config.import.queue_dir_for(&config.vault_path),
-                vault_path: config.vault_path.clone(),
-                config: config.import.clone(),
-                budget: Decoded::LIMIT,
-            })
+        config.import.queue.then(|| Self {
+            dir: config.import.queue_dir_for(&config.vault_path),
+            vault_path: config.vault_path.clone(),
+            config: config.import.clone(),
+            budget: Decoded::LIMIT,
+        })
     }
 
     /// Drains the queue every few seconds, one pass at a time, off the async
@@ -253,16 +253,27 @@ impl ImportQueue {
             let mut interval = tokio::time::interval(TICK);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut failed = 0_u32;
+            // What the last pass found missing, so each change is said once.
+            let mut missing = Vec::new();
             loop {
                 interval.tick().await;
                 let (queue, server) = (Arc::clone(&queue), Arc::clone(&server));
-                let pass = tokio::task::spawn_blocking(move || queue.pass(server.vault())).await;
+                let pass = tokio::task::spawn_blocking(move || {
+                    (queue.missing(), queue.pass(server.vault()))
+                })
+                .await;
                 let error = match pass {
-                    Ok(Ok(_)) => {
-                        failed = 0;
-                        continue;
+                    Ok((now_missing, landed)) => {
+                        say_missing(&missing, &now_missing);
+                        missing = now_missing;
+                        match landed {
+                            Ok(_) => {
+                                failed = 0;
+                                continue;
+                            }
+                            Err(error) => format!("{error:#}"),
+                        }
                     }
-                    Ok(Err(error)) => format!("{error:#}"),
                     Err(error) => error.to_string(),
                 };
                 failed = failed.saturating_add(1);
@@ -472,6 +483,20 @@ impl ImportQueue {
         Ok(Some(dir))
     }
 
+    /// The queue folder and source roots that are not folders now. A pass
+    /// over a missing queue folder lands nothing, and a log queued under a
+    /// missing root is refused: neither is a quiet pass.
+    fn missing(&self) -> Vec<PathBuf> {
+        let roots = [HistorySource::ClaudeCode, HistorySource::Codex]
+            .into_iter()
+            .filter_map(|source| self.config.root_for(source));
+        std::iter::once(self.dir.clone())
+            .chain(roots)
+            .chain(self.config.hook_transcript_roots.iter().cloned())
+            .filter(|place| !place.is_dir())
+            .collect()
+    }
+
     /// The stamp of an entry's logs as they are now; `None` when they cannot
     /// be found, which a read then says.
     fn stamp(&self, entry: &Entry) -> Option<String> {
@@ -543,6 +568,21 @@ impl ImportQueue {
                 None
             }
         }
+    }
+}
+
+/// Says each queue folder or source root that went missing since the last
+/// pass, and each that came back.
+fn say_missing(before: &[PathBuf], now: &[PathBuf]) {
+    for place in now.iter().filter(|place| !before.contains(place)) {
+        tracing::warn!(
+            reason = "import_source_missing",
+            place = %place.display(),
+            "an import queue folder or source root is not there; nothing queued in or under it lands until it is"
+        );
+    }
+    for place in before.iter().filter(|place| !now.contains(place)) {
+        tracing::info!(place = %place.display(), "an import queue folder or source root is back");
     }
 }
 

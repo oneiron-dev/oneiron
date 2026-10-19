@@ -415,8 +415,6 @@ pub(crate) async fn start_desktop_workers(
 ) -> anyhow::Result<StartedWorkers> {
     #[cfg(unix)]
     let import_queue = super::history_import::queue::ImportQueue::from_config(config);
-    #[cfg(unix)]
-    let folder_rescans = super::history_import::notes::folder::FolderRescans::from_config(config);
     // Model seats, the Dreamer and the workflow pump, from `[models]`. With
     // no section every seat stays empty and the model-free server is whole.
     // A startup error below drops `ai`, which tells its workers to stop.
@@ -551,7 +549,9 @@ pub(crate) async fn start_desktop_workers(
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
     // Attached folders rescan after the import queue starts (OF-554).
     #[cfg(unix)]
-    workers.extend(folder_rescans.map(|rescans| rescans.spawn(Arc::clone(&sync_server))));
+    workers.push(super::history_import::notes::folder::spawn_rescans(
+        Arc::clone(&sync_server),
+    ));
     // Open sockets may never close by themselves, so the drain is bounded.
     let (stopping, stopped) = tokio::sync::watch::channel(false);
     // Fact hooks (ARCH-0080) run unless `--no-hooks`; they stop with serve.

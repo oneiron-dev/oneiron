@@ -86,9 +86,13 @@ keep = 7              # ONEIRON_BACKUP_KEEP — newest kept; older ones are dele
 The schedule is off by default because erasing a record does not yet reach backup files (see
 *Limits*). With it on, the server checks every minute whether the newest backup is older than
 `every_hours`. The newest file on disk is its only state, so a restart or a manual backup is
-counted. Only a self-hosted local vault backs up this way; hosted and relay deployments back up
-through their host. The server also takes a backup on demand: `POST /v1/owner/backups`. `GET
-/v1/owner/backups` lists the backups.
+counted. The schedule and on-demand backups run on every privacy posture, under the owner's
+`[backup]` policy. A vault our cloud hosts (managed serve) keeps its backups in
+`<data_dir>.backups` and makes each rehearsal's scratch copy in `<data_dir>.rehearsals`, both
+private and on the vault's own disk (`/vault/data.backups` and `/vault/data.rehearsals` in the
+vault VM); one it cannot create or write is logged at start (`owner_storage_unavailable`). The
+server also takes a backup on demand: `POST /v1/owner/backups`. `GET /v1/owner/backups` lists the
+backups.
 
 ## Rehearse a restore
 

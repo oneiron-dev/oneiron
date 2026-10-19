@@ -160,8 +160,9 @@ opened without following a link, so a link under it leads nowhere. The queue
 folder is created readable and writable by you alone. `serve` opens it
 without following a link and does not read it when another user owns it or
 can write it. With the queue on, `queue_dir` and both roots must be absolute
-paths (`~/` is expanded). The queue is off by default, and a hosted node never
-runs it.
+paths (`~/` is expanded). The queue is off by default. With it on, an ordinary
+`serve` runs it whatever its privacy posture; a vault our cloud hosts (managed
+serve) starts no import yet.
 
 Each pass takes every waiting log and lands them together, earliest first: a
 session lands before a resumed copy of it, as in a folder import. A pass holds

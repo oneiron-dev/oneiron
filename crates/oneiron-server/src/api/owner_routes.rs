@@ -282,11 +282,11 @@ pub(crate) fn hooked_owner(
 fn host(server: &SyncServer) -> Result<Arc<OwnerHost>, ApiError> {
     server.owner_host.clone().ok_or_else(|| {
         ApiError::new(
-            "this server was started without a vault path, so it keeps no backups",
+            "this server was started without its vault's backup storage, so it serves no owner status or backups",
             ApiErrorDetails::InvalidState {
                 state: Some("owner_host_unset".to_owned()),
             },
-            ["Run `oneiron serve`, or use the `oneiron backup` command on a stopped vault."],
+            ["`oneiron serve` and a managed vault start with it; on a stopped vault, use the `oneiron backup` command."],
         )
     })
 }
