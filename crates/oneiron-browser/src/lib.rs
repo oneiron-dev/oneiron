@@ -20,6 +20,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+mod answer;
 #[cfg(feature = "driver")]
 mod capture;
 #[cfg(feature = "driver")]
@@ -38,10 +39,9 @@ mod receipt_evidence;
 #[cfg(feature = "driver")]
 mod session;
 
+pub use answer::{BrowserAnswer, DesktopAnswer, TakeoverRecord, WindowSwitch};
 #[cfg(feature = "driver")]
-pub use desktop::{
-    AbandonedTakeover, DesktopGuest, DesktopSession, PersonInput, Takeover, TakeoverRecord,
-};
+pub use desktop::{AbandonedTakeover, DesktopGuest, DesktopSession, PersonInput, Takeover};
 pub use library::{
     LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
     LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, ProposeInput,
@@ -157,7 +157,7 @@ pub struct PartialTree {
 /// that opened it, else the newest. The next answer carries it once, as
 /// `switched`. The observations held were of the tab before, so the next
 /// observation is whole.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TabSwitch {
     /// The tab the agent's verbs drive now.
     pub tab: String,
@@ -170,7 +170,7 @@ pub struct TabSwitch {
 }
 
 /// Why the agent's verbs moved to another tab.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TabSwitchCause {
     /// A tab opened since came to the front.
@@ -265,7 +265,8 @@ pub struct OpenInput {
 
 /// Rows whose role equals `role` and whose name contains `name`, ignoring
 /// case; or, with `cursor`, the next page of a `find` or `wait_for` answer
-/// an earlier call paged (its `next`), as the rows were then.
+/// an earlier call paged (its `next`), as the rows were then, or a cut
+/// desktop answer's longer search (its `walk_next`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FindInput {
@@ -286,11 +287,18 @@ pub struct FindOutput {
     /// The cursor of the next page; absent on the last.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
-    /// The desktop window's tree the rows were found in was cut, as an
-    /// observation's `partial` says: rows past the cut were not searched.
-    /// `observe` and its last page's `next` walk on.
+    /// The desktop window's tree the rows were found in was still cut when
+    /// the search ended, as an observation's `partial` says: rows past the
+    /// cut were not searched, so the answer is incomplete, never a proof
+    /// that no other row matches. A search that found no row walks on,
+    /// longer each time, until one matches, the tree ends, or the walk is
+    /// at its longest. Every page carries it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partial: Option<PartialTree>,
+    /// On the last page of a `partial` answer: the cursor `find` takes to
+    /// search the window again, longer, for the same rows, as a new answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub walk_next: Option<String>,
 }
 
 /// Clicks the row `ref` names: a live handle, or a locator, which names the
@@ -355,8 +363,8 @@ pub struct SelectInput {
 /// some row matches `role` and `name`, as `find` matches them. A target is a
 /// live handle, matched by its own row, or by the row its locator names now
 /// once its node is gone (a rebinding), or a locator. With `cursor` alone it
-/// waits for nothing and reads the next page of an earlier answer, as
-/// `find` does.
+/// waits for nothing and reads the next page of an earlier answer, or
+/// searches a cut desktop answer's window again, longer, as `find` does.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WaitForInput {
@@ -381,10 +389,16 @@ pub struct WaitForOutput {
     /// The cursor of the next page of `rows`; absent on the last.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
-    /// The desktop window's tree the wait last read was cut, as `find`'s
-    /// `partial` says.
+    /// The desktop window's tree the wait last read was still cut, as
+    /// `find`'s `partial` says: a wait that found no row walks on at each
+    /// look, longer, within its time, so one that timed out cut has not
+    /// shown no row is there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partial: Option<PartialTree>,
+    /// On the last page of a `partial` answer: the cursor `find` takes to
+    /// search the window again, longer, as `find`'s `walk_next` does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub walk_next: Option<String>,
     /// Each target that matched by its locator, not its own row.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rebindings: Vec<Rebound>,
@@ -415,8 +429,11 @@ pub struct ExpectOutput {
     pub met: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub row: Option<Row>,
-    /// The desktop window's tree the check read was cut, as `find`'s
-    /// `partial` says: a row past the cut reads as absent.
+    /// The desktop window's tree the check read was still cut, as `find`'s
+    /// `partial` says. A check that found no row walks on until it does,
+    /// the tree ends, or the walk is at its longest; with no `row` here,
+    /// rows past the cut were not seen, so the check is unmet: a row there
+    /// is neither shown present nor shown absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partial: Option<PartialTree>,
     /// The `ref` matched by its locator, not its own row.
@@ -1077,6 +1094,12 @@ pub enum BrowserError {
     TakenOver(String),
     #[error("a person has the browser ({0}); it answers again once they hand it back")]
     BrowserTakenOver(String),
+    /// Rule 5: a cut tree is no proof a row is gone, so an act on a row the
+    /// longest walk on never reached answers this, not `StaleRef`.
+    #[error(
+        "the window's tree walk stopped before its end at its longest and never reached {0}; observe and walk on with walk_next"
+    )]
+    TreeCut(String),
 }
 
 /// One verb's observation as its answer pages it: `act`'s observation, as
@@ -1322,6 +1345,10 @@ pub trait BrowserDriver: Send {
                         rebindings.append(&mut expected.rebindings);
                         if expected.met {
                             Ok(None)
+                        } else if expected.row.is_none() && expected.partial.is_some() {
+                            // Rule 5: no row seen in a tree still cut is
+                            // unproven, not unmet.
+                            Err(BrowserError::TreeCut("the expected row".to_owned()))
                         } else {
                             Err(BrowserError::Input("expect_unmet".to_owned()))
                         }
@@ -1722,6 +1749,7 @@ impl BrowserError {
             Self::Unsupported(_) => "browser_unsupported",
             Self::TakenOver(_) => "desktop_taken_over",
             Self::BrowserTakenOver(_) => "browser_taken_over",
+            Self::TreeCut(_) => "desktop_tree_cut",
         }
     }
 }
