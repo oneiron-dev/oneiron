@@ -1,7 +1,8 @@
 //! One exhaust stream, held whole however long it runs: in memory up to the
-//! inline budget, and past it in an unnamed host temp file, spooled the way a
-//! foreign guest's proposed file is ([`SandboxProposalBody`]). The free-space
-//! floor of the disk and the run's deadline are the only stops, each a typed
+//! inline budget, and past it in an unnamed temp file, spooled the way a
+//! foreign guest's proposed file is ([`SandboxProposalBody`]), on the disk its
+//! floor measures when the floor names a directory there. The free-space
+//! floor of that disk and the run's deadline are the only stops, each a typed
 //! refusal; a stream is never cut.
 //!
 //! In the exhaust artifact a stream within the budget rides the envelope
@@ -216,9 +217,14 @@ impl ByoaStreamWriter {
             return Ok(());
         }
         // Past the budget the held bytes go on to the spool, then `bytes`:
-        // held again when they fit the budget, else written straight on.
+        // held again when they fit the budget, else written straight on. The
+        // spool goes on the disk the floor measures when it names one.
         if self.spool.is_none() {
-            self.spool = Some(SandboxProposalBody::spool().map_err(spool_error)?);
+            let spool = match self.floor.as_deref().and_then(SpillFloor::spool_dir) {
+                Some(dir) => SandboxProposalBody::spool_in(&dir),
+                None => SandboxProposalBody::spool(),
+            };
+            self.spool = Some(spool.map_err(spool_error)?);
         }
         if let Some(spool) = &mut self.spool {
             spool_write(spool, self.floor.as_deref(), &self.held)?;

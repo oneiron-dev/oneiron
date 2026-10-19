@@ -7387,7 +7387,7 @@
      "purpose": "ONE-1823 [BK-00] booking-page event-type configuration",
      "surface": {
       "const": 7,
-      "crate-vis": 11,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 6,
       "struct": 5
@@ -7771,7 +7771,7 @@
      "path": "src/booking/lifecycle/claim.rs",
      "purpose": "Booking facts on the EVENT: the four exact claims, their writes and supersessions, the family validator, and…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 6,
       "struct": 1
      }
@@ -7992,7 +7992,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "fn": 4,
+      "fn": 5,
       "re-export": 2,
       "struct": 2
      }
@@ -8115,7 +8115,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BookingSolver"
@@ -8123,6 +8123,7 @@
      "path": "src/booking/solver/oracle.rs",
      "purpose": "BookingSolver: the SlotOracle implementation and pipeline driver",
      "surface": {
+      "fn": 1,
       "struct": 1
      }
     },
@@ -8562,7 +8563,7 @@
      "path": "src/calendar/freebusy.rs",
      "purpose": "Busy-only freebusy projection (CAL-09, C5)",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1,
       "type": 1
      }
@@ -14151,7 +14152,7 @@
      "path": "src/code_sandbox/proposal/body.rs",
      "purpose": "A proposed file's bytes, spooled to an anonymous host temp file as they arrive",
      "surface": {
-      "fn": 13,
+      "fn": 14,
       "struct": 3
      }
     },
@@ -19704,7 +19705,7 @@
      "path": "src/dispatch_byoa/error.rs",
      "purpose": "Error enum, literal refusal reasons, result alias, and the invalid() constructor",
      "surface": {
-      "crate-vis": 46,
+      "crate-vis": 48,
       "enum": 1,
       "type": 1
      }
@@ -19739,7 +19740,7 @@
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
       "mod": 1,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -19820,6 +19821,22 @@
       "enum": 5,
       "fn": 13,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ByoaInputStager",
+      "StagedInputPin"
+     ],
+     "path": "src/dispatch_byoa/staged_input.rs",
+     "purpose": "A CLI run's job carried as a file in its checkout, never in argv: one argv entry has an OS limit (Linux…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -25982,8 +25999,8 @@
      "path": "src/feedback/bundle.rs",
      "purpose": "Feedback bundle wire contract: bundle, config, and diagnosis types plus the MessagePack codec and digest",
      "surface": {
-      "const": 15,
-      "crate-vis": 1,
+      "const": 13,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 21,
       "struct": 7
@@ -61842,7 +61859,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62901,7 +62918,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3859,
+   "source_files": 3860,
    "test_files": 902
   },
   "oneiron-android": {
@@ -74933,6 +74950,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/booking/execute.rs",
+     "purpose": "The shared executor (ONE-1819): the one door from a machine-readable booking request to the merged solver…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/booking/free_text.rs",
      "purpose": "A booking page's free-text constraint (ONE-1816), parsed on the cheap seat…",
      "surface": {
@@ -74946,7 +74973,7 @@
      "path": "src/api/booking/front.rs",
      "purpose": "ONE-1816 / ARCH-0062 §5: a published page's interactive constraint front",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -74976,7 +75003,7 @@
      "path": "src/api/booking/lifecycle.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -74996,7 +75023,7 @@
      "path": "src/api/booking/page_token.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -75006,7 +75033,7 @@
      "path": "src/api/booking/public.rs",
      "purpose": "Anonymous, published-capability-only booking transport",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -75016,7 +75043,7 @@
      "path": "src/api/booking/public_availability.rs",
      "purpose": "Query-bound slot cache",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -83544,7 +83571,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1,
-      "mod": 1,
+      "mod": 2,
       "re-export": 8
      }
     },
@@ -83624,6 +83651,18 @@
       "const": 1,
       "fn": 5,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkdirStager"
+     ],
+     "path": "src/runtime/staged_input.rs",
+     "purpose": "The host half of a BYOA run's staged job (`oneiron::dispatch_byoa`'s staged input): the job is written whole…",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -84384,7 +84423,7 @@
      "path": "src/voice_host/public_events.rs",
      "purpose": "Public event correlation and dequeue fencing, independent of transport",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -84427,16 +84466,17 @@
      "kind": "src",
      "notable": [
       "PlayoutFrame",
+      "TurnSources",
       "VoiceBrainOut",
       "VoicePlayout"
      ],
      "path": "src/voice_host/speech.rs",
      "purpose": "The brain's reply in the host's own voice (OF-410)",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 3,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -84892,7 +84932,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 447,
+     "files": 448,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -85249,7 +85289,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -85335,7 +85375,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 826,
+   "source_files": 828,
    "test_files": 182
   },
   "oneiron-spawn": {
