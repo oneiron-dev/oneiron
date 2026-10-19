@@ -21972,10 +21972,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ArmTurnProgram",
+      "DisarmTurnProgram",
       "LandedTurnRef",
       "ProgramRecipePin",
       "TurnProgramAdmissionOutcome",
@@ -21986,10 +21987,10 @@
      "path": "src/dreamer_runner/program/types.rs",
      "purpose": "The DOOR-141 vocabulary: the pinned program, its arming, the wake a landed turn owes it, and what admitting…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 1,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -26076,7 +26077,7 @@
      "purpose": "Feedback consent: send routes, approval scope, redaction seam, preview, disclosure card, and approval…",
      "surface": {
       "const": 3,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 20,
       "struct": 4,
@@ -26312,7 +26313,20 @@
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export",
      "surface": {
       "mod": 1,
-      "re-export": 8
+      "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RetainedFeedbackPreview"
+     ],
+     "path": "src/feedback/preview_store.rs",
+     "purpose": "The feedback previews an owner was shown, kept until they expire (FIX 5212): a send reads back the exact…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -55150,7 +55164,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1080
+      "fn": 1082
      }
     },
     {
@@ -62108,7 +62122,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -63006,7 +63020,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3868,
+   "source_files": 3869,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71752,7 +71766,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1051
+      "fn": 1053
      }
     },
     {
@@ -72873,7 +72887,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1052
+      "fn": 1054
      }
     },
     {
@@ -83345,7 +83359,7 @@
      "path": "src/owner/feedback.rs",
      "purpose": "Feedback to the engine's makers (OF-420), sent by the owner: preview the exact bundle, then send that…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -85807,6 +85821,7 @@
       "ArchiveOutputRef",
       "ArchiveOutputScore",
       "ArchiveQualityMetric",
+      "ArmTurnProgram",
       "ArtifactAdmitSubmit",
       "ArtifactAskOutcome",
       "ArtifactAskRecord",
@@ -86716,6 +86731,7 @@
       "DiaryReviewState",
       "DirectionOutcome",
       "DirectionSlide",
+      "DisarmTurnProgram",
       "DiscardedProposal",
       "DisclosureBand",
       "DisclosureBoundRequest",
@@ -87989,6 +88005,7 @@
       "ProductivityRole",
       "ProductivityTree",
       "ProductivityTreeRequest",
+      "ProgramRecipePin",
       "ProjectBudgetShare",
       "ProjectCardConfirmRequest",
       "ProjectCardDismissal",
@@ -89032,6 +89049,7 @@
       "TurnAction",
       "TurnActionReceipt",
       "TurnActionRequest",
+      "TurnProgramRegistration",
       "TurnTagsView",
       "TwoClocksAtom",
       "TypeByteFamily",
@@ -89218,7 +89236,7 @@
      "purpose": "—",
      "surface": {
       "enum": 848,
-      "struct": 2688
+      "struct": 2692
      }
     },
     {
