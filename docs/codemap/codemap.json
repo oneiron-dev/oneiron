@@ -45284,7 +45284,7 @@
      "path": "src/secret_custody/doors.rs",
      "purpose": "Name index, borrowing admission projection, sealed put, and Vault doors",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 4
      }
     },
