@@ -313,3 +313,10 @@ fn bounded(value: &str, reason: &'static str) -> Result<(), CalendarConnectorErr
     }
     Ok(())
 }
+
+/// Whether `value` passes the bounded-ref check a seat's `seat_ref` and a
+/// kill's `reason_ref` meet, with nothing read: a verb hook's rewrite of a
+/// kill that fails it keeps the caller's ref (FIX 5076).
+pub(crate) fn ref_parses(value: &str) -> bool {
+    bounded(value, "").is_ok()
+}

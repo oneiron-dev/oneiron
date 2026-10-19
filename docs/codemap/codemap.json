@@ -2613,6 +2613,31 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/conversation_training.rs",
+     "purpose": "Folds each person's signed \"Learn from my conversations\" choice (FIX 4489, OF-420), and the one judge of…",
+     "surface": {
+      "crate-vis": 11,
+      "fn": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConversationTrainingView"
+     ],
+     "path": "src/authority/conversation_training/door.rs",
+     "purpose": "The person's own \"Learn from my conversations\" door (FIX 4489, OF-420): they say yes for an explicit list of…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/critical_confirm_door.rs",
      "purpose": "Signed critical-claim answers, under the existing host-root owner ceremony",
      "surface": {
@@ -3191,7 +3216,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 27,
-      "re-export": 51
+      "re-export": 52
      }
     },
     {
@@ -3245,7 +3270,7 @@
      "path": "src/authority/owner_choice.rs",
      "purpose": "The register every vault-wide single-value owner choice keeps: the checkpoint root policy (mesh PR2c…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "struct": 1
      }
     },
@@ -8357,6 +8382,7 @@
      "path": "src/calendar/connectors/mod.rs",
      "purpose": "Shared calendar connector kernel (CAL-05, ONE-1787)",
      "surface": {
+      "crate-vis": 1,
       "mod": 1,
       "re-export": 4
      }
@@ -8434,7 +8460,7 @@
      "purpose": "Seat configs, cursors, kill switch, error type, and sync verbs",
      "surface": {
       "const": 4,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 8,
       "struct": 4
@@ -33874,7 +33900,7 @@
      "path": "src/memory/key_value/mod.rs",
      "purpose": "Exact actor-owned keyed facts over canonical CLAIMs",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "re-export": 1
      }
@@ -34017,7 +34043,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 25,
       "re-export": 53
      }
@@ -53169,7 +53195,7 @@
      "surface": {
       "crate-vis": 39,
       "fn": 1,
-      "mod": 3,
+      "mod": 4,
       "re-export": 26
      }
     },
@@ -53334,6 +53360,18 @@
      "purpose": "The per-attempt report journal (OF-220)",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/revoke_lands.rs",
+     "purpose": "The owner's revoke always lands (FIX 5076; Engine 10-19): what a verb hook may change on a revoke, erase or…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 3
      }
     },
     {
@@ -60303,7 +60341,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 170,
+     "files": 172,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61591,7 +61629,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 187,
+     "files": 188,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61761,7 +61799,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3766,
+   "source_files": 3769,
    "test_files": 902
   },
   "oneiron-android": {
@@ -61880,6 +61918,21 @@
       "const": 88,
       "re-export": 1,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConversationTrainingSet"
+     ],
+     "path": "src/authority/conversation_training.rs",
+     "purpose": "A person's own \"Learn from my conversations\" choice (FIX 4489, OF-420), and its wire codec",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -62006,7 +62059,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -62366,7 +62419,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 26,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -62396,7 +62449,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 35,
+   "source_files": 36,
    "test_files": 1
   },
   "oneiron-bench": {
