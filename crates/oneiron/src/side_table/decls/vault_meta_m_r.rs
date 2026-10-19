@@ -123,7 +123,8 @@ side_tables! {
     /// Key: hex32 (org_ref).
     ORG_ADMIN_POLICY: VaultMeta b"org.admin.v1." LegacyJson;
     /// Owner-controlled origin residence/epoch/writer authority for one repository. Key: id16.
-    ORIGIN_AUTHORITY: VaultMeta b"origin:authority:v1:" Named;
+    ORIGIN_AUTHORITY: VaultMeta b"origin:authority:v1:" Named
+        => crate::origin::residence::erase_origin_authority_writer_in_txn;
     /// Epoch-bound publication permit stamp (u64be epoch), authorizing one publication under the
     /// current authority epoch. Key: id16.
     ORIGIN_AUTHORITY_PERMIT: VaultMeta b"origin:authority_permit:v1:" Raw;
@@ -135,7 +136,7 @@ side_tables! {
     /// Published. Key: id16 "\x00" string "\x00" string "\x00" string.
     ORIGIN_CAS_INTENT: VaultMeta b"origin:cas_intent:v1:" Raw;
     /// Tamper-detection proof hash (32 bytes) pinning one repo.change claim's exact byte content at
-    /// publication time. Key: id16.
+    /// publication time, or its erased form once an actor's erase re-hashed it. Key: id16.
     ORIGIN_CHANGE_RECEIPT: VaultMeta b"origin:change_receipt:v1:" Raw;
     /// Crash-idempotent receipt of the file operations one push landed against one ref, keyed by
     /// provenance then blake3(ref_name). Key: id16 ":" hash32.
@@ -183,10 +184,12 @@ side_tables! {
         => crate::origin::publication::erase_publication_actor_in_txn;
     /// Producer receipt pinning the exact encoded admission/outcome evidence claim body for one
     /// receive-pack operation. Key: id16.
-    ORIGIN_RECEIVE_PACK_EVIDENCE: VaultMeta b"origin:receive_pack_evidence:v1:" Raw;
+    ORIGIN_RECEIVE_PACK_EVIDENCE: VaultMeta b"origin:receive_pack_evidence:v1:" Raw
+        => crate::origin::smart_http::erase_receive_pack_evidence_actor_in_txn;
     /// Crash-durable per-push intent journal recording every proposed ref move before any effect
     /// lands, keyed by repo identity then operation id. Key: string + id16.
-    ORIGIN_RECEIVE_PACK_INTENT: VaultMeta b"origin:receive_pack_intent:v1:" Named;
+    ORIGIN_RECEIVE_PACK_INTENT: VaultMeta b"origin:receive_pack_intent:v1:" Named
+        => crate::origin::smart_http::erase_receive_pack_intent_actor_in_txn;
     /// One batch of a push intent's per-ref progress, so settling a batch rewrites that batch
     /// alone. Key: string + id16 (the intent's key) + u64be (batch index).
     ORIGIN_RECEIVE_PACK_PROGRESS: VaultMeta b"origin:receive_pack_progress:v1:" Named;
