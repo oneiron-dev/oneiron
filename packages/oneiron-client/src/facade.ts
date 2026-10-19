@@ -2808,7 +2808,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "can": { description: "Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "peek": { description: "An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "ask": { description: "Asks people or an authority a typed question and returns at admission with the ask's handle.", scope: "Write", proposes: false, hostDoor: false, section: true },
-  "wait": { description: "Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode.", scope: "Write", proposes: false, hostDoor: false, section: true },
+  "wait": { description: "Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode.", scope: "Write", proposes: false, hostDoor: false, section: true },
   "tasks.answer": { description: "Admits one person's word on an ask; the word is evidence, never approval.", scope: "Write", proposes: false, hostDoor: false, section: true },
   "tasks.outcomes": { description: "Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to.", scope: "Read", proposes: false, hostDoor: false, section: true },
   "vault.rooms.list": { description: "The caller's rooms its own grants admit; inside a room turn, only that room.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -5872,7 +5872,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
     peek: (input: Facade.TaskAskHandle, options?: O): FacadeReturns<"peek">[K] => invoke("peek", input, options, newInvocation()),
     /** Asks people or an authority a typed question and returns at admission with the ask's handle. */
     ask: (input: Facade.TaskAskRequest, options?: O): FacadeReturns<"ask">[K] => invoke("ask", input, options, newInvocation()),
-    /** Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode. */
+    /** Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode. */
     wait: (input: Facade.TaskWaitRequest, options?: O): FacadeReturns<"wait">[K] => invoke("wait", input, options, newInvocation()),
     connector: {
       /** Every live catalogued connector whose name or summary matches the query. */

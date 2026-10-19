@@ -849,7 +849,7 @@ fn climb_stale_ask(
     if !climbed && !lapsed {
         return Ok(false);
     }
-    vault.with_write_txn_grouped(|txn| {
+    let withdrew = vault.with_write_txn_grouped(|txn| {
         let Some(mut now) = TRIALS.get(&vault.store, txn, proposal)? else {
             return Ok(false);
         };
@@ -865,7 +865,12 @@ fn climb_stale_ask(
         }
         TRIALS.put(&vault.store, txn, proposal, &now)?;
         Ok(lapsed)
-    })
+    })?;
+    // A lapsed ask's waiters wake once its withdrawal committed (FIX 4706).
+    if withdrew {
+        vault.signal_decision_answer(seq);
+    }
+    Ok(withdrew)
 }
 
 /// The Coach's step for an open proposal whose project goal waits on a live

@@ -523,7 +523,9 @@ pub struct TaskAskPreflight {
     pub recipients: Vec<TaskAskPreflightRecipient>,
 }
 
-/// The group is an engine-authored TASK fact, not a local queue id.
+/// The group is an engine-authored TASK fact, not a local queue id. A
+/// world-privacy request's id is its handle too, for its asker's wait (FIX
+/// 4706).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskHandle {
@@ -820,6 +822,8 @@ pub enum TaskAskStatus {
         generation: u64,
     },
     Settled(Box<TaskAskResult>),
+    /// A world-privacy request a holder applied or declined (FIX 4706).
+    WorldPrivacy(Box<crate::policy_model::WorldPrivacyRequest>),
 }
 
 /// This is a signal contract, not a blocking read or a polling loop.
@@ -834,6 +838,8 @@ pub enum TaskAskWait {
     },
     Ready(Box<TaskAskResult>),
     Park(crate::code_run::SelfDurableWait),
+    /// A world-privacy request a holder applied or declined (FIX 4706).
+    WorldPrivacyReady(Box<crate::policy_model::WorldPrivacyRequest>),
 }
 
 #[derive(Serialize, Deserialize, schemars::JsonSchema)]

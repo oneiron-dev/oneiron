@@ -11409,7 +11409,7 @@ impl AgentVerb {
                 "Asks people or an authority a typed question and returns at admission with the ask's handle."
             }
             Self::Wait => {
-                "Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode."
+                "Waits on an ask, or on a world-privacy request its caller opened, at a step with no other work: pending, changed, ready with its result or the request's applied or declined state, or a park for code mode."
             }
             Self::TasksAnswer => {
                 "Admits one person's word on an ask; the word is evidence, never approval."

@@ -313,6 +313,10 @@ pub struct StoreCore {
     /// A failed digest lane stays quiet until a committed relevant change.
     /// This is per-vault, content-free and never gates unrelated deadlines.
     pub(crate) proactivity_suspended: Mutex<Option<u64>>,
+    /// The one decision-answer signal every ask door and waiter on this open
+    /// vault shares (FIX 4706): content-free, the last ask number answered
+    /// or withdrawn, sent only after that commit.
+    pub(crate) decision_answers: tokio::sync::watch::Sender<u64>,
     /// The container output guard: each container's last attendee-entry
     /// mark (OF-365 P5). Per vault, in memory, never persisted.
     pub(crate) container_output: crate::conversation::ContainerOutputGuard,

@@ -13,12 +13,13 @@
 //! The ask carries what the ladder hands the queue and nothing more; the host renders its
 //! own text from the question's.
 
+mod signal;
+
 use std::collections::{BTreeSet, VecDeque};
 use std::ops::Bound;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::watch;
 
 use super::ladder::{
     AskAct, AskRole, AskRoleResolver, AskTo, HolderKind, HumanDecisionQueue, HumanDecisionRequest,
@@ -270,13 +271,20 @@ impl Vault {
 
     /// Withdraws open ask `seq`: the decision it was put for no longer waits on it (it
     /// lapsed, or its caller decided another way). It leaves every role's queue, and a
-    /// later answer is refused. `false` when it was already answered or withdrawn.
+    /// later answer is refused. `false` when it was already answered or withdrawn. Its
+    /// waiters wake once the withdrawal committed (FIX 4706).
     pub fn withdraw_decision_ask(&self, seq: u64) -> Result<bool> {
-        self.with_write_txn_grouped(|txn| self.withdraw_decision_ask_in_txn(txn, seq))
+        let withdrawn =
+            self.with_write_txn_grouped(|txn| self.withdraw_decision_ask_in_txn(txn, seq))?;
+        if withdrawn {
+            self.signal_decision_answer(seq);
+        }
+        Ok(withdrawn)
     }
 
     /// [`Self::withdraw_decision_ask`] in the caller's write, beside the state that
-    /// lapsed it.
+    /// lapsed it. The caller wakes its waiters once that write committed
+    /// ([`Self::signal_decision_answer`]).
     pub(crate) fn withdraw_decision_ask_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -458,7 +466,7 @@ impl Vault {
             self.record_person_changed_answer(ask.id, record)?;
         }
         let answered_at = self.store.clock.now_recorded_at();
-        self.with_write_txn_grouped(|txn| {
+        let answered = self.with_write_txn_grouped(|txn| {
             let mut held = ASKS
                 .get(&self.store, &*txn, &seq)?
                 .ok_or_else(|| invalid("no such decision ask"))?;
@@ -490,25 +498,29 @@ impl Vault {
             });
             ASKS.put(&self.store, txn, &seq, &held)?;
             Ok(held)
-        })
+        })?;
+        // The answer is durable: every waiter on the ask wakes (FIX 4706).
+        self.signal_decision_answer(seq);
+        Ok(answered)
     }
 
     /// The world-privacy door's settlement of its widen ask `seq` (FIX 4480),
     /// in the writer that applied or declined the settings: the holder `by`
     /// answered yes or no, as the owner role, a person. An ask no longer open
-    /// is left as it is. Its waiters see the answer on their next read.
+    /// is left as it is. `Some(seq)` when this settled it: the door wakes its
+    /// waiters once that writer committed, never before (FIX 4706).
     pub(crate) fn settle_world_privacy_ask_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         seq: u64,
         by: EntityId,
         yes: bool,
-    ) -> Result<()> {
+    ) -> Result<Option<u64>> {
         let Some(mut ask) = ASKS.get(&self.store, &*txn, &seq)? else {
-            return Ok(());
+            return Ok(None);
         };
         if ask.queue_pin.model != WORLD_PRIVACY_ASK_QUEUE || !ask.is_open() {
-            return Ok(());
+            return Ok(None);
         }
         ask.answer = Some(AskAnswer {
             answer: DecisionAnswer::Noul(yes),
@@ -520,7 +532,8 @@ impl Vault {
             reason: None,
             rule: None,
         });
-        ASKS.put(&self.store, txn, &seq, &ask)
+        ASKS.put(&self.store, txn, &seq, &ask)?;
+        Ok(Some(seq))
     }
 
     /// Moves an open ask to the next role on its chain with a live holder, up to its
@@ -783,21 +796,17 @@ fn holder_kind(actor: &WriteActor) -> Result<HolderKind> {
     }
 }
 
-/// The ladder's person queue over the vault's asks. Hold one per vault and lend it: an
-/// answer given through it wakes every waiter on it.
+/// The ladder's person queue over the vault's asks. Every queue over one open vault
+/// shares its store's answer signal: an answer or a withdrawal at any door wakes every
+/// waiter, once it committed (FIX 4706).
 pub struct DecisionAsks {
     vault: Arc<Vault>,
-    /// The arrival number of the last answer given through this queue.
-    answered: watch::Sender<u64>,
 }
 
 impl DecisionAsks {
     #[must_use]
     pub fn new(vault: Arc<Vault>) -> Self {
-        Self {
-            vault,
-            answered: watch::channel(0).0,
-        }
+        Self { vault }
     }
 
     /// See [`Vault::decision_asks`].
@@ -843,11 +852,8 @@ impl DecisionAsks {
         answer: DecisionAnswer,
         reason: Option<&str>,
     ) -> Result<DecisionAsk> {
-        let ask = self
-            .vault
-            .answer_decision_ask_with_reason(owner, seq, answer, reason)?;
-        self.answered.send_replace(seq);
-        Ok(ask)
+        self.vault
+            .answer_decision_ask_with_reason(owner, seq, answer, reason)
     }
 
     /// Answers one ask as a holder of its role (see [`Vault::answer_decision_ask_as`]) and
@@ -858,19 +864,13 @@ impl DecisionAsks {
         seq: u64,
         answer: DecisionAnswer,
     ) -> Result<DecisionAsk> {
-        let ask = self.vault.answer_decision_ask_as(holder, seq, answer)?;
-        self.answered.send_replace(seq);
-        Ok(ask)
+        self.vault.answer_decision_ask_as(holder, seq, answer)
     }
 
     /// Withdraws one ask (see [`Vault::withdraw_decision_ask`]) and wakes its waiters,
     /// whose wait then fails as withdrawn.
     pub fn withdraw(&self, seq: u64) -> Result<bool> {
-        let withdrawn = self.vault.withdraw_decision_ask(seq)?;
-        if withdrawn {
-            self.answered.send_replace(seq);
-        }
-        Ok(withdrawn)
+        self.vault.withdraw_decision_ask(seq)
     }
 
     /// See [`Vault::climb_decision_ask`].
@@ -886,7 +886,7 @@ impl DecisionAsks {
     /// Waits for the answer to ask `seq`. An ask answered before the wait, or before a
     /// restart, returns at once.
     pub async fn answered(&self, seq: u64) -> Result<AskAnswer> {
-        let mut changes = self.answered.subscribe();
+        let mut changes = self.vault.subscribe_decision_answers();
         loop {
             let ask = self
                 .get(seq)?
@@ -897,7 +897,8 @@ impl DecisionAsks {
             if ask.withdrawn_at.is_some() {
                 return Err(invalid("decision ask withdrawn"));
             }
-            // The sender lives in `self`, so it outlives this wait.
+            // The vault's store holds the sender, and `self` the vault, so it
+            // outlives this wait.
             if changes.changed().await.is_err() {
                 return Err(invalid("decision asks closed"));
             }

@@ -665,6 +665,9 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
                     generation: *generation,
                 },
                 TaskAskStatus::Settled(result) => TaskAskWait::Ready(result.clone()),
+                TaskAskStatus::WorldPrivacy(request) => {
+                    TaskAskWait::WorldPrivacyReady(request.clone())
+                }
             };
             json!({ "output": wait })
         }

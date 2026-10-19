@@ -5906,8 +5906,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "tasks.wait",
-                crate::code_run::vault_read::request_schema::<crate::code_run::TaskWaitSetRequest>(
-                ),
+                crate::code_run::vault_read::request_schema::<crate::code_run::TaskWaitInput>(),
             ),
             (
                 "summarize",

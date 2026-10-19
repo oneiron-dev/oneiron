@@ -940,6 +940,10 @@ impl Memory<'_> {
             return Err(MemoryError::bad_request("invalid wait step key"));
         }
         self.with_verified_actor_write_txn(|txn| {
+            // A world-privacy request waits by its own id (FIX 4706).
+            if let Some(wait) = self.world_privacy_wait_in(txn, handle, step_key)? {
+                return Ok(wait);
+            }
             let Some(group) = self.ask_group_in(txn, handle.group_ref)? else {
                 // A held ask waits on its approval like any pending ask: the
                 // park or the bound wait wakes once it goes out and settles.
@@ -995,6 +999,7 @@ impl Memory<'_> {
                     TaskAskStatus::Changed { voided, generation } => {
                         TaskAskWait::Changed { voided, generation }
                     }
+                    TaskAskStatus::WorldPrivacy(request) => TaskAskWait::WorldPrivacyReady(request),
                 });
             };
             self.bind_external_wait(txn, handle, step_key, status)
@@ -1096,6 +1101,34 @@ pub(super) struct WaitRow {
     pub(super) consumed: bool,
 }
 
+impl WaitRow {
+    /// Consumes this wait once what it waits on is settled: its bound trap,
+    /// when it has one not yet consumed, is signalled and consumed in the
+    /// caller's write.
+    fn consume_in(
+        &mut self,
+        vault: &crate::Vault,
+        txn: &mut heed::RwTxn<'_>,
+        now_ms: u64,
+    ) -> MemoryResult<()> {
+        if let Some(trap_claim_id) = self.trap_ref
+            && !self.consumed
+        {
+            let trap = crate::llm::TrapRef {
+                trap_claim_id,
+                kind: crate::llm::DreamerTrapKind::HumanResponse,
+                step_hash: self.step_hash,
+            };
+            crate::llm::signal_step_wait_in_txn(vault, txn, &trap, now_ms)?;
+            if !crate::llm::consume_step_wait_in_txn(vault, txn, &trap, now_ms)? {
+                return Err(MemoryError::bad_request("wait signal was not consumable"));
+            }
+        }
+        self.consumed = true;
+        Ok(())
+    }
+}
+
 /// Registered external ask wait: `(group id, step hash) -> WaitRow`.
 pub(super) const TASK_ASK_WAITS: SideTable<(EntityId, [u8; 32]), WaitRow, Named> =
     SideTable::new(&side_table::TASK_ASK_WAIT);
@@ -1123,7 +1156,7 @@ pub(super) fn signal_waiters(
 }
 
 impl Memory<'_> {
-    fn bind_external_wait(
+    pub(super) fn bind_external_wait(
         &self,
         txn: &mut heed::RwTxn<'_>,
         handle: TaskAskHandle,
@@ -1200,21 +1233,12 @@ impl Memory<'_> {
                 TaskAskWait::Changed { voided, generation }
             }
             TaskAskStatus::Settled(result) => {
-                if let Some(trap_claim_id) = row.trap_ref
-                    && !row.consumed
-                {
-                    let trap = crate::llm::TrapRef {
-                        trap_claim_id,
-                        kind: crate::llm::DreamerTrapKind::HumanResponse,
-                        step_hash,
-                    };
-                    crate::llm::signal_step_wait_in_txn(self.vault(), txn, &trap, now_ms)?;
-                    if !crate::llm::consume_step_wait_in_txn(self.vault(), txn, &trap, now_ms)? {
-                        return Err(MemoryError::bad_request("wait signal was not consumable"));
-                    }
-                }
-                row.consumed = true;
+                row.consume_in(self.vault(), txn, now_ms)?;
                 TaskAskWait::Ready(result)
+            }
+            TaskAskStatus::WorldPrivacy(request) => {
+                row.consume_in(self.vault(), txn, now_ms)?;
+                TaskAskWait::WorldPrivacyReady(request)
             }
         };
         TASK_ASK_WAITS
@@ -1306,6 +1330,8 @@ pub(crate) fn settle_waiting_asks(vault: &crate::Vault) -> crate::Result<()> {
     drop(txn);
     for group in groups {
         super::ask_settlement::settle_ask_if_due(vault, group)?;
+        // FIX 4706: a world-privacy request's waits, from its LIVE status.
+        super::world_privacy_wait::reconcile_world_privacy_wait(vault, group)?;
     }
     vault.retry_pending_ask_soft_confirms(usize::MAX)?;
     Ok(())

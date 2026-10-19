@@ -263,7 +263,8 @@ impl HostSelfDispatcher<'_> {
     /// resumes from it.
     ///
     /// The wait keeps the `tasks.wait` marker a parked step records, as a
-    /// verb hook's ask does, its prompt naming the set.
+    /// verb hook's ask does, its prompt naming the set. One naming a
+    /// world-privacy request waits on it instead (FIX 4706).
     pub(super) fn dispatch_task_wait_set(
         &self,
         call: TaskWaitSetCall,
@@ -275,6 +276,10 @@ impl HostSelfDispatcher<'_> {
                 error: code.to_owned(),
             })
         };
+        // FIX 4706: a wait on a world-privacy request, no children.
+        if let Some(request) = &call.request {
+            return self.dispatch_world_privacy_wait(&call, request);
+        }
         let Some(site) = site else {
             return Ok(failed("task_wait_unbound"));
         };

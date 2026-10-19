@@ -1706,6 +1706,8 @@ impl Memory<'_> {
                 TaskAskStatus::Pending { .. } | TaskAskStatus::Changed { .. } => {
                     DoneVerdict::AskedUp(TaskAskHandle { group_ref: wait })
                 }
+                // An ask's status is never a world-privacy request's (FIX 4706).
+                TaskAskStatus::WorldPrivacy(_) => DoneVerdict::Held,
             });
         }
         let Some(brief) = current.brief.as_ref() else {
