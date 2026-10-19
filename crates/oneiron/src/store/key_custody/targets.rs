@@ -37,6 +37,7 @@ use super::protocol::{
     ACK_VERSION, AckOperation, AckRecord, CustodyBatch, EvidenceKind, PendingCode, TargetId,
     TargetKind, TargetPending, TargetScope, TargetSpec, hex,
 };
+use super::platform;
 use super::retirement::{RetireCause, RetirementIntent};
 
 const TARGETS: &str = "targets";
@@ -238,28 +239,13 @@ impl Journal {
 
     /// Holds the journal's lock for the life of the returned file: every
     /// read-modify-write of the set, an ack, the cursor or the watermark.
-    #[cfg(unix)]
     fn lock(&self) -> Result<File> {
-        use std::os::unix::fs::OpenOptionsExt;
         open_dir(self.dir(), true, None)?;
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(self.dir().join(LOCK))?;
-        rustix::fs::flock(&lock, rustix::fs::FlockOperation::LockExclusive)
-            .map_err(std::io::Error::from)?;
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        let lock = platform::secure(&mut options).open(self.dir().join(LOCK))?;
+        platform::lock_exclusive(&lock)?;
         Ok(lock)
-    }
-
-    #[cfg(not(unix))]
-    fn lock(&self) -> Result<File> {
-        Err(Error::InvalidConfig(
-            "key custody requires a supported Unix filesystem".into(),
-        ))
     }
 
     /// The required set; empty before the first registration.
@@ -510,8 +496,8 @@ impl Journal {
             }
         }
         if moved {
-            File::open(&done)?.sync_all()?;
-            File::open(&dir)?.sync_all()?;
+            platform::sync_dir(&done)?;
+            platform::sync_dir(&dir)?;
         }
         Ok(())
     }

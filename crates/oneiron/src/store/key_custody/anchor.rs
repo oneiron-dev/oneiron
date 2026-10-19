@@ -27,6 +27,7 @@ use crate::error::{Error, Result};
 use super::files::read_whole;
 use super::identity::{CustodyNamespace, CustodyVaultId};
 use super::log::{Control, CustodyPosition, POSITION_LEN};
+use super::platform;
 use super::protocol::{AnchorAdvance, AnchorStore};
 
 const ANCHOR_MAGIC: &[u8; 4] = b"OCAN";
@@ -113,28 +114,15 @@ impl FileAnchor {
         }
     }
 
-    /// Holds the lineage's lock for the life of the returned file.
-    #[cfg(unix)]
+    /// Holds the lineage's lock for the life of the returned file, through
+    /// the read, compare, temporary flush, replacement and directory sync.
     fn lock(&self, stem: &str) -> Result<File> {
-        use std::os::unix::fs::OpenOptionsExt;
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(self.present_root()?.join(format!("{stem}.lock")))?;
-        rustix::fs::flock(&lock, rustix::fs::FlockOperation::LockExclusive)
-            .map_err(std::io::Error::from)?;
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        let lock =
+            platform::secure(&mut options).open(self.present_root()?.join(format!("{stem}.lock")))?;
+        platform::lock_exclusive(&lock)?;
         Ok(lock)
-    }
-
-    #[cfg(not(unix))]
-    fn lock(&self, _: &str) -> Result<File> {
-        Err(Error::InvalidConfig(
-            "the custody anchor needs a supported Unix filesystem".into(),
-        ))
     }
 }
 
@@ -169,18 +157,11 @@ impl AnchorStore for FileAnchor {
         let written = (|| -> Result<()> {
             let mut options = OpenOptions::new();
             options.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                options
-                    .mode(0o600)
-                    .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-            }
-            let mut file = options.open(&temp)?;
+            let mut file = platform::secure(&mut options).open(&temp)?;
             file.write_all(record)?;
             file.sync_all()?;
             std::fs::rename(&temp, root.join(&name))?;
-            File::open(root)?.sync_all()?;
+            platform::sync_dir(root)?;
             Ok(())
         })();
         if written.is_err() {

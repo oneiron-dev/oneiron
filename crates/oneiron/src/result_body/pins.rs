@@ -16,6 +16,10 @@ struct PinCounts {
     /// Holds on every body at once, by readers of a whole set.
     every: usize,
     bodies: HashMap<[u8; 32], usize>,
+    /// The vault instance an off-record body was promoted as, before the
+    /// save transaction that names it opened (KS-2A): kept while its pin
+    /// is held, read by that transaction.
+    promoted: HashMap<[u8; 32], [u8; 16]>,
 }
 
 impl PinCounts {
@@ -41,6 +45,17 @@ impl ResultBodyPins {
             counts: Arc::clone(&self.counts),
             digest,
         }
+    }
+
+    /// The vault instance the body `digest` was promoted as, while the pin
+    /// its promotion took is held.
+    pub(crate) fn promoted(&self, digest: &[u8; 32]) -> Option<[u8; 16]> {
+        lock(&self.counts).promoted.get(digest).copied()
+    }
+
+    /// Whether any reader holds `digest`, or every body.
+    pub(crate) fn holds(&self, digest: &[u8; 32]) -> bool {
+        lock(&self.counts).holds(digest)
     }
 
     /// Runs `remove` unless a reader holds `digest`, keeping new pins out
@@ -74,6 +89,7 @@ impl Drop for ResultBodyPin {
                     let left = held.get().saturating_sub(1);
                     if left == 0 {
                         held.remove();
+                        counts.promoted.remove(&digest);
                     } else {
                         *held.get_mut() = left;
                     }
@@ -91,6 +107,22 @@ impl crate::Vault {
     /// closed.
     pub(crate) fn pin_result_body(&self, digest: [u8; 32]) -> ResultBodyPin {
         self.result_body_pins.pin(Some(digest))
+    }
+
+    /// [`Self::pin_result_body`] for a body an off-record promotion brought
+    /// in as the vault instance `instance`, before the save transaction
+    /// that names it opened: that transaction reads the instance while the
+    /// pin is held (KS-2A).
+    pub(crate) fn pin_promoted_result_body(
+        &self,
+        digest: [u8; 32],
+        instance: [u8; 16],
+    ) -> ResultBodyPin {
+        let pin = self.result_body_pins.pin(Some(digest));
+        lock(&self.result_body_pins.counts)
+            .promoted
+            .insert(digest, instance);
+        pin
     }
 
     /// Pins every result body at once, for a reader that finds its bodies

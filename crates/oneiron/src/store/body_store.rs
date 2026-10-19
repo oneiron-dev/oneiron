@@ -55,10 +55,13 @@ pub(crate) fn body_file_name(digest: &[u8; 32]) -> String {
 }
 
 /// One directory of body files, held open by descriptor, and on a sealed
-/// vault the seal its files' keys wrap under.
+/// vault the seal its files' keys open under. A vault's directory holds
+/// minted instances (KS-2A); an off-record session's (`session`) holds
+/// files whose keys stay in the session's overlay.
 pub(crate) struct BodyDir {
     pub(crate) dir: File,
     pub(crate) sealed: Option<super::DirSeal>,
+    pub(crate) session: bool,
 }
 
 impl BodyDir {
@@ -86,7 +89,11 @@ impl BodyDir {
                 "result bodies cross the vault filesystem".to_owned(),
             ));
         }
-        Ok(Some(Self { dir, sealed: None }))
+        Ok(Some(Self {
+            dir,
+            sealed: None,
+            session: false,
+        }))
     }
 
     /// The body directory at `path`, outside any vault (a checkpoint's),
@@ -543,8 +550,8 @@ pub(crate) enum SunkBody {
     /// Within the inline bound: its bytes, for the LMDB row.
     Inline(Vec<u8>),
     /// Past it: a published body file, and the disk left free beside it
-    /// once it was written, when that could be read. A sealed directory's
-    /// file comes with the key row its body's row commits with.
+    /// once it was written, when that could be read. A vault directory's
+    /// file comes with the instance row its body's row commits with.
     File {
         free_bytes: Option<u64>,
         key: Option<super::StagedBodyKey>,
@@ -556,6 +563,9 @@ pub(crate) enum SunkBody {
 /// way. Dropped unfinished, it leaves nothing behind.
 pub(crate) struct BodySink {
     dir: BodyDir,
+    /// What a vault directory's spill mints its instance from, before any
+    /// writer opens; `None` for an off-record session's directory.
+    mint: Option<super::BodyMint>,
     inline_limit: u64,
     meter: Option<BodyMeter>,
     inline: Vec<u8>,
@@ -566,9 +576,10 @@ pub(crate) struct BodySink {
 }
 
 impl BodySink {
-    pub(crate) fn new(dir: BodyDir, inline_limit: u64) -> Self {
+    pub(crate) fn new(dir: BodyDir, inline_limit: u64, mint: Option<super::BodyMint>) -> Self {
         Self {
             dir,
+            mint,
             inline_limit,
             meter: Some(BodyMeter::new()),
             inline: Vec::new(),
@@ -603,7 +614,8 @@ impl BodySink {
             self.inline.extend_from_slice(frame);
             return Ok(());
         }
-        let mut spill = super::BodySpill::create(&self.dir)?;
+        let instance = self.mint.as_ref().map(super::BodyMint::mint).transpose()?;
+        let mut spill = super::BodySpill::create(&self.dir, instance)?;
         let written = spill.write(&self.inline).and_then(|()| spill.write(frame));
         if let Err(error) = written {
             self.dir.discard(spill.temp());
@@ -711,6 +723,7 @@ impl Store {
             BodyDir::open_in(&spill.dir, &session_spill_name(session_ref), create)?.map(
                 |mut dir| {
                     dir.sealed = self.dir_seal(super::KeyScope::OffRecord);
+                    dir.session = true;
                     dir
                 },
             ),

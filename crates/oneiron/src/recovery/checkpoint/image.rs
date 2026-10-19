@@ -12,6 +12,10 @@ use super::{
 use crate::Result;
 use crate::store::DB_MANIFEST;
 
+/// The image format: 3 carries every body sealed under its instance's key
+/// and inline bodies out of their rows (KS-2A).
+pub(super) const IMAGE_VERSION: u16 = 3;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CheckpointImage {
@@ -20,10 +24,16 @@ pub(super) struct CheckpointImage {
     pub(super) databases: BTreeMap<String, CanonicalRows>,
     /// Each body file the rows name: its BLAKE3 and length.
     pub(super) bodies: Vec<([u8; 32], u64)>,
-    /// The envelopes among them, by their place in `bodies`: a sealed
-    /// vault's files (FIX 5348). A plain vault's image names none.
+    /// Each one's instance and the length of the envelope it travels in, by
+    /// its place in `bodies`: every body is carried sealed under its
+    /// instance's key alone (FIX 5348, KS-2A).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(super) sealed_bodies: BTreeMap<u64, carried_bodies::SealedFile>,
+    /// Each inline body the rows hold, carried sealed under its instance's
+    /// key after the files; its row here keeps only what precedes the body
+    /// (KS-2A).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) inline_bodies: Vec<carried_bodies::CarriedInline>,
 }
 
 impl CheckpointImage {
@@ -60,13 +70,9 @@ pub(super) fn read_image_required<'k>(
 )> {
     let opened = artifact::open_artifact(path, key)?;
     let image: CheckpointImage = rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
-    if image.version != 2
+    if image.version != IMAGE_VERSION
         || image.created_at != opened.created_at
-        || !carried_bodies::matches_artifact(
-            &image.bodies,
-            &image.sealed_bodies,
-            &opened.bodies.list(),
-        )
+        || !carried_bodies::matches_artifact(&image, &opened.bodies.list())
         || image.databases.len() != DB_MANIFEST.len()
         || DB_MANIFEST
             .iter()

@@ -132,8 +132,30 @@ impl Vault {
         declared: &[TargetSpec],
         anchor: Option<&dyn AnchorStore>,
     ) -> Result<CustodyStatus> {
+        self.publish_custody_claiming(FolderTarget::at(folder.to_path_buf()), declared, anchor)
+    }
+
+    /// [`Vault::publish_custody`] with the folder's frames and head claimed
+    /// on `room` first, the floor a backup's landing disk keeps (FIX 5858):
+    /// a claim the floor refuses leaves the folder pending by name.
+    pub fn publish_custody_within(
+        &self,
+        folder: &Path,
+        declared: &[TargetSpec],
+        anchor: Option<&dyn AnchorStore>,
+        room: Box<dyn super::RecoveryWriteBudget>,
+    ) -> Result<CustodyStatus> {
+        let folder = FolderTarget::at(folder.to_path_buf()).claiming(room);
+        self.publish_custody_claiming(folder, declared, anchor)
+    }
+
+    fn publish_custody_claiming(
+        &self,
+        folder: FolderTarget,
+        declared: &[TargetSpec],
+        anchor: Option<&dyn AnchorStore>,
+    ) -> Result<CustodyStatus> {
         let recipients = self.custody_recipients()?;
-        let folder = FolderTarget::at(folder.to_path_buf());
         let declared: Vec<DeclaredTarget> =
             declared.iter().cloned().map(DeclaredTarget::new).collect();
         let mut targets: Vec<&dyn CustodyTarget> = vec![&folder];

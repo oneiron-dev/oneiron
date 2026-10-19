@@ -17,12 +17,24 @@ impl SessionBinding<'_> {
     /// [`Self::output_sink`] with no sweep, for a step's program, which a
     /// resumed step runs again as stored.
     pub(super) fn script_sink(&self) -> Result<BodySink> {
-        let dir = self.answered(|| self.session.body_dir(self.route.target()))?;
+        let target = self.route.target();
+        let dir = self.answered(|| self.session.body_dir(target))?;
+        // A body bound for the vault's `bodies/` spills into a vault
+        // instance minted here, before any writer opens (KS-2A); an
+        // off-record room's keys stay in its overlay.
+        let mint = match target {
+            RouteTarget::Base => Some(self.answered(|| {
+                self.session
+                    .read_composed(|view, rtxn| crate::store::body_mint_in(view, rtxn))
+            })?),
+            RouteTarget::Overlay | RouteTarget::Discard => None,
+        };
         Ok(BodySink::new(
             dir,
             self.session
                 .limit_watch()
                 .bound(EngineLimit::CodeResultInlineBytes),
+            mint,
         ))
     }
 
@@ -97,9 +109,10 @@ impl SessionBinding<'_> {
         })
     }
 
-    /// The key row of the sealed file `finished` wrote, on the run's route,
-    /// before the row naming it (FIX 5348). A key the route's scope holds
-    /// for the digest already stays: its file serves the body.
+    /// The instance row of the file `finished` wrote, on the run's route,
+    /// before the row naming it (FIX 5348, KS-2A): a vault instance's row
+    /// pins the custody binding in the same transaction. A row the route's
+    /// scope holds for the digest already stays: its file serves the body.
     pub(super) fn put_body_key(
         &self,
         finished: &super::super::records::FinishedOutput,
@@ -109,13 +122,18 @@ impl SessionBinding<'_> {
         };
         self.answered(|| {
             let dir = self.session.body_dir(self.route.target())?;
-            if let Some(held) = self.session.side_table_get(&BODY_KEYS, key.digest())?
-                && key.keeps(&held, &dir)?
-            {
-                return Ok(());
-            }
             self.session
-                .side_table_put_routed(&self.route, &BODY_KEYS, key.digest(), key.row())
+                .routed_side_txn(&self.route, |txn, read, write| {
+                    if let Some(held) = BODY_KEYS.get(&read, txn, key.digest())?
+                        && key.keeps(&held, &dir)?
+                    {
+                        return Ok(());
+                    }
+                    if let crate::side_table::RoutedDbs::Base(vault) = &write {
+                        crate::store::pin_body_custody_in_txn(&vault.store, txn)?;
+                    }
+                    BODY_KEYS.put(&write, txn, key.digest(), key.row())
+                })
         })
     }
 

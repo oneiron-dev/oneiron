@@ -18,6 +18,7 @@
 //! (`commitment`); a restore refuses a signer its key does not trust.
 mod artifact;
 mod authority_plane;
+mod body_bind;
 mod carried_bodies;
 mod commitment;
 mod custody_head;
@@ -646,11 +647,16 @@ impl Vault {
             Custody::Fork(source) => (true, source, None),
         };
         let new_host = matches!(custody, Custody::NewHost);
-        let gate_custody = if new_host {
+        let mut gate_custody = if new_host {
             crate::store::preflight_absent_custody_rows(&image.databases["vault_meta"])?
         } else {
             crate::store::preflight_checkpoint_rows(&image.databases["vault_meta"], source)?
         };
+        // Every body instance the rows name, through the plan the claim keys
+        // share, so one fork copies both: missing refuses by name, retired
+        // takes its rows out (KS-2A).
+        let retired = carried_bodies::require(&mut image, gate_custody.plan_mut())?;
+        let body_custody = gate_custody.plan_mut().source().cloned();
         if fork {
             crate::store::refuse_custody_beside(destination)?;
         }
@@ -681,9 +687,13 @@ impl Vault {
         // result body with its line index, an ASSET's file raw (FIX 3677),
         // a sealed vault's envelope checked frame by frame under its key row
         // (FIX 5348).
-        if !image.bodies.is_empty() {
-            carried_bodies::restore(&vault, &mut image, bodies, &mut room)?;
-        }
+        carried_bodies::restore(
+            &vault,
+            &mut image,
+            bodies,
+            &mut room,
+            (body_custody.as_ref(), &retired),
+        )?;
         room.landing_rows(&image)?;
         vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {

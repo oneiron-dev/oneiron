@@ -18,6 +18,7 @@ impl Vault {
         Ok(BodySink::new(
             self.store.body_dir()?,
             self.limit_watch().bound(EngineLimit::CodeResultInlineBytes),
+            Some(self.store.body_mint()?),
         ))
     }
 
@@ -114,14 +115,55 @@ impl Vault {
         finish_output(path, sink, true, self.limit_watch())
     }
 
-    /// [`Self::code_run_output_sink`] sweeping `known`, the values a caller
-    /// read before its write transaction opened (FIX 3678): the whole-vault
-    /// import stages each result body inside its one transaction.
-    pub(crate) fn code_run_output_sink_knowing(
+    /// [`Self::code_run_output_sink`] as `staged` holds it, prepared before
+    /// its caller's write transaction opened (FIX 3678, KS-2A): the
+    /// whole-vault import stages each result body inside its one
+    /// transaction, sweeping the values it read then and spilling into the
+    /// instances minted then.
+    pub(crate) fn code_run_output_sink_knowing(&self, staged: StagedSinks) -> Result<BodySink> {
+        Ok(BodySink::new(
+            self.store.body_dir()?,
+            self.limit_watch().bound(EngineLimit::CodeResultInlineBytes),
+            Some(staged.mint),
+        )
+        .sweeping(staged.known))
+    }
+
+    /// What `count` result bodies a caller stages inside one write
+    /// transaction sink through, read and minted now, before it opens: the
+    /// values custody knows, for the sweep, and `count` body instances, one
+    /// for each body that may spill. One left unspilled is debris.
+    ///
+    /// # Errors
+    ///
+    /// Storage and custody errors.
+    pub(crate) fn staged_result_sinks(&self, count: usize) -> Result<StagedSinks> {
+        Ok(StagedSinks {
+            known: self.known_values()?,
+            mint: self.store.body_mint()?.reserve(count)?,
+        })
+    }
+
+    /// Whether the result body row of `digest` holds its body inline.
+    pub(crate) fn code_run_body_inline_in_txn(
         &self,
-        known: Option<std::sync::Arc<crate::secret_custody::KnownValues>>,
-    ) -> Result<BodySink> {
-        Ok(self.code_run_script_sink()?.sweeping(known))
+        txn: &heed::RoTxn<'_>,
+        digest: &[u8; 32],
+    ) -> Result<bool> {
+        let handle = CodeRunRawOutput::of_ref(crate::compaction::output::OutputRef {
+            hash: *digest,
+            byte_len: 0,
+        })
+        .handle;
+        Ok(matches!(
+            RAW_OUTPUTS.get(&self.store, txn, &handle)?,
+            Some(StoredBody::Inline(_))
+        ))
+    }
+
+    /// The inline bound a result body spills past.
+    pub(crate) fn code_result_inline_bytes(&self) -> u64 {
+        self.limit_watch().bound(EngineLimit::CodeResultInlineBytes)
     }
 
     /// Stores a complete body held whole under its content handle; `output`
@@ -198,9 +240,9 @@ impl Vault {
                     && !crate::store::keep_promoted_body_key_in_txn(
                         &self.store,
                         wtxn,
-                        room,
                         &output.raw_blake3,
                         output.raw_len,
+                        self.result_body_pins.promoted(&output.raw_blake3),
                     )?
                 {
                     return Err(Error::CorruptedIndex("message result body file missing"));
@@ -270,6 +312,7 @@ impl Vault {
     /// small bodies and explicit whole reads; context reads take ranges.
     pub fn get_code_run_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
+        let _custody = self.store.gate_custody_read_guard()?;
         let _pin = self.pin_result_body(output.raw_blake3);
         let body = {
             let rtxn = self.store.env.read_txn()?;
@@ -290,6 +333,7 @@ impl Vault {
         source: crate::compaction::output::OutputRef,
     ) -> Result<Option<Vec<u8>>> {
         let output = CodeRunRawOutput::of_ref(source);
+        let _custody = self.store.gate_custody_read_guard()?;
         let _pin = self.pin_result_body(source.hash);
         let body = {
             let rtxn = self.store.env.read_txn()?;
@@ -313,6 +357,7 @@ impl Vault {
         len: usize,
     ) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
+        let _custody = self.store.gate_custody_read_guard()?;
         let _pin = self.pin_result_body(output.raw_blake3);
         let rtxn = self.store.env.read_txn()?;
         let Some(row) = RAW_OUTPUTS.get_borrowed(&self.store, &rtxn, &output.handle)? else {
@@ -324,6 +369,14 @@ impl Vault {
         })
         .map(Some)
     }
+}
+
+/// What result bodies staged inside one write transaction sink through,
+/// prepared before it opened ([`Vault::staged_result_sinks`]).
+#[derive(Clone)]
+pub(crate) struct StagedSinks {
+    known: Option<std::sync::Arc<crate::secret_custody::KnownValues>>,
+    mint: crate::store::BodyMint,
 }
 
 /// A finished body: its manifest, its row and the secret scan's hit. A
@@ -484,17 +537,49 @@ pub(in crate::code_run::storage) fn read_body_row_range(
 /// `Some` only for a result body row stored as a file. A checkpoint reads
 /// its rows raw, so this is how it finds the files beside them.
 pub(crate) fn code_run_body_file_of_row(key: &[u8], value: &[u8]) -> Option<([u8; 32], u64)> {
-    let handle = key.strip_prefix(RAW_OUTPUTS.decl().prefix)?;
-    let hex =
-        handle.strip_prefix(super::super::support::CODE_RUN_OUTPUT_HANDLE_PREFIX.as_bytes())?;
+    let digest = handle_digest(key)?;
     let StoredBody::File { len } = StoredBody::from_raw(value).ok()? else {
         return None;
     };
+    Some((digest, len))
+}
+
+/// The inline body a raw `vault_meta` row holds, as its digest and bytes:
+/// `Some` only for a result body row stored inline. A checkpoint seals those
+/// bytes under the body's instance and carries the row without them
+/// (KS-2A).
+pub(crate) fn code_run_inline_body_of_row<'v>(
+    key: &[u8],
+    value: &'v [u8],
+) -> Option<([u8; 32], &'v [u8])> {
+    let digest = handle_digest(key)?;
+    match value.split_first() {
+        Some((&STORED_INLINE, body)) => Some((digest, body)),
+        _ => None,
+    }
+}
+
+/// The raw `vault_meta` key of the result body row of `digest`.
+pub(crate) fn code_run_body_row_key(digest: &[u8; 32]) -> Vec<u8> {
+    RAW_OUTPUTS.key_bytes(
+        &CodeRunRawOutput::of_ref(crate::compaction::output::OutputRef {
+            hash: *digest,
+            byte_len: 0,
+        })
+        .handle,
+    )
+}
+
+/// The digest a raw result body row's key names by its handle.
+fn handle_digest(key: &[u8]) -> Option<[u8; 32]> {
+    let handle = key.strip_prefix(RAW_OUTPUTS.decl().prefix)?;
+    let hex = handle
+        .strip_prefix(crate::code_run::support::CODE_RUN_OUTPUT_HANDLE_PREFIX.as_bytes())?;
     let mut digest = [0; 32];
     for (byte, pair) in digest.iter_mut().zip(hex.chunks_exact(2)) {
         *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
     }
-    (hex.len() == 64).then_some((digest, len))
+    (hex.len() == 64).then_some(digest)
 }
 
 fn drifted() -> Error {
