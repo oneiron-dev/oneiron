@@ -21,6 +21,7 @@ use axum::http::header::IF_NONE_MATCH;
 use axum::http::header::LOCATION;
 use axum::http::header::REFERRER_POLICY;
 use axum::http::header::X_CONTENT_TYPE_OPTIONS;
+use axum::http::request::Parts;
 use axum::response::Response;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -126,7 +127,7 @@ mod host;
 pub(crate) use self::host::{ArtifactHosts, VaultHostRoute};
 
 pub(crate) async fn serve_artifact_root(
-    headers: HeaderMap,
+    parts: Parts,
     OriginalUri(uri): OriginalUri,
     State(server): State<Arc<SyncServer>>,
     Path(artifact): Path<String>,
@@ -139,7 +140,7 @@ pub(crate) async fn serve_artifact_root(
         route.on_vault_host(host.app);
     }
     let code_policy = code_artifact_policy(&server, listener);
-    let response = serve_artifact_file(server, &route, &headers, code_policy)?;
+    let response = serve_artifact_file(server, &route, &parts, code_policy)?;
     if let Some(target) = route.redirect() {
         return artifact_redirect_response(&target);
     }
@@ -147,7 +148,7 @@ pub(crate) async fn serve_artifact_root(
 }
 
 pub(crate) async fn serve_artifact_path(
-    headers: HeaderMap,
+    parts: Parts,
     OriginalUri(uri): OriginalUri,
     State(server): State<Arc<SyncServer>>,
     Path((artifact, _path)): Path<(String, String)>,
@@ -160,7 +161,7 @@ pub(crate) async fn serve_artifact_path(
         route.on_vault_host(host.app);
     }
     let code_policy = code_artifact_policy(&server, listener);
-    let response = serve_artifact_file(server, &route, &headers, code_policy)?;
+    let response = serve_artifact_file(server, &route, &parts, code_policy)?;
     if let Some(target) = route.redirect() {
         return artifact_redirect_response(&target);
     }
@@ -170,21 +171,33 @@ pub(crate) async fn serve_artifact_path(
 fn serve_artifact_file(
     server: Arc<SyncServer>,
     route: &ArtifactRoute,
-    request_headers: &HeaderMap,
+    request: &Parts,
     code_policy: &'static str,
 ) -> Result<Response, EnvelopedApiError> {
+    let request_headers = &request.headers;
     // An adapter without content-scope enforcement must reject narrowed
     // credentials. Neither a write-only slip nor an identity alone grants a read.
-    let principal =
+    // On a managed vault the caller is the request's own (a slip, or the
+    // owner its supervisor attested), so the owner reads his own private
+    // artifacts; a caller that does not authenticate reads as no one.
+    let caller = CoreAuth::for_managed_request(
+        request_headers,
+        &request.extensions,
+        crate::auth::request_path(request),
+        &server,
+    )
+    .unwrap_or_else(|| {
         CoreAuth::from_headers(request_headers, &server.config, server.vault().as_ref())
-            .ok()
-            .filter(|auth| {
-                auth.has_scope(CoreScope::Read) && auth.require_unrestricted_record_scope().is_ok()
-            })
-            .and_then(|auth| {
-                auth.principal_ref()
-                    .and_then(|id| oneiron::EntityId::from_hex(id).ok())
-            });
+    });
+    let principal = caller
+        .ok()
+        .filter(|auth| {
+            auth.has_scope(CoreScope::Read) && auth.require_unrestricted_record_scope().is_ok()
+        })
+        .and_then(|auth| {
+            auth.principal_ref()
+                .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+        });
     let Some(file) = server
         .vault
         .resolve_authorized_artifact_file(

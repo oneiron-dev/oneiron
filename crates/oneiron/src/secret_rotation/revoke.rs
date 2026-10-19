@@ -17,6 +17,7 @@ use crate::secret_lease::{
     SecretLeaseStatus, teardown_local_registration_in_txn, write_secret_lease_in_txn,
 };
 use crate::side_table::HexId;
+use crate::store::Store;
 
 /// What a revoke erases at rest (CALLS CUSTODY_REVOKE_ERASE).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +31,9 @@ enum CustodyRevokeErase {
     /// revoked, value-free, and output digests, receipts and fingerprints
     /// stay. A record the owner ruled no secret keeps its bytes: the
     /// found-key screen reads them, so a later write does not mask that value
-    /// again, and the ruling put the value back into its record's body.
+    /// again, and the ruling put the value back into its record's body. A
+    /// record revoked before this erase gives up the bytes it still holds at
+    /// its next settle or revoke (FIX 5272), with no backfill of its own.
     /// Nothing recalls an export, a checkpoint, a delivered copy or history a
     /// store retains: no physical shredding is claimed.
     ValueCarrierInputsExceptRuledNoSecret,
@@ -58,13 +61,35 @@ fn erases(cause: RevokeCause) -> bool {
     }
 }
 
+/// Whether `record`, held here as record `id`, is revoked and still holds
+/// value bytes a revoke erases (CALLS CUSTODY_REVOKE_ERASE, FIX 5272): a
+/// record revoked before the erase keeps them until the next revoke or
+/// settle of it. A record whose found key the owner ruled no secret keeps
+/// its bytes, as the ruling's revoke did.
+pub(crate) fn holds_erasable_value_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    record: &SecretCustodyRecord,
+) -> Result<bool> {
+    if record.status != SecretCustodyStatus::Revoked || record.value_bytes.is_empty() {
+        return Ok(false);
+    }
+    Ok(!crate::secret_custody::ruled_no_secret_in_txn(
+        store, txn, id,
+    )?)
+}
+
 /// Revokes custody record `id` inside `wtxn`: the record flips `Revoked`
 /// with its value erased unless `cause` keeps it (CALLS
 /// CUSTODY_REVOKE_ERASE), the carrier that still seals its value and every
 /// input kept for it are dropped, and every lease over its name flips
 /// `Revoked` with its T2 file torn down. The revoke door and a synced
-/// revocation (OF-422) both land here. A record revoked already keeps what
-/// it holds. Returns the record as revoked, its value wiped.
+/// revocation (OF-422) both land here. A record revoked already keeps its
+/// metadata, and gives up the value bytes it still holds when `cause`
+/// erases and its found key was not ruled no secret
+/// ([`holds_erasable_value_in_txn`], FIX 5272). Returns the record as
+/// revoked, its value wiped.
 pub(crate) fn revoke_custody_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -74,7 +99,8 @@ pub(crate) fn revoke_custody_in_txn(
 ) -> Result<SecretCustodyRecord> {
     let mut rec = read_secret_custody_in_txn(&vault.store, wtxn, id)?
         .ok_or(Error::CorruptedIndex("secret custody record for live name"))?;
-    if rec.status != SecretCustodyStatus::Revoked {
+    let residual = erases(cause) && holds_erasable_value_in_txn(&vault.store, wtxn, id, &rec)?;
+    if rec.status != SecretCustodyStatus::Revoked || residual {
         rec.status = SecretCustodyStatus::Revoked;
         if erases(cause) {
             // Wiped, then emptied: the body keeps an empty value the codec

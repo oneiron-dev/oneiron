@@ -38,10 +38,6 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 // The known-value index and its key stay with the node: the
                 // index is derived from custody here (OF-560 C).
                 b"secret_known:",
-                // Which rewrap's bindings a receiver took: derived from the
-                // kept carriers and the fold (CALLS
-                // CUSTODY_REBIND_PENDING_FLOOR).
-                b"secret_custody:rebind:",
                 b"tasks.create.rate.",
                 b"own_rate.",
                 b"vault_cleanup.scan",
