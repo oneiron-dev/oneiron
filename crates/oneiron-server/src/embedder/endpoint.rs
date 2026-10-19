@@ -26,14 +26,15 @@ use oneiron::error::StoreError;
 use oneiron::federation::derivation::DerivationScope;
 use serde_json::value::RawValue;
 
+use super::brokered::Reach;
 use super::local::evidence::{self, RunProfile};
 use super::remote::RungHold;
 use super::{EmbedderCommon, QueryEmbedder, engine_locality};
 use crate::config::EmbedderConfig;
+use crate::models::BrokerContext;
 use crate::runtime::{GpuPool, GpuRegistryError};
 
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+pub(super) const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 /// Characters per token used to turn the provider-agnostic `max_input_tokens`
 /// into the character cap this provider can actually enforce. There is no
 /// tokenizer on this side of the wire, and four is the ratio the 2026-09 bench
@@ -43,7 +44,7 @@ const CHARS_PER_TOKEN: usize = 4;
 /// the remote answers and how many components it returns, nothing else.
 const PROBE_TEXT: &str = "oneiron embedder probe";
 /// Tool name on every upstream failure this provider reports.
-const EMBEDDER_TOOL: &str = "embedder-endpoint";
+pub(super) const EMBEDDER_TOOL: &str = "embedder-endpoint";
 /// The longest runtime an answer's mark may name; a longer one is not taken.
 const MAX_RUNTIME_BYTES: usize = 128;
 /// Bytes of text one request to `embedder serve` carries at most; an input
@@ -256,7 +257,8 @@ pub(crate) struct HttpEmbedder {
     /// What the vault admitted for this remote ([`Self::admit`]), which every
     /// answer is then held to.
     admitted: Mutex<Admitted>,
-    client: reqwest::blocking::Client,
+    /// How its requests reach the remote, with the key the section names.
+    client: Reach,
     truncations: AtomicU64,
     /// The endpoint's paid door: every embedding request goes through it
     /// once it is set. The primary endpoint's is set before its probe
@@ -276,14 +278,14 @@ enum Lane {
     Batch,
 }
 
-/// The pool document batches lease a pod from, and the client that reaches
-/// the pods with their own key, never the endpoint's.
+/// The pool document batches lease a pod from, and how the pods are reached
+/// with their own key, never the endpoint's.
 struct PodRoute {
     pool: GpuPool,
     /// The holding vault's account, when one is bound: each request is then a
     /// derivation job whose answer is sealed to that account.
     scope: Option<DerivationScope>,
-    client: reqwest::blocking::Client,
+    client: Reach,
 }
 
 impl PodRoute {
@@ -348,6 +350,15 @@ fn pod_error(error: &GpuRegistryError) -> oneiron::Error {
 
 impl HttpEmbedder {
     pub(super) fn from_config(config: &EmbedderConfig) -> oneiron::Result<Arc<Self>> {
+        Self::with_broker(config, None)
+    }
+
+    /// [`Self::from_config`], with the vault's credential-broker context a
+    /// `key_secret` key is sent through, request by request.
+    pub(super) fn with_broker(
+        config: &EmbedderConfig,
+        broker: Option<&BrokerContext>,
+    ) -> oneiron::Result<Arc<Self>> {
         let endpoint = config
             .endpoint
             .endpoint
@@ -360,7 +371,6 @@ impl HttpEmbedder {
         let model_key = config.endpoint.model_key.clone().ok_or_else(|| {
             oneiron::Error::InvalidConfig("embedder.model_key is required".to_owned())
         })?;
-        let timeout = Duration::from_millis(config.endpoint.timeout_ms);
         let url = reqwest::Url::parse(&endpoint)
             .map_err(|_| oneiron::Error::InvalidConfig("invalid embedder endpoint URL".into()))?;
         if !matches!(url.scheme(), "http" | "https")
@@ -388,31 +398,8 @@ impl HttpEmbedder {
                 "network embedder endpoints require HTTPS".into(),
             ));
         }
-        let mut headers = reqwest::header::HeaderMap::new();
-        if let Some(name) = &config.endpoint.api_key_env {
-            let key = std::env::var(name).map_err(|_| {
-                oneiron::Error::InvalidConfig("embedder key environment variable is missing".into())
-            })?;
-            let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {key}"))
-                .map_err(|_| {
-                    oneiron::Error::InvalidConfig("invalid embedder authorization value".into())
-                })?;
-            value.set_sensitive(true);
-            headers.insert(reqwest::header::AUTHORIZATION, value);
-        }
         // One attempt, no redirects, bounded body — the house transport shape.
-        // The worker loop is the retry; a retry inside the client would hide a
-        // dead remote behind a long stall and re-charge a metered one. No
-        // proxy either: one from the environment or the system would receive
-        // the bearer key and every text the vault embeds.
-        let client = reqwest::blocking::Client::builder()
-            .no_proxy()
-            .default_headers(headers)
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(timeout)
-            .build()
-            .map_err(|e| oneiron::Error::InvalidConfig(format!("embedder http client: {e}")))?;
+        let client = Reach::endpoint(&config.endpoint, broker)?;
         if let Some(artifact) = config.endpoint.artifact.as_deref() {
             tracing::info!(%endpoint, %model_key, artifact, "endpoint embedder configured");
         } else {
@@ -445,18 +432,7 @@ impl HttpEmbedder {
         scope: Option<DerivationScope>,
         timeout: Duration,
     ) -> oneiron::Result<()> {
-        let mut headers = reqwest::header::HeaderMap::new();
-        if let Some(bearer) = pool.bearer() {
-            headers.insert(reqwest::header::AUTHORIZATION, bearer.clone());
-        }
-        let client = reqwest::blocking::Client::builder()
-            .no_proxy()
-            .default_headers(headers)
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(timeout)
-            .build()
-            .map_err(|e| oneiron::Error::InvalidConfig(format!("gpu pod http client: {e}")))?;
+        let client = Reach::pods(&pool, timeout)?;
         tracing::info!(
             region = pool.region(),
             bound = scope.is_some(),
@@ -576,14 +552,10 @@ impl HttpEmbedder {
     /// that answers without the mark, is the OpenAI wire.
     fn read_listing(&self) -> oneiron::Result<Listing> {
         let url = format!("{}/models", self.endpoint);
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .map_err(|e| transport_error("models listing", &e))?;
-        let status = response.status();
+        let reply = self.client.get(&url, &self.model_key, "models listing")?;
+        let status = reply.status;
         let listed = if status.is_success() {
-            let bytes = bounded_body(response)?;
+            let bytes = reply.body?;
             serde_json::from_slice::<ModelsResponse>(&bytes).ok()
         } else if no_listing_route(status) {
             None
@@ -631,6 +603,9 @@ impl HttpEmbedder {
         let Some(door) = self.paid.get() else {
             return self.post_once(texts, side, lane);
         };
+        // A broker or key that is not there refuses the request before its
+        // permit starts.
+        self.client.preflight()?;
         // The door settles on the vectors; the mark rides beside them.
         let mut mark = None;
         let vectors = door.send(texts, &mut || {
@@ -652,7 +627,7 @@ impl HttpEmbedder {
     /// it is read: a pod's derivation job seals it there.
     fn post_at(
         &self,
-        client: &reqwest::blocking::Client,
+        client: &Reach,
         base: &str,
         texts: &[&str],
         side: Side<'_>,
@@ -664,22 +639,20 @@ impl HttpEmbedder {
             input: texts.to_vec(),
             side,
         };
-        let response = client
-            .post(&url)
-            .json(&body)
-            .send()
-            .map_err(|e| transport_error("embeddings request", &e))?;
-        let status = response.status();
+        let reply = client.post(&url, &self.model_key, &body, "embeddings request")?;
+        let status = reply.status;
         if !status.is_success() {
             return Err(oneiron::Error::UpstreamToolFailure {
                 tool: EMBEDDER_TOOL,
                 code: format!("embedder endpoint returned HTTP {status}"),
             });
         }
-        let parsed: EmbeddingsResponse = serde_json::from_slice(&settle(bounded_body(response)?)?)
-            .map_err(|e| oneiron::Error::UpstreamToolFailure {
-                tool: EMBEDDER_TOOL,
-                code: format!("embeddings response: {e}"),
+        let parsed: EmbeddingsResponse =
+            serde_json::from_slice(&settle(reply.body?)?).map_err(|e| {
+                oneiron::Error::UpstreamToolFailure {
+                    tool: EMBEDDER_TOOL,
+                    code: format!("embeddings response: {e}"),
+                }
             })?;
         let agrees = match &*self.admitted.lock().unwrap_or_else(PoisonError::into_inner) {
             Admitted::Unchecked => true,
@@ -784,7 +757,7 @@ fn requests<'t, 'a>(texts: &'t [&'a str], bytes: usize) -> Vec<&'t [&'a str]> {
     requests
 }
 
-fn transport_error(what: &str, error: &reqwest::Error) -> oneiron::Error {
+pub(super) fn transport_error(what: &str, error: &reqwest::Error) -> oneiron::Error {
     // The message carries the failure class, never the response body: a remote
     // that echoes the input back in an error must not put vault text into this
     // server's logs.
@@ -803,7 +776,7 @@ fn transport_error(what: &str, error: &reqwest::Error) -> oneiron::Error {
     }
 }
 
-fn bounded_body(response: reqwest::blocking::Response) -> oneiron::Result<Vec<u8>> {
+pub(super) fn bounded_body(response: reqwest::blocking::Response) -> oneiron::Result<Vec<u8>> {
     if response
         .content_length()
         .is_some_and(|n| n > MAX_RESPONSE_BYTES as u64)
@@ -1026,24 +999,23 @@ pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<Opti
 /// rung 0 and the worker keeps trying.
 pub(crate) fn probe_endpoint(embedder: &HttpEmbedder) -> Result<ProbeOutcome, ProbeError> {
     let url = format!("{}/models", embedder.endpoint);
-    let listed = match embedder.client.get(&url).send() {
-        Ok(response) if response.status().is_success() => match bounded_body(response) {
+    let listed = match embedder
+        .client
+        .get(&url, &embedder.model_key, "models probe")
+    {
+        Ok(reply) if reply.status.is_success() => match reply.body {
             Ok(bytes) => serde_json::from_slice::<ModelsResponse>(&bytes).ok(),
             Err(error) => return Ok(ProbeOutcome::Unreachable(error.to_string())),
         },
         // No listing route: an unknown catalog, so only the width is checked.
-        Ok(response) if no_listing_route(response.status()) => None,
-        Ok(response) => {
+        Ok(reply) if no_listing_route(reply.status) => None,
+        Ok(reply) => {
             return Ok(ProbeOutcome::Unreachable(format!(
                 "GET {url} returned HTTP {}",
-                response.status()
+                reply.status
             )));
         }
-        Err(error) => {
-            return Ok(ProbeOutcome::Unreachable(
-                transport_error("models probe", &error).to_string(),
-            ));
-        }
+        Err(error) => return Ok(ProbeOutcome::Unreachable(error.to_string())),
     };
     // A remote that answers but cannot be parsed is treated as reachable with
     // an unknown catalog: some servers omit `/models` entirely, and refusing

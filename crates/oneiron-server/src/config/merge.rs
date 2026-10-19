@@ -402,6 +402,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
         ));
     }
     validate_embedder_config(config)?;
+    config.runtime.validate_key_source()?;
     if let Some(oneironer) = &config.oneironer {
         oneironer.validate()?;
     }
