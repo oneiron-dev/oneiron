@@ -3,9 +3,10 @@
 //! intake.
 //!
 //! The first call records the purge in one writer: one `purge_scope`
-//! control per month the vault used, each riding that month's own scope at
-//! its next ordinal and naming no other scope, so no control links two
-//! months. From then on the offer pass prepares and releases nothing;
+//! control per (month, link generation) the vault used, each riding that
+//! pair's own scope at its next ordinal and naming no other scope, so no
+//! control links two months. A generation whose key a restore lost (FIX
+//! 5892) is purged as any other: the control carries no code. From then on the offer pass prepares and releases nothing;
 //! controls still spool and receipts still apply. The purge is done once the
 //! intake's `removed` receipt for every one of its controls is in; the
 //! writer that applies the last of them stages the training link key's
@@ -105,9 +106,15 @@ impl Vault {
             }
             let now = crate::unix_seconds_now();
             let mut controls = Vec::with_capacity(state.months.len());
-            for month in state.months.keys() {
+            // Every (month, generation) the vault used, orphaned ones too: a
+            // purge carries no code, so a lost key never stops it.
+            for entry in &state.months {
+                let pair = (entry.month.as_str(), entry.generation);
                 let id =
-                    custody::record_control_in(self, txn, month, ControlChange::PurgeScope, now)?;
+                    custody::record_control_in(self, txn, pair, ControlChange::PurgeScope, now)?
+                        .ok_or(Error::InvariantViolation(
+                            "a training purge control was not recorded",
+                        ))?;
                 controls.push(id.0);
             }
             // Recording the controls moved the counters: read them again.

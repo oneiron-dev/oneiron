@@ -9,14 +9,21 @@
 //!
 //! - custody (`publisher_training:custody:v1:`): one row per submission
 //!   (`s` + id) and per control (`c` + id). A row holds raw ids, revisions,
-//!   states, the month whose scope it rides and its ordinal in that scope,
-//!   never text: an offer's bytes live only sealed, in the outbox. The raw
-//!   ids stay here; what leaves names only their codes for that month
-//!   (`link`).
+//!   states, the month and link generation whose scope it rides and its
+//!   ordinal in that scope, never text: an offer's bytes live only sealed,
+//!   in the outbox. The raw ids stay here; what leaves names only their
+//!   codes for that month, made under that generation's key (`link`).
 //! - state (`publisher_training:state:v1`): the vault's private local order
-//!   (never exported), every month it used with that month's scope, next
-//!   ordinal and receipt cursor, whether the training link key was minted,
-//!   and the purge's controls, one per scope, once it is recorded.
+//!   (never exported), every (month, generation) it used with that pair's
+//!   scope, next ordinal and receipt cursor, whether the training link key
+//!   was minted and its current generation, when it was last minted afresh,
+//!   the withdrawals not yet reported unavailable, and the purge's controls,
+//!   one per scope, once it is recorded.
+//!
+//! A generation older than the current one is orphaned (FIX 5892): its key
+//! was lost with a restore that brought no custody head, so its codes cannot
+//! be made again. Its scopes stay, still purgeable whole, but a withdrawal
+//! that needs its codes is recorded nowhere and counted unavailable.
 //!
 //! A person's erase (FIX 3520) forgets their name here: every submission
 //! carrying their words stands withdrawn, each that reached the intake named
@@ -78,10 +85,13 @@ pub(super) struct SubmissionCustody {
     pub(super) policy_revision: [u8; 32],
     /// Its place in the vault's private local order: never exported.
     pub(super) local_seq: u64,
-    /// The UTC month of its first preparation, `YYYY-MM`: the scope it
-    /// rides. A retry keeps it.
+    /// The UTC month of its first preparation, `YYYY-MM`: with its
+    /// generation, the scope it rides. A retry keeps it.
     pub(super) month: String,
-    /// Its ordinal within its month's scope. A retry keeps it.
+    /// The training link key generation it was prepared under. A retry
+    /// keeps it.
+    pub(super) generation: u32,
+    /// Its ordinal within its scope. A retry keeps it.
     pub(super) scope_seq: u64,
     /// Unix seconds, of its first preparation. A retry keeps it.
     pub(super) prepared_at: u64,
@@ -135,6 +145,8 @@ pub(super) struct ControlCustody {
     /// The month whose scope it rides: that of the submissions it reaches,
     /// or for a purge control the month whose scope it purges.
     pub(super) month: String,
+    /// The link generation whose scope it rides, with its month.
+    pub(super) generation: u32,
     /// Its ordinal within that scope.
     pub(super) scope_seq: u64,
     pub(super) change: ControlChange,
@@ -142,6 +154,9 @@ pub(super) struct ControlCustody {
     pub(super) recorded_at: u64,
     /// Whether its file was written and the write recorded.
     pub(super) spooled: bool,
+    /// Whether it can never be written: it needs codes of an orphaned
+    /// generation, whose key is gone (FIX 5892).
+    pub(super) unsendable: bool,
     pub(super) receipt: Option<ReceiptMark>,
 }
 
@@ -160,6 +175,14 @@ pub(super) enum ControlChange {
     PurgeScope,
 }
 
+impl ControlChange {
+    /// Whether the wire spelling of this change carries codes, so signing it
+    /// needs its generation's key. A purge names none.
+    pub(super) const fn needs_codes(&self) -> bool {
+        !matches!(self, Self::PurgeScope)
+    }
+}
+
 /// The outbox's private state.
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct OutboxState {
@@ -167,18 +190,31 @@ pub(super) struct OutboxState {
     /// latest submission of each source and private sorting, and is never
     /// exported.
     pub(super) next_local_seq: u64,
-    /// Every month this vault used, by `YYYY-MM`.
-    pub(super) months: BTreeMap<String, MonthState>,
-    /// Whether the training link key was minted. Once set, a missing key is
-    /// an error, never a new key.
+    /// Every (month, generation) this vault used, each once, in the order
+    /// first used.
+    pub(super) months: Vec<MonthState>,
+    /// Whether the training link key was minted.
     pub(super) link_minted: bool,
+    /// The current training link key's custody generation: 0 for the first,
+    /// one more for each key minted afresh after a restore left the slot
+    /// missing (FIX 5892). A retired or unreadable key is never replaced.
+    pub(super) link_generation: u32,
+    /// When the key was last minted afresh, unix seconds.
+    pub(super) link_reminted_at: Option<u64>,
+    /// Withdrawals of an orphaned generation recorded nowhere, or never to
+    /// be written, since the last upkeep pass reported them.
+    pub(super) withdrawals_unavailable: u64,
     /// The purge, once recorded (TL-5).
     pub(super) purge: Option<PurgeState>,
 }
 
-/// One month this vault used.
+/// One (month, generation) this vault used.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct MonthState {
+    /// The UTC month, `YYYY-MM`.
+    pub(super) month: String,
+    /// The training link key generation its scope was made under.
+    pub(super) generation: u32,
     /// Its scope tag S, kept so listing scopes never needs the key.
     pub(super) scope: [u8; 32],
     /// The next ordinal in its scope; ordinals start at 1.
@@ -197,23 +233,35 @@ pub(super) struct PurgeState {
 }
 
 impl OutboxState {
-    /// The scope of `month`, which this vault used.
+    /// The (`month`, `generation`) entry, when this vault used it.
+    pub(super) fn month(&self, month: &str, generation: u32) -> Option<&MonthState> {
+        self.months
+            .iter()
+            .find(|entry| entry.month == month && entry.generation == generation)
+    }
+
+    /// The scope of (`month`, `generation`), which this vault used.
     ///
     /// # Errors
-    /// A month the vault never used: damaged custody.
-    pub(super) fn scope_of(&self, month: &str) -> Result<[u8; 32]> {
-        self.months
-            .get(month)
+    /// A pair the vault never used: damaged custody.
+    pub(super) fn scope_of(&self, month: &str, generation: u32) -> Result<[u8; 32]> {
+        self.month(month, generation)
             .map(|entry| entry.scope)
             .ok_or(Error::CorruptedIndex("publisher training month"))
     }
 
-    /// Every scope this vault used and its receipt cursor, in scope order:
-    /// what the scopes file lists.
+    /// Whether `generation` is orphaned: older than the current key's, its
+    /// key lost, its codes never to be made again.
+    pub(super) const fn orphaned(&self, generation: u32) -> bool {
+        generation < self.link_generation
+    }
+
+    /// Every scope this vault used, every generation's, and its receipt
+    /// cursor, in scope order: what the scopes file lists.
     pub(super) fn cursors(&self) -> Vec<ReceiptCursor> {
         let mut cursors: Vec<ReceiptCursor> = self
             .months
-            .values()
+            .iter()
             .map(|entry| ReceiptCursor {
                 scope: TrainingScope(entry.scope),
                 sequence: entry.receipt_cursor,
@@ -255,30 +303,103 @@ pub(super) fn next_local_seq_in(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Res
     Ok(seq)
 }
 
-/// Takes the next ordinal of `month`'s scope, in the caller's transaction:
-/// the scope, and that ordinal. A month this vault never used joins its
-/// list, its scope made under the training link key, which this first use
-/// mints when the vault has none yet.
+/// The current training link key's generation, in the caller's
+/// transaction, its key made live first: minted on the vault's first
+/// training use, or minted afresh under the next generation when a restore
+/// left its slot missing (FIX 5892). A new offer takes this generation.
+///
+/// # Errors
+/// A retired or unreadable key, and custody faults.
+pub(super) fn link_generation_in(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<u32> {
+    let mut state = state(vault, txn)?;
+    link::training_link_key_in(vault, txn, &mut state)?;
+    put_state_in(vault, txn, &state)?;
+    Ok(state.link_generation)
+}
+
+/// Takes the next ordinal of the (`month`, `generation`) scope, in the
+/// caller's transaction: the scope, and that ordinal. A pair this vault
+/// never used joins its list, its scope made under the current training
+/// link key, which this first use mints when the vault has none yet; only
+/// the current generation can join.
+///
+/// # Errors
+/// A pair of an older generation the vault never used, and the key's own
+/// errors.
 pub(super) fn next_scope_seq_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     month: &str,
+    generation: u32,
 ) -> Result<([u8; 32], u64)> {
     let mut state = state(vault, txn)?;
-    let known = state.months.get(month).map(|entry| entry.scope);
+    let known = state.month(month, generation).map(|entry| entry.scope);
     let scope = match known {
         Some(scope) => scope,
-        None => link::scope_tag(&*link::training_link_key_in(vault, txn, &mut state)?, month),
+        None => {
+            if generation != state.link_generation {
+                return Err(Error::CorruptedIndex("publisher training month"));
+            }
+            let key = link::training_link_key_in(vault, txn, &mut state)?;
+            if state.link_generation != generation {
+                return Err(Error::InvariantViolation(
+                    "a training month's link generation moved while it was placed",
+                ));
+            }
+            link::scope_tag(&key, month)
+        }
     };
-    let entry = state.months.entry(month.to_owned()).or_insert(MonthState {
-        scope,
-        next_event_seq: 1,
-        receipt_cursor: 0,
-    });
+    let at = match state
+        .months
+        .iter()
+        .position(|entry| entry.month == month && entry.generation == generation)
+    {
+        Some(at) => at,
+        None => {
+            state.months.push(MonthState {
+                month: month.to_owned(),
+                generation,
+                scope,
+                next_event_seq: 1,
+                receipt_cursor: 0,
+            });
+            state.months.len().saturating_sub(1)
+        }
+    };
+    let entry = state
+        .months
+        .get_mut(at)
+        .ok_or(Error::InvariantViolation("a training month joined no list"))?;
     let seq = entry.next_event_seq.max(1);
     entry.next_event_seq = seq.saturating_add(1);
     put_state_in(vault, txn, &state)?;
     Ok((scope, seq))
+}
+
+/// Adds `count` withdrawals of an orphaned generation to those the next
+/// upkeep pass reports unavailable, in the caller's transaction.
+pub(super) fn add_withdrawals_unavailable_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    count: u64,
+) -> Result<()> {
+    let mut state = state(vault, txn)?;
+    state.withdrawals_unavailable = state.withdrawals_unavailable.saturating_add(count);
+    put_state_in(vault, txn, &state)
+}
+
+/// Takes the count of withdrawals reported unavailable since the last
+/// upkeep pass, in the caller's transaction, and zeroes it.
+pub(super) fn take_withdrawals_unavailable_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<u64> {
+    let mut state = state(vault, txn)?;
+    let count = std::mem::take(&mut state.withdrawals_unavailable);
+    if count > 0 {
+        put_state_in(vault, txn, &state)?;
+    }
+    Ok(count)
 }
 
 /// Whether the intake's `removed` receipt for every purge control is in
@@ -360,43 +481,53 @@ pub(super) fn put_control_in(
     CONTROLS.put(&vault.store, txn, &(CONTROL, id.0), row)
 }
 
-/// Records one control, unspooled, riding `month`'s scope at its next
-/// ordinal (and the next number of the private order): its id.
+/// Records one control, unspooled, riding the (`month`, `generation`)
+/// scope at its next ordinal (and the next number of the private order):
+/// its id. A change that needs codes of an orphaned generation records
+/// nothing (its codes cannot be made again): it is counted unavailable, and
+/// `None` comes back.
 pub(super) fn record_control_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    month: &str,
+    (month, generation): (&str, u32),
     change: ControlChange,
     now: u64,
-) -> Result<TrainingControlId> {
+) -> Result<Option<TrainingControlId>> {
+    if change.needs_codes() && state(vault, txn)?.orphaned(generation) {
+        add_withdrawals_unavailable_in(vault, txn, 1)?;
+        return Ok(None);
+    }
     let id = TrainingControlId(random_id());
     let local_seq = next_local_seq_in(vault, txn)?;
-    let (_, scope_seq) = next_scope_seq_in(vault, txn, month)?;
+    let (_, scope_seq) = next_scope_seq_in(vault, txn, month, generation)?;
     let row = ControlCustody {
         local_seq,
         month: month.to_owned(),
+        generation,
         scope_seq,
         change,
         recorded_at: now,
         spooled: false,
+        unsendable: false,
         receipt: None,
     };
     put_control_in(vault, txn, id, &row)?;
-    Ok(id)
+    Ok(Some(id))
 }
 
 impl Vault {
     /// A person's erase over the custody family (FIX 3520), in the erase's
     /// own transaction: the submissions carrying their words that reached
-    /// the intake get id-only forget controls, one per source and month,
-    /// each under that month's scope, and every such row forgets their id
+    /// the intake get id-only forget controls, one per source, month and
+    /// generation, each under that pair's scope (none for an orphaned
+    /// generation, counted unavailable), and every such row forgets their id
     /// and stands withdrawn, its files left for the next pass to purge.
     pub(crate) fn erase_publisher_training_custody_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()> {
-        let mut forgets: BTreeMap<(EntityId, String), Vec<[u8; 16]>> = BTreeMap::new();
+        let mut forgets: BTreeMap<(EntityId, String, u32), Vec<[u8; 16]>> = BTreeMap::new();
         for ((_, id), mut row) in SUBMISSIONS.scan_from(&self.store, wtxn, &SUBMISSION)? {
             if !row.persons.contains(actor) {
                 continue;
@@ -406,7 +537,7 @@ impl Vault {
                 .is_some_and(|mark| mark.status == TrainingReceiptStatusV2::Removed);
             if row.published_at.is_some() && !removed {
                 forgets
-                    .entry((row.source, row.month.clone()))
+                    .entry((row.source, row.month.clone(), row.generation))
                     .or_default()
                     .push(id);
             }
@@ -420,11 +551,11 @@ impl Vault {
             SUBMISSIONS.put(&self.store, wtxn, &(SUBMISSION, id), &row)?;
         }
         let now = crate::unix_seconds_now();
-        for ((source, month), submissions) in forgets {
+        for ((source, month, generation), submissions) in forgets {
             record_control_in(
                 self,
                 wtxn,
-                &month,
+                (&month, generation),
                 ControlChange::ForgetSource {
                     source,
                     submissions,

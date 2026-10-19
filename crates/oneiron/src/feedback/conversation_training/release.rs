@@ -17,6 +17,14 @@
 //! codes for its source, persons and worlds (`link`). The release's private
 //! rechecks read the raw ids and revisions local custody keeps. While a
 //! purge stands (TL-5) the pass prepares and releases nothing.
+//!
+//! An offer is sealed only under the training link key of the generation it
+//! was placed in. After a restore that brought no key, the pass first mints
+//! one afresh under the next generation (FIX 5892); a held offer of an older
+//! generation is never resealed with it: its release withholds it
+//! ([`TrainingWithheld::LinkRotated`]), it stands withdrawn, since it never
+//! left, and its source is prepared again as a new offer. A published
+//! source is not offered again for the rotation alone.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -123,8 +131,12 @@ impl Vault {
             if row.state != SubmissionState::Held {
                 return Ok(ReleaseDecision::Withheld(TrainingWithheld::NotHeld));
             }
-            if custody::state(self, &txn)?.purge.is_some() {
+            let state = custody::state(self, &txn)?;
+            if state.purge.is_some() {
                 return Ok(ReleaseDecision::Withheld(TrainingWithheld::Purging));
+            }
+            if state.orphaned(row.generation) {
+                return Ok(ReleaseDecision::Withheld(TrainingWithheld::LinkRotated));
             }
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             let Some(selection) = source::select(self, &txn, &fold, row.source)? else {
@@ -171,7 +183,9 @@ impl Vault {
     /// of that source are recorded in the same write, one per month they
     /// were prepared in (a source edit invalidates the old version; the new
     /// offer stays live). While a purge stands (TL-5) nothing is prepared.
-    /// The pass ends by handing `sink` the vault's scopes.
+    /// It first mints the training link key afresh when a restore lost it,
+    /// and withdraws every held offer of an older generation (FIX 5892). The
+    /// pass ends by handing `sink` the vault's scopes.
     ///
     /// The caller judged that offers may be written at all: an intake key in
     /// the outbox and, for a self-hosted vault, an account binding. A filter
@@ -190,7 +204,7 @@ impl Vault {
     ) -> Result<TrainingOfferPass> {
         let now = crate::unix_seconds_now();
         let mut pass = TrainingOfferPass::default();
-        let (rooms, latest) = {
+        {
             let txn = self.store.env.read_txn()?;
             // A purge stands: nothing new is prepared.
             if custody::state(self, &txn)?.purge.is_some() {
@@ -201,6 +215,12 @@ impl Vault {
             if !fold.conversation_training_vault.on() {
                 return Ok(pass);
             }
+        }
+        self.renew_lost_training_link()?;
+        self.withdraw_rotated_offers(sink, &mut pass, now)?;
+        let (rooms, latest, generation) = {
+            let txn = self.store.env.read_txn()?;
+            let generation = custody::state(self, &txn)?.link_generation;
             let rooms = source::vault_conversations(self, &txn)?;
             let mut latest: BTreeMap<EntityId, (TrainingSubmissionId, SubmissionCustody)> =
                 BTreeMap::new();
@@ -212,7 +232,7 @@ impl Vault {
                     latest.insert(row.source, (id, row));
                 }
             }
-            (rooms, latest)
+            (rooms, latest, generation)
         };
         let _ = self.measure_limit(EngineLimit::MaintenanceRowItems, rooms.len() as u64);
         for room in rooms {
@@ -222,6 +242,7 @@ impl Vault {
                 intake,
                 room,
                 held: latest.get(&room),
+                generation,
                 now,
                 quiet_secs,
             };
@@ -254,17 +275,23 @@ impl Vault {
         if selection.newest.saturating_add(offer.quiet_secs) > offer.now {
             return Ok(Offered::Skipped);
         }
+        // An offer of an older generation is never reused or taken for a
+        // settled one: its source is prepared again under the current key.
+        let current = |row: &SubmissionCustody| row.generation == offer.generation;
         let reuse = match offer.held {
             Some((id, row)) if row.source_revision == selection.revision => match row.state {
-                SubmissionState::Held => Some((*id, row)),
+                SubmissionState::Held if current(row) => Some((*id, row)),
                 SubmissionState::Published => return Ok(Offered::Skipped),
                 SubmissionState::Withheld | SubmissionState::Withdrawn
-                    if row.setting_revision == setting.revision
+                    if current(row)
+                        && row.setting_revision == setting.revision
                         && row.policy_revision == policy =>
                 {
                     return Ok(Offered::Skipped);
                 }
-                SubmissionState::Withheld | SubmissionState::Withdrawn => None,
+                SubmissionState::Held | SubmissionState::Withheld | SubmissionState::Withdrawn => {
+                    None
+                }
             },
             _ => None,
         };
@@ -320,16 +347,17 @@ impl Vault {
             }
             ReleaseDecision::Withheld(why) => {
                 offer.sink.purge(placed.id)?;
-                self.mark_submission(placed.id, SubmissionState::Withheld, offer.now)?;
+                self.mark_submission(placed.id, withheld_state(&why), offer.now)?;
                 Ok(Offered::Withheld(placed.id, why))
             }
         }
     }
 
     /// Holds one submission in local custody: a new one under a new id, the
-    /// next number of the private order and, in the month of `now`, the
-    /// next ordinal of that month's scope; a retry of one still held under
-    /// its own id, order, month, ordinal and first preparation time. A held
+    /// next number of the private order and, in the month of `now` and the
+    /// current link generation (its key made live first), the next ordinal
+    /// of that pair's scope; a retry of one still held under its own id,
+    /// order, month, generation, ordinal and first preparation time. A held
     /// one it supersedes is withheld in the same write. `None` while a purge
     /// stands: nothing is held.
     fn hold_submission(
@@ -360,20 +388,24 @@ impl Vault {
                     held.local_seq,
                     Placed {
                         id,
-                        scope: state.scope_of(&held.month)?,
+                        scope: state.scope_of(&held.month, held.generation)?,
                         month: held.month.clone(),
+                        generation: held.generation,
                         scope_seq: held.scope_seq,
                         prepared_at: held.prepared_at,
                     },
                 ),
                 None => {
                     let local_seq = custody::next_local_seq_in(self, txn)?;
+                    let generation = custody::link_generation_in(self, txn)?;
                     let month = link::training_month(now);
-                    let (scope, scope_seq) = custody::next_scope_seq_in(self, txn, &month)?;
+                    let (scope, scope_seq) =
+                        custody::next_scope_seq_in(self, txn, &month, generation)?;
                     let id = TrainingSubmissionId(random_id());
                     let placed = Placed {
                         id,
                         month,
+                        generation,
                         scope,
                         scope_seq,
                         prepared_at: now,
@@ -392,6 +424,7 @@ impl Vault {
                 policy_revision: policy,
                 local_seq,
                 month: placed.month.clone(),
+                generation: placed.generation,
                 scope_seq: placed.scope_seq,
                 prepared_at: placed.prepared_at,
                 published_at: None,
@@ -414,11 +447,12 @@ impl Vault {
         filtered: &FilteredText,
         intake: &IntakeRecipient,
     ) -> Result<Option<SealedTrainingOffer>> {
+        let placed = prepared.placed;
+        // The key of the generation it was placed in, never another's.
         let key = {
             let txn = self.store.env.read_txn()?;
-            link::training_link_key(self, &txn)?
+            link::training_link_key(self, &txn, placed.generation)?
         };
-        let placed = prepared.placed;
         let text = filtered.as_str().as_bytes();
         let submission = placed.id.to_hex();
         let sealed = seal_training_text(intake, &placed.scope, &placed.id.0, text)?;
@@ -489,10 +523,44 @@ impl Vault {
         }))
     }
 
+    /// Withdraws every held offer of an orphaned generation (FIX 5892): it
+    /// is never resealed with the current key, so its release withholds it
+    /// ([`TrainingWithheld::LinkRotated`]); it never left, so it stands
+    /// withdrawn, its staged bytes purged, and its source is prepared again
+    /// as a new offer.
+    fn withdraw_rotated_offers(
+        &self,
+        sink: &dyn PublisherTrainingLifecycle,
+        pass: &mut TrainingOfferPass,
+        now: u64,
+    ) -> Result<()> {
+        let rotated: Vec<TrainingSubmissionId> = {
+            let txn = self.store.env.read_txn()?;
+            let state = custody::state(self, &txn)?;
+            custody::submissions(self, &txn)?
+                .into_iter()
+                .filter(|(_, row)| {
+                    row.state == SubmissionState::Held && state.orphaned(row.generation)
+                })
+                .map(|(id, _)| id)
+                .collect()
+        };
+        for id in rotated {
+            if self.release_training_submission(id)?
+                == ReleaseDecision::Withheld(TrainingWithheld::LinkRotated)
+            {
+                sink.purge(id)?;
+                self.mark_submission(id, SubmissionState::Withdrawn, now)?;
+                pass.withheld.push((id, TrainingWithheld::LinkRotated));
+            }
+        }
+        Ok(())
+    }
+
     /// Settles a held submission after its release: published, and every
     /// older published submission of the same source withdrawn by id-only
-    /// forget controls naming exactly those ids; or withheld, its files
-    /// already purged. A row no longer held is left as it stands.
+    /// forget controls naming exactly those ids; or withheld or withdrawn,
+    /// its files already purged. A row no longer held is left as it stands.
     fn mark_submission(
         &self,
         id: TrainingSubmissionId,
@@ -520,10 +588,11 @@ impl Vault {
 
 /// Withdraws every published submission of `row`'s source but `id` that
 /// the intake has not already removed, and records forget controls naming
-/// exactly those ids: one per month they were prepared in, each under that
-/// month's scope, never recoded under the new offer's month. The source
-/// changed, so its older versions are invalid, while the offer just
-/// published stays live.
+/// exactly those ids: one per month and generation they were prepared in,
+/// each under that pair's scope, never recoded under the new offer's (none
+/// for an orphaned generation, counted unavailable). The source changed, so
+/// its older versions are invalid, while the offer just published stays
+/// live.
 fn forget_older_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -531,7 +600,7 @@ fn forget_older_in(
     row: &SubmissionCustody,
     now: u64,
 ) -> Result<()> {
-    let mut older: BTreeMap<String, Vec<[u8; 16]>> = BTreeMap::new();
+    let mut older: BTreeMap<(String, u32), Vec<[u8; 16]>> = BTreeMap::new();
     for (other, mut held) in custody::submissions(vault, txn)? {
         let removed = held
             .receipt
@@ -545,14 +614,17 @@ fn forget_older_in(
         }
         held.state = SubmissionState::Withdrawn;
         put_submission_in(vault, txn, other, &held)?;
-        older.entry(held.month).or_default().push(other.0);
+        older
+            .entry((held.month, held.generation))
+            .or_default()
+            .push(other.0);
     }
-    for (month, submissions) in older {
+    for ((month, generation), submissions) in older {
         let change = ControlChange::ForgetSource {
             source: row.source,
             submissions,
         };
-        record_control_in(vault, txn, &month, change, now)?;
+        record_control_in(vault, txn, (&month, generation), change, now)?;
     }
     Ok(())
 }
@@ -564,16 +636,20 @@ struct Offer<'a> {
     intake: &'a IntakeRecipient,
     room: EntityId,
     held: Option<&'a (TrainingSubmissionId, SubmissionCustody)>,
+    /// The current training link generation.
+    generation: u32,
     now: u64,
     quiet_secs: u64,
 }
 
 /// Where a held submission sits: its id, the month of its first
-/// preparation and that month's scope, its ordinal there, and when it was
-/// first prepared. A retry keeps every one of them.
+/// preparation and the link generation it was placed in, that pair's scope,
+/// its ordinal there, and when it was first prepared. A retry keeps every
+/// one of them.
 struct Placed {
     id: TrainingSubmissionId,
     month: String,
+    generation: u32,
     scope: [u8; 32],
     scope_seq: u64,
     prepared_at: u64,
@@ -584,6 +660,17 @@ struct Prepared<'a> {
     placed: &'a Placed,
     selection: &'a TrainingSelection,
     setting: &'a Setting,
+}
+
+/// Where a submission a release held back for `why` stands: withdrawn when
+/// its generation's key is gone, since it never left (FIX 5892), withheld
+/// otherwise.
+fn withheld_state(why: &TrainingWithheld) -> SubmissionState {
+    if *why == TrainingWithheld::LinkRotated {
+        SubmissionState::Withdrawn
+    } else {
+        SubmissionState::Withheld
+    }
 }
 
 /// The digest of `worlds`' settings revisions on `fold`.

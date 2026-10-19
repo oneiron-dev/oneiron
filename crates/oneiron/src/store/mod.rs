@@ -225,4 +225,5 @@ pub(crate) use structural_kind_registry::{
 };
 #[cfg(test)]
 pub(crate) use test_hooks::TestHooks;
+pub(crate) use training_link::TrainingLinkSlot;
 pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};

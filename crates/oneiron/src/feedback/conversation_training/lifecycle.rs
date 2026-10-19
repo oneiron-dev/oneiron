@@ -271,6 +271,10 @@ pub enum TrainingWithheld {
     /// The vault's training scopes are being purged for an erase (TL-5):
     /// nothing new is released.
     Purging,
+    /// The offer was placed under a training link key a restore lost; the
+    /// vault holds a fresh one now (FIX 5892). It is never resealed with the
+    /// fresh key: it stands withdrawn, and its source is offered anew.
+    LinkRotated,
 }
 
 /// Why no offer is written. Controls still flow in every case.

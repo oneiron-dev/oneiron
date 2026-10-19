@@ -23,9 +23,13 @@
 //!
 //! Every input part is framed as its length, a big-endian `u32`, then its
 //! bytes. Once K is minted (`link_minted` in the training state, set in the
-//! writer that mints it), a missing or unreadable K is an error and never a
-//! new key: a fresh K would orphan every past code from withdrawal and
-//! erase.
+//! writer that mints it), an unreadable K is an error and a retired one too
+//! (the erase purge finished); neither is ever replaced. A K whose slot is
+//! missing, as after a restore that brought no custody head, is minted
+//! afresh under the next generation at the vault's next training writer
+//! (FIX 5892): the months of older generations keep their scopes, so an
+//! erase still purges them whole, but their codes cannot be made again, so
+//! their withdrawals are counted unavailable.
 
 use std::collections::BTreeSet;
 
@@ -35,6 +39,7 @@ use zeroize::Zeroizing;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::store::TrainingLinkSlot;
 
 use super::custody::{self, OutboxState};
 
@@ -117,50 +122,101 @@ pub(super) fn code_set(
     codes
 }
 
+/// What a restore that brought no training link key reports (FIX 5892): the
+/// key is made afresh at the vault's next training write, and what that
+/// costs. It names no key, scope, code or id.
+pub(crate) const TRAINING_LINK_RESTORE_NOTICE: &str = "This restore brought no training link key. \
+                                                       A fresh one will be made. Training \
+                                                       donations made before this restore can no \
+                                                       longer be withdrawn one by one from this \
+                                                       vault; an erase still purges them all.";
+
 /// K, for a writer: minted on the vault's first training use, with
 /// `link_minted` set on `state`, which the caller writes in this same
-/// writer. Once it is set, K is read, never minted again.
+/// writer. Once it is set, K at the current generation is read. When a
+/// restore that brought no custody head left that slot missing, a fresh K
+/// is minted under the next generation, which `state` takes with the time
+/// (FIX 5892): a retry of an uncommitted writer finds the slot it published
+/// and never advances twice. A retired K (the erase purge finished) or an
+/// unreadable one is never replaced.
 ///
 /// # Errors
-/// K minted once and now missing or unreadable ("training link key
-/// missing"), and custody faults while minting it.
+/// A retired K ("training link key retired"), an unreadable one ("training
+/// link key missing"), and custody faults while minting.
 pub(super) fn training_link_key_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     state: &mut OutboxState,
 ) -> Result<Zeroizing<[u8; 32]>> {
-    if state.link_minted {
-        return vault
+    if !state.link_minted {
+        let key = vault
             .store
-            .read_training_link_key()
-            .map_err(|_| link_missing());
+            .mint_training_link_key_in_txn(txn, state.link_generation)?;
+        state.link_minted = true;
+        return Ok(key);
     }
-    let key = vault.store.mint_training_link_key_in_txn(txn)?;
-    state.link_minted = true;
-    Ok(key)
+    let slot = vault
+        .store
+        .training_link_slot(state.link_generation)
+        .map_err(|_| link_missing())?;
+    match slot {
+        TrainingLinkSlot::Live => vault
+            .store
+            .read_training_link_key(state.link_generation)
+            .map_err(|_| link_missing()),
+        TrainingLinkSlot::Retired => Err(link_retired()),
+        TrainingLinkSlot::Missing => {
+            let generation = state
+                .link_generation
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("training link key generation"))?;
+            let key = vault.store.mint_training_link_key_in_txn(txn, generation)?;
+            state.link_generation = generation;
+            state.link_reminted_at = Some(crate::unix_seconds_now());
+            Ok(key)
+        }
+    }
 }
 
-/// K, for a reader: never minted here.
+/// K at `generation`, for a reader: never minted here. An orphaned
+/// generation's K is gone, so it never reads.
 ///
 /// # Errors
-/// K never minted, or missing or unreadable now ("training link key
-/// missing").
+/// K never minted, or missing or unreadable at `generation` ("training link
+/// key missing").
 pub(super) fn training_link_key(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    generation: u32,
 ) -> Result<Zeroizing<[u8; 32]>> {
     if !custody::state(vault, txn)?.link_minted {
         return Err(link_missing());
     }
     vault
         .store
-        .read_training_link_key()
+        .read_training_link_key(generation)
         .map_err(|_| link_missing())
+}
+
+/// Whether the vault's next training writer must mint K afresh: it was
+/// minted once, and its slot at the current generation is missing, as after
+/// a restore that brought no custody head. A finished purge needs no key.
+fn link_lost(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    let state = custody::state(vault, txn)?;
+    if !state.link_minted || custody::purge_removed(vault, txn)? {
+        return Ok(false);
+    }
+    Ok(vault.store.training_link_slot(state.link_generation)? == TrainingLinkSlot::Missing)
 }
 
 /// A K that should be there and is not. It names no key byte.
 fn link_missing() -> Error {
     Error::CorruptedIndex("training link key missing")
+}
+
+/// A K the erase purge retired: never minted again.
+fn link_retired() -> Error {
+    Error::CorruptedIndex("training link key retired")
 }
 
 /// K's readiness rule, its own and beside the claim key's, never inside it:
@@ -172,6 +228,47 @@ fn link_retirement_ready(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
 }
 
 impl Vault {
+    /// What a restore reports about the training link key (FIX 5892):
+    /// [`TRAINING_LINK_RESTORE_NOTICE`] when the vault minted K once and its
+    /// slot at the current generation is missing now; `None` otherwise. It
+    /// reads only: the fresh K is minted at the vault's next training
+    /// writer, never during a restore. A notice that cannot be read is
+    /// logged and left out: it never fails the restore it rides on.
+    pub(crate) fn training_link_restore_notice(&self) -> Option<String> {
+        let lost = self
+            .store
+            .env
+            .read_txn()
+            .map_err(Error::from)
+            .and_then(|txn| link_lost(self, &txn));
+        match lost {
+            Ok(lost) => lost.then(|| TRAINING_LINK_RESTORE_NOTICE.to_owned()),
+            Err(error) => {
+                tracing::warn!(%error, "the training link restore notice could not be read");
+                None
+            }
+        }
+    }
+
+    /// Mints K afresh, under the next generation, when a restore that
+    /// brought no custody head left its slot missing (FIX 5892): the first
+    /// step of every upkeep and offer pass, a writer only when one is due.
+    /// Withdrawals of the orphaned generation are then counted unavailable
+    /// rather than stopping the pass.
+    ///
+    /// # Errors
+    /// Storage and custody faults.
+    pub(super) fn renew_lost_training_link(&self) -> Result<()> {
+        let lost = {
+            let txn = self.store.env.read_txn()?;
+            link_lost(self, &txn)?
+        };
+        if lost {
+            self.with_write_txn_grouped(|txn| custody::link_generation_in(self, txn).map(|_| ()))?;
+        }
+        Ok(())
+    }
+
     /// Finishes K's staged retirement, including one an interrupted process
     /// left behind, once its rule holds.
     ///
