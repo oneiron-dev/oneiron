@@ -1,23 +1,25 @@
 //! Session-less signing ceremony. The public link carries the capability in its
 //! fragment (`/sign#<token>`); after loading, the client scrubs it and sends it
-//! only in POST bodies. A call that also presents a vault credential is classed
-//! by it: an agent's Complete is an automated sign act, whoever's link it holds.
+//! only in the `x-oneiron-esign-capability` header of each ceremony POST, which
+//! the vault admits before the body is read (`ingress`, FIX 3808). A call
+//! that also presents a vault credential is classed by it: an agent's Complete
+//! is an automated sign act, whoever's link it holds.
 use crate::server::SyncServer;
 pub(crate) mod delivery_outbox;
 mod editor_budget;
 pub(crate) mod hold_worker;
+mod ingress;
 mod presentation;
 #[cfg(unix)]
 pub(crate) mod seal_worker;
+use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header, request::Parts};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use oneiron::blob_artifact::esign::{
-    EsignCapability, EsignSigningImageRequest, EsignSigningImageView, EsignSigningPdfRequest,
-    EsignSigningRequest, SigningCaller,
-};
+use ingress::SigningIngress;
+use oneiron::blob_artifact::esign::{EsignSigningImageView, SigningCaller};
 use std::sync::Arc;
 pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -38,7 +40,10 @@ pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
 }
 
 /// Only the signing ceremony bypasses the hosted device-lease gate. Every
-/// action and document read still checks the bearer capability in the vault.
+/// action and document read still checks the bearer capability in the vault,
+/// from its header and before its body. An admitted body has no size refusal:
+/// it spools whole under the disk floor and its size is the `[limits]
+/// esign_body_bytes` row, so no `DefaultBodyLimit` sits on these routes.
 pub(super) fn public_routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/sign", get(page))
@@ -51,21 +56,17 @@ pub(super) fn public_routes() -> Router<Arc<SyncServer>> {
         .route("/sign/image", post(image))
         .route("/sign/preview", post(presentation::preview))
         .route("/sign/signature", post(presentation::signature))
-        .layer(DefaultBodyLimit::max(3 * 1024 * 1024))
         .layer(axum::middleware::from_fn(private_response))
 }
 async fn action(
     State(server): State<Arc<SyncServer>>,
+    SigningIngress { token, admitted }: SigningIngress,
     parts: Parts,
     peer: NetworkPeer,
     local_peer: LocalPeer,
-    Json(request): Json<EsignSigningRequest>,
+    body: Body,
 ) -> Response {
     let headers = &parts.headers;
-    let token = match EsignCapability::parse(&request.token) {
-        Ok(token) => token,
-        Err(_) => return refused(),
-    };
     // Proxy forwarding headers are not an authenticated IP source. Do not
     // copy attacker-supplied X-Forwarded-For into the legal audit trail.
     // The user agent is kept whole, however long (Rule 5): the header's own
@@ -80,6 +81,11 @@ async fn action(
     let Ok(caller) = signing_caller(&parts, &server) else {
         return refused();
     };
+    let request: ingress::ActionBody =
+        match ingress::payload(&server, admitted, headers, body).await {
+            Ok(request) => request,
+            Err(response) => return response,
+        };
     match server
         .vault
         .execute_signing_action_as(&token, &request.action, caller, ip, ua)
@@ -170,15 +176,12 @@ fn refused() -> Response {
 
 async fn pdf(
     State(server): State<Arc<SyncServer>>,
+    SigningIngress { token, admitted }: SigningIngress,
     headers: HeaderMap,
     peer: NetworkPeer,
     local_peer: LocalPeer,
-    Json(request): Json<EsignSigningPdfRequest>,
+    body: Body,
 ) -> Response {
-    let token = match EsignCapability::parse(&request.token) {
-        Ok(t) => t,
-        Err(_) => return refused(),
-    };
     let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
     };
@@ -186,6 +189,11 @@ async fn pdf(
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
+    let request: ingress::ItemBody = match ingress::payload(&server, admitted, &headers, body).await
+    {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
     match server
         .vault
         .esign_pdf_for_capability(&token, request.item, ip, ua)
@@ -222,22 +230,23 @@ async fn pdf(
         Err(_) => refused(),
     }
 }
+/// The signature image is the body itself, raw PNG or JPEG bytes: spooled
+/// whole, then decoded and stored on the same worker. Only its capability and
+/// turn, its format and visible pixels, and the decoder's bounds refuse it.
 async fn image(
     State(server): State<Arc<SyncServer>>,
-    Json(request): Json<EsignSigningImageRequest>,
+    SigningIngress { token, admitted }: SigningIngress,
+    headers: HeaderMap,
+    body: Body,
 ) -> Response {
-    use base64::Engine;
-    let token = match EsignCapability::parse(&request.token) {
-        Ok(t) => t,
-        Err(_) => return refused(),
-    };
-    let bytes = match base64::engine::general_purpose::STANDARD.decode(&request.png_or_jpeg_base64)
-    {
-        Ok(b) => b,
-        Err(_) => return refused(),
-    };
-    match server.vault.upload_esign_signature_image(&token, &bytes) {
-        Ok(image_ref) => (
+    let vault = Arc::clone(&server.vault);
+    let uploaded = ingress::spooled(&server, admitted, &headers, body, move |file, bytes| {
+        let image = ingress::whole_body(file, bytes)?;
+        vault.upload_esign_signature_image(&token, &image).ok()
+    })
+    .await;
+    match uploaded {
+        Ok(Some(image_ref)) => (
             [
                 (header::CACHE_CONTROL, "no-store"),
                 (header::REFERRER_POLICY, "no-referrer"),
@@ -245,7 +254,8 @@ async fn image(
             Json(EsignSigningImageView { image_ref }),
         )
             .into_response(),
-        Err(_) => refused(),
+        Ok(None) => refused(),
+        Err(response) => response,
     }
 }
 async fn path_token_refused() -> Response {
