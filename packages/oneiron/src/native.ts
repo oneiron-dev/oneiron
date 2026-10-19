@@ -682,6 +682,9 @@ vaultConsolidationStatus(input: unknown): unknown
 vaultRunsStep(input: unknown): unknown
 vaultRunsCheckpoint(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
+vaultConsolidationPin(input: unknown): unknown
+vaultConsolidationFrontier(input: unknown): unknown
+vaultConsolidationAccounting(input: unknown): unknown
 vaultConsolidationEvidence(input: unknown): unknown
 vaultSieveQueue(input: unknown): unknown
 vaultSieveRetained(input: unknown): unknown

@@ -3261,6 +3261,21 @@ export_facade! {
     let output = client.vault_consolidation_promote(&input)?;
     crate::codec::lift_record("vault.consolidation.promote", &output)
 };
+"vault.consolidation.pin" => fn vault_consolidation_pin(&self, input: ConsolidationPinRequest) -> ConsolidationRootAccounting = |client| {
+    let input: oneiron::memory::consolidation_frontier::ConsolidationPinRequest = crate::codec::lower_record("vault.consolidation.pin", input)?;
+    let output = client.vault_consolidation_pin(&input)?;
+    crate::codec::lift_record("vault.consolidation.pin", &output)
+};
+"vault.consolidation.frontier" => fn vault_consolidation_frontier(&self, input: ConsolidationFrontierRequest) -> ConsolidationRootAccounting = |client| {
+    let input: oneiron::memory::consolidation_frontier::ConsolidationFrontierRequest = crate::codec::lower_record("vault.consolidation.frontier", input)?;
+    let output = client.vault_consolidation_frontier(&input)?;
+    crate::codec::lift_record("vault.consolidation.frontier", &output)
+};
+"vault.consolidation.accounting" => fn vault_consolidation_accounting(&self, input: ConsolidationAccountingRequest) -> ConsolidationRootAccounting = |client| {
+    let input: oneiron::memory::consolidation_frontier::ConsolidationAccountingRequest = crate::codec::lower_record("vault.consolidation.accounting", input)?;
+    let output = client.vault_consolidation_accounting(&input)?;
+    crate::codec::lift_record("vault.consolidation.accounting", &output)
+};
 "vault.consolidation.evidence" => fn vault_consolidation_evidence(&self, input: ConsolidationEvidenceRequest) -> ScopedReadResultConsolidationEvidenceSourceList = |client| {
     let input: oneiron::memory::consolidation::ConsolidationEvidenceRequest = crate::codec::lower_record("vault.consolidation.evidence", input)?;
     let output = client.vault_consolidation_evidence(&input)?;

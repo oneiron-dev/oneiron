@@ -3,10 +3,10 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 757 facade rows, 2631 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 713.
+// UniFFI census: 760 facade rows, 2645 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 716.
 // WireJson rows: self.skills.call (result).
-// WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
+// WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
@@ -37758,6 +37758,198 @@ pub struct ConsolidationPromotion {
     pub input_evidence: Vec<ConsolidationEvidenceSource>,
     #[serde(rename = "output_evidence")]
     pub output_evidence: Vec<ConsolidationEvidenceSource>,
+}
+
+/// `oneiron::memory::consolidation_frontier::ConsolidationRootBucket`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConsolidationRootBucket {
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "predicate_root")]
+    pub predicate_root: String,
+    #[serde(rename = "world", default, skip_serializing_if = "Option::is_none")]
+    pub world: Option<String>,
+    #[serde(rename = "facet", default, skip_serializing_if = "Option::is_none")]
+    pub facet: Option<String>,
+    #[serde(
+        rename = "relationship",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub relationship: Option<String>,
+    #[serde(rename = "project")]
+    pub project: String,
+}
+
+/// `oneiron::memory::consolidation_frontier::ConsolidationReference`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConsolidationReference {
+    #[serde(rename = "source_id")]
+    pub source_id: String,
+    #[serde(rename = "claim_id", default, skip_serializing_if = "Option::is_none")]
+    pub claim_id: Option<String>,
+    #[serde(
+        rename = "byte_range",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub byte_range: Option<crate::WireJson>,
+}
+
+/// `oneiron::memory::consolidation_frontier::ConsolidationRootInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConsolidationRootInput {
+    #[serde(rename = "bucket")]
+    pub bucket: ConsolidationRootBucket,
+    #[serde(rename = "evidence")]
+    pub evidence: Vec<ConsolidationReference>,
+}
+
+/// `oneiron::memory::consolidation_frontier::ConsolidationPinRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConsolidationPinRequest {
+    #[serde(rename = "buckets")]
+    pub buckets: Vec<ConsolidationRootInput>,
+}
+
+/// `oneiron_contracts::claim::status::ClaimSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ClaimSource {
+    #[serde(rename = "user_stated")]
+    UserStated,
+    #[serde(rename = "observed")]
+    Observed,
+    #[serde(rename = "inferred")]
+    Inferred,
+    #[serde(rename = "imported")]
+    Imported,
+    #[serde(rename = "tool_output")]
+    ToolOutput,
+    #[serde(rename = "generated")]
+    Generated,
+}
+
+/// `oneiron::memory::consolidation_frontier::ConsolidationAncestor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsolidationAncestor {
+    #[serde(rename = "source_ref")]
+    pub source_ref: String,
+    #[serde(rename = "source_revision")]
+    pub source_revision: Vec<u8>,
+    #[serde(rename = "trust_class")]
+    pub trust_class: ClaimSource,
+}
+
+/// `oneiron::memory::consolidation_frontier::ConsolidationRootEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsolidationRootEvidence {
+    #[serde(rename = "reference")]
+    pub reference: ConsolidationReference,
+    #[serde(rename = "source_revision")]
+    pub source_revision: Vec<u8>,
+    #[serde(rename = "content_hash")]
+    pub content_hash: Vec<u8>,
+    #[serde(rename = "trust_class")]
+    pub trust_class: ClaimSource,
+    #[serde(rename = "corroborates")]
+    pub corroborates: bool,
+    #[serde(rename = "refusal", default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<PromotionEvidenceReason>,
+    #[serde(rename = "ancestors")]
+    pub ancestors: Vec<ConsolidationAncestor>,
+    #[serde(rename = "messages")]
+    pub messages: Vec<ConsolidationMessageEvidence>,
+}
+
+/// `oneiron::memory::consolidation_frontier::ConsolidationChildReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsolidationChildReceipt {
+    #[serde(rename = "child_ref")]
+    pub child_ref: String,
+    #[serde(rename = "judgement_hash")]
+    pub judgement_hash: Vec<u8>,
+    #[serde(rename = "evidence")]
+    pub evidence: Vec<ConsolidationReference>,
+}
+
+/// `oneiron::memory::consolidation_frontier::ConsolidationBucketAccounting`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsolidationBucketAccounting {
+    #[serde(rename = "bucket")]
+    pub bucket: ConsolidationRootBucket,
+    #[serde(rename = "bucket_hash")]
+    pub bucket_hash: Vec<u8>,
+    #[serde(rename = "pinned")]
+    pub pinned: Vec<ConsolidationRootEvidence>,
+    #[serde(rename = "children")]
+    pub children: Vec<ConsolidationChildReceipt>,
+    #[serde(rename = "independent")]
+    pub independent: Vec<ConsolidationRootEvidence>,
+    #[serde(rename = "duplicates_collapsed")]
+    pub duplicates_collapsed: u32,
+    #[serde(rename = "excluded_references")]
+    pub excluded_references: u32,
+    #[serde(rename = "source_meet")]
+    pub source_meet: ClaimSource,
+}
+
+/// `oneiron::memory::consolidation_frontier::ConsolidationRootAccounting`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsolidationRootAccounting {
+    #[serde(rename = "root_ref")]
+    pub root_ref: String,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "buckets")]
+    pub buckets: Vec<ConsolidationBucketAccounting>,
+}
+
+/// `oneiron::memory::consolidation_frontier::ConsolidationJudgement`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConsolidationJudgement {
+    #[serde(rename = "predicate")]
+    pub predicate: String,
+    #[serde(rename = "value")]
+    pub value: crate::WireJson,
+    #[serde(rename = "confidence")]
+    pub confidence: f64,
+}
+
+/// `oneiron::memory::consolidation_frontier::ConsolidationChildFrontier`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConsolidationChildFrontier {
+    #[serde(rename = "child_ref")]
+    pub child_ref: String,
+    #[serde(rename = "bucket_hash")]
+    pub bucket_hash: Vec<u8>,
+    #[serde(rename = "judgement")]
+    pub judgement: ConsolidationJudgement,
+    #[serde(rename = "evidence")]
+    pub evidence: Vec<ConsolidationReference>,
+}
+
+/// `oneiron::memory::consolidation_frontier::ConsolidationFrontierRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConsolidationFrontierRequest {
+    #[serde(rename = "root_ref")]
+    pub root_ref: String,
+    #[serde(rename = "children")]
+    pub children: Vec<ConsolidationChildFrontier>,
+}
+
+/// `oneiron::memory::consolidation_frontier::ConsolidationAccountingRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConsolidationAccountingRequest {
+    #[serde(rename = "root_ref")]
+    pub root_ref: String,
 }
 
 /// `oneiron::memory::consolidation::ConsolidationEvidenceRequest`.

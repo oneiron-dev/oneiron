@@ -36,6 +36,7 @@ mod claim_conflict;
 mod claim_stale;
 mod conflict_settle;
 pub mod consolidation;
+pub mod consolidation_frontier;
 mod diagnostics;
 mod diary_read;
 mod dreamer_revert;

@@ -2041,6 +2041,15 @@ impl OneironClient {
                 "vault.consolidation.promote" => remote_agent_verb_output::<
                     oneiron::memory::consolidation::ConsolidationPromotion,
                 >(client, verb, &input),
+                "vault.consolidation.pin" => remote_agent_verb_output::<
+                    oneiron::memory::consolidation_frontier::ConsolidationRootAccounting,
+                >(client, verb, &input),
+                "vault.consolidation.frontier" => remote_agent_verb_output::<
+                    oneiron::memory::consolidation_frontier::ConsolidationRootAccounting,
+                >(client, verb, &input),
+                "vault.consolidation.accounting" => remote_agent_verb_output::<
+                    oneiron::memory::consolidation_frontier::ConsolidationRootAccounting,
+                >(client, verb, &input),
                 "vault.consolidation.evidence" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<
                         Vec<oneiron::memory::consolidation::ConsolidationEvidenceSource>,
@@ -10428,6 +10437,45 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consolidation.promote", value)
+    }
+    pub fn vault_consolidation_pin(
+        &self,
+        input: &oneiron::memory::consolidation_frontier::ConsolidationPinRequest,
+    ) -> Result<oneiron::memory::consolidation_frontier::ConsolidationRootAccounting, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consolidation.pin", value)
+    }
+    pub fn vault_consolidation_frontier(
+        &self,
+        input: &oneiron::memory::consolidation_frontier::ConsolidationFrontierRequest,
+    ) -> Result<oneiron::memory::consolidation_frontier::ConsolidationRootAccounting, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consolidation.frontier", value)
+    }
+    pub fn vault_consolidation_accounting(
+        &self,
+        input: &oneiron::memory::consolidation_frontier::ConsolidationAccountingRequest,
+    ) -> Result<oneiron::memory::consolidation_frontier::ConsolidationRootAccounting, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consolidation.accounting", value)
     }
     pub fn vault_consolidation_evidence(
         &self,

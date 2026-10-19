@@ -11408,6 +11408,54 @@
       "openapi": true
     },
     {
+      "name": "vault.consolidation.pin",
+      "description": "Pins reference-only evidence for six-axis consolidation buckets at one owner-scoped ledger revision. Hashes, lineage taint and source eligibility are derived by the root, never accepted from children.",
+      "input": "crate::memory::consolidation_frontier::ConsolidationPinRequest",
+      "output": "crate::memory::consolidation_frontier::ConsolidationRootAccounting",
+      "scope": "Write",
+      "call": "memory.consolidation_pin_as_owner(&memory.embedded_owner(\"vault.consolidation.pin\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.frontier",
+      "description": "Records immutable child judgements and reference sets against an existing root pin, in any completion order, and accounts source-plus-hash corroboration without merging projects. Does not settle claims.",
+      "input": "crate::memory::consolidation_frontier::ConsolidationFrontierRequest",
+      "output": "crate::memory::consolidation_frontier::ConsolidationRootAccounting",
+      "scope": "Write",
+      "call": "memory.consolidation_frontier_as_owner(&memory.embedded_owner(\"vault.consolidation.frontier\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.accounting",
+      "description": "Reads the original root revision, source hashes, ancestor and edge provenance taint, zero-signal exclusions and per-bucket corroboration accounting under current owner read authority.",
+      "input": "crate::memory::consolidation_frontier::ConsolidationAccountingRequest",
+      "output": "crate::memory::consolidation_frontier::ConsolidationRootAccounting",
+      "scope": "Read",
+      "call": "memory.consolidation_accounting_as_owner(&memory.embedded_owner(\"vault.consolidation.accounting\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.consolidation.evidence",
       "description": "Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner.",
       "input": "crate::memory::consolidation::ConsolidationEvidenceRequest",

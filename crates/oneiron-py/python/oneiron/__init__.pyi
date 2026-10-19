@@ -2049,6 +2049,12 @@ class Oneiron:
             """Reads the status of one consolidation attempt by its durable job reference."""
         def promote(self, spec: Facade.ConsolidationPromoteRequest) -> Facade.ConsolidationPromotion:
             """Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."""
+        def pin(self, spec: Facade.ConsolidationPinRequest) -> Facade.ConsolidationRootAccounting:
+            """Pins reference-only evidence for six-axis consolidation buckets at one owner-scoped ledger revision. Hashes, lineage taint and source eligibility are derived by the root, never accepted from children."""
+        def frontier(self, spec: Facade.ConsolidationFrontierRequest) -> Facade.ConsolidationRootAccounting:
+            """Records immutable child judgements and reference sets against an existing root pin, in any completion order, and accounts source-plus-hash corroboration without merging projects. Does not settle claims."""
+        def accounting(self, spec: Facade.ConsolidationAccountingRequest) -> Facade.ConsolidationRootAccounting:
+            """Reads the original root revision, source hashes, ancestor and edge provenance taint, zero-signal exclusions and per-bucket corroboration accounting under current owner read authority."""
         def evidence(self, spec: Facade.ConsolidationEvidenceRequest) -> Facade.ScopedReadResult[list[Facade.ConsolidationEvidenceSource]]:
             """Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."""
     class _VaultSieveVerbs:

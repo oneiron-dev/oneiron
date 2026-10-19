@@ -676,6 +676,9 @@ pub enum AgentVerb {
     VaultRunsStep,
     VaultRunsCheckpoint,
     VaultConsolidationPromote,
+    VaultConsolidationPin,
+    VaultConsolidationFrontier,
+    VaultConsolidationAccounting,
     VaultConsolidationEvidence,
     VaultSieveQueue,
     VaultSieveRetained,
@@ -1459,6 +1462,9 @@ impl AgentVerb {
         Self::VaultRunsStep,
         Self::VaultRunsCheckpoint,
         Self::VaultConsolidationPromote,
+        Self::VaultConsolidationPin,
+        Self::VaultConsolidationFrontier,
+        Self::VaultConsolidationAccounting,
         Self::VaultConsolidationEvidence,
         Self::VaultSieveQueue,
         Self::VaultSieveRetained,
@@ -2263,6 +2269,9 @@ impl AgentVerb {
             Self::VaultRunsStep => "vault.runs.step",
             Self::VaultRunsCheckpoint => "vault.runs.checkpoint",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
+            Self::VaultConsolidationPin => "vault.consolidation.pin",
+            Self::VaultConsolidationFrontier => "vault.consolidation.frontier",
+            Self::VaultConsolidationAccounting => "vault.consolidation.accounting",
             Self::VaultConsolidationEvidence => "vault.consolidation.evidence",
             Self::VaultSieveQueue => "vault.sieve.queue",
             Self::VaultSieveRetained => "vault.sieve.retained",
@@ -3029,6 +3038,9 @@ impl AgentVerb {
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationPin
+                | Self::VaultConsolidationFrontier
+                | Self::VaultConsolidationAccounting
                 | Self::VaultConsolidationEvidence
                 | Self::VaultSieveQueue
                 | Self::VaultSieveRetained
@@ -3839,6 +3851,9 @@ impl AgentVerb {
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationPin
+                | Self::VaultConsolidationFrontier
+                | Self::VaultConsolidationAccounting
                 | Self::VaultConsolidationEvidence
                 | Self::VaultSieveQueue
                 | Self::VaultSieveRetained
@@ -4718,6 +4733,9 @@ impl AgentVerb {
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationPin
+                | Self::VaultConsolidationFrontier
+                | Self::VaultConsolidationAccounting
                 | Self::VaultConsolidationEvidence
                 | Self::VaultSieveQueue
                 | Self::VaultSieveRetained
@@ -5220,6 +5238,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationPin
+                | Self::VaultConsolidationFrontier
                 | Self::VaultSievePolicySet
                 | Self::VaultSieveRecipePolicySet
                 | Self::VaultSieveLeaseRefill
@@ -5998,6 +6018,9 @@ impl AgentVerb {
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
+            Self::VaultConsolidationPin => &["spec"],
+            Self::VaultConsolidationFrontier => &["spec"],
+            Self::VaultConsolidationAccounting => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultSieveQueue => &["spec"],
             Self::VaultSieveRetained => &["spec"],
@@ -6782,6 +6805,9 @@ impl AgentVerb {
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
+            Self::VaultConsolidationPin => &["spec"],
+            Self::VaultConsolidationFrontier => &["spec"],
+            Self::VaultConsolidationAccounting => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultSieveQueue => &["spec"],
             Self::VaultSieveRetained => &["spec"],
@@ -8820,6 +8846,15 @@ impl AgentVerb {
             }
             Self::VaultConsolidationPromote => {
                 "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."
+            }
+            Self::VaultConsolidationPin => {
+                "Pins reference-only evidence for six-axis consolidation buckets at one owner-scoped ledger revision. Hashes, lineage taint and source eligibility are derived by the root, never accepted from children."
+            }
+            Self::VaultConsolidationFrontier => {
+                "Records immutable child judgements and reference sets against an existing root pin, in any completion order, and accounts source-plus-hash corroboration without merging projects. Does not settle claims."
+            }
+            Self::VaultConsolidationAccounting => {
+                "Reads the original root revision, source hashes, ancestor and edge provenance taint, zero-signal exclusions and per-bucket corroboration accounting under current owner read authority."
             }
             Self::VaultConsolidationEvidence => {
                 "Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."
