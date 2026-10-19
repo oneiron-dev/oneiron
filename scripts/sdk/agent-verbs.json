@@ -4955,6 +4955,142 @@
       "openapi": true
     },
     {
+      "name": "vault.federation.burst.baseline",
+      "description": "The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context.",
+      "input": "crate::sync::federation_burst::FederationBurstPeerRequest",
+      "output": "crate::sync::federation_burst::FederationBurstBaselineState",
+      "call": "crate::task_verb::sdk::federation_burst_baseline_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.baseline\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.burst.policy",
+      "description": "The owner reads one grant-bound peer's relative-burst outcome policy.",
+      "input": "crate::sync::federation_burst::FederationBurstPeerRequest",
+      "output": "crate::sync::federation_burst::FederationBurstPolicy",
+      "call": "crate::task_verb::sdk::federation_burst_policy_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.policy\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.burst.policy.set",
+      "description": "The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant.",
+      "input": "crate::sync::federation_burst::FederationBurstPolicySetRequest",
+      "output": "crate::sync::federation_burst::FederationBurstPolicy",
+      "call": "crate::task_verb::sdk::set_federation_burst_policy_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.policy.set\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.burst.ingress",
+      "description": "The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt.",
+      "input": "crate::task_verb::sdk::ConnectDelivery",
+      "output": "crate::sync::federation_burst::FederationBurstReceipt",
+      "call": "crate::task_verb::sdk::federation_burst_host_only(memory, \"vault.federation.burst.ingress\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.burst.disposition",
+      "description": "The owner reads an authenticated batch original disposition, named baseline context and current durable replay state.",
+      "input": "crate::sync::federation_burst::FederationBurstReplayRequest",
+      "output": "crate::sync::federation_burst::FederationBurstReceipt",
+      "call": "crate::task_verb::sdk::federation_burst_host_only(memory, \"vault.federation.burst.disposition\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.burst.review",
+      "description": "The owner reads retained peer review bundles, coalesced once per peer and kept after replay or rejection.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "Vec<crate::sync::federation_burst::FederationBurstReviewBundle>",
+      "call": "crate::task_verb::sdk::federation_burst_reviews_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.review\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "mcp_fields": {}
+    },
+    {
+      "name": "vault.federation.burst.review.release",
+      "description": "The owner releases a bundle's burst hold for current-grant replay without importing evidence or widening authority.",
+      "input": "crate::sync::federation_burst::FederationBurstReviewRequest",
+      "output": "crate::sync::federation_burst::FederationBurstReviewReceipt",
+      "call": "crate::task_verb::sdk::release_federation_burst_review_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.review.release\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.burst.review.reject",
+      "description": "The owner rejects a bundle's pending batches while retaining its review evidence and terminal dispositions.",
+      "input": "crate::sync::federation_burst::FederationBurstReviewRequest",
+      "output": "crate::sync::federation_burst::FederationBurstReviewReceipt",
+      "call": "crate::task_verb::sdk::reject_federation_burst_review_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.review.reject\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.burst.replay",
+      "description": "The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit.",
+      "input": "crate::sync::federation_burst::FederationBurstReplayRequest",
+      "output": "crate::sync::federation_burst::FederationBurstReceipt",
+      "call": "crate::task_verb::sdk::federation_burst_host_only(memory, \"vault.federation.burst.replay\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.federation.connect.identity",
       "description": "The owner reads this vault identity and the host key used for reciprocal Connect consent.",
       "input": "crate::task_verb::sdk::EmptyRequest",
@@ -7558,6 +7694,7 @@
       "call": "crate::policy_setting_doors::wake_policy_set_embedded(memory, input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -7587,6 +7724,7 @@
       "call": "crate::policy_setting_doors::inference_defaults_replace_embedded(memory, input)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -8976,6 +9114,81 @@
       "input": "crate::memory::origin_doors::CodeExportRequest",
       "output": "crate::memory::origin_doors::CodeExportResult",
       "call": "memory.code_export_as(&memory.embedded_owner(\"vault.code.export\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.register",
+      "description": "Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused.",
+      "input": "crate::memory::origin_doors::OriginRegisterRequest",
+      "output": "crate::memory::origin_doors::OriginRegistered",
+      "call": "memory.origin_register_as(&memory.embedded_owner(\"vault.code.origin.register\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.mirror.get",
+      "description": "Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential.",
+      "input": "crate::memory::origin_doors::OriginRepoRequest",
+      "output": "crate::memory::origin_doors::OriginMirrorView",
+      "call": "memory.origin_mirror_get_as(&memory.embedded_owner(\"vault.code.origin.mirror.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.mirror.set",
+      "description": "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write.",
+      "input": "crate::memory::origin_doors::OriginMirrorSetRequest",
+      "output": "crate::origin::mirror::OriginMirrorTarget",
+      "call": "memory.origin_mirror_set_as(&memory.embedded_owner(\"vault.code.origin.mirror.set\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.mirror.clear",
+      "description": "Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes.",
+      "input": "crate::memory::origin_doors::OriginRepoRequest",
+      "output": "crate::memory::origin_doors::OriginMirrorCleared",
+      "call": "memory.origin_mirror_clear_as(&memory.embedded_owner(\"vault.code.origin.mirror.clear\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.mirror.push",
+      "description": "Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client.",
+      "input": "crate::memory::origin_doors::OriginRepoRequest",
+      "output": "crate::origin::mirror::OriginMirrorRun",
+      "call": "memory.origin_mirror_push_as(&memory.embedded_owner(\"vault.code.origin.mirror.push\")?, input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true

@@ -2906,6 +2906,116 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_federation_burst_baseline(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.burst.baseline")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.burst.baseline", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_burst_policy(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.burst.policy")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.burst.policy", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_burst_policy_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.burst.policy.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.burst.policy.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_burst_ingress(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.burst.ingress")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.burst.ingress", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_burst_disposition(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.burst.disposition")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.burst.disposition", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_burst_review(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.burst.review")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.burst.review", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_burst_review_release(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.burst.review.release")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.burst.review.release", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_burst_review_reject(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.burst.review.reject")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.burst.review.reject", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_burst_replay(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.burst.replay")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.burst.replay", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_federation_connect_identity(
         &self,
         py: Python<'_>,
@@ -5396,6 +5506,47 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.code.export")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.code.export", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_register(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.register")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.origin.register", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_mirror_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.mirror.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.origin.mirror.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_mirror_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.mirror.set")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.origin.mirror.set", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_mirror_clear(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.mirror.clear")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.mirror.clear", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_mirror_push(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.mirror.push")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.mirror.push", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }

@@ -2011,6 +2011,8 @@ class Oneiron:
         @property
         def coreference(self) -> "Oneiron._VaultFederationCoreferenceVerbs": ...
         @property
+        def burst(self) -> "Oneiron._VaultFederationBurstVerbs": ...
+        @property
         def connect(self) -> "Oneiron._VaultFederationConnectVerbs": ...
     class _VaultFederationCoreferenceVerbs:
         def link(self, spec: Facade.CoreferenceLinkRequest) -> Facade.CoreferenceLinkReceipt:
@@ -2021,6 +2023,31 @@ class Oneiron:
             """The owner consents to exporting an existing identity link into exactly one named federation pact."""
         def unlink(self, spec: Facade.CoreferencePairRequest) -> Facade.CoreferenceUnlinkReceipt:
             """The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims."""
+    class _VaultFederationBurstVerbs:
+        def baseline(self, spec: Facade.FederationBurstPeerRequest) -> Facade.FederationBurstBaselineState:
+            """The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context."""
+        @property
+        def policy(self) -> "Oneiron._VaultFederationBurstPolicyVerbs": ...
+        def ingress(self, spec: Facade.ConnectDelivery) -> Facade.FederationBurstReceipt:
+            """The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt."""
+        def disposition(self, spec: Facade.FederationBurstReplayRequest) -> Facade.FederationBurstReceipt:
+            """The owner reads an authenticated batch original disposition, named baseline context and current durable replay state."""
+        @property
+        def review(self) -> "Oneiron._VaultFederationBurstReviewVerbs": ...
+        def replay(self, spec: Facade.FederationBurstReplayRequest) -> Facade.FederationBurstReceipt:
+            """The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit."""
+    class _VaultFederationBurstPolicyVerbs:
+        def __call__(self, spec: Facade.FederationBurstPeerRequest) -> Facade.FederationBurstPolicy:
+            """The owner reads one grant-bound peer's relative-burst outcome policy."""
+        def set(self, spec: Facade.FederationBurstPolicySetRequest) -> Facade.FederationBurstPolicy:
+            """The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant."""
+    class _VaultFederationBurstReviewVerbs:
+        def __call__(self, spec: Facade.EmptyRequest) -> list[Facade.FederationBurstReviewBundle]:
+            """The owner reads retained peer review bundles, coalesced once per peer and kept after replay or rejection."""
+        def release(self, spec: Facade.FederationBurstReviewRequest) -> Facade.FederationBurstReviewReceipt:
+            """The owner releases a bundle's burst hold for current-grant replay without importing evidence or widening authority."""
+        def reject(self, spec: Facade.FederationBurstReviewRequest) -> Facade.FederationBurstReviewReceipt:
+            """The owner rejects a bundle's pending batches while retaining its review evidence and terminal dispositions."""
     class _VaultFederationConnectVerbs:
         def identity(self, spec: Facade.EmptyRequest) -> Facade.ConnectIdentity:
             """The owner reads this vault identity and the host key used for reciprocal Connect consent."""
@@ -2685,10 +2712,23 @@ class Oneiron:
         def receipt(self, spec: Facade.CodeWaitReceiptRequest) -> Facade.CodeWaitReceiptView | None:
             """Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."""
     class _VaultCodeOriginVerbs:
+        def register(self, spec: Facade.OriginRegisterRequest) -> Facade.OriginRegistered:
+            """Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused."""
+        @property
+        def mirror(self) -> "Oneiron._VaultCodeOriginMirrorVerbs": ...
         @property
         def authority(self) -> "Oneiron._VaultCodeOriginAuthorityVerbs": ...
         def publications(self, spec: Facade.OriginPublicationsRequest) -> Facade.OriginPublicationsView:
             """Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."""
+    class _VaultCodeOriginMirrorVerbs:
+        def get(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorView:
+            """Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential."""
+        def set(self, spec: Facade.OriginMirrorSetRequest) -> Facade.OriginMirrorTarget:
+            """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write."""
+        def clear(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorCleared:
+            """Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."""
+        def push(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorRun:
+            """Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client."""
     class _VaultCodeOriginAuthorityVerbs:
         def get(self, spec: Facade.OriginRepoRequest) -> Facade.OriginAuthorityView:
             """Read one served origin authority and this host identity under the owner credential."""

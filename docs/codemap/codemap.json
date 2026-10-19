@@ -33855,6 +33855,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/origin_doors/setup.rs",
+     "purpose": "The owner's repository registration and outbound mirror setup, through the same proof and credential-scoped…",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CheckoutDoorBindRequest",
       "CheckoutDoorBinding",
@@ -33862,17 +33872,22 @@
       "CodeExportResult",
       "OriginAuthoritySetRequest",
       "OriginAuthorityView",
+      "OriginMirrorCleared",
+      "OriginMirrorSetRequest",
+      "OriginMirrorView",
       "OriginPublicationState",
       "OriginPublicationView",
       "OriginPublicationsRequest",
       "OriginPublicationsView",
+      "OriginRegisterRequest",
+      "OriginRegistered",
       "OriginRepoRequest"
      ],
      "path": "src/memory/origin_doors/types.rs",
      "purpose": "—",
      "surface": {
       "enum": 1,
-      "struct": 10
+      "struct": 15
      }
     },
     {
@@ -36720,7 +36735,8 @@
      "purpose": "Outbound mirror pushing (ARCH-0068 RA8)",
      "surface": {
       "const": 4,
-      "fn": 5,
+      "crate-vis": 2,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -36731,7 +36747,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "mod": 10,
+      "mod": 11,
       "re-export": 1
      }
     },
@@ -36836,6 +36852,16 @@
       "enum": 5,
       "fn": 11,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/registration.rs",
+     "purpose": "Owner registration of a new, empty served origin",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -44321,7 +44347,7 @@
      "path": "src/secret_lease/doors.rs",
      "purpose": "T0/T1/T2 Vault doors: inject, materialize, register, revoke, expire",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 8
      }
     },
@@ -50104,7 +50130,7 @@
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
       "crate-vis": 1,
-      "fn": 16,
+      "fn": 17,
       "re-export": 3,
       "struct": 3
      }
@@ -53572,7 +53598,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1058
+      "fn": 1063
      }
     },
     {
@@ -60700,7 +60726,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 217,
+     "files": 218,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60742,7 +60768,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61381,7 +61407,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3738,
+   "source_files": 3740,
    "test_files": 902
   },
   "oneiron-android": {
@@ -70039,7 +70065,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1029
+      "fn": 1034
      }
     },
     {
@@ -71135,7 +71161,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1030
+      "fn": 1035
      }
     },
     {
@@ -74039,7 +74065,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 36
      }
     },
     {
@@ -74199,7 +74225,7 @@
      "path": "src/api/facade/call_context.rs",
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -74899,7 +74925,7 @@
      "path": "src/api/facade/origin_doors.rs",
      "purpose": "Credential-bound host projections of the typed origin and checkout doors (DOOR-139)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 10
      }
     },
     {
@@ -75291,7 +75317,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/ui_action_routes.rs",
@@ -76343,6 +76369,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/owner_work_routes.rs",
+     "purpose": "`/v1/owner/owner-work/{request}`: where one owner work request stands (FIX 4632, 4682, 4736)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -76398,6 +76434,26 @@
      "notable": [],
      "path": "src/api/owner_routes/recovery_kit_routes.rs",
      "purpose": "`/v1/owner/recovery-kit`: the world kit's public status on a running server (OF-173)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/recovery_kit_target_routes.rs",
+     "purpose": "The target install's own kit calls (FIX 4736, 4530, 4564): the material a root change or a late joiner's pad…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/root_routes.rs",
+     "purpose": "`/v1/owner/roots/requests`: the owner decides a change to one install's recovery root from any surface he is…",
      "surface": {
       "crate-vis": 1
      }
@@ -76556,6 +76612,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/world_privacy_work_routes.rs",
+     "purpose": "`/v1/owner/worlds/privacy/settings` and `/reassert`: a holder changes a world's settings, or re-asserts them…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/packs/defaults.rs",
      "purpose": "Explicit default restores and on-demand imports from the pinned library",
      "surface": {
@@ -76579,7 +76645,7 @@
      "path": "src/api/pairing.rs",
      "purpose": "Pairing-only enrollment and unauthenticated liveness discovery",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -82889,7 +82955,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 433,
+     "files": 437,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -83318,7 +83384,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 791,
+   "source_files": 795,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -85575,10 +85641,17 @@
       "OriginAuthority",
       "OriginAuthoritySetRequest",
       "OriginAuthorityView",
+      "OriginMirrorCleared",
+      "OriginMirrorRun",
+      "OriginMirrorSetRequest",
+      "OriginMirrorTarget",
+      "OriginMirrorView",
       "OriginPublicationState",
       "OriginPublicationView",
       "OriginPublicationsRequest",
       "OriginPublicationsView",
+      "OriginRegisterRequest",
+      "OriginRegistered",
       "OriginRepoRequest",
       "OriginResidence",
       "OutcomeBinding",
@@ -86981,7 +87054,7 @@
      "purpose": "—",
      "surface": {
       "enum": 825,
-      "struct": 2636
+      "struct": 2643
      }
     },
     {
