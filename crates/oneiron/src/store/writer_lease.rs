@@ -3,6 +3,7 @@
 use std::path::Path;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use crate::{Error, Result, VaultConfig};
 
@@ -342,5 +343,130 @@ impl std::fmt::Debug for VaultWriterLease {
         f.debug_struct("VaultWriterLease")
             .field("pid", &self.pid)
             .finish_non_exhaustive()
+    }
+}
+
+/// Hook (FIX 5885; CALLS "rekeylease owned-open wait"): how long an owned
+/// open ([`crate::Vault::open_owned`]) that meets a lease held for one owner
+/// act ([`crate::Vault::hold_writer_lease_for_owner_act`]) waits for it,
+/// trying again, before it refuses as it does today.
+const OWNER_ACT_LEASE_WAIT: Duration = Duration::from_secs(5);
+/// How often that wait tries the lease again; not a bound.
+const OWNER_ACT_LEASE_POLL: Duration = Duration::from_millis(100);
+/// The word after the PID on the lock file's diagnostics line while a lease
+/// is held for one owner act.
+const OWNER_ACT_MARK: &str = "owner-act";
+
+impl VaultWriterLease {
+    /// [`Self::acquire`] for an owned open. A lease held for one owner act
+    /// is waited out, trying again every `OWNER_ACT_LEASE_POLL` for up to
+    /// `OWNER_ACT_LEASE_WAIT`, so a host that starts while the owner's act
+    /// holds the lease for a moment does not fail (FIX 5885). Any other
+    /// holder refuses as before after one look again, since the act's mark
+    /// follows its lock by a moment; past the bound the refusal is today's.
+    pub(crate) fn acquire_after_owner_act(vault_dir: &Path) -> Result<Self> {
+        let deadline = Instant::now() + OWNER_ACT_LEASE_WAIT;
+        let mut looked_again = false;
+        loop {
+            match Self::acquire(vault_dir) {
+                Err(Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD))
+                    if Instant::now() < deadline =>
+                {
+                    if !held_for_owner_act(vault_dir) {
+                        if looked_again {
+                            return Err(Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD));
+                        }
+                        looked_again = true;
+                    }
+                    std::thread::sleep(OWNER_ACT_LEASE_POLL);
+                }
+                outcome => return outcome,
+            }
+        }
+    }
+
+    /// Rewrites the diagnostics line as `<pid> owner-act`, so an owned open
+    /// that meets this lease waits for it. A lock file linked elsewhere is
+    /// locked but never written, as at acquire.
+    #[cfg(unix)]
+    fn mark_owner_act(&self) -> Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
+
+        let Some(mut file) = self.file.as_ref() else {
+            return Ok(());
+        };
+        if !self.bind_lock_file()? {
+            return Ok(());
+        }
+        file.set_len(0)?;
+        file.seek(SeekFrom::Start(0))?;
+        file.write_all(format!("{} {OWNER_ACT_MARK}\n", self.pid).as_bytes())?;
+        file.flush()?;
+        Ok(())
+    }
+}
+
+/// Whether the lease on `vault_dir` is marked as held for one owner act. It
+/// reads at most a line, never follows a link and never waits on a pipe;
+/// anything it cannot read says no. The mark decides only whether to wait,
+/// never who holds the lease: that is the lock's alone.
+#[cfg(unix)]
+fn held_for_owner_act(vault_dir: &Path) -> bool {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let Ok(file) = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(vault_dir.join(VAULT_WRITER_LOCK_FILE))
+    else {
+        return false;
+    };
+    if !file.metadata().is_ok_and(|meta| meta.is_file()) {
+        return false;
+    }
+    let mut line = String::new();
+    file.take(64).read_to_string(&mut line).is_ok() && line.trim_end().ends_with(OWNER_ACT_MARK)
+}
+
+#[cfg(not(unix))]
+fn held_for_owner_act(_vault_dir: &Path) -> bool {
+    false
+}
+
+impl crate::Vault {
+    /// This process's writer lease on the very directory this handle opened,
+    /// for one owner act by a host that opened without it (FIX 5885: the
+    /// desktop re-key). Taken without waiting: another holder, this handle's
+    /// own lease included, refuses `ConcurrentWrite(VAULT_WRITER_LEASE_HELD)`
+    /// at once. It is marked on the lock file, so an owned open that meets it
+    /// waits up to `OWNER_ACT_LEASE_WAIT` before it refuses as today.
+    /// Dropping it releases the lease: hold it for the act alone.
+    pub fn hold_writer_lease_for_owner_act(&self) -> Result<VaultWriterLease> {
+        #[cfg(unix)]
+        {
+            let root = self
+                .store
+                .owner
+                .env
+                ._bound_root_dir
+                .as_ref()
+                .ok_or(Error::InvariantViolation("vault root descriptor missing"))?;
+            let lease = VaultWriterLease::acquire_held(
+                root.try_clone()?,
+                &self.store.owner._registered_path.path,
+            )?;
+            lease.mark_owner_act()?;
+            Ok(lease)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = self;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "vault writer leases require a supported OS locking primitive",
+            )
+            .into())
+        }
     }
 }

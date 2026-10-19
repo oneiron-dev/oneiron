@@ -99,11 +99,13 @@ impl Vault {
     /// Opens a process-owned vault. Server and embedded SDK owners use this
     /// door so the writer lease covers startup, all Arc holders, and shutdown.
     /// Low-level `open` remains available for caller-managed engine lifetimes.
+    /// A lease another host holds for one owner act is waited out for a
+    /// bounded time (FIX 5885, `VaultWriterLease::acquire_after_owner_act`).
     pub fn open_owned(path: impl AsRef<Path>, config: VaultConfig) -> Result<Self> {
         validate_open_config(&config)?;
         std::fs::create_dir_all(path.as_ref())?;
         let canonical = path.as_ref().canonicalize()?;
-        let lease = VaultWriterLease::acquire(&canonical)?;
+        let lease = VaultWriterLease::acquire_after_owner_act(&canonical)?;
         Self::open_leased(&canonical, config, lease)
     }
 

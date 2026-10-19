@@ -11,6 +11,12 @@
 //! this Mac's retained keychain slot. A source the owner configured for the
 //! server (its config file or the environment) is never overwritten: the
 //! answer names the steps instead. No secret byte is logged or returned.
+//!
+//! The recorder opens its vault without the writer lease, for its whole life.
+//! A confirm takes the lease for itself alone (FIX 5885) and drops it on
+//! every path; while another process holds it, only the re-key answers
+//! `owner_unproven`, and an owned open that meets the confirm's lease waits
+//! for it ([`Vault::hold_writer_lease_for_owner_act`]).
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -29,10 +35,12 @@ use crate::{
 /// file: set and non-empty, it is where the server-config source's secret
 /// came from.
 const AUTH_SECRET_ENV: &str = "ONEIRON_AUTH_SECRET";
-/// Why the local owner cannot be proved while the recorder opens its vault
-/// without the writer lease (`DESKTOP_OPEN_KEEPS_WRITER_LEASE`).
-const LEASE_NOT_HELD: &str = "this app does not hold the vault's writer lease, so it cannot \
-     prove the local owner; nothing was checked or written";
+/// Why the local owner cannot be proved while another process holds the
+/// vault's writer lease: `oneiron serve`, an owner command or a second app.
+const LEASE_BUSY: &str = "another process holds the vault's writer lease, so this app cannot \
+     prove the local owner now; nothing was checked or written";
+/// The confirm's own lease does not belong to this process (a forked child).
+const LEASE_NOT_OURS: &str = "this process does not hold the vault's writer lease it took";
 /// The embedded owner authenticated but owns no part of this vault.
 const NOT_THE_OWNER: &str = "the embedded owner is not this vault's owner";
 /// After a replace, the next open's search found no secret at all.
@@ -87,9 +95,6 @@ pub struct RekeyPrepared {
     /// Whether confirm keeps a secret in that source itself: only this
     /// Mac's retained slot. Any other source answers with setup steps.
     pub replaceable: bool,
-    /// Whether this process holds the vault's writer lease, which the local
-    /// owner's proof needs. Without it confirm answers `owner_unproven`.
-    pub writer_lease_held: bool,
 }
 
 /// [`root_rekey_confirm`]'s typed answer. Only `Rekeyed` wrote anything.
@@ -125,7 +130,8 @@ pub enum RekeyConfirmed {
     /// No source holds a host root secret, so there is nothing to replace.
     /// Nothing was written.
     NothingToReplace,
-    /// The local owner could not be proved. Nothing was checked or written.
+    /// The local owner could not be proved, or another process holds the
+    /// vault's writer lease. Nothing was checked or written.
     OwnerUnproven {
         /// Why, naming no secret.
         reason: String,
@@ -175,16 +181,16 @@ pub fn root_rekey_prepare(app: AppHandle) -> Result<RekeyPrepared, String> {
         install: context.install.to_hex(),
         source,
         replaceable: source == RekeySource::RetainedSlot,
-        writer_lease_held: holds_writer_lease(&state.vault),
     })
 }
 
 /// The owner's re-key, bound to the context `vault_id` and `install` that
-/// prepare showed. The local owner is proved first, then `secret` is checked
-/// by the engine against the settled root and this install, then kept in the
-/// source this Mac's open reads, when that is its own retained slot.
-/// Success only once that source is read again and validates. Every other
-/// outcome writes nothing and says why.
+/// prepare showed. It takes the vault's writer lease for this confirm alone
+/// and releases it on every path. The local owner is proved first, then
+/// `secret` is checked by the engine against the settled root and this
+/// install, then kept in the source this Mac's open reads, when that is its
+/// own retained slot. Success only once that source is read again and
+/// validates. Every other outcome writes nothing and says why.
 #[tauri::command]
 pub fn root_rekey_confirm(
     app: AppHandle,
@@ -206,7 +212,22 @@ pub fn root_rekey_confirm(
 }
 
 fn confirm(state: &RekeyState, shown: &LocalHostRootContext, secret: &str) -> RekeyConfirmed {
-    let owner = match local_owner(&state.vault) {
+    // The writer lease for this one confirm: `lease` is the drop guard, so
+    // every return below releases it.
+    let lease = match state.vault.hold_writer_lease_for_owner_act() {
+        Ok(lease) => lease,
+        Err(oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD)) => {
+            return RekeyConfirmed::OwnerUnproven {
+                reason: LEASE_BUSY.to_owned(),
+            };
+        }
+        Err(error) => {
+            return RekeyConfirmed::OwnerUnproven {
+                reason: format!("the vault's writer lease could not be taken: {error}"),
+            };
+        }
+    };
+    let owner = match local_owner(&state.vault, &lease) {
         Ok(owner) => owner,
         Err(reason) => return RekeyConfirmed::OwnerUnproven { reason },
     };
@@ -361,12 +382,12 @@ fn failure_reason(failure: SourceFailure) -> String {
 
 /// The local owner, proved the way the server's own CLI proves him
 /// (`oneiron-server` `owner::local_owner`): this process holds the vault's
-/// writer lease and acts as its embedded owner, who authenticates and is a
-/// live owner of this vault now. The engine checks him again in the
-/// snapshot it validates in.
-fn local_owner(vault: &Vault) -> Result<AuthenticatedOwner, String> {
-    if !holds_writer_lease(vault) {
-        return Err(LEASE_NOT_HELD.to_owned());
+/// writer lease (`lease`, the confirm's own) and acts as its embedded owner,
+/// who authenticates and is a live owner of this vault now. The engine
+/// checks him again in the snapshot it validates in.
+fn local_owner(vault: &Vault, lease: &VaultWriterLease) -> Result<AuthenticatedOwner, String> {
+    if !lease.held_by_current_process() {
+        return Err(LEASE_NOT_OURS.to_owned());
     }
     let actor = vault
         .ensure_embedded_owner_actor()
@@ -379,12 +400,6 @@ fn local_owner(vault: &Vault) -> Result<AuthenticatedOwner, String> {
         Ok(false) => Err(NOT_THE_OWNER.to_owned()),
         Err(error) => Err(error.to_string()),
     }
-}
-
-fn holds_writer_lease(vault: &Vault) -> bool {
-    vault
-        .writer_lease()
-        .is_some_and(VaultWriterLease::held_by_current_process)
 }
 
 fn hex(bytes: &[u8]) -> String {

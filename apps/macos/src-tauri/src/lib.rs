@@ -60,15 +60,6 @@ const DESKTOP_ROOT_SECRET_SOURCE: &[RootSecretSource] = &[
 ];
 /// What the engine's log names this open.
 const DESKTOP_OPEN: &str = "desktop app open";
-/// Hook (FIX 5571 re-key; CALLS "rekey desktop writer lease"): `true` opens
-/// the recorder's vault with [`Vault::open_owned`] and keeps its writer
-/// lease for the app's life, which the local owner's proof for a re-key
-/// needs ([`root_rekey`]). `false` keeps today's [`Vault::open`]: an owned
-/// open refuses while another process holds the lease (`oneiron serve` or
-/// an owner command on this vault, a second recorder), where today's open
-/// goes on, and a held lease refuses their owned opens in turn. Until it
-/// flips, a re-key's confirm answers that the owner is unproven.
-const DESKTOP_OPEN_KEEPS_WRITER_LEASE: bool = false;
 
 /// One place the desktop may find its vault's host root secret.
 #[derive(Clone, Copy)]
@@ -365,11 +356,7 @@ fn profile_from(vault: &Vault, secret: Option<&[u8]>, new_local_origin: bool) ->
 fn open_vault_at(path: &std::path::Path) -> Result<Arc<Vault>, Box<dyn std::error::Error>> {
     oneiron::panic_report::install_panic_hook();
     std::fs::create_dir_all(path)?;
-    let vault = if DESKTOP_OPEN_KEEPS_WRITER_LEASE {
-        Vault::open_owned(path, VaultConfig::device())?
-    } else {
-        Vault::open(path, VaultConfig::device())?
-    };
+    let vault = Vault::open(path, VaultConfig::device())?;
     // Signing doors (delete receipts) need this install's keys from the keystore.
     vault.install_default_keystore(path);
     Ok(Arc::new(vault))
