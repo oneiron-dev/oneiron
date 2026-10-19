@@ -1020,6 +1020,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/owner-work/{request}/diagnostics",
+        summary: "What blocks one pending owner work request, as its executor observes it: a re-assertion's keys and their blockers (paged by offset), or a bundle publication's home, relay reach, outer capsules and unresolved attempt. Ids and closed reasons only; any other install answers that the executor's observation is unavailable here.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/pack-drift",
         summary: "Pack drift repairs.",
         row: None,

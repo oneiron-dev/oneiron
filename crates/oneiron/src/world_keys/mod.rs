@@ -60,7 +60,10 @@ pub use self::kit::{
 pub(crate) use self::machine::{keystore_error, slot_seed};
 pub use self::machine::{machine_encryption_key, machine_secret};
 pub use self::owner_work::{
-    OwnerWorkDrain, OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned,
+    BundleHomeWarning, CapsuleRead, ExecutorObservation, LatestRead, OwnerWorkDiagnostics,
+    OwnerWorkDrain, OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned, PublicationDiagnostics,
+    PublishAttemptView, PublishObserved, PublishReach, ReassertDiagnostics, ReassertKey,
+    ReassertKeyState, ReassertUnread,
 };
 #[cfg(feature = "sync")]
 pub use self::pads::PromotedWorldPad;

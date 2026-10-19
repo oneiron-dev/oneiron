@@ -27,11 +27,11 @@ pub use authority_tail::{
 };
 pub(crate) use bundle::holds_sealed_bundle;
 pub use bundle::{
-    SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleEntry,
-    SealedBundleKitRoot, SealedBundleObject, SealedBundleStage, commit_sealed_bundle,
-    replace_sealed_bundle_pads, sealed_bundle_generations, sealed_bundle_part,
-    sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
-    stage_sealed_bundle_part,
+    SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleCommitReceipt,
+    SealedBundleEntry, SealedBundleKitRoot, SealedBundleObject, SealedBundleStage,
+    commit_sealed_bundle, replace_sealed_bundle_pads, sealed_bundle_commit_receipt,
+    sealed_bundle_generations, sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex,
+    sealed_generation_from_hex, sealed_generation_hex, stage_sealed_bundle_part,
 };
 pub use bundle_access::{
     PadAccessRequest, PadAccessState, PendingPadAccess, PendingPadAccessList,
