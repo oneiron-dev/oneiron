@@ -152,15 +152,18 @@ impl EngineNativeExecutor<'_> {
                     return Ok(super::compaction::Flight::default());
                 }
                 let note = asked.clone().flatten();
+                // FIX 4465 C: the live request as its rung sends it sizes and rides the flight.
+                let (live, room) = super::compaction::live_fork::capture(driver, request);
                 let (epoch, hooks) = match watermark {
-                    Some(watermark) => self
-                        .seal_compaction_window(driver, config, record, watermark, note.clone())?
+                    Some(at) => self
+                        .seal_compaction_window(driver, config, record, at, note.clone(), room)?
                         .map_or((None, CompactHooks::default()), |(request, hooks)| {
                             (Some(request), hooks)
                         }),
                     None => (None, CompactHooks::default()),
                 };
-                let folds = self.seal_folds(driver, config, record, &marks, note.as_deref())?;
+                let folds =
+                    self.seal_folds(driver, config, record, &marks, note.as_deref(), room)?;
                 if asked.is_some() {
                     self.storage
                         .update_code_run_folds(run_id, |ledger| ledger.compact = None)?;
@@ -169,6 +172,7 @@ impl EngineNativeExecutor<'_> {
                     epoch,
                     folds,
                     hooks,
+                    live,
                 })
             },
         );
@@ -190,6 +194,7 @@ impl EngineNativeExecutor<'_> {
         record: &CodeRunReplayRecord,
         marks: &[FoldMark],
         asked: Option<&str>,
+        room: Option<u64>,
     ) -> EngineExecutorResult<Vec<FoldJob>> {
         let mut jobs = Vec::new();
         let mut failed = Vec::new();
@@ -198,7 +203,7 @@ impl EngineNativeExecutor<'_> {
                 (Some(mark), Some(asked)) => Some(format!("{mark}\n{asked}")),
                 (mark, asked) => mark.or(asked).map(str::to_owned),
             };
-            match self.seal_fold(driver, config, record, mark, note)? {
+            match self.seal_fold(driver, config, record, mark, note, room)? {
                 Ok(job) => jobs.push(job),
                 Err(why) => failed.push((mark.fold, why)),
             }
@@ -217,6 +222,7 @@ impl EngineNativeExecutor<'_> {
         record: &CodeRunReplayRecord,
         mark: &FoldMark,
         note: Option<String>,
+        room: Option<u64>,
     ) -> EngineExecutorResult<Result<FoldJob, String>> {
         let run_id = config.run_id;
         let run_ref = self.gated_write.run_ref();
@@ -273,7 +279,6 @@ impl EngineNativeExecutor<'_> {
                 "its failure lines do not fit one summary; fold a shorter span".to_owned(),
             ));
         }
-        let room = driver.backend().input_token_limit(budget);
         super::compaction::add_profile_pins(
             &mut pins,
             &window,
@@ -291,7 +296,7 @@ impl EngineNativeExecutor<'_> {
                     })
             },
         );
-        if let Some(room) = driver.backend().input_token_limit(budget)
+        if let Some(room) = room
             && crate::compaction::compaction_input_tokens(
                 mark.from,
                 &window,
@@ -473,6 +478,7 @@ impl EngineNativeExecutor<'_> {
         record: &CodeRunReplayRecord,
         watermark: u64,
         note: Option<String>,
+        room: Option<u64>,
     ) -> EngineExecutorResult<Option<(crate::compaction::CompactionRequest, CompactHooks)>> {
         let run_id = config.run_id;
         let run_ref = self.gated_write.run_ref();
@@ -490,8 +496,7 @@ impl EngineNativeExecutor<'_> {
         let budget = driver.summary_token_budget();
         // The backend reads the rendered input: each step's JSON frame,
         // escapes included, beside the pins. That, not the steps' raw text,
-        // sizes the window.
-        let room = driver.backend().input_token_limit(budget);
+        // sizes the window, within `room`.
         let oversized = || {
             crate::Error::InvalidConfig(
                 "the compaction backend cannot take the next step's output whole".into(),

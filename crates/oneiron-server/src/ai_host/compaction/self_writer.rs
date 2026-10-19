@@ -7,38 +7,65 @@
 //! agent's own compaction model when its definition names one (FIX 4472),
 //! admitted as exactly that model. The agent writes only the summary; the
 //! host records who wrote it, what ran it and what it cost.
+//!
+//! When the row reads the live context (FIX 4465 C), the flight's calls fork
+//! the run's live request instead, captured at its breakpoint on the rung
+//! that admitted it, and the same receipt names that rung's model.
 
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
+use oneiron::LlmRequest;
 use oneiron::agent_def::AgentDefinition;
 use oneiron::code_run::{
-    CompactionHome, CompactionHostBinding, compaction_home_budget, load_compaction_home,
+    AdmittedLiveFork, CompactionHome, CompactionHostBinding, LiveCompactionFork,
+    compaction_home_budget, load_compaction_home,
 };
 use oneiron::compaction::{
-    CompactionBackend, CompactionCall, CompactionCheck, CompactionExecution, CompactionProduct,
-    CompactionRefusal, CompactionRequest, CompactionTierClass, SelfCompactionUnavailable,
-    compaction_usage_projection,
+    CompactionBackend, CompactionCall, CompactionCheck, CompactionExecution, CompactionHomeRef,
+    CompactionProduct, CompactionRefusal, CompactionRequest, CompactionTierClass,
+    SelfCompactionUnavailable, compaction_usage_projection,
 };
 use oneiron::llm::{ContentPart, ModelId, SelfCompactionDefault, SelfCompactionSource};
 
-use super::ServedCompactionBackend;
-use super::serve::{Admit, product_of};
+use super::live_fork::bind_live_compaction_fork;
+use super::serve::{Admit, Served, product_of};
+use super::{LiveAdmission, ServedCompactionBackend};
 
 /// The words that turn the house compaction call into the agent's own: the
 /// home the call wears follows them. The one hook a ruling on this text
 /// changes; the persona itself comes only from the agent's home.
-const SELF_WRITER_FRAME: &str = "You are writing this summary as yourself, in your own voice: it \
+pub(super) const SELF_WRITER_FRAME: &str = "You are writing this summary as yourself, in your own voice: it \
     is your own memory of your own work. What follows is your home, read under your own Grant \
     (your voice, your lessons and your diary). Keep the reply's JSON shape and the span's facts \
     exactly as the window gives them.";
 
 /// What one flight froze: the row it is served by, the model it runs on and
-/// the home it wears.
+/// the home it wears, and for a live flight the fork its calls send (FIX
+/// 4465 C), held until the flight ends.
 #[derive(Clone)]
 struct Frozen {
     row: SelfCompactionDefault,
     admit: (ModelId, oneiron::llm::ModelLocality),
     home: CompactionHome,
+    live: Option<Arc<LiveCompactionFork>>,
+}
+
+/// `select_live_compaction_binding` (FIX 4465 C, amending FIX 4465 A's
+/// per-wake model): the captured live binding wins only for a row that
+/// selects the live fork. A row on the retained turns resolves the agent's
+/// own compaction model, else the house's, as before, and lets go of any
+/// capture. A live row with no capture keeps the window and says why.
+fn select_live_compaction_binding(
+    row: &SelfCompactionDefault,
+    live: Option<AdmittedLiveFork>,
+) -> Result<Option<LiveCompactionFork>, SelfCompactionUnavailable> {
+    match (row.source, live) {
+        (SelfCompactionSource::RetainedTurns, _) => Ok(None),
+        (SelfCompactionSource::LiveFork, Some(fork)) => Ok(Some(fork.into_fork())),
+        (SelfCompactionSource::LiveFork, None) => {
+            Err(SelfCompactionUnavailable::LiveForkNotCaptured)
+        }
+    }
 }
 
 pub(super) struct SelfCompactionBackend {
@@ -50,6 +77,8 @@ pub(super) struct SelfCompactionBackend {
     definition: AgentDefinition,
     /// The run's authenticated actor, its caller's place and its proof.
     host: CompactionHostBinding,
+    /// How the run's live rung is read at a breakpoint (FIX 4465 C).
+    admission: Arc<dyn LiveAdmission>,
     flight: Mutex<Option<Frozen>>,
 }
 
@@ -59,12 +88,14 @@ impl SelfCompactionBackend {
         route: ServedCompactionBackend,
         definition: AgentDefinition,
         host: CompactionHostBinding,
+        admission: Arc<dyn LiveAdmission>,
     ) -> Self {
         Self {
             key,
             route,
             definition,
             host,
+            admission,
             flight: Mutex::new(None),
         }
     }
@@ -76,19 +107,37 @@ impl SelfCompactionBackend {
         Some(oneiron::agent_def::resolve_compaction_model(&self.definition, &house).clone())
     }
 
-    /// What this flight wears, or why it cannot be written as its agent. A
-    /// room's run is written as its agent too (FIX 4465 B): its calls file
-    /// and its summary lands on the route the run captured at entry.
-    fn freeze(&self) -> Result<Frozen, SelfCompactionUnavailable> {
-        let row = self
+    /// The vault's self-compaction row, as it reads now.
+    fn row(&self) -> Result<SelfCompactionDefault, SelfCompactionUnavailable> {
+        Ok(self
             .route
             .vault
             .purpose_default_table()
             .map_err(|_| SelfCompactionUnavailable::PolicyUnreadable)?
             .self_compaction()
-            .clone();
-        if row.source == SelfCompactionSource::LiveFork {
-            return Err(SelfCompactionUnavailable::LiveForkNotBuilt);
+            .clone())
+    }
+
+    /// What this flight wears, or why it cannot be written as its agent. A
+    /// room's run is written as its agent too (FIX 4465 B): its calls file
+    /// and its summary lands on the route the run captured at entry. A live
+    /// flight wears its fork's rung (FIX 4465 C).
+    fn freeze(&self, live: Option<AdmittedLiveFork>) -> Result<Frozen, SelfCompactionUnavailable> {
+        let row = self.row()?;
+        if let Some(fork) = select_live_compaction_binding(&row, live)? {
+            // The row read now bounds the captured rung, as it bounds the
+            // retained route's model.
+            let locality = fork.rung().offer.locality;
+            if locality > row.locality {
+                return Err(SelfCompactionUnavailable::RouteWiderThanPolicy);
+            }
+            let home = load_compaction_home(&self.route.vault, &self.host)?;
+            return Ok(Frozen {
+                row,
+                admit: (fork.request().model.clone(), locality),
+                home,
+                live: Some(Arc::new(fork)),
+            });
         }
         let model = self
             .writer_model()
@@ -110,6 +159,7 @@ impl SelfCompactionBackend {
             row,
             admit: (model, locality),
             home,
+            live: None,
         })
     }
 
@@ -118,6 +168,51 @@ impl SelfCompactionBackend {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    /// Freezes the flight, or clears it with why it cannot be written.
+    fn prepare(&self, live: Option<AdmittedLiveFork>) -> Result<(), SelfCompactionUnavailable> {
+        let frozen = self.freeze(live);
+        let mut slot = self.flight.lock().unwrap_or_else(PoisonError::into_inner);
+        match frozen {
+            Ok(frozen) => {
+                *slot = Some(frozen);
+                Ok(())
+            }
+            Err(why) => {
+                *slot = None;
+                Err(why)
+            }
+        }
+    }
+
+    /// A retained-turn call: the house compaction call on the writer's own
+    /// model, wearing the home in its system message.
+    fn serve_retained(
+        &self,
+        frozen: &Frozen,
+        request: &CompactionRequest,
+        retry: Option<CompactionCheck>,
+    ) -> Result<Served<Vec<CompactionHomeRef>>, CompactionRefusal> {
+        let admit = Admit::Exact {
+            model: frozen.admit.0.clone(),
+            locality: frozen.admit.1,
+        };
+        self.route.serve(request, retry, &admit, |call, room| {
+            let frame = oneiron::count_context_pack_tokens(SELF_WRITER_FRAME) as u64;
+            let home = frozen.home.render(compaction_home_budget(
+                room.context,
+                room.input,
+                room.output,
+                frame,
+            ));
+            if let Some(system) = call.messages.first_mut() {
+                system.content.push(ContentPart::Text {
+                    text: format!("\n\n{SELF_WRITER_FRAME}\n\n{}", home.text),
+                });
+            }
+            Ok(home.refs)
+        })
     }
 }
 
@@ -139,18 +234,40 @@ impl CompactionBackend for SelfCompactionBackend {
     }
 
     fn prepare_flight(&self, _session_bound: bool) -> Result<(), SelfCompactionUnavailable> {
-        let frozen = self.freeze();
-        let mut slot = self.flight.lock().unwrap_or_else(PoisonError::into_inner);
-        match frozen {
-            Ok(frozen) => {
-                *slot = Some(frozen);
-                Ok(())
-            }
-            Err(why) => {
-                *slot = None;
-                Err(why)
-            }
-        }
+        self.prepare(None)
+    }
+
+    /// Binds the live rung only for a row that reads the live context; a row
+    /// that cannot be read is named when the flight freezes.
+    fn capture_live_fork(
+        &self,
+        live: &LlmRequest,
+        summary_token_budget: u64,
+    ) -> Option<Result<LiveCompactionFork, SelfCompactionUnavailable>> {
+        let row = self
+            .row()
+            .ok()
+            .filter(|row| row.source == SelfCompactionSource::LiveFork)?;
+        Some(bind_live_compaction_fork(
+            &self.route,
+            self.admission.as_ref(),
+            self.host.actor().entity_ref(),
+            &row,
+            live,
+            summary_token_budget,
+        ))
+    }
+
+    fn prepare_live_flight(
+        &self,
+        _session_bound: bool,
+        fork: AdmittedLiveFork,
+    ) -> Result<(), SelfCompactionUnavailable> {
+        self.prepare(Some(fork))
+    }
+
+    fn end_flight(&self) {
+        *self.flight.lock().unwrap_or_else(PoisonError::into_inner) = None;
     }
 
     fn compact(
@@ -170,25 +287,12 @@ impl CompactionBackend for SelfCompactionBackend {
         let Some(frozen) = self.frozen() else {
             return Err(SelfCompactionUnavailable::FlightNotPrepared.refusal());
         };
-        let admit = Admit::Exact {
-            model: frozen.admit.0.clone(),
-            locality: frozen.admit.1,
+        let served = match &frozen.live {
+            Some(fork) => self
+                .route
+                .serve_live_fork(fork, &frozen.home, request, retry)?,
+            None => self.serve_retained(&frozen, request, retry)?,
         };
-        let served = self.route.serve(request, retry, &admit, |call, room| {
-            let frame = oneiron::count_context_pack_tokens(SELF_WRITER_FRAME) as u64;
-            let home = frozen.home.render(compaction_home_budget(
-                room.context,
-                room.input,
-                room.output,
-                frame,
-            ));
-            if let Some(system) = call.messages.first_mut() {
-                system.content.push(ContentPart::Text {
-                    text: format!("\n\n{SELF_WRITER_FRAME}\n\n{}", home.text),
-                });
-            }
-            Ok(home.refs)
-        })?;
         let usage = &served.response.usage;
         // The paid call, for its host to file in the model-step family on
         // the run's captured route (FIX 4465 B).
