@@ -245,17 +245,19 @@ fn slate_of(
 }
 
 /// Drafts with the model drafter `[models.decisions.connector_slate]` binds,
-/// asked up to the Big rung within the row's budget. Without that row, the
-/// rule rung drafts every row from the owner's past rulings.
+/// asked up to the Big rung within the row's budget, for the owner the
+/// request proved (FIX 4372). Without that row, the rule rung drafts every
+/// row from the owner's past rulings.
 pub(crate) fn with_slate_drafter<T>(
     server: &SyncServer,
+    owner: &AuthenticatedOwner,
     draft: impl FnOnce(Option<&ConnectorSlateDrafter<'_>>) -> T,
 ) -> T {
     let decisions = server.decision_host();
     let Some(settings) = decisions.connector_slate() else {
         return draft(None);
     };
-    let principal = match server.vault().ensure_embedded_owner_actor() {
+    let principal = match owner.revalidate(server.vault()) {
         Ok(principal) => principal,
         Err(error) => {
             tracing::warn!(%error, "no owner principal; the rule rung drafts the slate");
@@ -288,13 +290,17 @@ async fn register(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<RegisterRequest>, JsonRejection>,
 ) -> OwnerReply<Registered> {
-    let _owner = owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let reply = blocking(move || register_connector(&server, request)).await?;
+    let reply = blocking(move || register_connector(&server, &owner, request)).await?;
     Ok(Json(reply))
 }
 
-fn register_connector(server: &SyncServer, request: RegisterRequest) -> OwnerResult<Registered> {
+fn register_connector(
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    request: RegisterRequest,
+) -> OwnerResult<Registered> {
     let vault = server.vault();
     let (name, endpoint) = installed(server, &request.connector)?;
     if vault.describe_connector(&name)?.is_some() {
@@ -328,7 +334,7 @@ fn register_connector(server: &SyncServer, request: RegisterRequest) -> OwnerRes
     }
     let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
     let manifest = host::slate_manifest(&resolved, &discovery.tools, &request.tools);
-    let slate_id = with_slate_drafter(server, |drafter| {
+    let slate_id = with_slate_drafter(server, owner, |drafter| {
         vault.draft_connector_admission_slate(&manifest, drafter)
     })
     .map_err(engine)?;
@@ -613,13 +619,17 @@ async fn refresh(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<RefreshRequest>, JsonRejection>,
 ) -> OwnerReply<Refreshed> {
-    let _owner = owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let reply = blocking(move || refresh_connector(&server, request)).await?;
+    let reply = blocking(move || refresh_connector(&server, &owner, request)).await?;
     Ok(Json(reply))
 }
 
-fn refresh_connector(server: &SyncServer, request: RefreshRequest) -> OwnerResult<Refreshed> {
+fn refresh_connector(
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    request: RefreshRequest,
+) -> OwnerResult<Refreshed> {
     let vault = server.vault();
     let (name, endpoint) = installed(server, &request.connector)?;
     let catalog = catalog(vault, &name)?;
@@ -692,7 +702,7 @@ fn refresh_connector(server: &SyncServer, request: RefreshRequest) -> OwnerResul
             dropped: Vec::new(),
         });
     }
-    let delta = with_slate_drafter(server, |drafter| {
+    let delta = with_slate_drafter(server, owner, |drafter| {
         vault.draft_connector_delta_slate(slate_id, &listed, drafter)
     })
     .map_err(engine)?;

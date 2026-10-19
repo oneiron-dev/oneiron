@@ -49,8 +49,9 @@ pub(crate) async fn vault_projects_confirm(
             &["Present the owner's own verified, unattenuated credential."],
         )
     };
-    let Ok(owner) = crate::api::owner_routes::owner(auth, server) else {
-        return (Err(refused()), Vec::new());
+    let owner = match super::owner_binding::facade_owner_or(server, auth, refused) {
+        Ok(owner) => owner,
+        Err(refusal) => return (Err(refusal), Vec::new()),
     };
     let Some(principal_ref) = auth.principal_ref().map(str::to_owned) else {
         return (Err(refused()), Vec::new());
