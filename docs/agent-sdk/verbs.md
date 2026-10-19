@@ -171,6 +171,8 @@ both bindings and their export-census tests in one change.
 - `vault.campaign.program.read`
 - `vault.campaign.program.update`
 - `vault.campaign.program.archive`
+- `vault.turn_programs.arm`
+- `vault.turn_programs.disarm`
 - `self.saved_query.create`
 - `self.saved_query.read`
 - `self.saved_query.update`

@@ -443,6 +443,10 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
             let wait = TaskAskWait::Ready(result.clone());
             json!({"output": wait})
         }
+        SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::WorldPrivacy(request)) => {
+            let wait = TaskAskWait::WorldPrivacyReady(request.clone());
+            json!({"output": wait})
+        }
         SelfDispatchOutcome::Speech(value) => {
             json!({"order": value.order, "isVisible": value.is_visible})
         }

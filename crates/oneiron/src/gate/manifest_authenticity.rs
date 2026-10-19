@@ -315,6 +315,7 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
         txn.commit()?;
+        self.apply_pending_rebinds_after_commit();
         Ok(())
     }
 
@@ -422,6 +423,7 @@ impl Vault {
             return Ok(false);
         }
         txn.commit()?;
+        self.apply_pending_rebinds_after_commit();
         Ok(true)
     }
 
