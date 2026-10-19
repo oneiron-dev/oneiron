@@ -80750,7 +80750,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/decision_verdict.rs",
@@ -85018,7 +85018,7 @@
     "decision_verdict": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "`ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder"
     },
@@ -85303,7 +85303,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 55,
+   "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 826,
    "test_files": 182
