@@ -92,6 +92,23 @@ pub(crate) fn settled_split(
     split_from_answers(request.lane, masses, answers, request.floor)
 }
 
+/// Folds explicitly supplied per-hunk verdicts into a split, through the same
+/// lane, floor and note rules a judge's answers meet. The owner settlement
+/// door's scripted labels take this path; no share is ever caller-stamped.
+///
+/// # Errors
+///
+/// As the split path: a wrong verdict count, or a doubtful verdict without a
+/// note.
+pub(crate) fn split_from_verdicts(
+    lane: AttributionLane,
+    masses: &[f64],
+    answers: Vec<HunkVerdict>,
+    floor: f32,
+) -> Result<AttributionSplit> {
+    split_from_answers(lane, masses, answers, floor)
+}
+
 /// Folds per-hunk answers into one label + share vector.
 ///
 /// Each hunk weighs its share of the edit mass; with no edit, or an edit that

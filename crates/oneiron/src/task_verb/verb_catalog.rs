@@ -683,6 +683,13 @@ pub enum AgentVerb {
     VaultSkillsPackReceipt,
     VaultSkillsOutcomesProject,
     VaultSkillsOutcomesGet,
+    VaultSkillsAttributionSettle,
+    VaultSkillsAttributionRead,
+    VaultSkillsAttributionEvidenceRecord,
+    VaultSkillsAttributionProject,
+    VaultSkillsAttributionJudgments,
+    VaultSkillsAttributionProposals,
+    VaultSkillsAttributionPositiveRetire,
     AiStepsSubmit,
     AiStepsReceipt,
     AiReply,
@@ -1687,6 +1694,13 @@ impl AgentVerb {
         Self::VaultSkillsPackReceipt,
         Self::VaultSkillsOutcomesProject,
         Self::VaultSkillsOutcomesGet,
+        Self::VaultSkillsAttributionSettle,
+        Self::VaultSkillsAttributionRead,
+        Self::VaultSkillsAttributionEvidenceRecord,
+        Self::VaultSkillsAttributionProject,
+        Self::VaultSkillsAttributionJudgments,
+        Self::VaultSkillsAttributionProposals,
+        Self::VaultSkillsAttributionPositiveRetire,
         Self::AiStepsSubmit,
         Self::AiStepsReceipt,
         Self::AiReply,
@@ -2712,6 +2726,17 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => "vault.skills.pack_receipt",
             Self::VaultSkillsOutcomesProject => "vault.skills.outcomes.project",
             Self::VaultSkillsOutcomesGet => "vault.skills.outcomes.get",
+            Self::VaultSkillsAttributionSettle => "vault.skills.attribution.settle",
+            Self::VaultSkillsAttributionRead => "vault.skills.attribution.read",
+            Self::VaultSkillsAttributionEvidenceRecord => {
+                "vault.skills.attribution.evidence.record"
+            }
+            Self::VaultSkillsAttributionProject => "vault.skills.attribution.project",
+            Self::VaultSkillsAttributionJudgments => "vault.skills.attribution.judgments",
+            Self::VaultSkillsAttributionProposals => "vault.skills.attribution.proposals",
+            Self::VaultSkillsAttributionPositiveRetire => {
+                "vault.skills.attribution.positive.retire"
+            }
             Self::AiStepsSubmit => "ai.steps.submit",
             Self::AiStepsReceipt => "ai.steps.receipt",
             Self::AiReply => "ai.reply",
@@ -3722,6 +3747,13 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultSkillsAttributionSettle
+                | Self::VaultSkillsAttributionRead
+                | Self::VaultSkillsAttributionEvidenceRecord
+                | Self::VaultSkillsAttributionProject
+                | Self::VaultSkillsAttributionJudgments
+                | Self::VaultSkillsAttributionProposals
+                | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
                 | Self::AiReply
@@ -4753,6 +4785,13 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultSkillsAttributionSettle
+                | Self::VaultSkillsAttributionRead
+                | Self::VaultSkillsAttributionEvidenceRecord
+                | Self::VaultSkillsAttributionProject
+                | Self::VaultSkillsAttributionJudgments
+                | Self::VaultSkillsAttributionProposals
+                | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
                 | Self::AiReply
@@ -5871,6 +5910,13 @@ impl AgentVerb {
                 | Self::VaultSkillsPackReceipt
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultSkillsOutcomesGet
+                | Self::VaultSkillsAttributionSettle
+                | Self::VaultSkillsAttributionRead
+                | Self::VaultSkillsAttributionEvidenceRecord
+                | Self::VaultSkillsAttributionProject
+                | Self::VaultSkillsAttributionJudgments
+                | Self::VaultSkillsAttributionProposals
+                | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
                 | Self::AiReply
@@ -6569,6 +6615,10 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::VaultSkillsOutcomesProject
+                | Self::VaultSkillsAttributionSettle
+                | Self::VaultSkillsAttributionEvidenceRecord
+                | Self::VaultSkillsAttributionProject
+                | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiReply
                 | Self::AiVoiceStart
@@ -7472,6 +7522,13 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
+            Self::VaultSkillsAttributionSettle => &["spec"],
+            Self::VaultSkillsAttributionRead => &["spec"],
+            Self::VaultSkillsAttributionEvidenceRecord => &["spec"],
+            Self::VaultSkillsAttributionProject => &["spec"],
+            Self::VaultSkillsAttributionJudgments => &["spec"],
+            Self::VaultSkillsAttributionProposals => &["spec"],
+            Self::VaultSkillsAttributionPositiveRetire => &["spec"],
             Self::AiStepsSubmit => &["spec"],
             Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
@@ -8477,6 +8534,13 @@ impl AgentVerb {
             Self::VaultSkillsPackReceipt => &["spec"],
             Self::VaultSkillsOutcomesProject => &["spec"],
             Self::VaultSkillsOutcomesGet => &["spec"],
+            Self::VaultSkillsAttributionSettle => &["spec"],
+            Self::VaultSkillsAttributionRead => &["spec"],
+            Self::VaultSkillsAttributionEvidenceRecord => &["spec"],
+            Self::VaultSkillsAttributionProject => &["spec"],
+            Self::VaultSkillsAttributionJudgments => &["spec"],
+            Self::VaultSkillsAttributionProposals => &["spec"],
+            Self::VaultSkillsAttributionPositiveRetire => &["spec"],
             Self::AiStepsSubmit => &["spec"],
             Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
@@ -10794,6 +10858,27 @@ impl AgentVerb {
             }
             Self::VaultSkillsOutcomesGet => {
                 "Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."
+            }
+            Self::VaultSkillsAttributionSettle => {
+                "The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer."
+            }
+            Self::VaultSkillsAttributionRead => {
+                "The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows."
+            }
+            Self::VaultSkillsAttributionEvidenceRecord => {
+                "The owner records one attempt outcome as attribution evidence, grounded against its stamped pack receipt; recording never classifies it."
+            }
+            Self::VaultSkillsAttributionProject => {
+                "The owner runs one attribution pass over recorded evidence, plus the positive lane, returning the judgments and positive proposals it minted."
+            }
+            Self::VaultSkillsAttributionJudgments => {
+                "The owner reads every persisted attribution judgment in both lanes, the projector cursor and the unclear ledger."
+            }
+            Self::VaultSkillsAttributionProposals => {
+                "The owner reads the pending skill edit proposals, preference proposals and positive skill proposals attribution has minted."
+            }
+            Self::VaultSkillsAttributionPositiveRetire => {
+                "The owner retires one positive skill proposal once the optimizer has drafted from it or declined it."
             }
             Self::AiStepsSubmit => {
                 "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."

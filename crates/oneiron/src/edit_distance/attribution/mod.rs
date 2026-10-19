@@ -79,7 +79,8 @@ pub use self::audit::{
 };
 pub use self::evidence_judge::{
     amendment_evidence, amendment_judgments, judge_amendment, judge_amendment_hunks,
-    judge_amendment_with, pending_preference_proposals, record_amendment_evidence,
+    judge_amendment_verdicts, judge_amendment_with, pending_preference_proposals,
+    record_amendment_evidence,
 };
 pub use self::projector::{
     edit_cost_for, project_amendment_lessons, project_amendment_reliability,
@@ -87,7 +88,7 @@ pub use self::projector::{
 };
 pub use self::taxonomy::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, AmendmentShare,
-    PreferenceProposal, classify_amendment,
+    PreferenceProposal, classify_amendment, validate_share_vector,
 };
 
 pub(in crate::edit_distance) use self::evidence_judge::amendment_evidence_in_txn;

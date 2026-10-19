@@ -709,6 +709,13 @@ selfSkillsCallables(input: unknown): unknown
 vaultSkillsPackReceipt(input: unknown): unknown
 vaultSkillsOutcomesProject(input: unknown): unknown
 vaultSkillsOutcomesGet(input: unknown): unknown
+vaultSkillsAttributionSettle(input: unknown): unknown
+vaultSkillsAttributionRead(input: unknown): unknown
+vaultSkillsAttributionEvidenceRecord(input: unknown): unknown
+vaultSkillsAttributionProject(input: unknown): unknown
+vaultSkillsAttributionJudgments(input: unknown): unknown
+vaultSkillsAttributionProposals(input: unknown): unknown
+vaultSkillsAttributionPositiveRetire(input: unknown): unknown
 aiStepsSubmit(input: unknown): unknown
 aiStepsReceipt(input: unknown): unknown
 aiReply(input: unknown): unknown
