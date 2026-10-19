@@ -13,7 +13,7 @@ use super::inspect::inspect;
 use super::opc;
 use super::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditProposal, EditWarning, MutationMode,
-    OfficeFormat, RecalcStatus, StructureSummary, ValidationCheck, ValidationReport, WarningCode,
+    OfficeFormat, RecalcStatus, ValidationCheck, ValidationReport, WarningCode,
 };
 use crate::blob_artifact::{BLOB_ARTIFACT_RUN_REF_MAX_BYTES, read_blob_artifact_head_in_txn};
 use crate::entity_id::EntityId;
@@ -24,8 +24,9 @@ use oneiron_docedit::edit::transaction::{
     AssetRef, Assets, DeckTransaction, DeckTransactionReport, IdMarks, TransactionError,
     run_transaction,
 };
+use oneiron_docedit::edit::wire::{DeckInspection, inspect_deck};
 use oneiron_docedit::graphic::{AssetRecord, Origin};
-use oneiron_docedit::retained_opc::Limits;
+use oneiron_docedit::retained_opc::{Limits, Package};
 use serde::{Deserialize, Serialize};
 
 /// Managed native-id history per deck artifact, raised at each settle.
@@ -121,9 +122,42 @@ pub enum DeckEditOutcome {
 /// report's one failed check holding the refusal's message.
 #[derive(Debug, Clone)]
 pub struct DeckEditRejection {
-    pub inspection: StructureSummary,
+    pub inspection: DeckRejectionInspection,
     pub report: ValidationReport,
     pub refusal: TransactionError,
+}
+
+/// The base a refused deck transaction ran over, read as a deck (FIX 4486):
+/// its native edit targets as `vault.artifacts.inspect_deck` reads them, and
+/// every part its package holds, or that it could not be read. Never a
+/// workbook's sheets or flags. An unreadable base is reported as such beside
+/// the transaction's own refusal, which it never replaces.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum DeckRejectionInspection {
+    /// The base read as a deck: slides, shapes, fingerprints, duplicate
+    /// identities and marks, and its package's part names in order.
+    Inspected {
+        deck: DeckInspection,
+        parts: Vec<String>,
+    },
+    /// The base did not open as a package, or not as a deck.
+    Unreadable { reason: String },
+}
+
+impl DeckRejectionInspection {
+    /// `base` read as a deck under the transaction's own package `limits`.
+    fn of_base(base: &[u8], limits: Limits) -> Self {
+        let read = Package::open(base, limits)
+            .map_err(|error| format!("the deck package cannot be opened: {error}"))
+            .and_then(|package| {
+                let deck = inspect_deck(&package)
+                    .map_err(|error| format!("the deck cannot be read: {error}"))?;
+                let parts = package.names().map(str::to_owned).collect();
+                Ok(Self::Inspected { deck, parts })
+            });
+        read.unwrap_or_else(|reason| Self::Unreadable { reason })
+    }
 }
 
 /// Run one deck transaction over `input` and return an uncommitted
@@ -148,17 +182,17 @@ pub fn run_deck_transaction(
         .map_err(|_| invalid("deck transaction is invalid"))?;
     transaction.marks.join(history);
     let package = opc::read(input)?;
-    let inspection = inspect(&package, OfficeFormat::Pptx);
     let (bytes, report) = match run_transaction(input, &transaction, limits, assets) {
         Ok(run) => run,
         Err(refusal) => {
             return Ok(DeckEditOutcome::Rejected(Box::new(DeckEditRejection {
-                inspection,
+                inspection: DeckRejectionInspection::of_base(input, limits),
                 report: ValidationReport::single_failure("deck_transaction", refusal.to_string()),
                 refusal,
             })));
         }
     };
+    let inspection = inspect(&package, OfficeFormat::Pptx);
     let warnings = report
         .fit_unverified()
         .map(|fit| {

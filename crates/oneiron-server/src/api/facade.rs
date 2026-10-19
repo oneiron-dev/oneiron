@@ -1192,14 +1192,17 @@ fn facade_invoke_born(
 /// them (OF-533): a post's take question and a report's done and ask-up
 /// questions then go through the host's ladder instead of asking up. A
 /// model rung may block on the server's runtime, so the dispatch runs these
-/// rows on a blocking thread; every other row's surface stays unbound. A
-/// ladder the host cannot build refuses the row.
+/// rows on a blocking thread; every other row's surface stays unbound. The
+/// row's `task_decisions` flag picks both (FIX 2762). A ladder the host
+/// cannot build refuses the row.
 fn facade_task_decisions<'v>(
     server: &'v SyncServer,
     verb: &str,
     memory: oneiron::Memory<'v>,
 ) -> Result<oneiron::Memory<'v>, FacadeApiError> {
-    if !matches!(verb, "tasks.create" | "tasks.update") {
+    if !oneiron::task_verb::sdk::AgentVerb::from_name(verb)
+        .is_some_and(oneiron::task_verb::sdk::AgentVerb::takes_task_decisions)
+    {
         return Ok(memory);
     }
     let decisions = server

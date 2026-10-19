@@ -11,13 +11,16 @@ use crate::code_sandbox::{
 #[cfg(test)]
 use crate::engine_executor::SelfDispatchResponse;
 use crate::engine_executor::{
-    JsCodeModeHost, JsCodeModeOutput, JsCodeModeStepOutcome, JsResultCall, JsResultRef,
-    JsResultTarget, RESULT_REPLY_INLINE_BYTES, StepCancellation,
+    JsCodeModeHost, JsCodeModeOutput, JsCodeModeStepOutcome, JsResultCall, JsResultTarget,
+    RESULT_REPLY_INLINE_BYTES, StepCancellation,
 };
 use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{EntityId, Result};
+use describe::{names_one_target, result_ref, secret_handle};
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+mod describe;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -298,7 +301,7 @@ fn result_call(input: &str) -> Result<Option<JsResultCall>> {
                 receipt: store.receipt,
             })
         }
-        "describe" if secret_handle(&args.input).is_none() => {
+        "describe" if names_one_target(&args.input) && secret_handle(&args.input).is_none() => {
             result_ref(args.input).map(JsResultCall::Describe)
         }
         "can" => {
@@ -332,56 +335,6 @@ fn can_read(input: Value) -> Result<Option<(JsResultTarget, bool)>> {
         .ok_or_else(|| failure("result ref must be a name, handle or card"))
 }
 
-/// The result a `describe` input names, when it names one: a string (a bound
-/// name, or a handle, whose colon no name has, either with a range suffix),
-/// a result's card by its `ref` or `handle`, or `{name}` with none of a task
-/// describe's fields.
-fn result_ref(input: Value) -> Option<JsResultTarget> {
-    const TASK_FIELDS: [&str; 6] = [
-        "task_ref",
-        "self",
-        "session_id",
-        "key",
-        "frame_epoch",
-        "fold",
-    ];
-    match input {
-        Value::String(text) => Some(JsResultTarget::parse(&text)),
-        Value::Object(mut fields) => {
-            for key in ["ref", "handle"] {
-                if let Some(Value::String(reference)) = fields.remove(key) {
-                    return Some(JsResultTarget::parse(&reference));
-                }
-            }
-            if TASK_FIELDS.iter().any(|field| fields.contains_key(*field)) {
-                return None;
-            }
-            match fields.remove("name") {
-                Some(Value::String(name)) => Some(JsResultTarget {
-                    reference: JsResultRef::Name(name),
-                    range: None,
-                }),
-                _ => None,
-            }
-        }
-        _ => None,
-    }
-}
-
-/// The secret handle a `describe` input names, when it names one (OF-560):
-/// `"sc12"`, `{handle: "sc12"}`, `sc12:ab` or the text form `[secret sc12]`.
-/// A secret's handle is read before a result bound under the same name.
-fn secret_handle(input: &Value) -> Option<String> {
-    let text = match input {
-        Value::String(text) => text.as_str(),
-        Value::Object(fields) if fields.len() == 1 => fields.get("handle")?.as_str()?,
-        _ => return None,
-    };
-    crate::secret_custody::parse_secret_handle(text)
-        .is_ok()
-        .then(|| text.to_owned())
-}
-
 /// The `WRONG_ROOT` refusal for a verb-table call that names no row but one
 /// canonical verb under another root. Answered before any typed call, bridge
 /// stamp or receipt exists, so the wrong name has no effect.
@@ -407,12 +360,13 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
             // The bare `ask` and `wait` rows keep the run's coordination calls:
             // an ask binds to the run's own task, and a wait reads the run's
             // replay for the voids it has already seen.
+            // A describe naming more than one target skips the run's own
+            // routing, so its typed row refuses it (FIX 3256).
+            let routed = verb == AgentVerb::Describe && names_one_target(&args.input);
             // A secret's handle is described, and its reveal waited on,
             // through the reveal rows (OF-560): `describe("sc12")` names no
             // result of the run, and `wait({reveal})` no task ask.
-            if verb == AgentVerb::Describe
-                && let Some(handle) = secret_handle(&args.input)
-            {
+            if routed && let Some(handle) = secret_handle(&args.input) {
                 return Ok(SelfCall::AgentVerb(crate::code_run::SelfAgentVerbCall {
                     verb: AgentVerb::RevealDescribe,
                     input: json!({ "handle": handle }),
@@ -426,9 +380,7 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
             }
             // `describe({fold})` peeks at a fold of this run's own log, which
             // only the run holds: no host door ever sees it.
-            if verb == AgentVerb::Describe
-                && let Some(fold) = args.input.get("fold").filter(|fold| !fold.is_null())
-            {
+            if routed && let Some(fold) = args.input.get("fold").filter(|fold| !fold.is_null()) {
                 let fold = fold
                     .as_str()
                     .ok_or_else(|| failure("invalid fold handle"))?;

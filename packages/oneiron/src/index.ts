@@ -1302,7 +1302,7 @@ export class Oneiron {
       directives: (input: Facade.ResidenceDirectivesRequest): Facade.ResidenceDirectiveView[] => this.#call(() => this.#client.vaultResidenceDirectives(input) as Facade.ResidenceDirectiveView[]),
     },
     off_record: {
-      /** The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it. */
+      /** The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous, under their own name for it, and answers the handle later calls name it by. */
       start: (input: Facade.OffRecordStartRequest): Facade.OffRecordSessionView => this.#call(() => this.#client.vaultOffRecordStart(input) as Facade.OffRecordSessionView),
       /** The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows. */
       status: (input: Facade.OffRecordSessionRequest): Facade.OffRecordSessionView => this.#call(() => this.#client.vaultOffRecordStatus(input) as Facade.OffRecordSessionView),
@@ -1323,7 +1323,7 @@ export class Oneiron {
       rooms: {
         /** Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk. */
         status: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsStatus(input) as Facade.OffRecordRoomView),
-        /** A person starts an off-record stretch in a room they belong to, on their own credential. */
+        /** A person, or an agent within its Write Grant, starts an off-record stretch in a room they belong to, on their own credential. */
         start: (input: Facade.OffRecordRoomStartRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsStart(input) as Facade.OffRecordRoomView),
         /** Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant. */
         witness: (input: Facade.OffRecordRoomWitnessRequest): Facade.WitnessReceipt => this.#call(() => this.#client.vaultOffRecordRoomsWitness(input) as Facade.WitnessReceipt),

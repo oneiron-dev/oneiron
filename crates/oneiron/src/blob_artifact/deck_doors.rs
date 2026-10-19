@@ -19,7 +19,7 @@ use oneiron_docedit::retained_opc::Package;
 use serde::{Deserialize, Serialize};
 
 use crate::edit_roundtrip::pptx::inspect_pptx_with_limits;
-use crate::edit_roundtrip::{DeckEditRejection, OfficeFormat};
+use crate::edit_roundtrip::{DeckEditRejection, DeckRejectionInspection, OfficeFormat};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, resolve_entity_ref};
@@ -63,42 +63,15 @@ pub enum DeckCommentInspection {
     Refused { reason: String },
 }
 
-/// A refused deck transaction: the refusal by name, beside the structure
-/// summary and the corruption-gate report the editor wrote for it.
+/// A refused deck transaction: the refusal by name, beside the base read as
+/// a deck (FIX 4486) and the corruption-gate report the editor wrote for it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeckProposeRejection {
-    pub inspection: DeckRejectionSummary,
+    pub inspection: DeckRejectionInspection,
     pub report: DeckRejectionReport,
     /// Why it refused: a `step` refusal names the step's index and verb and
     /// its canon refusal (`target_changed`, `ambiguous_anchor`, ...).
     pub refusal: DeckTransactionRefusal,
-}
-
-/// The inspect-first structure summary of the base, as the editor read it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DeckRejectionSummary {
-    #[schemars(with = "String")]
-    pub format: OfficeFormat,
-    pub sheets: Vec<DeckRejectionSheet>,
-    pub defined_names: Vec<String>,
-    pub has_pivots: bool,
-    pub has_charts: bool,
-    pub has_macros: bool,
-    pub cross_sheet_dependencies: Vec<DeckRejectionSheetDependency>,
-    /// Parts classified unknown or unsupported: the passthrough set.
-    pub unknown_parts: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DeckRejectionSheet {
-    pub name: String,
-    pub index: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DeckRejectionSheetDependency {
-    pub from_sheet: String,
-    pub to_sheet: String,
 }
 
 /// The corruption-gate report: `ok` is the conjunction of its checks.
@@ -123,30 +96,7 @@ impl From<DeckEditRejection> for DeckProposeRejection {
             refusal,
         } = rejection;
         Self {
-            inspection: DeckRejectionSummary {
-                format: inspection.format,
-                sheets: inspection
-                    .sheets
-                    .into_iter()
-                    .map(|sheet| DeckRejectionSheet {
-                        name: sheet.name,
-                        index: sheet.index,
-                    })
-                    .collect(),
-                defined_names: inspection.defined_names,
-                has_pivots: inspection.has_pivots,
-                has_charts: inspection.has_charts,
-                has_macros: inspection.has_macros,
-                cross_sheet_dependencies: inspection
-                    .cross_sheet_dependencies
-                    .into_iter()
-                    .map(|dep| DeckRejectionSheetDependency {
-                        from_sheet: dep.from_sheet,
-                        to_sheet: dep.to_sheet,
-                    })
-                    .collect(),
-                unknown_parts: inspection.unknown_parts,
-            },
+            inspection,
             report: DeckRejectionReport {
                 ok: report.ok,
                 checks: report

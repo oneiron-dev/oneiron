@@ -860,6 +860,7 @@
       "mcp_result": "mcp_describe_result(output)?",
       "admission": {
         "unrestricted_record_scope": true,
+        "validate": "input.validate()?;",
         "readable": [
           "task_ref",
           "rows"
@@ -902,6 +903,7 @@
       "output": "crate::task_verb::TaskCreateReceipt",
       "call": "memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)?",
       "scope": "Write",
+      "task_decisions": true,
       "proposes": true,
       "mcp_fields": {
         "spec": "spec",
@@ -1253,6 +1255,7 @@
       "mcp_served": "oneiron::EntityId::from_hex(&input.task_ref).ok()",
       "call": "memory.tasks_update_request(&input)?",
       "scope": "Write",
+      "task_decisions": true,
       "mcp_scope": "addressed",
       "mcp_fields": {
         "spec": "$",
@@ -5585,7 +5588,7 @@
     },
     {
       "name": "vault.off_record.start",
-      "description": "The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it.",
+      "description": "The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous, under their own name for it, and answers the handle later calls name it by.",
       "input": "crate::task_verb::sdk::OffRecordStartRequest",
       "output": "crate::task_verb::sdk::OffRecordSessionView",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.start\", &input)?",
@@ -5728,7 +5731,7 @@
     },
     {
       "name": "vault.off_record.rooms.start",
-      "description": "A person starts an off-record stretch in a room they belong to, on their own credential.",
+      "description": "A person, or an agent within its Write Grant, starts an off-record stretch in a room they belong to, on their own credential.",
       "input": "crate::task_verb::sdk::OffRecordRoomStartRequest",
       "output": "crate::task_verb::sdk::OffRecordRoomView",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.start\", &input)?",

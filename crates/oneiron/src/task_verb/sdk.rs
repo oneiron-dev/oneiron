@@ -242,108 +242,6 @@ pub struct ProjectCardDismissal {
     pub card_id: String,
     pub dismissed: bool,
 }
-/// `describe`'s one input: the task to describe, a board card's key, the
-/// vault for its shape card, or none for the whole TASKS section.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DescribeRequest {
-    #[serde(default)]
-    pub task_ref: Option<String>,
-    #[serde(default, rename = "self")]
-    pub self_target: bool,
-    /// `describe(vault)`: the vault's shape card (ARCH-0070), what its
-    /// arrangement amounts to and what its actors can send. Names nothing
-    /// else.
-    #[serde(default)]
-    pub vault: bool,
-    #[serde(default)]
-    pub session_id: Option<String>,
-    /// A board card's key: describe expands that card, under the board's
-    /// scope and frame-epoch checks.
-    #[serde(default)]
-    pub key: Option<String>,
-    /// The board frame the card key was read from; a stale one is refused.
-    #[serde(default)]
-    pub frame_epoch: Option<u64>,
-    /// A fold of the run's own log (`f1`): its span, its stub and the ids it
-    /// holds. Only the run that folded it answers this.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fold: Option<String>,
-    /// A task highway handle (OF-220): describe answers its status, the
-    /// highway's own `TaskCallReceipt`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub handle: Option<super::TaskHandle>,
-    /// The digest of the last status observed for `handle`: describe then
-    /// polls, and an unchanged answer is `unchanged`.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "super::brief::hex32::option"
-    )]
-    #[schemars(with = "Option<String>")]
-    pub after: Option<[u8; 32]>,
-}
-
-/// `describe({handle, after})` (OF-220): the status of one highway handle,
-/// or a poll when `after` names the last observation, as the highway answers
-/// it. A handle names the described thing whole, so a task ref beside it, or
-/// an `after` with no handle, is refused.
-pub fn describe_handle_status(
-    memory: &Memory<'_>,
-    input: &DescribeRequest,
-) -> MemoryResult<super::TaskDescription> {
-    let Some(handle) = input.handle else {
-        return Err(MemoryError::bad_request(
-            "describe(after) polls a handle: name the handle it observed",
-        ));
-    };
-    if input.task_ref.is_some() {
-        return Err(MemoryError::bad_request(
-            "describe names a task_ref or a handle, not both",
-        ));
-    }
-    let receipt = memory.tasks_status(super::TaskStatusQuery {
-        handle,
-        after: input.after,
-    })?;
-    Ok(super::TaskDescription::Status { receipt })
-}
-
-/// Whether `describe` over the raw request `input` reaches
-/// [`describe_handle_status`] (Rule 5, FIX 2166): the highway's status is a
-/// task-work producer, so the served doors await a task-work turn for this
-/// branch and bind it, and the engine never waits for one on the server's
-/// runtime. `self`, `vault`, a card key and a fold each answer first, as in
-/// the row's call. A request that does not decode takes no turn; the
-/// dispatch refuses it.
-#[must_use]
-pub fn describe_takes_task_work_turn(input: &serde_json::Value) -> bool {
-    DescribeRequest::deserialize(input).is_ok_and(|request| {
-        !request.self_target
-            && !request.vault
-            && request.key.is_none()
-            && request.fold.is_none()
-            && (request.handle.is_some() || request.after.is_some())
-    })
-}
-
-/// The rows one describe names by id: its task, else its handle's truth
-/// row (the tray row, the TASK or the ask group). A continuation of its
-/// answer is released only while they may leave.
-#[must_use]
-pub fn describe_named_rows(input: &DescribeRequest) -> Vec<crate::EntityId> {
-    let task = input
-        .task_ref
-        .as_deref()
-        .and_then(|id| crate::EntityId::from_hex(id).ok());
-    let handle = input.handle.map(|handle| match handle {
-        super::TaskHandle::Proposed { proposal_ref } => proposal_ref,
-        super::TaskHandle::Task { task_ref }
-        | super::TaskHandle::Attempt(super::AttemptHandle { task_ref, .. }) => task_ref,
-        super::TaskHandle::Ask { group_ref } => group_ref,
-    });
-    task.into_iter().chain(handle).collect()
-}
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskCreateRequest {
@@ -581,6 +479,7 @@ pub use super::sdk_connector_pack::*;
 pub use super::sdk_coreference::*;
 pub use super::sdk_courtesy_delete::*;
 pub use super::sdk_credential::*;
+pub use super::sdk_describe::*;
 pub use super::sdk_diary::*;
 pub use super::sdk_disclosure::*;
 pub use super::sdk_embedding_space::*;

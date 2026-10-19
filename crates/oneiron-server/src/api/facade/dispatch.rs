@@ -1193,6 +1193,7 @@ async fn describe(
     facade_outside_room_turn(call, "describe")?;
     let hooks = facade_hooks_pre(server, call, "describe", value).await?;
     let value = hooks.args.clone();
+    oneiron::task_verb::sdk::validate_input("describe", &value)?;
     if value.get("self").and_then(serde_json::Value::as_bool) == Some(true) {
         let (output, rows) =
             crate::api::context_board::describe_self_for_auth(server, auth, &value).await?;

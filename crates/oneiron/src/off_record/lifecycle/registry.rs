@@ -18,6 +18,13 @@ use super::types::{
 };
 use crate::error::OffRecordError;
 
+/// The registry key prefix of a stretch a creator entered alone: the key is
+/// that instance's opaque handle, minted at entry (FIX 4597). Every creator
+/// names their stretches in a space of their own, so no name says whether
+/// someone else holds it; a handle binds only for its creator, or for the
+/// owner on their proof, and is never authority of its own.
+pub(super) const CREATED_KEY_PREFIX: &str = "created:";
+
 /// Vault-scoped, in-process source of truth for live off-record sessions.
 /// No registry row is ever serialized into the base vault.
 pub(crate) struct OffRecordSessionRegistry {
@@ -46,6 +53,9 @@ pub(super) struct OffRecordSessionEntry {
     /// the record a caller reads, so a name taken again after close starts
     /// with its own creator or none.
     pub(super) creator: Option<OffRecordCreator>,
+    /// The name its creator gave this instance, in their own space of names
+    /// (FIX 4597): RAM only, as `creator` is; `None` beside no creator.
+    pub(super) created_name: Option<String>,
     pub(super) state: Mutex<OffRecordSessionEntryState>,
     published_record: ArcSwapOption<OffRecordSessionRecord>,
 }
@@ -151,6 +161,9 @@ impl OffRecordSessionRegistry {
 
     /// `start` is [`SessionStart::InRoom`] for a stretch a participant
     /// started in a room, and [`SessionStart::Alone`] for one entered alone.
+    /// A [`SessionStart::Created`] stretch is keyed by a handle minted here,
+    /// and `session_ref` is its creator's own name for it, taken only beside
+    /// another live stretch of theirs (FIX 4597).
     pub(super) fn enter(
         &self,
         session_ref: &str,
@@ -165,11 +178,22 @@ impl OffRecordSessionRegistry {
             SessionStart::Alone(actor) => (None, actor, None),
             SessionStart::Created(creator) => (None, Some(creator.actor), Some(creator)),
         };
+        let created_name = creator.map(|_| session_ref.to_owned());
+        let key = match creator {
+            Some(_) => format!("{CREATED_KEY_PREFIX}{}", clock.entity_id()?.to_hex()),
+            None => session_ref.to_owned(),
+        };
+        let session_ref = key.as_str();
         let mut sessions = self.sessions()?;
-        if sessions.contains_key(session_ref) {
+        let taken = sessions.contains_key(session_ref)
+            || (creator.is_some()
+                && sessions.values().any(|entry| {
+                    entry.creator == creator && entry.created_name == created_name
+                }));
+        if taken {
             return Err(Error::OffRecord(
                 OffRecordError::OffRecordSessionAlreadyExists {
-                    session_ref: session_ref.to_owned(),
+                    session_ref: created_name.unwrap_or(key),
                 },
             ));
         }
@@ -196,6 +220,7 @@ impl OffRecordSessionRegistry {
         let entry = Arc::new(OffRecordSessionEntry {
             overlay,
             creator,
+            created_name,
             state: Mutex::new(OffRecordSessionEntryState {
                 record: record.clone(),
                 receipt_log: (mode != OffRecordMode::Anonymous)
@@ -222,6 +247,26 @@ impl OffRecordSessionRegistry {
 
     pub(super) fn entry(&self, session_ref: &str) -> Result<Option<Arc<OffRecordSessionEntry>>> {
         Ok(self.sessions()?.get(session_ref).cloned())
+    }
+
+    /// The key a call from `actor` names by `session_ref` among the
+    /// stretches entered alone by a creator (FIX 4597): an instance handle
+    /// as it stands, or the name `actor` gave one of its own live stretches.
+    /// `None` when it names neither; whether the key binds for the caller is
+    /// the binding door's to ask.
+    pub(super) fn created_key(&self, session_ref: &str, actor: EntityId) -> Option<String> {
+        if session_ref.starts_with(CREATED_KEY_PREFIX) {
+            return Some(session_ref.to_owned());
+        }
+        self.published
+            .load()
+            .iter()
+            .find(|(_, entry)| {
+                entry.creator.is_some_and(|creator| creator.actor == actor)
+                    && entry.created_name.as_deref() == Some(session_ref)
+                    && entry.published_record.load().is_some()
+            })
+            .map(|(key, _)| key.clone())
     }
 
     pub(crate) fn record(&self, session_ref: &str) -> Option<OffRecordSessionRecord> {

@@ -7228,6 +7228,9 @@ impl AgentVerb {
     pub const fn is_task_work(self) -> bool {
         matches!(self, Self::Can | Self::Ask | Self::Wait | Self::TasksAnswer)
     }
+    pub const fn takes_task_decisions(self) -> bool {
+        matches!(self, Self::TasksCreate | Self::TasksUpdate)
+    }
     pub const fn argument_fields(self) -> &'static [&'static str] {
         match self {
             Self::VaultCommitmentsCreate => &["spec"],
@@ -10445,7 +10448,7 @@ impl AgentVerb {
                 "The owner reads the residence directives this replica holds and each machine's result as received here; a null result means not received here, not that the machine is idle."
             }
             Self::VaultOffRecordStart => {
-                "The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it."
+                "The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous, under their own name for it, and answers the handle later calls name it by."
             }
             Self::VaultOffRecordStatus => {
                 "The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows."
@@ -10472,7 +10475,7 @@ impl AgentVerb {
                 "Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk."
             }
             Self::VaultOffRecordRoomsStart => {
-                "A person starts an off-record stretch in a room they belong to, on their own credential."
+                "A person, or an agent within its Write Grant, starts an off-record stretch in a room they belong to, on their own credential."
             }
             Self::VaultOffRecordRoomsWitness => {
                 "Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant."

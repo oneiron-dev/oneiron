@@ -16381,7 +16381,8 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: SteerRequest = decode(value.clone())?;
         }
         "describe" => {
-            let _input: DescribeRequest = decode(value.clone())?;
+            let input: DescribeRequest = decode(value.clone())?;
+            input.validate()?;
         }
         "tasks.create" => {
             let _input: TaskCreateRequest = decode(value.clone())?;
@@ -22432,6 +22433,7 @@ pub fn describe(
     memory: &Memory<'_>,
     input: DescribeRequest,
 ) -> MemoryResult<crate::task_verb::TaskDescription> {
+    input.validate()?;
     Ok(if input.self_target {
         Err(MemoryError::bad_request(
             "describe(self) requires a bound run session",
