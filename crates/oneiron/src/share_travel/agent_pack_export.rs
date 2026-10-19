@@ -56,6 +56,15 @@ pub struct AgentPackExportFile {
     pub content_base64: String,
 }
 
+/// Whether the owner's own agent-pack share is judged by his recipient
+/// choice for where it goes, as every other sharer's is (mesh PR2b, CALLS
+/// `mesh PR2b export recipient`). HELD for the owner's ruling (Engine 10-19
+/// 09:2x, Ask-first): while `false` his share withholds nothing wherever it
+/// goes, his private worlds included, exactly as before. `true` withholds
+/// what his OneMachine/MyMachines choice keeps from the destination, an
+/// unproved one or a proved machine it does not admit.
+const OWNER_PACK_EXPORT_RESPECTS_RECIPIENT: bool = false;
+
 impl Memory<'_> {
     /// `vault.agents.export_pack`: the agent's travelling AgentPack, read
     /// through the caller's admission, with a share receipt listing the
@@ -75,17 +84,20 @@ impl Memory<'_> {
         let Some((ENTITY_TYPE_AGENT_DEF, _, body)) = admitted(&lane, &txn, &agent)? else {
             return Err(Error::EntityNotFound.into());
         };
-        // The owner's share reads as the owner's own read; any other sharer's
-        // reads nothing of a world kept off an unknown machine.
-        let kept = if owner {
-            std::collections::BTreeSet::new()
+        // The pack carries nothing of a world the owner's recipient choice
+        // keeps from where it goes (mesh PR2b): this surface's destination,
+        // judged for the machine its connection proved. A delegate's pack
+        // travels on from this device too, so it goes to a recipient nobody
+        // proved. The owner's own share reads as his own read until his
+        // ruling ([`OWNER_PACK_EXPORT_RESPECTS_RECIPIENT`]).
+        let recipient = if owner && !OWNER_PACK_EXPORT_RESPECTS_RECIPIENT {
+            crate::settings::ReadDestination::on_device()
+        } else if owner || self.destination().is_off_device() {
+            self.destination().clone()
         } else {
-            crate::settings::device_local_worlds_at(
-                vault,
-                &txn,
-                crate::claim::CallerLocality::OffDevice,
-            )?
+            crate::claim::CallerLocality::OffDevice.into()
         };
+        let kept = crate::settings::device_local_worlds_for(vault, &txn, &recipient)?;
         let text = super::born_with_text_in_txn(vault, &txn, &lane, &agent, None, &choice, &kept)?;
         let def = decode_agent_definition(&body)?;
         let mut skills = Vec::new();

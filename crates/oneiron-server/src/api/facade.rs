@@ -133,6 +133,7 @@ mod shared_policy_doors;
 mod sieve_doors;
 mod sieve_observation_doors;
 mod skill_doors;
+mod skill_attribution_doors;
 mod skill_execution_doors;
 mod slim_doors;
 mod standing_doors;

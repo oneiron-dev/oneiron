@@ -2043,6 +2043,96 @@
       "openapi": true
     },
     {
+      "name": "vault.retrieval.policy.get",
+      "description": "The owner reads the served retrieval policy: active blend weights with their origins, owner pins, the learned posterior and model routing pins.",
+      "input": "EmptyRequest",
+      "output": "crate::task_verb::sdk::RetrievalPolicyView",
+      "call": "crate::task_verb::sdk::retrieval_policy_get_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.get\")?, _input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.policy.pin",
+      "description": "The owner pins one retrieval blend weight at a declared share, or clears its pin; learned updates may move only the unpinned remainder.",
+      "input": "crate::task_verb::sdk::RetrievalPolicyPinRequest",
+      "output": "crate::task_verb::sdk::RetrievalPolicyView",
+      "call": "crate::task_verb::sdk::retrieval_policy_pin_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.pin\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.policy.train",
+      "description": "The owner trains a retrieval-policy candidate from gate-attributed outcomes, judged on held-out runs, without serving it.",
+      "input": "crate::task_verb::sdk::RetrievalPolicyTrainRequest",
+      "output": "crate::store::RetrievalPolicyCandidate",
+      "call": "crate::task_verb::sdk::retrieval_policy_train_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.train\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.policy.evaluate",
+      "description": "The owner judges candidate blend weights against the active weights on the same held-out runs the tuner never trains on.",
+      "input": "crate::task_verb::sdk::RetrievalPolicyEvaluateRequest",
+      "output": "crate::store::RetrievalPolicyEvaluation",
+      "call": "crate::task_verb::sdk::retrieval_policy_evaluate_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.evaluate\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.policy.admit",
+      "description": "The owner admits candidate blend weights judged on the named evidence manifest; owner pins and held-out regressions refuse admission.",
+      "input": "crate::task_verb::sdk::RetrievalPolicyAdmitRequest",
+      "output": "crate::task_verb::sdk::RetrievalPolicyAdmitReceipt",
+      "call": "crate::task_verb::sdk::retrieval_policy_admit_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.admit\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.policy.update",
+      "description": "The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior.",
+      "input": "crate::task_verb::sdk::RetrievalPolicyTrainRequest",
+      "output": "crate::task_verb::sdk::RetrievalPolicyUpdateReceipt",
+      "call": "crate::task_verb::sdk::retrieval_policy_update_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.update\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.export",
       "description": "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only.",
       "input": "crate::memory::ExportOptions",
@@ -10739,6 +10829,104 @@
         "unrestricted_record_scope": true
       },
       "section": false
+    },
+    {
+      "name": "vault.skills.attribution.settle",
+      "description": "The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer.",
+      "input": "ProposalDeltaSettleRequest",
+      "output": "crate::task_verb::sdk::ProposalDeltaSettlement",
+      "call": "crate::task_verb::sdk::skill_attribution_settle_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.settle\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.read",
+      "description": "The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows.",
+      "input": "ProposalDeltaReadRequest",
+      "output": "crate::task_verb::sdk::ProposalDeltaRead",
+      "call": "crate::task_verb::sdk::skill_attribution_read_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.read\")?, &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.evidence.record",
+      "description": "The owner records one attempt outcome as attribution evidence, grounded against its stamped pack receipt; recording never classifies it.",
+      "input": "AttributionEvidenceRequest",
+      "output": "crate::task_verb::sdk::AttributionEvidenceReceipt",
+      "call": "crate::task_verb::sdk::skill_attribution_evidence_record_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.evidence.record\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.project",
+      "description": "The owner runs one attribution pass over recorded evidence, plus the positive lane, returning the judgments and positive proposals it minted.",
+      "input": "AttributionProjectRequest",
+      "output": "crate::task_verb::sdk::AttributionProjection",
+      "call": "crate::task_verb::sdk::skill_attribution_project_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.project\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.judgments",
+      "description": "The owner reads every persisted attribution judgment in both lanes, the projector cursor and the unclear ledger.",
+      "input": "AttributionListRequest",
+      "output": "crate::task_verb::sdk::AttributionJudgmentsView",
+      "call": "crate::task_verb::sdk::skill_attribution_judgments_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.judgments\")?, &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.proposals",
+      "description": "The owner reads the pending skill edit proposals, preference proposals and positive skill proposals attribution has minted.",
+      "input": "AttributionListRequest",
+      "output": "crate::task_verb::sdk::AttributionProposalsView",
+      "call": "crate::task_verb::sdk::skill_attribution_proposals_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.proposals\")?, &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.positive.retire",
+      "description": "The owner retires one positive skill proposal once the optimizer has drafted from it or declined it.",
+      "input": "PositiveRetireRequest",
+      "output": "crate::task_verb::sdk::PositiveRetireReceipt",
+      "call": "crate::task_verb::sdk::skill_attribution_positive_retire_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.positive.retire\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "ai.steps.submit",

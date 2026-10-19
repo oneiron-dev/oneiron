@@ -209,6 +209,7 @@ impl McpCallContext {
             off_record_session: None,
             room_turn: None,
             drain: Some(drain),
+            forwarded: None,
         };
         mcp_rewrite_admit(server, &call.verb, &context)(&call.verb, &call.args)
             .map_err(|_| VerbAskRefusal::ScopeRefused)?;

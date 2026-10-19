@@ -153,6 +153,12 @@ vaultRetrievalOutcomesEnd(input: unknown): unknown
 vaultRetrievalTrace(input: unknown): unknown
 vaultRetrievalExport(input: unknown): unknown
 vaultRetrievalReplay(input: unknown): unknown
+vaultRetrievalPolicyGet(input: unknown): unknown
+vaultRetrievalPolicyPin(input: unknown): unknown
+vaultRetrievalPolicyTrain(input: unknown): unknown
+vaultRetrievalPolicyEvaluate(input: unknown): unknown
+vaultRetrievalPolicyAdmit(input: unknown): unknown
+vaultRetrievalPolicyUpdate(input: unknown): unknown
 vaultExport(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
 vaultScopePosition(input: unknown): unknown
@@ -710,6 +716,13 @@ selfSkillsCallables(input: unknown): unknown
 vaultSkillsPackReceipt(input: unknown): unknown
 vaultSkillsOutcomesProject(input: unknown): unknown
 vaultSkillsOutcomesGet(input: unknown): unknown
+vaultSkillsAttributionSettle(input: unknown): unknown
+vaultSkillsAttributionRead(input: unknown): unknown
+vaultSkillsAttributionEvidenceRecord(input: unknown): unknown
+vaultSkillsAttributionProject(input: unknown): unknown
+vaultSkillsAttributionJudgments(input: unknown): unknown
+vaultSkillsAttributionProposals(input: unknown): unknown
+vaultSkillsAttributionPositiveRetire(input: unknown): unknown
 aiStepsSubmit(input: unknown): unknown
 aiStepsReceipt(input: unknown): unknown
 aiReply(input: unknown): unknown

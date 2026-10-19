@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1016 code-mode rows (992 host rows, 24 run rows), 3389 declarations.
-// Replies: 911 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1029 code-mode rows (1005 host rows, 24 run rows), 3444 declarations.
+// Replies: 924 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -453,7 +453,10 @@ declare namespace Sdk {
   type RerankReport = { status: "applied"; model: string; served_model?: string | null; candidates: number; calls: number } | { status: "skipped"; reason: RerankSkip };
   type RetrievalMeta = { quality?: RetrievalQuality; degradation?: RetrievalDegradation[]; confidence_adjustment?: ConfidenceAdjustment; sparse?: boolean | null; total_candidates: number; claims_returned: number; deep_pending?: boolean | null; partial?: boolean; temporal_hints?: TemporalHintReport[]; rerank?: RerankReport | null; limit_clamped?: boolean };
   type RetrievalRunId = { bytes: number[] };
-  type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt; retrieval_run_id?: RetrievalRunId | null };
+  type RecallResidenceSource = "home" | "local_only";
+  type RecallResidenceHit = { id: string; score: number; window: string };
+  type RecallResidence = { source: RecallResidenceSource; complete: boolean; capped: boolean; hits: RecallResidenceHit[] };
+  type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt; retrieval_run_id?: RetrievalRunId | null; residence?: RecallResidence | null };
   type AccessFactorPolicy = { half_life_secs: number; floor: number };
   type ClaimAgingProfiles = { durable: AccessFactorPolicy; standard: AccessFactorPolicy; ephemeral: AccessFactorPolicy };
   type ClaimAgingProfilesView = { manifest_ref: string; body_hash: string; profiles: ClaimAgingProfiles };
@@ -573,6 +576,28 @@ declare namespace Sdk {
   type RetrievalDiagnosticExport = { contract_version: string; runs: RetrievalRunEvidence[] };
   type RetrievalReplayRun = { source_run_id: RetrievalRunId; turn?: RetrievalTurn | null; state: RetrievalState; result_ids: number[][]; pack: RetrievalScoreBreakdown[]; trace?: RetrievalTrace | null };
   type RetrievalDiagnosticReplay = { contract_version: string; runs: RetrievalReplayRun[] };
+  type RetrievalBlendWeights = { recency: number; salience: number; confidence: number; gravity: number };
+  type RetrievalBlendWeightDataWindow = { run_count: number; outcome_count: number; candidate_count: number; started_at_min?: number | null; started_at_max?: number | null; outcome_updated_at_min?: number | null; outcome_updated_at_max?: number | null };
+  type RetrievalBlendWeightTableEntry = { version: number; weights: RetrievalBlendWeights; tuned_at: number; provenance: Record<string, string>; data_window: RetrievalBlendWeightDataWindow };
+  type RetrievalBlendSignal = "recency" | "salience" | "confidence" | "gravity";
+  type RetrievalWeightOrigin = "bootstrap" | "learned" | "owner_pin";
+  type RetrievalWeightRow = { signal: RetrievalBlendSignal; weight: number; origin: RetrievalWeightOrigin; pinned: boolean };
+  type RetrievalPolicyPin = { signal: RetrievalBlendSignal; value: number };
+  type ModelSlot = "llm" | "embedder" | "oneironer";
+  type ModelLocality = "on_device" | "own_server" | "third_party";
+  type RetrievalRoutingPin = { slot: ModelSlot; locality: ModelLocality };
+  type RetrievalPolicyView = { policy_version: number; active: RetrievalBlendWeightTableEntry; rows: RetrievalWeightRow[]; pins: RetrievalPolicyPin[]; posterior_tuned_at: number; posterior_labeled_runs: number; posterior_observations: number; routing_manifest_digest?: string | null; routing: RetrievalRoutingPin[] };
+  type RetrievalPolicyPinRequest = { signal: RetrievalBlendSignal; value?: number | null };
+  type RetrievalPolicyTrainRequest = { max_runs?: number | null; learning_rate?: number | null; min_reward_count?: number | null };
+  type RetrievalPolicyVerdict = "not_worse" | "regression" | "insufficient";
+  type RetrievalPolicyHeldOut = { candidate_score: number; active_score: number; reward_count: number; verdict: RetrievalPolicyVerdict };
+  type RetrievalPolicyCandidate = { weights: RetrievalBlendWeights; rows: RetrievalWeightRow[]; data_window: RetrievalBlendWeightDataWindow; manifest_digest: string; held_out: RetrievalPolicyHeldOut; training_reward_count: number; ungated_outcomes_skipped: number; algorithm: string };
+  type RetrievalPolicyEvaluateRequest = { weights: RetrievalBlendWeights; config?: RetrievalPolicyTrainRequest };
+  type RetrievalPolicyEvaluation = { candidate_weights: RetrievalBlendWeights; active_weights: RetrievalBlendWeights; rows: RetrievalWeightRow[]; manifest_digest: string; held_out: RetrievalPolicyHeldOut; pins_respected: boolean; ungated_outcomes_skipped: number };
+  type RetrievalPolicyAdmitRequest = { weights: RetrievalBlendWeights; manifest_digest: string; config?: RetrievalPolicyTrainRequest };
+  type RetrievalPolicyAdmitReceipt = { evaluation: RetrievalPolicyEvaluation; view: RetrievalPolicyView };
+  type RetrievalPolicyDisposition = "applied" | "offered";
+  type RetrievalPolicyUpdateReceipt = { disposition: RetrievalPolicyDisposition; reason?: string | null; candidate: RetrievalPolicyCandidate; view: RetrievalPolicyView };
   type ExportOptions = { format?: string | null; include_secrets?: boolean | null };
   type MemoryExport = { format: string; archive: string; digest: string };
   type ScopeAxis<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] };
@@ -1681,7 +1706,6 @@ declare namespace Sdk {
   type PolicyManifestPut = { manifest_ref?: string | null; expected_body_hash?: string | null; manifest: PolicyManifest };
   type PolicyManifestReceipt = { manifest: PolicyManifestView; approval: PolicyCeiling; receipt_ref: string; read_frontier_hash: string };
   type PolicyManifestPropose = { manifest: PolicyManifest };
-  type ModelSlot = "llm" | "embedder" | "oneironer";
   type ConfidenceBand = "low" | "medium" | "high" | "certain";
   type VerdictMode = "shadow" | "enforce";
   type VerdictBinding = { model: ModelId; slot: ModelSlot; floor: ConfidenceBand; mode: VerdictMode };
@@ -2449,13 +2473,45 @@ declare namespace Sdk {
   type SkillPackOutcomeRequest = { attempt_receipt: string; outcome_receipt: string; succeeded: boolean; axis: string; at: number; goal_revision?: string | null };
   type SkillPackOutcomeProjection = { receipt: LateCreditReceipt; persisted: boolean };
   type SkillPackCreditRequest = { receipt_id: string };
+  type ProposalReplacement = { before: string; after: string };
+  type ProposalAmendmentCause = "proposal_wrong" | "external_change" | "decider_preference";
+  type AttributionLabel = "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear";
+  type ProposalHunkVerdict = { verdict: AttributionLabel; confidence?: number; note?: string | null };
+  type ProposalShareClaim = { class: AttributionLabel; share: number };
+  type ProposalDeltaSettleRequest = { proposed_text: string; replacements: ProposalReplacement[]; actor: EntityId; skill?: EntityId | null; attempt_receipt?: string | null; source_turn_ref?: EntityId | null; scope: string; cause?: ProposalAmendmentCause | null; followed_skill?: boolean | null; skill_covered_step?: boolean | null; at: number; hunk_verdicts?: ProposalHunkVerdict[] | null; shares?: ProposalShareClaim[] | null };
+  type OpsSummaryView = { ins: number; del: number; kept: number; moved: number; approx: boolean };
+  type AmendmentDeltaView = { proposed_ref: string; final_ref: string; source: string; d_norm: number; ops_summary: OpsSummaryView; engine_ver: string };
+  type SettledHunkView = { before: string; after: string; edit_mass: number; actor?: EntityId | null; trust?: string | null };
+  type AmendmentShareView = { class: AttributionLabel; share: number; subject?: EntityId | null };
+  type AmendmentJudgmentView = { receipt_id: string; split: AmendmentShareView[]; scope: string; evidence_receipts: string[]; d_norm: number; at: number };
+  type ProposalDeltaSettlement = { receipt_id: string; artifact_ref: EntityId; proposed_text: string; final_text: string; delta: AmendmentDeltaView; hunks: SettledHunkView[]; judgment?: AmendmentJudgmentView | null; edit_cost_claims: EntityId[]; reliability_heads: EntityId[]; lessons: EntityId[] };
+  type ProposalDeltaReadRequest = { receipt_id: string; artifact_ref?: EntityId | null };
+  type ProposalOpSpanView = { actor?: EntityId | null; trust: string; before_text: string; after_text: string; lamport: number; timestamp: number };
+  type ProposalArtifactView = { artifact_ref: EntityId; proposed_text: string; final_text: string; source_turn_ref?: EntityId | null; spans: ProposalOpSpanView[] };
+  type AmendmentEvidenceView = { receipt_id: string; actor: EntityId; skill?: EntityId | null; attempt_receipt?: string | null; scope: string; cause?: ProposalAmendmentCause | null; followed_skill?: boolean | null; skill_covered_step?: boolean | null; at: number };
+  type PreferenceProposalView = { receipt_id: string; scope: string; evidence_receipts: string[]; share: number; at: number };
+  type UnclearNoteView = { reason: string; leaning?: AttributionLabel | null; confidence: number; share: number; note?: string | null };
+  type UnclearAttributionView = { lane: string; reference: string; evidence_receipts: string[]; notes: UnclearNoteView[]; at: number };
+  type ProposalDeltaRead = { receipt_id: string; delta?: AmendmentDeltaView | null; artifact?: ProposalArtifactView | null; evidence?: AmendmentEvidenceView | null; judgment?: AmendmentJudgmentView | null; preference_proposals: PreferenceProposalView[]; unclear: UnclearAttributionView[] };
+  type FollowedStateInput = { kind: "followed" } | { kind: "partly" } | { kind: "ignored" } | { kind: "deviated_with_reason"; reason: string; cause?: string | null };
+  type AttributionEvidenceRequest = { receipt_ref: string; actor: EntityId; skill?: EntityId | null; outcome: string; followed_skill?: boolean | null; followed_state?: FollowedStateInput | null; skill_covered_step?: boolean | null; at: number };
+  type AttributionEvidenceReceipt = { sequence: number };
+  type AttributionProjectRequest = { since_cursor?: number | null };
+  type AttemptJudgmentView = { sequence: number; verdict: AttributionLabel; subject: EntityId; evidence_receipts: string[]; at: number };
+  type PositiveProposalView = { evidence_sequence: number; skill: EntityId; actor: EntityId; finding: string; reason?: string | null; evidence_receipts: string[]; at: number };
+  type SkillEditProposalView = { judgment_sequence: number; skill: EntityId; evidence_receipts: string[]; at: number };
+  type AttributionProjection = { cursor: number; judgments: AttemptJudgmentView[]; positive_proposals: PositiveProposalView[]; pending_edit_proposals: SkillEditProposalView[] };
+  type AttributionListRequest = Record<string, never>;
+  type AttributionJudgmentsView = { cursor: number; attempt_judgments: AttemptJudgmentView[]; amendment_judgments: AmendmentJudgmentView[]; unclear: UnclearAttributionView[] };
+  type AttributionProposalsView = { edit_proposals: SkillEditProposalView[]; preference_proposals: PreferenceProposalView[]; positive_proposals: PositiveProposalView[] };
+  type PositiveRetireRequest = { evidence_sequence: number };
+  type PositiveRetireReceipt = { retired: boolean };
   type CallPurpose = "extraction" | "consolidation" | "answer_gen" | "auto_check" | "tool_routing" | "voice" | "eval" | { other: { name: string } };
   type DeterministicFallback = { name: string; config?: unknown | null };
   type CallClass = { kind: "durable"; fallback: DeterministicFallback } | { kind: "best_effort" };
   type ModelTierRef = string;
   type TierPrecedence = { per_seat?: ModelTierRef | null; vault_policy?: ModelTierRef | null; purpose_default?: ModelTierRef | null; global_default: ModelTierRef; seat?: ModelTierRef | null };
   type ResponseFormat = { format: "text" } | { format: "json"; schema: unknown };
-  type ModelLocality = "on_device" | "own_server" | "third_party";
   type CallEnvelope = { scope?: ScopeScope; purpose: CallPurpose; class: CallClass; tier: TierPrecedence; response_format: ResponseFormat; locality: ModelLocality; seat_effort?: ReasoningEffort | null };
   type LlmMessageRole = "system" | "user" | "assistant" | "tool";
   type ImageContent = { source: "base64"; data: string } | { source: "url"; url: string };
@@ -2839,7 +2895,6 @@ declare namespace Sdk {
   type VectorPutReceipt = { entity_ref: string; dimensions: number };
   type HybridPprQuery = { seeds: string[]; depth: number };
   type HybridTemporalQuery = { start: number; end: number };
-  type RetrievalBlendWeights = { recency: number; salience: number; confidence: number; gravity: number };
   type HybridRankReplay = { now: number; blend_weights: RetrievalBlendWeights };
   type HybridSearchRequest = { query?: string | null; query_vector?: number[] | null; phonetic_codes?: string[]; ppr?: HybridPprQuery | null; temporal?: HybridTemporalQuery | null; replay?: HybridRankReplay | null; limit: number };
   type HybridSearchHit = { entity_ref: string; source_revision_ref?: string | null; score: number; access_factor?: number | null; components: RetrievalScoreComponent[] };
@@ -5394,6 +5449,20 @@ declare const vault: Sdk.VaultHost & {
       /** The owner attaches an explicit observation to one local serving run; raw reward stays telemetry, never a gated training label. */
       put(input: Sdk.RetrievalOutcome): Promise<Sdk.RetrievalOutcomeRecord[] | StoredResult>;
     };
+    policy: {
+      /** The owner admits candidate blend weights judged on the named evidence manifest; owner pins and held-out regressions refuse admission. */
+      admit(input: Sdk.RetrievalPolicyAdmitRequest): Promise<Sdk.RetrievalPolicyAdmitReceipt | StoredResult>;
+      /** The owner judges candidate blend weights against the active weights on the same held-out runs the tuner never trains on. */
+      evaluate(input: Sdk.RetrievalPolicyEvaluateRequest): Promise<Sdk.RetrievalPolicyEvaluation | StoredResult>;
+      /** The owner reads the served retrieval policy: active blend weights with their origins, owner pins, the learned posterior and model routing pins. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.RetrievalPolicyView | StoredResult>;
+      /** The owner pins one retrieval blend weight at a declared share, or clears its pin; learned updates may move only the unpinned remainder. */
+      pin(input: Sdk.RetrievalPolicyPinRequest): Promise<Sdk.RetrievalPolicyView | StoredResult>;
+      /** The owner trains a retrieval-policy candidate from gate-attributed outcomes, judged on held-out runs, without serving it. */
+      train(input: Sdk.RetrievalPolicyTrainRequest): Promise<Sdk.RetrievalPolicyCandidate | StoredResult>;
+      /** The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior. */
+      update(input: Sdk.RetrievalPolicyTrainRequest): Promise<Sdk.RetrievalPolicyUpdateReceipt | StoredResult>;
+    };
     /** Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle. */
     recall(input: Sdk.RecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
     /** The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used. */
@@ -5644,6 +5713,26 @@ declare const vault: Sdk.VaultHost & {
   skills: {
     /** The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled. */
     archive(input: Sdk.HubSkillRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
+    attribution: {
+      evidence: {
+        /** The owner records one attempt outcome as attribution evidence, grounded against its stamped pack receipt; recording never classifies it. */
+        record(input: Sdk.AttributionEvidenceRequest): Promise<Sdk.AttributionEvidenceReceipt | StoredResult>;
+      };
+      /** The owner reads every persisted attribution judgment in both lanes, the projector cursor and the unclear ledger. */
+      judgments(input: Sdk.AttributionListRequest): Promise<Sdk.AttributionJudgmentsView | StoredResult>;
+      positive: {
+        /** The owner retires one positive skill proposal once the optimizer has drafted from it or declined it. */
+        retire(input: Sdk.PositiveRetireRequest): Promise<Sdk.PositiveRetireReceipt | StoredResult>;
+      };
+      /** The owner runs one attribution pass over recorded evidence, plus the positive lane, returning the judgments and positive proposals it minted. */
+      project(input: Sdk.AttributionProjectRequest): Promise<Sdk.AttributionProjection | StoredResult>;
+      /** The owner reads the pending skill edit proposals, preference proposals and positive skill proposals attribution has minted. */
+      proposals(input: Sdk.AttributionListRequest): Promise<Sdk.AttributionProposalsView | StoredResult>;
+      /** The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows. */
+      read(input: Sdk.ProposalDeltaReadRequest): Promise<Sdk.ProposalDeltaRead | StoredResult>;
+      /** The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer. */
+      settle(input: Sdk.ProposalDeltaSettleRequest): Promise<Sdk.ProposalDeltaSettlement | StoredResult>;
+    };
     code_auto_install: {
       /** The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification. */
       set(input: Sdk.SkillCodeAutoInstallRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;

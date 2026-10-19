@@ -416,6 +416,24 @@ impl OneironClient {
                 "vault.retrieval.replay" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::RetrievalDiagnosticReplay,
                 >(client, verb, &input),
+                "vault.retrieval.policy.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RetrievalPolicyView,
+                >(client, verb, &input),
+                "vault.retrieval.policy.pin" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RetrievalPolicyView,
+                >(client, verb, &input),
+                "vault.retrieval.policy.train" => remote_agent_verb_output::<
+                    oneiron::store::RetrievalPolicyCandidate,
+                >(client, verb, &input),
+                "vault.retrieval.policy.evaluate" => remote_agent_verb_output::<
+                    oneiron::store::RetrievalPolicyEvaluation,
+                >(client, verb, &input),
+                "vault.retrieval.policy.admit" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RetrievalPolicyAdmitReceipt,
+                >(client, verb, &input),
+                "vault.retrieval.policy.update" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RetrievalPolicyUpdateReceipt,
+                >(client, verb, &input),
                 "vault.export" => {
                     remote_agent_verb_output::<oneiron::memory::MemoryExport>(client, verb, &input)
                 }
@@ -2123,6 +2141,31 @@ impl OneironClient {
                 "vault.skills.outcomes.get" => remote_agent_verb_output::<
                     Option<oneiron::skill_attribution::LateCreditReceipt>,
                 >(client, verb, &input),
+                "vault.skills.attribution.settle" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ProposalDeltaSettlement,
+                >(client, verb, &input),
+                "vault.skills.attribution.read" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ProposalDeltaRead,
+                >(client, verb, &input),
+                "vault.skills.attribution.evidence.record" => {
+                    remote_agent_verb_output::<oneiron::task_verb::sdk::AttributionEvidenceReceipt>(
+                        client, verb, &input,
+                    )
+                }
+                "vault.skills.attribution.project" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::AttributionProjection,
+                >(client, verb, &input),
+                "vault.skills.attribution.judgments" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::AttributionJudgmentsView,
+                >(client, verb, &input),
+                "vault.skills.attribution.proposals" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::AttributionProposalsView,
+                >(client, verb, &input),
+                "vault.skills.attribution.positive.retire" => {
+                    remote_agent_verb_output::<oneiron::task_verb::sdk::PositiveRetireReceipt>(
+                        client, verb, &input,
+                    )
+                }
                 "ai.steps.submit" => remote_agent_verb_output::<
                     oneiron::llm::model_step::ModelStepReceipt,
                 >(client, verb, &input),
@@ -4651,6 +4694,78 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.retrieval.replay", value)
+    }
+    pub fn vault_retrieval_policy_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::task_verb::sdk::RetrievalPolicyView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.policy.get", value)
+    }
+    pub fn vault_retrieval_policy_pin(
+        &self,
+        input: &oneiron::task_verb::sdk::RetrievalPolicyPinRequest,
+    ) -> Result<oneiron::task_verb::sdk::RetrievalPolicyView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.policy.pin", value)
+    }
+    pub fn vault_retrieval_policy_train(
+        &self,
+        input: &oneiron::task_verb::sdk::RetrievalPolicyTrainRequest,
+    ) -> Result<oneiron::store::RetrievalPolicyCandidate, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.policy.train", value)
+    }
+    pub fn vault_retrieval_policy_evaluate(
+        &self,
+        input: &oneiron::task_verb::sdk::RetrievalPolicyEvaluateRequest,
+    ) -> Result<oneiron::store::RetrievalPolicyEvaluation, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.policy.evaluate", value)
+    }
+    pub fn vault_retrieval_policy_admit(
+        &self,
+        input: &oneiron::task_verb::sdk::RetrievalPolicyAdmitRequest,
+    ) -> Result<oneiron::task_verb::sdk::RetrievalPolicyAdmitReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.policy.admit", value)
+    }
+    pub fn vault_retrieval_policy_update(
+        &self,
+        input: &oneiron::task_verb::sdk::RetrievalPolicyTrainRequest,
+    ) -> Result<oneiron::task_verb::sdk::RetrievalPolicyUpdateReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.policy.update", value)
     }
     /// Exports the whole vault as one re-importable archive (a ZIP of JSONL
     /// records, files by BLAKE3 and a manifest), custody secrets included.
@@ -11398,6 +11513,90 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.skills.outcomes.get", value)
+    }
+    pub fn vault_skills_attribution_settle(
+        &self,
+        input: &oneiron::task_verb::sdk::ProposalDeltaSettleRequest,
+    ) -> Result<oneiron::task_verb::sdk::ProposalDeltaSettlement, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.attribution.settle", value)
+    }
+    pub fn vault_skills_attribution_read(
+        &self,
+        input: &oneiron::task_verb::sdk::ProposalDeltaReadRequest,
+    ) -> Result<oneiron::task_verb::sdk::ProposalDeltaRead, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.attribution.read", value)
+    }
+    pub fn vault_skills_attribution_evidence_record(
+        &self,
+        input: &oneiron::task_verb::sdk::AttributionEvidenceRequest,
+    ) -> Result<oneiron::task_verb::sdk::AttributionEvidenceReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.attribution.evidence.record", value)
+    }
+    pub fn vault_skills_attribution_project(
+        &self,
+        input: &oneiron::task_verb::sdk::AttributionProjectRequest,
+    ) -> Result<oneiron::task_verb::sdk::AttributionProjection, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.attribution.project", value)
+    }
+    pub fn vault_skills_attribution_judgments(
+        &self,
+        input: &oneiron::task_verb::sdk::AttributionListRequest,
+    ) -> Result<oneiron::task_verb::sdk::AttributionJudgmentsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.attribution.judgments", value)
+    }
+    pub fn vault_skills_attribution_proposals(
+        &self,
+        input: &oneiron::task_verb::sdk::AttributionListRequest,
+    ) -> Result<oneiron::task_verb::sdk::AttributionProposalsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.attribution.proposals", value)
+    }
+    pub fn vault_skills_attribution_positive_retire(
+        &self,
+        input: &oneiron::task_verb::sdk::PositiveRetireRequest,
+    ) -> Result<oneiron::task_verb::sdk::PositiveRetireReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.attribution.positive.retire", value)
     }
     pub fn ai_steps_submit(
         &self,
