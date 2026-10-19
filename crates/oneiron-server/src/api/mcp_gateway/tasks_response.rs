@@ -6957,18 +6957,25 @@ async fn execute_agent_verb_row(
                 .transpose()
                 .map_err(|error| mcp_engine_error("host action failed", error))?;
             // The person path lists through its surface; the host paths beside their archive. A slip keeps its own path; a host action with no slip (the dev mode) takes the host-action export.
+            // Each arm records the owner act with where he spoke from: an MCP row carries no request headers (FIX 4625, 4626).
+            let surface = crate::api::facade::owner_binding::act_surface(auth);
             let output = match (auth.verified_slip(), action) {
                 (Some(proof), _) if proof.claims().holder_ref == "host" => server
                     .vault
-                    .export_with_verified_host_owner_listing(&input, proof, actor.locality())
+                    .export_with_verified_host_owner_listing(
+                        &input,
+                        proof,
+                        surface,
+                        actor.locality(),
+                    )
                     .map(|(output, listed)| {
                         served.extend(listed);
                         output
                     }),
-                (Some(proof), _) => memory.export_with_verified_owner(&input, proof),
+                (Some(proof), _) => memory.export_with_verified_owner(&input, proof, surface),
                 (None, Some(action)) => server
                     .vault
-                    .export_with_host_action_listing(&input, &action, actor.locality())
+                    .export_with_host_action_listing(&input, &action, surface, actor.locality())
                     .map(|(output, listed)| {
                         served.extend(listed);
                         output
@@ -12803,9 +12810,13 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::policy_setting_doors::WakePolicySetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_settings_wake_policy_set(server, auth, input)
-                    .await;
+            let (output, listed) = crate::api::facade::host_doors::vault_settings_wake_policy_set(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -12848,7 +12859,10 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_settings_inference_defaults_replace(
-                    server, auth, input,
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
                 )
                 .await;
             // Derived from the rows its reads listed, when its path lists them.

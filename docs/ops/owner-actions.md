@@ -1207,8 +1207,20 @@ slot can hold a piece.
 
 `status` lists every kit, pending ones too, with its homes, coverage and confirmation, and each
 private world's state. `covered` means only that the world's current key has a wrap to the pinned
-root. A running server shows the same at `GET /v1/owner/recovery-kit`; issue, confirm and restore
-run only from the CLI, so no piece crosses HTTP.
+root. A running server shows the same at `GET /v1/owner/recovery-kit`. The commands above run on
+a stopped vault. On a running server a root change goes through the owner's request and its target
+install instead: any install you are signed in on records the request with
+`POST /v1/owner/roots/requests` (`target`, `change` = `pin`, `activate`, `restore` or `anchor`,
+with `root` and `machine` as the change names them). It carries ids only, and its receipt says
+"recorded, awaiting a holder" until the target acts, or why nothing was recorded (the target is
+this install, or not a linked one). The target lists what waits for it at
+`GET /v1/owner/roots/requests`. Its own call, `POST /v1/owner/roots/requests/run`, takes the
+material for that call alone: the kit's pieces as recovery codes and the passphrase, a confirm's
+`carry` machines, an anchoring's enrolment request and code. An activation's `issue_kit` answers
+the new kit's pieces to that caller only; `confirm_kit` reads two back and closes the request. A
+pin needs no material: the target makes it on its own. `GET /v1/owner/owner-work/{request}` reads
+where any owner work request stands. No receipt, log or other reply carries a piece, and an install
+never relays one for another.
 
 `restore` opens the world keys wrapped to the kit's root on this machine. It never changes a
 world's settings. A kit opened with one piece and the passphrase is not verified on its own:

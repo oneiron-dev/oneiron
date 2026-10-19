@@ -130,6 +130,13 @@ for row in ROWS:
     # unowned, as every HTTP call and direct tool call does.
     if row.get('host_door_lens_owner') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door takes a lens owner')
+    # `host_door_surface` hands an owner-setting door where the owner's say-so
+    # reached this install, for his act's audit record (FIX 4625): the facade
+    # call's request-derived surface (`FacadeCall::surface`, a linked machine
+    # its headers prove), or the header-less rule for an MCP row
+    # (`owner_binding::act_surface`). Never a field of its input.
+    if row.get('host_door_surface') and not row.get('host_door'):
+        raise ValueError(f'{row["name"]}: only a host door takes an act surface')
     # Rule 5: `task_work` marks a row whose run is one piece of task work. The
     # server's dispatch and its MCP dispatch take one turn for it
     # (`SyncServer::admit_task_work`, never refused) before the engine call,
@@ -738,10 +745,12 @@ def mcp_input_dispatch(row):
                  '// A host credential resolves first (FIX 2222): a hosted operator root gets the typed refusal, and a self-hosted root or the explicit dev mode exports as the owner it acts as.\n'
                  'let action = crate::api::host_action::host_action_of(server.vault(), auth).transpose().map_err(|error| mcp_engine_error("host action failed", error))?;\n'
                  '// The person path lists through its surface; the host paths beside their archive. A slip keeps its own path; a host action with no slip (the dev mode) takes the host-action export.\n'
+                 '// Each arm records the owner act with where he spoke from: an MCP row carries no request headers (FIX 4625, 4626).\n'
+                 'let surface = crate::api::facade::owner_binding::act_surface(auth);\n'
                  'let output = match (auth.verified_slip(), action) {\n'
-                 '    (Some(proof), _) if proof.claims().holder_ref == "host" => server.vault.export_with_verified_host_owner_listing(&input, proof, actor.locality()).map(|(output, listed)| { served.extend(listed); output }),\n'
-                 '    (Some(proof), _) => memory.export_with_verified_owner(&input, proof),\n'
-                 '    (None, Some(action)) => server.vault.export_with_host_action_listing(&input, &action, actor.locality()).map(|(output, listed)| { served.extend(listed); output }),\n'
+                 '    (Some(proof), _) if proof.claims().holder_ref == "host" => server.vault.export_with_verified_host_owner_listing(&input, proof, surface, actor.locality()).map(|(output, listed)| { served.extend(listed); output }),\n'
+                 '    (Some(proof), _) => memory.export_with_verified_owner(&input, proof, surface),\n'
+                 '    (None, Some(action)) => server.vault.export_with_host_action_listing(&input, &action, surface, actor.locality()).map(|(output, listed)| { served.extend(listed); output }),\n'
                  '    (None, None) => return Err(McpGatewayError::new(-32020, "forbidden", "full-vault export requires verified owner authority")),\n'
                  '}.map_err(mcp_facade_error)?;\n')
     elif row.get('host_door'):
@@ -749,7 +758,8 @@ def mcp_input_dispatch(row):
         # credential the REST facade passes it.
         session_arg = 'actor.off_record_session.as_deref().map(oneiron::EntityId::from_hex).transpose().map_err(|_| invalid())?, ' if row.get('host_door_session') else ''
         lens_arg = 'owner, ' if row.get('host_door_lens_owner') else ''
-        door = f'crate::api::facade::host_doors::{method}(server, auth, {session_arg}{"(actor.actor_ref, actor.actor_class), memory.invocation(), " if row.get("host_door_caller") else ""}{lens_arg}input).await'
+        surface_arg = 'crate::api::facade::owner_binding::act_surface(auth), ' if row.get('host_door_surface') else ''
+        door = f'crate::api::facade::host_doors::{method}(server, auth, {session_arg}{"(actor.actor_ref, actor.actor_class), memory.invocation(), " if row.get("host_door_caller") else ""}{lens_arg}{surface_arg}input).await'
         # The card's owner names the request as the row runs it, before it decodes.
         lens_owner = f'let owner = surface.lens_owner({json.dumps(name)}, &input);\n' if row.get('host_door_lens_owner') else ''
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
@@ -1276,22 +1286,22 @@ def facade_dispatch(facade_rows):
                 // its own path; a host action with no slip (the dev mode)
                 // takes the engine's host-action export; the attested owner
                 // takes the engine's request-proof export, at its own
-                // locality.
+                // locality. Each arm's receipt records the owner's act, with
+                // where he spoke from as this request proved it (audit only;
+                // FIX 4625, 4626).
+                let surface = call.surface();
                 let (output, rows) = match (proof, action, owner) {{
                     (Some(proof), _, _) if proof.claims().holder_ref == "host" => {{
-                        server.vault.export_with_verified_host_owner_listing(&input, proof, auth.locality())?
+                        server.vault.export_with_verified_host_owner_listing(&input, proof, surface, auth.locality())?
                     }}
                     (Some(proof), _, _) => {{
                         let (actor, class) = facade_actor(server, auth)?;
                         let producers = oneiron::memory::ProducerRows::default();
-                        let output = server.vault.memory(actor, class).at(auth.locality()).listing_producers(&producers).export_with_verified_owner(&input, proof)?;
+                        let output = server.vault.memory(actor, class).at(auth.locality()).listing_producers(&producers).export_with_verified_owner(&input, proof, surface)?;
                         (output, producers.take())
                     }}
-                    (None, Some(action), _) => server.vault.export_with_host_action_listing(&input, &action, auth.locality())?,
+                    (None, Some(action), _) => server.vault.export_with_host_action_listing(&input, &action, surface, auth.locality())?,
                     (None, None, Some(owner)) => {{
-                        // Its receipt records the owner's act, with where
-                        // he spoke from (audit only).
-                        let surface = super::owner_binding::act_surface(auth);
                         server.vault.export_with_authenticated_owner_listing(&input, &owner, surface, auth.locality())?
                     }}
                     (None, None, None) => {{
@@ -1315,7 +1325,8 @@ def facade_dispatch(facade_rows):
             landed = " server.ai.turn_landed_by(server.vault(), landed_by.0, landed_by.1);" if lands else ""
             session_arg = 'call.session()?, ' if r.get('host_door_session') else ''
             lens_arg = 'call.lens_owner(), ' if r.get('host_door_lens_owner') else ''
-            door = f'super::host_doors::{method}(server, auth, {session_arg}{"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}{lens_arg}facade_input(hooks.args.clone())?).await'
+            surface_arg = 'call.surface(), ' if r.get('host_door_surface') else ''
+            door = f'super::host_doors::{method}(server, auth, {session_arg}{"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}{lens_arg}{surface_arg}facade_input(hooks.args.clone())?).await'
             answer = (f'''let (output, listed) = {door};
                 let output = facade_output(output?)?;{landed}
                 Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else

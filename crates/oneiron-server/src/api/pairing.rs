@@ -195,7 +195,9 @@ pub(super) struct MachineEnrolment {
     machine_proof: String,
 }
 impl MachineEnrolment {
-    fn request(&self) -> Result<MachineEnrolmentRequest, ApiError> {
+    /// The request this wire names. The target's anchoring material reads an
+    /// enrolment the same way (`owner_routes::recovery_kit_target_routes`).
+    pub(super) fn request(&self) -> Result<MachineEnrolmentRequest, ApiError> {
         use base64::Engine as _;
         let machine_proof = <[u8; 64]>::try_from(parse_signature(&self.machine_proof)?)
             .map_err(|_| ApiError::unauthorized())?;

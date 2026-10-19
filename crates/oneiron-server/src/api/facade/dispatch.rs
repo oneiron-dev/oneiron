@@ -2898,11 +2898,14 @@ async fn vault_export(
     // its own path; a host action with no slip (the dev mode)
     // takes the engine's host-action export; the attested owner
     // takes the engine's request-proof export, at its own
-    // locality.
+    // locality. Each arm's receipt records the owner's act, with
+    // where he spoke from as this request proved it (audit only;
+    // FIX 4625, 4626).
+    let surface = call.surface();
     let (output, rows) = match (proof, action, owner) {
         (Some(proof), _, _) if proof.claims().holder_ref == "host" => server
             .vault
-            .export_with_verified_host_owner_listing(&input, proof, auth.locality())?,
+            .export_with_verified_host_owner_listing(&input, proof, surface, auth.locality())?,
         (Some(proof), _, _) => {
             let (actor, class) = facade_actor(server, auth)?;
             let producers = oneiron::memory::ProducerRows::default();
@@ -2911,25 +2914,21 @@ async fn vault_export(
                 .memory(actor, class)
                 .at(auth.locality())
                 .listing_producers(&producers)
-                .export_with_verified_owner(&input, proof)?;
+                .export_with_verified_owner(&input, proof, surface)?;
             (output, producers.take())
         }
-        (None, Some(action), _) => {
-            server
-                .vault
-                .export_with_host_action_listing(&input, &action, auth.locality())?
-        }
-        (None, None, Some(owner)) => {
-            // Its receipt records the owner's act, with where
-            // he spoke from (audit only).
-            let surface = super::owner_binding::act_surface(auth);
-            server.vault.export_with_authenticated_owner_listing(
-                &input,
-                &owner,
-                surface,
-                auth.locality(),
-            )?
-        }
+        (None, Some(action), _) => server.vault.export_with_host_action_listing(
+            &input,
+            &action,
+            surface,
+            auth.locality(),
+        )?,
+        (None, None, Some(owner)) => server.vault.export_with_authenticated_owner_listing(
+            &input,
+            &owner,
+            surface,
+            auth.locality(),
+        )?,
         (None, None, None) => {
             return Err(FacadeApiError::forbidden(
                 "full-vault export requires verified owner authority",
@@ -10696,6 +10695,7 @@ async fn vault_settings_wake_policy_set(
     let (output, listed) = super::host_doors::vault_settings_wake_policy_set(
         server,
         auth,
+        call.surface(),
         facade_input(hooks.args.clone())?,
     )
     .await;
@@ -10750,6 +10750,7 @@ async fn vault_settings_inference_defaults_replace(
     let (output, listed) = super::host_doors::vault_settings_inference_defaults_replace(
         server,
         auth,
+        call.surface(),
         facade_input(hooks.args.clone())?,
     )
     .await;

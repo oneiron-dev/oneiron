@@ -814,7 +814,11 @@ pub(crate) async fn react_core_message(
     // outside any action: the operator's root keeps it on a hosted vault.
     let bound = match &input.external {
         Some(_) if super::host_action::host_action_of(server.vault(), &auth).is_some() => None,
-        _ => super::facade::action_routes::action_bound(&server, &auth)?,
+        _ => super::facade::action_routes::action_bound(
+            &server,
+            &auth,
+            super::owner_routes::machine_routes::act_surface(&server, &auth, &headers),
+        )?,
     };
     let receipt = match bound {
         Some(bound) => {

@@ -103,7 +103,7 @@ mod note_doors;
 mod off_record_doors;
 mod off_record_room_doors;
 mod origin_doors;
-mod owner_binding;
+pub(super) mod owner_binding;
 mod persona_doors;
 mod policy_doors;
 mod project_card_doors;
@@ -535,7 +535,7 @@ async fn facade_route(
     headers: HeaderMap,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
-    let call = FacadeCall::http(&auth, &headers);
+    let call = FacadeCall::http(&server, &auth, &headers);
     let verb = uri.path().trim_start_matches('/');
     let output = call_verb(&server, &call, verb, facade_json(payload)).await?;
     Ok(Json(output.value))
