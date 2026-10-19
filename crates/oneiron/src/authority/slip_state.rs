@@ -127,11 +127,12 @@ impl SlipAuthorityState {
         Some(path)
     }
     /// The logged delegation chain of slip `id` in this snapshot (FIX 5064):
-    /// `id` itself, then each parent its logged mint names, never the mint's
-    /// signer, ending at its delegation root, the earliest ancestor known
-    /// here. A mint this fold lacks ends the walk at that id and refuses
-    /// nothing (CALLS `FIX 5064 cut lineage`); a repeated id ends it too.
-    /// Revocation and consumption do not erase lineage, so neither ends it.
+    /// `id` itself, then each parent its logged mint names, or the slip a
+    /// renewal's mint renews (FIX 5481), never the mint's signer, ending at
+    /// its delegation root, the earliest ancestor known here. A mint this
+    /// fold lacks ends the walk at that id and refuses nothing (CALLS
+    /// `FIX 5064 cut lineage`); a repeated id ends it too. Revocation and
+    /// consumption do not erase lineage, so neither ends it.
     #[must_use]
     pub(crate) fn delegation_chain(&self, id: &[u8; 32]) -> Vec<[u8; 32]> {
         let mut current = Some(*id);
@@ -142,12 +143,17 @@ impl SlipAuthorityState {
                 break;
             }
             chain.push(id);
-            current = self
-                .mints
-                .get(&id)
-                .and_then(|mint| mint.action.claims.parent_id);
+            current = self.lineage_link(&id);
         }
         chain
+    }
+    /// The one link a lineage walk takes from slip `id`'s logged mint: its
+    /// parent, or, for a parentless renewal, the slip it renews (FIX 5481).
+    /// `None` when the mint is not known here or names neither.
+    #[must_use]
+    pub(crate) fn lineage_link(&self, id: &[u8; 32]) -> Option<[u8; 32]> {
+        let mint = self.mints.get(id)?;
+        mint.action.claims.parent_id.or(mint.action.renews)
     }
     /// Whether the slip or an ancestor carries a revocation or id collision.
     #[must_use]

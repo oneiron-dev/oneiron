@@ -32,7 +32,7 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         };
         return match oneiron_remote::OneironClient::pair(&link) {
-            Ok((_, credential)) => {
+            Ok((_, credential, _)) => {
                 println!("{credential}");
                 std::process::ExitCode::SUCCESS
             }

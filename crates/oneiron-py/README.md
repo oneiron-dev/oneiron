@@ -87,8 +87,9 @@ connected handle's `as_actor` therefore raises `FORBIDDEN` — pair a link
 created for the actor you want to act as instead.
 
 `Oneiron.pair(link)` returns a dict: `memory` (the connected handle),
-`credential`, and `pin`, the checkpoint pin the link named, already checked
-against it and stored nowhere by this package. A machine that will run a local
+`credential`, `pin`, the checkpoint pin the link named, already checked
+against it and stored nowhere by this package, and `comm`, the comm reach the
+server says the credential carries (whom an agent paired by it may address). A machine that will run a local
 replica keeps the pin beside the server origin and the credential, and
 supplies it when that replica starts; a remote-only caller needs only the
 credential.
@@ -99,7 +100,7 @@ credential.
 |---|---|
 | `Oneiron.open(path=None, *, dimensions=None)` | an embedded handle |
 | `Oneiron.connect(url, key)` | a remote handle |
-| `Oneiron.pair(link)` | `{"memory", "credential", "pin"}` (`Paired`): a remote handle, the credential to store, and the checkpoint pin the link named (`None` when the vault has none) for a local replica to adopt by |
+| `Oneiron.pair(link)` | `{"memory", "credential", "pin", "comm"}` (`Paired`): a remote handle, the credential to store, the checkpoint pin the link named (`None` when the vault has none) for a local replica to adopt by, and the credential's comm reach |
 | `handle.as_actor(actor_key)` | a new handle bound to another actor |
 | `handle.in_room_turn(room_ref)` | a new handle whose every verb runs as a turn in that room |
 | `handle.last_receipt_ref()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `None` when embedded or before any call |

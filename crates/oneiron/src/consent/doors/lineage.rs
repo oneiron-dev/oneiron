@@ -18,9 +18,10 @@ use super::AuthenticatedOwner;
 impl AuthenticatedOwner {
     /// The verified credential chains this proof was carried under, in
     /// `txn`'s authority snapshot (FIX 5064): its carried slip, that slip's
-    /// verified parent and every logged ancestor up to their delegation root,
-    /// then the host root a host action acts under (FIX 2222) and that root's
-    /// own logged ancestry. A proof no credential carried has none. Every id
+    /// verified parent (or the slip a renewal renews, FIX 5481) and every
+    /// logged ancestor up to their delegation root, then the host root a host
+    /// action acts under (FIX 2222) and that root's own logged ancestry. A
+    /// proof no credential carried has none. Every id
     /// comes from a verified slip or the log, never from a wire value; a
     /// proposal freezes these as the lineage that, with its forks, never
     /// settles it.
@@ -65,8 +66,12 @@ impl AuthenticatedOwner {
         let carried = self.carried_slip().map(|credential| {
             let claims = credential.claims();
             let mut chain = vec![claims.slip_id];
-            if let Some(parent) = claims.parent_id {
-                chain.extend(slips.delegation_chain(&parent));
+            // Its verified parent, or the slip a renewal renews (FIX 5481).
+            let prior = claims
+                .parent_id
+                .or_else(|| slips.lineage_link(&claims.slip_id));
+            if let Some(prior) = prior {
+                chain.extend(slips.delegation_chain(&prior));
             }
             chain
         });

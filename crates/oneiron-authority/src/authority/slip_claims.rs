@@ -61,9 +61,22 @@ pub struct SlipClaims {
 #[serde(deny_unknown_fields)]
 pub struct SlipMintAction {
     pub claims: SlipClaims,
+    /// The slip this mint renews (FIX 5481): set only on an owner device's
+    /// renewal, which is parentless, so a lineage walk follows the renewed
+    /// credential back to the one it replaced. A lineage link, never a
+    /// parent: no narrowing check, revocation, consumption or liveness walk
+    /// crosses it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renews: Option<[u8; 32]>,
 }
 impl SlipMintAction {
     pub fn validate(&self) -> Result<()> {
+        // A renewal names another, real slip and has no parent of its own.
+        if self.renews.is_some_and(|prior| {
+            prior == self.claims.slip_id || prior == [0; 32] || self.claims.parent_id.is_some()
+        }) {
+            return Err(invalid_authority());
+        }
         self.claims.validate()
     }
 }

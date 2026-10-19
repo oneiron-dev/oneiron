@@ -1,4 +1,4 @@
-use oneiron::authority::AuthorityCheckpointPin;
+use oneiron::authority::{AuthorityCheckpointPin, CommReach};
 
 use super::*;
 
@@ -69,9 +69,14 @@ struct Paired {
     /// checkpoint (OF-469).
     #[serde(default)]
     pin: Option<AuthorityCheckpointPin>,
+    /// The comm reach the paired credential carries, as the vault took it
+    /// (FIX 5058): whom an agent paired by it may address.
+    comm: CommReach,
 }
 
-/// Redeems a pairing link once and returns `(origin, credential, pin)`.
+/// Redeems a pairing link once and returns `(origin, credential, pin,
+/// comm)`: the comm reach is the server's answer, never read back out of
+/// the credential.
 ///
 /// A fresh connection key signs the link's code and holder, and the link's
 /// checkpoint challenge and pin digest when it carries them; the request
@@ -82,7 +87,7 @@ struct Paired {
 /// with what it returns.
 pub(crate) fn pair(
     link: &str,
-) -> Result<(String, String, Option<AuthorityCheckpointPin>), MemoryError> {
+) -> Result<(String, String, Option<AuthorityCheckpointPin>, CommReach), MemoryError> {
     use ed25519_dalek::Signer;
     // The link and its code are never echoed: the code is the enrollment grant
     // until it is spent.
@@ -150,5 +155,6 @@ pub(crate) fn pair(
         origin,
         format!("{CREDENTIAL_PREFIX}{slip}.{}", lower_hex(key.as_bytes())),
         paired.pin,
+        paired.comm,
     ))
 }

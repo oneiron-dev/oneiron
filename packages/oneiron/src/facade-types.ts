@@ -3433,7 +3433,7 @@ export type BypassScope = { project: EntityId } | { thread: EntityId }
 /** `oneiron::consent::bypass::BypassExtent` */
 export type BypassExtent = { scope: BypassScope; floor_version: number }
 /** `oneiron::consent::registry::ConsentRegistryDelegation` */
-export type ConsentRegistryDelegation = { purpose: string; ticket_ref?: string | null; approved_by: string; wall_expires_at: number; status: SupportGrantStatus }
+export type ConsentRegistryDelegation = { purpose: string; ticket_ref?: string | null; approved_by: string; wall_expires_at: number; status: SupportGrantStatus; comm: CommReach }
 /** `oneiron::consent::registry::ConsentRegistryRow` */
 export type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null }
 /** `oneiron::consent::registry::ConsentRegistry` */

@@ -87,6 +87,8 @@ export type CheckpointPinPolicy = {
   quorum: number
   /** One attesting root must be hardware-backed. */
   hardware: boolean
+  /** The owner selected these roots and this quorum: no host root need attest. */
+  ownerSelected: boolean
 }
 
 /** An eligible root's certificate for its checkpoint SLH-DSA key. */

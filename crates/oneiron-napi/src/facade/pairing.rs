@@ -57,6 +57,9 @@ pub struct NapiCheckpointPinPolicy {
     pub quorum: u32,
     /// One attesting root must be hardware-backed.
     pub hardware: bool,
+    /// The owner selected these roots and this quorum (FIX 4883): no host
+    /// root need attest.
+    pub owner_selected: bool,
 }
 
 /// An eligible root's certificate for its checkpoint SLH-DSA key.
@@ -137,6 +140,7 @@ fn policy_from_engine(policy: &CheckpointRootPolicy) -> NapiCheckpointPinPolicy 
         roots: policy.roots.iter().map(root_from_engine).collect(),
         quorum: u32::from(policy.quorum),
         hardware: policy.hardware,
+        owner_selected: policy.owner_selected,
     }
 }
 

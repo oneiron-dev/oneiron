@@ -252,19 +252,22 @@ impl OneironClient {
         })
     }
 
-    /// Redeems a pairing link once and returns `(url, credential)`.
+    /// Redeems a pairing link once and returns `(url, credential, comm)`.
     ///
     /// It generates the connection key, proves it to the server, and builds
-    /// no handle: connect with the pair it returns, and store the credential
-    /// as one secret.
-    pub fn pair(link: &str) -> Result<(String, String), MemoryError> {
-        remote::pair(link).map(|(origin, credential, _)| (origin, credential))
+    /// no handle: connect with the url and credential it returns, and store
+    /// the credential as one secret. `comm` is the comm reach the server
+    /// says the credential carries (FIX 5058).
+    pub fn pair(
+        link: &str,
+    ) -> Result<(String, String, oneiron::authority::CommReach), MemoryError> {
+        remote::pair(link).map(|(origin, credential, _, comm)| (origin, credential, comm))
     }
 
     /// [`Self::pair`], also returning the checkpoint pin the link kept
-    /// (OF-469): `None` when the vault has no attested checkpoint. The pin is
-    /// already checked against the challenge and digest the link carries; it
-    /// is not stored.
+    /// (OF-469), as `(url, credential, pin, comm)`: `pin` is `None` when the
+    /// vault has no attested checkpoint. The pin is already checked against
+    /// the challenge and digest the link carries; it is not stored.
     pub fn pair_pinned(
         link: &str,
     ) -> Result<
@@ -272,6 +275,7 @@ impl OneironClient {
             String,
             String,
             Option<oneiron::authority::AuthorityCheckpointPin>,
+            oneiron::authority::CommReach,
         ),
         MemoryError,
     > {

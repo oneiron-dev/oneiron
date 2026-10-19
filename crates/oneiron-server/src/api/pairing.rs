@@ -11,6 +11,8 @@ use oneiron::federation::Scope;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+mod renewal_error;
+
 pub(super) async fn descriptor() -> Json<PairingDescriptor> {
     Json(PairingDescriptor::default())
 }
@@ -434,13 +436,13 @@ pub(super) fn with_issuer<T>(
     server: &SyncServer,
     operation: impl FnOnce(&HostSlipIssuer) -> oneiron::Result<T>,
 ) -> Result<T, ApiError> {
-    // A scope the vault refuses on a link says why; every other failure
-    // stays an unexplained 401.
+    // A scope the vault refuses on a link says why, and so does a renewal's
+    // named refusal (FIX 4651); every other failure stays an unexplained 401.
     let refusal = |error: oneiron::Error| match error.kind() {
         oneiron::ErrorKind::InvalidPairingScope => {
             ApiError::bad_request(error.to_string(), Some("scope.facets"))
         }
-        _ => ApiError::unauthorized(),
+        _ => renewal_error::renewal_refusal(&error).unwrap_or_else(ApiError::unauthorized),
     };
     if let Some(issuer) = server.managed_issuer.as_ref() {
         return operation(issuer).map_err(refusal);

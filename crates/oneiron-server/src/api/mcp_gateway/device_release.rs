@@ -64,7 +64,8 @@ pub(super) fn mcp_carrier_releases(
 /// derived from a row a device-local world keeps now, or naming one, or
 /// naming a short ref that resolves to no row, is refused: a continuation's
 /// caller starts over from page one, and a fresh call is told its result
-/// changed and to call again.
+/// changed and to call again. The owner's own agent-pack export reads its
+/// prose as no ref (`owner_export_scan`, FIX 5522).
 pub(super) fn mcp_release_result(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -83,7 +84,10 @@ pub(super) fn mcp_release_result(
     if !destination.is_off_device() {
         return Ok(result);
     }
-    let Some(mut named) = crate::device_local::short_refs_named(&server.vault, &result) else {
+    let scan = owner_export_scan(server, actor, &result);
+    let Some(mut named) =
+        crate::device_local::short_refs_named(&server.vault, scan.as_ref().unwrap_or(&result))
+    else {
         return Err(refused(ReleaseHold::Placement));
     };
     named.extend_from_slice(rows);
@@ -151,23 +155,105 @@ pub(super) fn mcp_release_error(
 
 /// The rows a code run's verb answers name by short ref inside the JSON
 /// each was recorded as, fresh or replayed; `None` when one names no row.
-/// The rest of its result is read at [`mcp_release_result`].
+/// A step `record` keeps, under its seq, as the owner's own agent-pack
+/// export call reads its prose as no ref (FIX 5522). The rest of its result
+/// is read at [`mcp_release_result`].
 pub(super) fn mcp_run_named_rows(
-    vault: &oneiron::Vault,
+    server: &SyncServer,
+    actor: &McpCallContext,
     structured: &Value,
+    record: &oneiron::code_run::CodeRunReplayRecord,
 ) -> Option<Vec<oneiron::EntityId>> {
     let mut rows = Vec::new();
-    let outputs = structured["steps"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|step| step["outcome"]["output"].as_str());
-    for output in outputs {
-        if let Ok(output) = serde_json::from_str::<Value>(output) {
-            rows.extend(crate::device_local::short_refs_named(vault, &output)?);
+    let mut owner = None;
+    for step in structured["steps"].as_array().into_iter().flatten() {
+        let Some(output) = step["outcome"]["output"].as_str() else {
+            continue;
+        };
+        let Ok(mut output) = serde_json::from_str::<Value>(output) else {
+            continue;
+        };
+        let export = step["seq"]
+            .as_u64()
+            .and_then(|seq| record.bridge_calls.iter().find(|call| call.seq == seq))
+            .is_some_and(recorded_export_call);
+        if export && *owner.get_or_insert_with(|| reads_as_owner(server, actor)) {
+            clear_export_text(&mut output);
         }
+        rows.extend(crate::device_local::short_refs_named(&server.vault, &output)?);
     }
     Some(rows)
+}
+
+/// The verb whose owner export reads its prose as no ref (FIX 5522).
+const OWNER_EXPORT_VERB: &str = "vault.agents.export_pack";
+
+/// The copy of `result` its short-ref scan reads instead (FIX 5522, CALLS
+/// "FIX 5522 owner export scan scope"): on the owner's own successful
+/// agent-pack export, as the host's envelope names its tool, the export with
+/// its text leaves read as none. `None` for every other result and caller,
+/// scanned whole as before. Keys, whole ids, every other field and the
+/// result that leaves stay as they are.
+fn owner_export_scan(server: &SyncServer, actor: &McpCallContext, result: &Value) -> Option<Value> {
+    let structured = result.get("structuredContent")?;
+    if result.get("isError") != Some(&Value::Bool(false))
+        || structured.get("tool").and_then(Value::as_str) != Some(OWNER_EXPORT_VERB)
+        || !reads_as_owner(server, actor)
+    {
+        return None;
+    }
+    let mut scan = result.clone();
+    if let Some(output) = scan
+        .get_mut("structuredContent")
+        .and_then(|structured| structured.get_mut("output"))
+    {
+        clear_export_text(output);
+    }
+    Some(scan)
+}
+
+/// Whether a code run's recorded call is an agent-pack export: its own
+/// request names the verb, never its output's shape.
+fn recorded_export_call(call: &oneiron::code_run::CodeRunBridgeCall) -> bool {
+    let names_export = |(key, verb): &(rmpv::Value, rmpv::Value)| {
+        key.as_str() == Some("verb") && verb.as_str() == Some(OWNER_EXPORT_VERB)
+    };
+    call.effect == oneiron::code_run::SelfEffect::AgentVerb
+        && matches!(&call.request, rmpv::Value::Map(entries) if entries.iter().any(names_export))
+}
+
+/// Whether `actor` reads as the vault's owner on the credential its request
+/// was verified with, its handle built as its verbs' is: the owner bit the
+/// export door's own lane reads (FIX 5493). Any failure is no owner.
+fn reads_as_owner(server: &SyncServer, actor: &McpCallContext) -> bool {
+    crate::api::mcp_credential_memory(
+        &server.vault,
+        actor.auth.as_ref(),
+        actor.actor_ref,
+        actor.actor_class,
+    )
+    .at(actor.locality())
+    .read_key()
+    .is_ok_and(|key| key.reads_as_vault_owner())
+}
+
+/// An agent-pack export's text leaves read as none: its born-with prose and
+/// each notice's world name. Nothing else changes.
+fn clear_export_text(export: &mut Value) {
+    if let Some(born_with) = export.get_mut("born_with").and_then(Value::as_object_mut) {
+        for (field, text) in born_with.iter_mut() {
+            let prose = oneiron::share_travel::BornWithField::from_name(field).is_some();
+            if prose && text.is_string() {
+                *text = Value::Null;
+            }
+        }
+    }
+    let notices = export.get_mut("notices").and_then(Value::as_array_mut);
+    for notice in notices.into_iter().flatten() {
+        if let Some(name) = notice.get_mut("world_name").filter(|name| name.is_string()) {
+            *name = Value::Null;
+        }
+    }
 }
 
 /// [`mcp_release_result`] for a code run's result: judged by `rows`, those

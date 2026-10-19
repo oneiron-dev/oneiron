@@ -25939,6 +25939,8 @@ pub struct ConsentRegistryDelegation {
     pub wall_expires_at: u64,
     #[serde(rename = "status")]
     pub status: SupportGrantStatus,
+    #[serde(rename = "comm")]
+    pub comm: CommReach,
 }
 
 /// `oneiron::consent::registry::ConsentRegistryRow`.

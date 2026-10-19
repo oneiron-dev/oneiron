@@ -88,6 +88,11 @@ pub struct Vault {
     /// Orders a trusted-contact notice's last consent read and send against
     /// revocation and re-naming.
     pub(crate) trusted_contact_send_order: std::sync::RwLock<()>,
+    /// The owner's agent-pack share receipts whose write failed, each tried
+    /// again on this handle's next travel receipt (FIX 5523). In memory
+    /// only: a close or a crash drops them.
+    pub(crate) pending_owner_export_receipts:
+        std::sync::Mutex<Vec<crate::share_travel::ExportTravel>>,
     /// One housekeeping pass at a time on this handle.
     pub(crate) housekeeping: std::sync::Mutex<crate::housekeeping::HousekeepingHandle>,
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,

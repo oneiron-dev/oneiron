@@ -1,5 +1,6 @@
 //! What the native `pair` hands the Python wrapper (OF-469, FIX 3376): the
-//! origin, the credential, and the checkpoint pin the link named, lifted whole
+//! origin, the credential, the credential's comm reach (FIX 5058) and the
+//! checkpoint pin the link named, lifted whole
 //! from `oneiron::authority::AuthorityCheckpointPin`. The pin is the trust
 //! input a later local replica adopts the vault's checkpoint by, so no field
 //! is narrowed or dropped: byte values cross as lowercase hex and enums as
@@ -9,28 +10,31 @@
 
 use oneiron::authority::{
     AuthorityCheckpointKeyBinding, AuthorityCheckpointPin, AuthorityKey, AuthoritySignature,
-    CheckpointPosture, CheckpointRoot, CheckpointRootPolicy,
+    CheckpointPosture, CheckpointRoot, CheckpointRootPolicy, CommReach,
 };
 use serde::Serialize;
 
 /// The private pairing result; `Oneiron.pair` connects with its url and
-/// credential and returns the credential and pin.
+/// credential and returns the credential, pin and comm reach.
 #[derive(Serialize)]
 pub(crate) struct Paired {
     url: String,
     credential: String,
     pin: Option<CheckpointPin>,
+    /// Whom the paired credential may address, as the server took it.
+    comm: CommReach,
 }
 
 impl Paired {
     /// The result of `OneironClient::pair_pinned`, pin lifted.
     pub(crate) fn from_engine(
-        (url, credential, pin): (String, String, Option<AuthorityCheckpointPin>),
+        (url, credential, pin, comm): (String, String, Option<AuthorityCheckpointPin>, CommReach),
     ) -> Self {
         Self {
             url,
             credential,
             pin: pin.as_ref().map(CheckpointPin::from_engine),
+            comm,
         }
     }
 }
@@ -61,6 +65,8 @@ struct CheckpointPinPolicy {
     roots: Vec<CheckpointPinRoot>,
     quorum: u8,
     hardware: bool,
+    /// The owner selected these roots and this quorum (FIX 4883).
+    owner_selected: bool,
 }
 
 #[derive(Serialize)]
@@ -136,6 +142,7 @@ impl CheckpointPinPolicy {
                 .collect(),
             quorum: policy.quorum,
             hardware: policy.hardware,
+            owner_selected: policy.owner_selected,
         }
     }
 }

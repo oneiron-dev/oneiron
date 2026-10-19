@@ -154,6 +154,11 @@ pub struct ExportTravel {
 const EXPORT_TRAVEL: SideTable<u64, ExportTravel, Named> =
     SideTable::new(&side_table::SHARE_EXPORT_TRAVEL);
 
+/// How many more writes the owner's own agent-pack share receipt gets when
+/// its first fails (FIX 5523, CALLS "FIX 5523 receipt retry"): on this open
+/// vault's next travel receipt, after which it is dropped with a warning.
+const OWNER_EXPORT_RECEIPT_RETRY_COUNT: usize = 1;
+
 const BRIEF_TRAVEL: SideTable<EntityId, TravelChoice, Named> =
     SideTable::new(&side_table::SHARE_BRIEF_TRAVEL);
 
@@ -437,12 +442,15 @@ impl Vault {
             by,
             born_with,
             Vec::new(),
+            false,
         )
     }
 
     /// Record one travelling AgentPack's share receipt, with the knowledge
     /// it kept home and the owner's notices for his own export (FIX 5493),
-    /// on the same terms as [`Self::record_export_travel`].
+    /// on the same terms as [`Self::record_export_travel`]; for the owner's
+    /// own export (`owner_export`) a failed write never fails his share
+    /// (FIX 5523).
     #[expect(
         clippy::too_many_arguments,
         reason = "one receipt row's fields, each the export door's own"
@@ -456,6 +464,7 @@ impl Vault {
         born_with: &BornWith,
         omitted: Vec<OmittedKnowledge>,
         notices: Vec<WorldRecipientNotice>,
+        owner_export: bool,
     ) -> Result<()> {
         self.record_travel(
             ExportTarget::AgentPack {
@@ -467,9 +476,15 @@ impl Vault {
             by,
             born_with,
             notices,
+            owner_export,
         )
     }
 
+    /// Writes one travel receipt, after the owner share receipts an earlier
+    /// failed write queued here (FIX 5523). The owner's own agent-pack share
+    /// never fails on its receipt: a failed write warns and queues it for
+    /// this vault's next travel receipt. Any other export is served without
+    /// its receipt only when no born-with text left with it.
     fn record_travel(
         &self,
         target: ExportTarget,
@@ -477,7 +492,9 @@ impl Vault {
         by: &EntityId,
         born_with: &BornWith,
         notices: Vec<WorldRecipientNotice>,
+        owner_export: bool,
     ) -> Result<()> {
+        let owner_export = owner_export && matches!(target, ExportTarget::AgentPack { .. });
         let travel = ExportTravel {
             at: self.store.clock.now_recorded_at(),
             target,
@@ -486,7 +503,28 @@ impl Vault {
             travelled: born_with.keys().copied().collect(),
             notices,
         };
-        let written = self.with_write_txn_grouped(|txn| {
+        self.retry_owner_export_receipts();
+        match self.append_export_travel(&travel) {
+            Err(error) if owner_export => {
+                tracing::warn!(
+                    %error,
+                    "owner export served without its travel receipt; queued for one retry"
+                );
+                self.owner_export_receipts().push(travel);
+                Ok(())
+            }
+            Err(error) if travel.travelled.is_empty() => {
+                tracing::warn!(%error, "export served without its travel receipt");
+                Ok(())
+            }
+            other => other,
+        }
+    }
+
+    /// Appends `travel` as the next export travel receipt in its own write,
+    /// its sequence assigned as it is written.
+    fn append_export_travel(&self, travel: &ExportTravel) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
             let sequence = match EXPORT_TRAVEL.iter_rev_from(&self.store, txn, &[])?.next() {
                 None => 0,
                 Some(row) => row?
@@ -494,14 +532,39 @@ impl Vault {
                     .checked_add(1)
                     .ok_or(crate::Error::IndexOverflow("export travel sequence"))?,
             };
-            EXPORT_TRAVEL.put(&self.store, txn, &sequence, &travel)
-        });
-        match written {
-            Err(error) if travel.travelled.is_empty() => {
-                tracing::warn!(%error, "export served without its travel receipt");
-                Ok(())
+            EXPORT_TRAVEL.put(&self.store, txn, &sequence, travel)
+        })
+    }
+
+    /// Writes each owner share receipt a failed write queued (FIX 5523), up
+    /// to [`OWNER_EXPORT_RECEIPT_RETRY_COUNT`] times, each in its own write,
+    /// and drops it either way: a failure warns and never reaches the
+    /// travel that retried it. The queue is taken whole and released before
+    /// any write.
+    fn retry_owner_export_receipts(&self) {
+        let pending = std::mem::take(&mut *self.owner_export_receipts());
+        for travel in pending {
+            let mut written = Ok(());
+            for _ in 0..OWNER_EXPORT_RECEIPT_RETRY_COUNT {
+                written = self.append_export_travel(&travel);
+                if written.is_ok() {
+                    break;
+                }
             }
-            other => other,
+            if let Err(error) = written {
+                tracing::warn!(
+                    %error,
+                    "owner export travel receipt failed its retry and was dropped"
+                );
+            }
         }
+    }
+
+    /// This open vault's queued owner share receipts (FIX 5523); a poisoned
+    /// lock still holds its queue.
+    fn owner_export_receipts(&self) -> std::sync::MutexGuard<'_, Vec<ExportTravel>> {
+        self.pending_owner_export_receipts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
