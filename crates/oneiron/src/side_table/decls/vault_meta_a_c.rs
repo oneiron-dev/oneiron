@@ -345,6 +345,10 @@ side_tables! {
     /// The vault's last sealed checkpoint: its sequence and signed commitment's
     /// BLAKE3, which the next one names as predecessor (OF-570 (e)). Key: ().
     CHECKPOINT_CHAIN_HEAD: VaultMeta b"checkpoint_chain:head:v1" Named;
+    /// One incarnation of a checkpoint payload compartment (KS-7): its custody generation and
+    /// whether it is active, retained or erased. Never a key and never a refcount. Key: subtype
+    /// (1) + canonical owner (32) + incarnation (16).
+    CHECKPOINT_PAYLOAD_INSTANCE: VaultMeta b"checkpoint_payload:instance:v1:" Named Engine;
     /// Two-slot channel assignment index: occupant id16 then predecessor id16, all-zero for an
     /// empty slot. Key: bytes32 (blake3 of the length-framed channel and address).
     CHANNEL_IDENTITY_ASSIGNMENT: VaultMeta b"cid_assign:v1:" Raw;

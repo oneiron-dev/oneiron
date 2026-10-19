@@ -747,11 +747,13 @@
       "SelfBudgetRequest",
       "SpendLeaseView",
       "SpendScopeRequest",
-      "TopUpSpendLeaseRequest"
+      "TopUpSpendLeaseRequest",
+      "UsageEventOrigin"
      ],
      "path": "src/agent_dispatch/budget_doors.rs",
      "purpose": "Typed doors over launch spend leases, budget holds and the local runner counter with its reservations",
      "surface": {
+      "enum": 1,
       "fn": 9,
       "struct": 17
      }
@@ -3152,6 +3154,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "LocalHostRootContext",
+      "LocalHostRootValidated",
+      "RetainedHostRootReplace"
+     ],
+     "path": "src/authority/local_host_root.rs",
+     "purpose": "Re-keying this install's host root (FIX 5571, the re-key half of FIX 5346; owner ruling FIX 5341 = A)",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "LocalOpenProfile"
      ],
      "path": "src/authority/local_open.rs",
@@ -3231,7 +3249,7 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 11,
       "struct": 3
@@ -3358,7 +3376,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 30,
-      "re-export": 55
+      "re-export": 56
      }
     },
     {
@@ -11588,7 +11606,7 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 8
      }
     },
@@ -18584,7 +18602,7 @@
      "purpose": "Revision-bound reply strips",
      "surface": {
       "crate-vis": 3,
-      "fn": 8,
+      "fn": 9,
       "struct": 3
      }
     },
@@ -50525,6 +50543,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/checkpoint_payload/instance.rs",
+     "purpose": "The instance table of checkpoint payload compartments (KS-7, `checkpoint_payload:instance:v1:`): one row per…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/checkpoint_payload/mod.rs",
+     "purpose": "Checkpoint payload custody (KS-7, FIX 5688): the ordinary payload a checkpoint copies is sealed one owner at…",
+     "surface": {
+      "crate-vis": 23
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -51004,7 +51042,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "mod": 1,
       "re-export": 14
      }
@@ -62696,7 +62734,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 185,
+     "files": 186,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63928,7 +63966,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 96,
+     "files": 98,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64154,7 +64192,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3955,
+   "source_files": 3958,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71304,7 +71342,7 @@
      "path": "src/apple.rs",
      "purpose": "Apple: the data-protection keychain, one generic-password item per slot",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 1
      }
@@ -77187,7 +77225,7 @@
      "path": "src/api/core/query.rs",
      "purpose": "Query/list/capability routes and their paging helpers",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -80207,7 +80245,7 @@
      "path": "src/api/scoped_auth.rs",
      "purpose": "Legacy owner-auth gate and scoped-read constructors for both auth flavors",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -90934,6 +90972,7 @@
       "UnknownReason",
       "UnsupportedCapability",
       "UpdateCampaignProgramRequest",
+      "UsageEventOrigin",
       "UsedProvenanceEdge",
       "Vad",
       "VadAnnotationSource",
@@ -91108,7 +91147,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 872,
+      "enum": 873,
       "struct": 2766
      }
     },

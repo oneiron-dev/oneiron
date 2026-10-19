@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1107 code-mode rows (1082 host rows, 25 run rows), 3721 declarations.
+// Census: 1107 code-mode rows (1082 host rows, 25 run rows), 3722 declarations.
 // Replies: 989 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
@@ -402,7 +402,8 @@ declare namespace Sdk {
   type RunnerBudgetReservation = { job_ref: string; reserved_units: number; created_at: number; updated_at: number };
   type RunnerBudgetReservationsView = { budget_id: string; counter?: LocalRunnerBudgetCounter | null; reservations: RunnerBudgetReservation[]; next?: string | null; local_only: boolean };
   type RunSettlementsRequest = { run: string };
-  type RunRungSettlement = { instance: string; lease: string; run: string; revision: number; model?: string | null; offer: string; route: string; purpose?: string | null; agent?: string | null; cycle?: string | null; item?: string | null; spend_scope?: string | null; reserved_units: number; settled_units: number; unit: string; usage_reported: boolean; settlement_refused: boolean; occurred_at: number; cost_amount?: number | null; currency?: string | null; price_table_snapshot?: string | null };
+  type UsageEventOrigin = "engine" | "posted";
+  type RunRungSettlement = { instance: string; lease: string; run: string; revision: number; model?: string | null; offer: string; route: string; purpose?: string | null; source: UsageEventOrigin; agent?: string | null; cycle?: string | null; item?: string | null; spend_scope?: string | null; reserved_units: number; settled_units: number; unit: string; usage_reported: boolean; settlement_refused: boolean; occurred_at: number; cost_amount?: number | null; currency?: string | null; price_table_snapshot?: string | null };
   type RunSettlementsView = { run: string; metering_enabled: boolean; settlements: RunRungSettlement[] };
   type RsiBudgetShare = { units: number; pinned: boolean };
   type RsiBudgetConfig = { limit: number; exploration_exposure_limit: number; shares: Record<string, RsiBudgetShare> };
