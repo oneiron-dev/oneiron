@@ -21,6 +21,7 @@ use super::super::doors::{
 use super::super::transition::{custody_portable, transition_named_in_txn};
 use super::super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus};
 use super::input::{MAX_INPUT_BYTES, attach_manifest};
+use super::manifest::unstated_input;
 use super::permits::candidate_for;
 use super::{
     ActiveChange, CustodyDelivery, CustodyPlan, Material, SecretCustodyWork,
@@ -83,7 +84,9 @@ pub struct SealedCustodyChange<'a> {
     /// For a register, the `manifest_ref` the sealed record names, as the
     /// surface states it: this install attaches the manifest it resolves
     /// for it, for the holder to check the record against (CALLS
-    /// CUSTODY_MANIFEST_RECHECK).
+    /// CUSTODY_MANIFEST_RECHECK). A register that states none carries the
+    /// vault's one current approved manifest, or an explicit "no manifest"
+    /// mark (CALLS CUSTODY_MANIFEST_UNSTATED).
     pub manifest_ref: Option<&'a str>,
     pub change: CustodyChange,
     pub secret_id: EntityId,
@@ -327,8 +330,13 @@ impl Vault {
     /// states the `manifest_ref` its record names gets the manifest this
     /// install resolves for it attached to its input, under the digest the
     /// request names, and its holder checks the record against it (CALLS
-    /// CUSTODY_MANIFEST_RECHECK). The same input sent again is the request
-    /// already recorded (CALLS CUSTODY_RETRY). `surface` is audit only.
+    /// CUSTODY_MANIFEST_RECHECK). One that states none gets the vault's one
+    /// current approved manifest attached there, which its holder checks a
+    /// record naming it against, or, when none applies, an explicit "no
+    /// manifest" mark, and the receipt says it registers without a manifest
+    /// check (CALLS CUSTODY_MANIFEST_UNSTATED). The same input sent again is
+    /// the request already recorded (CALLS CUSTODY_RETRY). `surface` is
+    /// audit only.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is no
@@ -361,15 +369,17 @@ impl Vault {
             return Err(refused("the sealed input is empty or larger than 4 MiB"));
         }
         // Read before the writer is taken: the manifest comes out of git.
-        let attached = match (sealed.change, sealed.manifest_ref) {
-            (_, None) => None,
+        let (attached, manifest_check) = match (sealed.change, sealed.manifest_ref) {
+            (CustodyChange::Register, None) => {
+                let (attached, check) = unstated_input(self, sealed.input);
+                (attached, Some(check))
+            }
+            (_, None) => (None, None),
             (CustodyChange::Register, Some(manifest_ref)) => {
                 let manifest = self.origin_secret_manifest_at(manifest_ref)?;
-                Some(attach_manifest(
-                    sealed.input,
-                    &manifest.manifest_ref,
-                    &manifest.text,
-                )?)
+                let attached =
+                    attach_manifest(sealed.input, &manifest.manifest_ref, &manifest.text)?;
+                (Some(attached), None)
             }
             (_, Some(_)) => return Err(refused("only a register names a manifest")),
         };
@@ -424,6 +434,11 @@ impl Vault {
         }
         wtxn.commit()?;
         self.mirror_custody_change(&recorded.custody);
-        Ok(recorded.custody)
+        // What this install checked as the holder, else what it attached.
+        let mut custody = recorded.custody;
+        if custody.manifest.is_none() {
+            custody.manifest = manifest_check;
+        }
+        Ok(custody)
     }
 }

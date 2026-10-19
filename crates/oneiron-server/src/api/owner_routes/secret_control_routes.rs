@@ -261,7 +261,9 @@ struct SealedBody {
     /// The envelope sealed to the holder's key, as standard base64.
     input_base64: String,
     /// For a register, the `manifest_ref` its sealed record names: this
-    /// install attaches the manifest it resolves for it.
+    /// install attaches the manifest it resolves for it. Absent, it attaches
+    /// the vault's one current approved manifest, or records that the
+    /// register carries none and the reply says so.
     #[serde(default)]
     manifest_ref: Option<String>,
 }

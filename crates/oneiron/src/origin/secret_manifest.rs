@@ -9,13 +9,18 @@
 //! file reads the same in the origin, in each checkout and in each mirror
 //! clone, which is where snapshot exclusion matches them.
 
+use std::path::Path;
+
 use crate::Vault;
 use crate::codebase::RepoRef;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
 use crate::origin::lfs::lfs_repo_id;
 use crate::origin::publication::OriginPublicationStatus;
-use crate::origin::smart_http::origin_repo_dir;
+use crate::origin::smart_http::{
+    ORIGIN_REPO_DIR_SUFFIX, ORIGIN_SERVING_ROOT_NAME, origin_repo_dir, validate_repo_name,
+};
 use crate::secret_manifest::{SecretManifest, parse_secret_manifest};
 
 /// Where a repository declares its secrets, relative to its root.
@@ -71,30 +76,9 @@ impl Vault {
             })
         };
         let wire = GitWire::new(self)?;
-        let repo_id = lfs_repo_id(&wire.repository_identity(&repo_dir)?.as_hex())?;
-        let path = repo_dir
-            .to_str()
-            .ok_or(Error::InvariantViolation("origin repo path must be UTF-8"))?;
-        // A pin only proves which object store the handle names, and only a
-        // commit can: any commit this repository published will do, and a
-        // visible slot names one without reading the publication history.
-        // Which object the ref names NOW is the projection's answer below, as
-        // for an advertisement, and only a commit there holds a manifest.
-        let mut repo = None;
-        for id in self.origin_visible_ref_rows(&repo_id)? {
-            let Some(record) = self.origin_publication(id)? else {
-                continue;
-            };
-            if record.status != OriginPublicationStatus::Published {
-                continue;
-            }
-            let repo_ref = RepoRef::parse(&format!("local:{path}#{}", record.new_oid.as_str()))?;
-            if let Ok(handle) = wire.open_repo(repo_ref, &repo_dir) {
-                repo = Some(handle);
-                break;
-            }
-        }
-        let repo = repo.ok_or_else(not_found)?;
+        let (repo_id, repo) = self
+            .published_origin_repo(&wire, &repo_dir)?
+            .ok_or_else(not_found)?;
         let commit = self
             .published_origin_refs(&wire, repo_id, &repo)?
             .into_iter()
@@ -115,6 +99,116 @@ impl Vault {
 }
 
 impl Vault {
+    /// The served repository at `repo_dir` opened through a commit it
+    /// published, with its id: where its published refs are read. `None`
+    /// when no commit it published opens.
+    fn published_origin_repo(
+        &self,
+        wire: &GitWire<'_>,
+        repo_dir: &Path,
+    ) -> Result<Option<(EntityId, GitWireRepo)>> {
+        let repo_id = lfs_repo_id(&wire.repository_identity(repo_dir)?.as_hex())?;
+        let path = repo_dir
+            .to_str()
+            .ok_or(Error::InvariantViolation("origin repo path must be UTF-8"))?;
+        // A pin only proves which object store the handle names, and only a
+        // commit can: any commit this repository published will do, and a
+        // visible slot names one without reading the publication history.
+        // Which object the ref names NOW is the projection's answer, as for
+        // an advertisement, and only a commit there holds a manifest.
+        for id in self.origin_visible_ref_rows(&repo_id)? {
+            let Some(record) = self.origin_publication(id)? else {
+                continue;
+            };
+            if record.status != OriginPublicationStatus::Published {
+                continue;
+            }
+            let repo_ref = RepoRef::parse(&format!("local:{path}#{}", record.new_oid.as_str()))?;
+            if let Ok(handle) = wire.open_repo(repo_ref, repo_dir) {
+                return Ok(Some((repo_id, handle)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The vault's one current approved secret manifest: the manifest file
+    /// that parses at the commit this vault publishes now for a branch of a
+    /// repository it serves, when exactly one such commit holds one (CALLS
+    /// CUSTODY_MANIFEST_UNSTATED). The publication journal is the approval:
+    /// a ref counts only while the vault advertises it, as for
+    /// [`Vault::origin_secret_manifest`]. `None` when no served branch
+    /// holds one, when several do, or when they cannot be read: then no
+    /// manifest applies.
+    pub(crate) fn current_origin_secret_manifest(&self) -> Option<OriginSecretManifest> {
+        match self.current_origin_secret_manifests(2) {
+            Ok(mut found) if found.len() == 1 => found.pop(),
+            Ok(_) => None,
+            Err(error) => {
+                tracing::debug!(kind = ?error.kind(), "current secret manifests not read");
+                None
+            }
+        }
+    }
+
+    /// Up to `limit` manifests that parse at the commits this vault
+    /// publishes now for the branches of the repositories it serves, by
+    /// repository name, then as the projection lists the refs.
+    fn current_origin_secret_manifests(&self, limit: usize) -> Result<Vec<OriginSecretManifest>> {
+        // Looked up, never created: a vault that serves nothing has none.
+        let root = self.store.env.path().join(ORIGIN_SERVING_ROOT_NAME);
+        if !root.is_dir() {
+            return Ok(Vec::new());
+        }
+        let mut names = Vec::new();
+        for entry in std::fs::read_dir(&root)? {
+            let entry = entry?;
+            if let Some(name) = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.strip_suffix(ORIGIN_REPO_DIR_SUFFIX))
+                && validate_repo_name(name).is_ok()
+                && entry.file_type()?.is_dir()
+            {
+                names.push(name.to_owned());
+            }
+        }
+        names.sort();
+        let wire = GitWire::new(self)?;
+        let mut found = Vec::new();
+        for repo_name in names {
+            let repo_dir = origin_repo_dir(self, &repo_name)?;
+            let Some((repo_id, repo)) = self.published_origin_repo(&wire, &repo_dir)? else {
+                continue;
+            };
+            for (ref_name, commit) in self.published_origin_refs(&wire, repo_id, &repo)? {
+                if !ref_name.as_str().starts_with("refs/heads/") {
+                    continue;
+                }
+                let Some(text) = manifest_bytes(&wire, &repo, &commit)?
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+                else {
+                    continue;
+                };
+                let Ok(manifest) = parse_secret_manifest(&text) else {
+                    continue;
+                };
+                found.push(OriginSecretManifest {
+                    manifest_ref: format!(
+                        "{repo_name}:{}@{}:{SECRET_MANIFEST_PATH}",
+                        ref_name.as_str(),
+                        commit.as_str()
+                    ),
+                    manifest,
+                    text,
+                });
+                if found.len() >= limit {
+                    return Ok(found);
+                }
+            }
+        }
+        Ok(found)
+    }
+
     /// Reads the manifest a record's `manifest_ref`,
     /// `<repo>:<ref>@<commit>:<path>`, names, as this vault publishes it now:
     /// the snapshot a recorder attaches to a register the owner's surface

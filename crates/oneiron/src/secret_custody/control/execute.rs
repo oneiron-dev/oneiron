@@ -25,12 +25,10 @@ use super::super::doors::{
     put_secret_custody_in_txn, read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
     refuse_bindings_wider_than_live_floor, register_secret_in_txn, resolve_secret_ref_in_txn,
 };
-use super::super::owner_door::recheck_manifest_snapshot_in_txn;
 use super::super::transition::{Enactment, custody_portable, write_custody_transition_in_txn};
 use super::super::types::{SecretBinding, SecretCustodyRecord, SecretCustodyStatus};
-use super::input::{
-    AttachedManifest, InputBinding, drop_input_in_txn, held_input_in_txn, split_attached,
-};
+use super::input::{Attached, InputBinding, drop_input_in_txn, held_input_in_txn, split_attached};
+use super::manifest::{CustodyManifestCheck, RegisterVerdict, check_register_in_txn};
 use super::permits::permitted_keys;
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, CustodyChange, OwnerWorkBody, OwnerWorkOutcome,
@@ -87,6 +85,9 @@ pub(crate) struct Enacted {
     pub(crate) outcome: OwnerWorkOutcome,
     /// The rotation receipt a rotate wrote here, in this commit.
     pub(crate) rotation: Option<RotationReceipt>,
+    /// For a register whose surface stated no `manifest_ref`, what this
+    /// holder checked the record against (CALLS CUSTODY_MANIFEST_UNSTATED).
+    pub(crate) manifest: Option<CustodyManifestCheck>,
 }
 
 impl Enacted {
@@ -94,6 +95,7 @@ impl Enacted {
         Self {
             outcome: super::enacted(),
             rotation,
+            manifest: None,
         }
     }
 
@@ -101,7 +103,27 @@ impl Enacted {
         Self {
             outcome: OwnerWorkOutcome::Refused { reason },
             rotation: None,
+            manifest: None,
         }
+    }
+
+    /// A register of record `id`, enacted, with what it was checked against
+    /// (CALLS CUSTODY_MANIFEST_UNSTATED); one taken unchecked is logged by
+    /// its manifest refs, never a value.
+    fn checked_against(self, id: EntityId, manifest: Option<CustodyManifestCheck>) -> Self {
+        if self.outcome != super::enacted() {
+            return self;
+        }
+        if let Some(check) = &manifest
+            && check.unchecked()
+        {
+            tracing::info!(
+                secret = %id.to_hex(),
+                manifest = %check.text(),
+                "custody register taken without a manifest check"
+            );
+        }
+        Self { manifest, ..self }
     }
 }
 
@@ -119,9 +141,9 @@ enum Opened {
     Missing,
     /// It does not open under the request's binding.
     Invalid,
-    /// Its body, and the manifest its recorder attached beside a sealed
-    /// register's envelope, if any.
-    Body(Zeroizing<Vec<u8>>, Option<AttachedManifest>),
+    /// Its body, and what its recorder attached beside a sealed register's
+    /// envelope, if anything.
+    Body(Zeroizing<Vec<u8>>, Option<Attached>),
 }
 
 /// A record whose value is wiped when it drops, on every path.
@@ -219,8 +241,8 @@ impl Vault {
         };
         match change {
             CustodyChange::Register => {
-                let record = match material {
-                    Material::Record(record, _) => Held(record.clone()),
+                let (record, manifest) = match material {
+                    Material::Record(record, _) => (Held(record.clone()), None),
                     Material::Input(secret) => match self
                         .opened_input_in_txn(txn, &binding, *input, secret)?
                     {
@@ -234,38 +256,31 @@ impl Vault {
                             };
                             let record = Held(record);
                             // The manifest the recorder sealed beside the
-                            // record, or the one it resolved for the
+                            // record, the one it resolved for the
                             // manifest_ref a surface stated, which must be
-                            // the record's.
-                            let snapshot = match (framed, attached) {
-                                (framed, None) => framed,
-                                (None, Some(attached))
-                                    if attached.manifest_ref == record.0.manifest_ref =>
-                                {
-                                    Some(attached.text)
-                                }
-                                (_, Some(_)) => {
-                                    return Ok(Some(Enacted::refused(
-                                        OwnerWorkRefusal::InvalidInput,
-                                    )));
-                                }
-                            };
-                            if let Some(refusal) = recheck_manifest_snapshot_in_txn(
+                            // the record's, or the vault's current approved
+                            // one for a surface that stated none.
+                            match check_register_in_txn(
                                 &self.store,
                                 txn,
+                                framed,
+                                attached,
                                 &record.0,
-                                snapshot.as_deref(),
                             )? {
-                                return Ok(Some(Enacted::refused(refusal)));
+                                RegisterVerdict::Register(manifest) => (record, manifest),
+                                RegisterVerdict::Refuse(refusal) => {
+                                    return Ok(Some(Enacted::refused(refusal)));
+                                }
                             }
-                            record
                         }
                     },
                     Material::Value(_) | Material::Bindings(_) | Material::Held => {
                         return Ok(Some(Enacted::refused(OwnerWorkRefusal::InvalidInput)));
                     }
                 };
-                self.register_from_in_txn(txn, id, *generation, record, enactment, at)
+                Ok(self
+                    .register_from_in_txn(txn, id, *generation, record, enactment, at)?
+                    .map(|done| done.checked_against(id, manifest)))
             }
             CustodyChange::Rotate => {
                 let value = match material {

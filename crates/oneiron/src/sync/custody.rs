@@ -545,11 +545,23 @@ impl Vault {
     /// Judges again every custody transition and input the live base
     /// windows carry, as a window open does: one whose request this vault
     /// had not folded when it arrived stands once the request is in, and
-    /// the holder a request names keeps its input. The owner work drain runs
-    /// it after an authority catch-up and on the served tick.
+    /// the holder a request names keeps its input. A rebind this vault keeps
+    /// pending because its live floor refused the bindings is judged again
+    /// from its kept carrier, and applies once the floor admits it (CALLS
+    /// CUSTODY_REBIND_PENDING_FLOOR). The owner work drain runs it after an
+    /// authority catch-up and on the served tick.
     pub(crate) fn reapply_custody_in_live_windows(&self) {
         for window in self.live_windows() {
             apply_custody_rows(self, &window.doc, &window.key, true);
+        }
+        match self.apply_pending_rebinds() {
+            Ok(rebound) if rebound > 0 => {
+                tracing::debug!(rebound, "pending custody rebinds applied");
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(error = %error, "pending custody rebinds not applied");
+            }
         }
     }
 
