@@ -153,6 +153,12 @@ vaultRetrievalOutcomesEnd(input: unknown): unknown
 vaultRetrievalTrace(input: unknown): unknown
 vaultRetrievalExport(input: unknown): unknown
 vaultRetrievalReplay(input: unknown): unknown
+vaultRetrievalPolicyGet(input: unknown): unknown
+vaultRetrievalPolicyPin(input: unknown): unknown
+vaultRetrievalPolicyTrain(input: unknown): unknown
+vaultRetrievalPolicyEvaluate(input: unknown): unknown
+vaultRetrievalPolicyAdmit(input: unknown): unknown
+vaultRetrievalPolicyUpdate(input: unknown): unknown
 vaultExport(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
 vaultScopePosition(input: unknown): unknown
@@ -268,6 +274,8 @@ vaultPacksSetupVerify(input: unknown): unknown
 vaultAuthorityAudit(input: unknown): unknown
 vaultAuthorityHistoryExport(input: unknown): unknown
 vaultAuthorityHistoryImport(input: unknown): unknown
+vaultWireHealthThresholdsGet(input: unknown): unknown
+vaultWireHealthThresholdsSet(input: unknown): unknown
 vaultSlimPolicy(input: unknown): unknown
 vaultSlimState(input: unknown): unknown
 vaultSlimResumeStep(input: unknown): unknown

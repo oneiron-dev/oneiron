@@ -1006,6 +1006,60 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_retrieval_policy_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.policy.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_policy_pin(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.policy.pin", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_policy_train(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.policy.train", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_policy_evaluate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.policy.evaluate", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_policy_admit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.policy.admit", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_policy_update(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.policy.update", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_export(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.export", js_json(input))
@@ -2053,6 +2107,24 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.authority.history.import", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_wire_health_thresholds_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.wire_health.thresholds.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_wire_health_thresholds_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.wire_health.thresholds.set", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

@@ -19,9 +19,8 @@ impl VectorRefinement {
         skip_rescore: bool,
     ) -> Self {
         let candidate_dimensions = config.fast_dims.map_or(config.dimensions, usize::from);
-        let full_dimension_rescore = config.fast_dims.is_some()
-            && query_dimensions == config.dimensions
-            && !skip_rescore;
+        let full_dimension_rescore =
+            config.fast_dims.is_some() && query_dimensions == config.dimensions && !skip_rescore;
         Self {
             stored_dimensions: config.dimensions,
             candidate_dimensions,

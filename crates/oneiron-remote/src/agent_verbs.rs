@@ -416,6 +416,24 @@ impl OneironClient {
                 "vault.retrieval.replay" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::RetrievalDiagnosticReplay,
                 >(client, verb, &input),
+                "vault.retrieval.policy.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RetrievalPolicyView,
+                >(client, verb, &input),
+                "vault.retrieval.policy.pin" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RetrievalPolicyView,
+                >(client, verb, &input),
+                "vault.retrieval.policy.train" => remote_agent_verb_output::<
+                    oneiron::store::RetrievalPolicyCandidate,
+                >(client, verb, &input),
+                "vault.retrieval.policy.evaluate" => remote_agent_verb_output::<
+                    oneiron::store::RetrievalPolicyEvaluation,
+                >(client, verb, &input),
+                "vault.retrieval.policy.admit" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RetrievalPolicyAdmitReceipt,
+                >(client, verb, &input),
+                "vault.retrieval.policy.update" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RetrievalPolicyUpdateReceipt,
+                >(client, verb, &input),
                 "vault.export" => {
                     remote_agent_verb_output::<oneiron::memory::MemoryExport>(client, verb, &input)
                 }
@@ -772,6 +790,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.authority.history.import" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AuthorityHistoryImported,
+                >(client, verb, &input),
+                "vault.wire_health.thresholds.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::WireThresholds,
+                >(client, verb, &input),
+                "vault.wire_health.thresholds.set" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::WireThresholdsReceipt,
                 >(client, verb, &input),
                 "vault.slim.policy" => remote_agent_verb_output::<
                     oneiron::slim::public::SlimIdlePolicy,
@@ -4640,6 +4664,78 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.retrieval.replay", value)
     }
+    pub fn vault_retrieval_policy_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::task_verb::sdk::RetrievalPolicyView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.policy.get", value)
+    }
+    pub fn vault_retrieval_policy_pin(
+        &self,
+        input: &oneiron::task_verb::sdk::RetrievalPolicyPinRequest,
+    ) -> Result<oneiron::task_verb::sdk::RetrievalPolicyView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.policy.pin", value)
+    }
+    pub fn vault_retrieval_policy_train(
+        &self,
+        input: &oneiron::task_verb::sdk::RetrievalPolicyTrainRequest,
+    ) -> Result<oneiron::store::RetrievalPolicyCandidate, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.policy.train", value)
+    }
+    pub fn vault_retrieval_policy_evaluate(
+        &self,
+        input: &oneiron::task_verb::sdk::RetrievalPolicyEvaluateRequest,
+    ) -> Result<oneiron::store::RetrievalPolicyEvaluation, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.policy.evaluate", value)
+    }
+    pub fn vault_retrieval_policy_admit(
+        &self,
+        input: &oneiron::task_verb::sdk::RetrievalPolicyAdmitRequest,
+    ) -> Result<oneiron::task_verb::sdk::RetrievalPolicyAdmitReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.policy.admit", value)
+    }
+    pub fn vault_retrieval_policy_update(
+        &self,
+        input: &oneiron::task_verb::sdk::RetrievalPolicyTrainRequest,
+    ) -> Result<oneiron::task_verb::sdk::RetrievalPolicyUpdateReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.retrieval.policy.update", value)
+    }
     /// Exports the whole vault as one re-importable archive (a ZIP of JSONL
     /// records, files by BLAKE3 and a manifest), custody secrets included.
     pub fn vault_export(
@@ -6048,6 +6144,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.authority.history.import", value)
+    }
+    pub fn vault_wire_health_thresholds_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::task_verb::sdk::WireThresholds, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.wire_health.thresholds.get", value)
+    }
+    pub fn vault_wire_health_thresholds_set(
+        &self,
+        input: &oneiron::task_verb::sdk::WireThresholds,
+    ) -> Result<oneiron::task_verb::sdk::WireThresholdsReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.wire_health.thresholds.set", value)
     }
     pub fn vault_slim_policy(
         &self,

@@ -674,6 +674,40 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.retrieval.policy.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.retrieval.policy.pin",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalPolicyPinRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.policy.train",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalPolicyTrainRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.policy.evaluate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalPolicyEvaluateRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.policy.admit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalPolicyAdmitRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.policy.update",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RetrievalPolicyTrainRequest,
+                >(),
+            ),
+            (
                 "vault.export",
                 crate::code_run::vault_read::request_schema::<crate::memory::ExportOptions>(),
             ),
@@ -1187,6 +1221,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::SignedAuthorityHistory,
                 >(),
+            ),
+            (
+                "vault.wire_health.thresholds.get",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.wire_health.thresholds.set",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WireThresholds>(
+                ),
             ),
             (
                 "vault.slim.policy",
@@ -5594,6 +5638,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.retrieval.trace",
     "vault.retrieval.export",
     "vault.retrieval.replay",
+    "vault.retrieval.policy.get",
+    "vault.retrieval.policy.pin",
+    "vault.retrieval.policy.train",
+    "vault.retrieval.policy.evaluate",
+    "vault.retrieval.policy.admit",
+    "vault.retrieval.policy.update",
     "self.credential.attenuate",
     "vault.scope.position",
     "vault.scope.ceiling",
@@ -5677,6 +5727,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.connectors.proxy.revoke_write",
     "vault.authority.history.export",
     "vault.authority.history.import",
+    "vault.wire_health.thresholds.get",
+    "vault.wire_health.thresholds.set",
     "vault.slim.policy",
     "vault.slim.state",
     "vault.slim.resume_step",
@@ -6399,6 +6451,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.retrieval.replay" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::RetrievalDiagnosticReplay,
         >(),
+        "vault.retrieval.policy.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::RetrievalPolicyView,
+        >(),
+        "vault.retrieval.policy.pin" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::RetrievalPolicyView,
+        >(),
+        "vault.retrieval.policy.train" => {
+            crate::code_run::vault_read::request_schema::<crate::store::RetrievalPolicyCandidate>()
+        }
+        "vault.retrieval.policy.evaluate" => {
+            crate::code_run::vault_read::request_schema::<crate::store::RetrievalPolicyEvaluation>()
+        }
+        "vault.retrieval.policy.admit" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::RetrievalPolicyAdmitReceipt,
+        >(),
+        "vault.retrieval.policy.update" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::RetrievalPolicyUpdateReceipt,
+        >(),
         "self.credential.attenuate" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::CredentialAttenuated,
         >(),
@@ -6649,6 +6719,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.authority.history.import" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AuthorityHistoryImported,
+        >(),
+        "vault.wire_health.thresholds.get" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WireThresholds>()
+        }
+        "vault.wire_health.thresholds.set" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::WireThresholdsReceipt,
         >(),
         "vault.slim.policy" => {
             crate::code_run::vault_read::request_schema::<crate::slim::public::SlimIdlePolicy>()
@@ -9053,6 +9129,48 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.retrieval.policy.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.policy.pin" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.policy.train" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.policy.evaluate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.policy.admit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.policy.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.export" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -9846,6 +9964,20 @@ pub fn mcp_arguments_schema_from_input(
         }
         "vault.authority.history.export" => &[],
         "vault.authority.history.import" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.wire_health.thresholds.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.wire_health.thresholds.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -15433,6 +15565,25 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.retrieval.replay" => {
             let _input: crate::task_verb::sdk::RetrievalDiagnosticRequest = decode(value.clone())?;
         }
+        "vault.retrieval.policy.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.policy.pin" => {
+            let _input: crate::task_verb::sdk::RetrievalPolicyPinRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.policy.train" => {
+            let _input: crate::task_verb::sdk::RetrievalPolicyTrainRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.policy.evaluate" => {
+            let _input: crate::task_verb::sdk::RetrievalPolicyEvaluateRequest =
+                decode(value.clone())?;
+        }
+        "vault.retrieval.policy.admit" => {
+            let _input: crate::task_verb::sdk::RetrievalPolicyAdmitRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.policy.update" => {
+            let _input: crate::task_verb::sdk::RetrievalPolicyTrainRequest = decode(value.clone())?;
+        }
         "vault.export" => {
             let _input: crate::memory::ExportOptions = decode(value.clone())?;
         }
@@ -15797,6 +15948,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.authority.history.import" => {
             let _input: crate::task_verb::sdk::SignedAuthorityHistory = decode(value.clone())?;
+        }
+        "vault.wire_health.thresholds.get" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.wire_health.thresholds.set" => {
+            let _input: crate::task_verb::sdk::WireThresholds = decode(value.clone())?;
         }
         "vault.slim.policy" => {
             let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
@@ -18653,6 +18810,20 @@ pub fn invoke(
         "vault.retrieval.trace" => encode(vault_retrieval_trace(memory, decode(value)?)?),
         "vault.retrieval.export" => encode(vault_retrieval_export(memory, decode(value)?)?),
         "vault.retrieval.replay" => encode(vault_retrieval_replay(memory, decode(value)?)?),
+        "vault.retrieval.policy.get" => encode(vault_retrieval_policy_get(memory, decode(value)?)?),
+        "vault.retrieval.policy.pin" => encode(vault_retrieval_policy_pin(memory, decode(value)?)?),
+        "vault.retrieval.policy.train" => {
+            encode(vault_retrieval_policy_train(memory, decode(value)?)?)
+        }
+        "vault.retrieval.policy.evaluate" => {
+            encode(vault_retrieval_policy_evaluate(memory, decode(value)?)?)
+        }
+        "vault.retrieval.policy.admit" => {
+            encode(vault_retrieval_policy_admit(memory, decode(value)?)?)
+        }
+        "vault.retrieval.policy.update" => {
+            encode(vault_retrieval_policy_update(memory, decode(value)?)?)
+        }
         "vault.export" => encode(vault_export(memory, decode(value)?)?),
         "self.credential.attenuate" => encode(self_credential_attenuate(memory, decode(value)?)?),
         "vault.scope.position" => encode(vault_scope_position(memory, decode(value)?)?),
@@ -18872,6 +19043,12 @@ pub fn invoke(
         }
         "vault.authority.history.import" => {
             encode(vault_authority_history_import(memory, decode(value)?)?)
+        }
+        "vault.wire_health.thresholds.get" => {
+            encode(vault_wire_health_thresholds_get(memory, decode(value)?)?)
+        }
+        "vault.wire_health.thresholds.set" => {
+            encode(vault_wire_health_thresholds_set(memory, decode(value)?)?)
         }
         "vault.slim.policy" => encode(vault_slim_policy(memory, decode(value)?)?),
         "vault.slim.state" => encode(vault_slim_state(memory, decode(value)?)?),
@@ -21520,6 +21697,66 @@ pub fn vault_retrieval_replay(
         input,
     )
 }
+pub fn vault_retrieval_policy_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::RetrievalPolicyView> {
+    crate::task_verb::sdk::retrieval_policy_get_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.policy.get")?,
+        _input,
+    )
+}
+pub fn vault_retrieval_policy_pin(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalPolicyPinRequest,
+) -> MemoryResult<crate::task_verb::sdk::RetrievalPolicyView> {
+    crate::task_verb::sdk::retrieval_policy_pin_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.policy.pin")?,
+        input,
+    )
+}
+pub fn vault_retrieval_policy_train(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalPolicyTrainRequest,
+) -> MemoryResult<crate::store::RetrievalPolicyCandidate> {
+    crate::task_verb::sdk::retrieval_policy_train_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.policy.train")?,
+        input,
+    )
+}
+pub fn vault_retrieval_policy_evaluate(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalPolicyEvaluateRequest,
+) -> MemoryResult<crate::store::RetrievalPolicyEvaluation> {
+    crate::task_verb::sdk::retrieval_policy_evaluate_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.policy.evaluate")?,
+        input,
+    )
+}
+pub fn vault_retrieval_policy_admit(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalPolicyAdmitRequest,
+) -> MemoryResult<crate::task_verb::sdk::RetrievalPolicyAdmitReceipt> {
+    crate::task_verb::sdk::retrieval_policy_admit_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.policy.admit")?,
+        input,
+    )
+}
+pub fn vault_retrieval_policy_update(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RetrievalPolicyTrainRequest,
+) -> MemoryResult<crate::task_verb::sdk::RetrievalPolicyUpdateReceipt> {
+    crate::task_verb::sdk::retrieval_policy_update_as_owner(
+        memory,
+        &memory.embedded_owner("vault.retrieval.policy.update")?,
+        input,
+    )
+}
 pub fn vault_export(
     memory: &Memory<'_>,
     input: crate::memory::ExportOptions,
@@ -22425,6 +22662,18 @@ pub fn vault_authority_history_import(
         &memory.embedded_owner("vault.authority.history.import")?,
         input,
     )
+}
+pub fn vault_wire_health_thresholds_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::WireThresholds> {
+    crate::task_verb::sdk::host_only(memory, "vault.wire_health.thresholds.get", &input)
+}
+pub fn vault_wire_health_thresholds_set(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WireThresholds,
+) -> MemoryResult<crate::task_verb::sdk::WireThresholdsReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.wire_health.thresholds.set", &input)
 }
 pub fn vault_slim_policy(
     memory: &Memory<'_>,

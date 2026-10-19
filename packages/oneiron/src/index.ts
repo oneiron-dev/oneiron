@@ -565,6 +565,20 @@ export class Oneiron {
       export: (input: Facade.RetrievalDiagnosticRequest): Facade.RetrievalDiagnosticExport => this.#call(() => this.#client.vaultRetrievalExport(input) as Facade.RetrievalDiagnosticExport),
       /** The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used. */
       replay: (input: Facade.RetrievalDiagnosticRequest): Facade.RetrievalDiagnosticReplay => this.#call(() => this.#client.vaultRetrievalReplay(input) as Facade.RetrievalDiagnosticReplay),
+      policy: {
+        /** The owner reads the served retrieval policy: active blend weights with their origins, owner pins, the learned posterior and model routing pins. */
+        get: (input: Facade.EmptyRequest = {}): Facade.RetrievalPolicyView => this.#call(() => this.#client.vaultRetrievalPolicyGet(input) as Facade.RetrievalPolicyView),
+        /** The owner pins one retrieval blend weight at a declared share, or clears its pin; learned updates may move only the unpinned remainder. */
+        pin: (input: Facade.RetrievalPolicyPinRequest): Facade.RetrievalPolicyView => this.#call(() => this.#client.vaultRetrievalPolicyPin(input) as Facade.RetrievalPolicyView),
+        /** The owner trains a retrieval-policy candidate from gate-attributed outcomes, judged on held-out runs, without serving it. */
+        train: (input: Facade.RetrievalPolicyTrainRequest): Facade.RetrievalPolicyCandidate => this.#call(() => this.#client.vaultRetrievalPolicyTrain(input) as Facade.RetrievalPolicyCandidate),
+        /** The owner judges candidate blend weights against the active weights on the same held-out runs the tuner never trains on. */
+        evaluate: (input: Facade.RetrievalPolicyEvaluateRequest): Facade.RetrievalPolicyEvaluation => this.#call(() => this.#client.vaultRetrievalPolicyEvaluate(input) as Facade.RetrievalPolicyEvaluation),
+        /** The owner admits candidate blend weights judged on the named evidence manifest; owner pins and held-out regressions refuse admission. */
+        admit: (input: Facade.RetrievalPolicyAdmitRequest): Facade.RetrievalPolicyAdmitReceipt => this.#call(() => this.#client.vaultRetrievalPolicyAdmit(input) as Facade.RetrievalPolicyAdmitReceipt),
+        /** The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior. */
+        update: (input: Facade.RetrievalPolicyTrainRequest): Facade.RetrievalPolicyUpdateReceipt => this.#call(() => this.#client.vaultRetrievalPolicyUpdate(input) as Facade.RetrievalPolicyUpdateReceipt),
+      },
     },
     affect: {
       annotations: {
@@ -975,6 +989,14 @@ export class Oneiron {
         /** The owner acknowledges one saved handoff fork alarm. */
         acknowledge: (input: Facade.HandoffAlarmRequest): Facade.AuthorityHandoffAlarm => this.#call(() => this.#client.vaultAuthorityHandoffAlarmsAcknowledge(input) as Facade.AuthorityHandoffAlarm),
       }),
+    },
+    wire_health: {
+      thresholds: {
+        /** The owner reads the serving host's per-verb and per-actor wire detection thresholds and their window; crossings ask a health question, never refuse for rate. */
+        get: (input: Facade.EmptyRequest): Facade.WireThresholds => this.#call(() => this.#client.vaultWireHealthThresholdsGet(input) as Facade.WireThresholds),
+        /** The owner replaces the serving host's positive wire detection thresholds and window, receiving the previous and installed policy without adding a rate refusal. */
+        set: (input: Facade.WireThresholds): Facade.WireThresholdsReceipt => this.#call(() => this.#client.vaultWireHealthThresholdsSet(input) as Facade.WireThresholdsReceipt),
+      },
     },
     slim: {
       /** Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild. */

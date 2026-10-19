@@ -127,6 +127,12 @@ pub enum AgentVerb {
     VaultRetrievalTrace,
     VaultRetrievalExport,
     VaultRetrievalReplay,
+    VaultRetrievalPolicyGet,
+    VaultRetrievalPolicyPin,
+    VaultRetrievalPolicyTrain,
+    VaultRetrievalPolicyEvaluate,
+    VaultRetrievalPolicyAdmit,
+    VaultRetrievalPolicyUpdate,
     VaultExport,
     SelfCredentialAttenuate,
     VaultScopePosition,
@@ -242,6 +248,8 @@ pub enum AgentVerb {
     VaultAuthorityAudit,
     VaultAuthorityHistoryExport,
     VaultAuthorityHistoryImport,
+    VaultWireHealthThresholdsGet,
+    VaultWireHealthThresholdsSet,
     VaultSlimPolicy,
     VaultSlimState,
     VaultSlimResumeStep,
@@ -1128,6 +1136,12 @@ impl AgentVerb {
         Self::VaultRetrievalTrace,
         Self::VaultRetrievalExport,
         Self::VaultRetrievalReplay,
+        Self::VaultRetrievalPolicyGet,
+        Self::VaultRetrievalPolicyPin,
+        Self::VaultRetrievalPolicyTrain,
+        Self::VaultRetrievalPolicyEvaluate,
+        Self::VaultRetrievalPolicyAdmit,
+        Self::VaultRetrievalPolicyUpdate,
         Self::VaultExport,
         Self::SelfCredentialAttenuate,
         Self::VaultScopePosition,
@@ -1243,6 +1257,8 @@ impl AgentVerb {
         Self::VaultAuthorityAudit,
         Self::VaultAuthorityHistoryExport,
         Self::VaultAuthorityHistoryImport,
+        Self::VaultWireHealthThresholdsGet,
+        Self::VaultWireHealthThresholdsSet,
         Self::VaultSlimPolicy,
         Self::VaultSlimState,
         Self::VaultSlimResumeStep,
@@ -2132,6 +2148,12 @@ impl AgentVerb {
             Self::VaultRetrievalTrace => "vault.retrieval.trace",
             Self::VaultRetrievalExport => "vault.retrieval.export",
             Self::VaultRetrievalReplay => "vault.retrieval.replay",
+            Self::VaultRetrievalPolicyGet => "vault.retrieval.policy.get",
+            Self::VaultRetrievalPolicyPin => "vault.retrieval.policy.pin",
+            Self::VaultRetrievalPolicyTrain => "vault.retrieval.policy.train",
+            Self::VaultRetrievalPolicyEvaluate => "vault.retrieval.policy.evaluate",
+            Self::VaultRetrievalPolicyAdmit => "vault.retrieval.policy.admit",
+            Self::VaultRetrievalPolicyUpdate => "vault.retrieval.policy.update",
             Self::VaultExport => "vault.export",
             Self::SelfCredentialAttenuate => "self.credential.attenuate",
             Self::VaultScopePosition => "vault.scope.position",
@@ -2247,6 +2269,8 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => "vault.authority.audit",
             Self::VaultAuthorityHistoryExport => "vault.authority.history.export",
             Self::VaultAuthorityHistoryImport => "vault.authority.history.import",
+            Self::VaultWireHealthThresholdsGet => "vault.wire_health.thresholds.get",
+            Self::VaultWireHealthThresholdsSet => "vault.wire_health.thresholds.set",
             Self::VaultSlimPolicy => "vault.slim.policy",
             Self::VaultSlimState => "vault.slim.state",
             Self::VaultSlimResumeStep => "vault.slim.resume_step",
@@ -3157,6 +3181,12 @@ impl AgentVerb {
                 | Self::VaultRetrievalTrace
                 | Self::VaultRetrievalExport
                 | Self::VaultRetrievalReplay
+                | Self::VaultRetrievalPolicyGet
+                | Self::VaultRetrievalPolicyPin
+                | Self::VaultRetrievalPolicyTrain
+                | Self::VaultRetrievalPolicyEvaluate
+                | Self::VaultRetrievalPolicyAdmit
+                | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
                 | Self::VaultScopePosition
@@ -3272,6 +3302,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultWireHealthThresholdsGet
+                | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimPolicy
                 | Self::VaultSlimState
                 | Self::VaultSlimResumeStep
@@ -4185,6 +4217,12 @@ impl AgentVerb {
                 | Self::VaultRetrievalTrace
                 | Self::VaultRetrievalExport
                 | Self::VaultRetrievalReplay
+                | Self::VaultRetrievalPolicyGet
+                | Self::VaultRetrievalPolicyPin
+                | Self::VaultRetrievalPolicyTrain
+                | Self::VaultRetrievalPolicyEvaluate
+                | Self::VaultRetrievalPolicyAdmit
+                | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
                 | Self::VaultScopePosition
@@ -4300,6 +4338,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultWireHealthThresholdsGet
+                | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimPolicy
                 | Self::VaultSlimState
                 | Self::VaultSlimResumeStep
@@ -5319,6 +5359,12 @@ impl AgentVerb {
                 | Self::VaultRetrievalTrace
                 | Self::VaultRetrievalExport
                 | Self::VaultRetrievalReplay
+                | Self::VaultRetrievalPolicyGet
+                | Self::VaultRetrievalPolicyPin
+                | Self::VaultRetrievalPolicyTrain
+                | Self::VaultRetrievalPolicyEvaluate
+                | Self::VaultRetrievalPolicyAdmit
+                | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
                 | Self::VaultReceipts
                 | Self::VaultAssetsIngest
@@ -5427,6 +5473,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultWireHealthThresholdsGet
+                | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimPolicy
                 | Self::VaultSlimState
                 | Self::VaultSlimResumeStep
@@ -6214,6 +6262,10 @@ impl AgentVerb {
                 | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalOutcomesPut
                 | Self::VaultRetrievalOutcomesEnd
+                | Self::VaultRetrievalPolicyPin
+                | Self::VaultRetrievalPolicyTrain
+                | Self::VaultRetrievalPolicyAdmit
+                | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultAssetsIngest
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
@@ -6282,6 +6334,7 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
                 | Self::VaultMeshBindMachine
@@ -6897,6 +6950,12 @@ impl AgentVerb {
             Self::VaultRetrievalTrace => &["spec"],
             Self::VaultRetrievalExport => &["spec"],
             Self::VaultRetrievalReplay => &["spec"],
+            Self::VaultRetrievalPolicyGet => &["spec"],
+            Self::VaultRetrievalPolicyPin => &["spec"],
+            Self::VaultRetrievalPolicyTrain => &["spec"],
+            Self::VaultRetrievalPolicyEvaluate => &["spec"],
+            Self::VaultRetrievalPolicyAdmit => &["spec"],
+            Self::VaultRetrievalPolicyUpdate => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopePosition => &["spec"],
@@ -7012,6 +7071,8 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultWireHealthThresholdsGet => &["spec"],
+            Self::VaultWireHealthThresholdsSet => &["spec"],
             Self::VaultSlimPolicy => &["spec"],
             Self::VaultSlimState => &["spec"],
             Self::VaultSlimResumeStep => &["spec"],
@@ -7899,6 +7960,12 @@ impl AgentVerb {
             Self::VaultRetrievalTrace => &["spec"],
             Self::VaultRetrievalExport => &["spec"],
             Self::VaultRetrievalReplay => &["spec"],
+            Self::VaultRetrievalPolicyGet => &["spec"],
+            Self::VaultRetrievalPolicyPin => &["spec"],
+            Self::VaultRetrievalPolicyTrain => &["spec"],
+            Self::VaultRetrievalPolicyEvaluate => &["spec"],
+            Self::VaultRetrievalPolicyAdmit => &["spec"],
+            Self::VaultRetrievalPolicyUpdate => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::VaultScopePosition => &["spec"],
@@ -8014,6 +8081,8 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultWireHealthThresholdsGet => &["spec"],
+            Self::VaultWireHealthThresholdsSet => &["spec"],
             Self::VaultSlimPolicy => &["spec"],
             Self::VaultSlimState => &["spec"],
             Self::VaultSlimResumeStep => &["spec"],
@@ -9142,6 +9211,24 @@ impl AgentVerb {
             Self::VaultRetrievalReplay => {
                 "The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."
             }
+            Self::VaultRetrievalPolicyGet => {
+                "The owner reads the served retrieval policy: active blend weights with their origins, owner pins, the learned posterior and model routing pins."
+            }
+            Self::VaultRetrievalPolicyPin => {
+                "The owner pins one retrieval blend weight at a declared share, or clears its pin; learned updates may move only the unpinned remainder."
+            }
+            Self::VaultRetrievalPolicyTrain => {
+                "The owner trains a retrieval-policy candidate from gate-attributed outcomes, judged on held-out runs, without serving it."
+            }
+            Self::VaultRetrievalPolicyEvaluate => {
+                "The owner judges candidate blend weights against the active weights on the same held-out runs the tuner never trains on."
+            }
+            Self::VaultRetrievalPolicyAdmit => {
+                "The owner admits candidate blend weights judged on the named evidence manifest; owner pins and held-out regressions refuse admission."
+            }
+            Self::VaultRetrievalPolicyUpdate => {
+                "The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior."
+            }
             Self::VaultExport => {
                 "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only."
             }
@@ -9482,6 +9569,12 @@ impl AgentVerb {
             }
             Self::VaultAuthorityHistoryImport => {
                 "Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."
+            }
+            Self::VaultWireHealthThresholdsGet => {
+                "The owner reads the serving host's per-verb and per-actor wire detection thresholds and their window; crossings ask a health question, never refuse for rate."
+            }
+            Self::VaultWireHealthThresholdsSet => {
+                "The owner replaces the serving host's positive wire detection thresholds and window, receiving the previous and installed policy without adding a rate refusal."
             }
             Self::VaultSlimPolicy => {
                 "Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild."

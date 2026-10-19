@@ -504,6 +504,9 @@ class Oneiron:
         def authority(self) -> "Oneiron._VaultAuthorityVerbs":
             return Oneiron._VaultAuthorityVerbs(self._client)
         @property
+        def wire_health(self) -> "Oneiron._VaultWireHealthVerbs":
+            return Oneiron._VaultWireHealthVerbs(self._client)
+        @property
         def slim(self) -> "Oneiron._VaultSlimVerbs":
             return Oneiron._VaultSlimVerbs(self._client)
         @property
@@ -1073,6 +1076,9 @@ class Oneiron:
         def replay(self, spec):
             """The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_replay(json.dumps(spec))))
+        @property
+        def policy(self) -> "Oneiron._VaultRetrievalPolicyVerbs":
+            return Oneiron._VaultRetrievalPolicyVerbs(self._client)
     class _VaultRetrievalAgingVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1118,6 +1124,27 @@ class Oneiron:
         def end(self, spec):
             """The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_outcomes_end(json.dumps(spec))))
+    class _VaultRetrievalPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """The owner reads the served retrieval policy: active blend weights with their origins, owner pins, the learned posterior and model routing pins."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_policy_get(json.dumps({} if spec is None else spec))))
+        def pin(self, spec):
+            """The owner pins one retrieval blend weight at a declared share, or clears its pin; learned updates may move only the unpinned remainder."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_policy_pin(json.dumps(spec))))
+        def train(self, spec):
+            """The owner trains a retrieval-policy candidate from gate-attributed outcomes, judged on held-out runs, without serving it."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_policy_train(json.dumps(spec))))
+        def evaluate(self, spec):
+            """The owner judges candidate blend weights against the active weights on the same held-out runs the tuner never trains on."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_policy_evaluate(json.dumps(spec))))
+        def admit(self, spec):
+            """The owner admits candidate blend weights judged on the named evidence manifest; owner pins and held-out regressions refuse admission."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_policy_admit(json.dumps(spec))))
+        def update(self, spec):
+            """The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_policy_update(json.dumps(spec))))
     class _VaultAffectVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1868,6 +1895,21 @@ class Oneiron:
         def acknowledge(self, spec):
             """The owner acknowledges one saved handoff fork alarm."""
             return json.loads(_translate(lambda: self._client.vault_authority_handoff_alarms_acknowledge(json.dumps(spec))))
+    class _VaultWireHealthVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def thresholds(self) -> "Oneiron._VaultWireHealthThresholdsVerbs":
+            return Oneiron._VaultWireHealthThresholdsVerbs(self._client)
+    class _VaultWireHealthThresholdsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads the serving host's per-verb and per-actor wire detection thresholds and their window; crossings ask a health question, never refuse for rate."""
+            return json.loads(_translate(lambda: self._client.vault_wire_health_thresholds_get(json.dumps(spec))))
+        def set(self, spec):
+            """The owner replaces the serving host's positive wire detection thresholds and window, receiving the previous and installed policy without adding a rate refusal."""
+            return json.loads(_translate(lambda: self._client.vault_wire_health_thresholds_set(json.dumps(spec))))
     class _VaultSlimVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

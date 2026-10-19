@@ -168,6 +168,18 @@ pub enum RecordError {
         revision_hex(current)
     )]
     CheckpointPolicyRevisionStale { current: [u8; 32] },
+    /// The owner's world recipient choice keeps a world's rows from this
+    /// destination (mesh PR2b, L11-B (B)): the reason names his choice (one
+    /// named machine, or machines marked mine) and why this destination is
+    /// not one it admits. Content-free: it never names the world. Nothing
+    /// was released.
+    #[error("{0}")]
+    WorldRecipientLimit(&'static str),
+    /// A row's world placement, the rows a result was derived from, or the
+    /// vault root cannot be verified, so nothing is released: an integrity
+    /// hold, never the owner's choice (mesh PR2-reasons). Content-free.
+    #[error("{0}")]
+    WorldPlacementUnverifiable(&'static str),
     /// A pairing link's scope the vault refuses: a facet limit on the vault
     /// owner, or a write facet outside the link's facets.
     #[error("invalid pairing scope: {0}")]
@@ -380,6 +392,8 @@ impl RecordError {
             Self::AuthorityRefused(_) => ErrorKind::AuthorityRefused,
             Self::CheckpointPolicyRefused(_) => ErrorKind::CheckpointPolicyRefused,
             Self::CheckpointPolicyRevisionStale { .. } => ErrorKind::CheckpointPolicyRevisionStale,
+            Self::WorldRecipientLimit(_) => ErrorKind::WorldRecipientLimit,
+            Self::WorldPlacementUnverifiable(_) => ErrorKind::WorldPlacementUnverifiable,
             Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,
             Self::InvalidOutboundGrantBody(_) => ErrorKind::InvalidOutboundGrantBody,
             Self::InvalidConnectorKeyBody(_) => ErrorKind::InvalidConnectorKeyBody,
