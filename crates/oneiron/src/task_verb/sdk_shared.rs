@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
+use crate::claim::CallerLocality;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::federation::{
@@ -232,14 +233,15 @@ pub fn propose_shared_remove_owner(
 /// `vault.shared.execute`: run a matured act once; running it again answers
 /// the same receipt, and a remaining Owner's re-run of an export-first
 /// removal delivers its archive to the removed Owner again (FIX 1300). A held
-/// `erase` act runs its own executor, then its receipt tells the Owners.
+/// `erase` act runs its own executor, then its receipt tells the Owners. The
+/// embedded handle's path: its caller reads on this device.
 pub fn execute_shared_act(
     vault: &Vault,
     executor: &AuthenticatedOwner,
     slips: Option<&HostSlipIssuer>,
     input: SharedActRequest,
 ) -> MemoryResult<SharedActExecuted> {
-    execute_shared_act_listing(vault, executor, slips, input).0
+    execute_shared_act_listing(vault, executor, slips, CallerLocality::OnDevice, input).0
 }
 
 /// [`execute_shared_act`], beside the rows its answer was derived from, the
@@ -248,11 +250,13 @@ pub fn execute_shared_act(
 /// effect reads the act, the roster and the grants its receipt names.
 /// An export-first removal's first execution lists every record its
 /// export counted and digested (FIX 3412); `None` for its re-delivery,
-/// whose archive the first execution built.
+/// whose archive the first execution built. A held erase's handle reads at
+/// the caller's `locality`, as the host found it from the connection.
 pub fn execute_shared_act_listing(
     vault: &Vault,
     executor: &AuthenticatedOwner,
     slips: Option<&HostSlipIssuer>,
+    locality: CallerLocality,
     input: SharedActRequest,
 ) -> (MemoryResult<SharedActExecuted>, Option<Vec<EntityId>>) {
     let producers = ProducerRows::default();
@@ -261,6 +265,7 @@ pub fn execute_shared_act_listing(
         vault,
         executor,
         slips,
+        locality,
         input,
         &producers,
         &mut export_listed,
@@ -278,6 +283,7 @@ fn execute_shared_act_into(
     vault: &Vault,
     executor: &AuthenticatedOwner,
     slips: Option<&HostSlipIssuer>,
+    locality: CallerLocality,
     input: SharedActRequest,
     producers: &ProducerRows,
     export_listed: &mut bool,
@@ -290,6 +296,7 @@ fn execute_shared_act_into(
         // record; its receipt then tells the Owners (OF-150).
         vault
             .memory(executor.revalidate_person(vault)?, EdgeActorClass::Human)
+            .at(locality)
             .listing_producers(producers)
             .execute_completed_entity_erase(executor, &input.act_id)?;
         return Ok(SharedActExecuted {

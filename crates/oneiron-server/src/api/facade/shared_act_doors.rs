@@ -217,12 +217,14 @@ pub(crate) async fn vault_shared_execute(
         Ok(executor) => executor,
         Err(refusal) => return (Err(refusal), Some(Vec::new())),
     };
+    let locality = auth.locality();
     let ran = off_runtime(server, VERB, move |server| {
         with_slips(server, VERB, |slips| {
             Ok(sdk::execute_shared_act_listing(
                 server.vault(),
                 &executor,
                 Some(slips),
+                locality,
                 input,
             ))
         })

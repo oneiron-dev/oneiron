@@ -422,6 +422,7 @@ impl Memory<'_> {
             .collect::<MemoryResult<Vec<_>>>()?;
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let report = read.weave_report(reader, &recipe)?;
+        self.produced_from(report.value.source_rows());
         Ok(WeaveReportView {
             sections: self.weave_sections(&report.value)?,
             narrowing: report.receipt,
@@ -476,6 +477,7 @@ impl Memory<'_> {
         if report != live.report {
             return Ok(None);
         }
+        self.produced_from(report.source_rows());
         let plan =
             super::weave_lens::weave_lens_answer_plan(answer, &report).map_err(|reason| {
                 MemoryError::new(
@@ -500,16 +502,19 @@ impl Memory<'_> {
         Ok(Some(lens))
     }
 
-    /// The live report for `reader` under the bound actor's read.
+    /// The live report for `reader` under the bound actor's read, its rows
+    /// listed.
     fn live_weave_report(
         &self,
         reader: WeaveReader<'_>,
         request: &WeaveReportRequest,
     ) -> MemoryResult<WeaveReport> {
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        Ok(read
+        let report = read
             .weave_report(reader, &Self::weave_recipe(request)?)?
-            .value)
+            .value;
+        self.produced_from(report.source_rows());
+        Ok(report)
     }
 
     fn weave_recipe(request: &WeaveReportRequest) -> MemoryResult<Vec<WeaveSectionSpec>> {
@@ -568,7 +573,10 @@ impl Memory<'_> {
     ) -> MemoryResult<WeaveLinkCorrectionView> {
         let reader = self.weave_reader(owner)?;
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        let filed = read.report_wrong_link(proof, reader, request.link()?)?;
+        let link = request.link()?;
+        // The label is filed on the link the reader's own report shows.
+        self.produced_from([link.source, link.target]);
+        let filed = read.report_wrong_link(proof, reader, link)?;
         Ok(WeaveLinkCorrectionView::from_correction(&filed))
     }
 
@@ -594,7 +602,10 @@ impl Memory<'_> {
     ) -> MemoryResult<WeaveItemCorrectionView> {
         let reader = self.weave_reader(owner)?;
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        let filed = read.report_wrong_item(proof, reader, request.target()?)?;
+        let target = request.target()?;
+        // The label is filed on the row the reader's own report shows.
+        self.produced_from([target.id()]);
+        let filed = read.report_wrong_item(proof, reader, target)?;
         Ok(WeaveItemCorrectionView::from_correction(&filed))
     }
 
@@ -617,6 +628,8 @@ impl Memory<'_> {
         reader: WeaveReader<'_>,
         stored: StoredWeaveDigest,
     ) -> MemoryResult<WeaveDigestFramed> {
+        // A saved period serves the rows its report was read from.
+        self.produced_from(stored.report.value.source_rows());
         let lens = stored.lens.as_ref().and_then(|render| {
             super::weave_lens::compose_weave_lens_framed(read, reader, &stored.report.value, render)
                 .inspect_err(|error| tracing::warn!(?error, "weave lens did not compose"))

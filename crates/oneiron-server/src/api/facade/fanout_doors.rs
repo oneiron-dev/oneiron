@@ -30,6 +30,7 @@ pub(crate) async fn vault_fanout_resume(
     auth: &CoreAuth,
     input: FanoutResumeRequest,
 ) -> Listed<FanoutLaunchView> {
+    let locality = auth.locality();
     as_owner_listing(
         server,
         auth,
@@ -38,6 +39,7 @@ pub(crate) async fn vault_fanout_resume(
             let memory = server
                 .vault()
                 .memory(owner.revalidate(server.vault())?, EdgeActorClass::Human)
+                .at(locality)
                 .listing_producers(producers);
             sdk::resume_fanout_launch_as(&memory, owner, input)
         },
@@ -59,10 +61,12 @@ pub(crate) async fn vault_fanout_resume_as(
         Err(refusal) => return refused(refusal),
     };
     let server = Arc::clone(server);
+    let locality = auth.locality();
     off_runtime_listing(VERB, move |producers| {
         let memory = server
             .vault()
             .memory(holder.entity_ref(), holder.actor_class())
+            .at(locality)
             .listing_producers(producers);
         sdk::resume_fanout_launch_as_holder(&memory, &holder, input)
     })
@@ -76,6 +80,7 @@ pub(crate) async fn vault_fanout_ack(
     auth: &CoreAuth,
     input: FanoutAckRequest,
 ) -> Listed<FanoutLaunchView> {
+    let locality = auth.locality();
     as_owner_listing(
         server,
         auth,
@@ -84,6 +89,7 @@ pub(crate) async fn vault_fanout_ack(
             let memory = server
                 .vault()
                 .memory(owner.revalidate(server.vault())?, EdgeActorClass::Human)
+                .at(locality)
                 .listing_producers(producers);
             sdk::ack_fanout_check_as(&memory, owner, input)
         },

@@ -247,8 +247,9 @@ def rust_type(value):
 
 SERVER_RECALL_DOC = "/// `vault.recall` → `SyncServer::recall_home_listing`, the recall door\n/// every server transport shares (`POST /v1/core/facade/vault.recall`, and\n/// the held socket's `rpc.req`): it embeds the query whenever the vault's\n/// embedder is serving.\n///\n/// The lease is not a client input, and a bearer slip is not one. At high,\n/// xhigh and max the door admits the recall on a line of its own and\n/// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,\n/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no\n/// reranker route the recall runs unreranked and reports\n/// `skipped / no_reranker` in `retrieval_meta.rerank`.\n///\n/// On a device that syncs only what it opened, the door then asks the home\n/// under the call's own caller (FIX 2905): its references ride in\n/// `residence`, apart from the local items; without them the pack is\n/// local-only and `partial`.\n"
 # FIX 2905: the server doors that also ask an opened device's home, by row,
-# with the caller the call (or the MCP actor) admitted as the last argument.
-HOME_SERVER_DOORS = {'vault.recall': 'recall_home_listing'}
+# with the caller the call (or the MCP actor) admitted as the last argument
+# (FIX 3876: the BM25 text search too).
+HOME_SERVER_DOORS = {'vault.recall': 'recall_home_listing', 'vault.search.bm25': 'bm25_home_listing'}
 
 # Boundary codecs are selected by argument/result type, never by verb name.
 ARGUMENTS = {

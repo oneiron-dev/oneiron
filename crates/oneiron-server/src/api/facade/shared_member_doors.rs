@@ -70,6 +70,7 @@ pub(crate) async fn vault_records_erase_preview(
         Err(refusal) => return refused(refusal),
     };
     let server = Arc::clone(server);
+    let locality = auth.locality();
     off_runtime_listing(VERB, move |producers| {
         let memory = server
             .vault()
@@ -77,6 +78,7 @@ pub(crate) async fn vault_records_erase_preview(
                 caller.revalidate_person(server.vault())?,
                 EdgeActorClass::Human,
             )
+            .at(locality)
             .listing_producers(producers);
         sdk::preview_record_erase(&memory, input)
     })
@@ -98,6 +100,7 @@ pub(crate) async fn vault_records_erase_confirm(
         Err(refusal) => return refused(refusal),
     };
     let server = Arc::clone(server);
+    let locality = auth.locality();
     off_runtime_listing(VERB, move |producers| {
         let memory = server
             .vault()
@@ -105,6 +108,7 @@ pub(crate) async fn vault_records_erase_confirm(
                 caller.revalidate_person(server.vault())?,
                 EdgeActorClass::Human,
             )
+            .at(locality)
             .listing_producers(producers);
         sdk::confirm_record_erase(&memory, &caller, input)
     })

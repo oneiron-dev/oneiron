@@ -14142,7 +14142,7 @@
     },
     {
       "name": "vault.search.bm25",
-      "description": "BM25 text search over the engine index; surfaceable claims only.",
+      "description": "BM25 text search over the engine index; surfaceable claims only. On a device that syncs only what it opened, a server's door asks the home under the caller's own proof, and its references ride in residence.",
       "uniffi": {
         "args": {
           "query": "String",
@@ -14151,8 +14151,9 @@
         "output": "LexicalHits"
       },
       "input": "QueryBm25Request",
-      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::LexicalHit>>",
-      "call": "memory.query_bm25(&input.query, input.limit)?",
+      "output": "Bm25Search",
+      "call": "crate::task_verb::sdk::search_bm25(memory, input)?",
+      "server_door": "bm25_home",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true,
