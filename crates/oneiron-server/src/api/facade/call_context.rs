@@ -67,6 +67,12 @@ fn invocation_header(headers: &HeaderMap) -> Carried<InvocationId> {
     Carried::spelled(header(headers, INVOCATION_HEADER), InvocationId::parse_hex)
 }
 
+/// Names the hook pause a request resumes beside its invocation, by the ask
+/// handle its Pending gave, as 32 hex digits (L13 PR-D, FIX 4283): a
+/// session-only call's pause its session no longer holds then refuses,
+/// never running as a new call. A request that names none is a new call.
+pub(crate) const HOOK_ASK_HEADER: &str = "x-oneiron-hook-ask";
+
 fn invalid_invocation() -> FacadeApiError {
     FacadeApiError::new(
         StatusCode::BAD_REQUEST,
@@ -84,6 +90,9 @@ pub(crate) struct FacadeCall<'a> {
     /// The logical verb the call runs (ARCH-0080 §3): its verb hooks fire
     /// once for it, and a retry of a pending call names the same one.
     invocation: Carried<InvocationId>,
+    /// The hook pause the call resumes, by its ask handle
+    /// ([`HOOK_ASK_HEADER`]).
+    hook_ask: Carried<EntityId>,
     /// The session whose mode places a narrowed credential's writes.
     session: Carried<EntityId>,
     /// The same session as text, for the off-record surface (OF-063).
@@ -119,6 +128,9 @@ impl<'a> FacadeCall<'a> {
                 EntityId::from_hex(room).ok()
             }),
             invocation: invocation_header(headers),
+            hook_ask: Carried::spelled(header(headers, HOOK_ASK_HEADER), |ask| {
+                EntityId::from_hex(ask).ok()
+            }),
             session: match request_session(headers) {
                 Ok(None) => Carried::Absent,
                 Ok(Some(session)) => Carried::Named(session),
@@ -154,6 +166,7 @@ impl<'a> FacadeCall<'a> {
             auth,
             room_turn: Carried::spelled(room_turn.map(Some), |room| EntityId::from_hex(room).ok()),
             invocation: Carried::spelled(invocation.map(Some), InvocationId::parse_hex),
+            hook_ask: Carried::Absent,
             session: Carried::spelled(session.map(Some), |session| {
                 EntityId::from_hex(session).ok()
             }),
@@ -184,6 +197,7 @@ impl<'a> FacadeCall<'a> {
                 None => Carried::Absent,
             },
             invocation: Carried::Named(invocation),
+            hook_ask: Carried::Absent,
             session: Carried::Absent,
             session_ref: None,
             drain: Some(drain),
@@ -211,6 +225,18 @@ impl<'a> FacadeCall<'a> {
 
     pub(super) fn invocation(&self) -> Result<Option<InvocationId>, FacadeApiError> {
         self.invocation.read(invalid_invocation)
+    }
+
+    /// The hook pause the call names as the one it resumes, if it names one.
+    pub(super) fn hook_ask(&self) -> Result<Option<EntityId>, FacadeApiError> {
+        self.hook_ask.read(|| {
+            FacadeApiError::new(
+                StatusCode::BAD_REQUEST,
+                MEMORY_CODE_BAD_REQUEST,
+                "invalid hook ask header",
+                ["Name the hook's ask as the 32-hex handle its Pending gave."],
+            )
+        })
     }
 
     pub(super) fn session(&self) -> Result<Option<EntityId>, FacadeApiError> {
@@ -288,6 +314,7 @@ impl<'a> FacadeCall<'a> {
             auth: self.auth.clone(),
             room_turn: self.room_turn,
             invocation: self.invocation,
+            hook_ask: self.hook_ask,
             session: self.session,
             session_ref: self.session_ref.map(str::to_owned),
             drain: self.drain.clone(),
@@ -306,6 +333,7 @@ pub(super) struct OwnedFacadeCall {
     auth: CoreAuth,
     room_turn: Carried<EntityId>,
     invocation: Carried<InvocationId>,
+    hook_ask: Carried<EntityId>,
     session: Carried<EntityId>,
     session_ref: Option<String>,
     drain: Option<VerbAskDrainPermit>,
@@ -322,6 +350,7 @@ impl OwnedFacadeCall {
             auth: &self.auth,
             room_turn: self.room_turn,
             invocation: self.invocation,
+            hook_ask: self.hook_ask,
             session: self.session,
             session_ref: self.session_ref.as_deref(),
             drain: self.drain.clone(),
