@@ -68621,17 +68621,36 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/chart_labels.rs",
+     "purpose": "A chart's data-label ranges (`c15:datalabelsRange`, Office 2013's \"Value From Cells\") unlinked when its data…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "Conversion"
      ],
+     "path": "src/live/conversion.rs",
+     "purpose": "What a deck edit or export did PowerPoint's way, named on its receipt (OF-510; the Office ruling of 10-18)",
+     "surface": {
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/live/convert.rs",
      "purpose": "Deck edits PowerPoint performs, done its way where the live deck once refused them (OF-510; the Office…",
      "surface": {
-      "crate-vis": 7,
-      "enum": 1,
-      "fn": 2
+      "crate-vis": 12
      }
     },
     {
@@ -68660,10 +68679,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/live/diagram.rs",
+     "purpose": "SmartArt structure (OF-510, FIX 3697): nodes added, removed, re-levelled or moved, as PowerPoint's text pane…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/live/held.rs",
      "purpose": "What a retained element is written as, in live-model terms: a shape's preset or custom geometry, a…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -68677,7 +68706,7 @@
      "surface": {
       "enum": 1,
       "mod": 3,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -68825,6 +68854,24 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Coord",
+      "GeomPath",
+      "PathCommand",
+      "PathFill",
+      "PathPoint"
+     ],
+     "path": "src/live/points.rs",
+     "purpose": "A shape's points (OF-510, Edit Points): the paths of its custom geometry (`a:custGeom`), read and written as…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 3,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [
@@ -68865,7 +68912,7 @@
      "path": "src/live/pptx.rs",
      "purpose": "The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "enum": 9,
       "fn": 32,
       "struct": 24
@@ -69329,7 +69376,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 20,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -69394,7 +69441,7 @@
    },
    "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 93,
+   "source_files": 97,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -87161,6 +87208,7 @@
       "ConversationCreateInput",
       "ConversationTurnCreateInput",
       "CooperativeDeletionDispositionKind",
+      "Coord",
       "CoordinationPattern",
       "CoordinationPatternView",
       "CopingAggregate",
@@ -87667,6 +87715,7 @@
       "GeneratedUiResultSetSelectAll",
       "GeneratedUiResultSetSelection",
       "GeneratedUiStatePatch",
+      "GeomPath",
       "GeometryProps",
       "GoalAxis",
       "GoalAxisKind",
@@ -88551,6 +88600,9 @@
       "ParticipantView",
       "ParticipantsPage",
       "ParticipantsRequest",
+      "PathCommand",
+      "PathFill",
+      "PathPoint",
       "PatternSkillRef",
       "PeerCount",
       "PendingActMatured",
@@ -89904,8 +89956,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 854,
-      "struct": 2709
+      "enum": 857,
+      "struct": 2711
      }
     },
     {

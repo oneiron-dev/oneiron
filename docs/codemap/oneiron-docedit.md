@@ -68,10 +68,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/graphic/svg.rs` | src | m | 1 crate-vis | — | The closed SVG subset compiled to native shapes |
 | `src/graphic/tests.rs` | test | L | — | — | ONE-2534 acceptance: one fixture per primitive and path command with exact EMU geometry, every refused… |
 | `src/lib.rs` | src | s | 1 struct · 1 enum · 9 fn · 15 mod · 5 re-export | DoceditError, DocxAnchorBlock | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
-| `src/live/convert.rs` | src | m | 1 enum · 2 fn · 7 crate-vis | Conversion | Deck edits PowerPoint performs, done its way where the live deck once refused them (OF-510; the Office… |
+| `src/live/chart_labels.rs` | src | s | 1 crate-vis | — | A chart's data-label ranges (`c15:datalabelsRange`, Office 2013's "Value From Cells") unlinked when its data… |
+| `src/live/conversion.rs` | src | s | 1 enum · 2 fn | Conversion | What a deck edit or export did PowerPoint's way, named on its receipt (OF-510; the Office ruling of 10-18) |
+| `src/live/convert.rs` | src | m | 12 crate-vis | — | Deck edits PowerPoint performs, done its way where the live deck once refused them (OF-510; the Office… |
 | `src/live/deck_export.rs` | src | XL | 7 struct · 1 enum · 11 fn · 1 const | ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
-| `src/live/held.rs` | src | m | 19 crate-vis | — | What a retained element is written as, in live-model terms: a shape's preset or custom geometry, a… |
-| `src/live/mod.rs` | src | s | 1 enum · 3 mod · 3 re-export | LiveError | The live deck body (ARCH-0077, "Multiplayer: the target body shape"; OF-510), built last in the deck chain |
+| `src/live/diagram.rs` | src | m | 3 crate-vis | — | SmartArt structure (OF-510, FIX 3697): nodes added, removed, re-levelled or moved, as PowerPoint's text pane… |
+| `src/live/held.rs` | src | m | 20 crate-vis | — | What a retained element is written as, in live-model terms: a shape's preset or custom geometry, a… |
+| `src/live/mod.rs` | src | s | 1 enum · 3 mod · 4 re-export | LiveError | The live deck body (ARCH-0077, "Multiplayer: the target body shape"; OF-510), built last in the deck chain |
 | `src/live/oracle_run/assets.rs` | src | s | 3 crate-vis | — | The runner's one picture asset, generated rather than shipped |
 | `src/live/oracle_run/checks.rs` | src | m | 10 crate-vis | — | The engine-side checks: package corruption (step 5), the part diff and unknown-XML probes (step 2), the… |
 | `src/live/oracle_run/edits.rs` | src | m | 31 crate-vis | — | The path every exported edit takes: apply the operations to the import, project over the retained package… |
@@ -86,7 +89,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/oracle_run/suite.rs` | src | s | 3 crate-vis | — | One pinned baseline through steps 1 to 7: its no-op export, the probed variant and every mutation over it… |
 | `src/live/oracle_run/text_check.rs` | src | s | 4 crate-vis | — | Step 3's text comparison: a model text body against its re-import, by paragraph text and level and by the… |
 | `src/live/oracle_run/variants.rs` | src | s | 18 crate-vis | — | Fixture variants derived from a pinned baseline by narrow XML surgery: unknown-XML probes beside the mutated… |
-| `src/live/pptx.rs` | src | XL | 24 struct · 9 enum · 32 fn · 7 crate-vis | ApproveScope, AttributionIndex, ChangeKind, ChartKind, ChartSeries, ChartSource, Conflict, ConnectorEnd +25 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
+| `src/live/points.rs` | src | m | 2 struct · 3 enum · 3 crate-vis | Coord, GeomPath, PathCommand, PathFill, PathPoint | A shape's points (OF-510, Edit Points): the paths of its custom geometry (`a:custGeom`), read and written as… |
+| `src/live/pptx.rs` | src | XL | 24 struct · 9 enum · 32 fn · 6 crate-vis | ApproveScope, AttributionIndex, ChangeKind, ChartKind, ChartSeries, ChartSource, Conflict, ConnectorEnd +25 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
 | `src/live/reshape.rs` | src | L | 8 crate-vis | — | Shape changes to a written table or chart at export (OF-510) |
 | `src/native_patch/chart.rs` | src | m | 3 struct · 1 fn · 4 crate-vis | ChartData, Sequence, SeriesData | Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds… |
 | `src/native_patch/mod.rs` | src | s | 5 struct · 4 enum · 1 fn · 1 re-export · 3 crate-vis | CellWrite, ChartFamily, Frame, Merge, NativeEdit, NativeRefusal, NativeReport, Target +1 | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
