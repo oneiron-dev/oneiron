@@ -11,6 +11,7 @@
 //! two embedding spaces inside one vault.
 
 mod admitted;
+mod brokered;
 mod endpoint;
 mod remote;
 pub(crate) use local::prepare as prepare_local;
@@ -229,14 +230,28 @@ pub(crate) struct EmbedderSlot {
     rung_hold: Arc<Mutex<remote::RungHold>>,
     /// Why the last load or admission failed, cleared by the next success.
     refusal: Mutex<Option<String>>,
+    /// The vault's credential-broker context, which a `key_secret` endpoint
+    /// and remote rung send through.
+    broker: Option<crate::models::BrokerContext>,
 }
 
 impl EmbedderSlot {
-    /// Builds the slot for a resolved section, or `None` at rung 0.
+    /// [`Self::with_broker`], with no credential-broker context.
+    #[cfg(test)]
+    pub(crate) fn from_config(config: &EmbedderConfig) -> oneiron::Result<Option<Self>> {
+        Self::with_broker(config, None)
+    }
+
+    /// Builds the slot for a resolved section, or `None` at rung 0. A
+    /// `key_secret` endpoint, and its remote rung, send through `broker`, the
+    /// vault's credential-broker context.
     ///
     /// The endpoint provider is ready on return: it holds an HTTP client and
     /// no artifacts. The local provider is not, by design.
-    pub(crate) fn from_config(config: &EmbedderConfig) -> oneiron::Result<Option<Self>> {
+    pub(crate) fn with_broker(
+        config: &EmbedderConfig,
+        broker: Option<&crate::models::BrokerContext>,
+    ) -> oneiron::Result<Option<Self>> {
         crate::config::remote_embedder::validate_remote(config)?;
         if !config.is_active() {
             return Ok(None);
@@ -248,9 +263,10 @@ impl EmbedderSlot {
             admitted: AtomicBool::new(false),
             rung_hold: Arc::default(),
             refusal: Mutex::new(None),
+            broker: broker.cloned(),
         };
         if config.provider == EmbedderProvider::Endpoint {
-            let embedder = endpoint::HttpEmbedder::from_config(config)?;
+            let embedder = endpoint::HttpEmbedder::with_broker(config, broker)?;
             let _ = slot.ready.set(embedder as Arc<dyn QueryEmbedder>);
         }
         Ok(Some(slot))
@@ -426,7 +442,12 @@ impl EmbedderSlot {
         &self,
         receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
     ) -> oneiron::Result<Option<oneiron::embed::RemoteRung>> {
-        build_remote_rung(&self.config, Arc::clone(&self.rung_hold), receipts)
+        remote::build_remote_rung_with_broker(
+            &self.config,
+            Arc::clone(&self.rung_hold),
+            receipts,
+            self.broker.as_ref(),
+        )
     }
 
     /// Embeds a query, or says why it cannot.
@@ -519,10 +540,20 @@ pub(crate) fn build_slot(
     config: Option<&EmbedderConfig>,
     receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
 ) -> anyhow::Result<Option<EmbedderSlot>> {
+    build_slot_with_broker(config, receipts, None)
+}
+
+/// [`build_slot`], with the vault's credential-broker context a `key_secret`
+/// endpoint and remote rung send through, request by request.
+pub(crate) fn build_slot_with_broker(
+    config: Option<&EmbedderConfig>,
+    receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
+    broker: Option<&crate::models::BrokerContext>,
+) -> anyhow::Result<Option<EmbedderSlot>> {
     let Some(config) = config else {
         return Ok(None);
     };
-    let Some(slot) = EmbedderSlot::from_config(config)? else {
+    let Some(slot) = EmbedderSlot::with_broker(config, broker)? else {
         tracing::info!("embedder provider is none; the vault serves at rung 0");
         return Ok(None);
     };
@@ -545,7 +576,7 @@ pub(crate) fn build_slot(
         }
     }
     if let Some(remote) = &config.remote {
-        let http = endpoint::HttpEmbedder::from_config(&remote.endpoint_config(config))?;
+        let http = endpoint::HttpEmbedder::with_broker(&remote.endpoint_config(config), broker)?;
         http.pay_through(Arc::new(admitted::AdmittedRequests::unmetered(
             remote,
             oneiron::embed::Embedder::locality(&*http),

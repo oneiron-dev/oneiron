@@ -4,6 +4,7 @@ pub use gpu::{
     GPU_LEASE_SECONDS, GPU_RENEW_SECONDS, GpuHealth, GpuLease, GpuRegistry, GpuRegistryError,
 };
 mod gpu_pool;
+pub(crate) use gpu_pool::POD_PROBE_TIMEOUT;
 pub use gpu_pool::{GpuDerivationJob, GpuLeaseGuard, GpuPodConfig, GpuPool, GpuPoolConfig};
 mod defaults;
 mod mode;

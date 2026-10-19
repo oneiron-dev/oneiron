@@ -21,6 +21,10 @@ pub struct RemoteEmbedderConfig {
     pub artifact: Option<String>,
     #[serde(default)]
     pub api_key_env: Option<String>,
+    /// The vault secret holding the rung's key, sent through the credential
+    /// broker; HTTPS only. Never the endpoint's own key.
+    #[serde(default)]
+    pub key_secret: Option<String>,
     #[serde(default = "remote_lease")]
     pub lease_ms: u64,
     #[serde(default = "remote_timeout")]
@@ -46,6 +50,7 @@ impl RemoteEmbedderConfig {
             locality: self.locality,
             artifact: self.artifact.clone(),
             api_key_env: self.api_key_env.clone(),
+            key_secret: self.key_secret.clone(),
             timeout_ms: self.timeout_ms,
         };
         config
@@ -59,9 +64,24 @@ pub(crate) fn validate_remote(primary: &EmbedderConfig) -> oneiron::Result<()> {
     if primary.endpoint.locality != EmbedderLocality::OnDevice {
         return Err(Error::InvalidConfig("third-party and owner-server endpoints require embedder.remote, an egress predicate and an on-device primary".into()));
     }
+    if primary.provider == EmbedderProvider::Endpoint {
+        let endpoint = &primary.endpoint;
+        validate_key_source(
+            "embedder",
+            endpoint.endpoint.as_deref().unwrap_or_default(),
+            endpoint.api_key_env.is_some(),
+            endpoint.key_secret.as_deref(),
+        )?;
+    }
     let Some(remote) = &primary.remote else {
         return Ok(());
     };
+    validate_key_source(
+        "embedder.remote",
+        &remote.endpoint,
+        remote.api_key_env.is_some(),
+        remote.key_secret.as_deref(),
+    )?;
     if !primary.is_active()
         || remote.locality == EmbedderLocality::OnDevice
         || remote.lease_ms == 0
@@ -77,6 +97,41 @@ pub(crate) fn validate_remote(primary: &EmbedderConfig) -> oneiron::Result<()> {
     for id in policy.allow.iter().chain(&policy.deny) {
         oneiron::EntityId::from_hex(id)
             .map_err(|_| Error::InvalidConfig("egress policy entity id is invalid".into()))?;
+    }
+    Ok(())
+}
+
+/// An endpoint's key: from an environment variable or a vault secret, not
+/// both. A secret's key goes through the credential broker, which sends over
+/// `https` only and to the OpenAI-compatible `…/v1/embeddings` and
+/// `…/v1/models` paths only, so the endpoint's URL ends in `/v1`.
+fn validate_key_source(
+    field: &str,
+    endpoint: &str,
+    has_env: bool,
+    secret: Option<&str>,
+) -> oneiron::Result<()> {
+    use oneiron::Error;
+    let Some(secret) = secret else {
+        return Ok(());
+    };
+    if has_env {
+        return Err(Error::InvalidConfig(format!(
+            "{field}: set api_key_env or key_secret, not both"
+        )));
+    }
+    if secret.is_empty() || secret.len() > 256 || !secret.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(Error::InvalidConfig(format!(
+            "{field}.key_secret must name a vault secret (printable ASCII, no spaces); put the key itself in the vault, never in the config file"
+        )));
+    }
+    let brokered = reqwest::Url::parse(endpoint).is_ok_and(|url| {
+        url.scheme() == "https" && url.path().trim_end_matches('/').ends_with("/v1")
+    });
+    if !brokered {
+        return Err(Error::InvalidConfig(format!(
+            "{field}.key_secret: the credential broker sends to an https endpoint ending in /v1 only"
+        )));
     }
     Ok(())
 }

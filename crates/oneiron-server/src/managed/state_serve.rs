@@ -893,9 +893,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     if let Some(embedding) = &config.embedding {
         embedding.apply_to(&vault)?;
     }
+    // The one credential-broker context, built from the opened vault: the
+    // System One seat, the embedder and the GPU pods read their
+    // `key_secret` keys at its custody door, call by call. Its broker is the
+    // same-user child beside this binary; a missing broker or secret leaves
+    // those calls refused before they start, as on any host.
+    let broker = crate::models::BrokerContext::for_serve(&vault, &config);
     // The embedder slot and the pods' health poller, as plain serve builds
     // them; the worker that fills the slot starts under the write admission.
-    let (embedder, gpu_poller) = crate::commands::build_embedder(&vault, &config).await?;
+    let (embedder, gpu_poller) =
+        crate::commands::build_embedder(&vault, &config, broker.as_ref()).await?;
     // The tagger slot `[oneironer]` names, as plain serve builds it; its
     // worker starts under the write admission too.
     let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone()).await?;
@@ -907,6 +914,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
         .with_tagger(tagger)
+        .with_broker(broker)
         .with_browser_guest(
             config
                 .browser

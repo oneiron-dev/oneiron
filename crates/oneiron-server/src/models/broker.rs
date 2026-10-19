@@ -132,7 +132,22 @@ impl BrokerSite {
     /// The site `config` names. A child is not started here: its first call
     /// starts it.
     pub(super) fn new(config: &ModelsConfig) -> anyhow::Result<Self> {
-        match &config.broker {
+        // The child sends every provider's calls, under the longest of their
+        // timeouts.
+        let timeout = config
+            .providers
+            .values()
+            .filter(|provider| provider.key_secret.is_some())
+            .map(|provider| provider.timeout_secs)
+            .max()
+            .unwrap_or(1);
+        Self::with_timeout(&config.broker, Duration::from_secs(timeout))
+    }
+
+    /// The site `broker` names, whose same-user child gives each send
+    /// `timeout`. A child is not started here: its first call starts it.
+    pub(super) fn with_timeout(broker: &BrokerConfig, timeout: Duration) -> anyhow::Result<Self> {
+        match broker {
             BrokerConfig::SeparateUser { socket, uid } => Ok(Self::User {
                 socket: socket.clone(),
                 uid: *uid,
@@ -150,15 +165,6 @@ impl BrokerSite {
                     "no credential broker at {}; set models.broker.program",
                     program.display()
                 );
-                // The child sends every provider's calls, under the longest
-                // of their timeouts.
-                let timeout = config
-                    .providers
-                    .values()
-                    .filter(|provider| provider.key_secret.is_some())
-                    .map(|provider| provider.timeout_secs)
-                    .max()
-                    .unwrap_or(1);
                 tracing::warn!(
                     program = %program.display(),
                     "the credential broker runs as this server's own user (same_user): \
@@ -167,7 +173,7 @@ impl BrokerSite {
                 Ok(Self::Child(Arc::new(ChildBroker::new(
                     program,
                     extra_roots,
-                    Duration::from_secs(timeout),
+                    timeout,
                 ))))
             }
         }

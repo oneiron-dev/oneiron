@@ -84,6 +84,17 @@ pub(crate) fn build_remote_rung(
     hold: Arc<Mutex<RungHold>>,
     receipts: Arc<dyn RunReceiptSink>,
 ) -> oneiron::Result<Option<RemoteRung>> {
+    build_remote_rung_with_broker(primary, hold, receipts, None)
+}
+
+/// [`build_remote_rung`], with the vault's credential-broker context a
+/// `key_secret` rung sends through, request by request.
+pub(crate) fn build_remote_rung_with_broker(
+    primary: &EmbedderConfig,
+    hold: Arc<Mutex<RungHold>>,
+    receipts: Arc<dyn RunReceiptSink>,
+    broker: Option<&crate::models::BrokerContext>,
+) -> oneiron::Result<Option<RemoteRung>> {
     crate::config::remote_embedder::validate_remote(primary)?;
     let Some(config) = &primary.remote else {
         return Ok(None);
@@ -91,7 +102,7 @@ pub(crate) fn build_remote_rung(
     let policy = config.egress.as_ref().ok_or_else(|| {
         oneiron::Error::InvalidConfig("remote rung missing egress predicate".into())
     })?;
-    let embedder = HttpEmbedder::from_config(&config.endpoint_config(primary))?;
+    let embedder = HttpEmbedder::with_broker(&config.endpoint_config(primary), broker)?;
     embedder.hold_as_rung(hold);
     embedder.pay_through(Arc::new(AdmittedRequests::unmetered(
         config,

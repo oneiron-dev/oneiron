@@ -286,7 +286,10 @@ pub(crate) async fn build_server(
     server_config: crate::config::SyncServerConfig,
     owner_host: crate::owner::schedule::OwnerHost,
 ) -> anyhow::Result<(SyncServer, Option<tokio::task::JoinHandle<()>>)> {
-    let (embedder, gpu_poller) = build_embedder(&vault, config).await?;
+    // The one credential-broker context the System One seat, the embedder
+    // and the GPU pods send their vault-secret keys through.
+    let broker = crate::models::BrokerContext::for_serve(&vault, config);
+    let (embedder, gpu_poller) = build_embedder(&vault, config, broker.as_ref()).await?;
     let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone()).await?;
 
     // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
@@ -295,6 +298,7 @@ pub(crate) async fn build_server(
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
         .with_tagger(tagger)
+        .with_broker(broker)
         .with_owner_host(owner_host)
         .with_browser_guest(
             config
@@ -322,10 +326,12 @@ pub(crate) async fn build_server(
 
 /// The embedder slot `config` names, and the GPU pool's health poller,
 /// already running when `[gpu]` names a pool. Plain and embedded serve build
-/// them through [`build_server`]; managed serve builds them here too.
+/// them through [`build_server`]; managed serve builds them here too. A
+/// `key_secret` endpoint, rung or pool sends through `broker`.
 pub(crate) async fn build_embedder(
     vault: &oneiron::Vault,
     config: &ServeConfig,
+    broker: Option<&crate::models::BrokerContext>,
 ) -> anyhow::Result<(
     Option<crate::embedder::EmbedderSlot>,
     Option<tokio::task::JoinHandle<()>>,
@@ -339,17 +345,22 @@ pub(crate) async fn build_embedder(
     let gpu = config
         .gpu
         .clone()
-        .map(crate::runtime::GpuPool::new)
+        .map(|gpu| crate::runtime::GpuPool::with_broker(gpu, broker))
         .transpose()?;
     let gpu_poller = gpu
         .as_ref()
         .map(crate::runtime::GpuPool::spawn_health_poller);
     let gpu_route = gpu.map(|pool| (pool, vault.derivation_scope().ok()));
     let embedder_config = config.embedder.clone();
+    let broker = broker.cloned();
     let embedder = crate::logging::off_runtime("embedder slot task", move || {
         // The server's sink before a host chooses one: the log.
         let receipts = Arc::new(crate::models::ServerReceipts::default());
-        let slot = crate::embedder::build_slot(embedder_config.as_ref(), receipts)?;
+        let slot = crate::embedder::build_slot_with_broker(
+            embedder_config.as_ref(),
+            receipts,
+            broker.as_ref(),
+        )?;
         if let (Some(slot), Some((pool, scope))) = (&slot, gpu_route) {
             crate::embedder::route_batches_through(slot, pool, scope)?;
         }

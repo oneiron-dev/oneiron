@@ -210,6 +210,7 @@ impl RuntimeRoleDefaults {
 pub struct RuntimeConfigOverride {
     pub mode: Option<RuntimeMode>,
     pub byo_key_env: Option<String>,
+    pub byo_key_secret: Option<String>,
     pub role_defaults: Option<RuntimeRoleDefaultOverrides>,
 }
 
@@ -239,8 +240,11 @@ impl RuntimeConfigOverride {
         if other.mode.is_some() {
             self.mode = other.mode;
         }
-        if other.byo_key_env.is_some() {
+        // The BYO key's source is one choice: a layer that names one
+        // replaces both.
+        if other.byo_key_env.is_some() || other.byo_key_secret.is_some() {
             self.byo_key_env = other.byo_key_env;
+            self.byo_key_secret = other.byo_key_secret;
         }
         if let Some(other_defaults) = other.role_defaults {
             self.role_defaults

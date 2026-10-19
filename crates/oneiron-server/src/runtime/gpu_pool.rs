@@ -6,7 +6,9 @@
 use super::gpu::{
     GPU_RENEW_SECONDS, GpuDerivationLease, GpuHealth, GpuLease, GpuRegistry, GpuRegistryError,
 };
+use crate::models::BrokerContext;
 use oneiron::federation::derivation::{DerivationScope, SealedOutput};
+use oneiron_broker::{CallHeader, Shape};
 use rand_core::RngCore;
 use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
@@ -45,6 +47,11 @@ pub struct GpuPoolConfig {
     /// one. Pods never see the embedder endpoint's own key.
     #[serde(default)]
     pub api_key_env: Option<String>,
+    /// The vault secret holding the pods' bearer key, sent through the
+    /// credential broker for each probe and batch; HTTPS pods only. Never
+    /// the embedder endpoint's own key.
+    #[serde(default)]
+    pub key_secret: Option<String>,
 }
 
 impl GpuPoolConfig {
@@ -55,6 +62,23 @@ impl GpuPoolConfig {
         anyhow::ensure!(self.poll_seconds > 0, "gpu.poll_seconds must be at least 1");
         for path in [&self.health_path, &self.ready_path] {
             anyhow::ensure!(path.starts_with('/'), "gpu health paths start with '/'");
+        }
+        if let Some(secret) = &self.key_secret {
+            anyhow::ensure!(
+                self.api_key_env.is_none(),
+                "gpu: set api_key_env or key_secret, not both"
+            );
+            anyhow::ensure!(
+                !secret.is_empty()
+                    && secret.len() <= 256
+                    && secret.bytes().all(|b| b.is_ascii_graphic()),
+                "gpu.key_secret must name a vault secret (printable ASCII, no spaces); put the key itself in the vault, never in the config file"
+            );
+            anyhow::ensure!(
+                Shape::Health.check_path(&self.health_path).is_ok()
+                    && Shape::OpenAiModels.check_path(&self.ready_path).is_ok(),
+                "gpu.key_secret: the credential broker probes a pod at …/health and …/v1/models only"
+            );
         }
         let mut ids = std::collections::BTreeSet::new();
         for pod in &self.pods {
@@ -90,6 +114,13 @@ impl GpuPoolConfig {
                 "gpu pod {} is a network pod and needs HTTPS",
                 pod.id
             );
+            anyhow::ensure!(
+                self.key_secret.is_none()
+                    || (url.scheme() == "https"
+                        && url.path().trim_end_matches('/').ends_with("/v1")),
+                "gpu pod {}: the credential broker sends to an https pod URL ending in /v1 only",
+                pod.id
+            );
         }
         Ok(())
     }
@@ -105,7 +136,8 @@ fn default_poll_seconds() -> u64 {
     15
 }
 
-const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long one pod probe may take.
+pub(crate) const POD_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn now() -> u64 {
     SystemTime::now()
@@ -122,7 +154,16 @@ struct Inner {
     urls: BTreeMap<String, String>,
     config: GpuPoolConfig,
     bearer: Option<HeaderValue>,
+    secret: Option<PodSecret>,
     runtime: tokio::runtime::Handle,
+}
+
+/// The vault secret the pods' key is read from for each request, and the
+/// credential-broker context that sends it: `None` where serve opened none,
+/// so every request to a pod fails before it is sent.
+struct PodSecret {
+    name: String,
+    broker: Option<BrokerContext>,
 }
 
 /// The production owner of one region's [`GpuRegistry`]. Cheap to clone.
@@ -144,6 +185,15 @@ impl GpuPool {
     /// Registers every pod as unhealthy; nothing routes to a pod before its
     /// first health poll passes. Must be called inside the serve runtime.
     pub fn new(config: GpuPoolConfig) -> anyhow::Result<Self> {
+        Self::with_broker(config, None)
+    }
+
+    /// [`Self::new`], with the vault's credential-broker context a
+    /// `key_secret` pool's probes and batches send through.
+    pub(crate) fn with_broker(
+        config: GpuPoolConfig,
+        broker: Option<&BrokerContext>,
+    ) -> anyhow::Result<Self> {
         config.validate()?;
         let runtime = tokio::runtime::Handle::try_current()
             .map_err(|_| anyhow::anyhow!("the GPU pool starts inside the serve runtime"))?;
@@ -165,12 +215,17 @@ impl GpuPool {
             }
             None => None,
         };
+        let secret = config.key_secret.clone().map(|name| PodSecret {
+            name,
+            broker: broker.cloned(),
+        });
         Ok(Self {
             inner: Arc::new(Inner {
                 registry: Mutex::new(registry),
                 urls,
                 config,
                 bearer,
+                secret,
                 runtime,
             }),
         })
@@ -179,6 +234,15 @@ impl GpuPool {
     /// The pods' own authorization header, for a worker's pod client.
     pub fn bearer(&self) -> Option<&HeaderValue> {
         self.inner.bearer.as_ref()
+    }
+
+    /// The vault secret the pods' key is read from, and the broker context
+    /// that sends it, for a worker's pod requests.
+    pub(crate) fn key_secret(&self) -> Option<(&str, Option<&BrokerContext>)> {
+        self.inner
+            .secret
+            .as_ref()
+            .map(|secret| (secret.name.as_str(), secret.broker.as_ref()))
     }
 
     pub fn region(&self) -> &str {
@@ -204,7 +268,10 @@ impl GpuPool {
     /// health path, inference is a 2xx on the readiness path. Both paths
     /// resolve against the pod's origin, as an absolute link does: `/health`
     /// on `https://pod/v1` is `https://pod/health`.
-    async fn probe(&self, client: &reqwest::Client, url: &str) -> GpuHealth {
+    async fn probe(&self, client: &reqwest::Client, pod: &str, url: &str) -> GpuHealth {
+        if let Some(secret) = &self.inner.secret {
+            return self.probe_brokered(pod, url, secret).await;
+        }
         let at = |path: &str| reqwest::Url::parse(url).and_then(|base| base.join(path));
         let (Ok(health_url), Ok(ready_url)) = (
             at(&self.inner.config.health_path),
@@ -212,7 +279,11 @@ impl GpuPool {
         ) else {
             return GpuHealth::default();
         };
-        let health = client.get(health_url).timeout(HEALTH_TIMEOUT).send().await;
+        let health = client
+            .get(health_url)
+            .timeout(POD_PROBE_TIMEOUT)
+            .send()
+            .await;
         let Ok(health) = health else {
             return GpuHealth::default();
         };
@@ -220,7 +291,7 @@ impl GpuPool {
         let inference = app
             && client
                 .get(ready_url)
-                .timeout(HEALTH_TIMEOUT)
+                .timeout(POD_PROBE_TIMEOUT)
                 .send()
                 .await
                 .is_ok_and(|r| r.status().is_success());
@@ -231,9 +302,52 @@ impl GpuPool {
         }
     }
 
+    /// [`Self::probe`] through the credential broker, with the key the
+    /// vault secret holds: each probe is one broker call to the pod's own
+    /// origin, `GET …/health` then `GET …/v1/models`. A broker or key that
+    /// is not there leaves the pod unhealthy.
+    async fn probe_brokered(&self, pod: &str, url: &str, secret: &PodSecret) -> GpuHealth {
+        let (Some(broker), Ok(base)) = (&secret.broker, reqwest::Url::parse(url)) else {
+            return GpuHealth::default();
+        };
+        let origin = base.origin().ascii_serialization();
+        // A probe names no model: the pod's id is its call's binding.
+        let get = |shape: Shape, path: &str| {
+            CallHeader::new(
+                format!("gpu:{pod}"),
+                shape,
+                origin.clone(),
+                path.to_owned(),
+                Vec::new(),
+                pod.to_owned(),
+                &[],
+            )
+        };
+        let config = &self.inner.config;
+        let health_call = get(Shape::Health, &config.health_path);
+        let Ok(health) = broker
+            .send(&secret.name, &health_call, &[], POD_PROBE_TIMEOUT)
+            .await
+        else {
+            return GpuHealth::default();
+        };
+        let app = (200..300).contains(&health.status);
+        let ready_call = get(Shape::OpenAiModels, &config.ready_path);
+        let inference = app
+            && broker
+                .send(&secret.name, &ready_call, &[], POD_PROBE_TIMEOUT)
+                .await
+                .is_ok_and(|answer| (200..300).contains(&answer.status));
+        GpuHealth {
+            transport: true,
+            app,
+            inference,
+        }
+    }
+
     pub async fn poll_health(&self, client: &reqwest::Client) {
         for (id, url) in &self.inner.urls {
-            let health = self.probe(client, url).await;
+            let health = self.probe(client, id, url).await;
             let _ = self.registry().set_health(id, health);
             if !health.healthy() {
                 tracing::warn!(region = %self.region(), pod = %id, ?health, "gpu pod unhealthy");
