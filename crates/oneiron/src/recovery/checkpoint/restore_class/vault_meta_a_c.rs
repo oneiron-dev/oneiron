@@ -128,6 +128,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::CHECKOUT_TOMBSTONE, LIVE),
     // A restore never rolls the checkpoint chain back.
     (&t::CHECKPOINT_CHAIN_HEAD, LIVE),
+    (&t::CHECKPOINT_PAYLOAD_INSTANCE, LIVE),
     (&t::CHANNEL_IDENTITY_ASSIGNMENT, LIVE),
     (&t::CHANNEL_IDENTITY_ASSIGNMENT_ERASED, LIVE),
     (&t::CLAIM_DEFERRED, CONTENT),

@@ -62,7 +62,7 @@ impl CustodyVaultId {
 /// | `0x04` | `KnownValueEntry`   | reserved: KS-3 known-value holder entries |
 /// | `0x05` | `WorldPad`          | reserved: KS-5 world pads                |
 /// | `0x06` | `CredentialValue`   | reserved: KS-6 credential values         |
-/// | `0x07` | `CheckpointPayload` | reserved: KS-7 checkpoint payloads       |
+/// | `0x07` | `CheckpointPayload` | KS-7 checkpoint payload compartments     |
 ///
 /// A later client adds its variant with its reserved tag, its item width and
 /// secret width, and its corruption label; custody itself stays the same.
@@ -71,18 +71,24 @@ pub(crate) enum CustodyKind {
     /// The per-claim key of claim-bound Gate decision rows: item = claim id
     /// (16 bytes), secret = AES-256-GCM key (32 bytes).
     ClaimDecision,
+    /// One owner's compartment of a checkpoint's ordinary payload (KS-7):
+    /// item = subtype (1) | canonical owner (32) | incarnation (16), secret
+    /// = the compartment's sealing key (32 bytes).
+    CheckpointPayload,
 }
 
 impl CustodyKind {
     pub(crate) const fn tag(self) -> u8 {
         match self {
             Self::ClaimDecision => 0x01,
+            Self::CheckpointPayload => 0x07,
         }
     }
 
     pub(crate) fn from_tag(tag: u8) -> Option<Self> {
         match tag {
             0x01 => Some(Self::ClaimDecision),
+            0x07 => Some(Self::CheckpointPayload),
             _ => None,
         }
     }
@@ -91,6 +97,7 @@ impl CustodyKind {
     pub(crate) const fn item_len(self) -> usize {
         match self {
             Self::ClaimDecision => 16,
+            Self::CheckpointPayload => 49,
         }
     }
 
@@ -98,7 +105,7 @@ impl CustodyKind {
     /// is damaged, never replaced.
     pub(crate) const fn secret_len(self) -> usize {
         match self {
-            Self::ClaimDecision => 32,
+            Self::ClaimDecision | Self::CheckpointPayload => 32,
         }
     }
 
@@ -107,6 +114,7 @@ impl CustodyKind {
     pub(crate) fn corrupt(self) -> Error {
         match self {
             Self::ClaimDecision => Error::CorruptedIndex("gate decision ORCB"),
+            Self::CheckpointPayload => Error::CorruptedIndex("checkpoint payload custody"),
         }
     }
 }
