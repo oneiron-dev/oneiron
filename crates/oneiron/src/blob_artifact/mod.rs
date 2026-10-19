@@ -53,7 +53,9 @@ pub use self::deck_doors::{
     DeckRejectionCheck, DeckRejectionReport,
 };
 pub(crate) use self::family::hash_hex;
-pub use self::family::{ArtifactExport, ArtifactKind, ArtifactVersionView, ArtifactView};
+pub use self::family::{
+    ArtifactExport, ArtifactKind, ArtifactVersionView, ArtifactView, VersionReconciliation,
+};
 pub(crate) use self::holders::{
     artifact_author_in_txn, carrier_content_hash, content_holders_in_txn,
     held_content_hashes_in_txn,

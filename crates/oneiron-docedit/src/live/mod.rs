@@ -22,6 +22,7 @@ pub mod oracle_run;
 mod points;
 pub mod pptx;
 mod reshape;
+mod svg_fallback;
 
 pub use conversion::{Conversion, effect_receipt};
 pub use deck_export::{
