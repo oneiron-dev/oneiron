@@ -109,6 +109,7 @@ pub(crate) use super::share_doors::*;
 // The role-holder decision-ask doors (OF-493), likewise.
 pub(crate) use super::decision_ask_doors::*;
 pub(crate) use super::decision_band_doors::*;
+pub(crate) use super::disclosure_doors::*;
 // The vault shape's apply door (ARCH-0070), likewise.
 pub(crate) use super::vault_shape_doors::*;
 // The owner's embedding-space doors (OF-370), likewise.
@@ -1103,6 +1104,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
         | "vault.companions.access_requests.answer"
+        | "vault.disclosure.ceiling.get"
+        | "vault.disclosure.ceiling.set"
+        | "vault.disclosure.ceiling.clear"
+        | "vault.disclosure.reveals"
+        | "vault.disclosure.reveals.answer"
         | "vault.personas.preview"
         | "vault.personas.export"
         | "vault.personas.edit"

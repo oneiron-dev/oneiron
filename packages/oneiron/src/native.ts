@@ -376,6 +376,11 @@ vaultLensesDeactivate(input: unknown): unknown
 vaultLensesList(input: unknown): unknown
 vaultLensesDefault(input: unknown): unknown
 vaultDisclosureOffer(input: unknown): unknown
+vaultDisclosureCeilingGet(input: unknown): unknown
+vaultDisclosureCeilingSet(input: unknown): unknown
+vaultDisclosureCeilingClear(input: unknown): unknown
+vaultDisclosureReveals(input: unknown): unknown
+vaultDisclosureRevealsAnswer(input: unknown): unknown
 reveal(input: unknown): unknown
 revealWait(input: unknown): unknown
 revealDescribe(input: unknown): unknown
