@@ -2273,6 +2273,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_wire_health_thresholds_get(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.wire_health.thresholds.get")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.wire_health.thresholds.get", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_wire_health_thresholds_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.wire_health.thresholds.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.wire_health.thresholds.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_slim_policy(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.slim.policy")?;
         let output = py

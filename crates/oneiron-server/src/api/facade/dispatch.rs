@@ -5621,6 +5621,54 @@ async fn vault_authority_history_import(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_wire_health_thresholds_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.wire_health.thresholds.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.wire_health.thresholds.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.wire_health.thresholds.get", value).await?;
+    let (output, listed) = super::host_doors::vault_wire_health_thresholds_get(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_wire_health_thresholds_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.wire_health.thresholds.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.wire_health.thresholds.set", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.wire_health.thresholds.set", value).await?;
+    let (output, listed) = super::host_doors::vault_wire_health_thresholds_set(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_slim_policy(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -23220,6 +23268,12 @@ pub(crate) async fn call_verb(
         }
         "vault.authority.history.import" => {
             vault_authority_history_import(server, call, input).await
+        }
+        "vault.wire_health.thresholds.get" => {
+            vault_wire_health_thresholds_get(server, call, input).await
+        }
+        "vault.wire_health.thresholds.set" => {
+            vault_wire_health_thresholds_set(server, call, input).await
         }
         "vault.slim.policy" => vault_slim_policy(server, call, input).await,
         "vault.slim.state" => vault_slim_state(server, call, input).await,

@@ -942,6 +942,8 @@ class Oneiron:
         @property
         def authority(self) -> "Oneiron._VaultAuthorityVerbs": ...
         @property
+        def wire_health(self) -> "Oneiron._VaultWireHealthVerbs": ...
+        @property
         def slim(self) -> "Oneiron._VaultSlimVerbs": ...
         @property
         def mesh(self) -> "Oneiron._VaultMeshVerbs": ...
@@ -1756,6 +1758,14 @@ class Oneiron:
             """Every saved authority handoff fork alarm, for the owner."""
         def acknowledge(self, spec: Facade.HandoffAlarmRequest) -> Facade.AuthorityHandoffAlarm:
             """The owner acknowledges one saved handoff fork alarm."""
+    class _VaultWireHealthVerbs:
+        @property
+        def thresholds(self) -> "Oneiron._VaultWireHealthThresholdsVerbs": ...
+    class _VaultWireHealthThresholdsVerbs:
+        def get(self, spec: Facade.EmptyRequest) -> Facade.WireThresholds:
+            """The owner reads the serving host's per-verb and per-actor wire detection thresholds and their window; crossings ask a health question, never refuse for rate."""
+        def set(self, spec: Facade.WireThresholds) -> Facade.WireThresholdsReceipt:
+            """The owner replaces the serving host's positive wire detection thresholds and window, receiving the previous and installed policy without adding a rate refusal."""
     class _VaultSlimVerbs:
         def policy(self, spec: Facade.EmptyRequest) -> Facade.SlimIdlePolicy:
             """Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild."""

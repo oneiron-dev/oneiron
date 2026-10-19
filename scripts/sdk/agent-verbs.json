@@ -3853,6 +3853,36 @@
       "openapi": true
     },
     {
+      "name": "vault.wire_health.thresholds.get",
+      "description": "The owner reads the serving host's per-verb and per-actor wire detection thresholds and their window; crossings ask a health question, never refuse for rate.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::WireThresholds",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.wire_health.thresholds.get\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.wire_health.thresholds.set",
+      "description": "The owner replaces the serving host's positive wire detection thresholds and window, receiving the previous and installed policy without adding a rate refusal.",
+      "input": "crate::task_verb::sdk::WireThresholds",
+      "output": "crate::task_verb::sdk::WireThresholdsReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.wire_health.thresholds.set\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.slim.policy",
       "description": "Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild.",
       "input": "crate::task_verb::sdk::EmptyRequest",

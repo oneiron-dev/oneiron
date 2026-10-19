@@ -268,6 +268,8 @@ vaultPacksSetupVerify(input: unknown): unknown
 vaultAuthorityAudit(input: unknown): unknown
 vaultAuthorityHistoryExport(input: unknown): unknown
 vaultAuthorityHistoryImport(input: unknown): unknown
+vaultWireHealthThresholdsGet(input: unknown): unknown
+vaultWireHealthThresholdsSet(input: unknown): unknown
 vaultSlimPolicy(input: unknown): unknown
 vaultSlimState(input: unknown): unknown
 vaultSlimResumeStep(input: unknown): unknown

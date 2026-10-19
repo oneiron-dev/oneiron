@@ -6,40 +6,18 @@ use std::{
     collections::{BTreeMap, VecDeque},
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
-const MANIFEST: &str = "manifest:rc42:wire-observation:v1";
+pub use oneiron::task_verb::sdk::WireThresholds;
+use oneiron::task_verb::sdk::{
+    WIRE_THRESHOLDS_MANIFEST as MANIFEST, WireThresholdsReceipt,
+    set_wire_thresholds_as_owner_in_txn,
+};
+
 const RECEIPT: &str = "wire:window:v2:";
 const QUESTION: &str = "wire:question:v2:";
 const LIMIT_QUESTION: &str = "wire:limit-question:v1:";
 /// A row keeps one question for each window of this many seconds, and counts
 /// every crossing in the window in it.
 const LIMIT_QUESTION_WINDOW_SECS: u64 = 60;
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WireThresholds {
-    pub window_secs: u64,
-    pub per_verb: u64,
-    pub per_actor: u64,
-}
-impl Default for WireThresholds {
-    fn default() -> Self {
-        Self {
-            window_secs: 60,
-            per_verb: 50_000_000,
-            per_actor: 1_000_000,
-        }
-    }
-}
-impl WireThresholds {
-    fn validate(&self) -> Result<()> {
-        if self.window_secs == 0 || self.per_verb == 0 || self.per_actor == 0 {
-            Err(Error::InvalidConfig(
-                "RC42 thresholds must be positive".into(),
-            ))
-        } else {
-            Ok(())
-        }
-    }
-}
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WireWindowReceipt {
     pub started_at: u64,
@@ -457,18 +435,52 @@ impl WireTelemetry {
         self.save_limit_questions()
     }
     pub fn set_thresholds(&self, thresholds: &WireThresholds) -> Result<()> {
-        thresholds.validate()?;
+        self.write_thresholds(thresholds, |txn| {
+            self.vault
+                .sync_state_put_in_write_txn(txn, MANIFEST, &encode(thresholds)?)
+        })
+    }
+    pub(crate) fn set_thresholds_as_owner(
+        &self,
+        owner: &oneiron::consent::AuthenticatedOwner,
+        thresholds: &WireThresholds,
+    ) -> Result<WireThresholdsReceipt> {
+        self.write_thresholds(thresholds, |txn| {
+            set_wire_thresholds_as_owner_in_txn(&self.vault, txn, owner, thresholds)
+        })
+    }
+    /// Keeps the old window and the new policy together, holding the counter
+    /// lock until the write commits. Host writes do not join a commit group
+    /// while holding this lock.
+    fn write_thresholds<T>(
+        &self,
+        thresholds: &WireThresholds,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
+    ) -> Result<T> {
         let mut active = self
             .active
             .lock()
             .map_err(|_| Error::CorruptedIndex("wire counter lock"))?;
-        if active.frozen {
-            return Err(Error::InvalidConfig(
-                "wire observation frozen for reap".into(),
-            ));
-        }
-        self.flush_active(&mut active)?;
-        self.vault.sync_state_put(MANIFEST, &encode(thresholds)?)
+        let result = self.vault.with_write_txn(|txn| {
+            thresholds.validate()?;
+            if active.frozen {
+                return Err(Error::InvalidConfig(
+                    "wire observation frozen for reap".into(),
+                ));
+            }
+            if !active.persisted
+                && let Some(window) = &active.window
+            {
+                self.vault.sync_state_put_in_write_txn(
+                    txn,
+                    &format!("{RECEIPT}{:020}:{:020}", window.started_at, window.ended_at),
+                    &encode(window)?,
+                )?;
+            }
+            write(txn)
+        })?;
+        active.persisted = true;
+        Ok(result)
     }
     pub fn thresholds(&self) -> Result<WireThresholds> {
         let value = self
