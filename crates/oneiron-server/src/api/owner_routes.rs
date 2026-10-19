@@ -47,6 +47,7 @@ mod conflict_routes;
 pub(crate) mod connector_admission_routes;
 mod connector_consent_routes;
 mod connector_subscription_routes;
+mod conversation_learning_routes;
 pub(super) mod cooperative_deletion_routes;
 mod craft_candidate_routes;
 mod decision_ask_routes;
@@ -173,6 +174,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(secret_lift_routes::routes())
         .merge(steer_routes::routes())
         .merge(training_swap_routes::routes())
+        .merge(conversation_learning_routes::routes())
         .merge(world_privacy_routes::routes())
         .merge(world_privacy_work_routes::routes())
         .merge(owner_work_routes::routes())

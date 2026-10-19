@@ -115,7 +115,7 @@ struct SetUnanimity {
 /// same transaction; the proof lends a non-owner no owner authority. Every
 /// refusal is the owner door's 403, and a managed owner's or a host action's
 /// stays the owner door's own.
-fn holder(
+pub(super) fn holder(
     auth: &CoreAuth,
     server: &SyncServer,
     scope: CoreScope,
