@@ -73,6 +73,11 @@ const CARRIED_FORWARDING_HEADERS: [&str; 4] = [
     "x-real-ip",
 ];
 
+/// The header an MCP connector names its credential in. Beside an owner's
+/// attestation it is that connector's call on `/mcp`, so it never opens the
+/// owner's own socket.
+const MCP_CREDENTIAL_HEADER: &str = "x-oneiron-mcp-credential";
+
 /// The upgrade headers the owner's own socket also repeats on each call:
 /// the room turn and the session his supervisor's attestation placed the
 /// upgrade in. Never the invocation it named, which was the upgrade's own.
@@ -238,9 +243,13 @@ pub(super) fn upgrade(
     let (credential, session_jti, owner) =
         match CoreAuth::for_attested_request(headers, extensions, "/ws", &server) {
             Some(Err(refused)) => return Err(refused.into_response()),
-            // The owner, with no slip of anyone's: his own socket, which
-            // stands while the vault records him as its live owner.
-            Some(Ok(auth)) if !crate::auth::carries_caller_slip(headers) => {
+            // The owner, with no credential of anyone's beside him, as
+            // `/mcp` takes him: his own socket, which stands while the vault
+            // records him as its live owner.
+            Some(Ok(auth))
+                if !crate::auth::carries_caller_slip(headers)
+                    && !headers.contains_key(MCP_CREDENTIAL_HEADER) =>
+            {
                 let session = ManagedOwnerSession::opened_by(&auth).ok_or_else(unauthorized)?;
                 (Credential::Owner(session), None, Some(auth))
             }
