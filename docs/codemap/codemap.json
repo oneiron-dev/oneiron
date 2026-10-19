@@ -83721,7 +83721,7 @@
      "path": "src/managed/isolation.rs",
      "purpose": "Fail-closed Linux fscrypt and root-owned UID allocation probes",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -84971,7 +84971,7 @@
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -84995,13 +84995,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/backup/rehearse.rs",
      "purpose": "Rehearsals of one vault's backups: restored into a scratch copy beside the live vault, opened, checked and…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -85012,6 +85012,16 @@
      "purpose": "Restores of one vault's backups: over the stopped vault, where no vault is yet, and the activation of the…",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/scratch.rs",
+     "purpose": "The mark a rehearsal's scratch copy carries when it is deleted afterwards, and the start-up sweep of those a…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -85239,7 +85249,7 @@
      "path": "src/owner/schedule.rs",
      "purpose": "Scheduled backups for a running `serve`",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -87100,7 +87110,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -87221,7 +87231,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 867,
+   "source_files": 868,
    "test_files": 182
   },
   "oneiron-spawn": {
