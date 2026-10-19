@@ -5021,7 +5021,7 @@
      "path": "src/batch/builder/puts.rs",
      "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 2
      }
     },
@@ -50416,7 +50416,7 @@
      "path": "src/store/asset_body/mod.rs",
      "purpose": "ASSET bodies on the file plane (FIX 3677; Engine rule (b), 10-18)",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 23
      }
     },
     {
@@ -50430,13 +50430,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/asset_body/spool.rs",
+     "purpose": "The receive spool of an ASSET body a peer sends by reference (FIX 5489): its frames go, in order, to one…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/asset_body/stage.rs",
      "purpose": "Staging an ASSET body from a reader before the transaction that puts it (FIX 3677): the body streams into…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -50994,7 +51004,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 1,
       "re-export": 14
      }
@@ -51799,7 +51809,17 @@
      "path": "src/sync/asset_body.rs",
      "purpose": "File-plane ASSET rows at sync (FIX 5393 cut 1): no export ships a manifest without its bytes",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/asset_body/references.rs",
+     "purpose": "The reference a by-reference ASSET body travels under (FIX 5489)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -53596,7 +53616,7 @@
      "path": "src/sync/schema.rs",
      "purpose": "CRDT Doc schema creation for the sync layer",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 6
      }
     },
@@ -53838,8 +53858,26 @@
       "enum": 1,
       "fn": 27,
       "mod": 1,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AssetBodyAddress",
+      "AssetBodyData",
+      "AssetBodyEnd",
+      "AssetBodyReceipt",
+      "AssetBodyWant"
+     ],
+     "path": "src/sync/transport/asset_bodies.rs",
+     "purpose": "By-reference ASSET body frames (FIX 5489)",
+     "surface": {
+      "const": 6,
+      "fn": 9,
+      "struct": 5
      }
     },
     {
@@ -63890,7 +63928,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 95,
+     "files": 96,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63918,7 +63956,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 202,
+     "files": 204,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -64116,7 +64154,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3952,
+   "source_files": 3955,
    "test_files": 902
   },
   "oneiron-android": {
