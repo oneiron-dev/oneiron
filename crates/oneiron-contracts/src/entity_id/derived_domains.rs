@@ -218,9 +218,18 @@ pub const CONNECT_GUEST_ACTOR: &[u8] = b"oneiron/connect-guest-actor/v1";
 /// is the one.
 pub const FOREIGN_WORLD: &[u8] = b"oneiron.federation.foreign-world.v1";
 
+/// The occurrence of an ASSET's current body file (`store::asset_body`, FIX
+/// 3677): one per ASSET, moved as its row changes. Parts: the ASSET.
+pub const ASSET_BODY_FILE: &[u8] = b"oneiron/asset-body-file/v1";
+
+/// The occurrence a legal hold keeps an ASSET's superseded body file under
+/// (`store::asset_body`, FIX 3677). Parts: the ASSET, the file's BLAKE3 (32
+/// bytes) and its length (u64 big-endian).
+pub const ASSET_BODY_HELD: &[u8] = b"oneiron/asset-body-held/v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 52] = [
+pub(crate) const ALL: [&[u8]; 54] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -273,4 +282,6 @@ pub(crate) const ALL: [&[u8]; 52] = [
     AGENT_PACK_TRAVEL,
     CONNECT_GUEST_ACTOR,
     FOREIGN_WORLD,
+    ASSET_BODY_FILE,
+    ASSET_BODY_HELD,
 ];

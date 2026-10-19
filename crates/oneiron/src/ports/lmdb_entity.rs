@@ -38,6 +38,14 @@ impl Vault {
         {
             return Ok(None);
         }
+        // A file-plane ASSET reads as its body, read from its file and
+        // checked; the raw ports keep the manifest its row holds (FIX 3677).
+        if row.entity_type == ENTITY_TYPE_ASSET
+            && let Some(manifest) = crate::store::asset_file_in_txn(store, txn, id, &row.body)?
+        {
+            row.body = self.asset_file_body(&manifest)?;
+            return Ok(Some(row));
+        }
         #[cfg(feature = "sync")]
         if crate::entity_doc::has_record_head(&self.store, txn, id)? {
             if row.entity_type == ENTITY_TYPE_NOTE {

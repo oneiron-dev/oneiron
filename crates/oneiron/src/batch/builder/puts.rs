@@ -130,6 +130,27 @@ impl BatchBuilder<'_> {
         )
     }
 
+    /// FIX 3677: [`Self::put`] of ASSET `id` whose body is the body file
+    /// `file` names, published before this batch: the row keeps `manifest` in
+    /// its place, and the put binds the file to the row in its transaction.
+    pub(crate) fn put_asset_file(
+        mut self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        manifest: &[u8],
+        file: crate::store::AssetBodyFacts,
+    ) -> Self {
+        self.asset_files.insert(*id, file);
+        self.put(
+            id,
+            crate::registry::ENTITY_TYPE_ASSET,
+            occurred,
+            learned_at,
+            manifest,
+        )
+    }
+
     /// The ONE-1686 witness MESSAGE put: the only door that stages an
     /// `ENTITY_TYPE_MESSAGE` row.
     ///

@@ -37,6 +37,15 @@ pub(in crate::batch) struct PutOptions {
     pub(in crate::batch) decision: DecisionRecording,
     pub(in crate::batch) consent: ConsentHandling,
     pub(in crate::batch) indexing: TextIndexing,
+    pub(in crate::batch) storage: BodyStorage,
+}
+
+/// Where the put's body lives (FIX 3677).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(in crate::batch) struct BodyStorage {
+    /// The row's body is the manifest of this ASSET body file, published
+    /// before the put; `None` when the row holds the body itself.
+    pub(in crate::batch) asset_file: Option<crate::store::AssetBodyFacts>,
 }
 
 /// Which admit bands the put opens.

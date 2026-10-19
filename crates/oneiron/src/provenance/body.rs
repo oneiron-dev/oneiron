@@ -204,6 +204,27 @@ pub(crate) fn release_owner_bodies_in_txn(
     Ok(bodies.len())
 }
 
+/// Drops `owner`'s one `occurrence` and queues its file digest for the
+/// collector when no other descriptor holds it. `false` when the owner holds
+/// no such occurrence.
+pub(crate) fn release_body_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    owner: &EntityId,
+    occurrence: &EntityId,
+) -> Result<bool> {
+    let key = (*owner, *occurrence);
+    let Some(body) = BODY.get(store, txn, &key)? else {
+        return Ok(false);
+    };
+    BODY.delete(store, txn, &key)?;
+    if let Some(held) = body.state.held() {
+        BODY_DIGEST.delete(store, txn, &(held.blake3, *occurrence))?;
+        release_if_unheld(store, txn, held)?;
+    }
+    Ok(true)
+}
+
 /// Up to `limit` released file digests, oldest key first. The collector
 /// unlinks a file only once its reader pins allow and [`take_released_in_txn`]
 /// confirms no descriptor took the digest back.

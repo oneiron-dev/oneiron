@@ -46,8 +46,27 @@ pub(super) fn plan_short_id_update(
     short_id_prefix: &str,
     data: &[u8],
 ) -> Result<ShortIdPlan> {
-    let content_hash = short_id_content_hash(data);
+    plan_short_id_update_hashed(
+        store,
+        txn,
+        id,
+        entity_type,
+        short_id_prefix,
+        short_id_content_hash(data),
+    )
+}
 
+/// [`plan_short_id_update`] for a body whose content-hash byte its writer
+/// measured as it streamed (a body file, FIX 3677), so the body need not be
+/// read whole again.
+pub(super) fn plan_short_id_update_hashed(
+    store: &impl ManifestDbs,
+    txn: &heed::RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    short_id_prefix: &str,
+    content_hash: u8,
+) -> Result<ShortIdPlan> {
     if let Some((short_id, old_content_hash)) =
         crate::ports::ShortIdStoreRead::port_short_id_reference(store, txn, id)?
     {

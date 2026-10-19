@@ -215,6 +215,9 @@ impl Vault {
             {
                 continue;
             }
+            // A file-plane ASSET leaves as its body, never the manifest its
+            // row keeps (FIX 3677).
+            let raw = self.materialized_row_in_txn(&txn, id, raw)?;
             let bytes = &raw[ENTITY_METADATA_HEADER_LEN..];
             // An epoch summary leaves only beside every record it was written
             // from, nested summaries included; otherwise it stays home.

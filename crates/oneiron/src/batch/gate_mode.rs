@@ -36,6 +36,9 @@ pub(crate) struct ApplyOpsGateMode {
     /// candidates, revalidated in the transaction that applies them. Raw puts
     /// never read it.
     pub(super) owner_authored: Option<crate::consent::OwnerAuthoredWrite>,
+    /// The body file each ASSET put this batch stages as a manifest names,
+    /// published before the batch (FIX 3677); consumed by that put.
+    pub(super) asset_files: HashMap<EntityId, crate::store::AssetBodyFacts>,
 }
 
 impl ApplyOpsGateMode {
@@ -56,6 +59,7 @@ impl ApplyOpsGateMode {
             pre_analyzed_text: HashMap::new(),
             nsw_plans: HashMap::new(),
             owner_authored: None,
+            asset_files: HashMap::new(),
         }
     }
 
@@ -86,6 +90,16 @@ impl ApplyOpsGateMode {
     /// written from; a text put that births no row here copies nothing.
     pub(crate) fn with_text_births(mut self, births: HashMap<EntityId, Vec<EntityId>>) -> Self {
         self.text_births = births;
+        self
+    }
+
+    /// Binds each ASSET put whose body is a manifest to the body file it
+    /// names (FIX 3677).
+    pub(super) fn with_asset_files(
+        mut self,
+        files: HashMap<EntityId, crate::store::AssetBodyFacts>,
+    ) -> Self {
+        self.asset_files = files;
         self
     }
 

@@ -159,6 +159,7 @@ pub(super) fn apply_ops_with_origin(
     let birth_mask = gate_mode.birth_mask;
     let text_births = std::mem::take(&mut gate_mode.text_births);
     let births = std::mem::take(&mut gate_mode.births);
+    let mut asset_files = std::mem::take(&mut gate_mode.asset_files);
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let authority_generation = crate::authority::authority_cache_generation(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
@@ -272,6 +273,19 @@ pub(super) fn apply_ops_with_origin(
                     hub_sync_imported,
                 )?;
                 let replicated = allow_maintenance && allow_reserved_predicate;
+                // FIX 3677: a long opaque local ASSET body goes to its file
+                // here, and the row keeps its manifest; a replicated or
+                // replayed row is written as it came.
+                put_options.storage.asset_file = asset_files.remove(&id);
+                if put_options.storage.asset_file.is_none()
+                    && !replicated
+                    && !replay
+                    && let Some((manifest, file)) =
+                        crate::store::file_put_body_in_txn(store, wtxn, entity_type, &data)?
+                {
+                    data = Zeroizing::new(manifest);
+                    put_options.storage.asset_file = Some(file);
+                }
                 let sources = text_births.get(&id).map(Vec::as_slice);
                 if let Some(facet) = birth_stamp_target(
                     store,

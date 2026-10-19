@@ -437,6 +437,14 @@ impl Vault {
                 {
                     bodies.push(body);
                 }
+                // A file-plane ASSET's body file goes with its row (FIX 3677).
+                #[cfg(unix)]
+                if entry.name == "entities"
+                    && let Some(body) =
+                        crate::store::asset_body_file_of_row(&self.store, &txn, key, value)?
+                {
+                    bodies.push(body);
+                }
                 let value = if entry.name == "job_records" {
                     rebuild::unlease_attempt(key, value)?
                 } else {
@@ -466,6 +474,9 @@ impl Vault {
             databases.insert(entry.name.into(), rows);
         }
         drop(txn);
+        // Two rows may name one file: it is carried once.
+        bodies.sort_unstable();
+        bodies.dedup();
         let image = CheckpointImage {
             version: 2,
             created_at,
@@ -853,8 +864,19 @@ impl Vault {
         if !image.bodies.is_empty() {
             let mut bodies = bodies;
             let target = vault.store.body_dir()?;
+            // A result body comes back with its line index; an ASSET's file
+            // comes back raw, checked as it streams (FIX 3677).
+            let results = image.databases["vault_meta"]
+                .iter()
+                .filter_map(|(key, value)| crate::code_run::code_run_body_file_of_row(key, value))
+                .map(|(digest, _)| digest)
+                .collect::<BTreeSet<_>>();
             for (index, (digest, len)) in image.bodies.iter().enumerate() {
-                target.import(digest, *len, &mut bodies.body(index))?;
+                if results.contains(digest) {
+                    target.import(digest, *len, &mut bodies.body(index))?;
+                } else {
+                    target.import_asset_body(digest, *len, &mut bodies.body(index))?;
+                }
             }
         }
         #[cfg(not(unix))]

@@ -143,6 +143,9 @@ impl Vault {
                         let raw = self
                             .get_raw_in(txn, &origin)?
                             .ok_or(crate::Error::EntityNotFound)?;
+                        // A file-plane ASSET forks its body, never the
+                        // manifest its row keeps (FIX 3677).
+                        let raw = self.materialized_row_in_txn(txn, &origin, raw)?;
                         let bytes = &raw[ENTITY_METADATA_HEADER_LEN..];
                         fork_links(
                             self.batch_in()

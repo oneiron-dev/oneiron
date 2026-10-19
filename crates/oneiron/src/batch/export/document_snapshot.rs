@@ -317,6 +317,9 @@ impl Vault {
                 continue;
             }
             sources.insert(id);
+            // A file-plane ASSET goes out as its body, never the manifest its
+            // row keeps; read whole here, as every body was (FIX 3677).
+            let raw = self.materialized_row_in_txn(&rtxn, &id, raw)?;
             if header.entity_type == crate::registry::ENTITY_TYPE_ASSET
                 && crate::receipt::is_receipt_archive_source(&raw[ENTITY_METADATA_HEADER_LEN..])
             {

@@ -167,6 +167,7 @@ impl BatchBuilder<'_> {
         let (origin, birth_mask) = (self.origin, self.birth_mask);
         let text_births = std::mem::take(&mut self.text_births);
         let births = std::mem::take(&mut self.births);
+        let asset_files = std::mem::take(&mut self.asset_files);
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
         #[cfg(feature = "sync")]
@@ -215,6 +216,7 @@ impl BatchBuilder<'_> {
                         .with_birth_mask(birth_mask)
                         .with_text_births(text_births)
                         .with_births(births)
+                        .with_asset_files(asset_files)
                         .with_prepared(prepared),
                     origin,
                 },
