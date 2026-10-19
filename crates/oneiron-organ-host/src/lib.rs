@@ -59,7 +59,7 @@ pub use error::{HostError, Unavailable};
 pub use fetch::GuardedFetch;
 pub use handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 #[cfg(unix)]
-pub use host::OrganHost;
+pub use host::{CallMeasure, CallSize, OrganHost};
 pub use landing::propose_organ_outputs;
 #[cfg(unix)]
 pub use mesh::OrganService;

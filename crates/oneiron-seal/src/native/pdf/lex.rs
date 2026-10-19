@@ -275,11 +275,19 @@ fn skip_value(lexer: &mut PdfLexer<'_>, first: Token<'_>, depth: usize) -> Resul
     Ok(())
 }
 
-/// Parse the actual classic-xref trailer dictionary using the same bounded
-/// token grammar as object definitions. `None` is proven absence, not a
-/// failed spelling match. Nested names/values cannot impersonate its key.
+/// [`table_prev_work`] without its token count.
+#[cfg(test)]
 pub(super) fn table_prev(section: &[u8]) -> Result<Option<usize>, LexError> {
-    let mut lexer = PdfLexer::new(section, 0, section.len().min(8_000_000));
+    table_prev_work(section).map(|(prev, _)| prev)
+}
+
+/// Parse the actual classic-xref trailer dictionary using the same token
+/// grammar as object definitions. `None` is proven absence, not a failed
+/// spelling match. Nested names/values cannot impersonate its key. The
+/// whole section is lexed however long it is (Rule 5); the tokens it took
+/// come back beside the offset for the `[limits]` structural-work row.
+pub(super) fn table_prev_work(section: &[u8]) -> Result<(Option<usize>, usize), LexError> {
+    let mut lexer = PdfLexer::new(section, 0, usize::MAX);
     if lexer
         .next()?
         .is_none_or(|t| t.kind != Kind::Word || t.value != b"xref")
@@ -322,7 +330,7 @@ pub(super) fn table_prev(section: &[u8]) -> Result<Option<usize>, LexError> {
             skip_value(&mut lexer, value, 0)?;
         }
     }
-    Ok(prev)
+    Ok((prev, lexer.work()))
 }
 
 #[cfg(test)]

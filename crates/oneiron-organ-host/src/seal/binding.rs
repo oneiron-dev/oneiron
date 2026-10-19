@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use x509_cert::spki::AlgorithmIdentifierOwned;
 
-use super::{SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealLimits};
+use super::{PDF_FORMAT_BYTES, SealAlgorithm, SealIdentity, SealKeyError, SealKeys};
 use crate::handlers::AskRequest;
 use crate::receipt::SignedReceipt;
 
@@ -233,20 +233,14 @@ impl<'a> SealCall<'a> {
     /// the key issued for that revision, over the same attributes. Later
     /// revisions (validation data, a document timestamp) may follow only
     /// when `suffix` allows them; their meaning is the verifier's to judge.
-    pub(super) fn admit(
-        &self,
-        output: &[u8],
-        suffix: bool,
-        limits: &SealLimits,
-    ) -> Result<(), EsignSealerError> {
+    /// However much they add, they are admitted (Rule 5): past the PDF
+    /// format bound alone an output is not one this side could read.
+    pub(super) fn admit(&self, output: &[u8], suffix: bool) -> Result<(), EsignSealerError> {
         let unbound = || EsignSealerError::Fatal {
             stage: "binding".to_owned(),
             code: "unbound_output".to_owned(),
         };
-        let len = output.len() as u64;
-        let base = self.input.pdf.len() as u64;
-        if len > base.saturating_add(limits.max_output_growth_bytes) || len > limits.max_input_bytes
-        {
+        if output.len() as u64 > PDF_FORMAT_BYTES {
             return Err(unbound());
         }
         let signer = lock(&self.signer).clone().ok_or_else(unbound)?;

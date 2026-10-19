@@ -411,18 +411,11 @@ pub(crate) async fn assemble(
             ProfileDegradeReason::DocumentTimestampUnavailable,
         ));
     }
-    let growth = bytes.len().saturating_sub(prepared.bytes.len());
-    if growth > ctx.config.resource_limits.max_output_growth_bytes {
-        return Err(SealError::Fatal {
-            stage: SealStage::PdfIncrementalUpdate,
-            code: FatalCode::PdfInvariantFailed,
-        });
-    }
-    // Self-consistency cap: the sealer must never emit a document the
-    // verifier would refuse as input (verify_document rejects
-    // len > max_input_bytes). The two caps derive from the SAME configured
-    // limits struct, so a seal that would exceed the verify cap is refused
-    // at seal time.
+    // The output grows by whatever its validation material and timestamps
+    // need (Rule 5): the host measures that growth against its `[limits]`
+    // row. The one refusal left is the format bound: the sealer never emits
+    // a document past lopdf's u32 offsets, which the verifier (and every
+    // later reader here) could not parse. Both read the same bound.
     if bytes.len() > ctx.config.resource_limits.max_input_bytes {
         return Err(SealError::Fatal {
             stage: SealStage::PdfIncrementalUpdate,

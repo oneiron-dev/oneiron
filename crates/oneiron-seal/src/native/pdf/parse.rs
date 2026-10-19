@@ -2,7 +2,7 @@
 
 use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId};
 
-use crate::api::SealResourceLimits;
+use crate::api::{Counter, STREAM_DECODE_BYTES, SealResourceLimits};
 use crate::error::{FatalCode, InputInvalidCode, SealError, SealStage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -375,18 +375,24 @@ pub(super) fn xref_offsets_consistent(doc: &Document, bytes: &[u8]) -> bool {
         })
 }
 
+/// A strict parse, each stream decoded under the per-stream codec bound;
+/// its object count goes to the invocation's counts.
 fn load_strict(bytes: &[u8], limits: &SealResourceLimits) -> Result<Document, SealError> {
     let options = LoadOptions {
         strict: true,
-        max_decompressed_size: Some(limits.max_input_bytes),
+        max_decompressed_size: Some(STREAM_DECODE_BYTES),
         ..LoadOptions::default()
     };
-    Document::load_mem_with_options(bytes, options)
-        .map_err(|_| input_invalid(InputInvalidCode::MalformedXref))
+    let doc = Document::load_mem_with_options(bytes, options)
+        .map_err(|_| input_invalid(InputInvalidCode::MalformedXref))?;
+    limits.observed.note(Counter::PdfObjects, doc.objects.len());
+    Ok(doc)
 }
 
 /// Full prepared-input validation (§7.1). Rejects instead of signing any
-/// input that violates the upstream preparation contract.
+/// input that violates the upstream preparation contract. On size it
+/// refuses only past the format bounds (`max_input_bytes`, lopdf's u32
+/// offsets; `max_pdf_objects`, ISO 32000-1's object count).
 pub(crate) fn validate_prepared(
     bytes: &[u8],
     limits: &SealResourceLimits,

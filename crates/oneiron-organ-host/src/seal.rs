@@ -15,10 +15,17 @@
 //! verification is one `seal.verify` call in a process of its own, with no
 //! handlers: a second opinion, never the admission.
 //!
+//! No size refuses a seal (Rule 5). Each call runs in a process of its own,
+//! booked and granted memory by what it lends; the organ refuses only past
+//! the PDF format bounds; what it counted, the frames it carried and the
+//! sealed PDF's size are measured against the engine's `[limits]` rows,
+//! which ask whether everything is okay and serve the call whole.
+//!
 //! Calls block, as every host call does: run them off any async runtime.
 
 mod binding;
 mod file_keys;
+mod observe;
 
 pub use file_keys::{FileSealKeys, pem_certificates};
 
@@ -38,6 +45,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use self::binding::{RevisionArgs, SealCall};
+use self::observe::{measure_input, measure_output};
 use crate::error::{HostError, Unavailable};
 use crate::fetch::GuardedFetch;
 use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
@@ -68,8 +76,10 @@ const MIB: u64 = 1024 * 1024;
 /// The seal's own response caps: a CRL, and a timestamp.
 const MAX_CRL_BYTES: u64 = 8 * MIB;
 const MAX_TSA_BYTES: u64 = MIB;
-/// The engine's 64 MiB prepared limit plus the seal's 32 MiB growth limit.
-const MAX_SEALED_BYTES: u64 = 96 * MIB;
+/// The most bytes a sealed PDF spans: lopdf records each object's offset
+/// as a `u32`, so neither the organ nor any later reader could parse more.
+/// A format bound; below it the output is measured, never refused.
+const PDF_FORMAT_BYTES: u64 = u32::MAX as u64;
 
 /// The signing key's custody, a local signer or a KMS. The key never
 /// crosses the socket. Both run on the caller's thread inside its call, so
@@ -131,25 +141,6 @@ pub struct SealTsa {
     pub policy_oid: Option<String>,
 }
 
-/// The seal's resource limits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct SealLimits {
-    pub max_input_bytes: u64,
-    pub max_output_growth_bytes: u64,
-    pub max_pdf_objects: u64,
-}
-
-impl Default for SealLimits {
-    /// The seal's own defaults.
-    fn default() -> Self {
-        Self {
-            max_input_bytes: 256 * MIB,
-            max_output_growth_bytes: 32 * MIB,
-            max_pdf_objects: 1_000_000,
-        }
-    }
-}
-
 /// What the engine configures for its seals.
 #[derive(Debug, Clone)]
 pub struct SealSettings {
@@ -158,7 +149,6 @@ pub struct SealSettings {
     /// In order of preference. Their origins belong on the install grant's
     /// fetch allowlist, with the CRL origins.
     pub timestamp_authorities: Vec<SealTsa>,
-    pub limits: SealLimits,
     /// The organ's installed name and the grant its calls run under.
     pub organ: String,
     pub grant: String,
@@ -170,14 +160,13 @@ pub struct SealSettings {
 }
 
 impl SealSettings {
-    /// Background calls of one minute, five seconds a fetch, the seal's
-    /// default limits, no timestamp authority.
+    /// Background calls of one minute, five seconds a fetch, no timestamp
+    /// authority.
     #[must_use]
     pub fn new(trust_anchors: Vec<Vec<u8>>, grant: impl Into<String>) -> Self {
         Self {
             trust_anchors,
             timestamp_authorities: Vec::new(),
-            limits: SealLimits::default(),
             organ: SEAL_ORGAN.to_owned(),
             grant: grant.into(),
             class: CallClass::Background,
@@ -189,7 +178,10 @@ impl SealSettings {
 
 /// The seal organ's install grant: both verbs over PDFs and the engine's
 /// revisions, the identity once, at most three signatures and 32 fetches a
-/// call, fetches only inside `fetch`, and room for the sealed PDF.
+/// call, fetches only inside `fetch`, and room for the sealed PDF. Its
+/// memory is a floor: each call is sized by what it lends. Its frames are
+/// bounded by the wire's own `u32` length alone, and its outputs by the
+/// PDF format bound and the call's booking.
 #[must_use]
 pub fn seal_spec(program: impl Into<PathBuf>, fetch: FetchGrant) -> OrganSpec {
     let mut spec = OrganSpec::first_party(SEAL_ORGAN, program);
@@ -206,11 +198,11 @@ pub fn seal_spec(program: impl Into<PathBuf>, fetch: FetchGrant) -> OrganSpec {
     spec.max_ask_bytes = 64 * MIB;
     spec.memory_bytes = 1024 * MIB;
     spec.call_memory_bytes = 256 * MIB;
-    spec.max_output_bytes = MAX_SEALED_BYTES;
-    if cfg!(target_os = "macos") {
-        // Outputs ride inline on macOS; one more MiB carries the report.
-        spec.max_reply_frame = u32::try_from(MAX_SEALED_BYTES + MIB).unwrap_or(u32::MAX);
-    }
+    spec.max_output_bytes = PDF_FORMAT_BYTES;
+    // Outputs ride inline on macOS: a reply carries the whole sealed PDF.
+    // The `[limits]` frame rows measure what each frame carried.
+    spec.max_call_frame = u32::MAX;
+    spec.max_reply_frame = u32::MAX;
     spec.fetch = fetch;
     spec
 }
@@ -300,7 +292,6 @@ struct VerifyArgs {
 struct ConfigArgs {
     trust_anchors: Vec<ByteBuf>,
     timestamp_authorities: Vec<SealTsa>,
-    limits: SealLimits,
 }
 
 #[derive(Deserialize)]
@@ -427,7 +418,6 @@ impl HostedSealer<'_> {
                 .map(|anchor| ByteBuf::from(anchor.clone()))
                 .collect(),
             timestamp_authorities,
-            limits: self.settings.limits,
         })
     }
 
@@ -480,6 +470,7 @@ impl EsignSealer for HostedSealer<'_> {
             signature_revisions: call.revision_args(),
         })
         .map_err(|_| reply_invalid())?;
+        measure_input(self.vault, &input.pdf);
         let lent = vec![
             LentInput {
                 media_type: PDF.to_owned(),
@@ -490,17 +481,10 @@ impl EsignSealer for HostedSealer<'_> {
                 bytes: call.suffixes(),
             },
         ];
-        let outcome = self
-            .host
-            .call_with(
-                self.vault,
-                self.call(VERB_SEAL, SEAL_SCHEMA, args),
-                lent,
-                &handlers,
-            )
-            .map_err(host_failure)?;
+        let (reply, outcome) =
+            self.sized_call(self.call(VERB_SEAL, SEAL_SCHEMA, args), lent, &handlers)?;
         let (evidence_sha256, requested, achieved, degraded, self_verify) =
-            match from_value(&outcome.report)? {
+            match from_value(&reply)? {
                 SealReply::Failed(failure) => return Err(failure.into_error()),
                 SealReply::Sealed {
                     evidence_sha256,
@@ -519,11 +503,12 @@ impl EsignSealer for HostedSealer<'_> {
         // revision, and only for a profile that has them.
         let suffix =
             request.profile >= SealProfile::BaselineLt && achieved >= SealProfile::BaselineLt;
-        call.admit(sealed, suffix, &self.settings.limits)?;
+        call.admit(sealed, suffix)?;
         let evidence: [u8; 32] = Sha256::digest(&sealed[..]).into();
         if evidence_sha256.as_slice() != evidence {
             return Err(reply_invalid());
         }
+        measure_output(self.vault, &input.pdf, sealed);
         Ok(EsignSealed {
             bytes: sealed.to_vec(),
             evidence_sha256: evidence,
@@ -540,21 +525,16 @@ impl EsignSealer for HostedSealer<'_> {
             config: self.config(false)?,
         })
         .map_err(|_| reply_invalid())?;
+        measure_input(self.vault, pdf);
         let lent = vec![LentInput {
             media_type: PDF.to_owned(),
             bytes: pdf.to_vec(),
         }];
-        // A process of its own: never the one that sealed.
-        let outcome = self
-            .host
-            .call_fresh_with(
-                self.vault,
-                self.call(VERB_VERIFY, 1, args),
-                lent,
-                &AskHandlers::none(),
-            )
-            .map_err(host_failure)?;
-        match from_value(&outcome.report)? {
+        // A process of its own, as every seal call: never the one that
+        // sealed.
+        let (reply, _) =
+            self.sized_call(self.call(VERB_VERIFY, 1, args), lent, &AskHandlers::none())?;
+        match from_value(&reply)? {
             VerifyReply::Verified(verdict) => Ok(verdict.into_verdict()),
             VerifyReply::Failed(failure) => Err(failure.into_error()),
         }

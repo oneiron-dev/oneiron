@@ -3,6 +3,8 @@
 //! It decides whether a call may start now, never when work runs (canon
 //! pins "no second scheduler"). Classes wait in priority order; background
 //! work may hold at most half the threads; one core stays free of organs.
+//! A call that books more memory than the whole budget is never refused on
+//! size (Rule 5): it runs alone, once the budget has drained.
 
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
@@ -36,6 +38,9 @@ struct Used {
     memory: u64,
     inflight: u32,
     waiting: [u32; 3],
+    /// Of those waiting, the calls bigger than the whole budget. While one
+    /// waits, its class admits nothing new, so the budget drains for it.
+    whole: [u32; 3],
 }
 
 #[derive(Debug)]
@@ -118,7 +123,8 @@ impl Budget {
     }
 
     /// Books `threads` and `memory` for one call, waiting in class order
-    /// until they fit or `deadline` passes.
+    /// until they fit or `deadline` passes. Memory past the whole budget
+    /// fits once nothing else holds any.
     pub(crate) fn admit(
         &self,
         class: CallClass,
@@ -128,9 +134,10 @@ impl Budget {
     ) -> Result<Permit, HostError> {
         let shared = &self.shared;
         let config = shared.config;
-        if threads > config.threads || memory > config.memory_bytes {
+        if threads > config.threads {
             return Err(HostError::OverBudget);
         }
+        let whole = memory > config.memory_bytes;
         let rank = rank(class);
         let thread_cap = if class == CallClass::Background {
             (config.threads / 2).max(1)
@@ -139,13 +146,22 @@ impl Budget {
         };
         let mut used = shared.lock();
         used.waiting[rank] += 1;
+        used.whole[rank] += u32::from(whole);
         loop {
             let ahead = used.waiting[..rank].iter().any(|count| *count > 0);
-            let fits = used.threads + threads <= thread_cap
-                && used.memory + memory <= config.memory_bytes
-                && used.inflight < config.max_inflight;
-            if !ahead && fits {
+            // A smaller call of the same class waits behind a whole-budget
+            // one, which would otherwise never see the budget drain.
+            let held = !whole && used.whole[rank] > 0;
+            let room = if whole {
+                used.memory == 0
+            } else {
+                used.memory.saturating_add(memory) <= config.memory_bytes
+            };
+            let fits =
+                used.threads + threads <= thread_cap && room && used.inflight < config.max_inflight;
+            if !ahead && !held && fits {
                 used.waiting[rank] -= 1;
+                used.whole[rank] -= u32::from(whole);
                 used.threads += threads;
                 used.memory += memory;
                 used.inflight += 1;
@@ -158,6 +174,7 @@ impl Budget {
             let now = Instant::now();
             if now >= deadline {
                 used.waiting[rank] -= 1;
+                used.whole[rank] -= u32::from(whole);
                 drop(used);
                 shared.freed.notify_all();
                 return Err(HostError::BudgetTimeout);

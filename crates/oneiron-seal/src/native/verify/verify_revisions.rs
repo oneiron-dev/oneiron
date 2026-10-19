@@ -5,10 +5,9 @@ use std::collections::BTreeSet;
 
 use super::super::pdf;
 use super::verify_evidence::EnvelopeEvidence;
-use crate::api::SealResourceLimits;
 use crate::api::{
-    Anomaly, ModificationLevel, Modifications, RevisionKind, RevisionReport, SignatureKind,
-    VerifyCheck, VerifyCheckKind, VerifyCheckStatus,
+    Anomaly, Counter, ModificationLevel, Modifications, RevisionKind, RevisionReport,
+    SealResourceLimits, SignatureKind, VerifyCheck, VerifyCheckKind, VerifyCheckStatus,
 };
 use lopdf::{Document, Object, ObjectId};
 
@@ -342,10 +341,10 @@ pub(super) fn classify(
     let mut suspicious = false;
     let mut work = 0usize;
     for (index, end) in ends.iter().copied().enumerate() {
+        // Every prefix is classified, however many bytes they span in all
+        // (Rule 5); the sum goes to the `[limits]` prefix-bytes row.
         work = work.saturating_add(end);
-        if work > 2 * 1024 * 1024 * 1024 {
-            return (revisions, Modifications::NotRun, anomalies);
-        }
+        limits.observed.note(Counter::PrefixBytes, work);
         let Some(doc) = pdf::load_snapshot(&bytes[..end], limits) else {
             return (revisions, Modifications::NotRun, anomalies);
         };

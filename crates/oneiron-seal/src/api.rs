@@ -271,22 +271,113 @@ pub mod config {
         }
     }
 
+    /// The most bytes a PDF the seal reads or writes spans: lopdf records
+    /// each object's byte offset as a `u32` (its xref entry), so an object
+    /// past 4 GiB could not be addressed. A format bound, not a policy.
+    pub const PDF_FORMAT_BYTES: usize = u32::MAX as usize;
+    /// The most indirect objects one PDF file holds: ISO 32000-1 Annex C,
+    /// section C.2, Table C.1 (8,388,607).
+    pub const PDF_FORMAT_OBJECTS: usize = 8_388_607;
+    /// The most one PDF stream decodes to: a decompression-bomb guard, held
+    /// per stream and never summed over a document (Rule 5). The seal's old
+    /// default input size, kept as that codec bound.
+    pub const STREAM_DECODE_BYTES: usize = 256 * 1024 * 1024;
+
+    /// The seal's resource limits: format bounds only, which refuse input
+    /// the PDF codec cannot carry. Everything the seal used to cap on size
+    /// (output growth, objects, revisions, structural work, prefix work,
+    /// decoded DSS material) it now counts in `observed` and serves whole;
+    /// the host measures those counts against its `[limits]` rows.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct SealResourceLimits {
+        /// Bytes of a PDF read or written, at most [`PDF_FORMAT_BYTES`].
         pub max_input_bytes: usize,
-        pub max_output_growth_bytes: usize,
+        /// Objects of one parsed PDF, at most [`PDF_FORMAT_OBJECTS`].
         pub max_pdf_objects: usize,
+        /// Where this invocation's counts go.
+        pub observed: SealObservations,
     }
 
     impl Default for SealResourceLimits {
         fn default() -> Self {
             Self {
-                max_input_bytes: 256 * 1024 * 1024,
-                max_output_growth_bytes: 32 * 1024 * 1024,
-                max_pdf_objects: 1_000_000,
+                max_input_bytes: PDF_FORMAT_BYTES,
+                max_pdf_objects: PDF_FORMAT_OBJECTS,
+                observed: SealObservations::default(),
             }
         }
     }
+
+    /// What the seal's native analysis counted, as the host's `[limits]`
+    /// rows read it. Each is the largest of one pass, never a sum over the
+    /// self-verifier's repeat passes. A count never stops the work.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+    pub struct SealObserved {
+        /// Objects of one strictly parsed snapshot.
+        pub pdf_objects: u64,
+        /// Raw object definitions of one revision, shadowed and unindexed
+        /// ones included.
+        pub raw_definitions: u64,
+        /// Tokens one structural pass lexed: a revision analysis, or one
+        /// classic xref section.
+        pub structural_work: u64,
+        /// Revisions of one xref `/Prev` chain.
+        pub revisions: u64,
+        /// Prefix bytes one pass over the revision chain parsed, summed over
+        /// its revisions.
+        pub prefix_bytes: u64,
+        /// Bytes one DSS extraction decoded across its Certs, CRLs and OCSPs.
+        pub dss_decode_bytes: u64,
+    }
+
+    /// One count [`SealObservations`] keeps.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Counter {
+        PdfObjects,
+        RawDefinitions,
+        StructuralWork,
+        Revisions,
+        PrefixBytes,
+        DssDecodeBytes,
+    }
+
+    /// Where one invocation's counts go. Clones share it, so the caller
+    /// that built a config reads what the engine counted under it; a fresh
+    /// default starts at zero. Two are equal when they are the same sink.
+    #[derive(Debug, Clone, Default)]
+    pub struct SealObservations(std::sync::Arc<[std::sync::atomic::AtomicU64; 6]>);
+
+    impl SealObservations {
+        /// The largest value each count has reached.
+        #[must_use]
+        pub fn observed(&self) -> SealObserved {
+            let read = |counter: Counter| {
+                self.0[counter as usize].load(std::sync::atomic::Ordering::Relaxed)
+            };
+            SealObserved {
+                pdf_objects: read(Counter::PdfObjects),
+                raw_definitions: read(Counter::RawDefinitions),
+                structural_work: read(Counter::StructuralWork),
+                revisions: read(Counter::Revisions),
+                prefix_bytes: read(Counter::PrefixBytes),
+                dss_decode_bytes: read(Counter::DssDecodeBytes),
+            }
+        }
+
+        /// Raises `counter` to `value` if it is below.
+        pub(crate) fn note(&self, counter: Counter, value: usize) {
+            let value = u64::try_from(value).unwrap_or(u64::MAX);
+            self.0[counter as usize].fetch_max(value, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    impl PartialEq for SealObservations {
+        fn eq(&self, other: &Self) -> bool {
+            std::sync::Arc::ptr_eq(&self.0, &other.0)
+        }
+    }
+
+    impl Eq for SealObservations {}
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct SealConfig {
@@ -361,7 +452,10 @@ pub mod config {
 }
 
 #[cfg(feature = "native")]
+pub(crate) use config::Counter;
+#[cfg(feature = "native")]
 pub use config::{
     FetchError, FetchMethod, FetchPolicy, FetchPurpose, FetchRequest, FetchResponse,
-    OfflineFetcher, SealConfig, SealFetcher, SealResourceLimits, TsaEndpoint,
+    OfflineFetcher, PDF_FORMAT_BYTES, PDF_FORMAT_OBJECTS, STREAM_DECODE_BYTES, SealConfig,
+    SealFetcher, SealObservations, SealObserved, SealResourceLimits, TsaEndpoint,
 };
