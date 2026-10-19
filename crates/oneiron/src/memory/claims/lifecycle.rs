@@ -78,6 +78,25 @@ impl Memory<'_> {
         self.commit_one(input, false, Some(ClaimApprovalStatus::Proposed))
     }
 
+    /// [`Self::claim_propose`], with `in_writer` run first in the content
+    /// writer that commits the proposal (FIX 5664): a crate caller whose
+    /// standing must still hold when the claim lands (its actor not erased
+    /// since it read) rechecks it there, and a refusal lands nothing.
+    /// Ordinary proposals keep [`Self::claim_propose`].
+    pub(crate) fn claim_propose_guarded(
+        &self,
+        input: &ClaimInput,
+        in_writer: &dyn Fn(&heed::RoTxn<'_>) -> Result<(), Error>,
+    ) -> MemoryResult<CommitReceipt> {
+        self.commit_one_guarded(
+            input,
+            false,
+            Some(ClaimApprovalStatus::Proposed),
+            || {},
+            in_writer,
+        )
+    }
+
     /// Proposes one claim under the bounds of the credential a host bound to
     /// this handle (FIX 1400): a connector narrowed to a world and facet
     /// writes its Proposed claim there. The claim is born at the handle's

@@ -18,10 +18,12 @@
 //! keeps its nightly dreaming exactly as before.
 //!
 //! Every row here is this node's own, under the vault's elected home: the
-//! cycle opens where its items run.
+//! cycle opens where its items run. An actor's erase takes its rows in all
+//! five families (`erase`, FIX 5664).
 
 mod cycle;
 mod doors;
+mod erase;
 mod items;
 mod policy;
 mod receipt;
@@ -43,9 +45,10 @@ pub use self::doors::{
     FreeTimePolicyState, FreeTimePolicyView, FreeTimeSpendView, free_time_cycle_as_owner,
     free_time_cycles_as_owner, free_time_policy_as_owner, free_time_policy_set_as_owner,
 };
+pub(crate) use self::erase::erase_free_time_actor_in_txn;
 pub use self::items::FreeTimeItemBinding;
 pub(crate) use self::items::{
-    FreeTimeForHumanReply, FreeTimeItemRun, charge_free_time_item_in_txn,
+    FreeTimeForHumanContext, FreeTimeForHumanReply, FreeTimeItemRun, charge_free_time_item_in_txn,
     end_free_time_item_in_txn, free_time_item_input, free_time_item_to_run, free_time_line,
     land_free_time_for_human, record_own_time_landed_in_txn,
 };

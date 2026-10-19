@@ -37,6 +37,11 @@ pub enum IdleReason {
     Disabled,
     /// The worker failed to start; the server log has the cause.
     StartFailed,
+    /// The worker's thread ended before shutdown asked it to (FIX 5776):
+    /// it returned or panicked, and its timer work runs on the fallback
+    /// sleepers. Its tallies and last error stand; the server log has the
+    /// cause.
+    WorkerExited,
     /// The server is shutting down.
     Stopped,
 }

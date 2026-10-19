@@ -132,14 +132,91 @@ fn record_in_txn(
     STATE.put(&vault.store, txn, &(), &state)
 }
 
+/// The curator's cadence slot `now` falls in and the wake state, once the
+/// idle floor has passed; `None` before it.
+fn idle_curator_slot_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    idle: WakeIdleState,
+    now: u64,
+) -> Result<Option<(u64, WakeState)>> {
+    let policy = policy_in_txn(vault, txn)?;
+    if now < idle.last_inbound_at.saturating_add(policy.idle_secs) {
+        return Ok(None);
+    }
+    let slot = crate::dreamer_runner::maintenance::curator_slot_in_txn(vault, txn, now)?;
+    Ok(Some((slot, state_in_txn(vault, txn)?)))
+}
+
+/// Whether this check asks for the idle curator pass (OF-191): the host is
+/// idle as the policy's own checks read it (compute available, no turn or
+/// background work running, the idle floor passed) and the curator's cadence
+/// slot is one the idle trigger has not asked for yet; the slot is taken in
+/// this commit. A future idle timer armed alone asks for nothing. A read that
+/// fails asks for nothing and never fails the check.
+fn idle_curator_due_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    idle: WakeIdleState,
+    now: u64,
+) -> Result<bool> {
+    if !idle.compute_available || idle.running_turns || idle.live_background_work {
+        return Ok(false);
+    }
+    let (slot, mut state) = match idle_curator_slot_in_txn(vault, txn, idle, now) {
+        Ok(Some(read)) => read,
+        Ok(None) => return Ok(false),
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "the idle curator check did not read");
+            return Ok(false);
+        }
+    };
+    if state.idle_curator_slot == Some(slot) {
+        return Ok(false);
+    }
+    state.idle_curator_slot = Some(slot);
+    STATE
+        .put(&vault.store, txn, &(), &state)
+        .map_err(|e| row_error(e, invalid()))?;
+    Ok(true)
+}
+
 impl Vault {
     /// Re-evaluate against the writer snapshot and co-commit wake + cursor.
-    /// A competing check cannot enqueue again for the same rows.
+    /// A competing check cannot enqueue again for the same rows. Once that
+    /// commit lands, an idle host asks for the curator pass (OF-191), once
+    /// per rubric cadence; a pass that does not queue is logged and never
+    /// fails the check.
     pub fn enqueue_due_dreamer_wake(
         &self,
         idle: WakeIdleState,
         now: u64,
     ) -> Result<WakePolicyOutcome> {
+        let (outcome, curator) = self.enqueue_due_dreamer_wake_once(idle, now)?;
+        if curator {
+            match self.schedule_curator(
+                crate::dreamer_runner::maintenance::CuratorTrigger::Idle,
+                now,
+            ) {
+                Ok(EnqueueDreamerAttemptOutcome::Enqueued(_)) => {
+                    self.store.notify_attempt_observers();
+                }
+                Ok(EnqueueDreamerAttemptOutcome::Existing(_)) => {}
+                Err(error) => {
+                    tracing::warn!(kind = ?error.kind(), "the idle curator pass was not queued");
+                }
+            }
+        }
+        Ok(outcome)
+    }
+
+    /// One check's commit: the wake and its cursor, and whether it took an
+    /// idle curator slot.
+    fn enqueue_due_dreamer_wake_once(
+        &self,
+        idle: WakeIdleState,
+        now: u64,
+    ) -> Result<(WakePolicyOutcome, bool)> {
         self.with_write_txn_grouped(|txn| {
             let outcome = (|| -> Result<WakePolicyOutcome> {
                 if !idle.compute_available || idle.running_turns || idle.live_background_work {
@@ -270,7 +347,8 @@ impl Vault {
                 })
             })()?;
             record_in_txn(self, txn, idle, now, &outcome)?;
-            Ok(outcome)
+            let curator = idle_curator_due_in_txn(self, txn, idle, now)?;
+            Ok((outcome, curator))
         })
     }
 }
