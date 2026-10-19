@@ -7642,8 +7642,83 @@
       "section": false
     },
     {
+      "name": "vault.disclosure.ceiling.get",
+      "description": "Reads the owner registry dial for one model connection, optionally one data class.",
+      "input": "crate::disclosure::DisclosureCeilingRequest",
+      "output": "crate::disclosure::DisclosureCeilingView",
+      "call": "memory.vault().model_disclosure_ceiling(&memory.embedded_owner(\"vault.disclosure.ceiling.get\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.disclosure.ceiling.set",
+      "description": "The owner sets one connection or class disclosure ceiling; no read authority changes.",
+      "input": "crate::disclosure::DisclosureCeilingSet",
+      "output": "crate::disclosure::DisclosureCeilingView",
+      "call": "memory.vault().set_model_disclosure_ceiling(&memory.embedded_owner(\"vault.disclosure.ceiling.set\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.disclosure.ceiling.clear",
+      "description": "The owner clears one dial, restoring connection or actor-class inference.",
+      "input": "crate::disclosure::DisclosureCeilingRequest",
+      "output": "crate::disclosure::DisclosureCeilingView",
+      "call": "memory.vault().clear_model_disclosure_ceiling(&memory.embedded_owner(\"vault.disclosure.ceiling.clear\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.disclosure.reveals",
+      "description": "The owner reads model-disclosure asks and receipts, including PERSON handles, without values.",
+      "input": "crate::task_verb::sdk::RevealAsksRequest",
+      "output": "Vec<crate::task_verb::sdk::RevealAskView>",
+      "call": "crate::task_verb::sdk::disclosure_reveals_as_owner(memory.vault(), &memory.embedded_owner(\"vault.disclosure.reveals\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.disclosure.reveals.answer",
+      "description": "The owner approves once, approves standing, or denies the exact frozen reveal ask.",
+      "input": "crate::task_verb::sdk::RevealAnswerRequest",
+      "output": "crate::task_verb::sdk::RevealAnsweredView",
+      "call": "crate::task_verb::sdk::answer_disclosure_reveal_as_owner(memory.vault(), &memory.embedded_owner(\"vault.disclosure.reveals.answer\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "reveal",
-      "description": "Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects.",
+      "description": "Asks for a custody or PERSON handle's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects.",
       "input": "crate::task_verb::sdk::RevealRequest",
       "output": "crate::task_verb::sdk::RevealPending",
       "call": "crate::task_verb::sdk::reveal_as_caller(memory, input)?",
@@ -7652,7 +7727,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "reveal.wait",
@@ -7664,11 +7740,12 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "reveal.describe",
-      "description": "What a secret handle names, where it was found and what a reveal of it would do now; never the value.",
+      "description": "What a custody or PERSON handle names, where it was found and what a reveal of it would do now; never the value.",
       "input": "crate::task_verb::sdk::RevealDescribeRequest",
       "output": "crate::task_verb::sdk::RevealHandleCard",
       "call": "crate::task_verb::sdk::describe_secret_as_caller(memory, input)?",
@@ -7676,7 +7753,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "self.use",

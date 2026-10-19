@@ -53,7 +53,7 @@ struct RevealsQuery {
 struct ReceiptView {
     reveal: String,
     handle: String,
-    class: &'static str,
+    class: String,
     why: String,
     reader: String,
     connection: Option<String>,
@@ -75,7 +75,7 @@ impl From<SecretRevealReceipt> for ReceiptView {
         Self {
             reveal: receipt.reveal.to_hex(),
             handle: receipt.handle,
-            class: receipt.class.as_str(),
+            class: receipt.class,
             why: receipt.why,
             reader: receipt.reader,
             connection: receipt.connection,

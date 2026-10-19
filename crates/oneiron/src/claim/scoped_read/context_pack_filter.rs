@@ -113,6 +113,7 @@ impl ScopedRead<'_> {
                     hint: "scoped_read returned no actor-readable entities".to_owned(),
                 });
             }
+            crate::disclosure::project_model_pack_in(self.vault, &rtxn, &self.actor_key, pack)?;
             Ok(self.receipt_for(None, &policy, &filter, suppressed))
         })();
         self.end_recall_plan()?;

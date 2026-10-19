@@ -504,6 +504,11 @@ both bindings and their export-census tests in one change.
 - `vault.lenses.result_set.action`
 - `vault.lenses.default`
 - `vault.disclosure.offer`
+- `vault.disclosure.ceiling.get`
+- `vault.disclosure.ceiling.set`
+- `vault.disclosure.ceiling.clear`
+- `vault.disclosure.reveals`
+- `vault.disclosure.reveals.answer`
 - `reveal`
 - `reveal.wait`
 - `reveal.describe`

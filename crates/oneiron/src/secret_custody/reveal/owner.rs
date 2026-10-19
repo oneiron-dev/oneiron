@@ -179,6 +179,7 @@ impl Vault {
                 connection: None,
                 provider: None,
                 secret,
+                person: None,
                 handle,
                 class: class.as_str().to_owned(),
                 why: reason,

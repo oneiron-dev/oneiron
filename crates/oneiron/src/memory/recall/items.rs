@@ -80,11 +80,19 @@ impl Memory<'_> {
                     .map(|stamp| MemoryStaleStamp::from_stamp(stamp, self.vault.now_recorded_at())),
                 None => None,
             };
+            let handle = if entity_type == ENTITY_TYPE_CLAIM {
+                body.as_deref().map(|bytes| -> MemoryResult<Option<String>> {
+                    let claim = crate::claim::decode_claim_body(bytes, true)?;
+                    Ok(crate::disclosure::claim_handle_in(self.vault, txn, lane.actor_key(), &claim)?)
+                }).transpose()?.flatten()
+            } else {
+                None
+            };
             let view = self.entity_view_of_in_txn(lane, txn, row, mode)?;
-            Ok(Some((entity_type, body, view, turn, stale)))
+            Ok(Some((entity_type, body, view, turn, stale, handle)))
         })?;
         receipt.restrict_with(&read);
-        let Some((entity_type, Some(body), Some(view), turn, stale)) = admitted else {
+        let Some((entity_type, Some(body), Some(view), turn, stale, handle)) = admitted else {
             return Ok(None);
         };
         let (turn_messages, turn_revision, turn_members) = turn.unwrap_or_default();
@@ -148,7 +156,11 @@ impl Memory<'_> {
             crate::vault::ReadMode::Live | crate::vault::ReadMode::Indexed => None,
         };
         let kind = kind_string_for_type(entity_type);
-        let record = Some(crate::lens::RecordRef::from_view(&view));
+        let mut record = crate::lens::RecordRef::from_view(&view);
+        if let Some(handle) = &handle {
+            record.label.clone_from(handle);
+        }
+        let record = Some(record);
 
         if entity_type == ENTITY_TYPE_CLAIM {
             let body = crate::claim::decode_claim_body(&body, true)?;
@@ -157,7 +169,9 @@ impl Memory<'_> {
             }
             // A claim whose parts read as a secret together serves none of them.
             let secret = crate::batch::export::claim_reads_as_secret(&body);
-            let value_json = if secret {
+            let value_json = if let Some(handle) = handle {
+                serde_json::Value::String(handle)
+            } else if secret {
                 serde_json::Value::String("[redacted]".to_owned())
             } else {
                 super::served_value_json(&body.value)

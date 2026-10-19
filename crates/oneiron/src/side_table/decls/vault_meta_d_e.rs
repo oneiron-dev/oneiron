@@ -33,6 +33,9 @@ side_tables! {
     /// OF-490: an agent reviews each read of its diary before it is read (on for Eiri; absent
     /// means off). Value: one byte, 1 on, 0 off. Key: id16 (agent).
     DIARY_READ_REVIEW: VaultMeta b"diary:read_review:v1:" Raw;
+    /// Owner's model-channel band ceiling, optionally specialized by data class.
+    /// Key: connection "/" class (or "*").
+    DISCLOSURE_MODEL_CEILING: VaultMeta b"disclosure.model_ceiling.v1:" Named;
     /// Enforcement-truth per-counterparty-contact disclosure scope row (rmpv-encoded), dual-written
     /// with an owner-visible claim. Key: id16.
     DISCLOSURE_SCOPE: VaultMeta b"disclosure.scope.v1:" Raw;
