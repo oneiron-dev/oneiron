@@ -236,7 +236,7 @@ func readsCompile(client: Oneiron) throws {
     let _: EntityView? = EntityRead(value: nil, narrowing: receipt).value
     let _: [EntityView] = EntityViews(value: [], narrowing: receipt).value
     let _: [ClaimView] = ClaimViews(value: [], narrowing: receipt).value
-    let _: [LexicalHit] = LexicalHits(value: [], narrowing: receipt).value
+    let _: [LexicalHit] = LexicalHits(value: [], narrowing: receipt, residence: nil).value
     let _: [NeighborHit] = NeighborHits(value: [], narrowing: receipt).value
 
     let entity = EntityView(

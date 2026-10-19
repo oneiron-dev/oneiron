@@ -5021,7 +5021,7 @@
      "path": "src/batch/builder/puts.rs",
      "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 2
      }
     },
@@ -22262,7 +22262,7 @@
      "surface": {
       "crate-vis": 2,
       "mod": 4,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -22355,7 +22355,48 @@
      "purpose": "Turn-woken programs (DOOR-141, FIX 4382)",
      "surface": {
       "crate-vis": 5,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/read.rs",
+     "purpose": "A turn program's reads (DOOR-141 PR3a, FIX 4382): what admitting a landed turn's wakes decided, where one…",
+     "surface": {
+      "fn": 3,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProgramAdmissionOutcomeView",
+      "ProgramFrontierView",
+      "ProgramHeldView",
+      "ProgramQueueView",
+      "ProgramResultAvailability",
+      "ProgramRunLifecycle",
+      "ProgramRunRequest",
+      "ProgramRunStateView",
+      "ProgramRunView",
+      "ProgramStepIssueView",
+      "ProgramStepState",
+      "ProgramStepView",
+      "ProgramTryView",
+      "SettledProgramStepRequest",
+      "SettledProgramStepView",
+      "TurnProgramAdmissionItem",
+      "TurnProgramAdmissionRequest",
+      "TurnProgramAdmissionView"
+     ],
+     "path": "src/dreamer_runner/program/read/views.rs",
+     "purpose": "The wire shapes of a turn program's reads (DOOR-141 PR3a)",
+     "surface": {
+      "enum": 5,
+      "struct": 13
      }
     },
     {
@@ -22365,7 +22406,7 @@
      "path": "src/dreamer_runner/program/run.rs",
      "purpose": "Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 23
      }
     },
     {
@@ -33589,7 +33630,7 @@
      "path": "src/llm/step/settled.rs",
      "purpose": "Settled-step point read (DOOR-141 A): one committed model step of a Dreamer attempt, as its terminal…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 2
      }
@@ -50375,7 +50416,7 @@
      "path": "src/store/asset_body/mod.rs",
      "purpose": "ASSET bodies on the file plane (FIX 3677; Engine rule (b), 10-18)",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 23
      }
     },
     {
@@ -50389,13 +50430,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/asset_body/spool.rs",
+     "purpose": "The receive spool of an ASSET body a peer sends by reference (FIX 5489): its frames go, in order, to one…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/asset_body/stage.rs",
      "purpose": "Staging an ASSET body from a reader before the transaction that puts it (FIX 3677): the body streams into…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -50953,7 +51004,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 1,
       "re-export": 14
      }
@@ -51758,7 +51809,17 @@
      "path": "src/sync/asset_body.rs",
      "purpose": "File-plane ASSET rows at sync (FIX 5393 cut 1): no export ships a manifest without its bytes",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/asset_body/references.rs",
+     "purpose": "The reference a by-reference ASSET body travels under (FIX 5489)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -53555,7 +53616,7 @@
      "path": "src/sync/schema.rs",
      "purpose": "CRDT Doc schema creation for the sync layer",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 6
      }
     },
@@ -53797,8 +53858,26 @@
       "enum": 1,
       "fn": 27,
       "mod": 1,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AssetBodyAddress",
+      "AssetBodyData",
+      "AssetBodyEnd",
+      "AssetBodyReceipt",
+      "AssetBodyWant"
+     ],
+     "path": "src/sync/transport/asset_bodies.rs",
+     "purpose": "By-reference ASSET body frames (FIX 5489)",
+     "surface": {
+      "const": 6,
+      "fn": 9,
+      "struct": 5
      }
     },
     {
@@ -56080,7 +56159,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1097
+      "fn": 1100
      }
     },
     {
@@ -63058,7 +63137,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 90,
+     "files": 92,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63849,7 +63928,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 95,
+     "files": 96,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63877,7 +63956,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 202,
+     "files": 204,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -64075,7 +64154,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3950,
+   "source_files": 3955,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73041,7 +73120,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1068
+      "fn": 1071
      }
     },
     {
@@ -74180,7 +74259,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1069
+      "fn": 1072
      }
     },
     {
@@ -77968,7 +78047,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 173
+      "crate-vis": 174
      }
     },
     {
@@ -78227,6 +78306,16 @@
      "notable": [],
      "path": "src/api/facade/policy_doors.rs",
      "purpose": "The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/program_read_doors.rs",
+     "purpose": "A turn program's reads (DOOR-141 PR3a): what a landed turn's wakes admitted, where one program's run stands…",
      "surface": {
       "crate-vis": 3
      }
@@ -83670,7 +83759,7 @@
      "path": "src/managed/isolation.rs",
      "purpose": "Fail-closed Linux fscrypt and root-owned UID allocation probes",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -84920,7 +85009,7 @@
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -84944,13 +85033,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/backup/rehearse.rs",
      "purpose": "Rehearsals of one vault's backups: restored into a scratch copy beside the live vault, opened, checked and…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -84961,6 +85050,16 @@
      "purpose": "Restores of one vault's backups: over the stopped vault, where no vault is yet, and the activation of the…",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/scratch.rs",
+     "purpose": "The mark a rehearsal's scratch copy carries when it is deleted afterwards, and the start-up sweep of those a…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -85188,7 +85287,7 @@
      "path": "src/owner/schedule.rs",
      "purpose": "Scheduled backups for a running `serve`",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -85252,7 +85351,7 @@
      "path": "src/protocol.rs",
      "purpose": "Custom Oneiron sync protocol — server-side extensions",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 32
      }
     },
     {
@@ -86720,7 +86819,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 467,
+     "files": 468,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -87049,7 +87148,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 31,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -87170,7 +87269,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 866,
+   "source_files": 868,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -89745,7 +89844,20 @@
       "ProductivityRole",
       "ProductivityTree",
       "ProductivityTreeRequest",
+      "ProgramAdmissionOutcomeView",
+      "ProgramFrontierView",
+      "ProgramHeldView",
+      "ProgramQueueView",
       "ProgramRecipePin",
+      "ProgramResultAvailability",
+      "ProgramRunLifecycle",
+      "ProgramRunRequest",
+      "ProgramRunStateView",
+      "ProgramRunView",
+      "ProgramStepIssueView",
+      "ProgramStepState",
+      "ProgramStepView",
+      "ProgramTryView",
       "ProjectBudgetShare",
       "ProjectCardConfirmRequest",
       "ProjectCardDismissal",
@@ -90331,6 +90443,8 @@
       "SettleVerb",
       "SettleVerdict",
       "SettledHunkView",
+      "SettledProgramStepRequest",
+      "SettledProgramStepView",
       "SettledStepRequest",
       "SettledStepView",
       "ShapeApplyItem",
@@ -90799,6 +90913,9 @@
       "TurnAction",
       "TurnActionReceipt",
       "TurnActionRequest",
+      "TurnProgramAdmissionItem",
+      "TurnProgramAdmissionRequest",
+      "TurnProgramAdmissionView",
       "TurnProgramRegistration",
       "TurnTagsView",
       "TwoClocksAtom",
@@ -90991,8 +91108,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 867,
-      "struct": 2753
+      "enum": 872,
+      "struct": 2766
      }
     },
     {

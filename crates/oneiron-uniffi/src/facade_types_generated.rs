@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1068 facade rows, 3620 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1020.
+// UniFFI census: 1071 facade rows, 3638 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1023.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -50075,6 +50075,386 @@ pub struct CheckpointView {
     pub resumed: Vec<CheckpointResumeView>,
     #[serde(rename = "next_step", default, skip_serializing_if = "Option::is_none")]
     pub next_step: Option<u64>,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::TurnProgramAdmissionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TurnProgramAdmissionRequest {
+    #[serde(rename = "turn_ref")]
+    pub turn_ref: String,
+    #[serde(
+        rename = "registration",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub registration: Option<String>,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramAdmissionOutcomeView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum ProgramAdmissionOutcomeView {
+    #[serde(rename = "queued")]
+    Queued {
+        #[serde(rename = "root")]
+        root: String,
+        #[serde(rename = "code_run")]
+        code_run: String,
+    },
+    #[serde(rename = "refused")]
+    Refused {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+}
+
+/// `oneiron::dreamer_runner::program::read::views::TurnProgramAdmissionItem`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TurnProgramAdmissionItem {
+    #[serde(rename = "admission")]
+    pub admission: String,
+    #[serde(rename = "registration")]
+    pub registration: String,
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "actor_class")]
+    pub actor_class: String,
+    #[serde(
+        rename = "conversation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub conversation: Option<String>,
+    #[serde(rename = "landed_at", default, skip_serializing_if = "Option::is_none")]
+    pub landed_at: Option<u64>,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(
+        rename = "definition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub definition: Option<ProgramRecipePin>,
+    #[serde(
+        rename = "sealed_scope",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub sealed_scope: Option<String>,
+    #[serde(rename = "gate_receipt")]
+    pub gate_receipt: String,
+    #[serde(rename = "outcome")]
+    pub outcome: ProgramAdmissionOutcomeView,
+    #[serde(rename = "decided_at")]
+    pub decided_at: u64,
+    #[serde(rename = "withheld")]
+    pub withheld: Vec<String>,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::TurnProgramAdmissionView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TurnProgramAdmissionView {
+    #[serde(rename = "turn_ref")]
+    pub turn_ref: String,
+    #[serde(rename = "admissions")]
+    pub admissions: Vec<TurnProgramAdmissionItem>,
+    #[serde(
+        rename = "next_cursor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_cursor: Option<String>,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramRunRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProgramRunRequest {
+    #[serde(rename = "root")]
+    pub root: String,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramTryView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramTryView {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "status")]
+    pub status: String,
+    #[serde(
+        rename = "result_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub result_ref: Option<String>,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+    #[serde(rename = "updated_at")]
+    pub updated_at: u64,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramQueueView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramQueueView {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "state")]
+    pub state: String,
+    #[serde(rename = "lease_generation")]
+    pub lease_generation: u32,
+    #[serde(
+        rename = "result_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub result_ref: Option<String>,
+    #[serde(rename = "updated_at")]
+    pub updated_at: u64,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramHeldView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramHeldView {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "cause")]
+    pub cause: String,
+    #[serde(rename = "owner")]
+    pub owner: String,
+    #[serde(rename = "reason")]
+    pub reason: String,
+    #[serde(rename = "parked_at")]
+    pub parked_at: u64,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramRunLifecycle`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ProgramRunLifecycle {
+    #[serde(rename = "entered")]
+    Entered,
+    #[serde(rename = "settled")]
+    Settled,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramFrontierView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramFrontierView {
+    #[serde(rename = "bridge_calls")]
+    pub bridge_calls: u64,
+    #[serde(rename = "steps")]
+    pub steps: u64,
+    #[serde(rename = "outputs")]
+    pub outputs: u64,
+    #[serde(rename = "state_hash")]
+    pub state_hash: String,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramRunStateView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramRunStateView {
+    #[serde(rename = "entered_by")]
+    pub entered_by: String,
+    #[serde(rename = "entered_at")]
+    pub entered_at: u64,
+    #[serde(rename = "lifecycle")]
+    pub lifecycle: ProgramRunLifecycle,
+    #[serde(
+        rename = "result_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub result_ref: Option<String>,
+    #[serde(
+        rename = "settled_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub settled_at: Option<u64>,
+    #[serde(rename = "frontier", default, skip_serializing_if = "Option::is_none")]
+    pub frontier: Option<ProgramFrontierView>,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramStepIssueView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum ProgramStepIssueView {
+    #[serde(rename = "model")]
+    Model {
+        #[serde(rename = "occurrence")]
+        occurrence: u64,
+        #[serde(rename = "request_hash")]
+        request_hash: String,
+    },
+    #[serde(rename = "write")]
+    Write {
+        #[serde(rename = "step_start")]
+        step_start: u64,
+        #[serde(rename = "ordinal")]
+        ordinal: u64,
+        #[serde(rename = "receipt")]
+        receipt: String,
+        #[serde(rename = "call_digest")]
+        call_digest: String,
+    },
+    #[serde(rename = "outbound")]
+    Outbound {
+        #[serde(rename = "intent")]
+        intent: String,
+        #[serde(rename = "call_seq")]
+        call_seq: u64,
+    },
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramStepState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ProgramStepState {
+    #[serde(rename = "issued")]
+    Issued,
+    #[serde(rename = "settled")]
+    Settled,
+    #[serde(rename = "uncertain")]
+    Uncertain,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramStepView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramStepView {
+    #[serde(rename = "step_ref")]
+    pub step_ref: String,
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "issue")]
+    pub issue: ProgramStepIssueView,
+    #[serde(rename = "state")]
+    pub state: ProgramStepState,
+    #[serde(
+        rename = "result_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub result_digest: Option<String>,
+    #[serde(rename = "uncertain", default, skip_serializing_if = "Option::is_none")]
+    pub uncertain: Option<String>,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramRunView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramRunView {
+    #[serde(rename = "root")]
+    pub root: String,
+    #[serde(rename = "admission")]
+    pub admission: String,
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "actor_class")]
+    pub actor_class: String,
+    #[serde(rename = "code_run")]
+    pub code_run: String,
+    #[serde(
+        rename = "definition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub definition: Option<ProgramRecipePin>,
+    #[serde(
+        rename = "root_created_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub root_created_at: Option<u64>,
+    #[serde(rename = "tries")]
+    pub tries: Vec<ProgramTryView>,
+    #[serde(rename = "queue", default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<ProgramQueueView>,
+    #[serde(rename = "held", default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<ProgramHeldView>,
+    #[serde(rename = "run", default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<ProgramRunStateView>,
+    #[serde(rename = "steps")]
+    pub steps: Vec<ProgramStepView>,
+    #[serde(rename = "undecodable_steps")]
+    pub undecodable_steps: u64,
+    #[serde(
+        rename = "next_cursor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_cursor: Option<String>,
+    #[serde(rename = "withheld")]
+    pub withheld: Vec<String>,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::SettledProgramStepRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SettledProgramStepRequest {
+    #[serde(rename = "root")]
+    pub root: String,
+    #[serde(rename = "step_ref")]
+    pub step_ref: String,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramResultAvailability`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ProgramResultAvailability {
+    #[serde(rename = "readable")]
+    Readable,
+    #[serde(rename = "withheld")]
+    Withheld,
+    #[serde(rename = "absent")]
+    Absent,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::SettledProgramStepView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SettledProgramStepView {
+    #[serde(rename = "root")]
+    pub root: String,
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "code_run")]
+    pub code_run: String,
+    #[serde(rename = "step_ref")]
+    pub step_ref: String,
+    #[serde(rename = "issue")]
+    pub issue: ProgramStepIssueView,
+    #[serde(rename = "settled_at")]
+    pub settled_at: u64,
+    #[serde(rename = "result_digest")]
+    pub result_digest: String,
+    #[serde(
+        rename = "result_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub result_ref: Option<String>,
+    #[serde(rename = "availability")]
+    pub availability: ProgramResultAvailability,
+    #[serde(
+        rename = "model_step",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub model_step: Option<SettledStepView>,
+    #[serde(
+        rename = "body_base64",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub body_base64: Option<String>,
 }
 
 /// `oneiron::dreamer_runner::owner_doors::ConsolidationHomeNode`.

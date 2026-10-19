@@ -34,7 +34,12 @@
 //! the record is erased (CALLS "ASSET body file revisions").
 
 mod read;
+#[allow(dead_code, reason = "FIX 5489 PR3's body receive calls this")]
+mod spool;
 mod stage;
+
+pub(crate) use spool::AssetBodySpool;
+pub(crate) use stage::StagedAssetBody;
 
 use std::io::{self, Read, Write};
 

@@ -43,16 +43,22 @@ impl IsolationEvidence {
         .collect()
     }
 }
+/// What reading a directory's fscrypt policy found.
 #[cfg(target_os = "linux")]
-pub(super) fn probe(path: &Path, name: &str) -> IsolationEvidence {
-    use std::{
-        fs::OpenOptions,
-        io::Read,
-        os::{
-            fd::AsRawFd,
-            unix::fs::{MetadataExt, OpenOptionsExt},
-        },
-    };
+pub(super) enum FscryptPolicy {
+    /// A v1 or v2 policy.
+    Present,
+    /// No policy on the directory, or a filesystem without fscrypt.
+    Absent,
+    /// The read failed, or found a policy of a kind this build does not read.
+    Unverified(std::io::Error),
+}
+/// The fscrypt policy of `dir`, a directory held open, as the kernel's GET
+/// ioctl reads it: read-only, with no key needed. Neither the policy nor any
+/// key is ever returned or kept.
+#[cfg(target_os = "linux")]
+pub(super) fn fscrypt_policy(dir: &std::fs::File) -> FscryptPolicy {
+    use std::os::fd::AsRawFd;
     // FS_IOC_GET_ENCRYPTION_POLICY_EX, linux/fscrypt.h. The kernel fills
     // policy_size and one of the v1 (12-byte) or v2 (24-byte) policy unions.
     #[repr(C)]
@@ -60,6 +66,36 @@ pub(super) fn probe(path: &Path, name: &str) -> IsolationEvidence {
         size: u64,
         bytes: [u8; 24],
     }
+    let mut policy = Policy {
+        size: 24,
+        bytes: [0; 24],
+    };
+    // The UAPI deliberately encodes __u8[9] (size + version), not sizeof(Policy).
+    // Its request number stays 0xc0096616 even though this buffer is 32 bytes.
+    // SAFETY: live directory fd; correctly sized/aligned writable UAPI buffer.
+    let rc = unsafe { libc::ioctl(dir.as_raw_fd(), 0xc0096616 as libc::c_ulong, &mut policy) };
+    if rc != 0 {
+        let error = std::io::Error::last_os_error();
+        return match error.raw_os_error() {
+            Some(libc::ENODATA | libc::EOPNOTSUPP | libc::ENOTTY) => FscryptPolicy::Absent,
+            _ => FscryptPolicy::Unverified(error),
+        };
+    }
+    if matches!((policy.bytes[0], policy.size), (0, 12) | (2, 24)) {
+        FscryptPolicy::Present
+    } else {
+        FscryptPolicy::Unverified(std::io::Error::other(
+            "an fscrypt policy of a kind this build does not read",
+        ))
+    }
+}
+#[cfg(target_os = "linux")]
+pub(super) fn probe(path: &Path, name: &str) -> IsolationEvidence {
+    use std::{
+        fs::OpenOptions,
+        io::Read,
+        os::unix::fs::{MetadataExt, OpenOptionsExt},
+    };
     let absent = || IsolationEvidence {
         fscrypt: false,
         dedicated_uid: false,
@@ -81,15 +117,7 @@ pub(super) fn probe(path: &Path, name: &str) -> IsolationEvidence {
     let Ok(metadata) = dir.metadata() else {
         return absent();
     };
-    let mut policy = Policy {
-        size: 24,
-        bytes: [0; 24],
-    };
-    // The UAPI deliberately encodes __u8[9] (size + version), not sizeof(Policy).
-    // Its request number stays 0xc0096616 even though this buffer is 32 bytes.
-    // SAFETY: live directory fd; correctly sized/aligned writable UAPI buffer.
-    let rc = unsafe { libc::ioctl(dir.as_raw_fd(), 0xc0096616 as libc::c_ulong, &mut policy) };
-    let fscrypt = rc == 0 && matches!((policy.bytes[0], policy.size), (0, 12) | (2, 24));
+    let fscrypt = matches!(fscrypt_policy(&dir), FscryptPolicy::Present);
     // SAFETY: geteuid has no pointer arguments or memory effects.
     let uid = unsafe { libc::geteuid() };
     let allocated = || -> Option<bool> {
