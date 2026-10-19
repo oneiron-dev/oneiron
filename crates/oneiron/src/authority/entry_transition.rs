@@ -355,6 +355,19 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    // The owner's enrollment of a device's own owner signing key: an owner
+    // root signs it and his act's carrier cosigns it (FIX 4920), so its own
+    // judge reads the roster before the generic participant rule.
+    if let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op {
+        if let Err(issue) = super::owner_key_enrollment::judge_owner_key_enroll(
+            &state, entry, enroll, hash, context,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        apply_op(&mut state, &entry.op, hash, entry.signer_key());
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     let signer = entry.signer_key().clone();
     if let Some(folded) =
         super::anchor_fold::fold_anchor_entry(&mut state, entry, &signer, hash, restriction_only)
@@ -601,7 +614,10 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         }
         | AuthorityOp::ReRoot {
             new_device: device, ..
-        } => state.roster.contains_key(&device.key),
+        }
+        | AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll { device, .. }) => {
+            state.roster.contains_key(&device.key)
+        }
         AuthorityOp::Genesis { .. }
         | AuthorityOp::RevokeDevice { .. }
         | AuthorityOp::SlipMint(_)

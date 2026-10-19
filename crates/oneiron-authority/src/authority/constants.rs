@@ -98,8 +98,7 @@ pub const LIFECYCLE_KIND_DISSOLVE: &str = "dissolve";
 /// Domain of a new owner signing key's proof of possession (FIX 4920): the
 /// key signs it, then the canonical map of its vault, machine, key, owner,
 /// target and `seen`.
-pub const OWNER_KEY_ENROLLMENT_POP_DOMAIN: &[u8] =
-    b"oneiron/authority/owner-key-enrollment/pop/v1";
+pub const OWNER_KEY_ENROLLMENT_POP_DOMAIN: &[u8] = b"oneiron/authority/owner-key-enrollment/pop/v1";
 /// Domain of an owner key enrollment act's target: BLAKE3 over it, the vault
 /// id and the public key (FIX 4920).
 pub const OWNER_KEY_ENROLLMENT_TARGET_DOMAIN: &[u8] =

@@ -102,6 +102,7 @@ mod observation_policy;
 mod op_apply;
 mod owner_act;
 mod owner_choice;
+mod owner_key_enrollment;
 mod owner_project_slip;
 mod owner_roots;
 mod owner_work;
