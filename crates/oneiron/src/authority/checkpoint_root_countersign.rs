@@ -146,14 +146,10 @@ impl Vault {
 
     /// Drops every kept countersign no machine asked for in the idle bound.
     fn drop_idle_countersigns(&self, txn: &mut heed::RwTxn<'_>, now: u64) -> Result<()> {
-        let idle: Vec<_> = COUNTERSIGNED
-            .scan(&self.store, txn)?
-            .into_iter()
-            .filter(|(_, kept)| now.saturating_sub(kept.touched_secs) > COUNTERSIGN_KEPT_IDLE_SECS)
-            .map(|(key, _)| key)
-            .collect();
-        for key in &idle {
-            COUNTERSIGNED.delete(&self.store, txn, key)?;
+        for (key, kept) in COUNTERSIGNED.scan(&self.store, txn)? {
+            if now.saturating_sub(kept.touched_secs) > COUNTERSIGN_KEPT_IDLE_SECS {
+                COUNTERSIGNED.delete(&self.store, txn, &key)?;
+            }
         }
         Ok(())
     }
