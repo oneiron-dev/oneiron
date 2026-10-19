@@ -444,5 +444,14 @@ pub fn coordination_runs(vault: &Vault) -> Result<Vec<String>> {
 /// Storage errors.
 pub fn coordination_cost(vault: &Vault, team_ref: &str) -> Result<Option<CoordinationCost>> {
     let rtxn = vault.store.env.read_txn()?;
-    COORDINATION.get(&vault.store, &rtxn, &team_ref.to_owned())
+    coordination_cost_in_txn(vault, &rtxn, team_ref)
+}
+
+/// [`coordination_cost`] in the caller's snapshot.
+pub(crate) fn coordination_cost_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    team_ref: &str,
+) -> Result<Option<CoordinationCost>> {
+    COORDINATION.get(&vault.store, txn, &team_ref.to_owned())
 }
