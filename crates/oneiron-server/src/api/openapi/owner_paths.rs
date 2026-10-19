@@ -359,6 +359,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "get",
+        path: "/conversation-learning/receipts",
+        summary: "One page of the caller's own publisher training receipts, as the person their proof names: each withdrawal their choice recorded, and each submission of their words with its source, worlds, local custody, the intake's last receipt (stored, excluded, removal_pending, removed or rejected), the runs that used it, the withdrawal note and times. Never another person's rows. Pass the page's next back as after (34 hex) for the rest.",
+        row: None,
+    },
+    OwnerRoute {
         method: "post",
         path: "/courtesy-delete/answer",
         summary: "The owner's answer to one ask, with the reason typed on the card when there is one.",

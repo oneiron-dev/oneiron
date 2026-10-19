@@ -11,6 +11,7 @@
 //! the host's model rungs for what the rules leave open. A doubtful answer
 //! takes a Coach note and holds in the unclear ledger.
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
+use oneiron::limit_ask::EngineLimit;
 use oneiron::receipt::ReceiptRecord;
 use oneiron::skill_attribution::{
     ATTRIBUTION_CALL_PURPOSE_NAME, AttributionNotes, AttributionVerdict, DeviationCause,
@@ -35,10 +36,9 @@ const ITEM_BYTES: usize = 2 * 1024;
 /// skill is judged; more skills share the text room.
 const SKILLS_BYTES: usize = 32 * 1024;
 const SKILL_BYTES: usize = 8 * 1024;
-/// Most bytes of a deviation's reason kept.
+/// Most bytes of a deviation's reason kept: the evidence door's policy reason
+/// budget refuses a longer one.
 const REASON_BYTES: usize = 1024;
-/// Most bytes of one doubtful answer's note kept.
-const NOTE_BYTES: usize = 1024;
 /// The note writer's instruction. The outcome goes as data.
 const NOTE_SYSTEM: &str = "You write the Coach's note on one attribution the decision ladder \
     could not settle. The data you get is a finished attempt's routing facts, the label the \
@@ -83,8 +83,11 @@ pub(super) fn run(server: &SyncServer, admitted: &DreamerAdmittedAttempt) -> one
         .map_err(|error| oneiron::Error::InvalidConfig(format!("no owner principal: {error}")))?;
     let host = server.decision_host();
     let ladder = host.attribution_ladder();
-    let notes = CoachNotes {
-        models: &source.models,
+    let notes = MeasuredNotes {
+        vault,
+        coach: CoachNotes {
+            models: &source.models,
+        },
     };
     let decisions = host.attribution_decisions(&ladder, principal, &notes);
     let report = vault.run_coach_skill_discovery(admitted, RECEIPTS, &source, Some(&decisions))?;
@@ -202,7 +205,7 @@ impl CoachNotes<'_> {
                 None
             });
         match written.as_deref().map(str::trim) {
-            Some(text) if !text.is_empty() => clip(text, NOTE_BYTES).to_owned(),
+            Some(text) if !text.is_empty() => text.to_owned(),
             _ if answer.verdict == AttributionVerdict::Unclear => {
                 "no label fits the attempt's record; no Coach note was written".to_owned()
             }
@@ -214,6 +217,28 @@ impl CoachNotes<'_> {
                 request.floor
             ),
         }
+    }
+}
+
+/// The sweep's notes: [`CoachNotes`], with each call's longest note measured
+/// against the engine's text row. The host passes every note on whole.
+struct MeasuredNotes<'a> {
+    vault: &'a Vault,
+    coach: CoachNotes<'a>,
+}
+
+impl AttributionNotes for MeasuredNotes<'_> {
+    fn notes(
+        &self,
+        request: &JudgeRequest<'_>,
+        answers: &[HunkVerdict],
+    ) -> oneiron::Result<Vec<Option<String>>> {
+        let notes = self.coach.notes(request, answers)?;
+        let longest = notes.iter().flatten().map(String::len).max().unwrap_or(0);
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
+        Ok(notes)
     }
 }
 
