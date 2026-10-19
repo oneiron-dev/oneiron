@@ -177,6 +177,27 @@ pub(crate) fn owned_bodies_in_txn(
         .collect())
 }
 
+/// The file a raw `vault_meta` row holds when it is a descriptor whose held
+/// body (a complete one, or an incomplete one's retained part) is a file: its
+/// digest and length. A checkpoint reads its rows raw, so this is how it
+/// finds every file a descriptor holds, a legal hold's superseded ASSET file
+/// included (FIX 5348).
+///
+/// # Errors
+///
+/// A descriptor row that does not decode.
+pub(crate) fn file_body_of_row(key: &[u8], value: &[u8]) -> Result<Option<([u8; 32], u64)>> {
+    if !key.starts_with(BODY.decl().prefix) {
+        return Ok(None);
+    }
+    Ok(BODY
+        .decode_value(value)?
+        .state
+        .held()
+        .filter(|held| held.location == BodyLocation::File)
+        .map(|held| (held.blake3, held.bytes)))
+}
+
 /// Whether any descriptor still holds `blake3`.
 pub(crate) fn digest_is_held_in_txn(
     store: &impl ManifestDbs,

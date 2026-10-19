@@ -43,7 +43,7 @@ impl Vault {
         if row.entity_type == ENTITY_TYPE_ASSET
             && let Some(manifest) = crate::store::asset_file_in_txn(store, txn, id, &row.body)?
         {
-            row.body = self.asset_file_body(&manifest)?;
+            row.body = self.asset_file_body(txn, &manifest)?;
             return Ok(Some(row));
         }
         #[cfg(feature = "sync")]

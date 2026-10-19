@@ -44,10 +44,11 @@ fn merge_chain(left: &MachineChain, right: &MachineChain) -> MachineChain {
     }
     let revisions =
         crate::authority::machine_standing::merge_revisions(&left.revisions, &right.revisions);
-    // Concurrent owner answers that say otherwise conflict, whatever their
-    // numeric revisions (mesh PR1b C5): the higher number never wins them.
+    // Concurrent owner say-sos that say otherwise conflict, whatever their
+    // numeric revisions (mesh PR1b C5, FIX 4610): the higher number never
+    // wins them.
     let contest = |mut head: MachineRevision| {
-        head.conflicted |= super::answer_contested(&head, &revisions);
+        head.conflicted |= super::say_so_contested(&head, &revisions);
         head
     };
     MachineChain {

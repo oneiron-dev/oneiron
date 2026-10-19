@@ -271,8 +271,9 @@ impl Vault {
     /// from, and the entity each landing wrote. `None` for a resumed apply:
     /// its journal holds no source set, and the rows its plan was read from
     /// may have moved since. `None` too once an item lands through a door
-    /// whose reads it does not follow (a channel provision; a skill import
-    /// that refuses).
+    /// whose reads it does not follow (a delegated channel provision, whose
+    /// custody record its writer resolves by name; a skill import refused
+    /// before it lands a candidate).
     ///
     /// # Errors
     ///
@@ -764,14 +765,9 @@ impl Vault {
                     ..
                 }),
             ) => {
-                let imported =
-                    self.import_shape_skill(owner, skill_id, version.as_deref(), source, now);
-                // A refusal can carry the name and version of a skill the
-                // import read, which no row here names: the rows are unknown.
-                if imported.is_err() {
-                    sources.unknown();
-                }
-                imported
+                // The candidate an import lands is listed, even when its id,
+                // version or lifecycle then refuses the item.
+                self.import_shape_skill(owner, skill_id, version.as_deref(), source, now, sources)
             }
             (
                 ShapeChange::Update,
@@ -801,16 +797,21 @@ impl Vault {
                     ..
                 }),
             ) => {
-                // The identity a provision writes is not named here, and its
-                // receipt names the lifecycle ledger: the rows are unknown.
-                sources.unknown();
                 let binding = provision.binding.resolve(|agent_id| {
                     live.get(&ShapeTarget::Actor {
                         agent_id: agent_id.to_owned(),
                     })
                     .and_then(|(_, entity)| *entity)
                 })?;
-                self.provision_shape_channel(owner, channel, address, provision, binding, now)
+                self.provision_shape_channel(
+                    owner,
+                    channel,
+                    address,
+                    provision,
+                    binding,
+                    now,
+                    sources,
+                )
             }
             (ShapeChange::Retire, ShapeTarget::Channel { .. }, _) => {
                 // Retiring a channel identity releases it through its
@@ -885,8 +886,8 @@ impl Vault {
                 Some(ShapeRow::Manifest { body, .. }),
             ) => {
                 let narrowing = item.class == ShapeItemClass::Receipted;
-                let installed =
-                    self.install_shape_manifest(owner, manifest_ref, body, narrowing, now)?;
+                let installed = self
+                    .install_shape_manifest(owner, manifest_ref, body, narrowing, now, sources)?;
                 // The door installs at the id the row names.
                 if let Ok(id) = EntityId::from_hex(manifest_ref) {
                     sources.list(id);

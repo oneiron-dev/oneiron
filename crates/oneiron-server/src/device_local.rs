@@ -6,6 +6,7 @@
 use oneiron::EntityId;
 use oneiron::claim::CallerLocality;
 use oneiron::settings::{ReadDestination, ReleaseHold};
+use oneiron::task_verb::sdk::ActAnswer;
 
 /// Whether a retained payload stays on this device for a caller toward
 /// `destination` (a locality alone is a destination nobody proved): one of
@@ -42,6 +43,49 @@ pub(crate) fn retained_hold(
     named.sort_unstable_by_key(|id| *id.as_bytes());
     named.dedup();
     vault.release_hold_for(&named, destination)
+}
+
+/// An act's answer for a caller toward `destination` (FIX 3414): the act ran
+/// as its caller's authority asked, wherever it asked from, and only its
+/// answer is judged. A reply that names, or lists, a row a world withheld
+/// from that destination keeps becomes the content-free word that the act
+/// ran ([`ActAnswer::DetailsOnDevice`]), beside no rows; a reply that may
+/// leave keeps its rows, and a refusal stays as it is. A check that fails
+/// keeps the details here.
+pub(crate) fn act_answer<T: serde::Serialize>(
+    vault: &oneiron::Vault,
+    destination: &ReadDestination,
+    (answer, rows): (oneiron::memory::MemoryResult<T>, Vec<EntityId>),
+) -> (oneiron::memory::MemoryResult<ActAnswer<T>>, Vec<EntityId>) {
+    let done = match answer {
+        Ok(done) => done,
+        Err(refusal) => return (Err(refusal), rows),
+    };
+    let stays = destination.is_off_device()
+        && serde_json::to_vec(&done).map_or(true, |payload| {
+            retained_hold(vault, destination, &rows, &payload).map_or(true, |hold| hold.is_some())
+        });
+    if stays {
+        (Ok(ActAnswer::details_on_device()), Vec::new())
+    } else {
+        (Ok(ActAnswer::Done(done)), rows)
+    }
+}
+
+/// [`act_answer`] for a door one of whose paths lists none: an answer whose
+/// rows are not known keeps its reply, and the release judges it as before.
+pub(crate) fn act_answer_maybe<T: serde::Serialize>(
+    vault: &oneiron::Vault,
+    destination: &ReadDestination,
+    (answer, rows): (oneiron::memory::MemoryResult<T>, Option<Vec<EntityId>>),
+) -> (oneiron::memory::MemoryResult<ActAnswer<T>>, Option<Vec<EntityId>>) {
+    match rows {
+        Some(rows) => {
+            let (answer, rows) = act_answer(vault, destination, (answer, rows));
+            (answer, Some(rows))
+        }
+        None => (answer.map(ActAnswer::Done), None),
+    }
 }
 
 /// [`withholds_retained`] for the machine `peer` proved on the socket

@@ -242,6 +242,8 @@ fn follow_shared_citation(
 ) -> MemoryResult<ScopedReadResult<Option<SharedBriefCitation>>> {
     let read = memory.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
     let frame = viewer_frame(&read)?;
+    // The rows the citation is read from, listed by the reads that chose them.
+    let mut listed = Vec::new();
     let citation = memory.vault().follow_shared_brief_citation(
         share,
         memory.actor(),
@@ -249,7 +251,10 @@ fn follow_shared_citation(
         narrowing,
         &frame,
         &read,
-    )?;
+        &mut listed,
+    );
+    memory.produced_from(listed);
+    let citation = citation?;
     Ok(citation.map(|citation| {
         citation.map(|citation| SharedBriefCitation {
             claim_ref: citation.claim.to_hex(),
@@ -296,10 +301,18 @@ fn render_shared_brief(
 ) -> MemoryResult<ScopedReadResult<Option<SharedBriefView>>> {
     let read = memory.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
     let frame = viewer_frame(&read)?;
-    let rendered =
-        memory
-            .vault()
-            .render_shared_brief(*share_id, memory.actor(), narrowing, &frame, &read)?;
+    // The rows the view is read from, listed by the reads that chose them.
+    let mut listed = Vec::new();
+    let rendered = memory.vault().render_shared_brief_listing(
+        *share_id,
+        memory.actor(),
+        narrowing,
+        &frame,
+        &read,
+        &mut listed,
+    );
+    memory.produced_from(listed);
+    let rendered = rendered?;
     Ok(rendered.map(|view| view.map(|view| SharedBriefView::project(share_id, view))))
 }
 
