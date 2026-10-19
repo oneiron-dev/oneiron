@@ -12,8 +12,8 @@ use ed25519_dalek::{Signature, Signer as _, VerifyingKey};
 use getrandom::SysRng;
 use oneiron_crypto::{HybridPublicKey, Purpose, SealKey, SealParams, SuiteId, seal};
 use oneiron_vault_contract::conversation_training::{
-    TRAINING_RECEIPT_TYPE, TRAINING_SEAL_RECIPIENT, TRAINING_SIGNATURE_SUITE, TrainingReceiptV1,
-    TrainingSignatureV1, training_signed_message,
+    TRAINING_RECEIPT_TYPE, TRAINING_SEAL_RECIPIENT, TRAINING_SIGNATURE_SUITE, TrainingReceiptV2,
+    TrainingSignatureV2, training_signed_message,
 };
 use serde::Serialize;
 
@@ -94,11 +94,12 @@ impl IntakeReceiptKey {
 
 /// C1 (D6): signs `body`, for a file of `file_type`, with this install's
 /// machine key over the contract's signed message (its own domain, never an
-/// authority transcript). The signature binds the payload to this vault
-/// install, not to a person's cloud account: that binding is the uploader's
-/// (a self-hosted vault's device-code account hook, unavailable today; the
-/// supervisor's registry binding in managed mode). `None` before this
-/// install has a machine identity.
+/// authority transcript). The signature is for the intake's authentication
+/// of this install only: the intake checks it, then discards it and the key,
+/// and keeps no install identity beside the codes (TRAINING-LINK = C). The
+/// account binding is the uploader's (a self-hosted vault's device-code
+/// account hook, unavailable today; the supervisor's in managed mode).
+/// `None` before this install has a machine identity.
 ///
 /// # Errors
 /// Storage faults, a machine identity whose signer is not loaded, and a body
@@ -107,7 +108,7 @@ pub(super) fn sign_training_payload<T: Serialize>(
     vault: &Vault,
     file_type: &str,
     body: &T,
-) -> Result<Option<TrainingSignatureV1>> {
+) -> Result<Option<TrainingSignatureV2>> {
     let key = {
         let txn = vault.store.env.read_txn()?;
         crate::identity::read_machine_signing_key_in_txn(vault, &txn)?
@@ -118,7 +119,7 @@ pub(super) fn sign_training_payload<T: Serialize>(
     let message = training_signed_message(file_type, body)
         .map_err(|_| Error::InvariantViolation("a training file body does not encode"))?;
     let signature = key.sign(&message);
-    Ok(Some(TrainingSignatureV1 {
+    Ok(Some(TrainingSignatureV2 {
         suite: TRAINING_SIGNATURE_SUITE.to_owned(),
         public_key: oneiron_vault_contract::hex(key.verifying_key().as_bytes()),
         signature: oneiron_vault_contract::hex(&signature.to_bytes()),
@@ -126,7 +127,7 @@ pub(super) fn sign_training_payload<T: Serialize>(
 }
 
 /// Whether `receipt` is signed by the intake's receipt key over its body.
-pub(super) fn receipt_verifies(key: &IntakeReceiptKey, receipt: &TrainingReceiptV1) -> bool {
+pub(super) fn receipt_verifies(key: &IntakeReceiptKey, receipt: &TrainingReceiptV2) -> bool {
     let signature = &receipt.signature;
     if signature.suite != TRAINING_SIGNATURE_SUITE
         || signature.public_key != oneiron_vault_contract::hex(key.0.as_bytes())
@@ -147,14 +148,15 @@ pub(super) fn receipt_verifies(key: &IntakeReceiptKey, receipt: &TrainingReceipt
 }
 
 /// Seals `text` to the intake, one envelope per chunk, in part order. Each
-/// envelope binds the engine vault id, the submission and its part, so no
-/// chunk opens as another offer's or another part.
+/// envelope binds the offer's scope (in the envelope's vault id, so its
+/// clear header names no vault), the submission and its part, so no chunk
+/// opens as another offer's or another part.
 ///
 /// # Errors
 /// A sealing failure; nothing is half sealed.
 pub(super) fn seal_training_text(
     recipient: &IntakeRecipient,
-    vault_id: &[u8; 32],
+    scope: &[u8; 32],
     submission: &[u8; 16],
     text: &[u8],
 ) -> Result<Vec<Vec<u8>>> {
@@ -171,7 +173,7 @@ pub(super) fn seal_training_text(
             epoch: SEAL_EPOCH,
             key_id: &key_id,
             recipient: TRAINING_SEAL_RECIPIENT,
-            vault_id,
+            vault_id: scope,
         };
         let key = SealKey::Hybrid {
             recipient: &recipient.key,

@@ -41,7 +41,7 @@ use oneiron::authority::{ConversationLearningView, ConversationTrainingView};
 use oneiron::error::RecordError;
 use oneiron::feedback::{PersonTrainingReceipts, PersonTrainingSubmission, TrainingReceiptsCursor};
 use oneiron::world_keys::PolicyRevision;
-use oneiron_vault_contract::conversation_training::TrainingReceiptStatusV1;
+use oneiron_vault_contract::conversation_training::TrainingReceiptStatusV2;
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface, parse_revision, revision_hex};
@@ -281,7 +281,7 @@ struct SubmissionReceipt {
     custody: &'static str,
     /// The intake's last receipt for it (`stored`, `excluded`,
     /// `removal_pending`, `removed` or `rejected`); null while none came.
-    receipt: Option<TrainingReceiptStatusV1>,
+    receipt: Option<TrainingReceiptStatusV2>,
     /// The runs the intake says used it.
     used_runs: Vec<UsedRun>,
     /// What a withdrawal reaches, once it is withdrawn or its removal is

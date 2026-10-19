@@ -36,6 +36,12 @@ pub enum CtlRequest {
         cause: ShedCause,
         waited_secs: u64,
     },
+    /// Appended last (TL-5, TRAINING-LINK = C): before an erase destroys the
+    /// vault, purge every publisher training scope it ever used. The first
+    /// call records the purge; every call answers where it stands
+    /// ([`CtlResponse::TrainingPurge`]). A vault frozen for reap refuses it
+    /// as it refuses any write.
+    TrainingPurge,
 }
 
 impl CtlRequest {
@@ -48,7 +54,10 @@ impl CtlRequest {
             CtlRequest::Shed { waited_secs, .. } => {
                 anyhow::ensure!(*waited_secs > 0, "shed requires a positive waited_secs");
             }
-            CtlRequest::PrepareReap | CtlRequest::ReapAbort | CtlRequest::Ping => {}
+            CtlRequest::PrepareReap
+            | CtlRequest::ReapAbort
+            | CtlRequest::Ping
+            | CtlRequest::TrainingPurge => {}
         }
         Ok(())
     }
@@ -190,6 +199,40 @@ pub const REAP_PAUSE_REFUSAL: CtlRefusal = CtlRefusal {
     resumes_on: [CtlResumeOn::ReapAbort, CtlResumeOn::Wake],
     self_hosted_supported: true,
 };
+
+/// Why a training purge is pending: it is recorded, and a purge control is
+/// not yet written for the node to ship.
+pub const TRAINING_PURGE_UNSENT: &str = "purge_unsent";
+/// Why a training purge is pending: its controls are written, and the
+/// intake's `removed` receipt for one is not in.
+pub const TRAINING_PURGE_RECEIPT_PENDING: &str = "receipt_pending";
+/// Why a training purge is pending: the intake answered a purge control
+/// `rejected`.
+pub const TRAINING_PURGE_REJECTED: &str = "purge_rejected";
+
+/// Where a vault's publisher training purge stands (TL-5): one purge
+/// control per scope the vault ever used, each riding its own scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrainingPurgeState {
+    /// The vault never used a training scope: nothing to purge.
+    NotNeeded,
+    /// Recorded, and the intake's `removed` receipt for some purge control
+    /// is not in. The erase waits; nothing times it out.
+    Pending,
+    /// The intake's `removed` receipt for every purge control is in.
+    Done,
+}
+
+/// The answer to [`CtlRequest::TrainingPurge`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrainingPurgeStateWire {
+    pub state: TrainingPurgeState,
+    /// Why it is pending: [`TRAINING_PURGE_UNSENT`],
+    /// [`TRAINING_PURGE_RECEIPT_PENDING`] or [`TRAINING_PURGE_REJECTED`];
+    /// `None` otherwise.
+    pub reason: Option<String>,
+}
 
 /// How a managed vault came up (contract v3), on every `Ping`: a boot
 /// snapshot, taken before the vault signalled ready, that does not change
@@ -352,6 +395,12 @@ pub enum CtlResponse {
     /// reason `Slim` carries none.
     Refused {
         refused: CtlRefusal,
+    },
+    /// Appended last (TL-5): the answer to [`CtlRequest::TrainingPurge`]. Its
+    /// one required field {training_purge} is disjoint from every variant
+    /// above, and it carries no `ok` for the reason `Slim` carries none.
+    TrainingPurge {
+        training_purge: TrainingPurgeStateWire,
     },
 }
 
