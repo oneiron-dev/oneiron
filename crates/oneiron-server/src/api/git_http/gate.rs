@@ -8,9 +8,11 @@ use super::routes::GitService;
 use crate::auth::CoreAuth;
 use crate::auth::RevokedTokenJtis;
 use crate::config::SyncServerConfig;
+use crate::server::SyncServer;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::http::header::WWW_AUTHENTICATE;
+use axum::http::request::Parts;
 use axum::response::IntoResponse;
 use axum::response::Response;
 
@@ -30,6 +32,41 @@ pub(super) fn authenticate(
 ) -> Result<CoreAuth, Box<Response>> {
     let auth =
         CoreAuth::from_headers(headers, config, revoked).map_err(|_| Box::new(challenge()))?;
+    admit(auth, service)
+}
+
+/// [`authenticate`] for the request `parts` name. On a managed vault whose
+/// supervisor attested the owner on this request, the caller is that owner
+/// ([`CoreAuth::for_attested_request`]): the person himself while the vault
+/// records him as its live owner, his registered principal and every owner
+/// scope, judged by the same gate a bearer is. Every other request
+/// authenticates by its headers, as before.
+pub(super) fn authenticate_request(
+    parts: &Parts,
+    server: &SyncServer,
+    service: GitService,
+) -> Result<CoreAuth, Box<Response>> {
+    let Some(attested) = CoreAuth::for_attested_request(
+        &parts.headers,
+        &parts.extensions,
+        crate::auth::request_path(parts),
+        server,
+    ) else {
+        return authenticate(
+            &parts.headers,
+            &server.config,
+            server.vault().as_ref(),
+            service,
+        );
+    };
+    let auth =
+        attested.map_err(|error| Box::new(text_response(error.status(), error.message())))?;
+    admit(auth, service)
+}
+
+/// The gate past authentication: the service's scope, an unrestricted
+/// record scope and, to push, a registered principal.
+fn admit(auth: CoreAuth, service: GitService) -> Result<CoreAuth, Box<Response>> {
     auth.require(service.scope())
         .map_err(|error| Box::new(text_response(error.status(), "insufficient scope")))?;
     auth.require_unrestricted_record_scope()
