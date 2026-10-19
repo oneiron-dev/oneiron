@@ -801,7 +801,8 @@ impl HostUnlock {
             Self::Passkey { credential, .. } => format!("passkey:{credential}"),
             Self::Escrow { label, .. } => format!("escrow:{label}"),
             Self::EscrowCapsule { label, .. } => format!("escrow-capsule:{label}"),
-            Self::VaultKeyKit { .. } => "data-key-kit".to_owned(),
+            // `--unlock kit`, as the flag names it; a world kit's says its wrap.
+            Self::VaultKeyKit { .. } => "kit".to_owned(),
         }
     }
 
