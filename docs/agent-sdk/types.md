@@ -21,6 +21,12 @@
 export type OpenOptions = {
   /** Embedding vector dimensions; omitted takes the engine default. */
   dimensions?: number
+  /**
+   * The class of machine the host declares this install to be, set before the
+   * vault opens (FIX 5560): `"computer"`, the default when omitted, or
+   * `"phone"`. Never read off the operating system.
+   */
+  deviceClass?: "computer" | "phone"
 }
 
 /**
@@ -849,6 +855,20 @@ class Paired(TypedDict):
     # Whom an agent paired by the credential may address, as the server took it.
     comm: Facade.CommReach
 
+class HostRootProfile(TypedDict):
+    # This open enrolled this install as an Unanswered machine; False when
+    # its live profile already stood, and nothing was written.
+    enrolled: bool
+    # The given root is not the vault's settled root, so it went unused: the
+    # handle stands under the settled root as before. Reported, never
+    # refused. Never True with enrolled.
+    wrong_root: bool
+
+class HostRootOpened(TypedDict):
+    # The embedded handle, bound to the local owner actor.
+    memory: "Oneiron"
+    host_root: HostRootProfile
+
 class OneironError(RuntimeError):
     code: str
     message: str
@@ -873,6 +893,15 @@ class Oneiron:
         *,
         dimensions: int | None = None,
     ) -> "Oneiron": ...
+    @classmethod
+    def open_with_host_root(
+        cls,
+        path: str | os.PathLike[str] | None,
+        host_root_secret: bytes,
+        *,
+        dimensions: int | None = None,
+    ) -> HostRootOpened:
+        """open, then this install's machine profile from the vault's host root secret's exact bytes (FIX 5342)."""
     @classmethod
     def connect(cls, url: str, key: str) -> "Oneiron": ...
     @classmethod

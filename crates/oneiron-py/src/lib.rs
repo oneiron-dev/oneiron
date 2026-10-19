@@ -27,6 +27,8 @@ use serde::Deserialize;
 
 #[cfg(feature = "engine")]
 mod embedded_engine;
+// FIX 5342: the rooted-only host-root open.
+mod host_root;
 mod pairing;
 
 /// One message inside a witnessed turn, with the SDK's optional fields.
@@ -185,11 +187,34 @@ impl NativeClient {
         // Crash output never carries world text: the engine's hook goes in before
         // any vault opens (owner ruling 2026-10-14, fix 6).
         oneiron::panic_report::install_panic_hook();
-        let options = oneiron_remote::OpenOptions { dimensions };
+        let options = oneiron_remote::OpenOptions {
+            dimensions,
+            device_class: None,
+        };
         let inner = py
             .detach(|| oneiron_remote::OneironClient::open(path.as_deref(), &options))
             .map_err(raise)?;
         Ok(Self { inner })
+    }
+
+    /// `open`, then this install's own machine profile from the vault's host
+    /// root secret, its exact bytes borrowed for this call (FIX 5342).
+    #[staticmethod]
+    #[pyo3(signature = (path, host_root_secret, dimensions=None))]
+    fn open_with_host_root(
+        py: Python<'_>,
+        path: Option<std::path::PathBuf>,
+        host_root_secret: &[u8],
+        dimensions: Option<usize>,
+    ) -> PyResult<Self> {
+        let inner = host_root::open(py, path, host_root_secret, dimensions)?;
+        Ok(Self { inner })
+    }
+
+    /// What `open_with_host_root` did with its root, as JSON; `None` on
+    /// every other handle.
+    fn host_root_profile(&self) -> PyResult<Option<String>> {
+        host_root::profile(&self.inner)
     }
 
     /// Binds a remote `oneiron-server`. `key` is the credential `pair`
