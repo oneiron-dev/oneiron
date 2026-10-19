@@ -535,8 +535,9 @@
      "path": "src/agent_def/models.rs",
      "purpose": "The owner's per-agent model list (FIX 4472): the models an agent may run on, each with the owner's own words…",
      "surface": {
+      "const": 1,
       "crate-vis": 7,
-      "fn": 4,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -12650,7 +12651,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 19,
-      "fn": 9,
+      "fn": 10,
       "re-export": 2,
       "struct": 1,
       "type": 1
@@ -36991,6 +36992,7 @@
      "path": "src/origin/residence.rs",
      "purpose": "Explicit owner-controlled origin epochs",
      "surface": {
+      "const": 1,
       "crate-vis": 16,
       "enum": 2,
       "fn": 7,
@@ -50428,7 +50430,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FederationBurstDecision",
@@ -53870,7 +53872,7 @@
      "path": "src/task_verb/sdk_guest_revoke.rs",
      "purpose": "The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -69394,14 +69396,19 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "SystemOneSeat"
+      "SystemOneHttpRequest",
+      "SystemOneHttpResponse",
+      "SystemOneSeat",
+      "SystemOneTransport"
      ],
      "path": "src/lib.rs",
      "purpose": "The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision`",
      "surface": {
-      "const": 1,
-      "fn": 1,
-      "struct": 1
+      "const": 2,
+      "fn": 3,
+      "struct": 3,
+      "trait": 1,
+      "type": 1
      }
     },
     {
@@ -78542,7 +78549,6 @@
      "kind": "src",
      "notable": [
       "AutoDevicePrecedence",
-      "EmbedderArgs",
       "EmbedderConfig",
       "EmbedderConfigOverride",
       "EmbedderDevice",
@@ -78560,7 +78566,21 @@
       "crate-vis": 3,
       "enum": 5,
       "fn": 7,
-      "struct": 6
+      "re-export": 1,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EmbedderArgs"
+     ],
+     "path": "src/config/embedder/args.rs",
+     "purpose": "The `[embedder]` section's flag and environment layers: `--embedder-*` and `ONEIRON_EMBEDDER_*`",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
      }
     },
     {
@@ -79208,7 +79228,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "const": 1,
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 25,
       "struct": 1
      }
@@ -79350,13 +79370,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/brokered.rs",
+     "purpose": "How an endpoint embedder's requests reach their server: a plain client, whose default headers carry an…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/embedder/endpoint.rs",
      "purpose": "The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 21
      }
     },
     {
@@ -79514,7 +79544,7 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 29
      }
     },
     {
@@ -79524,7 +79554,7 @@
      "path": "src/embedder/remote.rs",
      "purpose": "Builds a remote rung with a nonblocking host egress predicate",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -80872,10 +80902,20 @@
      "purpose": "A provider whose key stays in the vault's custody (T0) and leaves only through the credential broker…",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/broker_context.rs",
+     "purpose": "One vault's credential-broker context (ARCH-0069 `#broker-design`): the custody door its vault-secret keys…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -81124,7 +81164,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 20,
       "re-export": 14,
       "struct": 2
@@ -81575,7 +81615,7 @@
      "path": "src/owner/guest_revoke.rs",
      "purpose": "The courtesy deletes a guest revoke queues (OF-232, FIX 1634)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -81818,7 +81858,7 @@
      "path": "src/runtime/config.rs",
      "purpose": "Resolved runtime config including the 163-line resolution impl",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 7,
       "struct": 1
      }
@@ -81873,7 +81913,7 @@
      "path": "src/runtime/gpu_pool.rs",
      "purpose": "The serve host's owner of the per-region GPU registry",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 13,
       "struct": 5
      }
@@ -81885,6 +81925,7 @@
      "path": "src/runtime/mod.rs",
      "purpose": "—",
      "surface": {
+      "crate-vis": 1,
       "mod": 1,
       "re-export": 8
      }
@@ -83280,7 +83321,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 43,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83378,7 +83419,7 @@
      "purpose": "The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened…"
     },
     "embedder": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83490,7 +83531,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 44,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -83632,7 +83673,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 798,
+   "source_files": 801,
    "test_files": 182
   },
   "oneiron-spawn": {
