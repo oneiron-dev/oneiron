@@ -982,6 +982,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.skills.bootstrap",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.skill_hubs.default.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.skills.restoreDefaults",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
                 "vault.skill_hubs.put",
                 crate::code_run::vault_read::request_schema::<SkillHubPutRequest>(),
             ),
@@ -1321,6 +1333,33 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::MeshPathReceiptsRequest,
                 >(),
+            ),
+            (
+                "vault.mesh.identity",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.mesh.bind_machine",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::MeshMachineBinding,
+                >(),
+            ),
+            (
+                "vault.mesh.set_alpn_grant",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::MeshAlpnGrant>(
+                ),
+            ),
+            (
+                "vault.mesh.revoke_machine",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::MeshMachineRevokeRequest,
+                >(),
+            ),
+            (
+                "vault.mesh.dial",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::MeshDialRequest>(
+                ),
             ),
             (
                 "vault.inspection.resolve",
@@ -3453,6 +3492,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.artifacts.admit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ArtifactAdmitSubmit,
+                >(),
+            ),
+            (
                 "vault.critic.review",
                 crate::code_run::vault_read::request_schema::<
                     crate::critic::review::CriticReviewSubmit,
@@ -4039,6 +4084,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.graph.ask",
                 crate::code_run::vault_read::request_schema::<crate::receipt::GraphAskRequest>(),
+            ),
+            (
+                "vault.graph.admit",
+                crate::code_run::vault_read::request_schema::<crate::receipt::GraphAdmitRequest>(),
             ),
             (
                 "vault.questions.create",
@@ -5755,6 +5804,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.weave.digest.render",
     "vault.weave.link.corrections",
     "self.inbox.lens",
+    "vault.skills.bootstrap",
+    "vault.skill_hubs.default.get",
+    "vault.skills.restoreDefaults",
     "vault.skill_hubs.put",
     "vault.skill_hubs.get",
     "vault.skill_hubs.publishers.admit",
@@ -5823,6 +5875,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.slim.resume_step",
     "vault.slim.drop_heavy",
     "vault.slim.resume",
+    "vault.mesh.path_receipts",
+    "vault.mesh.identity",
+    "vault.mesh.bind_machine",
+    "vault.mesh.set_alpn_grant",
+    "vault.mesh.revoke_machine",
+    "vault.mesh.dial",
     "vault.org_admin.configure",
     "vault.org_admin.powers",
     "vault.members.reset_project_access",
@@ -6064,6 +6122,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
+    "vault.artifacts.admit",
     "vault.artifacts.propose_outline",
     "vault.artifacts.outline",
     "vault.artifacts.keep_outline",
@@ -6113,6 +6172,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.voices.targets.provision",
     "vault.voices.targets.evict",
     "vault.voices.inspect",
+    "vault.graph.admit",
     "vault.questions.outcomes",
     "vault.questions.outcomes.project",
     "vault.questions.schedule",
@@ -6664,6 +6724,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.inbox.lens" => {
             crate::code_run::vault_read::request_schema::<crate::agent_inbox_lens::InboxLensPage>()
         }
+        "vault.skills.bootstrap" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::BootstrapSkillView>,
+        >(),
+        "vault.skill_hubs.default.get" => {
+            crate::code_run::vault_read::request_schema::<crate::skill_hub::DefaultSkillHub>()
+        }
+        "vault.skills.restoreDefaults" => {
+            crate::code_run::vault_read::request_schema::<Vec<crate::skill_hub::HubImportReceipt>>()
+        }
         "vault.skill_hubs.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SkillHubConfigured,
         >(),
@@ -6869,6 +6938,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.slim.resume" => {
             crate::code_run::vault_read::request_schema::<crate::slim::public::SlimResumeReceipt>()
+        }
+        "vault.mesh.path_receipts" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::sync::mesh_path::MeshPathReceipt>,
+        >(),
+        "vault.mesh.identity" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::MeshBindingIdentity,
+        >(),
+        "vault.mesh.bind_machine" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::MeshMachineBound>()
+        }
+        "vault.mesh.set_alpn_grant" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::MeshAlpnGrant>()
+        }
+        "vault.mesh.revoke_machine" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::MeshMachineRevoked,
+        >(),
+        "vault.mesh.dial" => {
+            crate::code_run::vault_read::request_schema::<crate::sync::mesh_path::MeshPathReceipt>()
         }
         "vault.org_admin.configure" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::OrgAdminConfigured,
@@ -7607,6 +7694,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.workspace.roster" => crate::code_run::vault_read::request_schema::<
             Vec<crate::workspace_roster::WorkspaceRosterEntry>,
         >(),
+        "vault.artifacts.admit" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::ArtifactAskOutcome,
+        >(),
         "vault.artifacts.propose_outline" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::deck_creation::DeckOutlineView,
         >(),
@@ -7758,6 +7848,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.voices.inspect" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::VoiceBankInspection,
         >(),
+        "vault.graph.admit" => {
+            crate::code_run::vault_read::request_schema::<crate::receipt::GraphAskOutcome>()
+        }
         "vault.questions.outcomes" => {
             crate::code_run::vault_read::request_schema::<crate::receipt::QuestionOutcomes>()
         }
@@ -9694,6 +9787,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.skills.bootstrap" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skill_hubs.default.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.restoreDefaults" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.skill_hubs.put" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -10235,6 +10349,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.mesh.path_receipts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mesh.identity" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mesh.bind_machine" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mesh.set_alpn_grant" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mesh.revoke_machine" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.mesh.dial" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -12729,6 +12878,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.artifacts.admit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.critic.review" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13560,6 +13716,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.graph.ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.graph.admit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -16017,6 +16180,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.inbox.lens" => {
             let _input: crate::agent_inbox_lens::InboxLensRequest = decode(value.clone())?;
         }
+        "vault.skills.bootstrap" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.skill_hubs.default.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.skills.restoreDefaults" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
         "vault.skill_hubs.put" => {
             let _input: SkillHubPutRequest = decode(value.clone())?;
         }
@@ -16253,6 +16425,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.mesh.path_receipts" => {
             let _input: crate::task_verb::sdk::MeshPathReceiptsRequest = decode(value.clone())?;
+        }
+        "vault.mesh.identity" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.mesh.bind_machine" => {
+            let _input: crate::task_verb::sdk::MeshMachineBinding = decode(value.clone())?;
+        }
+        "vault.mesh.set_alpn_grant" => {
+            let _input: crate::task_verb::sdk::MeshAlpnGrant = decode(value.clone())?;
+        }
+        "vault.mesh.revoke_machine" => {
+            let _input: crate::task_verb::sdk::MeshMachineRevokeRequest = decode(value.clone())?;
+        }
+        "vault.mesh.dial" => {
+            let _input: crate::task_verb::sdk::MeshDialRequest = decode(value.clone())?;
         }
         "vault.inspection.resolve" => {
             let _input: crate::lens::InspectionResolveRequest = decode(value.clone())?;
@@ -17478,6 +17665,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.ask" => {
             let _input: crate::blob_artifact::ArtifactAskSubmit = decode(value.clone())?;
         }
+        "vault.artifacts.admit" => {
+            let _input: crate::blob_artifact::ArtifactAdmitSubmit = decode(value.clone())?;
+        }
         "vault.critic.review" => {
             let _input: crate::critic::review::CriticReviewSubmit = decode(value.clone())?;
         }
@@ -17832,6 +18022,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.graph.ask" => {
             let input: crate::receipt::GraphAskRequest = decode(value.clone())?;
+            input.validate()?;
+        }
+        "vault.graph.admit" => {
+            let input: crate::receipt::GraphAdmitRequest = decode(value.clone())?;
             input.validate()?;
         }
         "vault.questions.create" => {
@@ -19213,6 +19407,13 @@ pub fn invoke(
             encode(vault_weave_link_corrections(memory, decode(value)?)?)
         }
         "self.inbox.lens" => encode(self_inbox_lens(memory, decode(value)?)?),
+        "vault.skills.bootstrap" => encode(vault_skills_bootstrap(memory, decode(value)?)?),
+        "vault.skill_hubs.default.get" => {
+            encode(vault_skill_hubs_default_get(memory, decode(value)?)?)
+        }
+        "vault.skills.restoreDefaults" => {
+            encode(vault_skills_restoreDefaults(memory, decode(value)?)?)
+        }
         "vault.skill_hubs.put" => encode(vault_skill_hubs_put(memory, decode(value)?)?),
         "vault.skill_hubs.get" => encode(vault_skill_hubs_get(memory, decode(value)?)?),
         "vault.skill_hubs.publishers.admit" => {
@@ -19379,6 +19580,11 @@ pub fn invoke(
         "vault.slim.drop_heavy" => encode(vault_slim_drop_heavy(memory, decode(value)?)?),
         "vault.slim.resume" => encode(vault_slim_resume(memory, decode(value)?)?),
         "vault.mesh.path_receipts" => encode(vault_mesh_path_receipts(memory, decode(value)?)?),
+        "vault.mesh.identity" => encode(vault_mesh_identity(memory, decode(value)?)?),
+        "vault.mesh.bind_machine" => encode(vault_mesh_bind_machine(memory, decode(value)?)?),
+        "vault.mesh.set_alpn_grant" => encode(vault_mesh_set_alpn_grant(memory, decode(value)?)?),
+        "vault.mesh.revoke_machine" => encode(vault_mesh_revoke_machine(memory, decode(value)?)?),
+        "vault.mesh.dial" => encode(vault_mesh_dial(memory, decode(value)?)?),
         "vault.inspection.resolve" => encode(vault_inspection_resolve(memory, decode(value)?)?),
         "vault.shared.propose_delete" => {
             encode(vault_shared_propose_delete(memory, decode(value)?)?)
@@ -20081,6 +20287,7 @@ pub fn invoke(
             encode(vault_artifacts_review_slides(memory, decode(value)?)?)
         }
         "vault.artifacts.ask" => encode(vault_artifacts_ask(memory, decode(value)?)?),
+        "vault.artifacts.admit" => encode(vault_artifacts_admit(memory, decode(value)?)?),
         "vault.critic.review" => encode(vault_critic_review(memory, decode(value)?)?),
         "vault.artifacts.propose_outline" => {
             encode(vault_artifacts_propose_outline(memory, decode(value)?)?)
@@ -20266,6 +20473,7 @@ pub fn invoke(
         "ai.video.cancel" => encode(ai_video_cancel(memory, decode(value)?)?),
         "ai.verdict" => encode(ai_verdict(memory, decode(value)?)?),
         "vault.graph.ask" => encode(vault_graph_ask(memory, decode(value)?)?),
+        "vault.graph.admit" => encode(vault_graph_admit(memory, decode(value)?)?),
         "vault.questions.create" => encode(vault_questions_create(memory, decode(value)?)?),
         "vault.questions.edit" => encode(vault_questions_edit(memory, decode(value)?)?),
         "vault.questions.pause" => encode(vault_questions_pause(memory, decode(value)?)?),
@@ -22490,6 +22698,36 @@ pub fn self_inbox_lens(
 ) -> MemoryResult<crate::agent_inbox_lens::InboxLensPage> {
     memory.inbox_lens(&input)
 }
+pub fn vault_skills_bootstrap(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::BootstrapSkillView>> {
+    crate::task_verb::sdk::skill_bootstrap_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.bootstrap")?,
+        &_input,
+    )
+}
+pub fn vault_skill_hubs_default_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::skill_hub::DefaultSkillHub> {
+    crate::task_verb::sdk::default_skill_hub_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skill_hubs.default.get")?,
+        &_input,
+    )
+}
+pub fn vault_skills_restoreDefaults(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::skill_hub::HubImportReceipt>> {
+    crate::task_verb::sdk::skill_restore_defaults_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.restoreDefaults")?,
+        &_input,
+    )
+}
 pub fn vault_skill_hubs_put(
     memory: &Memory<'_>,
     input: SkillHubPutRequest,
@@ -23133,6 +23371,36 @@ pub fn vault_mesh_path_receipts(
     input: crate::task_verb::sdk::MeshPathReceiptsRequest,
 ) -> MemoryResult<Vec<crate::sync::mesh_path::MeshPathReceipt>> {
     crate::task_verb::sdk::mesh_path_receipts_as_owner(memory, &input)
+}
+pub fn vault_mesh_identity(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::MeshBindingIdentity> {
+    crate::task_verb::sdk::host_only(memory, "vault.mesh.identity", &input)
+}
+pub fn vault_mesh_bind_machine(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::MeshMachineBinding,
+) -> MemoryResult<crate::task_verb::sdk::MeshMachineBound> {
+    crate::task_verb::sdk::host_only(memory, "vault.mesh.bind_machine", &input)
+}
+pub fn vault_mesh_set_alpn_grant(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::MeshAlpnGrant,
+) -> MemoryResult<crate::task_verb::sdk::MeshAlpnGrant> {
+    crate::task_verb::sdk::host_only(memory, "vault.mesh.set_alpn_grant", &input)
+}
+pub fn vault_mesh_revoke_machine(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::MeshMachineRevokeRequest,
+) -> MemoryResult<crate::task_verb::sdk::MeshMachineRevoked> {
+    crate::task_verb::sdk::host_only(memory, "vault.mesh.revoke_machine", &input)
+}
+pub fn vault_mesh_dial(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::MeshDialRequest,
+) -> MemoryResult<crate::sync::mesh_path::MeshPathReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.mesh.dial", &input)
 }
 pub fn vault_inspection_resolve(
     memory: &Memory<'_>,
@@ -26127,6 +26395,12 @@ pub fn vault_artifacts_ask(
 ) -> MemoryResult<crate::blob_artifact::ArtifactAskOutcome> {
     memory.artifacts_ask(&input)
 }
+pub fn vault_artifacts_admit(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ArtifactAdmitSubmit,
+) -> MemoryResult<crate::blob_artifact::ArtifactAskOutcome> {
+    memory.artifacts_admit(&input)
+}
 pub fn vault_critic_review(
     memory: &Memory<'_>,
     input: crate::critic::review::CriticReviewSubmit,
@@ -27088,6 +27362,13 @@ pub fn vault_graph_ask(
 ) -> MemoryResult<crate::receipt::GraphAskOutcome> {
     input.validate()?;
     crate::task_verb::sdk::host_only(memory, "vault.graph.ask", &input)
+}
+pub fn vault_graph_admit(
+    memory: &Memory<'_>,
+    input: crate::receipt::GraphAdmitRequest,
+) -> MemoryResult<crate::receipt::GraphAskOutcome> {
+    input.validate()?;
+    crate::task_verb::sdk::host_only(memory, "vault.graph.admit", &input)
 }
 pub fn vault_questions_create(
     memory: &Memory<'_>,

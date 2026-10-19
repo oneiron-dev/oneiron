@@ -916,6 +916,21 @@ export_facade! {
     let output = client.self_inbox_lens(&input)?;
     crate::codec::lift_record("self.inbox.lens", &output)
 };
+"vault.skills.bootstrap" => fn vault_skills_bootstrap(&self) -> Vec<BootstrapSkillView> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.skills.bootstrap")?;
+    let output = client.vault_skills_bootstrap(&input)?;
+    crate::codec::lift_record("vault.skills.bootstrap", &output)
+};
+"vault.skill_hubs.default.get" => fn vault_skill_hubs_default_get(&self) -> DefaultSkillHub = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.skill_hubs.default.get")?;
+    let output = client.vault_skill_hubs_default_get(&input)?;
+    crate::codec::lift_record("vault.skill_hubs.default.get", &output)
+};
+"vault.skills.restoreDefaults" => fn vault_skills_restoreDefaults(&self) -> Vec<HubImportReceipt> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.skills.restoreDefaults")?;
+    let output = client.vault_skills_restoreDefaults(&input)?;
+    crate::codec::lift_record("vault.skills.restoreDefaults", &output)
+};
 "vault.skill_hubs.put" => fn vault_skill_hubs_put(&self, input: SkillHubPutRequest) -> SkillHubConfigured = |client| {
     let input: oneiron::task_verb::sdk::SkillHubPutRequest = crate::codec::lower_record("vault.skill_hubs.put", input)?;
     let output = client.vault_skill_hubs_put(&input)?;
@@ -1310,6 +1325,31 @@ export_facade! {
     let input: oneiron::task_verb::sdk::MeshPathReceiptsRequest = crate::codec::lower_record("vault.mesh.path_receipts", input)?;
     let output = client.vault_mesh_path_receipts(&input)?;
     crate::codec::lift_record("vault.mesh.path_receipts", &output)
+};
+"vault.mesh.identity" => fn vault_mesh_identity(&self) -> MeshBindingIdentity = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.mesh.identity")?;
+    let output = client.vault_mesh_identity(&input)?;
+    crate::codec::lift_record("vault.mesh.identity", &output)
+};
+"vault.mesh.bind_machine" => fn vault_mesh_bind_machine(&self, input: MeshMachineBinding) -> MeshMachineBound = |client| {
+    let input: oneiron::task_verb::sdk::MeshMachineBinding = crate::codec::lower_record("vault.mesh.bind_machine", input)?;
+    let output = client.vault_mesh_bind_machine(&input)?;
+    crate::codec::lift_record("vault.mesh.bind_machine", &output)
+};
+"vault.mesh.set_alpn_grant" => fn vault_mesh_set_alpn_grant(&self, input: MeshAlpnGrant) -> MeshAlpnGrant = |client| {
+    let input: oneiron::task_verb::sdk::MeshAlpnGrant = crate::codec::lower_record("vault.mesh.set_alpn_grant", input)?;
+    let output = client.vault_mesh_set_alpn_grant(&input)?;
+    crate::codec::lift_record("vault.mesh.set_alpn_grant", &output)
+};
+"vault.mesh.revoke_machine" => fn vault_mesh_revoke_machine(&self, input: MeshMachineRevokeRequest) -> MeshMachineRevoked = |client| {
+    let input: oneiron::task_verb::sdk::MeshMachineRevokeRequest = crate::codec::lower_record("vault.mesh.revoke_machine", input)?;
+    let output = client.vault_mesh_revoke_machine(&input)?;
+    crate::codec::lift_record("vault.mesh.revoke_machine", &output)
+};
+"vault.mesh.dial" => fn vault_mesh_dial(&self, input: MeshDialRequest) -> MeshPathReceipt = |client| {
+    let input: oneiron::task_verb::sdk::MeshDialRequest = crate::codec::lower_record("vault.mesh.dial", input)?;
+    let output = client.vault_mesh_dial(&input)?;
+    crate::codec::lift_record("vault.mesh.dial", &output)
 };
 "vault.inspection.resolve" => fn vault_inspection_resolve(&self, input: InspectionResolveRequest) -> InspectionResolved = |client| {
     let input: oneiron::lens::InspectionResolveRequest = crate::codec::lower_record("vault.inspection.resolve", input)?;
@@ -3131,6 +3171,11 @@ export_facade! {
     let output = client.vault_artifacts_ask(&input)?;
     crate::codec::lift_record("vault.artifacts.ask", &output)
 };
+"vault.artifacts.admit" => fn vault_artifacts_admit(&self, input: ArtifactAdmitSubmit) -> ArtifactAskOutcome = |client| {
+    let input: oneiron::blob_artifact::ArtifactAdmitSubmit = crate::codec::lower_record("vault.artifacts.admit", input)?;
+    let output = client.vault_artifacts_admit(&input)?;
+    crate::codec::lift_record("vault.artifacts.admit", &output)
+};
 "vault.critic.review" => fn vault_critic_review(&self, input: CriticReviewSubmit) -> CriticReviewOutcome = |client| {
     let input: oneiron::critic::review::CriticReviewSubmit = crate::codec::lower_record("vault.critic.review", input)?;
     let output = client.vault_critic_review(&input)?;
@@ -3705,6 +3750,11 @@ export_facade! {
     let input: oneiron::receipt::GraphAskRequest = crate::codec::lower_record("vault.graph.ask", input)?;
     let output = client.vault_graph_ask(&input)?;
     crate::codec::lift_record("vault.graph.ask", &output)
+};
+"vault.graph.admit" => fn vault_graph_admit(&self, input: GraphAdmitRequest) -> GraphAskOutcome = |client| {
+    let input: oneiron::receipt::GraphAdmitRequest = crate::codec::lower_record("vault.graph.admit", input)?;
+    let output = client.vault_graph_admit(&input)?;
+    crate::codec::lift_record("vault.graph.admit", &output)
 };
 "vault.questions.create" => fn vault_questions_create(&self, input: QuestionCreateRequest) -> QuestionRecord = |client| {
     let input: oneiron::receipt::QuestionCreateRequest = crate::codec::lower_record("vault.questions.create", input)?;

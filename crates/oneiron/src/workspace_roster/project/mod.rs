@@ -11,8 +11,9 @@ mod origin;
 pub use mint::{ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt};
 mod proposal;
 pub use proposal::{
-    ACTOR_ERASE_PENDING_PROJECT, ProjectCardConfirmRequest, ProjectCardRecord, ProjectCardState,
-    ProjectProposalRequest,
+    ACTOR_ERASE_PENDING_PROJECT, ACTOR_ERASE_PROJECT_VERDICT, ACTOR_ERASE_SETTLED_PROJECT_CARD,
+    ProjectCardConfirmRequest, ProjectCardRecord, ProjectCardState, ProjectProposalRequest,
+    ProjectVerdictErase, SettledProjectCardErase,
 };
 pub(crate) use proposal::{
     ClaimedProjectDetection, ProjectDetectionAnswer, ProjectDetectionSource,
