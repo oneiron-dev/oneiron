@@ -698,6 +698,8 @@ pub enum AgentVerb {
     VaultRoomsReplyStrips,
     VaultRoomsClaim,
     VaultRoomsSpeak,
+    VaultRoomsThreadAudienceAdd,
+    VaultRoomsThreadAudienceRemove,
     VaultProjectsPropose,
     VaultProjectsProposals,
     VaultProjectsDismissCard,
@@ -1776,6 +1778,8 @@ impl AgentVerb {
         Self::VaultRoomsReplyStrips,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
+        Self::VaultRoomsThreadAudienceAdd,
+        Self::VaultRoomsThreadAudienceRemove,
         Self::VaultProjectsPropose,
         Self::VaultProjectsProposals,
         Self::VaultProjectsDismissCard,
@@ -2875,6 +2879,8 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => "vault.rooms.reply_strips",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
+            Self::VaultRoomsThreadAudienceAdd => "vault.rooms.thread_audience.add",
+            Self::VaultRoomsThreadAudienceRemove => "vault.rooms.thread_audience.remove",
             Self::VaultProjectsPropose => "vault.projects.propose",
             Self::VaultProjectsProposals => "vault.projects.proposals",
             Self::VaultProjectsDismissCard => "vault.projects.dismiss_card",
@@ -3963,6 +3969,8 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
@@ -5068,6 +5076,8 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
@@ -6264,6 +6274,8 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
@@ -7030,6 +7042,8 @@ impl AgentVerb {
                 | Self::TasksAnswer
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
@@ -7987,6 +8001,8 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultRoomsThreadAudienceAdd => &["spec"],
+            Self::VaultRoomsThreadAudienceRemove => &["spec"],
             Self::VaultProjectsPropose => &["spec"],
             Self::VaultProjectsProposals => &["spec"],
             Self::VaultProjectsDismissCard => &["spec"],
@@ -9066,6 +9082,8 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultRoomsThreadAudienceAdd => &["spec"],
+            Self::VaultRoomsThreadAudienceRemove => &["spec"],
             Self::VaultProjectsPropose => &["spec"],
             Self::VaultProjectsProposals => &["spec"],
             Self::VaultProjectsDismissCard => &["spec"],
@@ -11486,7 +11504,13 @@ impl AgentVerb {
                 "Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed."
             }
             Self::VaultRoomsSpeak => {
-                "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."
+                "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove."
+            }
+            Self::VaultRoomsThreadAudienceAdd => {
+                "Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it."
+            }
+            Self::VaultRoomsThreadAudienceRemove => {
+                "Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."
             }
             Self::VaultProjectsPropose => {
                 "The drafting agent proposes a project card on a source message; the card writes no project and confers no authority."
