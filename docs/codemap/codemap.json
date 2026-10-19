@@ -6478,6 +6478,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EsignIngress"
+     ],
+     "path": "src/blob_artifact/esign/ingress.rs",
+     "purpose": "Token-first admission at the public signing doors (FIX 3808, Engine ruling 10-18): a recipient link's…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -6513,7 +6526,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 2,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -6612,7 +6625,7 @@
       "EsignRateReceipt"
      ],
      "path": "src/blob_artifact/esign/rate.rs",
-     "purpose": "Vault-local, receipt-backed ceremony observation and signature-upload `[limits]` crossings; neither ever…",
+     "purpose": "Vault-local, receipt-backed ceremony observation and the `[limits]` crossings of signature uploads and…",
      "surface": {
       "const": 2,
       "crate-vis": 3,
@@ -61833,7 +61846,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63270,7 +63283,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3887,
+   "source_files": 3888,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76155,6 +76168,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/esign/ingress.rs",
+     "purpose": "Token-first ingress at the public signing doors (FIX 3808, Engine rulings 10-18 and 10-19)",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/esign/presentation.rs",
      "purpose": "Stateless field editor and capability-scoped ceremony presentation adapters",
      "surface": {
@@ -78246,7 +78269,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/openapi/signing_paths.rs",
-     "purpose": "The public signing ceremony routes (`/sign/*`, DOOR-117): their request and answer schemas are the verb…",
+     "purpose": "The public signing ceremony routes (`/sign/*`, DOOR-117): their payload and answer schemas are the verb…",
      "surface": {
       "crate-vis": 1
      }
@@ -85473,7 +85496,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 455,
+     "files": 456,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -85923,7 +85946,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 840,
+   "source_files": 841,
    "test_files": 182
   },
   "oneiron-spawn": {
