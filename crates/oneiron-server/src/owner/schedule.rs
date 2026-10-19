@@ -26,10 +26,9 @@ pub(crate) struct OwnerHost {
     pub(crate) every: Option<Duration>,
     /// One backup at a time, whether the schedule or the owner asked.
     pub(crate) backup_lock: Mutex<()>,
-    /// Where rehearsals make their scratch copy in place of the system temp
-    /// directory, which a host may share with other accounts or keep off the
-    /// vault's own disk: a managed vault's private directory beside its data,
-    /// or a test's own. `None` is the system temp directory.
+    /// Where rehearsals make their scratch copy: a managed vault's private
+    /// directory beside its data, or a test's own. `None` is the vault's own
+    /// directory, the disk its floor measures (FIX 5612).
     pub(crate) rehearse_temp: Option<PathBuf>,
 }
 
@@ -59,7 +58,7 @@ impl OwnerHost {
     }
 
     /// Makes rehearsals' scratch copies under `dir`, a private directory on
-    /// the vault's own storage, instead of the system temp directory.
+    /// the vault's own storage, instead of the vault's directory.
     pub(crate) fn with_rehearsal_dir(mut self, dir: PathBuf) -> Self {
         self.rehearse_temp = Some(dir);
         self
@@ -83,11 +82,12 @@ impl OwnerHost {
     ) -> OwnerResult<BackupOutcome> {
         let _one_at_a_time = self.one_at_a_time();
         backup::take_as(vault, &self.backups, owner).map_err(|error| {
-            if write_budget::host_at_floor(&error) {
+            if let Some(capacity) = write_budget::Capacity::of_host(&error) {
                 tracing::warn!(
                     reason = "capacity",
-                    refusal = write_budget::CAPACITY_REFUSAL,
-                    "backup not taken: the vault's disk is at its floor"
+                    cause = capacity.cause(),
+                    refusal = capacity.refusal(),
+                    "backup not taken: no room on the disk it writes to"
                 );
             }
             match error.downcast::<oneiron::Error>() {
@@ -102,8 +102,9 @@ impl OwnerHost {
     /// from choosing the file until the rehearsal has read it, so retention
     /// cannot prune it in between. `vault` is the open vault the backup is
     /// of; the rehearsal reads only its key-custody state. The copy's writes
-    /// claim their room on the floor this host was lent, and one stopped
-    /// there says capacity (FIX 5479).
+    /// claim their room on the floor this host was lent, and on the disk
+    /// they land on, and one stopped there or by a full disk says capacity
+    /// (FIX 5479, FIX 5612, FIX 5615).
     pub(crate) fn rehearse(
         &self,
         vault: &oneiron::Vault,
@@ -111,7 +112,7 @@ impl OwnerHost {
     ) -> OwnerResult<Rehearsal> {
         self.with_chosen(file, |chosen| {
             write_budget::rehearse_claiming(
-                &self.rehearse_temp(),
+                &self.rehearse_temp(vault),
                 &chosen.path,
                 self.vault_config.clone(),
                 &vault.side_restore_source()?,
@@ -121,11 +122,24 @@ impl OwnerHost {
         })
     }
 
-    /// The directory a rehearsal's scratch copy is made in and removed from.
-    fn rehearse_temp(&self) -> PathBuf {
-        self.rehearse_temp
-            .clone()
-            .unwrap_or_else(std::env::temp_dir)
+    /// The directory a rehearsal's scratch copy is made in and removed from:
+    /// the one this host was given, else the vault's own, as it opened, so
+    /// the copy lands on the disk the floor measures (FIX 5612). A vault
+    /// directory another user could move entries in, where no scratch is
+    /// made, keeps the system temp directory as before.
+    fn rehearse_temp(&self, vault: &oneiron::Vault) -> PathBuf {
+        if let Some(dir) = &self.rehearse_temp {
+            return dir.clone();
+        }
+        let dir = vault.lfs_storage_dir();
+        #[cfg(unix)]
+        let shared = !matches!(oneiron::store::shared_path(dir), Ok(None));
+        #[cfg(not(unix))]
+        let shared = false;
+        if shared {
+            return std::env::temp_dir();
+        }
+        dir.to_path_buf()
     }
 
     fn with_chosen<T>(
@@ -206,21 +220,21 @@ impl SyncServer {
                         "scheduled backup taken"
                     ),
                     Ok(Ok(None)) => {}
-                    // Still due, so a later tick with room takes it (FIX 5479).
-                    Ok(Err(error)) if write_budget::host_at_floor(&error) => {
-                        tracing::warn!(
+                    Ok(Err(error)) => match write_budget::Capacity::of_host(&error) {
+                        // Still due, so a later tick with room takes it (FIX
+                        // 5479), after a full disk too (FIX 5615).
+                        Some(capacity) => tracing::warn!(
                             reason = "capacity",
-                            refusal = write_budget::CAPACITY_REFUSAL,
-                            "scheduled backup not taken: the vault's disk is at its floor; a \
+                            cause = capacity.cause(),
+                            refusal = capacity.refusal(),
+                            "scheduled backup not taken: no room on the disk it writes to; a \
                              later tick with room takes it"
-                        );
-                    }
-                    Ok(Err(error)) => {
-                        tracing::warn!(
+                        ),
+                        None => tracing::warn!(
                             kind = ?crate::logging::engine_kind(&error),
                             "scheduled backup failed"
-                        );
-                    }
+                        ),
+                    },
                     Err(error) => {
                         tracing::warn!(panicked = error.is_panic(), "scheduled backup task failed");
                     }

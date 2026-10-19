@@ -95,6 +95,13 @@ pub(crate) struct RoomTurnCeiling {
     /// refresh re-proves the caller's standing on that thread, which a
     /// thread's own Ready receipt gives without a seat. `None` is the room's.
     pub(crate) branch: Option<EntityId>,
+    /// Whether this is a member's personal read of the room or thread, never
+    /// a held turn's (FIX 5545). A personal read only shows the caller what
+    /// it reads itself, so its roster and peers stand in each private thread
+    /// under the CURRENT rule while the caller's own read still meets each
+    /// turn under CONTENT. A held ceiling, whose words reach the roster,
+    /// holds every one of them to CONTENT (FIX 5636).
+    pub(crate) personal: bool,
 }
 
 /// What `room_scope` gives for a roster, as two terms.
@@ -267,7 +274,8 @@ impl RoomTurnCeiling {
     /// and every peer read either holds. A member who joined binds the read;
     /// one who left still binds a lane built while it belonged. Refreshing a
     /// ceiling can therefore narrow the read and never drop a restriction it
-    /// held. The thread it reads, if any, stays this ceiling's.
+    /// held. The thread it reads, if any, stays this ceiling's, and so does
+    /// whether it is personal.
     #[must_use]
     pub(crate) fn narrowed_by(&self, now: &Self) -> Self {
         let mut roster = self.roster.clone();
@@ -288,6 +296,7 @@ impl RoomTurnCeiling {
             roster,
             peers,
             branch: self.branch,
+            personal: self.personal,
         }
     }
 

@@ -1322,7 +1322,7 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/roots/requests/cancel",
         summary: "Records the owner's cancel of one root request, ids only; it takes effect on the target whenever it syncs, offline or not. The receipt says cancelled, or that the target answered it first (already enacted or refused), which stands.",
-        row: None,
+        row: Some("vault.roots.requests.cancel"),
     },
     OwnerRoute {
         method: "post",

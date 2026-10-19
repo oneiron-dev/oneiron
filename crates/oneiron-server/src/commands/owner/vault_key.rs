@@ -187,7 +187,8 @@ fn prf_input(args: &VaultKeyNamedArgs) -> anyhow::Result<()> {
 /// it before the open, a plain vault's key after it. A recovery box files an
 /// escrow seed under the vault's id: a sealed vault's mirror names it, and a
 /// plain vault opens first to read its own. The world kit opens the
-/// `world-kit` escrow wrap, bound to the vault id `--vault-id` names.
+/// `world-kit` escrow wrap, bound to the vault id `--vault-id` names; the
+/// data-key kit rebuilds the key itself, bound to that id (FIX 5614).
 fn add_device(args: VaultKeyAddDeviceArgs) -> anyhow::Result<()> {
     refuse_unused_unlock_args(&args)?;
     let config = resolve_serve_config(&args.serve)?;
@@ -636,6 +637,14 @@ pub(crate) enum HostUnlock {
         capsule: Vec<u8>,
         secret: HybridSecretKey,
     },
+    /// The data-key kit's pieces and, with one piece, its passphrase (FIX
+    /// 5614): they rebuild the vault data key itself, bound to the vault id
+    /// the owner names, and open it against its commitment with no wrap.
+    VaultKeyKit {
+        vault_id: [u8; 32],
+        pieces: Vec<oneiron::recovery::KitPiece>,
+        passphrase: Option<oneiron::recovery::KitPassphrase>,
+    },
 }
 
 impl HostUnlock {
@@ -792,6 +801,8 @@ impl HostUnlock {
             Self::Passkey { credential, .. } => format!("passkey:{credential}"),
             Self::Escrow { label, .. } => format!("escrow:{label}"),
             Self::EscrowCapsule { label, .. } => format!("escrow-capsule:{label}"),
+            // `--unlock kit`, as the flag names it; a world kit's says its wrap.
+            Self::VaultKeyKit { .. } => "kit".to_owned(),
         }
     }
 
@@ -816,6 +827,15 @@ impl HostUnlock {
                 capsule,
                 secret,
             }),
+            Self::VaultKeyKit {
+                vault_id,
+                pieces,
+                passphrase,
+            } => Some(VaultKeyUnlock::Kit {
+                vault_id: *vault_id,
+                pieces,
+                passphrase: passphrase.as_ref(),
+            }),
         }
     }
 
@@ -835,6 +855,12 @@ impl HostUnlock {
                 secret,
                 ..
             } => vault.unlock_vault_key_with_escrow_capsule(label, capsule, secret),
+            // Nor any wrap at all: the kit rebuilds the key itself.
+            Self::VaultKeyKit {
+                vault_id,
+                pieces,
+                passphrase,
+            } => vault.unlock_vault_key_with_kit(vault_id, pieces, passphrase.as_ref()),
         }
     }
 }

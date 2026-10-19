@@ -85,7 +85,9 @@ pub enum SessionHookNotKept {
     /// The side-row wall found a secret in a record, which only a vault's
     /// custody door may mint, and a session holds none.
     Custody,
-    /// An anonymous room retains no record.
+    /// The session's stretch is closing or gone, so its in-memory keep takes
+    /// no record; an anonymous room's records go there while it lives
+    /// (FIX 5431).
     NoRetention,
     /// The room is on record but holds unsaved rows: records of a hook that
     /// read them never land in base.
