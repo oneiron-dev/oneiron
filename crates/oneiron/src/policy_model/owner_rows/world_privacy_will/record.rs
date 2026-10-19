@@ -5,6 +5,9 @@
 //! right. A holder's yes applies it as his own act (`by: Owner`, `answer` =
 //! the request), once.
 
+use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
+
 use serde::{Deserialize, Serialize};
 
 use crate::authority::{PolicyRevision, WorldPrivacy};
@@ -236,6 +239,47 @@ impl Vault {
             .map(|(_, request)| request)
             .filter(|request| !pending_only || request.status == WorldPrivacyRequestStatus::Pending)
             .collect();
+        requests.sort_by(|left, right| right.at.cmp(&left.at));
+        Ok(requests)
+    }
+
+    /// [`Self::world_privacy_requests`] as `holder` may see them (FIX 4707),
+    /// in one snapshot that revalidates the proof first: a live vault owner
+    /// sees every request; anyone else only those on worlds whose settings
+    /// right they hold now, by the census the world-privacy doors judge.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when the proof no longer holds.
+    pub fn world_privacy_requests_for(
+        &self,
+        holder: &crate::consent::AuthenticatedOwner,
+        pending_only: bool,
+    ) -> Result<Vec<WorldPrivacyRequest>> {
+        let txn = self.store.env.read_txn()?;
+        let actor = holder.revalidate_person_in_txn(self, &txn)?;
+        let every = crate::policy_model::is_live_vault_owner_in_txn(self, &txn, &actor)?;
+        let mut held = BTreeMap::new();
+        let mut requests = Vec::new();
+        for (_, request) in REQUESTS.scan(&self.store, &txn)? {
+            if pending_only && request.status != WorldPrivacyRequestStatus::Pending {
+                continue;
+            }
+            if !every {
+                let world = request.world_id()?;
+                let holds = match held.entry(world) {
+                    Entry::Occupied(entry) => *entry.get(),
+                    Entry::Vacant(entry) => {
+                        let holders = super::world_holders_in_txn(self, &txn, world)?;
+                        *entry.insert(holders.contains(&actor))
+                    }
+                };
+                if !holds {
+                    continue;
+                }
+            }
+            requests.push(request);
+        }
         requests.sort_by(|left, right| right.at.cmp(&left.at));
         Ok(requests)
     }

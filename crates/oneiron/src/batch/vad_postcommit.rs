@@ -179,13 +179,17 @@ pub(super) fn ops_put_tasks(ops: &[BatchOp]) -> Vec<EntityId> {
         .collect()
 }
 
+/// Whether the batch's commit wakes the proactivity watch: a claim it
+/// writes, a row it deletes, or an authority row (an owner home pick may
+/// have re-elected this node's MACRO home in the batch, DOOR-101).
 pub(super) fn ops_change_proactivity(ops: &[BatchOp]) -> bool {
     ops.iter().any(|op| {
         matches!(
             op,
             BatchOp::ClaimCandidate { .. }
                 | BatchOp::Put {
-                    entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                    entity_type: crate::registry::ENTITY_TYPE_CLAIM
+                        | crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
                     ..
                 }
                 | BatchOp::Delete { .. }

@@ -18,10 +18,8 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::body::Body;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::consent::AuthenticatedOwner;
@@ -31,13 +29,13 @@ use oneiron::store::GateDecisionId;
 use serde::Deserialize;
 
 use super::error_map::core_engine_error;
-use super::{has_json_content_type, json_payload, query_params};
+use super::{json_payload, query_params};
 use crate::auth::CoreAuth;
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::owner::schedule::OwnerHost;
 use crate::owner::{
     OwnerError, backup, cleanup, feedback, graph_fs, healer, imports, location, note_tombstones,
-    off_record, pack_drift, persona, runs, secrets,
+    off_record, pack_drift, persona, runs,
 };
 use crate::server::SyncServer;
 mod browser_takeover_routes;
@@ -68,11 +66,15 @@ mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
 mod model_setting_routes;
+mod owner_work_routes;
 mod pack_routes;
 mod pad_routes;
 mod peer_confidence_routes;
 mod proactivity_routes;
 mod recovery_kit_routes;
+mod recovery_kit_target_routes;
+mod root_routes;
+mod secret_control_routes;
 mod secret_found_routes;
 mod secret_lift_routes;
 mod secret_reveal_routes;
@@ -87,6 +89,7 @@ mod weave_routes;
 mod widen_proposal_routes;
 mod wire_health_routes;
 mod world_privacy_routes;
+mod world_privacy_work_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
 
@@ -97,9 +100,6 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/backups/rehearse", post(rehearse_backup))
         .route("/maintain", post(run_housekeeping))
         .route("/secret-scan", get(secret_scan).post(set_secret_scan))
-        .route("/secrets/register", post(register_secret))
-        .route("/secrets/rotate", post(rotate_secret))
-        .route("/secrets/revoke", post(revoke_secret))
         .route("/healer/oversight", get(healer_oversight))
         .route("/healer/failures", get(healer_failures))
         .route("/healer/failures/drill", get(drill_failure))
@@ -166,6 +166,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(space_posting_routes::routes())
         .merge(vault_key_routes::routes())
         .merge(recovery_kit_routes::routes())
+        .merge(secret_control_routes::routes())
         .merge(secret_use_routes::routes())
         .merge(secret_reveal_routes::routes())
         .merge(secret_found_routes::routes())
@@ -173,6 +174,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(steer_routes::routes())
         .merge(training_swap_routes::routes())
         .merge(world_privacy_routes::routes())
+        .merge(world_privacy_work_routes::routes())
+        .merge(owner_work_routes::routes())
+        .merge(root_routes::routes())
+        .merge(recovery_kit_target_routes::routes())
         .merge(super::owner_origin::routes())
         .merge(super::packs::routes())
 }
@@ -541,62 +546,6 @@ async fn set_secret_scan(
     })
     .await?;
     Ok(Json(receipt))
-}
-
-/// The body is read by `RegisterSecret::read`, as rotation's is: the owner
-/// door runs first, so a refused caller's body is never read.
-async fn register_secret(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    headers: HeaderMap,
-    body: Body,
-) -> OwnerReply<secrets::Registered> {
-    let owner = owner(&auth, &server)?;
-    if !has_json_content_type(&headers) {
-        return Err(ApiError::bad_request("invalid JSON request body", None).into());
-    }
-    let request = secrets::RegisterSecret::read(body)
-        .await
-        .map_err(owner_error)?;
-    let registered = blocking(move || secrets::register(server.vault(), &owner, &request)).await?;
-    Ok(Json(registered))
-}
-
-/// The body is read by `RotateSecret::read`, not `Json`: the extractor's
-/// body copy and parser scratch would outlive the request unwiped.
-async fn rotate_secret(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    headers: HeaderMap,
-    body: Body,
-) -> OwnerReply<secrets::Rotated> {
-    let owner = owner(&auth, &server)?;
-    if !has_json_content_type(&headers) {
-        return Err(ApiError::bad_request("invalid JSON request body", None).into());
-    }
-    let request = secrets::RotateSecret::read(body)
-        .await
-        .map_err(owner_error)?;
-    let rotated = blocking(move || secrets::rotate(server.vault(), &owner, &request)).await?;
-    Ok(Json(rotated))
-}
-
-/// `POST /v1/owner/secrets/revoke` with `{"name"}`: the record goes terminal
-/// and every lease over it is revoked (OF-422). The body is read by
-/// `secrets::read_revoke`, after the owner door, as rotation's is.
-async fn revoke_secret(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    headers: HeaderMap,
-    body: Body,
-) -> OwnerReply<secrets::Rotated> {
-    let owner = owner(&auth, &server)?;
-    if !has_json_content_type(&headers) {
-        return Err(ApiError::bad_request("invalid JSON request body", None).into());
-    }
-    let name = secrets::read_revoke(body).await.map_err(owner_error)?;
-    let revoked = blocking(move || secrets::revoke(server.vault(), &owner, &name)).await?;
-    Ok(Json(revoked))
 }
 
 async fn healer_oversight(

@@ -76,7 +76,7 @@ impl Vault {
             Err(other) => return Err(other),
         };
         Ok(CheckpointPolicyView {
-            revision: folded.revision(),
+            revision: folded.revision(CHECKPOINT_POLICY_REVISION_CONTEXT),
             policy,
             refusal,
             selected: folded.in_force.clone().filter(|head| head.choice.is_some()),
@@ -120,7 +120,9 @@ impl Vault {
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         // Revision integrity (mesh contract §4): the owner chose on what the
         // surface showed him.
-        let current = fold.checkpoint_policy.revision();
+        let current = fold
+            .checkpoint_policy
+            .revision(CHECKPOINT_POLICY_REVISION_CONTEXT);
         if seen.is_some_and(|seen| seen != current) {
             return Err(Error::Record(RecordError::CheckpointPolicyRevisionStale {
                 current,

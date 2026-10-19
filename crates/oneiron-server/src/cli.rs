@@ -7,8 +7,8 @@ use crate::config::ServeArgs;
 
 mod deployment_args;
 pub use deployment_args::HostRelayArgs;
-mod hook_args;
 mod graph_fs_args;
+mod hook_args;
 pub use graph_fs_args::GraphFsCommand;
 mod learning_setting_args;
 mod owner_args;
@@ -37,7 +37,9 @@ pub use owner_args::{
     EmbeddingSpaceProbePutArgs, EmbeddingSpaceProbesCommand, EmbeddingSpacesCommand,
     SecretAnchorSignArgs,
 };
-pub use owner_args::{GuestRevokeArgs, GuestsCommand, SecretRevealArgs, SecretRevokeArgs};
+pub use owner_args::{
+    GuestRevokeArgs, GuestsCommand, SecretRevealArgs, SecretRevokeArgs, SecretRewrapArgs,
+};
 pub use owner_args::{
     LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
     LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs,

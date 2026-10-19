@@ -53,7 +53,12 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
         skip_rescore: bool,
     ) -> Result<RevisionedHits> {
-        self.search_dense_revisioned(DenseChannel::TextIndex(query), limit, requested, skip_rescore)
+        self.search_dense_revisioned(
+            DenseChannel::TextIndex(query),
+            limit,
+            requested,
+            skip_rescore,
+        )
     }
 
     /// [`Self::search_vector_revisioned`] over declared space `space_id`

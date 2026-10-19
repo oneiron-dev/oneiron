@@ -56,6 +56,7 @@ pub(crate) mod resources;
 mod revert;
 pub(crate) mod reviewed;
 mod roles;
+pub(crate) mod root_evidence;
 pub mod routing;
 mod scope_summary_attempt;
 pub mod selection;

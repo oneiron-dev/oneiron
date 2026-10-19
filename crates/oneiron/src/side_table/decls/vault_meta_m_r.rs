@@ -23,6 +23,9 @@ side_tables! {
     MESSAGE_STREAM_RECEIPT: VaultMeta b"message_stream_receipt:v1:" Named;
     /// Owner-submitted model requests and their terminal receipts. Key: id16(step attempt).
     MODEL_STEP_SUBMISSION: VaultMeta b"model_step:submission:v1:" Named Authored;
+    /// Owner-submitted shared model streams: the frozen request and its one durable terminal.
+    /// Key: id16(stream).
+    MODEL_STREAM: VaultMeta b"model_stream:terminal:v1:" Named Authored;
     /// Named entity secondary index. Key: byte + (u64be|id16) + id16.
     PORTS_NAMED_ENTITY_INDEX: VaultMeta b"named_entity:v1:" Raw;
     /// Saved oplog version-vector floor an authority rebase cannot cross past a scrub. Key:
@@ -404,7 +407,8 @@ side_tables! {
         => crate::workspace_roster::erase_pending_actor_in_txn;
     /// The project question's yes, or its ask of a person, on one source message, with its
     /// decision receipt. Key: id16 (source message).
-    PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named;
+    PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named
+        => crate::Vault::erase_project_verdict_actor_in_txn;
     /// A held revision waiting for its slip's mint. Key: slip id32 + id16 (project) + hash32
     /// (revision).
     PROJECT_REVISION_AWAITING_MINT: VaultMeta b"project.revision_awaiting_mint.v1/" Raw;
@@ -534,6 +538,8 @@ side_tables! {
     /// strict-msgpack decode does not run; `RawValue` delegates to the
     /// module's own `encode_retrieval_outcome`/`decode_retrieval_outcome`.
     RETRIEVAL_OUTCOME: VaultMeta b"retr_out:v0:" Raw;
+    /// Owner-pinned retrieval blend weights no learned update may move. Key: ().
+    RETRIEVAL_POLICY_PINS: VaultMeta b"retr_policy_pins:v1:" Named;
     /// Account-local contextual retrieval posterior, updated by the Coach at sleep. Key: ().
     RETRIEVAL_POLICY_POSTERIOR: VaultMeta b"retr_policy_posterior:v1:" Named;
     /// Retrieval run telemetry record. Key: id16.
@@ -595,7 +601,8 @@ side_tables! {
     /// when, written once and never rewritten. Key: id16 (room) + 16 bytes (thread, all zero for the
     /// room itself) + u8 (subject kind) + id16 (subject) + u8 (cause kind) + 16 bytes (the cause's turn
     /// or task id, or an offer id's digest).
-    ROOMS_PARTICIPATION: VaultMeta b"rooms.participation.v1/" LegacyJson;
+    ROOMS_PARTICIPATION: VaultMeta b"rooms.participation.v1/" LegacyJson
+        => crate::Vault::erase_participation_actor_in_txn;
     /// Maps a host-configured platform handle to the one present actor it addresses within a room.
     /// Key: id16 (room id) + bytes (platform handle).
     ROOMS_HANDLE: VaultMeta b"rooms.platform_handle.v1/" Raw;

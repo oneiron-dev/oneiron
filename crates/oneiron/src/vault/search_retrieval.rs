@@ -6,10 +6,10 @@ use crate::error::{Error, Result};
 use crate::pipeline::{RetrievalWithTelemetry, ScoredEntity};
 use crate::store::{
     GateDecisionRecord, PendingGateConsentGroup, PendingGateConsentRecord, RetrievalAction,
-    RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry, RetrievalEndOutcome,
-    RetrievalOutcome, RetrievalOutcomeRecord, RetrievalRunId, RetrievalRunRecord,
-    RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal, RetrievalTrace,
-    RetrievalTraceForkHash,
+    RetrievalBlendSignal, RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry,
+    RetrievalBlendWeights, RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord,
+    RetrievalPolicyPins, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
+    RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceForkHash,
 };
 use crate::{BatchBuilder, ContextPackBuilder, PipelineBuilder, bm25};
 use std::time::Instant;
@@ -348,6 +348,61 @@ impl Vault {
         config: RetrievalBlendTuningConfig,
     ) -> Result<RetrievalBlendWeightTableEntry> {
         self.store.tune_retrieval_blend_weights(config)
+    }
+
+    /// Returns the owner pins no learned retrieval-policy update may move.
+    pub fn retrieval_policy_pins(&self) -> Result<RetrievalPolicyPins> {
+        self.store.retrieval_policy_pins()
+    }
+
+    /// Replaces the owner retrieval-policy pins and holds the active
+    /// weights to them, returning the entry as now served.
+    pub fn put_retrieval_policy_pins(
+        &self,
+        pins: RetrievalPolicyPins,
+    ) -> Result<RetrievalBlendWeightTableEntry> {
+        self.store.put_retrieval_policy_pins(pins)
+    }
+
+    /// Sets one owner retrieval-policy pin, or clears it when `value` is
+    /// absent, merging inside the store's write transaction.
+    pub fn put_retrieval_policy_pin(
+        &self,
+        signal: RetrievalBlendSignal,
+        value: Option<f32>,
+    ) -> Result<RetrievalBlendWeightTableEntry> {
+        self.store.put_retrieval_policy_pin(signal, value)
+    }
+
+    /// Trains a retrieval-policy candidate from gated outcomes without
+    /// serving it; held-out runs judge it against the active weights.
+    pub fn train_retrieval_policy_candidate(
+        &self,
+        config: RetrievalBlendTuningConfig,
+    ) -> Result<crate::store::RetrievalPolicyCandidate> {
+        self.store.train_retrieval_policy_candidate(config)
+    }
+
+    /// Judges candidate blend weights on the tuner's held-out runs.
+    pub fn evaluate_retrieval_policy_candidate(
+        &self,
+        config: RetrievalBlendTuningConfig,
+        weights: RetrievalBlendWeights,
+    ) -> Result<crate::store::RetrievalPolicyEvaluation> {
+        self.store
+            .evaluate_retrieval_policy_candidate(config, weights)
+    }
+
+    /// Admits candidate blend weights judged on the named evidence
+    /// manifest, refusing pin overwrites and held-out regressions.
+    pub fn admit_retrieval_policy_candidate(
+        &self,
+        config: RetrievalBlendTuningConfig,
+        weights: RetrievalBlendWeights,
+        expected_manifest_digest: &str,
+    ) -> Result<RetrievalBlendWeightTableEntry> {
+        self.store
+            .admit_retrieval_policy_candidate(config, weights, expected_manifest_digest)
     }
 
     /// Record a terminal, gate-attributed outcome for offline retrieval tuning.

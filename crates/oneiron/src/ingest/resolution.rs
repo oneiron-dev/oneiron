@@ -142,6 +142,25 @@ pub(super) fn evaluate_entity_resolution_waterfall_in_txn(
     candidates: &[EntityResolutionCandidate],
     high_collision_mention: bool,
 ) -> crate::Result<EntityResolutionWaterfallDecision> {
+    let decision =
+        score_entity_resolution_waterfall_in_txn(vault, wtxn, candidates, high_collision_mention)?;
+    if let Some(subject) = decision.selected {
+        if vault.archive_tombstone_in_txn(wtxn, &subject)?.is_some() {
+            vault.restore_archived_in_txn(wtxn, &subject)?;
+        }
+        crate::vault_cleanup::restore_task_attempts(vault, wtxn, subject)?;
+    }
+    Ok(decision)
+}
+
+/// The same guarded ranking, without restoring, linking or minting a subject.
+/// A lookup may repair a confidence cache, never change an entity's lifecycle.
+pub(crate) fn score_entity_resolution_waterfall_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    candidates: &[EntityResolutionCandidate],
+    high_collision_mention: bool,
+) -> crate::Result<EntityResolutionWaterfallDecision> {
     let (mut ranked, claims_suppressed) = {
         // Topology cannot change during scoring. Fold the zero-head-shell
         // witness once, not once for each candidate and claim subject.
@@ -261,12 +280,6 @@ pub(super) fn evaluate_entity_resolution_waterfall_in_txn(
         ),
     };
 
-    if let Some(subject) = selected {
-        if vault.archive_tombstone_in_txn(wtxn, &subject)?.is_some() {
-            vault.restore_archived_in_txn(wtxn, &subject)?;
-        }
-        crate::vault_cleanup::restore_task_attempts(vault, wtxn, subject)?;
-    }
     Ok(EntityResolutionWaterfallDecision {
         ranked,
         claims_suppressed,

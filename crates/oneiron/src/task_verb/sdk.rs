@@ -619,6 +619,8 @@ pub use super::sdk_shared::*;
 pub use super::sdk_shared_admin::*;
 pub use super::sdk_shared_members::*;
 pub use super::sdk_shared_policy::*;
+pub use super::sdk_skill_attribution::*;
+pub use super::sdk_skill_defaults::*;
 pub use super::sdk_skill_execution::*;
 pub use super::sdk_skills::*;
 pub use super::sdk_standing::*;
@@ -626,6 +628,7 @@ pub use super::sdk_support_grant::*;
 pub use super::sdk_trusted_contact::*;
 pub use super::sdk_voice_bank::*;
 pub use super::sdk_weave::*;
+pub use super::sdk_wire_health::*;
 pub use super::sdk_workflows::*;
 pub use super::sdk_workspace::*;
 

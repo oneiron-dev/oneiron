@@ -89,7 +89,8 @@ side_tables! {
     /// redaction-shape checks), business validation `Named`'s generic
     /// strict-msgpack decode does not run; `RawValue` delegates to the
     /// module's own `encode_gate_decision`/`decode_gate_decision`.
-    GATE_DECISION_LEDGER: VaultMeta b"gate_decision:v0:" Raw Ciphertext;
+    GATE_DECISION_LEDGER: VaultMeta b"gate_decision:v0:" Raw Ciphertext
+        => crate::store::erase_gate_decision_actor_in_txn;
     /// Claim-keyed gate decision index. Key: id16 + id16.
     GATE_DECISION_CLAIM_INDEX: VaultMeta b"gate_decision_by_claim:v0:" Raw;
     /// Claim-index backfill flag. Key: ().

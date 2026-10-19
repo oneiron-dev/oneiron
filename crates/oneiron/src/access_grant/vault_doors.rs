@@ -200,7 +200,9 @@ impl Vault {
             if raw.entity_type != ENTITY_TYPE_ACCESS_GRANT {
                 return Err(Error::CorruptedIndex("access grant entity type"));
             }
-            let grant = decode_access_grant_body(&raw.body)?;
+            let Some(grant) = super::codec::decode_live_access_grant_body(&raw.body)? else {
+                continue;
+            };
             if grant.scope.calendar_rung(calendar_ref).is_some() {
                 rows.push(CalendarAccessGrantRow { grant_ref, grant });
             }

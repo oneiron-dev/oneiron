@@ -34,6 +34,13 @@
 //! Someone new confirms the mention's provisional entity as a real, synced
 //! person and asserts it distinct from each real candidate (ARCH-0055 §6), so
 //! no merge of the two is proposed again.
+mod evidence;
+pub use evidence::{
+    IdentityAnswerEvidenceRequest, IdentityMentionState, IdentityMentionView,
+    IdentityResolutionView,
+};
+pub(crate) use evidence::{clear_mention_resolutions_in_txn, erase_mention_resolutions_in_txn};
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
@@ -291,7 +298,7 @@ pub struct IdentityActNowRequest {
 }
 
 /// Where a name an agent must act on stands.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum IdentityActNow {
     /// The name settles to this entity: act on it.
@@ -769,6 +776,7 @@ fn apply_in_txn(
     (source, seal): (ClaimSource, &TopologySeal),
     now: u64,
 ) -> Result<EntityId> {
+    let original = evidence::snapshot_in_txn(vault, txn, ask)?;
     let span = (&ask.message, ask.start, ask.end);
     let entity = match answer {
         Answer::Is(chosen) => {
@@ -797,6 +805,7 @@ fn apply_in_txn(
         }
     };
     put_hint_in_txn(vault, txn, ask, entity, now)?;
+    evidence::record_in_txn(vault, txn, ask, entity, source, now, original)?;
     Ok(entity)
 }
 
@@ -1495,6 +1504,7 @@ impl Vault {
                 (ClaimSource::UserStated, &seal),
                 now,
             )?;
+            evidence::prove_owner_in_txn(self, txn, owner, &held, &[])?;
             Ok(IdentitySettled {
                 ask: key_hex(&key),
                 entity: entity.to_hex(),
@@ -1511,10 +1521,19 @@ impl Memory<'_> {
     /// [`EngineCause::OwnerAnswerUnproven`]. The actor or its class alone
     /// never authenticates an owner.
     pub fn identity_answer(&self, input: &IdentityAnswerRequest) -> MemoryResult<IdentitySettled> {
+        self.identity_answer_guarded(input, self.owner_authorship(), &[])
+    }
+
+    fn identity_answer_guarded(
+        &self,
+        input: &IdentityAnswerRequest,
+        owner: Option<&AuthenticatedOwner>,
+        owner_evidence: &[EntityId],
+    ) -> MemoryResult<IdentitySettled> {
         let key = parse_key(&input.ask)
             .ok_or_else(|| MemoryError::bad_request("ask is 64 hex: an open identity ask"))?;
         let now = self.vault().now_recorded_at();
-        let seal = match self.owner_authorship() {
+        let seal = match owner {
             Some(owner) => {
                 TopologySeal::decision(ActAuthority::Owner(owner.clone(), FACADE_ANSWER_SURFACE))
                     .answering(ask_answer_id(&key)?)
@@ -1522,6 +1541,20 @@ impl Memory<'_> {
             None => TopologySeal::engine(EngineCause::OwnerAnswerUnproven),
         };
         self.with_verified_actor_write_txn(|txn| {
+            if let Some(owner) = owner {
+                if owner.revalidate_in_txn(self.vault(), txn)? != self.actor() {
+                    return Err(MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
+                        "identity answer proof does not name the caller",
+                        &["Answer from the owner's own session."],
+                    ));
+                }
+                crate::memory::identity_doors::require_identity_evidence_in_txn(
+                    self.vault(),
+                    txn,
+                    owner_evidence,
+                )?;
+            }
             if !crate::policy_model::owners_in_txn(self.vault(), txn)?.contains(&self.actor()) {
                 return Err(MemoryError::new(
                     MEMORY_CODE_FORBIDDEN,
@@ -1544,6 +1577,14 @@ impl Memory<'_> {
                 (ClaimSource::UserStated, &seal),
                 now,
             )?;
+            if let Some(owner) = owner {
+                evidence::prove_owner_in_txn(self.vault(), txn, owner, &held, owner_evidence)?;
+            }
+            self.produced_from(
+                std::iter::once(held.turn)
+                    .chain([held.message, entity])
+                    .chain(owner_evidence.iter().copied()),
+            );
             Ok(IdentitySettled {
                 ask: key_hex(&key),
                 entity: entity.to_hex(),

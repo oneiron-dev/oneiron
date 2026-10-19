@@ -5,7 +5,7 @@
 
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 use super::{FOUND, FoundKey, FoundKeyAction, FoundKeyCard, FoundKeySettled, FoundKeys};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -141,7 +141,8 @@ impl Vault {
     /// revoked, the record's body gets the value back where the mask left
     /// its handle, or the file's mark drops the key, and a Gate record keeps
     /// the ruling. A portable record's revocation reaches the owner's other
-    /// machines as a signed transition.
+    /// machines as a custody revoke request this install carries and
+    /// enacts, with its revoked transition (WILL L04 row 04).
     ///
     /// Only a key found in a record's body or in a file is ruled here; one in
     /// a claim, a text field alone or a row outside the entity tables keeps
@@ -158,8 +159,8 @@ impl Vault {
         owner: &AuthenticatedOwner,
         handle: &str,
     ) -> Result<FoundKeySettled> {
-        let _ = self.load_install_signing_if_minted();
-        let (settled, transition) = self.with_write_txn_grouped(|txn| {
+        self.load_install_signing_if_minted()?;
+        let (settled, carried) = self.with_write_txn_grouped(|txn| {
             let actor = live_owner_in_txn(self, owner, txn, "only the vault owner rules on it")?;
             let mut found = Located::find_in_txn(&self.store, txn, handle)?;
             found.refuse_ruled()?;
@@ -190,28 +191,21 @@ impl Vault {
             } else {
                 restore_body_in_txn(self, txn, &found.record, &found.handle, &value)?;
             }
-            let transition = match read_secret_custody_in_txn(&self.store, txn, &found.custody)? {
-                Some(mut after) => {
-                    let transition = crate::secret_custody::write_custody_transition_in_txn(
-                        self,
-                        txn,
-                        found.custody,
-                        &after,
-                        at,
-                    );
-                    after.value_bytes.zeroize();
-                    transition?
-                }
-                None => None,
-            };
-            Ok((settled, transition))
+            // The ruling's surface is this install's: audit only.
+            let carried = self.carry_custody_revoke_in_txn(
+                txn,
+                owner,
+                crate::authority::ActSurface::ThisInstall,
+                &rec.name,
+                at,
+            )?;
+            Ok((settled, carried))
         })?;
-        #[cfg(feature = "sync")]
-        if transition.is_some() {
-            self.refresh_custody_in_live_windows();
+        if let Some(carried) = carried {
+            self.mirror_custody_change(&crate::secret_custody::SecretCustodyWork::recorded(
+                carried,
+            ));
         }
-        #[cfg(not(feature = "sync"))]
-        let _ = transition;
         Ok(settled)
     }
 }

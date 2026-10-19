@@ -168,6 +168,15 @@ impl VerifiedEvidenceSet {
         Ok(Self::from_rows(rows, inherited_meet))
     }
     fn from_rows(rows: Vec<VerifiedCitation>, inherited_meet: ClaimSource) -> Self {
+        let collapsed = super::conflict::collapse_verified_evidence(
+            rows.iter()
+                .map(|row| super::VerifiedSwarmEvidence {
+                    source_id: row.locator.source_id(),
+                    content_hash: row.hash,
+                    trust_class: row.trust,
+                })
+                .collect(),
+        );
         let mut independent: BTreeMap<(EntityId, [u8; 32]), VerifiedCitation> = BTreeMap::new();
         for row in rows {
             match independent.entry((row.locator.source_id(), row.hash)) {
@@ -176,7 +185,6 @@ impl VerifiedEvidenceSet {
                 }
                 std::collections::btree_map::Entry::Occupied(mut entry) => {
                     let kept = entry.get_mut();
-                    kept.trust = source_meet(kept.trust, row.trust);
                     if row.locator < kept.locator {
                         kept.locator = row.locator;
                         kept.messages = row.messages;
@@ -184,8 +192,19 @@ impl VerifiedEvidenceSet {
                 }
             }
         }
+        let rows = collapsed
+            .independent
+            .into_iter()
+            .map(|entry| {
+                let mut row = independent
+                    .remove(&(entry.source_id, entry.content_hash))
+                    .expect("collapsed evidence came from these citations");
+                row.trust = entry.trust_class;
+                row
+            })
+            .collect();
         Self {
-            rows: independent.into_values().collect(),
+            rows,
             inherited_meet,
         }
     }

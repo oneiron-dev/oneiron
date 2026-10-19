@@ -29,6 +29,8 @@
 //! and record bounds `execute_code` and `vault.recall` meet, and the door
 //! hands the run the credential's read key: a search reads, and an edge's
 //! target is checked, as the credential reads.
+mod execution;
+
 use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::Router;
@@ -38,17 +40,16 @@ use axum::extract::{Path, Request, State};
 use axum::http::{Extensions, HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Json;
 use axum::routing::{get, post};
+use oneiron::authority::ActSurface;
 use oneiron::claim::ScopedReadActorKey;
-use oneiron::code_run::actions::{
-    ActionArgument, ActionDispatch, ActionHostBinding, ActionJson, AgentActionCall,
-};
+use oneiron::code_run::actions::{ActionArgument, ActionDispatch, ActionJson, AgentActionCall};
 use oneiron::code_run::live_run::{LiveRunCredential, is_live_run_verb};
 use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, AgentVerbRefusalWords, RunCall,
     SelfAgentVerbCall, SelfDispatchOutcome, SelfEffect,
 };
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::lens::{GeneratedUiValidatedAction, LensPrincipalBinding, SelfUiActionId};
+use oneiron::lens::{GeneratedUiValidatedAction, SelfUiActionId};
 use oneiron::memory::{
     HostWriteOrigin, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INTERNAL, MemoryError,
 };
@@ -57,12 +58,12 @@ use oneiron::{EdgeActorClass, EntityId, WriteActor};
 use serde::Deserialize;
 use tower::ServiceExt;
 
+use self::execution::{execute, run_bound};
 use super::{FacadeApiError, facade_actor, facade_input, facade_json, owner_authorship};
 use crate::actions::SharedActionExecutor;
+use crate::api::owner_routes::machine_routes::act_surface;
 use crate::auth::{CoreAuth, CoreScope};
-use crate::server::{
-    HeldLiveRun, LiveRunCaller, LiveRunRefusal, ResolvedLiveRun, SyncServer, seated_planner,
-};
+use crate::server::{LiveRunCaller, LiveRunRefusal, ResolvedLiveRun, SyncServer};
 
 pub(crate) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -155,7 +156,10 @@ pub(super) async fn invoke_action_dispatch(
     })?;
     // A credential that names no principal meets the facade's own refusal.
     facade_actor(server, auth)?;
-    let mut bound = action_bound(server, auth)?.ok_or_else(|| {
+    // Where the owner spoke from: a linked machine this request's own
+    // headers prove, else the header-less rule (FIX 4625).
+    let surface = act_surface(server, auth, &headers);
+    let mut bound = action_bound(server, auth, surface)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",
             ["Present a verified slip paired to this principal."],
@@ -221,8 +225,9 @@ pub(crate) struct ActionBound {
     class: EdgeActorClass,
     key: oneiron::claim::ScopedReadActorKey,
     owner: Option<AuthenticatedOwner>,
-    /// Where the owner spoke from, for an owner setting's act record.
-    surface: Option<oneiron::authority::ActSurface>,
+    /// Where the owner spoke from, for an owner setting's act record: the
+    /// surface the caller derived from its own request (FIX 4625).
+    surface: Option<ActSurface>,
     /// The live run the action acts for, resolved from its handle.
     live_run: Option<ResolvedLiveRun>,
 }
@@ -233,10 +238,15 @@ pub(crate) struct ActionBound {
 /// owner its host action names, with that owner's guarded key at the
 /// caller's locality and the owner's proof; a hosted operator's root is
 /// refused, never left to a fallback (FIX 2222). A managed vault's attested
-/// owner binds its request's own proof (WILL-PLAN L13 row 01).
+/// owner binds its request's own proof (WILL-PLAN L13 row 01). `surface` is
+/// where the owner's say-so reached this install, as the caller read it from
+/// its own request ([`act_surface`] over its headers, or
+/// [`super::owner_binding::act_surface`] for a call that carries none; FIX
+/// 4625): an owner act records it, and no rule reads it.
 pub(crate) fn action_bound(
     server: &SyncServer,
     auth: &CoreAuth,
+    surface: ActSurface,
 ) -> Result<Option<ActionBound>, FacadeApiError> {
     let (actor, class, key, owner) =
         if let Some(action) = crate::api::host_action::facade_host_action(server, auth)? {
@@ -267,7 +277,7 @@ pub(crate) fn action_bound(
         class,
         key,
         owner,
-        surface: Some(super::owner_binding::act_surface(auth)),
+        surface: Some(surface),
         live_run: None,
     }))
 }
@@ -295,7 +305,7 @@ pub(crate) fn rest_action_bound<T: serde::Serialize>(
     if headers.contains_key(super::ROOM_TURN_HEADER) {
         return Ok(None);
     }
-    let Some(bound) = action_bound(server, auth)? else {
+    let Some(bound) = action_bound(server, auth, act_surface(server, auth, headers))? else {
         return Ok(None);
     };
     Ok(action_json(input)?.map(|_| bound))
@@ -305,43 +315,6 @@ pub(crate) fn rest_action_bound<T: serde::Serialize>(
 fn action_json<T: serde::Serialize>(input: &T) -> Result<Option<ActionJson>, FacadeApiError> {
     let value = serde_json::to_value(input).map_err(|_| internal())?;
     Ok(ActionJson::new(value).ok())
-}
-
-/// Runs `call` from the app's table under `bound`, its verb-table rows
-/// through their own routes under this request's headers and connection.
-async fn execute(
-    server: &Arc<SyncServer>,
-    headers: HeaderMap,
-    extensions: Extensions,
-    bound: ActionBound,
-    call: AgentActionCall,
-) -> Result<ActionDispatch, FacadeApiError> {
-    let ActionBound {
-        actor, class, key, ..
-    } = &bound;
-    let principal = match class {
-        EdgeActorClass::Agent => {
-            LensPrincipalBinding::agent_task(actor.to_hex(), key.clone(), vec![key.clone()])
-        }
-        EdgeActorClass::System => {
-            LensPrincipalBinding::system_job(actor.to_hex(), key.clone(), vec![key.clone()])
-        }
-        EdgeActorClass::Human => {
-            LensPrincipalBinding::human_view(actor.to_hex(), key.clone(), vec![key.clone()])
-        }
-    }
-    .map_err(engine)?;
-    run_bound(
-        server,
-        headers,
-        extensions,
-        bound,
-        None,
-        move |executor, vault, writer, binding| {
-            executor.execute_call(vault, writer, &principal, &call, binding)
-        },
-    )
-    .await
 }
 
 /// Runs a lens card's validated event under `bound`, as an action call
@@ -384,7 +357,9 @@ pub(super) async fn execute_result_set_action(
         return Err(internal());
     };
     require_action_scope(auth, action.command().as_str())?;
-    let mut bound = action_bound(server, auth)?.ok_or_else(|| {
+    // A held card's event carries no request headers.
+    let surface = super::owner_binding::act_surface(auth);
+    let mut bound = action_bound(server, auth, surface)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",
             ["Present a verified slip paired to this principal."],
@@ -407,80 +382,6 @@ pub(super) async fn execute_result_set_action(
         },
     )
     .await
-}
-
-/// Runs `run` on a blocking thread with the app's table, the vault, the
-/// actor `bound` writes as, and its host binding: the verb door over this
-/// request and the credential's read key, and the owner's proof.
-async fn run_bound<F>(
-    server: &Arc<SyncServer>,
-    headers: HeaderMap,
-    extensions: Extensions,
-    bound: ActionBound,
-    credential: Option<CoreAuth>,
-    run: F,
-) -> Result<ActionDispatch, FacadeApiError>
-where
-    F: FnOnce(
-            &SharedActionExecutor,
-            &oneiron::Vault,
-            WriteActor,
-            ActionHostBinding<'_>,
-        ) -> oneiron::Result<ActionDispatch>
-        + Send
-        + 'static,
-{
-    let ActionBound {
-        actor,
-        class,
-        key,
-        owner,
-        surface,
-        live_run,
-    } = bound;
-    let door: Arc<dyn AgentVerbDoor> = Arc::new(FacadeRowDoor::new(
-        server, headers, extensions, key, credential,
-    ));
-    let executor = app()?;
-    // OF-181: the live run's guard, waited for briefly while an entry or
-    // another action holds it, taken before the action and held through it,
-    // with the run's lease read again under it.
-    let held = match &live_run {
-        Some(run) => Some(
-            run.hold(&server.live_runs, &server.vault)
-                .await
-                .map_err(engine)?
-                .map_err(refused)?,
-        ),
-        None => None,
-    };
-    let host = Arc::clone(server);
-    let vault = Arc::clone(&server.vault);
-    tokio::task::spawn_blocking(move || {
-        // OF-181: an action for a live run plans its leader rows as the
-        // run's own entries do, on the host's ladder.
-        let planner = match live_run.as_ref().map(ResolvedLiveRun::planner) {
-            Some((Some(settings), model)) => seated_planner(
-                &vault,
-                settings,
-                model,
-                host.decision_host().host_planner_decisions(actor),
-            )
-            .map_err(oneiron::Error::InvalidConfig)?,
-            _ => None,
-        };
-        let binding = ActionHostBinding {
-            verb_door: Some(door),
-            owner: owner.as_ref(),
-            owner_surface: surface,
-            live_run: held.as_ref().map(HeldLiveRun::proof),
-            planner,
-        };
-        run(executor, &vault, WriteActor::new(actor, class), binding)
-    })
-    .await
-    .map_err(|_| internal())?
-    .map_err(engine)
 }
 
 /// `POST /v1/core/live-runs/{run}/attach` (OF-181): attaches this credential
@@ -515,7 +416,9 @@ pub(super) async fn attach_run_as(
 ) -> Result<String, FacadeApiError> {
     auth.require(CoreScope::Write)?;
     facade_actor(server, auth)?;
-    let bound = action_bound(server, auth)?.ok_or_else(|| {
+    // An attach is no owner act; its binding keeps the header-less surface.
+    let surface = super::owner_binding::act_surface(auth);
+    let bound = action_bound(server, auth, surface)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "a live run attaches the credential's own read key",
             ["Present a verified slip paired to the run's agent."],

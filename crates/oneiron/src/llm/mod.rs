@@ -35,9 +35,10 @@ pub(crate) use oneiron_model::llm::{
     DreamerFailurePrecedence, DreamerFailureRule, decide_failure, fallback_failure_class,
     parse_failure_rules,
 };
-pub mod manifest;
-pub mod model_trials;
 pub mod catalog_doors;
+pub mod manifest;
+pub mod model_stream;
+pub mod model_trials;
 pub mod registry;
 pub mod routing;
 pub mod run_admission;

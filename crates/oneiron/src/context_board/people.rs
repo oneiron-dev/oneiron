@@ -248,6 +248,27 @@ impl People {
         Self { vault, rows, index }
     }
 
+    /// Applies model-channel name disclosure after the roster's own read.
+    /// A hidden name stays the person's real bare handle, not a stand-in.
+    pub fn disclose_names(
+        &mut self,
+        vault: &Vault,
+        reader: &crate::claim::ScopedReadActorKey,
+    ) -> Result<()> {
+        let txn = vault.store.env.read_txn()?;
+        for row in &mut self.rows {
+            let band = crate::disclosure::person_name_claim_in(vault, &txn, row.person)?
+                .map_or(crate::disclosure::DisclosureBand::Sensitive, |(_, body)| {
+                    crate::disclosure::DisclosureBand::of_claim(&body)
+                });
+            if !crate::disclosure::model_names_admitted_in(vault, &txn, reader, band)? {
+                row.name.clone_from(&row.handle);
+                row.about = None;
+            }
+        }
+        Ok(())
+    }
+
     /// The vault these people belong to, as the prefix groups them.
     #[must_use]
     pub fn vault(&self) -> &str {
@@ -382,11 +403,13 @@ impl<'a> PeopleView<'a> {
     #[must_use]
     pub fn mention(&self, id: EntityId) -> Option<String> {
         let row = self.people.get(id)?;
-        Some(if self.resident.contains(&row.person) {
-            row.handle.clone()
-        } else {
-            format!("{}({})", row.handle, one_line_token(&row.name))
-        })
+        Some(
+            if self.resident.contains(&row.person) || row.name == row.handle {
+                row.handle.clone()
+            } else {
+                format!("{}({})", row.handle, one_line_token(&row.name))
+            },
+        )
     }
 
     /// [`Self::mention`], falling back to the raw id.

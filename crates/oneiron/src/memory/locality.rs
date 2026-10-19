@@ -55,13 +55,33 @@ impl Memory<'_> {
     pub fn at(mut self, locality: crate::claim::CallerLocality) -> Self {
         if locality == crate::claim::CallerLocality::OffDevice {
             self.locality = locality;
+            self.destination.meet(&locality.into());
         }
+        self
+    }
+
+    /// Serves a caller whose rows go to `destination`, as the host found it
+    /// from the connection: the machine it proved rides beside the locality,
+    /// and every read lane, the export and each producer check judge the
+    /// world settings for that machine in their own snapshot (mesh PR2b).
+    /// It only narrows, as [`Self::at`] does.
+    #[must_use]
+    pub fn for_destination(mut self, destination: &crate::settings::ReadDestination) -> Self {
+        if destination.is_off_device() {
+            self.locality = crate::claim::CallerLocality::OffDevice;
+        }
+        self.destination.meet(destination);
         self
     }
 
     /// Where this surface's caller reads from.
     pub(crate) const fn locality(&self) -> crate::claim::CallerLocality {
         self.locality
+    }
+
+    /// Where this surface's rows go.
+    pub(crate) fn destination(&self) -> &crate::settings::ReadDestination {
+        &self.destination
     }
 
     /// Lists `rows` as producers of the answer being read, when a host
@@ -81,7 +101,7 @@ impl Memory<'_> {
     ) -> MemoryResult<()> {
         self.produced_from([row]);
         let store = &self.vault.store;
-        let kept = crate::settings::device_local_worlds_at(self.vault, txn, self.locality)?;
+        let kept = crate::settings::device_local_worlds_for(self.vault, txn, &self.destination)?;
         if crate::settings::device_local_keeps_among(store, txn, &kept, &row)? {
             return Err(MemoryError::from(crate::error::Error::EntityNotFound));
         }
