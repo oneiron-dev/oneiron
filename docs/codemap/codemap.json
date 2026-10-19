@@ -11504,7 +11504,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -11625,6 +11625,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/claim/scoped_read/named_reads.rs",
+     "purpose": "Named point reads (FIX 5226): a read whose caller named each target says when a legal non-use order keeps a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/claim/scoped_read/note_visibility.rs",
      "purpose": "Actor and class checks for private NOTE bodies in scoped reads",
      "surface": {
@@ -11652,7 +11662,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 8,
       "struct": 2
@@ -11771,7 +11781,7 @@
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -11781,7 +11791,7 @@
      "path": "src/claim/scoped_read/visibility.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 3
      }
     },
@@ -28496,7 +28506,7 @@
      "path": "src/graph_fs/device_scan.rs",
      "purpose": "The device-local pass of a capped Graph-FS scan (DEC-0005)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -35176,8 +35186,8 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 16,
-      "fn": 3
+      "crate-vis": 20,
+      "fn": 4
      }
     },
     {
@@ -41452,7 +41462,7 @@
      "path": "src/ports/safe_read.rs",
      "purpose": "Integrity reads compose ports without opening a transaction",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
      }
     },
@@ -54829,7 +54839,7 @@
      "surface": {
       "enum": 1,
       "fn": 10,
-      "re-export": 73,
+      "re-export": 74,
       "struct": 39
      }
     },
@@ -55310,7 +55320,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1083
+      "fn": 1084
      }
     },
     {
@@ -55906,6 +55916,19 @@
       "enum": 1,
       "fn": 15,
       "struct": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RootRequestCancelRequest"
+     ],
+     "path": "src/task_verb/sdk_root_requests.rs",
+     "purpose": "The input and answer of the owner's root-request cancel row (FIX 5586): `vault.roots.requests.cancel`, a…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -61893,7 +61916,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 71,
+     "files": 72,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63048,7 +63071,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 197,
+     "files": 198,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63218,7 +63241,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3883,
+   "source_files": 3885,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72009,7 +72032,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1054
+      "fn": 1055
      }
     },
     {
@@ -73148,7 +73171,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1055
+      "fn": 1056
      }
     },
     {
@@ -76816,7 +76839,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 170
+      "crate-vis": 171
      }
     },
     {
@@ -77165,6 +77188,16 @@
      "notable": [],
      "path": "src/api/facade/role_picks.rs",
      "purpose": "OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/root_request_doors.rs",
+     "purpose": "The owner's root-request cancel door (FIX 5586): `vault.roots.requests.cancel` over the same engine door as…",
      "surface": {
       "crate-vis": 1
      }
@@ -85391,7 +85424,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 454,
+     "files": 455,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -85841,7 +85874,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 837,
+   "source_files": 838,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -86334,6 +86367,7 @@
       "BudgetHoldState",
       "BudgetLandRequest",
       "BudgetLease",
+      "BundleHomeWarning",
       "BundleVerdict",
       "BundledSkillPermissions",
       "ButtonControl",
@@ -86942,6 +86976,8 @@
       "CritiqueVerdict",
       "CropInput",
       "CursorSpan",
+      "CustodyRegisterCheck",
+      "CustodyUncheckedReason",
       "CutDecision",
       "DagRecordAppendInput",
       "DagRecordAppendReceipt",
@@ -88191,6 +88227,13 @@
       "OwnerPolicyConfigurationReceipt",
       "OwnerPolicyConfigurationView",
       "OwnerPolicyConfigureRequest",
+      "OwnerWorkCancelNote",
+      "OwnerWorkCancelState",
+      "OwnerWorkKind",
+      "OwnerWorkReceipt",
+      "OwnerWorkRefusal",
+      "OwnerWorkStatus",
+      "OwnerWorkUnassigned",
       "PackAdapter",
       "PackAttributionFields",
       "PackBytesFile",
@@ -88710,6 +88753,7 @@
       "RoomTurn",
       "RoomTurnRequest",
       "RoomWaitKind",
+      "RootRequestCancelRequest",
       "RouteObservation",
       "RoutineOutcome",
       "Row",
@@ -89580,8 +89624,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 844,
-      "struct": 2694
+      "enum": 852,
+      "struct": 2697
      }
     },
     {

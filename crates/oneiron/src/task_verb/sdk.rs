@@ -512,6 +512,7 @@ pub use super::sdk_reply::*;
 pub use super::sdk_research::*;
 pub use super::sdk_residence::*;
 pub use super::sdk_retrieval::*;
+pub use super::sdk_root_requests::*;
 pub use super::sdk_scratchpad::*;
 pub use super::sdk_secret::*;
 pub use super::sdk_secret_grant::*;

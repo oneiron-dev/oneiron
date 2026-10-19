@@ -1,7 +1,7 @@
 //! Bounded-page adapters for authority-scoped app subscription channels.
-use crate::claim::CallerLocality;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::memory::{MemoryReceipt, PendingWrite};
+use crate::settings::ReadDestination;
 use crate::{EntityId, Error, Result, Vault};
 
 const PAGE_SIZE: usize = 256;
@@ -14,12 +14,17 @@ fn validate_limit(limit: usize) -> Result<()> {
     Ok(())
 }
 
-/// Whether a caller at `locality` may learn of `claim` at all: off this
-/// device, a device-local claim is not there to count or name.
-fn readable_at(vault: &Vault, claim: Option<[u8; 16]>, locality: CallerLocality) -> Result<bool> {
+/// Whether a caller whose rows go to `destination` may learn of `claim` at
+/// all: off this device, a claim a world withholds from one of its machines
+/// is not there to count or name (mesh PR2b).
+fn readable_at(
+    vault: &Vault,
+    claim: Option<[u8; 16]>,
+    destination: &ReadDestination,
+) -> Result<bool> {
     match claim {
-        Some(claim) if locality == CallerLocality::OffDevice => {
-            Ok(!vault.device_local_keeps(&EntityId::from_bytes(claim)?)?)
+        Some(claim) if destination.is_off_device() => {
+            Ok(!vault.device_local_keeps_for(&EntityId::from_bytes(claim)?, destination)?)
         }
         _ => Ok(true),
     }
@@ -35,15 +40,17 @@ fn in_world(vault: &Vault, claim: Option<[u8; 16]>, world: Option<&str>) -> Resu
         .is_some_and(|claim| claim.world.map(|id| id.to_hex()).as_deref() == world))
 }
 
-/// Apply principal and world predicates before the output limit, across all pages.
+/// Apply principal and world predicates before the output limit, across all
+/// pages, for a caller whose rows go to `destination`.
 pub fn scoped_subscription_receipts(
     vault: &Vault,
     actor: &str,
     world: Option<&str>,
-    locality: CallerLocality,
+    destination: impl Into<ReadDestination>,
     limit: usize,
 ) -> Result<Vec<MemoryReceipt>> {
     validate_limit(limit)?;
+    let destination: ReadDestination = destination.into();
     let mut before = None;
     let mut output = Vec::new();
     loop {
@@ -53,7 +60,7 @@ pub fn scoped_subscription_receipts(
         for row in page {
             if row.actor_ref.as_deref() != Some(actor)
                 || !in_world(vault, row.claim_id, world)?
-                || !readable_at(vault, row.claim_id, locality)?
+                || !readable_at(vault, row.claim_id, &destination)?
             {
                 continue;
             }
@@ -82,15 +89,19 @@ pub fn scoped_subscription_receipts(
 
 /// Scan stable sequence pages and retain only the requested scoped top-k.
 /// Ordering matches the facade's created-at / decision / claim ordering.
+/// Off this device a claim a world withholds from one of the machines the
+/// rows go to is skipped, judged in the scan's snapshot (mesh PR2b).
 pub fn scoped_subscription_pending(
     vault: &Vault,
     actor: &str,
     world: Option<&str>,
-    locality: CallerLocality,
+    destination: impl Into<ReadDestination>,
     limit: usize,
 ) -> Result<Vec<PendingWrite>> {
     validate_limit(limit)?;
+    let destination: ReadDestination = destination.into();
     let txn = vault.store.env.read_txn()?;
+    let kept = crate::settings::device_local_worlds_for(vault, &txn, &destination)?;
     let mut cursor = None;
     let mut selected = Vec::new();
     loop {
@@ -111,8 +122,8 @@ pub fn scoped_subscription_pending(
             {
                 continue;
             }
-            if locality == CallerLocality::OffDevice
-                && crate::settings::device_local_keeps_in(vault, &txn, &id)?
+            if destination.is_off_device()
+                && crate::settings::device_local_keeps_among(&vault.store, &txn, &kept, &id)?
             {
                 continue;
             }

@@ -540,7 +540,7 @@ impl Memory<'_> {
             if EntityId::from_hex(id).is_err() {
                 continue;
             }
-            match self.get_entity(id) {
+            match self.get_entity_tolerant(id) {
                 Ok(read) => {
                     records.extend(read.value.as_ref().map(crate::lens::RecordRef::from_view));
                 }

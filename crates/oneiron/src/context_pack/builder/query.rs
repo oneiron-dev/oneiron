@@ -53,9 +53,9 @@ pub struct ContextPackBuilder<'a> {
     pub(super) psych_profile_key: Option<PsychProfileKey>,
     pub(super) l2_summary_subjects: Vec<EntityId>,
     pub(super) l2_summary_reader: Option<&'a crate::claim::ScopedRead<'a>>,
-    /// Whether the pack is for a caller off this device; see
-    /// [`Self::caller_off_device`]. Its edge walk admits no device-local row.
-    pub(super) off_device: bool,
+    /// Where the pack's rows go; see [`Self::for_destination`]. Its edge walk
+    /// admits no row a world withholds from one of those machines.
+    pub(super) destination: crate::settings::ReadDestination,
     /// See [`Self::skip_optional_recall`].
     pub(super) skip_optional_recall: bool,
 }
@@ -178,7 +178,7 @@ impl<'a> ContextPackBuilder<'a> {
             psych_profile_key: None,
             l2_summary_subjects: Vec::new(),
             l2_summary_reader: None,
-            off_device: false,
+            destination: crate::settings::ReadDestination::on_device(),
             skip_optional_recall: false,
         }
     }
@@ -256,7 +256,7 @@ impl<'a> ContextPackBuilder<'a> {
     /// it before assembly, not only filter the rendered response afterwards.
     pub fn l2_summary_reader(mut self, reader: &'a crate::claim::ScopedRead<'a>) -> Self {
         self.l2_summary_reader = Some(reader);
-        self.caller_off_device(reader.off_device())
+        self.for_destination(reader.actor_key().destination())
     }
 
     pub fn search_vector(mut self, vector: &[f32], limit: usize) -> Self {

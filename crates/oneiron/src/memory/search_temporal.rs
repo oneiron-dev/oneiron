@@ -155,7 +155,7 @@ impl Memory<'_> {
             .reading(lane.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(lane.actor_key().clone())
-            .caller_off_device(lane.off_device())
+            .for_destination(lane.actor_key().destination())
             .filter_candidates(&admitted)
             .temporal_adaptive(input.adaptive)
             .limit(limit);
