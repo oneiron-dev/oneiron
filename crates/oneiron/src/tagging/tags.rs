@@ -885,11 +885,7 @@ fn source_turns_in_txn(
 
 /// Whether a stored tag set lists `id` among the MESSAGE rows it was read
 /// from: the raw read of [`source_turns_in_txn`], stopping at the first.
-fn listed_as_source_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
+fn listed_as_source_in_txn(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
     for row in TAG_SET.iter_from(store, txn, &[])? {
         if row?.1.messages.contains(id) {
             return Ok(true);
