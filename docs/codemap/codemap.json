@@ -51330,7 +51330,7 @@
       "const": 3,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "re-export": 1,
       "struct": 1
      }
@@ -71188,14 +71188,15 @@
      "notable": [
       "LlmNodes",
       "MeshLlmTransport",
+      "MeshPeerProof",
       "MeshPeerTransport",
       "VaultLlmNodes"
      ],
      "path": "src/mesh/client.rs",
      "purpose": "The asking side: the first of the owner's nodes that takes the call runs it; with none, the call waits and…",
      "surface": {
-      "fn": 4,
-      "struct": 3,
+      "fn": 6,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -75890,7 +75891,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/context_board/reply.rs",
@@ -81449,7 +81450,7 @@
      "path": "src/device_local.rs",
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -83465,12 +83466,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "OfferEndpoint",
       "ServedOffer"
      ],
      "path": "src/models/offer.rs",
      "purpose": "What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 2,
       "struct": 1
      }
     },
