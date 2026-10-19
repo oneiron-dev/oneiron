@@ -5,6 +5,7 @@ use crate::codebase::entity_id_from_hash_material;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, GitWireRepo};
+use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, LegacyCompact, SideKey, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
@@ -15,6 +16,8 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ReceivedFileOperation {
     pub operation_id: String,
+    /// The pusher's hex id, or [`ERASED_CALL_IDENTITY`] once that actor was
+    /// erased (FIX 4475).
     pub actor_id: String,
     pub session_id: String,
     pub ref_name: String,
@@ -173,6 +176,12 @@ impl Vault {
             if let Some(old) = CODE_OPERATIONS.get(&self.store, txn, &receipt_key)?
                 && old != operations
             {
+                // An erase since the landing left the same operations naming
+                // no one: they landed, and their documents' receipts refuse
+                // a second ingress, so nothing runs again.
+                if landed_erased(&old, &operations) {
+                    return Ok(());
+                }
                 return Err(Error::ConcurrentWrite("push operation receipt changed"));
             }
             // A conflicting aggregate must refuse before any document effect.
@@ -205,6 +214,56 @@ impl Vault {
             .collect()
     }
 }
+/// Whether `held`, a landed aggregate, is `fresh` with some operations
+/// naming no one (FIX 4475): every other field matches, and where the two
+/// differ the held one is erased. Erased never turns back into a live actor.
+fn landed_erased(held: &[ReceivedFileOperation], fresh: &[ReceivedFileOperation]) -> bool {
+    held.len() == fresh.len()
+        && held.iter().zip(fresh).all(|(held, fresh)| {
+            (held.actor_id == fresh.actor_id || held.actor_id == ERASED_CALL_IDENTITY)
+                && ReceivedFileOperation {
+                    actor_id: fresh.actor_id.clone(),
+                    ..held.clone()
+                } == *fresh
+        })
+}
+
+/// Erasing `actor` from the push operation receipts (FIX 4475): each
+/// operation it pushed keeps its id, session, ref, path, hashes, modes and
+/// document flag and names no one. One-way, in the erase's own transaction.
+/// An id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a receipt row that cannot be read.
+pub(crate) fn erase_code_operations_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::typed_body::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let hex = actor.to_hex();
+    let mut rows = Vec::new();
+    for (key, mut operations) in CODE_OPERATIONS.scan(&vault.store, wtxn)? {
+        let mut named = false;
+        for operation in &mut operations {
+            if operation.actor_id == hex {
+                operation.actor_id = ERASED_CALL_IDENTITY.to_owned();
+                named = true;
+            }
+        }
+        if named {
+            rows.push((key, operations));
+        }
+    }
+    for (key, operations) in rows {
+        CODE_OPERATIONS.put(&vault.store, wtxn, &key, &operations)?;
+    }
+    Ok(())
+}
+
 fn bytes<'a>(files: &'a BTreeMap<String, super::tree::OriginTreeFile>, path: &str) -> &'a [u8] {
     files.get(path).map_or(b"", |file| file.content.as_slice())
 }

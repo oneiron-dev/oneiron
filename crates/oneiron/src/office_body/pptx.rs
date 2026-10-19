@@ -4,7 +4,8 @@
 //!
 //! A deck/shape tree with model node ids kept apart from native ids and from
 //! the Loro handles, one rich-text body per text shape, and a log in which
-//! every operation names its actor, from which the attribution index rebuilds.
+//! every operation names its commit peer, whose receipt names its actor, from
+//! which the attribution index rebuilds ([`log`]).
 //! A person's operations apply to the deck as of the frontier the caller read
 //! and merge into the head as a CRDT peer's would; the merged deck must still
 //! keep the deck's tree rules, since a converged state is not necessarily a
@@ -25,6 +26,7 @@
 //! operations replay onto the head as the same nodes.
 
 mod doc;
+mod log;
 mod preview;
 mod verbs;
 
@@ -68,7 +70,7 @@ use oneiron_docedit::retained_opc::{Limits, Package};
 use serde::{Deserialize, Serialize};
 
 /// The deck oracle's latest receipt per export profile, by profile name.
-const ORACLE: SideTable<String, OracleRecord, Named> =
+pub(super) const ORACLE: SideTable<String, OracleRecord, Named> =
     SideTable::new(&side_table::OFFICE_BODY_ORACLE);
 
 /// The longest export profile name a receipt may carry.
@@ -77,12 +79,13 @@ const MAX_PROFILE_LEN: usize = 128;
 /// One profile's oracle receipt as recorded: the eight-step check's outcome
 /// and the projector it checked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct OracleRecord {
+pub(super) struct OracleRecord {
     receipt: OracleReceipt,
     /// The projector the oracle checked (`PROJECTOR_VERSION` when it was
     /// recorded); a receipt for another projector opens nothing.
     projector: String,
-    recorded_by: EntityId,
+    /// No one once that actor was erased (FIX 4511).
+    pub(super) recorded_by: BodyActor,
     recorded_at: u64,
 }
 
@@ -134,11 +137,12 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let (head, doc) = self.loro_body(&txn, artifact, OfficeBodyKind::Pptx, at)?;
         let body = doc::read(&doc)?;
+        let log = log::stamped(&self.store, &txn, artifact, &body.log)?;
         Ok(PptxBody {
-            attribution: AttributionIndex::build(&body.deck, &body.log),
+            attribution: AttributionIndex::build(&body.deck, &log),
             frontier: at.map_or(head.frontier, <[u8]>::to_vec),
             deck: body.deck,
-            log: body.log,
+            log,
         })
     }
 
@@ -182,7 +186,7 @@ impl Vault {
                     effects.extend(done.iter().map(effect_receipt));
                 }
                 doc::sync_to(doc, &body.deck)?;
-                doc::append_log(doc, &stamped)?;
+                doc::append_log(doc, &log::logged(doc, &stamped))?;
                 Ok(ops
                     .iter()
                     .filter_map(DeckOp::created)
@@ -233,7 +237,7 @@ impl Vault {
                         effects.extend(done.iter().map(effect_receipt));
                     }
                     doc::sync_to(doc, &body.deck)?;
-                    doc::append_log(doc, &stamped)
+                    doc::append_log(doc, &log::logged(doc, &stamped))
                 })?;
             record.commits += 1;
             FORKS.put(&self.store, wtxn, &key, &record)?;
@@ -386,7 +390,7 @@ impl Vault {
         let record = OracleRecord {
             receipt: receipt.clone(),
             projector: PROJECTOR_VERSION.to_owned(),
-            recorded_by: actor.entity_ref(),
+            recorded_by: BodyActor::Actor(actor.entity_ref()),
             recorded_at: self.now_recorded_at(),
         };
         self.with_write_txn_grouped(|wtxn| ORACLE.put(&self.store, wtxn, &receipt.profile, &record))
@@ -673,10 +677,11 @@ impl Vault {
             Some(&typed.base),
         )?;
         let base = doc::read(&base)?;
-        let ops = proposal
+        let logged = proposal
             .log
             .get(base.log.len()..)
             .ok_or(Error::CorruptedIndex("deck fork log"))?;
+        let ops = log::stamped(&self.store, txn, &record.artifact, logged)?;
         let run_root = record.run_root.map(|root| root.to_hex());
         let mut work = base.deck.fork_at(
             &record.id.to_hex(),
@@ -684,7 +689,7 @@ impl Vault {
             run_root.as_deref(),
         );
         for op in ops {
-            work.record(op.clone());
+            work.record(op);
         }
         Ok(work)
     }

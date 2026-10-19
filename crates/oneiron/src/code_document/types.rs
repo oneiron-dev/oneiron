@@ -129,12 +129,13 @@ pub struct CodeOpAttribution {
 
 impl CodeOpAttribution {
     /// The symbol-manifest chain entry, once turn, activity and intent are all
-    /// recorded. An erased actor's operation has none: no actor is made up.
+    /// recorded. An erased actor's operation keeps its place in the chain and
+    /// names no one: no actor is made up (FIX 4476).
     #[must_use]
     pub fn producing_operation(&self) -> Option<crate::code_symbol::CodeProducingOperation> {
         Some(crate::code_symbol::CodeProducingOperation {
             operation: self.operation,
-            actor: self.actor?.entity_ref(),
+            actor: self.actor.map(WriteActor::entity_ref),
             turn: self.provenance.turn?,
             activity: self.provenance.activity?,
             intent: self.provenance.intent?,
