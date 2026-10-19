@@ -106,10 +106,10 @@ fn superseded(
 ) -> bool {
     unanswered_root(work, hash, request)
         && match ROOT_WORK_SUPERSESSION {
-            RootSupersession::CausalNewRequestOnSameTarget => !work
+            RootSupersession::CausalNewRequestOnSameTarget => work
                 .heads
                 .get(&(OwnerWorkKind::Root, request.act.target))
-                .is_some_and(|live| live.contains(hash)),
+                .is_none_or(|live| !live.contains(hash)),
         }
 }
 
