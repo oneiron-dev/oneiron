@@ -430,15 +430,19 @@
     },
     {
       "name": "self.identity.answer",
-      "description": "A vault owner's tap on an identity choice card: who a person named in their conversations is.",
-      "input": "crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest",
+      "description": "The owner answers an identity choice with supporting evidence refs; the original mention and verified owner resolution provenance are retained atomically.",
+      "input": "crate::dreamer_runner::maintenance::identity::IdentityAnswerEvidenceRequest",
       "output": "crate::dreamer_runner::maintenance::identity::IdentitySettled",
-      "call": "memory.identity_answer(&input)?",
+      "call": "memory.identity_answer_with_evidence_as_owner(&memory.embedded_owner(\"self.identity.answer\")?, &input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "self.identity.settle",
@@ -450,7 +454,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "self.inbox.list",
@@ -585,6 +590,54 @@
       "output": "crate::context_board::PersonRow",
       "call": "memory.people_get(&input)?",
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.people.create",
+      "description": "The owner creates a distinct PERSON with declared identity hints and existing identity-evidence refs, looking before minting an opaque id without selecting or merging a namesake.",
+      "input": "crate::memory::identity_doors::PersonCreateRequest",
+      "output": "crate::memory::identity_doors::PersonCreated",
+      "call": "memory.people_create_as_owner(&memory.embedded_owner(\"vault.people.create\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.entities.look_before_mint",
+      "description": "The owner queries the declared PERSON, ORG or PLACE identity hints for N candidates with evidence and provenance; only stored mention evidence is scored by the waterfall, and no entity is restored, linked or minted.",
+      "input": "crate::memory::identity_doors::IdentityLookupRequest",
+      "output": "crate::memory::identity_doors::IdentityLookup",
+      "call": "memory.entities_look_before_mint_as_owner(&memory.embedded_owner(\"vault.entities.look_before_mint\")?, &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.identity.mention",
+      "description": "The owner reads one saved mention as unresolved, candidates or resolved, preserving the original tagger suggestion and the resolving owner evidence and provenance.",
+      "input": "crate::dreamer_runner::maintenance::identity::MentionProvenance",
+      "output": "crate::dreamer_runner::maintenance::identity::IdentityMentionView",
+      "call": "memory.identity_mention_as_owner(&memory.embedded_owner(\"vault.identity.mention\")?, &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "openapi": true,
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -3750,6 +3803,118 @@
         "unrestricted_record_scope": true
       },
       "section": false
+    },
+    {
+      "name": "vault.packs.sections.propose",
+      "description": "The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing.",
+      "input": "crate::memory::PluginSectionProposeRequest",
+      "output": "crate::memory::PluginSectionProposal",
+      "call": "memory.plugin_section_propose(&input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.list",
+      "description": "Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project.",
+      "input": "crate::memory::PluginSectionListRequest",
+      "output": "crate::memory::PluginSectionsView",
+      "call": "memory.plugin_sections_list(&input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.grant",
+      "description": "The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent.",
+      "input": "crate::memory::PluginSectionGrantRequest",
+      "output": "crate::memory::PluginSectionGrant",
+      "call": "memory.plugin_section_grant_as_owner(&memory.embedded_owner(\"vault.packs.sections.grant\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.revoke",
+      "description": "The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild.",
+      "input": "crate::memory::PluginSectionRevokeRequest",
+      "output": "crate::memory::PluginSectionRevoked",
+      "call": "memory.plugin_section_revoke_as_owner(&memory.embedded_owner(\"vault.packs.sections.revoke\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.suggest",
+      "description": "Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal.",
+      "input": "crate::memory::PluginSectionSuggestRequest",
+      "output": "crate::memory::PluginSectionSuggestion",
+      "call": "memory.plugin_section_suggest(&input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.suggestions.get",
+      "description": "The owner's plugin suggestion knob: whether workflow-pattern suggestion passes may run at all.",
+      "input": "EmptyRequest",
+      "output": "crate::memory::PluginSuggestionsView",
+      "call": "memory.plugin_suggestions_as_owner(&memory.embedded_owner(\"vault.packs.sections.suggestions.get\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.suggestions.set",
+      "description": "The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted.",
+      "input": "crate::memory::PluginSuggestionsSetRequest",
+      "output": "crate::memory::PluginSuggestionsView",
+      "call": "memory.plugin_suggestions_set_as_owner(&memory.embedded_owner(\"vault.packs.sections.suggestions.set\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "ai.chat.completions",
@@ -14560,6 +14725,54 @@
       "output": "crate::memory::consolidation::ConsolidationPromotion",
       "scope": "Write",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.consolidation.promote\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.pin",
+      "description": "Pins reference-only evidence for six-axis consolidation buckets at one owner-scoped ledger revision. Hashes, lineage taint and source eligibility are derived by the root, never accepted from children.",
+      "input": "crate::memory::consolidation_frontier::ConsolidationPinRequest",
+      "output": "crate::memory::consolidation_frontier::ConsolidationRootAccounting",
+      "scope": "Write",
+      "call": "memory.consolidation_pin_as_owner(&memory.embedded_owner(\"vault.consolidation.pin\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.frontier",
+      "description": "Records immutable child judgements and reference sets against an existing root pin, in any completion order, and accounts source-plus-hash corroboration without merging projects. Does not settle claims.",
+      "input": "crate::memory::consolidation_frontier::ConsolidationFrontierRequest",
+      "output": "crate::memory::consolidation_frontier::ConsolidationRootAccounting",
+      "scope": "Write",
+      "call": "memory.consolidation_frontier_as_owner(&memory.embedded_owner(\"vault.consolidation.frontier\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.accounting",
+      "description": "Reads the original root revision, source hashes, ancestor and edge provenance taint, zero-signal exclusions and per-bucket corroboration accounting under current owner read authority.",
+      "input": "crate::memory::consolidation_frontier::ConsolidationAccountingRequest",
+      "output": "crate::memory::consolidation_frontier::ConsolidationRootAccounting",
+      "scope": "Read",
+      "call": "memory.consolidation_accounting_as_owner(&memory.embedded_owner(\"vault.consolidation.accounting\")?, &input)?",
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,

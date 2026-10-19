@@ -77,6 +77,7 @@ pub(crate) use super::voice_bank_doors::*;
 pub(crate) use super::asr_doors::*;
 pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::clustering_doors::*;
+pub(crate) use super::identity_doors::*;
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
@@ -192,6 +193,8 @@ pub(crate) use super::vector_doors::*;
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
+// The plugin Context Board section doors (DOOR-112), likewise.
+pub(crate) use super::plugin_section_doors::*;
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;
 pub(crate) use super::critical_confirm_doors::*;
@@ -1275,6 +1278,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.records.erase_sweep"
         | "vault.cleanup.run"
         | "vault.entities.mention"
+        | "vault.people.create"
+        | "vault.entities.look_before_mint"
+        | "vault.identity.mention"
+        | "self.identity.answer"
         | "vault.legal_holds.place"
         | "vault.legal_holds.widen"
         | "vault.legal_holds.list"
@@ -1358,10 +1365,17 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.writes.critical_confirm.receipt"
         | "vault.claims.review"
         | "vault.claims.settle"
+        | "vault.packs.sections.grant"
+        | "vault.packs.sections.revoke"
+        | "vault.packs.sections.suggestions.get"
+        | "vault.packs.sections.suggestions.set"
         | "vault.claims.vet"
         | "vault.claims.vetting"
         | "vault.consolidation.promote"
         | "vault.consolidation.evidence"
+        | "vault.consolidation.pin"
+        | "vault.consolidation.frontier"
+        | "vault.consolidation.accounting"
         | "vault.sieve.evidence"
         | "vault.sieve.evidence.replay"
         | "vault.sieve.cadence"

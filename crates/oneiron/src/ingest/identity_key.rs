@@ -21,20 +21,24 @@ pub fn identity_fields_for_kind(kind: u8) -> &'static [&'static str] {
     }
 }
 
-fn hints(kind: u8, bytes: &[u8]) -> BTreeSet<String> {
+pub(crate) fn identity_hint_body(kind: u8, bytes: &[u8]) -> Option<serde_json::Value> {
     // Checked before the decode: a kind without identity fields, a custody
     // record among them, is never decoded into an unwiped copy.
     if identity_fields_for_kind(kind).is_empty() {
-        return BTreeSet::new();
+        return None;
     }
     let mut cursor = std::io::Cursor::new(bytes);
-    let value = if let Ok(value) = rmpv::decode::read_value(&mut cursor)
+    if let Ok(value) = rmpv::decode::read_value(&mut cursor)
         && cursor.position() == bytes.len() as u64
     {
-        crate::serialize::msgpack_value_to_json(&value)
-    } else if let Ok(value) = serde_json::from_slice(bytes) {
-        value
+        Some(crate::serialize::msgpack_value_to_json(&value))
     } else {
+        serde_json::from_slice(bytes).ok()
+    }
+}
+
+fn hints(kind: u8, bytes: &[u8]) -> BTreeSet<String> {
+    let Some(value) = identity_hint_body(kind, bytes) else {
         return BTreeSet::new();
     };
     let mut hints = BTreeSet::new();

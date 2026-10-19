@@ -43,6 +43,9 @@ both bindings and their export-census tests in one change.
 - `vault.coach.inspect`
 - `vault.people.list`
 - `vault.people.get`
+- `vault.people.create`
+- `vault.entities.look_before_mint`
+- `vault.identity.mention`
 - `vault.shape.read`
 - `vault.shape.plan`
 - `vault.shape.apply`
@@ -237,6 +240,13 @@ both bindings and their export-census tests in one change.
 - `vault.packs.connector.grants.get`
 - `vault.packs.connector.grants.put`
 - `vault.packs.remove`
+- `vault.packs.sections.propose`
+- `vault.packs.sections.list`
+- `vault.packs.sections.grant`
+- `vault.packs.sections.revoke`
+- `vault.packs.sections.suggest`
+- `vault.packs.sections.suggestions.get`
+- `vault.packs.sections.suggestions.set`
 - `ai.chat.completions`
 - `vault.connectors.proxy.admit`
 - `vault.connectors.proxy.revoke_write`
@@ -867,6 +877,9 @@ both bindings and their export-census tests in one change.
 - `vault.consolidation.home.get`
 - `vault.consolidation.lineage`
 - `vault.consolidation.promote`
+- `vault.consolidation.pin`
+- `vault.consolidation.frontier`
+- `vault.consolidation.accounting`
 - `vault.consolidation.evidence`
 - `vault.sieve.evidence`
 - `vault.sieve.evidence.replay`

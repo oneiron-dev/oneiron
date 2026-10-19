@@ -561,6 +561,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_people_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.people.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.people.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_entities_look_before_mint(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.entities.look_before_mint")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.entities.look_before_mint", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_identity_mention(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.identity.mention")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.identity.mention", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_shape_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.shape.read")?;
         let output = py
@@ -2197,6 +2225,69 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.packs.remove")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.packs.remove", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_sections_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.sections.propose")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.sections.propose", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_sections_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.sections.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.sections.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_sections_grant(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.sections.grant")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.sections.grant", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_sections_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.sections.revoke")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.sections.revoke", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_sections_suggest(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.sections.suggest")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.sections.suggest", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_sections_suggestions_get(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.sections.suggestions.get")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.packs.sections.suggestions.get", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_sections_suggestions_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.sections.suggestions.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.packs.sections.suggestions.set", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }
@@ -7687,6 +7778,30 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.consolidation.promote")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.consolidation.promote", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consolidation_pin(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.pin")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consolidation.pin", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consolidation_frontier(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.frontier")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consolidation.frontier", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consolidation_accounting(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.accounting")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.consolidation.accounting", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }
