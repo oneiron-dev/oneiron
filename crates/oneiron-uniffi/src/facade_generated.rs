@@ -617,6 +617,36 @@ export_facade! {
     let output = client.vault_retrieval_replay(&input)?;
     crate::codec::lift_record("vault.retrieval.replay", &output)
 };
+"vault.retrieval.policy.get" => fn vault_retrieval_policy_get(&self) -> RetrievalPolicyView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.retrieval.policy.get")?;
+    let output = client.vault_retrieval_policy_get(&input)?;
+    crate::codec::lift_record("vault.retrieval.policy.get", &output)
+};
+"vault.retrieval.policy.pin" => fn vault_retrieval_policy_pin(&self, input: RetrievalPolicyPinRequest) -> RetrievalPolicyView = |client| {
+    let input: oneiron::task_verb::sdk::RetrievalPolicyPinRequest = crate::codec::lower_record("vault.retrieval.policy.pin", input)?;
+    let output = client.vault_retrieval_policy_pin(&input)?;
+    crate::codec::lift_record("vault.retrieval.policy.pin", &output)
+};
+"vault.retrieval.policy.train" => fn vault_retrieval_policy_train(&self, input: RetrievalPolicyTrainRequest) -> RetrievalPolicyCandidate = |client| {
+    let input: oneiron::task_verb::sdk::RetrievalPolicyTrainRequest = crate::codec::lower_record("vault.retrieval.policy.train", input)?;
+    let output = client.vault_retrieval_policy_train(&input)?;
+    crate::codec::lift_record("vault.retrieval.policy.train", &output)
+};
+"vault.retrieval.policy.evaluate" => fn vault_retrieval_policy_evaluate(&self, input: RetrievalPolicyEvaluateRequest) -> RetrievalPolicyEvaluation = |client| {
+    let input: oneiron::task_verb::sdk::RetrievalPolicyEvaluateRequest = crate::codec::lower_record("vault.retrieval.policy.evaluate", input)?;
+    let output = client.vault_retrieval_policy_evaluate(&input)?;
+    crate::codec::lift_record("vault.retrieval.policy.evaluate", &output)
+};
+"vault.retrieval.policy.admit" => fn vault_retrieval_policy_admit(&self, input: RetrievalPolicyAdmitRequest) -> RetrievalPolicyAdmitReceipt = |client| {
+    let input: oneiron::task_verb::sdk::RetrievalPolicyAdmitRequest = crate::codec::lower_record("vault.retrieval.policy.admit", input)?;
+    let output = client.vault_retrieval_policy_admit(&input)?;
+    crate::codec::lift_record("vault.retrieval.policy.admit", &output)
+};
+"vault.retrieval.policy.update" => fn vault_retrieval_policy_update(&self, input: RetrievalPolicyTrainRequest) -> RetrievalPolicyUpdateReceipt = |client| {
+    let input: oneiron::task_verb::sdk::RetrievalPolicyTrainRequest = crate::codec::lower_record("vault.retrieval.policy.update", input)?;
+    let output = client.vault_retrieval_policy_update(&input)?;
+    crate::codec::lift_record("vault.retrieval.policy.update", &output)
+};
 "vault.export" => fn vault_export(&self, format: Option<String>) -> MemoryExport = |client| {
     let output = client.vault_export(format.as_deref())?;
     crate::codec::lift_record("vault.export", &output)

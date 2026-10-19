@@ -129,6 +129,12 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.trace`
 - `vault.retrieval.export`
 - `vault.retrieval.replay`
+- `vault.retrieval.policy.get`
+- `vault.retrieval.policy.pin`
+- `vault.retrieval.policy.train`
+- `vault.retrieval.policy.evaluate`
+- `vault.retrieval.policy.admit`
+- `vault.retrieval.policy.update`
 - `vault.export`
 - `self.credential.attenuate`
 - `vault.scope.position`
