@@ -20167,7 +20167,7 @@
      "path": "src/dreamer_consolidation/conflict.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 9,
       "struct": 9
      }
@@ -20179,7 +20179,7 @@
      "path": "src/dreamer_consolidation/evidence.rs",
      "purpose": "Parent-verified evidence is the sole scoped consolidation handoff",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -20303,7 +20303,7 @@
      "surface": {
       "crate-vis": 23,
       "mod": 4,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -20344,6 +20344,16 @@
      "purpose": "ARCH-0032 stage 2 (OF-073): the Dreamer reviews NOTEs",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/note_text.rs",
+     "purpose": "The text of one NOTE as the Dreamer may read it (ARCH-0032 stage 2), in the caller's transaction: one…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -20522,6 +20532,19 @@
      "surface": {
       "crate-vis": 15,
       "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RetainedAlternative"
+     ],
+     "path": "src/dreamer_consolidation/retained_conflict.rs",
+     "purpose": "The candidates an escalated consolidation round dropped, retained on its `conflict.open` marker (OF-023, FIX…",
+     "surface": {
+      "crate-vis": 3,
       "struct": 1
      }
     },
@@ -21080,7 +21103,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4,
       "re-export": 5,
       "struct": 3
@@ -21134,6 +21157,16 @@
      "purpose": "Persisted-head convergence through the existing promotion, claim Gate, semantic-edge and provenance doors",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_promotion/settlement.rs",
+     "purpose": "The selected landing (OF-023, FIX 496): a consolidation round's retained alternative that a conflict…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -22655,7 +22688,7 @@
      "path": "src/dreamer_wake/nightly.rs",
      "purpose": "Budgeted interest-queue spending",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -62753,7 +62786,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 70,
+     "files": 72,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62774,7 +62807,7 @@
      "purpose": "ORF-2 / OF-361 — the BudgetMem statistical PRE-FILTER: the cheap screen that decides what is worth…"
     },
     "dreamer_promotion": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -63798,7 +63831,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3929,
+   "source_files": 3932,
    "test_files": 902
   },
   "oneiron-android": {
