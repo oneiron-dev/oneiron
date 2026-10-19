@@ -8,22 +8,30 @@
 //! ([`oneiron::Vault::stage_countersign_part`]), has this home's root attest
 //! it once this home's fold rebuilds it
 //! ([`oneiron::Vault::countersign_authority_checkpoint_for`]), and answers
-//! what it made, on the last part, for the machine's intake. Each serves a live
+//! what it made, on the last part, for the machine's intake. The staged bytes
+//! are charged to the server's retained-memory line while held, and go when
+//! the stage idles out or its socket closes (FIX 5111); the rebuild and the
+//! signature run off the runtime worker (FIX 5110). Each serves a live
 //! linked machine of the vault only; any other looks missing or refused.
 //! Nothing a machine sends chooses its trust: every root comes from this
 //! vault's own policy, and the home's root signs only what its own fold
 //! rebuilds.
 
+use std::sync::Arc;
+
 use base64::Engine;
 use oneiron::authority::{
     AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, AuthorityCheckpointAttestation,
-    CheckpointAttestationIntake, HostSlipIssuer, PeerMachine, RootCheckpointAttest,
+    CheckpointAttestationIntake, CountersignStageCharge, CountersignStaged, HostSlipIssuer,
+    PeerMachine, RootCheckpointAttest,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::{Answer, AppError, one_hash};
+use crate::byte_line::{ByteLine, HeldBytes};
 use crate::server::SyncServer;
+use crate::wire_telemetry::LimitQuestions;
 
 /// No parameters.
 #[derive(Deserialize)]
@@ -77,6 +85,28 @@ fn with_host_root<T>(
 
 fn unavailable() -> AppError {
     AppError::internal_server_error("authority checkpoint unavailable")
+}
+
+/// A countersign stage's charge on this server's retained-memory line, the
+/// one the residence index cache is charged to (FIX 5111).
+struct StageCharge {
+    line: Arc<ByteLine>,
+    held: HeldBytes,
+    questions: Arc<LimitQuestions>,
+}
+
+impl CountersignStageCharge for StageCharge {
+    fn resize(&mut self, bytes: usize) -> bool {
+        self.line.try_resize(&mut self.held, bytes, &self.questions)
+    }
+}
+
+fn stage_charge(server: &SyncServer) -> Box<dyn CountersignStageCharge> {
+    Box::new(StageCharge {
+        held: server.retained.empty(),
+        line: Arc::clone(&server.retained),
+        questions: Arc::clone(server.wire_telemetry.limit_questions()),
+    })
 }
 
 pub(super) fn roots(
@@ -145,19 +175,27 @@ pub(super) fn countersign(
         let Some(issuer) = issuer else {
             return Ok(Vec::new());
         };
-        let Some(image) = server
+        let staged = server
             .vault
-            .stage_countersign_part(peer, id, input.total, input.offset, &part)
-            .map_err(|_| AppError::bad_request("countersign part refused", Some("part")))?
-        else {
-            return Ok(Vec::new());
+            .stage_countersign_part(peer, id, input.total, input.offset, &part, || {
+                stage_charge(server)
+            })
+            .map_err(|_| AppError::bad_request("countersign part refused", Some("part")))?;
+        // The whole image stays charged until it is countersigned.
+        let (image, _charge) = match staged {
+            CountersignStaged::Held => return Ok(Vec::new()),
+            CountersignStaged::NoRoom => return Err(AppError::memory_floor()),
+            CountersignStaged::Whole { image, charge } => (image, charge),
         };
-        let made = server
-            .vault
-            .countersign_authority_checkpoint_for(peer, &image, issuer)
-            .map_err(|_| {
-                AppError::bad_request("authority checkpoint image refused", Some("part"))
-            })?;
+        // FIX 5110: the fold rebuild and the SLH-DSA signature run off the
+        // runtime worker. This socket waits for them before it answers, so
+        // its replies keep their order.
+        let made = crate::server::blocking(|| {
+            server
+                .vault
+                .countersign_authority_checkpoint_for(peer, &image, issuer)
+        })
+        .map_err(|_| AppError::bad_request("authority checkpoint image refused", Some("part")))?;
         Ok(match made {
             RootCheckpointAttest::Attested { image, attestation } if image == id => {
                 vec![*attestation]

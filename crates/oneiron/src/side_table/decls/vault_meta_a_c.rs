@@ -108,6 +108,12 @@ side_tables! {
     /// second it was kept at and the root policy this install built it under (OF-469 cutoffs).
     /// Runtime-tier: no checkpoint image carries it. Key: ().
     AUTHORITY_CHECKPOINT_PROGRESS: VaultMeta b"authority.checkpoint.local.progress.v1" Named;
+    /// What a root held here signed for a home's checkpoint head (FIX 5109): the image, the
+    /// posture and policy it was made under, where its delivery stands, and the attestation
+    /// until the home reports the root accepted. A delivery cache, rebuilt by signing again;
+    /// never the attestation table. Runtime-tier. Key: home tag (1 then the home's machine id,
+    /// or 0 then zeros for a home that proved none) + root key (suite byte + key bytes).
+    AUTHORITY_CHECKPOINT_ROOT_DELIVERY: VaultMeta b"authority.checkpoint.local.root-delivery.v1:" Named;
     /// This install's cumulative count of authority rows first stored here and their canonical
     /// signed body bytes (OF-469 cutoffs). Runtime-tier. Key: ().
     AUTHORITY_CHECKPOINT_TOTALS: VaultMeta b"authority.checkpoint.local.totals.v1" Named;

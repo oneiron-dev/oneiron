@@ -34,11 +34,16 @@ impl WorldKeyFrontierCheck {
     pub const KIND: &'static str = "world_key_frontier_wide";
 }
 
-/// One image a linked machine sends in parts, as far as it came.
+/// One image a linked machine sends in parts, as far as it came, and the
+/// host's charge for its bytes (FIX 5111).
 pub(crate) struct CountersignStage {
     pub(crate) image: [u8; 32],
     pub(crate) total: u64,
     pub(crate) bytes: Vec<u8>,
+    /// When its last part came.
+    pub(crate) touched: std::time::Instant,
+    /// The host's charge for the room `bytes` holds; it goes with the stage.
+    pub(crate) charge: Box<dyn crate::authority::CountersignStageCharge>,
 }
 
 /// The vault handle's world-key state. Never persisted and never shared
@@ -58,7 +63,8 @@ pub(crate) struct WorldKeySession {
     /// The checkpoint root signers the host holds here (FIX 4882).
     pub(crate) checkpoint_roots: Mutex<Vec<Arc<dyn crate::authority::CheckpointRootSigner>>>,
     /// The image each linked machine is sending this home in parts to
-    /// countersign (FIX 4882), until it is whole.
+    /// countersign (FIX 4882), until it is whole, it idles out or its socket
+    /// closes (FIX 5111).
     pub(crate) checkpoint_countersign: Mutex<BTreeMap<EntityId, CountersignStage>>,
     /// Each world's question, at its latest crossing.
     frontier: Mutex<BTreeMap<EntityId, WorldKeyFrontierCheck>>,

@@ -48,7 +48,9 @@ mod checkpoint_image;
 mod checkpoint_policy;
 mod checkpoint_policy_choice;
 mod checkpoint_root_attest;
+mod checkpoint_root_delivery;
 mod checkpoint_root_intake;
+mod checkpoint_root_stage;
 mod checkpoint_root_status;
 mod claim_write;
 mod conversation_training;
@@ -193,9 +195,11 @@ pub use checkpoint_root_attest::{
     AUTHORITY_CHECKPOINT_COUNTERSIGN_PART_MAX, CheckpointRootSigner, ROOT_CHECKPOINT_AUTHORITY,
     ROOT_CHECKPOINT_PICKUP, RootCheckpointAttest, RootCheckpointAuthority, RootCheckpointPickup,
 };
+pub use checkpoint_root_delivery::{RootAttestationDelivery, RootAttestationDeliveryState};
 pub use checkpoint_root_intake::{
     CheckpointAttestationIntake, ROOT_CHECKPOINT_RETRY, RootCheckpointRetry,
 };
+pub use checkpoint_root_stage::{CountersignStageCharge, CountersignStaged};
 pub use checkpoint_root_status::{
     AuthorityCheckpointRootState, AuthorityCheckpointRoots, CheckpointRootDelivery,
     ROOT_CHECKPOINT_MISSING_SIGNER, ROOT_CHECKPOINT_POLICY_CHANGE, RootCheckpointMissingSigner,
