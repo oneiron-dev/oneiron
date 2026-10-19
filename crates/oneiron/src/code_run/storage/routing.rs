@@ -302,8 +302,9 @@ impl SessionBinding<'_> {
             return Ok(());
         };
         self.answered(|| {
+            let dir = self.session.body_dir(self.route.target())?;
             if let Some(held) = self.session.side_table_get(&BODY_KEYS, key.digest())?
-                && key.keeps(&held)?
+                && key.keeps(&held, &dir)?
             {
                 return Ok(());
             }

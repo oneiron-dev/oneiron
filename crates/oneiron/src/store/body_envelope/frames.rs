@@ -217,7 +217,7 @@ pub(super) struct Layout {
 
 impl Layout {
     fn new(overhead: u64, len: u64) -> Result<Self> {
-        if overhead == 0 || overhead > MAX_OVERHEAD {
+        if !(1..=MAX_OVERHEAD).contains(&overhead) {
             return Err(corrupt());
         }
         Ok(Self {

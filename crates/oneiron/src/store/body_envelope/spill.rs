@@ -35,14 +35,19 @@ impl StagedBodyKey {
     }
 
     /// Whether `held`, the key row a route already holds for this digest,
-    /// is wrapped for this key's scope: then it stays, and its file serves
+    /// is a committed pair in `dir`, where this key's file is: wrapped for
+    /// this key's scope, its file there. Then it stays, and its file serves
     /// the body.
     ///
     /// # Errors
     ///
-    /// A row that does not parse.
-    pub(crate) fn keeps(&self, held: &BodyKeyRow) -> Result<bool> {
-        held.wrapped_for(self.scope)
+    /// A row that does not parse, and filesystem errors.
+    pub(crate) fn keeps(&self, held: &BodyKeyRow, dir: &BodyDir) -> Result<bool> {
+        Ok(dir
+            .sealed
+            .as_ref()
+            .is_some_and(|sealed| sealed.scope == self.scope)
+            && dir.holds_pair(&self.digest, Some(held))?)
     }
 
     /// Writes `index`, the body's line index, sealed beside its file in
@@ -78,7 +83,10 @@ pub(crate) struct BodySpill {
 
 enum Out {
     Plain(File),
-    Sealed { writer: FrameWriter, dir: DirSeal },
+    Sealed {
+        writer: Box<FrameWriter>,
+        dir: DirSeal,
+    },
 }
 
 impl BodySpill {
@@ -99,7 +107,7 @@ impl BodySpill {
         let out = match sealed {
             None => Out::Plain(file),
             Some((dir, key)) => Out::Sealed {
-                writer: FrameWriter::new(file, key, Domain::Body),
+                writer: Box::new(FrameWriter::new(file, key, Domain::Body)),
                 dir,
             },
         };
@@ -358,7 +366,7 @@ impl BodyDir {
                     let rtxn = store.env.read_txn()?;
                     body_key_row_in_txn(store, &rtxn, digest)?
                 };
-                if row.is_some() && self.open_reader(digest, len, row.as_ref())?.is_some() {
+                if self.holds_pair(digest, row.as_ref())? {
                     return Ok(());
                 }
                 self.import_sealed(digest, len, file, key, true)
@@ -385,7 +393,7 @@ pub(crate) fn keep_promoted_body_key_in_txn(
 ) -> Result<bool> {
     let dir = store.body_dir()?;
     let mut row = body_key_row_in_txn(store, txn, digest)?;
-    if row.is_none()
+    if !dir.holds_pair(digest, row.as_ref())?
         && let Some(sealed) = &dir.sealed
         && let Some(held) = body_key_row_in_txn(room, txn, digest)?
     {

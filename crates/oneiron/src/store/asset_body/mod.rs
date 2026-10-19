@@ -356,9 +356,12 @@ pub(crate) fn file_put_body_in_txn(
     let dir = store.body_dir()?;
     if dir.sealed.is_none() {
         dir.publish_asset_body(&facts, data)?;
-    } else if super::body_key_row_in_txn(store, txn, &facts.blake3)?.is_none() {
+    } else if !dir.holds_pair(
+        &facts.blake3,
+        super::body_key_row_in_txn(store, txn, &facts.blake3)?.as_ref(),
+    )? {
         let staged = dir.publish_sealed_body(&facts.blake3, data)?;
-        super::bind_body_key_in_txn(store, txn, &staged)?;
+        super::bind_body_key_in_txn(store, txn, &dir, &staged)?;
     }
     let manifest = AssetFileManifest {
         facts,

@@ -233,6 +233,22 @@ impl BodyDir {
         BodyFile::sealed(file, key, digest, len).map(Some)
     }
 
+    /// Whether `row`, the key row of the body `digest`, is a committed pair
+    /// in this sealed directory: wrapped for its scope, its file here.
+    ///
+    /// # Errors
+    ///
+    /// A row that does not parse, and filesystem errors.
+    pub(crate) fn holds_pair(&self, digest: &[u8; 32], row: Option<&BodyKeyRow>) -> Result<bool> {
+        let (Some(row), Some(sealed)) = (row, &self.sealed) else {
+            return Ok(false);
+        };
+        Ok(row.wrapped_for(sealed.scope)?
+            && self
+                .open_named(&sealed_body_file_name(digest, &row.instance))?
+                .is_some())
+    }
+
     /// The sparse line index of the body `digest`, `len` bytes long, as
     /// `row` names it: the sealed index of an envelope, or the plain one.
     /// `None` when there is none, or it does not read whole: it is derived.

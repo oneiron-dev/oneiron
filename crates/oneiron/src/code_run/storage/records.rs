@@ -301,7 +301,7 @@ impl Vault {
         RAW_OUTPUTS.put(&self.store, wtxn, &output.handle, &finished.body)?;
         // A sealed body file's key commits with the row naming it (FIX 5348).
         if let Some(key) = &finished.key {
-            crate::store::bind_body_key_in_txn(&self.store, wtxn, key)?;
+            crate::store::bind_body_key_in_txn(&self.store, wtxn, &self.store.body_dir()?, key)?;
         }
         if let Some(reason) = finished.secret {
             self.mark_code_run_output_secret_in_txn(wtxn, output, at, reason)?;

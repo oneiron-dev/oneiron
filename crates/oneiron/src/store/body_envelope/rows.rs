@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::frames::{FORMAT_VERSION, FileKey};
-use super::{BodySeal, DirSeal, KeyScope, StagedBodyKey};
+use super::{BodyDir, BodySeal, DirSeal, KeyScope, StagedBodyKey};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 
@@ -209,19 +209,23 @@ pub(crate) fn body_key_row_in_txn(
 }
 
 /// Commits `staged`'s key row in the transaction that writes the row or
-/// descriptor naming its body. A digest that already has a committed pair
-/// keeps it: the staged file is then an orphan the collector takes, and no
-/// committed file's key is replaced.
+/// descriptor naming its body, its file published in `dir`. A digest that
+/// already has a committed pair there keeps it: the staged file is then an
+/// orphan the collector takes, and no committed file's key is replaced. A
+/// key row whose file is gone is no pair, and the staged one takes its place.
 ///
 /// # Errors
 ///
-/// Storage errors.
+/// Storage and filesystem errors, and a row that does not parse.
 pub(crate) fn bind_body_key_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
+    dir: &BodyDir,
     staged: &StagedBodyKey,
 ) -> Result<()> {
-    if BODY_KEYS.contains(dbs, txn, &staged.digest)? {
+    if let Some(held) = BODY_KEYS.get(dbs, txn, &staged.digest)?
+        && staged.keeps(&held, dir)?
+    {
         return Ok(());
     }
     BODY_KEYS.put(dbs, txn, &staged.digest, &staged.row)

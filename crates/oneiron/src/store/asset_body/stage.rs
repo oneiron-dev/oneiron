@@ -329,7 +329,7 @@ impl crate::Vault {
             // A sealed file's key row commits with the row naming it; a
             // digest with a committed pair keeps it (FIX 5348).
             if let Some(key) = &staged.key {
-                crate::store::bind_body_key_in_txn(&self.store, txn, key)?;
+                crate::store::bind_body_key_in_txn(&self.store, txn, &self.store.body_dir()?, key)?;
             }
             let manifest = AssetFileManifest {
                 facts: staged.facts,
