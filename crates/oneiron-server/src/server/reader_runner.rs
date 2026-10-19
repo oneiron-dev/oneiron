@@ -27,6 +27,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
 use std::time::Duration;
 
+use oneiron::agent_def::birth_under_inherited_list;
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
@@ -121,6 +122,9 @@ impl ReaderSeats {
             hold_units: 0,
             window_tokens: window_tokens.unwrap_or(DEFAULT_READER_WINDOW_TOKENS),
             memory_bytes: self.child_memory_bytes,
+            // Any eligible model: an agent's run lends its own list
+            // (`run_bound`).
+            listed: Vec::new(),
         }
     }
 
@@ -554,7 +558,9 @@ impl Child {
     /// The seat a job's model calls are bound to, born under its own run as
     /// a run's is (`run_seat`): a manifest-backed vault refuses a seatless
     /// executor. A job in an off-record session takes none (the seat row is
-    /// the base vault's) and runs its configured model.
+    /// the base vault's) and runs its configured model. A read and a summary
+    /// alike are held to the list their spawning run froze, unless it admits
+    /// no eligible model (`birth_under_inherited_list`, FIX 4539).
     fn seat(
         &self,
         vault: &Vault,
@@ -567,21 +573,36 @@ impl Child {
         if session.is_some() {
             return Ok(None);
         }
-        run_seat(vault, self.provider.as_ref(), self.job.run, |facet| {
-            SeatTask {
-                kind: SeatKind::Child,
-                warm_scope: format!("reader-run:{}", self.job.run.to_hex()),
-                task: task.to_owned(),
-                purpose,
-                facet: facet.to_owned(),
-                required: Vec::new(),
-                min_context_tokens,
-                locality,
-                override_model: None,
-                override_effort: None,
-                listed: Vec::new(),
-            }
-        })
+        let inherited = &self.job.binding.listed;
+        let prior = if inherited.is_empty() {
+            None
+        } else {
+            vault
+                .model_seat_receipt(self.job.run)
+                .map_err(|error| error.to_string())?
+        };
+        birth_under_inherited_list(
+            self.job.run,
+            inherited,
+            prior.as_ref().map(|receipt| &receipt.model),
+            |listed| {
+                run_seat(vault, self.provider.as_ref(), self.job.run, |facet| {
+                    SeatTask {
+                        kind: SeatKind::Child,
+                        warm_scope: format!("reader-run:{}", self.job.run.to_hex()),
+                        task: task.to_owned(),
+                        purpose: purpose.clone(),
+                        facet: facet.to_owned(),
+                        required: Vec::new(),
+                        min_context_tokens,
+                        locality,
+                        override_model: None,
+                        override_effort: None,
+                        listed,
+                    }
+                })
+            },
+        )
     }
 
     /// The child's run: a fresh sandbox and a dispatcher bound to its job

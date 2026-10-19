@@ -3,7 +3,9 @@
 //! a Grant line naming a tighten of the world the change applies; otherwise a
 //! tighten waits as a proposal and a widen as an ask to the world's holders.
 //! A run of the owner himself, whose host bound his proof, changes them as
-//! his own say-so. An agent is never relabelled as the owner.
+//! his own say-so. An agent is never relabelled as the owner. A request the
+//! run opens carries the credential lineage its host admitted it under (FIX
+//! 4705), so no answer from that lineage settles it.
 
 use crate::EdgeActorClass;
 use crate::authority::{ActAuthority, ActSurface};
@@ -40,9 +42,13 @@ impl HostSelfDispatcher<'_> {
         };
         let (world, settings, seen) = input.parse()?;
         let outcome = match (self.actor.actor_class(), self.owner_proof) {
-            (EdgeActorClass::Agent, _) => {
-                vault.agent_world_privacy(&self.actor, Vec::new(), world, settings, seen)?
-            }
+            (EdgeActorClass::Agent, _) => vault.agent_world_privacy(
+                &self.actor,
+                self.opener_lineage.clone(),
+                world,
+                settings,
+                seen,
+            )?,
             (EdgeActorClass::Human, Some(owner))
                 if owner.actor_for_read(vault)? == self.actor.entity_ref() =>
             {

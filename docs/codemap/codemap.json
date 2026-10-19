@@ -535,8 +535,9 @@
      "path": "src/agent_def/models.rs",
      "purpose": "The owner's per-agent model list (FIX 4472): the models an agent may run on, each with the owner's own words…",
      "surface": {
+      "const": 1,
       "crate-vis": 7,
-      "fn": 4,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -2913,7 +2914,7 @@
      "path": "src/authority/left_notices.rs",
      "purpose": "A removed person's own notices of losing a shared vault (OF-158 client leave)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -12650,7 +12651,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 19,
-      "fn": 9,
+      "fn": 10,
       "re-export": 2,
       "struct": 1,
       "type": 1
@@ -18691,9 +18692,24 @@
      "purpose": "One-way authenticated courtesy deletion requests",
      "surface": {
       "const": 4,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 6,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CooperativeDeletionSuccession"
+     ],
+     "path": "src/deletion/coop_succession.rs",
+     "purpose": "Courtesy asks and answers across a former peer's host re-root (FIX 3014)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -18916,7 +18932,7 @@
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
       "crate-vis": 27,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -36991,6 +37007,7 @@
      "path": "src/origin/residence.rs",
      "purpose": "Explicit owner-controlled origin epochs",
      "surface": {
+      "const": 1,
       "crate-vis": 16,
       "enum": 2,
       "fn": 7,
@@ -50428,7 +50445,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FederationBurstDecision",
@@ -53870,7 +53887,7 @@
      "path": "src/task_verb/sdk_guest_revoke.rs",
      "purpose": "The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -60544,7 +60561,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61624,7 +61641,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3757,
+   "source_files": 3758,
    "test_files": 902
   },
   "oneiron-android": {
@@ -74138,7 +74155,7 @@
      "path": "src/api/cooperative_deletion.rs",
      "purpose": "The peer-facing courtesy deletion routes (OF-273)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -81613,7 +81630,7 @@
      "path": "src/owner/guest_revoke.rs",
      "purpose": "The courtesy deletes a guest revoke queues (OF-232, FIX 1634)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
