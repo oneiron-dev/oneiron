@@ -1040,6 +1040,21 @@
       "openapi": true
     },
     {
+      "name": "vault.budgets.reservations",
+      "description": "The owner reads a device-local runner budget counter and one page of the child reservations held against it, without creating or refilling it.",
+      "input": "crate::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest",
+      "output": "crate::agent_dispatch::budget_doors::RunnerBudgetReservationsView",
+      "call": "crate::agent_dispatch::budget_doors::runner_budget_reservations_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.reservations\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.budgets.settlements",
       "description": "The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced.",
       "input": "crate::agent_dispatch::budget_doors::RunSettlementsRequest",
@@ -3838,6 +3853,36 @@
       "openapi": true
     },
     {
+      "name": "vault.wire_health.thresholds.get",
+      "description": "The owner reads the serving host's per-verb and per-actor wire detection thresholds and their window; crossings ask a health question, never refuse for rate.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::WireThresholds",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.wire_health.thresholds.get\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.wire_health.thresholds.set",
+      "description": "The owner replaces the serving host's positive wire detection thresholds and window, receiving the previous and installed policy without adding a rate refusal.",
+      "input": "crate::task_verb::sdk::WireThresholds",
+      "output": "crate::task_verb::sdk::WireThresholdsReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.wire_health.thresholds.set\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.slim.policy",
       "description": "Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild.",
       "input": "crate::task_verb::sdk::EmptyRequest",
@@ -6469,6 +6514,66 @@
       "output": "crate::consent::lifecycle::ConsentActReceipt",
       "call": "crate::consent::lifecycle::revoke(memory.vault(), &memory.embedded_owner(\"vault.consent.revoke\")?, input)?",
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.bypass_grant_warning",
+      "description": "The owner previews the exact actor, classes, envelope and project or thread of a scoped bypass; this warning grants nothing.",
+      "input": "crate::consent::bypass_lifecycle::BypassGrantWarningRequest",
+      "output": "crate::consent::bypass_lifecycle::BypassGrantWarningView",
+      "call": "crate::consent::bypass_lifecycle::bypass_grant_warning(memory.vault(), &memory.embedded_owner(\"vault.consent.bypass_grant_warning\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.create_bypass_grant",
+      "description": "The owner explicitly acknowledges a scoped bypass warning and atomically creates one receipted standing bypass per class.",
+      "input": "crate::consent::bypass_lifecycle::CreateBypassGrantRequest",
+      "output": "Vec<crate::consent::lifecycle::ConsentActReceipt>",
+      "call": "crate::consent::bypass_lifecycle::create_bypass_grant(memory.vault(), &memory.embedded_owner(\"vault.consent.create_bypass_grant\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.active_bypass_grants",
+      "description": "The owner reads live scoped bypass states and their complete bounds, newest first; vault.consent.revoke ends each grant.",
+      "input": "crate::consent::bypass_lifecycle::ActiveBypassGrantsRequest",
+      "output": "Vec<crate::consent::bypass_lifecycle::BypassActiveState>",
+      "call": "crate::consent::bypass_lifecycle::active_bypass_grants(memory.vault(), &memory.embedded_owner(\"vault.consent.active_bypass_grants\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.consent.bypassed_effect_receipts",
+      "description": "The owner reads the existing Gate receipts for effects covered by one bypass grant, including after its revocation.",
+      "input": "crate::consent::bypass_lifecycle::BypassedEffectReceiptsRequest",
+      "output": "Vec<crate::consent::bypass_lifecycle::BypassedEffectReceipt>",
+      "call": "crate::consent::bypass_lifecycle::bypassed_effect_receipts(memory.vault(), &memory.embedded_owner(\"vault.consent.bypassed_effect_receipts\")?, input)?",
+      "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -9354,6 +9459,99 @@
       "scope": "Write",
       "admission": {},
       "section": false
+    },
+    {
+      "name": "vault.artifacts.propose_outline",
+      "description": "Proposes a closed typed deck outline as a brief NOTE for the person to keep or decline.",
+      "input": "crate::blob_artifact::deck_creation::DeckOutlineProposeRequest",
+      "output": "crate::blob_artifact::deck_creation::DeckOutlineView",
+      "call": "memory.artifacts_propose_outline(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.artifacts.outline",
+      "description": "Reads a typed deck outline, its current NOTE frontier, its keep and its freshness.",
+      "input": "crate::blob_artifact::deck_creation::DeckOutlineRefRequest",
+      "output": "crate::blob_artifact::deck_creation::DeckOutlineView",
+      "call": "memory.artifacts_outline(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "refs": [
+        "/outline_ref"
+      ]
+    },
+    {
+      "name": "vault.artifacts.keep_outline",
+      "description": "The owner keeps the exact outline frontier, freezing its version and content hash.",
+      "input": "crate::blob_artifact::deck_creation::DeckOutlineSettleRequest",
+      "output": "crate::edit_roundtrip::deck_create::KeptOutline",
+      "call": "memory.artifacts_keep_outline(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.artifacts.decline_outline",
+      "description": "The owner declines the exact outline frontier, clearing its keep and design directions.",
+      "input": "crate::blob_artifact::deck_creation::DeckOutlineSettleRequest",
+      "output": "crate::blob_artifact::deck_creation::DeckOutlineDeclined",
+      "call": "memory.artifacts_decline_outline(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.artifacts.design_deck",
+      "description": "Compiles one to three template directions from the exact fresh keep into validated plans or typed design decisions.",
+      "input": "crate::blob_artifact::deck_creation::DeckDesignRequest",
+      "output": "crate::blob_artifact::deck_creation::DeckDesignView",
+      "call": "memory.artifacts_design_deck(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "refs": [
+        "/outline_ref"
+      ]
+    },
+    {
+      "name": "vault.artifacts.create_deck",
+      "description": "Emits one checked deck from a fresh kept outline and a planned template, retaining born-from and unverified fit.",
+      "input": "crate::blob_artifact::deck_creation::DeckEmissionRequest",
+      "output": "crate::blob_artifact::deck_creation::DeckEmissionOutcome",
+      "call": "memory.artifacts_create_deck(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "refs": [
+        "/outline_ref"
+      ]
     },
     {
       "name": "vault.artifacts.inspect_deck",
@@ -12661,6 +12859,70 @@
       }
     },
     {
+      "name": "vault.writes.critical_confirm.pending",
+      "description": "The owner reads a candidate's exact critical confirmation, with its nonce, effect digest, policy frontier and deadline.",
+      "input": "crate::memory::CriticalWriteConfirmPendingRequest",
+      "output": "Option<crate::memory::CriticalWriteConfirmPending>",
+      "call": "memory.critical_write_confirm_pending_as_owner(&memory.embedded_owner(\"vault.writes.critical_confirm.pending\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.writes.critical_confirm.clear",
+      "description": "The owner clears exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt.",
+      "input": "crate::memory::CriticalWriteConfirmRequest",
+      "output": "crate::memory::CriticalWriteConfirmSettlement",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.writes.critical_confirm.clear\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.writes.critical_confirm.decline",
+      "description": "The owner declines exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt.",
+      "input": "crate::memory::CriticalWriteConfirmRequest",
+      "output": "crate::memory::CriticalWriteConfirmSettlement",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.writes.critical_confirm.decline\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.writes.critical_confirm.receipt",
+      "description": "The owner reads a critical confirmation's existing signed authority receipt without settling or rewriting the claim.",
+      "input": "crate::memory::CriticalWriteConfirmReceiptRequest",
+      "output": "crate::memory::CriticalWriteConfirmReceipt",
+      "call": "memory.critical_write_confirm_receipt_as_owner(&memory.embedded_owner(\"vault.writes.critical_confirm.receipt\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.writes.pending",
       "description": "Gated writes parked for consent, newest first.",
       "uniffi": {
@@ -14068,6 +14330,36 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.home.get",
+      "description": "The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything.",
+      "input": "EmptyRequest",
+      "output": "crate::dreamer_runner::ConsolidationHomeView",
+      "call": "crate::dreamer_runner::consolidation_home_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.home.get\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.lineage",
+      "description": "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model.",
+      "input": "crate::dreamer_runner::ConsolidationLineageRequest",
+      "output": "Option<crate::dreamer_runner::ConsolidationLineageView>",
+      "call": "crate::dreamer_runner::consolidation_lineage_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.lineage\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true

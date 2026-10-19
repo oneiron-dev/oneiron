@@ -165,7 +165,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             ["entities", entity, "body"] => {
                 let id = parse_entity_id(entity)?;
                 let mount = self.options.mount;
-                Ok(self.file_row(id)?
+                Ok(self
+                    .file_row(id)?
                     .map(|row| {
                         row.and_then(|row| row.body).map(|bytes| GraphFsFile {
                             path: normalized,

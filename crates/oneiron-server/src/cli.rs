@@ -7,8 +7,8 @@ use crate::config::ServeArgs;
 
 mod deployment_args;
 pub use deployment_args::HostRelayArgs;
-mod hook_args;
 mod graph_fs_args;
+mod hook_args;
 pub use graph_fs_args::GraphFsCommand;
 mod learning_setting_args;
 mod owner_args;

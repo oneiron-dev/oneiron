@@ -405,7 +405,10 @@ pub(super) fn register_live_paired_mcp(
     if !credential.starts_with("v2.slip.") || !uncaveated {
         return false;
     }
-    let Some(slip) = auth.verified_slip().filter(|_| auth.credential_is_live(server.vault())) else {
+    let Some(slip) = auth
+        .verified_slip()
+        .filter(|_| auth.credential_is_live(server.vault()))
+    else {
         return false;
     };
     // Redeem pairs only a holder that exists; neither does this.

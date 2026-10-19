@@ -30,16 +30,36 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     let credential = mcp_connector_credential(headers)?;
     let proof_headers = mcp_proof_headers(headers)?;
     let auth = crate::auth::CoreAuth::from_headers(
-        &proof_headers, &server.config, server.vault().as_ref(),
-    ).map_err(|_| mcp_proof_error())?.at(locality);
+        &proof_headers,
+        &server.config,
+        server.vault().as_ref(),
+    )
+    .map_err(|_| mcp_proof_error())?
+    .at(locality);
     let session = crate::api::write_facet::request_session(headers).map_err(|()| {
         McpGatewayError::new(-32602, "tool_args_invalid", "invalid session header")
     })?;
-    let room_turn = headers.get(crate::api::facade::ROOM_TURN_HEADER).map(|room| {
-        room.to_str().ok().and_then(|room| oneiron::EntityId::from_hex(room.trim()).ok())
-            .ok_or_else(|| McpGatewayError::new(-32602, "tool_args_invalid", "invalid room turn header"))
-    }).transpose()?;
-    registered_actor(server, &credential, auth, mode, request_id, session, room_turn).await
+    let room_turn = headers
+        .get(crate::api::facade::ROOM_TURN_HEADER)
+        .map(|room| {
+            room.to_str()
+                .ok()
+                .and_then(|room| oneiron::EntityId::from_hex(room.trim()).ok())
+                .ok_or_else(|| {
+                    McpGatewayError::new(-32602, "tool_args_invalid", "invalid room turn header")
+                })
+        })
+        .transpose()?;
+    registered_actor(
+        server,
+        &credential,
+        auth,
+        mode,
+        request_id,
+        session,
+        room_turn,
+    )
+    .await
 }
 
 /// The same connector resolution after the facade or MCP door verified the
@@ -49,10 +69,21 @@ pub(crate) async fn resolve_mcp_actor_for_auth(
     auth: &crate::auth::CoreAuth,
     session: Option<oneiron::EntityId>,
 ) -> Result<McpCallContext, McpGatewayError> {
-    let credential = auth.invocation_slip().ok_or_else(mcp_proof_error)?
-        .credential_token().map_err(|_| mcp_proof_error())?;
-    registered_actor(server, &credential, auth.clone(), McpSurfaceMode::Primary,
-        "memory-proxy", session, None).await
+    let credential = auth
+        .invocation_slip()
+        .ok_or_else(mcp_proof_error)?
+        .credential_token()
+        .map_err(|_| mcp_proof_error())?;
+    registered_actor(
+        server,
+        &credential,
+        auth.clone(),
+        McpSurfaceMode::Primary,
+        "memory-proxy",
+        session,
+        None,
+    )
+    .await
 }
 
 async fn registered_actor(
@@ -102,11 +133,20 @@ async fn registered_actor(
     let session_ref = session.map(|session| session.to_hex());
     actor.auth = Some(auth.in_off_record_session(session_ref.as_deref()));
     let landing = crate::api::write_facet::landing_facet(
-        &server.vault, session, &actor.scope.facets, actor.scope.facet_ref,
+        &server.vault,
+        session,
+        &actor.scope.facets,
+        actor.scope.facet_ref,
     );
     Ok(McpCallContext {
-        actor, mode, request_id: request_id.to_owned(), landing,
-        invocation: None, off_record_session: session_ref, room_turn, drain: None,
+        actor,
+        mode,
+        request_id: request_id.to_owned(),
+        landing,
+        invocation: None,
+        off_record_session: session_ref,
+        room_turn,
+        drain: None,
     })
 }
 

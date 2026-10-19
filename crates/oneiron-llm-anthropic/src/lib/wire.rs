@@ -13,6 +13,8 @@ use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use super::backend::validate_capabilities;
 use super::{AnthropicMessagesConfig, AnthropicMessagesHttpRequest, AnthropicProviderOptions};
 
+mod cache;
+
 pub fn build_anthropic_messages_request(
     config: &AnthropicMessagesConfig,
     request: &LlmRequest,
@@ -132,6 +134,8 @@ pub fn build_anthropic_messages_request(
             }
         }
     }
+    // FIX 4465 C: the host's prompt-cache boundaries, when it names any.
+    cache::mark(request, &mut body)?;
 
     Ok(AnthropicMessagesHttpRequest {
         method: "POST",

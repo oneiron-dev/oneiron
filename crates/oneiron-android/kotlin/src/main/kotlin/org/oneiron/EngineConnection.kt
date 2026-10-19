@@ -11,13 +11,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * A [send] and a [receive] may block two app threads at once, and [close] from a third returns
  * the blocked [receive]. Every method blocks: call it from an app thread, never from an [AppHost]
  * callback. It keeps the engine's native half alive until closed; once the engine stops,
- * [receive] returns an empty array and [send] throws.
+ * [receive] returns an empty array and [send] throws [EngineException]. One from
+ * [EmbeddedEngine.openArtifactConnection] rides the artifact app's own origin (`/a/`).
  */
-class EngineConnection internal constructor(engine: EmbeddedEngine) : AutoCloseable {
+class EngineConnection internal constructor(engine: EmbeddedEngine, artifacts: Boolean) : AutoCloseable {
     private var nativeHandle: Long = 0
     private val closed = AtomicBoolean(false)
 
-    init { openNative(engine) }
+    init { openNative(engine, artifacts) }
 
     /** Writes all of [bytes] to the server; throws once closed or once the server ended it. */
     fun send(bytes: ByteArray) {
@@ -36,7 +37,7 @@ class EngineConnection internal constructor(engine: EmbeddedEngine) : AutoClosea
         if (closed.compareAndSet(false, true)) closeNative()
     }
 
-    private external fun openNative(engine: EmbeddedEngine)
+    private external fun openNative(engine: EmbeddedEngine, artifacts: Boolean)
     private external fun sendNative(bytes: ByteArray)
     private external fun receiveNative(): ByteArray
     private external fun closeNative()

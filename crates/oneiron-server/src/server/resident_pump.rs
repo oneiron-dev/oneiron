@@ -75,7 +75,7 @@ use oneiron::{DreamerRunnerStore, EntityId, LlmError, RetryableLlmError, Vault, 
 use tokio::sync::broadcast;
 
 use super::run_host_door::RunHostDoor;
-use super::{ReaderSeats, SyncServer};
+use super::{HousekeepingAdmission, ReaderSeats, SyncServer, admit_every_pass};
 use crate::ai_host::payer_funding::{
     PayerFault, park_for_payer, resume_payer_parks, scope_funding,
 };
@@ -186,14 +186,26 @@ impl SyncServer {
     /// Starts the pump, or returns `None` when no engine-native code host
     /// serves this vault.
     pub(crate) fn spawn_resident_pump(self: &Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
+        self.spawn_resident_pump_admitted(admit_every_pass())
+    }
+
+    /// Starts the pump on a host with a write freeze: each pass and each run
+    /// is admitted through `admit`, and holds that admission on its blocking
+    /// thread until its last write, so an aborted pump's work still counts
+    /// until its writes do. A run is admitted after its permit wait and
+    /// before its claim. Nothing is admitted while the pump waits.
+    pub(crate) fn spawn_resident_pump_admitted(
+        self: &Arc<Self>,
+        admit: HousekeepingAdmission,
+    ) -> Option<tokio::task::JoinHandle<()>> {
         self.code_execution_host()?.engine_native()?;
         let server = Arc::clone(self);
         Some(tokio::spawn(async move {
-            server.pump_residents_forever().await
+            server.pump_residents_forever(admit).await
         }))
     }
 
-    async fn pump_residents_forever(self: Arc<Self>) {
+    async fn pump_residents_forever(self: Arc<Self>, admit: HousekeepingAdmission) {
         // Subscribed before the first pass, so a commit between that pass
         // and the first wait still wakes the loop.
         let mut wake = AttemptQueue::new(self.vault()).subscribe();
@@ -201,13 +213,22 @@ impl SyncServer {
         let running: Arc<Mutex<HashSet<AttemptId>>> = Arc::default();
         let mut failing: BTreeMap<String, String> = BTreeMap::new();
         loop {
+            // A refused pass (a vault frozen for reap) wakes and resumes
+            // nothing, and asks again.
+            let Some(admission) = admit() else {
+                tokio::time::sleep(PASS_SPACING).await;
+                continue;
+            };
             let server = Arc::clone(&self);
-            let pass = tokio::task::spawn_blocking(move || server.resident_pass(unix_now()))
-                .await
-                .unwrap_or_else(|error| Pass {
-                    ready: Vec::new(),
-                    faults: BTreeMap::from([("pass".to_owned(), error.to_string())]),
-                });
+            let pass = tokio::task::spawn_blocking(move || {
+                let _admission = admission;
+                server.resident_pass(unix_now())
+            })
+            .await
+            .unwrap_or_else(|error| Pass {
+                ready: Vec::new(),
+                faults: BTreeMap::from([("pass".to_owned(), error.to_string())]),
+            });
             for (what, reason) in &pass.faults {
                 if failing.get(what) != Some(reason) {
                     tracing::warn!(%what, %reason, "the resident pump cannot serve this; it retries");
@@ -226,8 +247,9 @@ impl SyncServer {
                 }
                 let server = Arc::clone(&self);
                 let running = Arc::clone(&running);
+                let admit = Arc::clone(&admit);
                 tokio::spawn(async move {
-                    if !server.run_agent(id, of).await {
+                    if !server.run_agent(id, of, &admit).await {
                         held(&running).remove(&id);
                     }
                 });
@@ -313,7 +335,12 @@ impl SyncServer {
     /// Waits its agent's turn for a permit, then claims, runs and settles
     /// one run on its own thread. Returns whether later passes must leave the
     /// run alone: a claim that failed fails again on every pass.
-    async fn run_agent(self: Arc<Self>, id: AttemptId, of: RunOf) -> bool {
+    async fn run_agent(
+        self: Arc<Self>,
+        id: AttemptId,
+        of: RunOf,
+        admit: &HousekeepingAdmission,
+    ) -> bool {
         let key = of.key();
         let permit = loop {
             let wait = match self
@@ -329,16 +356,25 @@ impl SyncServer {
                 break permit;
             }
         };
+        // Admitted with its permit in hand and before its claim. A refused
+        // run (a vault frozen for reap) stays unclaimed, and a later pass
+        // reads it again.
+        let Some(admission) = admit() else {
+            return false;
+        };
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let server = Arc::clone(&self);
         // The run's host door runs its rows on this runtime.
         let runtime = tokio::runtime::Handle::current();
         // The engine REPL driver's future is not `Send`: each run drives it
         // on its own thread with its own reactor, as `execute_code` does.
+        // The admission goes with it, held through its claim, its run and
+        // its settlement.
         let spawned = std::thread::Builder::new()
             .name("oneiron-agent-run".to_owned())
             .spawn(move || {
                 let leave = server.run_agent_blocking(id, of, &key, runtime);
+                drop(admission);
                 drop(permit);
                 let _ = sender.send(leave);
             });
