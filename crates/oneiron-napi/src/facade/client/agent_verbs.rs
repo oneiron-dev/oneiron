@@ -1591,6 +1591,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skills_bootstrap(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.bootstrap", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skill_hubs_default_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skill_hubs.default.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_restoreDefaults(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.restoreDefaults", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skill_hubs_put(
         &self,
         input: serde_json::Value,
@@ -4291,6 +4318,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_disclosure_ceiling_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.ceiling.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_disclosure_ceiling_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.ceiling.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_disclosure_ceiling_clear(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.ceiling.clear", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_disclosure_reveals(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.reveals", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_disclosure_reveals_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.disclosure.reveals.answer", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn reveal(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("reveal", js_json(input))
@@ -5566,6 +5638,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_artifacts_admit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.admit", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_critic_review(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.critic.review", js_json(input))
@@ -6548,6 +6629,12 @@ impl NativeClient {
     pub fn vault_graph_ask(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.graph.ask", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_graph_admit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.graph.admit", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -7861,6 +7948,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.consolidation.home.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_home_pick(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.home.pick", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

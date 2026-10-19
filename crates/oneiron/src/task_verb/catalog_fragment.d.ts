@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1040 code-mode rows (1016 host rows, 24 run rows), 3476 declarations.
-// Replies: 934 fully typed, 102 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1051 code-mode rows (1027 host rows, 24 run rows), 3493 declarations.
+// Replies: 943 fully typed, 104 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 106; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -835,21 +835,39 @@ declare namespace Sdk {
   type InboxPointerRow = { claim_id: string; duplicate_of_claim_id: string; duplicate_of_group_key: string };
   type InboxSubCluster = { key: string; member_claim_ids: string[] };
   type InboxGroup = { group_key: string; run_id: string; headline: string; created_at: number; members?: InboxGroupMember[]; held_member_count: number; pointer_rows?: InboxPointerRow[]; sub_clusters?: InboxSubCluster[]; new_claim_count: number; update_count: number; conflict_count: number };
+  type HubPin = { type: "semver"; value: string } | { type: "tag"; value: string } | { type: "commit"; value: string } | { type: "content_hash"; value: string } | { type: "none" };
+  type HubRef = { hub_id: EntityId; ref_string: string; pin: HubPin };
+  type SkillLibraryLifecycle = "candidate" | "active" | "stale" | "archived" | "superseded";
+  type SkillLibraryCall = { reference: string; arguments: unknown; returns: unknown };
+  type SkillLibraryDependency = { skill_id: string; min_version?: string | null };
+  type SkillSourceEvidence = { message_ref: EntityId; available: boolean };
+  type SkillStaleView = { reason: string; deleted_refs: EntityId[] };
+  type SkillForkLineage = { parent: EntityId; parent_version?: string | null; parent_document?: EntityId | null; parent_frontier?: number[] | null; parent_available: boolean; hub_sources: HubRef[] };
+  type SkillLibraryFile = { path: string; content: number[] };
+  type SkillCapabilityView = { bins: string[]; env: string[]; mcp: string[]; allowed_tools: string[] };
+  type SkillLibraryScan = { contentHash: string; provider: string; scannedAt: number; verdict: string; riskLevel: string; completeness: string; governance: string; scannedAtDeclared?: number | null };
+  type InstallLifecycle = "candidate" | "active" | "stale" | "quarantined" | "superseded";
+  type InstallHoldReason = "source_only" | "rules_hit" | "code_auto_install_off" | "qualification_required" | "no_fit" | "local_approval" | "unloadable_approval" | "stale" | "quarantined" | "superseded" | "advisories";
+  type InstallDisposition = "installed" | "already_installed" | "pending_permission" | { not_installed: InstallHoldReason };
+  type HubImportReceipt = { entity: string; content_hash: string; hub_id: string; ref_string: string; pin_type: string; pin_value?: string | null; publisher?: string | null; publisher_grant?: string | null; installed_as: InstallLifecycle; disposition: InstallDisposition; fit_analysis?: string | null; requested_permissions?: string[]; at: number };
+  type HubAdmissionReceipt = { receipt_id: string; candidate: string; content_hash: string; binding: string; consent_digest: string; publisher: string; publisher_grant: string; hub_id: string; hub_ref: string; evidence_skill: string; held_out_digest: string; held_out_count: number; before: number; after: number; accepted: boolean; judge_revision: string; displaced_by_revision?: string | null; at: number };
+  type HubSkillReceipts = { sources: HubRef[]; imports: HubImportReceipt[]; admission?: HubAdmissionReceipt | null };
+  type SkillLibraryView = { entity: EntityId; skill_id: string; desc: string; version: string; content_hash?: string | null; lifecycle: SkillLibraryLifecycle; approval: ClaimApprovalStatus; loadable: boolean; source: string; role: string; call?: SkillLibraryCall | null; governance_tier?: string | null; generated: boolean; human_authored: boolean; dependencies: SkillLibraryDependency[]; provenance: unknown; source_messages: SkillSourceEvidence[]; stale?: SkillStaleView | null; lineage: SkillForkLineage[]; files?: SkillLibraryFile[] | null; capabilities?: SkillCapabilityView | null; scans: SkillLibraryScan[]; receipts: HubSkillReceipts };
+  type BootstrapSkillView = { skill_id: string; content_hash: string; source: HubRef; resident?: SkillLibraryView | null };
   type SkillHubKind = "git" | "http-index" | "local-dir";
   type SkillHubTrustTier = "untrusted" | "community" | "verified";
   type HubSyncPolicy = "pinned-ref" | "pinned-commit" | "content-hash-frozen" | "mirror-of-hub";
+  type SkillHubRecord = { kind: SkillHubKind; endpoint: string; trust_tier: SkillHubTrustTier; sync_policy: HubSyncPolicy };
+  type TrackedHubRef = { hub_ref: HubRef; sync_policy: HubSyncPolicy; latest_seen?: string | null; latest_trusted?: string | null };
+  type DefaultSkillHub = { hub: EntityId; record: SkillHubRecord; skills: TrackedHubRef };
   type SkillHubPutRequest = { hub: EntityId; kind: SkillHubKind; endpoint: string; trust_tier: SkillHubTrustTier; sync_policy: HubSyncPolicy };
   type HubConsentOutcome = "approved" | "denied" | "revoked";
   type HubConsentReceipt = { outcome: HubConsentOutcome; decision: string; grant_ref?: string | null };
   type SkillHubConfigured = { hub: EntityId; consent: HubConsentReceipt };
   type SkillHubRequest = { hub: EntityId };
-  type SkillHubRecord = { kind: SkillHubKind; endpoint: string; trust_tier: SkillHubTrustTier; sync_policy: HubSyncPolicy };
   type SkillPublisherRequest = { hub: EntityId; identity: string };
   type SkillPublisherAdmission = { hub: EntityId; identity: string; grant_ref: string };
   type HubRefRequest = { hub: EntityId; ref_string: string };
-  type HubPin = { type: "semver"; value: string } | { type: "tag"; value: string } | { type: "commit"; value: string } | { type: "content_hash"; value: string } | { type: "none" };
-  type HubRef = { hub_id: EntityId; ref_string: string; pin: HubPin };
-  type TrackedHubRef = { hub_ref: HubRef; sync_policy: HubSyncPolicy; latest_seen?: string | null; latest_trusted?: string | null };
   type HubRefSetRequest = { hub_ref: HubRef; sync_policy: HubSyncPolicy };
   type HubImportRequest = { hub_ref: HubRef; publisher: string };
   type PackPutOutcome = "installed" | "candidate" | "blocked";
@@ -874,24 +892,8 @@ declare namespace Sdk {
   type HubSkillRequest = { entity: EntityId };
   type HubSkillSyncOutcome = "applied" | "proposed" | "refused_by_policy";
   type HubSkillSyncReceipt = { outcome: HubSkillSyncOutcome; proposal?: EntityId | null; approval?: ClaimApprovalStatus | null };
-  type InstallLifecycle = "candidate" | "active" | "stale" | "quarantined" | "superseded";
-  type InstallHoldReason = "source_only" | "rules_hit" | "code_auto_install_off" | "qualification_required" | "no_fit" | "local_approval" | "unloadable_approval" | "stale" | "quarantined" | "superseded" | "advisories";
-  type InstallDisposition = "installed" | "already_installed" | "pending_permission" | { not_installed: InstallHoldReason };
-  type HubImportReceipt = { entity: string; content_hash: string; hub_id: string; ref_string: string; pin_type: string; pin_value?: string | null; publisher?: string | null; publisher_grant?: string | null; installed_as: InstallLifecycle; disposition: InstallDisposition; fit_analysis?: string | null; requested_permissions?: string[]; at: number };
-  type HubAdmissionReceipt = { receipt_id: string; candidate: string; content_hash: string; binding: string; consent_digest: string; publisher: string; publisher_grant: string; hub_id: string; hub_ref: string; evidence_skill: string; held_out_digest: string; held_out_count: number; before: number; after: number; accepted: boolean; judge_revision: string; displaced_by_revision?: string | null; at: number };
-  type HubSkillReceipts = { sources: HubRef[]; imports: HubImportReceipt[]; admission?: HubAdmissionReceipt | null };
   type SkillConvertRequest = { message_refs: EntityId[]; hint?: string | null };
   type SkillConvertReceipt = { outcome: "created"; entity: EntityId } | { outcome: "dup_pointer"; entity: EntityId } | { outcome: "merge_proposed"; existing: EntityId; proposal: EntityId };
-  type SkillLibraryLifecycle = "candidate" | "active" | "stale" | "archived" | "superseded";
-  type SkillLibraryCall = { reference: string; arguments: unknown; returns: unknown };
-  type SkillLibraryDependency = { skill_id: string; min_version?: string | null };
-  type SkillSourceEvidence = { message_ref: EntityId; available: boolean };
-  type SkillStaleView = { reason: string; deleted_refs: EntityId[] };
-  type SkillForkLineage = { parent: EntityId; parent_version?: string | null; parent_document?: EntityId | null; parent_frontier?: number[] | null; parent_available: boolean; hub_sources: HubRef[] };
-  type SkillLibraryFile = { path: string; content: number[] };
-  type SkillCapabilityView = { bins: string[]; env: string[]; mcp: string[]; allowed_tools: string[] };
-  type SkillLibraryScan = { contentHash: string; provider: string; scannedAt: number; verdict: string; riskLevel: string; completeness: string; governance: string; scannedAtDeclared?: number | null };
-  type SkillLibraryView = { entity: EntityId; skill_id: string; desc: string; version: string; content_hash?: string | null; lifecycle: SkillLibraryLifecycle; approval: ClaimApprovalStatus; loadable: boolean; source: string; role: string; call?: SkillLibraryCall | null; governance_tier?: string | null; generated: boolean; human_authored: boolean; dependencies: SkillLibraryDependency[]; provenance: unknown; source_messages: SkillSourceEvidence[]; stale?: SkillStaleView | null; lineage: SkillForkLineage[]; files?: SkillLibraryFile[] | null; capabilities?: SkillCapabilityView | null; scans: SkillLibraryScan[]; receipts: HubSkillReceipts };
   type SkillLibraryListRequest = { after?: EntityId | null; limit: number };
   type SkillLibraryPage = { skills: SkillLibraryView[]; next_after?: EntityId | null };
   type SkillRestoreAdmission = { source: HubRef; publisher: string; evidence_skill: EntityId; effect_digest?: string | null };
@@ -1854,14 +1856,24 @@ declare namespace Sdk {
   type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[]; as_of?: number | null };
   type DisclosureOfferRequest = { contact: string; scope: Scope; purpose: string; channel: string; beneficiary: string; ask?: string | null; owner_ref: string; expires_at: number };
   type DisclosureOffered = { proposal_ref: string; owner_ref: string; created_at: number; expires_at: number };
+  type DisclosureDataClass = "names" | "dates" | "contact" | "ids" | "health";
+  type DisclosureCeilingRequest = { connection: string; class?: DisclosureDataClass | null };
+  type DisclosureBand = "public" | "private" | "sensitive" | "restricted";
+  type DisclosureCeilingView = { connection: string; class?: DisclosureDataClass | null; ceiling?: DisclosureBand | null };
+  type DisclosureCeilingSet = { connection: string; class?: DisclosureDataClass | null; ceiling: DisclosureBand };
+  type RevealAsksRequest = { pending?: boolean; limit?: number | null };
+  type RevealReceipt = { reveal: string; handle: string; class: string; why: string; connection?: string | null; provider?: string | null; project?: string | null; run?: string | null; answered_by?: string | null; decision?: string | null; lease?: string | null; asked_at: number; delivered_at?: number | null };
+  type RevealAskView = { receipt: RevealReceipt; state: string; expires_at: number; disclosure?: string | null; expected_digest?: string | null; grant_ref?: string | null };
+  type RevealOutcome = "once" | "standing" | "deny";
+  type RevealAnswerRequest = { reveal: string; expected_digest: string; outcome: RevealOutcome };
+  type RevealAnsweredView = { reveal: string; outcome: string; receipt_ref: string; grant_ref?: string | null };
   type RevealRequest = { handle: string; why: string };
   type RevealPending = { reveal: string };
   type RevealWaitRequest = { reveal: string };
   type RevealDecision = "pending" | "granted" | "denied" | "expired";
-  type RevealReceipt = { reveal: string; handle: string; class: string; why: string; connection?: string | null; provider?: string | null; project?: string | null; run?: string | null; answered_by?: string | null; decision?: string | null; lease?: string | null; asked_at: number; delivered_at?: number | null };
   type RevealWaitAnswer = { decision: RevealDecision; value?: string | null; value_base64?: string | null; receipt?: RevealReceipt | null };
   type RevealDescribeRequest = { handle: string };
-  type RevealProvenance = { record: string; place: string; kind: string; masked_at: number };
+  type RevealProvenance = { record: string; place: string; kind: string; masked_at?: number | null; learned_at?: number | null };
   type RevealHandleCard = { handle: string; label: string; class: string; status: string; band: string; provenance?: RevealProvenance | null; reveal: string; grant_ref?: string | null; refusal?: string | null };
   type SecretUseRequest = { handle: string; operation: string; arguments?: unknown };
   type SecretUseStatus = "answered" | "failed" | "withheld";
@@ -2248,15 +2260,19 @@ declare namespace Sdk {
   type ProposalSettleRequest = { artifact_ref: string; proposal_ref: string; brief_ref?: string | null; reason?: string | null };
   type ReleasedWait = { released: boolean };
   type SlideReviewUnitInput = { target: unknown; review_image?: string | null; review_image_ref?: string | null; renderer: string };
-  type SlideReviewSubmit = { artifact_ref: string; run_ref: string; units: SlideReviewUnitInput[]; question: unknown; author: unknown; labels: unknown; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null };
+  type DecisionClass = "retrieval" | "contradiction" | "triage" | "judgment" | "useful_upstream" | "preference" | "provenance";
+  type AnswerContract = { kind: "noul" } | { kind: "choice"; options: string[] } | { kind: "score"; min: number; max: number } | { kind: "box" } | { kind: "point" };
+  type DecisionQuestion = { id: string; version: number; text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
+  type SlideReviewSubmit = { artifact_ref: string; run_ref: string; units: SlideReviewUnitInput[]; question: DecisionQuestion; author: unknown; labels: unknown; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null };
   type SlideUnitRefused = { target: unknown; reason: string; offer?: unknown | null };
   type SlideReviewOutcome = { proposed?: PendingProposalView | null; abstained: unknown[]; refused: SlideUnitRefused[] };
   type FolderItemInput = { artifact_ref: string; row: number };
   type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; author: string; labels: unknown } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null };
-  type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: unknown; units: ArtifactAskUnits; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null };
+  type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: DecisionQuestion; units: ArtifactAskUnits; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null };
   type UnitAbstention = { unit: unknown; decision?: TypedDecision | null };
   type UnitRefusal = { unit: unknown; reason: string };
   type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[] };
+  type ArtifactAdmitSubmit = { ask: ArtifactAskSubmit; decisions: TypedDecision[] };
   type CriticBinding = { lens_id: string; lens_ref: string; actor_ref: string; actor_class: number };
   type CriticReviewSubmit = { target_ref: string; kind: string; session_ref: string; run_ref: string; type_node: string; type_tree_version: number; axis: string; auto_resolve_threshold: number; catalog: unknown; critics: CriticBinding[] };
   type CritiqueTriageScores = { accept: number; revise: number; discard: number };
@@ -2418,7 +2434,7 @@ declare namespace Sdk {
   type ProjectConversationRequest = { conversation_ref: string };
   type RosterActor = string;
   type ProjectCardState = "proposed" | { minted: { project: EntityId } } | "dismissed";
-  type ProjectCardRecord = { card: ProjectProposalCard; conversation: EntityId; detection: EntityId; drafted_by: RosterActor; state: ProjectCardState; at: number };
+  type ProjectCardRecord = { card: ProjectProposalCard; conversation: EntityId; detection: EntityId; drafted_by: RosterActor; state: ProjectCardState; at: number; history?: boolean };
   type ProjectCardRequest = { card_id: string };
   type ProjectCardDismissal = { card_id: string; dismissed: boolean };
   type ProjectCardConfirmRequest = { card_id: string; action_id: string; occurred_at: number };
@@ -2678,13 +2694,10 @@ declare namespace Sdk {
   type AiVideoJobRequest = { job: string };
   type AiVideoJob = { state: "queued" } | { state: "running"; progress?: number | null } | { state: "done"; answer: AiAnswer } | { state: "failed"; error: LlmError };
   type AiVideoCancelled = { job: string };
-  type AnswerContract = { kind: "noul" } | { kind: "choice"; options: string[] } | { kind: "score"; min: number; max: number } | { kind: "box" } | { kind: "point" };
   type AiVerdictReversibility = "reversible_read" | "outbound_effect";
   type AiVerdictRequest = { question: string; contract?: AnswerContract; evidence?: string[]; state?: unknown | null; ceiling?: DecisionRung | null; reversibility?: AiVerdictReversibility; deadline_ms?: number | null; routine?: boolean; image?: string | null; misses?: number; until_ms?: number | null };
   type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null };
   type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; presence?: TypedDecision | null; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null; evidence_cut_at_bytes?: number | null };
-  type DecisionClass = "retrieval" | "contradiction" | "triage" | "judgment" | "useful_upstream" | "preference" | "provenance";
-  type DecisionQuestion = { id: string; version: number; text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
   type GraphAskSelection = { entity_type: number; limit: number };
   type HostingPrivacyPosture = "managed" | "relay" | "self-host";
   type QuestionCriteria = { yes_if_all: string[]; no_if_any: string[]; not_a_reason_to_say_no: string[] };
@@ -2692,6 +2705,7 @@ declare namespace Sdk {
   type AnswerRecord = { claim: string; unit: string; decision: TypedDecision; frontier: number[]; source_kind: number; answered_at: number };
   type GraphAskDeclined = { unit: EntityId; decision: TypedDecision };
   type GraphAskOutcome = { state: "done"; answers: AnswerRecord[]; abstained: EntityId[]; declined: GraphAskDeclined[] } | { state: "failed"; failed_unit?: EntityId | null; code: string; message: string; answers: AnswerRecord[]; abstained: EntityId[] };
+  type GraphAdmitRequest = { question: DecisionQuestion; unit: EntityId; decision: TypedDecision };
   type DecisionDial = { first: DecisionRung; ceiling: DecisionRung; band: DecisionBand };
   type QuestionActivation = "one_off" | "standing";
   type RefreshPolicy = { on_arrival: boolean; every_seconds?: number | null };
@@ -3132,8 +3146,11 @@ declare namespace Sdk {
   type CheckpointStepView = { step: number; label: string; state_hash: string; created_at_ms: number };
   type CheckpointResumeView = { step: number; wait_ref: string; effect: string; output_handle: string; reply?: unknown | null };
   type CheckpointView = { run_ref: string; completed_steps: number; steps: CheckpointStepView[]; resumed: CheckpointResumeView[]; next_step?: number | null };
-  type ConsolidationHomeNode = { node_id: number; class: string; elected_at: number };
-  type ConsolidationHomeView = { home?: ConsolidationHomeNode | null; this_node?: number | null; candidates_available: boolean };
+  type ConsolidationHomeNode = { node_id: string; class: string; elected_at: number };
+  type ConsolidationHomePickHead = { act_ref: string; machine: EntityId; node_id?: string | null; at: number };
+  type ConsolidationHomeView = { home?: ConsolidationHomeNode | null; this_node?: string | null; candidates_available: boolean; pick?: string | null; revision: string; heads: ConsolidationHomePickHead[]; conflict: ConsolidationHomePickHead[] };
+  type ConsolidationHomePickRequest = { node_id?: string | null };
+  type ConsolidationHomePickReceipt = { pick?: string | null; act_ref: string; revision: string; heads: ConsolidationHomePickHead[]; conflict: ConsolidationHomePickHead[]; home?: ConsolidationHomeNode | null };
   type ConsolidationLineageRequest = { job_ref: string; from_step?: string | null; limit?: number | null };
   type ConsolidationTryView = { job_ref: string; kind: string; state: AttemptState; run_id?: string | null; parent_attempt?: string | null; retry_of?: string | null; folded_retries: number; attempt_count: number; lease_owner?: string | null; result_ref?: string | null; resume_point?: AttemptResumePoint | null; parked?: DreamerParkedAttemptView | null };
   type ConsolidationStepRef = { step_hash: string; claim_ref: EntityId };
@@ -3660,9 +3677,9 @@ declare function mount(input: Sdk.GraphFsMountRequest): Promise<Sdk.GraphFsMount
 declare function peek(input: Sdk.TaskAskHandle): Promise<Sdk.TaskAskPersonEvidence[] | StoredResult>;
 /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
 declare function report(input: Sdk.ReportRequest): Promise<Sdk.ReportReceipt | StoredResult>;
-/** Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
+/** Asks for a custody or PERSON handle's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
 declare const reveal: ((input: Sdk.RevealRequest) => Promise<Sdk.RevealPending | StoredResult>) & {
-  /** What a secret handle names, where it was found and what a reveal of it would do now; never the value. */
+  /** What a custody or PERSON handle names, where it was found and what a reveal of it would do now; never the value. */
   describe(input: Sdk.RevealDescribeRequest): Promise<Sdk.RevealHandleCard | StoredResult>;
   /** Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt. */
   wait(input: Sdk.RevealWaitRequest): Promise<Sdk.RevealWaitAnswer | StoredResult>;
@@ -3971,6 +3988,8 @@ declare const vault: Sdk.VaultHost & {
   /** Appends one authored delta to this actor's generation-bound stream through its existing write gate. */
   append_to_stream(input: Sdk.AppendToStreamRequest): Promise<null | StoredResult>;
   artifacts: {
+    /** Admits the caller's own provider measurements for one artifact ask's units in place of the host ladder's, validating each decision and its provider-bound paired readings before holding the answers as one proposal for Keep or Discard. */
+    admit(input: Sdk.ArtifactAdmitSubmit): Promise<Sdk.ArtifactAskOutcome | StoredResult>;
     anchors: {
       /** Pins an exact readable locator and quote in an artifact version; opening a thread makes the pin durable. */
       pin(input: Sdk.AnnotationPinRequest): Promise<Sdk.AnnotationAnchorView | StoredResult>;
@@ -4599,6 +4618,8 @@ declare const vault: Sdk.VaultHost & {
     home: {
       /** The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything. */
       get(input: Sdk.EmptyRequest): Promise<Sdk.ConsolidationHomeView | StoredResult>;
+      /** The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget. */
+      pick(input: Sdk.ConsolidationHomePickRequest): Promise<Sdk.ConsolidationHomePickReceipt | StoredResult>;
     };
     /** The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model. */
     lineage(input: Sdk.ConsolidationLineageRequest): Promise<Sdk.ConsolidationLineageView | null | StoredResult>;
@@ -4685,8 +4706,21 @@ declare const vault: Sdk.VaultHost & {
     list(input: Sdk.DiagnosticsListRequest): Promise<Sdk.ScopedReadResult<Sdk.DiagnosticEventView[]> | StoredResult>;
   };
   disclosure: {
+    ceiling: {
+      /** The owner clears one dial, restoring connection or actor-class inference. */
+      clear(input: Sdk.DisclosureCeilingRequest): Promise<Sdk.DisclosureCeilingView | StoredResult>;
+      /** Reads the owner registry dial for one model connection, optionally one data class. */
+      get(input: Sdk.DisclosureCeilingRequest): Promise<Sdk.DisclosureCeilingView | StoredResult>;
+      /** The owner sets one connection or class disclosure ceiling; no read authority changes. */
+      set(input: Sdk.DisclosureCeilingSet): Promise<Sdk.DisclosureCeilingView | StoredResult>;
+    };
     /** An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses. */
     offer(input: Sdk.DisclosureOfferRequest): Promise<Sdk.DisclosureOffered | StoredResult>;
+    /** The owner reads model-disclosure asks and receipts, including PERSON handles, without values. */
+    reveals: ((input: Sdk.RevealAsksRequest) => Promise<Sdk.RevealAskView[] | StoredResult>) & {
+      /** The owner approves once, approves standing, or denies the exact frozen reveal ask. */
+      answer(input: Sdk.RevealAnswerRequest): Promise<Sdk.RevealAnsweredView | StoredResult>;
+    };
   };
   edges: {
     put(input: Sdk.MemoryEdgeInput): Promise<Sdk.MemoryEdgeOutput | StoredResult>;
@@ -4882,6 +4916,8 @@ declare const vault: Sdk.VaultHost & {
   /** Reads one entity as a typed view, or none when absent or withheld; the receipt says which. */
   get(input: Sdk.EntityRequest): Promise<Sdk.ScopedReadResult<Sdk.EntityView | null> | StoredResult>;
   graph: {
+    /** Admits the caller's own provider measurement for one graph unit in place of the host ladder's, validating the whole decision and its provider-bound paired readings before landing it as a proposed claim private to the caller. */
+    admit(input: Sdk.GraphAdmitRequest): Promise<Sdk.GraphAskOutcome | StoredResult>;
     ask(input: Sdk.GraphAskRequest): Promise<Sdk.GraphAskOutcome | StoredResult>;
   };
   guests: {
@@ -5747,6 +5783,10 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   skill_hubs: {
+    default: {
+      /** Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.DefaultSkillHub | StoredResult>;
+    };
     /** Reads one configured hub as the owner. */
     get(input: Sdk.SkillHubRequest): Promise<Sdk.SkillHubRecord | StoredResult>;
     publishers: {
@@ -5787,6 +5827,8 @@ declare const vault: Sdk.VaultHost & {
       /** The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer. */
       settle(input: Sdk.ProposalDeltaSettleRequest): Promise<Sdk.ProposalDeltaSettlement | StoredResult>;
     };
+    /** Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills. */
+    bootstrap(input: Sdk.EmptyRequest): Promise<Sdk.BootstrapSkillView[] | StoredResult>;
     code_auto_install: {
       /** The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification. */
       set(input: Sdk.SkillCodeAutoInstallRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;
@@ -5854,6 +5896,8 @@ declare const vault: Sdk.VaultHost & {
     receipts(input: Sdk.HubSkillRequest): Promise<Sdk.HubSkillReceipts | StoredResult>;
     /** The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring. */
     restore(input: Sdk.SkillLibraryRestoreRequest): Promise<Sdk.SkillLibraryRestoreReceipt | StoredResult>;
+    /** The owner explicitly re-imports missing or retired bootstrap and pinned first-hub defaults as fresh candidates, leaving unchanged defaults and local forks alone. */
+    restoreDefaults(input: Sdk.EmptyRequest): Promise<Sdk.HubImportReceipt[] | StoredResult>;
     rules: {
       /** The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose. */
       set(input: Sdk.SkillHashRuleRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;

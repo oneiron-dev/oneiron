@@ -28,6 +28,7 @@ mod actor_erase;
 mod agent;
 mod file;
 mod owner;
+mod person;
 
 use std::fmt;
 
@@ -175,7 +176,7 @@ pub struct SecretRevealReceipt {
     /// The handle the reveal named, such as `sc12`.
     pub handle: String,
     /// The secret's custody class.
-    pub class: CustodyClass,
+    pub class: String,
     /// The agent's why, or the owner's reason.
     pub why: String,
     /// `agent:<hex>` or `owner:<hex>`.
@@ -349,6 +350,7 @@ pub(crate) struct RevealAsker {
     provider: Option<String>,
     project: Option<EntityId>,
     run: Option<String>,
+    reader: Option<crate::claim::ScopedReadActorKey>,
 }
 
 impl RevealAsker {
@@ -358,7 +360,13 @@ impl RevealAsker {
             provider: None,
             project,
             run,
+            reader: None,
         }
+    }
+
+    pub(crate) fn with_reader(mut self, reader: crate::claim::ScopedReadActorKey) -> Self {
+        self.reader = Some(reader);
+        self
     }
 
     /// This asker with the model provider its host named, if any.
@@ -460,6 +468,7 @@ struct RevealRow {
     connection: Option<String>,
     provider: Option<String>,
     secret: EntityId,
+    person: Option<person::PersonRevealTarget>,
     handle: String,
     /// The custody class, as [`CustodyClass::as_str`] spells it.
     class: String,
@@ -512,7 +521,10 @@ impl RevealRow {
             .connection
             .as_deref()
             .ok_or(Error::CorruptedIndex("secret reveal connection"))?;
-        reveal_bound(connection, self.class()?, self.project.as_ref())
+        match &self.person {
+            Some(_) => disclosure_bound(connection, "names", self.project.as_ref()),
+            None => reveal_bound(connection, self.class()?, self.project.as_ref()),
+        }
     }
 
     /// What the owner's answer to this reveal authorizes: every fact the ask
@@ -552,6 +564,10 @@ impl RevealRow {
         for field in fields {
             part(field);
         }
+        if let Some(person) = &self.person {
+            part(person.claim.as_bytes());
+            part(&person.digest);
+        }
         // A file's read binds the file, its bytes and each key it opens.
         if let Some(file) = &self.file {
             part(file.artifact.as_bytes());
@@ -587,7 +603,7 @@ impl RevealRow {
         Ok(SecretRevealReceipt {
             reveal,
             handle: self.handle.clone(),
-            class: self.class()?,
+            class: self.class.clone(),
             why: self.why.clone(),
             reader: format!(
                 "{}:{}",
@@ -638,9 +654,18 @@ pub(super) fn reveal_bound(
     class: CustodyClass,
     project: Option<&EntityId>,
 ) -> Result<GrantBound> {
+    disclosure_bound(connection, &reveal_class(class), project)
+}
+
+/// Shared class × connection × project bound for custody and PERSON claims.
+fn disclosure_bound(
+    connection: &str,
+    class: &str,
+    project: Option<&EntityId>,
+) -> Result<GrantBound> {
     GrantBound::disclosure(
         AudienceBound::singleton(connection)?,
-        DisclosureClass::new(reveal_class(class))?,
+        DisclosureClass::new(class)?,
         DisclosureEnvelope::new([project_selector(project)])?,
     )
 }
@@ -737,6 +762,36 @@ pub(super) fn resolve_handle_in_txn(
     handle: &str,
 ) -> Result<(String, EntityId)> {
     let (short, hash) = parse_secret_handle(handle)?;
+    resolve_parsed_handle_in_txn(store, txn, short, hash)
+}
+
+/// Typed public handle lookup shared by custody and PERSON reveals.
+fn resolve_typed_handle_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    handle: &str,
+    entity_type: u8,
+) -> Result<(String, EntityId)> {
+    let handle = handle.trim();
+    let (short, hash) = if handle.contains(':') {
+        let (short, hash) = crate::entity_id::parse_short_ref_syntax(handle)?;
+        (short, Some(hash))
+    } else {
+        (handle, None)
+    };
+    let parsed = crate::entity_id::parse_presentation_id(short)?;
+    if parsed.prefix != crate::registry::short_id_prefix(entity_type)? {
+        return Err(Error::EntityNotFound);
+    }
+    resolve_parsed_handle_in_txn(store, txn, short, hash)
+}
+
+fn resolve_parsed_handle_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    short: &str,
+    hash: Option<u8>,
+) -> Result<(String, EntityId)> {
     // A forward key is the short id and one content-hash byte; a bare handle
     // names whichever hash the record holds now.
     let mut found = None;

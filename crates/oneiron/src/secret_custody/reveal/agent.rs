@@ -47,11 +47,17 @@ impl Vault {
         )?;
         let reveal = self.store.clock.entity_id()?;
         self.with_write_txn_grouped(|txn| {
-            let (handle, secret) = resolve_handle_in_txn(&self.store, txn, handle)?;
-            let rec = read_secret_custody_admission_in_txn(&self.store, txn, &secret)?
-                .ok_or_else(|| unknown(&handle))?;
-            let floor = SecretCustodyFloor::resolve(&self.store, txn)?;
-            crate::secret_lease::reveal_tier_admission(&rec, &floor)?;
+            let (handle, secret, class, person) = if handle.trim().starts_with("pr") {
+                let (handle, person, target) = super::person::resolve_person_in(self, txn, asker, handle)?;
+                (handle, person, "names".to_owned(), Some(target))
+            } else {
+                let (handle, secret) = resolve_handle_in_txn(&self.store, txn, handle)?;
+                let rec = read_secret_custody_admission_in_txn(&self.store, txn, &secret)?
+                    .ok_or_else(|| unknown(&handle))?;
+                let floor = SecretCustodyFloor::resolve(&self.store, txn)?;
+                crate::secret_lease::reveal_tier_admission(&rec, &floor)?;
+                (handle, secret, rec.class.as_str().to_owned(), None)
+            };
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let mut row = RevealRow {
                 reader: READER_AGENT.to_owned(),
@@ -59,8 +65,9 @@ impl Vault {
                 connection: Some(asker.connection()),
                 provider: asker.provider.clone(),
                 secret,
+                person,
                 handle,
-                class: rec.class.as_str().to_owned(),
+                class,
                 why,
                 project: asker.project,
                 run: asker.run.clone(),
@@ -105,7 +112,9 @@ impl Vault {
             // A file's read is collected by reading the file again.
             let mut row = REVEALS
                 .get(&self.store, txn, reveal)?
-                .filter(|row| row.is_agents(&asker.agent) && row.file.is_none())
+                .filter(|row| row.is_agents(&asker.agent) && row.file.is_none()
+                    && row.project == asker.project && row.run == asker.run
+                    && row.connection.as_deref() == Some(asker.connection().as_str()))
                 .ok_or(Error::EntityNotFound)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let answer = |decision, row: &RevealRow| -> Result<SecretRevealWait> {
@@ -114,6 +123,14 @@ impl Vault {
                     value: None,
                     receipt: Some(row.receipt(*reveal)?),
                 })
+            };
+            // A PERSON claim is re-admitted in this writer before any grant
+            // is spent or receipt is written. A changed claim needs a new ask.
+            let person_value = if row.person.is_some() && matches!(row.state,
+                SecretRevealState::Covered | SecretRevealState::ApprovedOnce | SecretRevealState::ApprovedStanding) {
+                Some(super::person::value_in(self, txn, asker, &row)?)
+            } else {
+                None
             };
             let state = row.state;
             match state {
@@ -156,7 +173,18 @@ impl Vault {
                     row.decision = approve_once_decision_in_txn(&self.store, txn, &digest)?;
                 }
             }
-            deliver_in_txn(self, txn, reveal, row)
+            if let Some(value) = person_value {
+                row.state = SecretRevealState::Delivered;
+                row.delivered_at = Some(now);
+                REVEALS.put(&self.store, txn, reveal, &row)?;
+                Ok(SecretRevealWait {
+                    decision: SecretRevealDecision::Granted,
+                    value: Some(value),
+                    receipt: Some(row.receipt(*reveal)?),
+                })
+            } else {
+                deliver_in_txn(self, txn, reveal, row)
+            }
         })
     }
 

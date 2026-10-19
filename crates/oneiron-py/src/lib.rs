@@ -1771,6 +1771,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_skills_bootstrap(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.bootstrap")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.bootstrap", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skill_hubs_default_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skill_hubs.default.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skill_hubs.default.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_restoreDefaults(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.restoreDefaults")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.restoreDefaults", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_skill_hubs_put(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.skill_hubs.put")?;
         let output = py
@@ -4699,6 +4720,51 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_disclosure_ceiling_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.disclosure.ceiling.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.disclosure.ceiling.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_disclosure_ceiling_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.disclosure.ceiling.set")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.disclosure.ceiling.set", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_disclosure_ceiling_clear(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.disclosure.ceiling.clear")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.disclosure.ceiling.clear", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_disclosure_reveals(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.disclosure.reveals")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.disclosure.reveals", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_disclosure_reveals_answer(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.disclosure.reveals.answer")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.disclosure.reveals.answer", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn reveal(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "reveal")?;
         let output = py
@@ -5804,6 +5870,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_artifacts_admit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.artifacts.admit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.admit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_critic_review(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.critic.review")?;
         let output = py
@@ -6713,6 +6786,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.graph.ask")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.graph.ask", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_graph_admit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.graph.admit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.graph.admit", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -7799,6 +7879,16 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.consolidation.home.get")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.consolidation.home.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consolidation_home_pick(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.home.pick")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.consolidation.home.pick", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }
