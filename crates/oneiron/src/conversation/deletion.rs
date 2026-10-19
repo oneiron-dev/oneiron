@@ -437,6 +437,8 @@ fn check_delete(
                 crate::gate::RoomAction::PolicyDelete,
                 role,
             )?;
+            // No role deletes an audience edit its live root keeps (FIX 5639).
+            crate::workspace_roster::reject_audience_edit_delete(&vault.store, txn, &record)?;
             Ok(role)
         }
         DeleteReason::GdprDelete if subject.is_some() && subject == author => {

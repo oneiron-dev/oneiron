@@ -64,6 +64,7 @@ impl Vault {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
+        crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
         // An erased world takes its keys with it (fix 7); a deleted one
         // keeps them, so it restores from old bundles.
         if erase {
@@ -167,6 +168,7 @@ impl Vault {
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
+        crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
         let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
         // A soft erase keeps the graph, so the sieve and projection rows of
         // the same words go here, not at the physical tear.

@@ -179,7 +179,7 @@ impl Memory<'_> {
             let event = AudienceEvent {
                 root,
                 person,
-                by: actor,
+                by: crate::workspace_roster::RosterActor::Actor(actor),
                 op: if history.is_some() {
                     AudienceOp::Add
                 } else {
