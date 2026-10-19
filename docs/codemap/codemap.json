@@ -26398,7 +26398,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 66
+      "crate-vis": 67
      }
     },
     {
@@ -53609,7 +53609,7 @@
      "path": "src/task_verb/sdk_courtesy_delete.rs",
      "purpose": "The inputs and answers of the owner's courtesy delete rows (OF-273, ARCH-0043 #relationship-lifecycle)…",
      "surface": {
-      "fn": 1,
+      "fn": 7,
       "struct": 6
      }
     },
@@ -81525,7 +81525,7 @@
      "path": "src/owner/cooperative_deletion.rs",
      "purpose": "Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle): after a disconnect the owner asks a former peer…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -81575,7 +81575,7 @@
      "path": "src/owner/guest_revoke.rs",
      "purpose": "The courtesy deletes a guest revoke queues (OF-232, FIX 1634)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -82084,7 +82084,7 @@
      "path": "src/server/core/pattern_workflow.rs",
      "purpose": "The house pattern runner (DOOR-111 S4b): the start a planned team's pattern skill writes, run on the house…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1
      }
     },
