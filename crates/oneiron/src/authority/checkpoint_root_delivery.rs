@@ -22,7 +22,6 @@
 use serde::{Deserialize, Serialize};
 
 use super::checkpoint_attest::root_row_key;
-use super::checkpoint_policy::checkpoint_root_policy_of;
 use super::*;
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -267,10 +266,6 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         kept: &KeptDelivery,
     ) -> Result<bool> {
-        let view = self.authority_view_readonly_in_txn(txn)?;
-        let Ok(counted) = checkpoint_root_policy_of(&view, kept.posture) else {
-            return Ok(false);
-        };
-        Ok(counted.root(&kept.root).is_some() && counted.digest()? == kept.policy)
+        self.root_policy_counts_in_txn(txn, kept.posture, &kept.root, kept.policy)
     }
 }

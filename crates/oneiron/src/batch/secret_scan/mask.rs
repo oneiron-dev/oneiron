@@ -22,6 +22,7 @@
 pub(super) mod admit;
 pub(super) mod carrier;
 pub(super) mod side_row;
+pub(super) mod stream_known;
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -108,7 +109,7 @@ pub(in crate::batch) fn mask_batch_ops(
     // back, shape or none (OF-560 C). A replayed batch reads only what it
     // wrote before.
     let known = if masks {
-        KnownValues::load_in_txn(store, &*wtxn)?.map(Arc::new)
+        KnownValues::load_backfilled_in_txn(store, wtxn)?.map(Arc::new)
     } else {
         None
     };

@@ -27,7 +27,7 @@ use super::{
 };
 use crate::EntityId;
 use crate::authority::{AuthorityEntryHash, Destination, PeerMachine};
-use crate::sync::client::SyncClientConfig;
+use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
 use crate::sync::residence::SealedBundleObject;
 use crate::sync::transport::TransportError;
@@ -80,18 +80,22 @@ async fn publish_all(
     let PeerMachine::Proven { machine: home, .. } = vault.peer_machine_stands(rpc.home) else {
         return Ok(());
     };
+    // A full machine lands what the assembly merges (FIX 4788).
+    let materialize = config.residence_mode == SyncResidenceMode::All;
     for (request, _) in asked.into_iter().filter(|(_, to)| *to == home) {
-        publish_one(manager, &mut rpc, request, home).await?;
+        publish_one(manager, &mut rpc, request, home, materialize).await?;
     }
     Ok(())
 }
 
-/// One request's publication to `home`, which `rpc` reaches.
+/// One request's publication to `home`, which `rpc` reaches. `materialize`
+/// is a full machine's: the windows its assembly merges land here too.
 async fn publish_one(
     manager: &Arc<WindowManager>,
     rpc: &mut ResidenceRpc,
     request: AuthorityEntryHash,
     home: EntityId,
+    materialize: bool,
 ) -> Result<(), TransportError> {
     let holder = Destination::Machine(home);
     let slot = sealed_bundle_slot(manager.vault().store.clock.now_recorded_at());
@@ -133,6 +137,7 @@ async fn publish_one(
             holder,
             held.as_ref().map(|(bundle, pads)| (bundle, pads)),
             Some(request),
+            materialize,
         )
     })
     .await?;

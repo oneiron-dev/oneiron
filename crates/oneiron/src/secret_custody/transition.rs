@@ -21,6 +21,9 @@
 mod payload;
 mod rebind;
 
+#[cfg(feature = "sync")]
+pub(crate) use self::rebind::moves_custody_floor;
+
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron_crypto::HybridPublicKey;
 

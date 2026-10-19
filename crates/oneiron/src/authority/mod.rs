@@ -49,6 +49,7 @@ mod checkpoint_image;
 mod checkpoint_policy;
 mod checkpoint_policy_choice;
 mod checkpoint_root_attest;
+mod checkpoint_root_countersign;
 mod checkpoint_root_delivery;
 mod checkpoint_root_intake;
 mod checkpoint_root_stage;

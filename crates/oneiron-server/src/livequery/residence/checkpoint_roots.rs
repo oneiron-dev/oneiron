@@ -189,7 +189,10 @@ pub(super) fn countersign(
         };
         // FIX 5110: the fold rebuild and the SLH-DSA signature run off the
         // runtime worker. This socket waits for them before it answers, so
-        // its replies keep their order.
+        // its replies keep their order. FIX 5195: the vault keeps what its
+        // root made for this machine before the answer goes, so a last part
+        // whose answer the machine's RPC timeout lost is answered from that
+        // on its next pass, with no new rebuild or signature.
         let made = crate::server::blocking(|| {
             server
                 .vault

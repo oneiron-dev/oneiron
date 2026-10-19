@@ -211,7 +211,7 @@ pub fn put_policy_manifest_as_owner(
     owner: &AuthenticatedOwner,
     input: PolicyManifestPut,
 ) -> Result<PolicyManifestReceipt> {
-    vault.with_write_txn_grouped(|txn| {
+    let receipt = vault.with_write_txn_grouped(|txn| {
         let actor = owner.revalidate_in_txn(vault, txn)?;
         let id = match input.manifest_ref.as_deref() {
             Some(reference) => id(reference)?,
@@ -238,7 +238,9 @@ pub fn put_policy_manifest_as_owner(
             receipt_ref,
             read_frontier_hash: hex(&resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?),
         })
-    })
+    })?;
+    vault.apply_pending_rebinds_after_commit();
+    Ok(receipt)
 }
 
 /// An untrusted contribution always stays an inert proposal, even if tighter.

@@ -27,7 +27,9 @@
 //! so its own attested head never moves to another host's image. One made
 //! for a home's head is kept in a delivery cache until the home has it (FIX
 //! 5109, [`Vault::attest_home_checkpoint_as_root`]). The home stages the
-//! image a machine sends it in parts in `checkpoint_root_stage`.
+//! image a machine sends it in parts in `checkpoint_root_stage`, and keeps
+//! what its root made for that machine until the machine asks again (FIX
+//! 5195, `checkpoint_root_countersign`).
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, PoisonError};
@@ -237,8 +239,10 @@ impl Vault {
     }
 
     /// [`Vault::attest_checkpoint_image_as_root`] for a linked machine of the
-    /// vault that asks this host's root to attest the image it wrote. Refused
-    /// for any other peer.
+    /// vault that asks this host's root to attest the image it wrote. What
+    /// the root made is kept for the machine before it is answered, and the
+    /// same image asked again is answered from it while it still counts (FIX
+    /// 5195, `checkpoint_root_countersign`). Refused for any other peer.
     pub fn countersign_authority_checkpoint_for(
         &self,
         peer: PeerMachine,
@@ -251,7 +255,10 @@ impl Vault {
                 return Err(peer_refused());
             }
         }
-        self.attest_checkpoint_image_as_root(image, signer)
+        let PeerMachine::Proven { machine, .. } = peer else {
+            return Err(peer_refused());
+        };
+        self.countersign_kept_or_signed(machine, image, signer)
     }
 
     /// Why `root` may not sign `candidate`, whose canonical bytes are
