@@ -35,6 +35,22 @@ pub(super) fn provision_host_authority(
     Ok(())
 }
 
+/// Refuses to boot when the engine's embedded owner id and the vault
+/// contract's copy of it ([`oneiron_vault_contract::embedded_owner_holder_hex`])
+/// differ: the supervisor names a personal vault's owner by the contract's.
+pub(super) fn check_embedded_owner_holder() -> anyhow::Result<()> {
+    let engine = oneiron::EntityId::derive(
+        oneiron_contracts::entity_id::derived_domains::EMBEDDED_OWNER_ACTOR,
+        &[],
+    )?
+    .to_hex();
+    let contract = oneiron_vault_contract::embedded_owner_holder_hex();
+    if engine != contract {
+        return Err(ManagedError::EmbeddedOwnerDrift { engine, contract }.into());
+    }
+    Ok(())
+}
+
 /// Marks a vault as a synthetic canary: the only thing a contract-v1 managed
 /// open will accept in place of the probed hardened-tenant preconditions.
 pub const CANARY_MARKER_KEY: &str = "managed:canary:v1";
