@@ -149,6 +149,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::AttemptCancelReceipts),
         Self::Engine(EngineLimit::AttemptRetryTipRows),
         Self::Engine(EngineLimit::WorkflowSteps),
+        Self::Engine(EngineLimit::WorkflowNameBytes),
         Self::Engine(EngineLimit::JudgeRubricBytes),
         Self::Engine(EngineLimit::MaintenanceRowItems),
         Self::Engine(EngineLimit::MaintenanceTextBytes),

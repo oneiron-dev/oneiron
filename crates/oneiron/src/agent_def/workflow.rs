@@ -2,7 +2,7 @@
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::limit_ask::EngineLimit;
+use crate::limit_ask::{EngineLimit, LimitWatch};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_WORKFLOW};
 use crate::{EntityId, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
@@ -41,11 +41,7 @@ impl WorkflowDefinition {
         Ok(definition)
     }
     fn validate(&self) -> Result<()> {
-        if self.name.trim().is_empty()
-            || self.name.len() > 256
-            || self.revision == 0
-            || self.steps.is_empty()
-        {
+        if self.name.trim().is_empty() || self.revision == 0 || self.steps.is_empty() {
             return Err(invalid());
         }
         Ok(())
@@ -88,14 +84,15 @@ pub fn decode_workflow(bytes: &[u8]) -> Result<WorkflowDefinition> {
 }
 
 /// Shared by local puts, batch writes and replay. Replay permits late-arriving references;
-/// dispatch always resolves the live definitions before enqueuing anything.
+/// dispatch always resolves the live definitions before enqueuing anything. Returns the
+/// decoded definition the put measures.
 pub(crate) fn validate_workflow_put(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     bytes: &[u8],
     replicated: bool,
-) -> Result<()> {
+) -> Result<WorkflowDefinition> {
     let definition = decode_workflow(bytes)?;
     if definition.forked_from == Some(*id) {
         return Err(invalid());
@@ -121,7 +118,14 @@ pub(crate) fn validate_workflow_put(
             }
         }
     }
-    Ok(())
+    Ok(definition)
+}
+/// An accepted composition is kept whole: past the `[limits]` `workflow_steps`
+/// or `workflow_name_bytes` row it asks whether everything is okay (Rule 5).
+/// Every workflow put measures here, local or replicated.
+pub(crate) fn measure_workflow_limits(watch: &LimitWatch, definition: &WorkflowDefinition) {
+    watch.measure(EngineLimit::WorkflowSteps, definition.steps.len() as u64);
+    watch.measure(EngineLimit::WorkflowNameBytes, definition.name.len() as u64);
 }
 fn require_kind(
     store: &crate::store::Store,
@@ -149,9 +153,7 @@ impl Vault {
             TimeRange { start: at, end: at },
             at,
             &encode_workflow(definition)?,
-        )?;
-        self.measure_workflow_steps(definition);
-        Ok(())
+        )
     }
     pub fn get_workflow(&self, id: &EntityId) -> Result<Option<WorkflowDefinition>> {
         let Some(raw) = self.get_raw(id)? else {
@@ -190,9 +192,7 @@ impl Vault {
                     &encoded,
                 )
                 .apply(txn)
-        })?;
-        self.measure_workflow_steps(definition);
-        Ok(())
+        })
     }
     /// Creates a composition as the authenticated owner. An occupied id is
     /// never an implicit edit, including another entity kind.
@@ -218,9 +218,7 @@ impl Vault {
                     &encoded,
                 )
                 .apply(txn)
-        })?;
-        self.measure_workflow_steps(definition);
-        Ok(())
+        })
     }
     /// The owner's edit of exactly the revision they read. The next revision
     /// is assigned here; fork lineage stays the saved one.
@@ -233,7 +231,7 @@ impl Vault {
         steps: Vec<EntityId>,
         at: u64,
     ) -> Result<WorkflowDefinition> {
-        let definition = self.with_write_txn_grouped(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             require_kind(&self.store, txn, id, ENTITY_TYPE_WORKFLOW)?;
             let prior = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?
@@ -258,9 +256,7 @@ impl Vault {
                 )
                 .apply(txn)?;
             Ok(definition)
-        })?;
-        self.measure_workflow_steps(&definition);
-        Ok(definition)
+        })
     }
     /// A fork is a new entity and keeps the source reference as lineage.
     pub fn fork_workflow(
@@ -269,7 +265,7 @@ impl Vault {
         fork: &EntityId,
         at: u64,
     ) -> Result<WorkflowDefinition> {
-        let definition = self.with_write_txn_grouped(|txn| {
+        self.with_write_txn_grouped(|txn| {
             require_kind(&self.store, txn, parent, ENTITY_TYPE_WORKFLOW)?;
             if crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, fork)? {
                 return Err(invalid());
@@ -289,9 +285,7 @@ impl Vault {
                 )
                 .apply(txn)?;
             Ok(definition)
-        })?;
-        self.measure_workflow_steps(&definition);
-        Ok(definition)
+        })
     }
     /// Every step of an accepted composition is kept; past the `[limits]`
     /// `workflow_steps` row it asks whether everything is okay (Rule 5).

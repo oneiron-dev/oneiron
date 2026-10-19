@@ -127,10 +127,15 @@ pub enum EngineLimit {
     /// Past it, the row asks whether everything is okay while the whole
     /// lineage is still read.
     AttemptRetryTipRows,
-    /// Steps one saved workflow holds, measured where it is saved, updated
-    /// and snapshotted for a dispatch. Past it, the row asks whether
+    /// Steps one saved workflow holds, measured at every put of it (its
+    /// save, update and fork, raw and batch puts, and sync replay) and where
+    /// it is snapshotted for a dispatch. Past it, the row asks whether
     /// everything is okay and every step is kept.
     WorkflowSteps,
+    /// Bytes of one saved workflow's name, measured at every put of it.
+    /// Past it, the row asks whether everything is okay and the name is
+    /// stored whole.
+    WorkflowNameBytes,
     /// Bytes of the judge's rubric (the active shared `judge` skill's text)
     /// one judgment or label re-check reads. Past it the rubric is read whole.
     JudgeRubricBytes,
@@ -280,7 +285,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 72] = [
+    pub const ALL: [Self; 73] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -311,6 +316,7 @@ impl EngineLimit {
         Self::AttemptCancelReceipts,
         Self::AttemptRetryTipRows,
         Self::WorkflowSteps,
+        Self::WorkflowNameBytes,
         Self::JudgeRubricBytes,
         Self::MaintenanceRowItems,
         Self::MaintenanceTextBytes,
@@ -388,6 +394,7 @@ impl EngineLimit {
             Self::AttemptCancelReceipts => "limits.attempt_cancel_receipts",
             Self::AttemptRetryTipRows => "limits.attempt_retry_tip_rows",
             Self::WorkflowSteps => "limits.workflow_steps",
+            Self::WorkflowNameBytes => "limits.workflow_name_bytes",
             Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
             Self::MaintenanceRowItems => "limits.maintenance_row_items",
             Self::MaintenanceTextBytes => "limits.maintenance_text_bytes",
@@ -475,6 +482,8 @@ impl EngineLimit {
             // Sixteen times the 64 steps a saved workflow refused past before
             // Rule 5.
             Self::WorkflowSteps => 1_024,
+            // The 256 bytes a workflow name refused past before Rule 5.
+            Self::WorkflowNameBytes => 256,
             // The shipped rubric is about 1 KiB; the judgment's state holds
             // at most 64 KiB in all.
             Self::JudgeRubricBytes => 8_192,
