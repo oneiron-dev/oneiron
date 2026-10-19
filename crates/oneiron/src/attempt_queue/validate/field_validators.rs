@@ -6,8 +6,7 @@ use crate::attempt_queue::cancel::{
 use crate::attempt_queue::encoding::MAX_DEDUPE_ACTOR_REF_LEN;
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{
-    AttemptEvent, AttemptRecord, AttemptState, CleanupAttemptLeases, MAX_ATTEMPT_MANIFEST_ENTRIES,
-    ManifestEntry,
+    AttemptEvent, AttemptRecord, AttemptState, CleanupAttemptLeases, ManifestEntry,
 };
 use crate::error::{ArtifactError, Error, Result};
 
@@ -96,9 +95,6 @@ pub(in crate::attempt_queue) const ERR_MANIFEST_VERSION_EMPTY: &str =
 
 pub(in crate::attempt_queue) const ERR_MANIFEST_VERSION_TOO_LONG: &str =
     "manifest version exceeds 128 bytes";
-
-pub(in crate::attempt_queue) const ERR_MANIFEST_FULL: &str =
-    "attempt manifest is full; entries are never dropped";
 
 pub(in crate::attempt_queue) const ERR_LEASE_TIMEOUT_ZERO: &str = "lease timeout must be > 0";
 
@@ -504,11 +500,6 @@ pub(in crate::attempt_queue) fn validate_manifest_entry(entry: &ManifestEntry) -
 pub(in crate::attempt_queue) fn validate_attempt_manifest(
     manifest: &[ManifestEntry],
 ) -> Result<()> {
-    if manifest.len() > MAX_ATTEMPT_MANIFEST_ENTRIES {
-        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-            ERR_MANIFEST_FULL,
-        )));
-    }
     for entry in manifest {
         validate_manifest_entry(entry)?;
     }

@@ -455,6 +455,10 @@ impl Memory<'_> {
         // FIX 2027: a quote's selection is read under the speaker's own key,
         // taken here, before the writer opens: no read snapshot nests in it.
         let quote_key = quoting.then(|| self.read_key()).transpose()?;
+        // FIX 3284: which of the turn's messages this write lands new, carried
+        // out of its transaction. A message an exact retry finds stored lands
+        // nothing and owes no second prose receipt.
+        let mut lands_new: Vec<bool> = Vec::new();
         before_txn();
 
         let landed = self.with_witness_write_txn_as(callback, admit, room_speech, |wtxn| {
@@ -539,6 +543,11 @@ impl Memory<'_> {
                     )?
                 }
             };
+            lands_new = admission
+                .message_exists
+                .iter()
+                .map(|exists| !exists)
+                .collect();
             let landed = match &sink {
                 WitnessSink::Base(base) => {
                     self.stage_in_base(
@@ -688,7 +697,9 @@ impl Memory<'_> {
             }
         };
         if answer.is_ok() {
-            crate::gate::record_references::receipt_landed_prose(self, &unlinked_prose);
+            let landed_prose =
+                crate::gate::record_references::landed_witness_prose(unlinked_prose, &lands_new);
+            crate::gate::record_references::receipt_landed_prose(self, &landed_prose);
         }
         answer
     }
