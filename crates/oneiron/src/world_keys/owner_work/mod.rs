@@ -17,7 +17,11 @@
 //! result is "recorded, awaiting a holder". There is no counter, no second
 //! queue, no timer and no takeover: a missing key, pad or secret on the
 //! executor leaves the work pending, and only a new owner act names another
-//! executor.
+//! executor. A root request the owner cancelled, or a newer request on its
+//! target superseded, before its executor answered it reads as cancelled or
+//! superseded instead, and no result is signed for it (FIX 4739, CALLS
+//! ROOT_WORK_CANCEL, ROOT_WORK_SUPERSESSION); a cancel its result came first
+//! says it came too late, and the result stands.
 //!
 //! The first kind is a world's key work, in Ensure mode after a settings
 //! edit and in Reassert mode after the owner's re-assertion of a world
@@ -121,6 +125,14 @@ pub enum OwnerWorkStatus {
     Enacted,
     /// The executor refused it, for the reason given.
     Refused { reason: OwnerWorkRefusal },
+    /// The owner cancelled it before its executor answered it (CALLS
+    /// ROOT_WORK_CANCEL): a root request only. Its executor never runs it
+    /// once it holds the cancel, and no result is signed for it.
+    Cancelled,
+    /// A newer request on its target superseded it before its executor
+    /// answered it (CALLS ROOT_WORK_SUPERSESSION): a root request only. Its
+    /// executor never runs it, and no result is signed for it.
+    Superseded,
 }
 
 impl OwnerWorkStatus {
@@ -131,12 +143,15 @@ impl OwnerWorkStatus {
             Self::RecordedAwaitingHolder => "recorded, awaiting a holder",
             Self::Enacted => "enacted by its holder",
             Self::Refused { .. } => "refused by its holder",
+            Self::Cancelled => "cancelled by the owner",
+            Self::Superseded => "superseded by a newer request on its target",
         }
     }
 
     /// What the owner may do next, for a refusal that names a next step: a
     /// root request whose target computed another revision than the one he
-    /// saw (FIX 4738). `None` for every other status.
+    /// saw (FIX 4738); and what a cancelled or superseded root request means
+    /// for its target (FIX 4739). `None` for every other status.
     #[must_use]
     pub fn advice(self) -> Option<&'static str> {
         match self {
@@ -147,9 +162,54 @@ impl OwnerWorkStatus {
                  than the one you saw; it may not have synced yet. Review where it stands and \
                  ask again",
             ),
+            Self::Cancelled => Some(
+                "the target never runs it once it has synced the cancel; a result it signed \
+                 before then stands, and nothing is undone",
+            ),
+            Self::Superseded => Some(
+                "a newer request on the same target replaced it, and the target never runs this \
+                 one",
+            ),
             Self::RecordedAwaitingHolder | Self::Enacted | Self::Refused { .. } => None,
         }
     }
+}
+
+/// Where the owner's cancel of a root request stands, derived from the fold
+/// (CALLS ROOT_WORK_CANCEL).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnerWorkCancelState {
+    /// No result came first: the request is cancelled.
+    Cancelled,
+    /// Its executor enacted the request before it had the cancel: the
+    /// result stands, and nothing is undone.
+    AlreadyEnacted,
+    /// Its executor refused the request before it had the cancel: that
+    /// answer stands.
+    AlreadyRefused,
+}
+
+impl OwnerWorkCancelState {
+    /// The words a surface shows.
+    #[must_use]
+    pub fn text(self) -> &'static str {
+        match self {
+            Self::Cancelled => "cancelled",
+            Self::AlreadyEnacted => "already enacted: the result stands",
+            Self::AlreadyRefused => "already refused: that answer stands",
+        }
+    }
+}
+
+/// The owner's cancels of one root request, as its receipt shows them. Ids
+/// only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerWorkCancelNote {
+    /// Each cancel's signed authority-log entry, as hex, ascending.
+    pub entries: Vec<String>,
+    pub state: OwnerWorkCancelState,
 }
 
 /// What an owner act recorded for a holder, and where it stands. Ids only.
@@ -183,6 +243,12 @@ pub struct OwnerWorkReceipt {
     /// for a home whose profile keeps sealed copies, and for any other work.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_warning: Option<BundleHomeWarning>,
+    /// For a root request the owner cancelled, his cancels and where they
+    /// stand (FIX 4739): the request cancelled, or answered before its
+    /// executor had a cancel, which says so. `None` for a request no cancel
+    /// names, and for any other work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel: Option<OwnerWorkCancelNote>,
 }
 
 impl OwnerWorkReceipt {
@@ -198,23 +264,45 @@ impl OwnerWorkReceipt {
             unassigned: Some(why),
             manifest_check: None,
             home_warning: None,
+            cancel: None,
         }
     }
 
     /// The receipt of the request signed as entry `request`, as `fold`
-    /// stands, with the manifest judgment its holder's result carries;
-    /// `None` unless the fold admitted that request.
+    /// stands, with the manifest judgment its holder's result carries and
+    /// the owner's cancels of it; `None` unless the fold admitted that
+    /// request. A result is the request's one terminal state: a cancel or a
+    /// newer request closes only a request with none.
     pub(crate) fn of(fold: &AuthorityFold, request: AuthorityEntryHash) -> Option<Self> {
         let recorded = fold.owner_work_request(&request)?;
         let outcome = fold
             .owner_work_result(&request)
             .map(|answer| &answer.outcome);
         let status = match outcome {
+            None if fold.root_request_cancelled(&request) => OwnerWorkStatus::Cancelled,
+            None if fold.root_request_superseded(&request) => OwnerWorkStatus::Superseded,
             None => OwnerWorkStatus::RecordedAwaitingHolder,
             Some(OwnerWorkOutcome::Enacted { .. }) => OwnerWorkStatus::Enacted,
             Some(OwnerWorkOutcome::Refused { reason }) => {
                 OwnerWorkStatus::Refused { reason: *reason }
             }
+        };
+        let cancels: Vec<String> = fold
+            .owner_work_cancels(&request)
+            .map(|cancel| entry_hex(&cancel))
+            .collect();
+        let cancel_state = match outcome {
+            None => OwnerWorkCancelState::Cancelled,
+            Some(OwnerWorkOutcome::Enacted { .. }) => OwnerWorkCancelState::AlreadyEnacted,
+            Some(OwnerWorkOutcome::Refused { .. }) => OwnerWorkCancelState::AlreadyRefused,
+        };
+        let cancel = if cancels.is_empty() {
+            None
+        } else {
+            Some(OwnerWorkCancelNote {
+                entries: cancels,
+                state: cancel_state,
+            })
         };
         let home_warning = match recorded.work {
             OwnerWorkBody::PublishBundle { home } => diagnostics::bundle_home_warning(fold, home),
@@ -231,6 +319,7 @@ impl OwnerWorkReceipt {
             unassigned: None,
             manifest_check: outcome.and_then(OwnerWorkOutcome::register_check).cloned(),
             home_warning,
+            cancel,
         })
     }
 

@@ -47,7 +47,7 @@ pub struct AuthorityCheckpointRow {
 /// `op`'s kind: each row a fold past the image reads whole
 /// ([`crate::authority::fold_resume::is_projected`]: an approval, a binding,
 /// a confirm, a device revocation, a handoff, a machine profile, a world-key
-/// record, an owner work request or result),
+/// record, an owner work request, result or cancel),
 /// and each row a store door past it reads whole to judge a new row: the
 /// genesis and each device enrollment the consent structure rests on, the
 /// root records that name owner anchors, the actor revocations a signer's

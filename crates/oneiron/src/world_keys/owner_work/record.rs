@@ -1,5 +1,6 @@
 //! Recording one owner work request in the act's own transaction, and the
-//! one rule that names its executor.
+//! one rule that names its executor; and recording the owner's cancel of a
+//! root request (FIX 4739).
 
 use std::collections::BTreeSet;
 
@@ -8,9 +9,9 @@ use ed25519_dalek::SigningKey;
 use super::{OWNER_WORK_NO_EXECUTOR, OwnerWorkReceipt, OwnerWorkUnassigned};
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityOp, MAX_PARENTS,
-    OwnerAct, OwnerWorkBody, OwnerWorkRequest, WorldKeyMode, WorldPrivacyWorkBasis, WrapRecipient,
-    authority_entry_hash, invalid_authority, next_sequence, owner_act_signer_admits,
-    sign_side_entry, stored_authority_row,
+    OwnerAct, OwnerActKind, OwnerWorkBody, OwnerWorkCancel, OwnerWorkRequest, WorldKeyMode,
+    WorldPrivacyWorkBasis, WrapRecipient, authority_entry_hash, invalid_authority, next_sequence,
+    owner_act_signer_admits, sign_side_entry, stored_authority_row,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -27,7 +28,7 @@ use crate::{EntityId, TimeRange, Vault};
 fn no_carrier() -> Error {
     Error::InvalidConfig(
         "this install has no live machine profile in the vault's roster to carry the owner's \
-         work request; nothing was written"
+         work request or cancel; nothing was written"
             .to_owned(),
     )
 }
@@ -37,11 +38,11 @@ fn no_carrier() -> Error {
 const NO_KEY_OWNER: &str = "the person this world's key binds is no live owner of the vault; \
                             nothing was written";
 
-/// The request would name more rows than one authority entry may: the log's
-/// encoding bound, never a possession test. Nothing was written.
+/// The request or cancel would name more rows than one authority entry may:
+/// the log's encoding bound, never a possession test. Nothing was written.
 fn parent_bound(named: usize) -> Error {
     Error::InvalidConfig(format!(
-        "this owner work request would name {named} parent rows, more than the {MAX_PARENTS} one \
+        "this owner work entry would name {named} parent rows, more than the {MAX_PARENTS} one \
          authority entry names; nothing was written"
     ))
 }
@@ -274,5 +275,64 @@ impl Vault {
         self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(txn)?;
         OwnerWorkReceipt::of(&after, hash).ok_or_else(invalid_authority)
+    }
+
+    /// Signs and lands the owner's cancel of the root request signed as
+    /// entry `request`, whose target is `target`, in `txn`, carried by this
+    /// install for `actor`, the owner PERSON the caller revalidated in this
+    /// same transaction (CALLS ROOT_WORK_CANCEL). Ids only: its act names the
+    /// target and, as its `seen`, the request. Its parents are the main-log
+    /// heads alone, which carry the request (FIX 4987). The fold is the
+    /// judge: a cancel it does not take refuses the transaction.
+    pub(crate) fn record_owner_work_cancel_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: EntityId,
+        surface: ActSurface,
+        target: EntityId,
+        request: AuthorityEntryHash,
+    ) -> Result<AuthorityEntryHash> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        // Key possession: this install carries the act with its own install
+        // key, under a live profile of any role (mesh contract §3).
+        let (machine, signing) = self
+            .owner_work_carrier_in_txn(txn, &fold)?
+            .ok_or_else(no_carrier)?;
+        let public_key = signing.verifying_key().to_bytes();
+        let seen = OwnerWorkCancel::seen_for(request);
+        let act = OwnerAct::by_owner(actor, OwnerActKind::RootRequest, target, surface, seen);
+        let parents = fold.owner_work_parents();
+        if parents.len() > MAX_PARENTS {
+            return Err(parent_bound(parents.len()));
+        }
+        let cancel = OwnerWorkCancel {
+            carrier: machine,
+            act,
+            request,
+        };
+        let seq = next_sequence(&fold, &AuthorityKey::Ed25519(public_key))?;
+        let now = self.instant_in_txn(txn)?.secs();
+        let entry = sign_side_entry(
+            &fold,
+            &signing,
+            seq,
+            parents,
+            AuthorityOp::OwnerWorkCancel(cancel),
+            now,
+        )?;
+        let hash = authority_entry_hash(&entry)?;
+        let at = TimeRange {
+            start: now,
+            end: now,
+        };
+        self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
+        let after = self.authority_view_readonly_in_txn(txn)?;
+        if !after
+            .owner_work_cancels(&request)
+            .any(|cancel| cancel == hash)
+        {
+            return Err(invalid_authority());
+        }
+        Ok(hash)
     }
 }

@@ -30,8 +30,7 @@ use crate::{EntityId, Vault};
 /// K04, authority: the credential is not a live owner's own unattenuated,
 /// parentless human device credential. Each `RENEWAL_*` reason is public so
 /// a transport can name its refusal (FIX 4651).
-pub const RENEWAL_K04: &str =
-    "only a live owner's unattenuated parentless human device credential may renew; agent, \
+pub const RENEWAL_K04: &str = "only a live owner's unattenuated parentless human device credential may renew; agent, \
      support and attenuated credentials require a fresh owner mint";
 /// Authority and key possession: the holder's own-device Grant does not
 /// stand, or no enrolled machine of the holder's proved this request.

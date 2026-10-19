@@ -180,7 +180,10 @@ pub(super) fn mcp_run_named_rows(
         if export && *owner.get_or_insert_with(|| reads_as_owner(server, actor)) {
             clear_export_text(&mut output);
         }
-        rows.extend(crate::device_local::short_refs_named(&server.vault, &output)?);
+        rows.extend(crate::device_local::short_refs_named(
+            &server.vault,
+            &output,
+        )?);
     }
     Some(rows)
 }
