@@ -34,6 +34,9 @@ pub(super) struct ConnState {
     pub(super) locality: oneiron::claim::CallerLocality,
     /// A single revision-bound, metadata-only index projection for this socket.
     pub(super) residence_index: Option<crate::livequery::ResidenceIndexCache>,
+    /// Whether this socket sent countersign parts: as it closes, its
+    /// machine's countersign stage goes (FIX 5111).
+    pub(super) countersigned: bool,
     /// The machine this socket's upgrade proved, independent of its actor.
     /// Read it through [`Self::peer_machine`], which asks the fold again.
     proven_machine: oneiron::authority::PeerMachine,
@@ -55,6 +58,7 @@ impl ConnState {
             bound_auth: None,
             locality: oneiron::claim::CallerLocality::OffDevice,
             residence_index: None,
+            countersigned: false,
             proven_machine: oneiron::authority::PeerMachine::Unknown,
         }
     }
@@ -62,6 +66,16 @@ impl ConnState {
     pub(super) fn with_peer_machine(mut self, machine: oneiron::authority::PeerMachine) -> Self {
         self.proven_machine = machine;
         self
+    }
+
+    /// This socket closed: the countersign stage its machine sent on it goes,
+    /// so a machine that stopped mid-upload holds none past it (FIX 5111).
+    pub(super) fn closed(&self, vault: &oneiron::Vault) {
+        if self.countersigned
+            && let oneiron::authority::PeerMachine::Proven { machine, .. } = self.proven_machine
+        {
+            vault.drop_countersign_stage(machine);
+        }
     }
 
     /// The machine this socket proved at upgrade, while the vault's fold
