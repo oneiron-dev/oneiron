@@ -12148,6 +12148,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AdmittedLiveFork",
+      "CacheBoundary",
+      "LiveCompactionFork",
+      "LiveForkRung"
+     ],
+     "path": "src/code_run/compaction_fork.rs",
+     "purpose": "The live fork (FIX 4465 C): a run's live request, captured at the breakpoint that seals a self-written…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 11,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -12564,7 +12583,7 @@
      "surface": {
       "crate-vis": 19,
       "mod": 6,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -14587,6 +14606,16 @@
      "surface": {
       "crate-vis": 4,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/compaction/driver/live_fork.rs",
+     "purpose": "The one Frontier-tier binding a compaction may wear (FIX 4465 C, Engine 10-19): an agent whose profile names…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -23397,11 +23426,21 @@
      "path": "src/engine_executor/compaction.rs",
      "purpose": "The compaction host in the executor (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "enum": 1,
       "fn": 5,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/compaction/live_fork.rs",
+     "purpose": "The live fork's flight transport (FIX 4465 C): the capture a breakpoint sealed rides its flight, the run's…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -59318,7 +59357,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 87,
+     "files": 88,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59395,7 +59434,7 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -59640,7 +59679,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60601,7 +60640,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3695,
+   "source_files": 3698,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67814,11 +67853,21 @@
       "crate-vis": 2,
       "fn": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/wire/cache.rs",
+     "purpose": "Prompt-cache boundaries on the Messages wire (FIX 4465 C): the host's descriptor, rendered as…",
+     "surface": {
+      "crate-vis": 1
+     }
     }
    ],
    "modules": {
     "lib": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67827,7 +67876,7 @@
    },
    "over_bar": 0,
    "purpose": "Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
-   "source_files": 6,
+   "source_files": 7,
    "test_files": 1
   },
   "oneiron-llm-gemini": {
@@ -71823,7 +71872,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/code_mode.rs",
@@ -71839,17 +71888,27 @@
      "path": "src/ai_host/compaction.rs",
      "purpose": "Compaction for code mode's runs (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/compaction/live_fork.rs",
+     "purpose": "The agent's own compaction from its live context (FIX 4465 C)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/compaction/self_writer.rs",
      "purpose": "The agent's own compaction writer (FIX 4465, owner 10-19: \"the toggle sets WHO writes, not which model\")",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -71859,7 +71918,7 @@
      "path": "src/ai_host/compaction/serve.rs",
      "purpose": "The house compaction route's call (moved from `compaction.rs`): one pass's request, admitted on the role's…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 11
      }
     },
     {
@@ -79778,6 +79837,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/ladder/live_fork.rs",
+     "purpose": "The live fork's rung (FIX 4465 C): the one rung a run's live request is bound to at a compaction breakpoint…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/ladder/step_attempt.rs",
      "purpose": "The durable step executor owns retries; this door sends one gated attempt",
      "surface": {
@@ -81892,7 +81961,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82186,7 +82255,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 43,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82328,7 +82397,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 774,
+   "source_files": 776,
    "test_files": 182
   },
   "oneiron-spawn": {
