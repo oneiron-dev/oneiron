@@ -1087,6 +1087,14 @@ export class Oneiron {
       registry: (input: Facade.ConsentRegistryQuery): Facade.ConsentRegistry => this.#call(() => this.#client.vaultConsentRegistry(input) as Facade.ConsentRegistry),
       /** The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted. */
       revoke: (input: Facade.RevokeGrantRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentRevoke(input) as Facade.ConsentActReceipt),
+      /** The owner previews the exact actor, classes, envelope and project or thread of a scoped bypass; this warning grants nothing. */
+      bypass_grant_warning: (input: Facade.BypassGrantWarningRequest): Facade.BypassGrantWarningView => this.#call(() => this.#client.vaultConsentBypassGrantWarning(input) as Facade.BypassGrantWarningView),
+      /** The owner explicitly acknowledges a scoped bypass warning and atomically creates one receipted standing bypass per class. */
+      create_bypass_grant: (input: Facade.CreateBypassGrantRequest): Facade.ConsentActReceipt[] => this.#call(() => this.#client.vaultConsentCreateBypassGrant(input) as Facade.ConsentActReceipt[]),
+      /** The owner reads live scoped bypass states and their complete bounds, newest first; vault.consent.revoke ends each grant. */
+      active_bypass_grants: (input: Facade.ActiveBypassGrantsRequest): Facade.BypassActiveState[] => this.#call(() => this.#client.vaultConsentActiveBypassGrants(input) as Facade.BypassActiveState[]),
+      /** The owner reads the existing Gate receipts for effects covered by one bypass grant, including after its revocation. */
+      bypassed_effect_receipts: (input: Facade.BypassedEffectReceiptsRequest): Facade.BypassedEffectReceipt[] => this.#call(() => this.#client.vaultConsentBypassedEffectReceipts(input) as Facade.BypassedEffectReceipt[]),
     },
     gate: {
       policy: {

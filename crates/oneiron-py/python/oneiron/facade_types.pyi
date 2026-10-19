@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 769 facade rows, 2702 declarations.
-Inputs: 717 of 769 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 689 of 769 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 773 facade rows, 2712 declarations.
+Inputs: 721 of 773 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 693 of 773 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -6498,6 +6498,43 @@ class ConsentRegistry(TypedDict):
     rows: list[ConsentRegistryRow]
 class RevokeGrantRequest(TypedDict):
     grant: str
+CatastropheClass = Literal["WidenOwnAuthority", "KeyRecovery", "VaultWideDestruction", "SecurityControlDisable", "MassSecretExport", "WorldPrivacyWiden"]
+class BypassActionEnvelopeRequest(TypedDict):
+    selectors: list[str]
+    target: NotRequired[str | None]
+    budget: NotRequired[int | None]
+    receipt_required: NotRequired[bool]
+class BypassGrantBoundRequest(TypedDict):
+    actor: str
+    actor_class: NotRequired[str | None]
+    classes: list[CatastropheClass]
+    scope: BypassScope
+    envelope: BypassActionEnvelopeRequest
+class BypassGrantWarningRequest(TypedDict):
+    bound: BypassGrantBoundRequest
+class BypassGrantWarningView(TypedDict):
+    owner: str
+    bound: BypassGrantBoundRequest
+    floor_version: int
+    bound_digests: list[str]
+class CreateBypassGrantRequest(TypedDict):
+    warning: BypassGrantWarningView
+class ActiveBypassGrantsRequest(TypedDict):
+    ...
+class BypassActiveState(TypedDict):
+    active: bool
+    grant: str
+    bound: BypassGrantBoundRequest
+    floor_version: int
+    created_at: int
+class BypassedEffectReceiptsRequest(TypedDict):
+    grant: str
+class BypassedEffectReceipt(TypedDict):
+    decision_ref: str
+    grant_ref: str
+    effect_digest: str
+    reason_code: str
+    created_at: int
 class PolicyManifestRead(TypedDict):
     manifest_ref: NotRequired[str | None]
 PolicyCriticality = Literal["normal", "critical"]

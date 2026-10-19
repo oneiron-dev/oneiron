@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 769 facade rows, 2666 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 725.
+// UniFFI census: 773 facade rows, 2675 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 729.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -19986,6 +19986,131 @@ pub struct ConsentRegistry {
 pub struct RevokeGrantRequest {
     #[serde(rename = "grant")]
     pub grant: String,
+}
+
+/// `oneiron::consent::effect::CatastropheClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CatastropheClass {
+    #[serde(rename = "WidenOwnAuthority")]
+    WidenOwnAuthority,
+    #[serde(rename = "KeyRecovery")]
+    KeyRecovery,
+    #[serde(rename = "VaultWideDestruction")]
+    VaultWideDestruction,
+    #[serde(rename = "SecurityControlDisable")]
+    SecurityControlDisable,
+    #[serde(rename = "MassSecretExport")]
+    MassSecretExport,
+    #[serde(rename = "WorldPrivacyWiden")]
+    WorldPrivacyWiden,
+}
+
+/// `oneiron::consent::bypass_lifecycle::BypassActionEnvelopeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BypassActionEnvelopeRequest {
+    #[serde(rename = "selectors")]
+    pub selectors: Vec<String>,
+    #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(rename = "budget", default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<u64>,
+    #[serde(
+        rename = "receipt_required",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub receipt_required: Option<bool>,
+}
+
+/// `oneiron::consent::bypass_lifecycle::BypassGrantBoundRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BypassGrantBoundRequest {
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(
+        rename = "actor_class",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub actor_class: Option<String>,
+    #[serde(rename = "classes")]
+    pub classes: Vec<CatastropheClass>,
+    #[serde(rename = "scope")]
+    pub scope: BypassScope,
+    #[serde(rename = "envelope")]
+    pub envelope: BypassActionEnvelopeRequest,
+}
+
+/// `oneiron::consent::bypass_lifecycle::BypassGrantWarningRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BypassGrantWarningRequest {
+    #[serde(rename = "bound")]
+    pub bound: BypassGrantBoundRequest,
+}
+
+/// `oneiron::consent::bypass_lifecycle::BypassGrantWarningView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BypassGrantWarningView {
+    #[serde(rename = "owner")]
+    pub owner: String,
+    #[serde(rename = "bound")]
+    pub bound: BypassGrantBoundRequest,
+    #[serde(rename = "floor_version")]
+    pub floor_version: u16,
+    #[serde(rename = "bound_digests")]
+    pub bound_digests: Vec<String>,
+}
+
+/// `oneiron::consent::bypass_lifecycle::CreateBypassGrantRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CreateBypassGrantRequest {
+    #[serde(rename = "warning")]
+    pub warning: BypassGrantWarningView,
+}
+
+/// `oneiron::consent::bypass_lifecycle::BypassActiveState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BypassActiveState {
+    #[serde(rename = "active")]
+    pub active: bool,
+    #[serde(rename = "grant")]
+    pub grant: String,
+    #[serde(rename = "bound")]
+    pub bound: BypassGrantBoundRequest,
+    #[serde(rename = "floor_version")]
+    pub floor_version: u16,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+}
+
+/// `oneiron::consent::bypass_lifecycle::BypassedEffectReceiptsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BypassedEffectReceiptsRequest {
+    #[serde(rename = "grant")]
+    pub grant: String,
+}
+
+/// `oneiron::consent::bypass_lifecycle::BypassedEffectReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BypassedEffectReceipt {
+    #[serde(rename = "decision_ref")]
+    pub decision_ref: String,
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "effect_digest")]
+    pub effect_digest: String,
+    #[serde(rename = "reason_code")]
+    pub reason_code: String,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
 }
 
 /// `oneiron::gate::policy_manifest_doors::types::PolicyManifestRead`.

@@ -355,6 +355,10 @@ vaultConsentDeny(input: unknown): unknown
 vaultConsentCreateStandingGrant(input: unknown): unknown
 vaultConsentRegistry(input: unknown): unknown
 vaultConsentRevoke(input: unknown): unknown
+vaultConsentBypassGrantWarning(input: unknown): unknown
+vaultConsentCreateBypassGrant(input: unknown): unknown
+vaultConsentActiveBypassGrants(input: unknown): unknown
+vaultConsentBypassedEffectReceipts(input: unknown): unknown
 vaultGatePolicyGet(input: unknown): unknown
 vaultGatePolicyPut(input: unknown): unknown
 vaultGatePolicyPropose(input: unknown): unknown
