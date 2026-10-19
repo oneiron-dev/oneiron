@@ -376,6 +376,9 @@ pub(super) fn transition_record(
     transition_record_with_outcome(vault, id, next, outcome, now_ms)
 }
 
+/// The send's terminal Done with nothing bridged: the ledger's own tests'
+/// door. Production sends complete through [`complete_record_bridged`].
+#[cfg(test)]
 pub(crate) fn complete_record(
     vault: &Vault,
     id: [u8; 32],
@@ -387,6 +390,27 @@ pub(crate) fn complete_record(
         IntentState::Done,
         RecordedOutboundOutcome::Acked,
         now_ms,
+    )
+}
+
+/// A send's terminal Done, with `bridge` writing in the same transaction
+/// (DOOR-141 PR2): a turn program's step settles with the send's result
+/// there. The bridge returns nothing, so it cannot fail the transition;
+/// Pending, Done and replay are the plain transition's. A row already Done
+/// runs no bridge.
+pub(crate) fn complete_record_bridged(
+    vault: &Vault,
+    id: [u8; 32],
+    now_ms: u64,
+    bridge: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord),
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    transition_record_with_outcome_and(
+        vault,
+        id,
+        IntentState::Done,
+        RecordedOutboundOutcome::Acked,
+        now_ms,
+        bridge,
     )
 }
 
@@ -552,6 +576,17 @@ fn transition_record_with_outcome(
     outcome: RecordedOutboundOutcome,
     now_ms: u64,
 ) -> IntentLedgerResult<IntentLedgerRecord> {
+    transition_record_with_outcome_and(vault, id, next, outcome, now_ms, |_, _| {})
+}
+
+fn transition_record_with_outcome_and(
+    vault: &Vault,
+    id: [u8; 32],
+    next: IntentState,
+    outcome: RecordedOutboundOutcome,
+    now_ms: u64,
+    also: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord),
+) -> IntentLedgerResult<IntentLedgerRecord> {
     let mut wtxn = vault.store.env.write_txn()?;
     let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
         IntentLedgerError::InvalidRecord("transition target is missing"),
@@ -586,6 +621,7 @@ fn transition_record_with_outcome(
         // unknown. Keep its conservative floor anchored to this transition.
         crate::outbound_chokepoint::dedupe::delivered_in_txn(vault, &mut wtxn, &id)?;
     }
+    also(&mut wtxn, &record);
 
     wtxn.commit().map_err(Error::from)?;
     force_sync(vault)?;

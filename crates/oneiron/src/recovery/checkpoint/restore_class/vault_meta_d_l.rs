@@ -107,6 +107,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // never resurrected or dropped by an image.
     (&t::DREAMER_TURN_PROGRAM_ARM, LIVE),
     (&t::DREAMER_TURN_PROGRAM_ATTEMPT, CONTENT),
+    // DOOR-141 PR2: a program's run and its settled steps are execution
+    // progress; the effects they join keep their own (LIVE) classes.
+    (&t::DREAMER_TURN_PROGRAM_RUN, CONTENT),
+    (&t::DREAMER_TURN_PROGRAM_STEP, CONTENT),
     (&t::DREAMER_TURN_PROGRAM_WAKE, CONTENT),
     (&t::DREAMER_WAKE_RECIPE_INPUT, CONTENT),
     (&t::DREAMER_WAKE_STATE, CONTENT),

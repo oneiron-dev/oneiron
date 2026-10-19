@@ -514,6 +514,10 @@ impl<'a> HostSelfDispatcher<'a> {
                     })));
                 }
             };
+            // A turn program's run calls its pinned callable alone.
+            if let Some(refused) = self.program_skill_refusal(call) {
+                return Ok(Err(refused));
+            }
             Ok(self
                 .callable_skill_lease()?
                 .map(|lease| CallableSkillLease { read_as, ..lease }))
@@ -533,7 +537,8 @@ impl<'a> HostSelfDispatcher<'a> {
                 error: code.to_owned(),
             }))
         };
-        let Some(lease) = &self.agent_lease else {
+        // A turn program's run lends its pinned callable its own leased try.
+        let Some(lease) = self.agent_lease.as_ref().or_else(|| self.program_lease()) else {
             return Ok(refused("skills_call_unleased"));
         };
         let Some(vault) = &self.skill_vault else {

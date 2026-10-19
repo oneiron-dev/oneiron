@@ -12993,6 +12993,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/program_step.rs",
+     "purpose": "A turn program's code run (DOOR-141 PR2): the program's own leased try, lent to the one callable SKILL its…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -13071,6 +13081,16 @@
      "purpose": "Attach point 2 (ARCH-0080 §3): the verb hooks of each call a run serves itself",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/verb_hooks/parked.rs",
+     "purpose": "The hook pause a parked call names when the run makes it again (FIX 5526): the ask an earlier try of the…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -22219,13 +22239,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/program/authority.rs",
      "purpose": "The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 17,
       "fn": 1
      }
     },
@@ -22247,8 +22267,18 @@
      "path": "src/dreamer_runner/program/mod.rs",
      "purpose": "Turn-woken programs (DOOR-141, FIX 4382)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/run.rs",
+     "purpose": "Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -22267,7 +22297,7 @@
      "path": "src/dreamer_runner/program/types.rs",
      "purpose": "The DOOR-141 vocabulary: the pinned program, its arming, the wake a landed turn owes it, and what admitting…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 1,
       "struct": 7
@@ -22585,7 +22615,7 @@
      "surface": {
       "crate-vis": 14,
       "mod": 1,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -22716,6 +22746,24 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TurnProgramExecutor",
+      "TurnProgramHost",
+      "TurnProgramReactor",
+      "TurnProgramRequest",
+      "TurnProgramRuntime"
+     ],
+     "path": "src/dreamer_wake/program.rs",
+     "purpose": "The Dreamer's turn program runtime (DOOR-141 PR2, FIX 4382)",
+     "surface": {
+      "fn": 1,
+      "struct": 3,
+      "trait": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -22801,13 +22849,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/settlement.rs",
      "purpose": "What the driver does with an attempt once the executor returns: milestones, landing, complete, park, publish",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -36009,7 +36057,7 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 53,
+      "crate-vis": 54,
       "fn": 36,
       "struct": 2,
       "type": 1
@@ -37551,7 +37599,7 @@
      "path": "src/off_record/lifecycle/session_hooks.rs",
      "purpose": "The one session-only store of runtime-hook records (WILL L11-01 S01-2c; Engine 10-19): where a verb hook…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -39410,6 +39458,7 @@
      "path": "src/outbound_consent/result_scrub.rs",
      "purpose": "Result redaction types, sender trait, and transport hardening policy",
      "surface": {
+      "crate-vis": 1,
       "fn": 8,
       "struct": 6,
       "trait": 1
@@ -39635,7 +39684,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -44867,13 +44916,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/verb/ask/session.rs",
      "purpose": "A session-only call's hook ask (L13 PR-D, FIX 4283, FIX 5383; Engine 10-19 16:1x ruling (a), 17:3x)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -44893,7 +44942,7 @@
      "path": "src/runtime_hooks/verb/chain/session.rs",
      "purpose": "A chain of a session-only call (WILL L11-01 S01-2c): the lanes its hooks read through, over a room's view…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9
      }
     },
     {
@@ -45015,7 +45064,7 @@
      "path": "src/runtime_hooks/verb/state.rs",
      "purpose": "What a vault holds in memory for verb hooks: the process switch, the cached binding list, the sandbox, the…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 7,
       "struct": 3
@@ -45028,7 +45077,27 @@
      "path": "src/runtime_hooks/verb/storage.rs",
      "purpose": "Where one verb hook chain reads content and keeps its records (WILL L11-01 S01-2c): the vault, or a…",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 35
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/storage/named_pause.rs",
+     "purpose": "Which call a named hook pause is (FIX 5526): a retry names its pause by the ask handle, and one request may…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/storage/room_pause.rs",
+     "purpose": "A room's hook pause (FIX 5524; Engine 10-20, a widening of the 2c-3 call): a hook in an off-record room asks…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -55215,7 +55284,8 @@
      "path": "src/task_verb/sdk_browser.rs",
      "purpose": "Browser wire shapes, shared by code mode and the credential-bound host doors",
      "surface": {
-      "re-export": 1
+      "re-export": 1,
+      "type": 13
      }
     },
     {
@@ -62305,7 +62375,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 98,
+     "files": 100,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62571,7 +62641,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 88,
+     "files": 89,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62585,7 +62655,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63180,7 +63250,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 33,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63588,7 +63658,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3912,
+   "source_files": 3918,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66013,6 +66083,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "BrowserAnswer",
+      "DesktopAnswer",
+      "TakeoverRecord",
+      "WindowSwitch"
+     ],
+     "path": "src/answer.rs",
+     "purpose": "What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and…",
+     "surface": {
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/capture.rs",
      "purpose": "Repeat screenshots (AB-004)",
@@ -66038,15 +66124,14 @@
       "DesktopGuest",
       "DesktopSession",
       "PersonInput",
-      "Takeover",
-      "TakeoverRecord"
+      "Takeover"
      ],
      "path": "src/desktop.rs",
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…",
      "surface": {
       "enum": 2,
-      "fn": 15,
-      "struct": 4
+      "fn": 16,
+      "struct": 3
      }
     },
     {
@@ -66076,7 +66161,7 @@
      "path": "src/driver/pages.rs",
      "purpose": "The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 25
      }
     },
     {
@@ -66142,7 +66227,7 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 41,
       "trait": 2
      }
@@ -66248,6 +66333,13 @@
     }
    ],
    "modules": {
+    "answer": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and…"
+    },
     "capture": {
      "files": 1,
      "impl_vault": false,
@@ -66321,7 +66413,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 13,
+   "source_files": 14,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -69814,7 +69906,7 @@
      "path": "src/supervisor/mod.rs",
      "purpose": "The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps…",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -69825,6 +69917,19 @@
      "purpose": "Single wake-pass assembly and engine delegation",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProgramExecutorFactory"
+     ],
+     "path": "src/supervisor/program_factory.rs",
+     "purpose": "The turn program runtime around a host's executor factory (DOOR-141 PR2)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -70028,7 +70133,7 @@
      "purpose": "RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints"
     },
     "supervisor": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -70058,7 +70163,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 18,
+   "source_files": 19,
    "test_files": 10
   },
   "oneiron-ffi": {
@@ -75593,6 +75698,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/turn_program_host.rs",
+     "purpose": "What this server lends one entry of a Dreamer turn program (DOOR-141 PR2): the engine-native code host's own…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/turns.rs",
      "purpose": "Chat turns in flight",
      "surface": {
@@ -75647,6 +75762,16 @@
      "purpose": "A self agent's chat turn on its own live fork (FIX 4465 D)",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/chat/hook_ask.rs",
+     "purpose": "The hook pause a chat turn's retry resumes (FIX 5526): the ask handle a hook's Pending gave, named in…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -76844,7 +76969,7 @@
      "path": "src/api/facade/call_context.rs",
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -85986,14 +86111,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 53,
+     "files": 54,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 460,
+     "files": 461,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -86443,7 +86568,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 847,
+   "source_files": 849,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -86929,6 +87054,19 @@
       "BriefIntent",
       "BriefKindStamp",
       "BriefStamp",
+      "BrowserAnswerBatchOutput",
+      "BrowserAnswerExpectOutput",
+      "BrowserAnswerFindOutput",
+      "BrowserAnswerHandoverOutput",
+      "BrowserAnswerImageOutput",
+      "BrowserAnswerLibraryFindOutput",
+      "BrowserAnswerLibraryRetireOutput",
+      "BrowserAnswerLibraryRetiredOutput",
+      "BrowserAnswerLibraryRunOutput",
+      "BrowserAnswerObservationPage",
+      "BrowserAnswerProposeOutput",
+      "BrowserAnswerScreenshotOutput",
+      "BrowserAnswerWaitForOutput",
       "BudgetDenied",
       "BudgetExhaustionPolicy",
       "BudgetHoldNotice",
@@ -89857,6 +89995,8 @@
       "SupportGrantStatus",
       "SupportGrantView",
       "SupportHolderClass",
+      "TabSwitch",
+      "TabSwitchCause",
       "TaggedMentionView",
       "TaggingFailureView",
       "TaggingHistoryView",
@@ -89872,6 +90012,7 @@
       "TaggingTraceView",
       "TaggingTurnRequest",
       "TaggingVadView",
+      "TakeoverRecord",
       "TaskAccept",
       "TaskAnswerRequest",
       "TaskAskAnswer",
@@ -90212,8 +90353,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 857,
-      "struct": 2711
+      "enum": 858,
+      "struct": 2726
      }
     },
     {

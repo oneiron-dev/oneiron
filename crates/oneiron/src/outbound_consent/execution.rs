@@ -394,6 +394,9 @@ pub(super) struct ScopedResultTransport<'a, S> {
     pub(super) scrubbable_result_fields: usize,
     pub(super) scrubbed_result_fields: usize,
     pub(super) checked_bytes: Vec<u8>,
+    /// The body the last authorized send returned, handed on to that send's
+    /// own terminal bridge only (DOOR-141 PR2), never counted or logged.
+    settled_body: Option<Vec<u8>>,
 }
 
 impl<'a, S> ScopedResultTransport<'a, S> {
@@ -404,6 +407,7 @@ impl<'a, S> ScopedResultTransport<'a, S> {
             scrubbable_result_fields: 0,
             scrubbed_result_fields: 0,
             checked_bytes: Vec::new(),
+            settled_body: None,
         }
     }
 }
@@ -416,10 +420,15 @@ impl<S: OutboundResultSender> crate::outbound_chokepoint::OutboundTransport
         let transport = self.inner.send(call);
         self.effectful_sends = self.effectful_sends.saturating_add(1);
         let scrubbable = transport.raw_result.scrubbable_field_count();
+        self.settled_body = transport.raw_result.body().map(<[u8]>::to_vec);
         let scrubbed = scrub_outbound_result(transport.raw_result).scrubbed_field_count();
         self.scrubbable_result_fields = self.scrubbable_result_fields.saturating_add(scrubbable);
         self.scrubbed_result_fields = self.scrubbed_result_fields.saturating_add(scrubbed);
         transport.outcome
+    }
+
+    fn settled_result(&self) -> Option<&[u8]> {
+        self.settled_body.as_deref()
     }
 }
 

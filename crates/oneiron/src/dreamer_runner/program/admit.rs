@@ -1,12 +1,12 @@
 //! DOOR-141 admission: one writer judges a wake against the live vault and,
 //! in one commit, records its Gate decision and admission, queues the program
-//! attempt as the root of its run tree under the waking actor's stamp, parks
-//! it until the program runtime lands, and consumes the wake.
+//! attempt as the root of its run tree under the waking actor's stamp, ready
+//! for the program runtime, and consumes the wake.
 
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
-    DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerAttemptPayload, DreamerParkCause,
-    DreamerParkedAttemptRecord, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+    DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerAttemptPayload, DreamerRunnerStore,
+    EnqueueDreamerAttemptOutcome,
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
@@ -14,12 +14,11 @@ use crate::registry::ENTITY_TYPE_TURN;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{EntityId, Vault};
 
-use super::super::store::PARKED;
 use super::types::{
     ProgramRecipePin, TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt,
     TurnProgramAdmissionRecord, TurnProgramWake, run_id,
 };
-use super::{ADMISSION, ARM, PARK_OWNER, PARK_REASON, WAKE};
+use super::{ADMISSION, ARM, WAKE};
 
 const NOT_ARMED: &str = "the program is no longer armed";
 const NOT_TRIGGERED: &str = "the landed turn does not match the program's trigger";
@@ -37,16 +36,19 @@ impl Vault {
     /// pinned SKILL must still be the program pinned. The decision, allowed
     /// or refused, is a Gate receipt; an allowed one queues one Dreamer
     /// program attempt, stamped as the waking actor, the root of its run
-    /// tree, and parks it until the program runtime lands. The wake is
-    /// consumed in the same commit, so a crash before it re-admits nothing.
+    /// tree, ready for the program runtime: no placeholder park holds it
+    /// (DOOR-141 PR2). The wake is consumed in the same commit, so a crash
+    /// before it re-admits nothing.
     pub(super) fn admit_turn_program(
         &self,
         wake: &TurnProgramWake,
         now: u64,
     ) -> Result<TurnProgramAdmissionReceipt> {
         let receipt = self.with_write_txn_grouped(|txn| admit_in_txn(self, txn, wake, now))?;
-        if receipt.first && matches!(receipt.outcome, TurnProgramAdmissionOutcome::Parked { .. }) {
+        if receipt.first && matches!(receipt.outcome, TurnProgramAdmissionOutcome::Queued { .. }) {
             self.store.notify_attempt_observers();
+            // The deadline lane arms the queued program at once.
+            self.store.notify_proactivity_changes();
         }
         Ok(receipt)
     }
@@ -86,19 +88,6 @@ fn admit_in_txn(
         let attempt = queue_in_txn(vault, txn, &admission, now)?;
         record.attempt = Some(attempt);
         ADMISSION.put(vault, txn, &admission, &record)?;
-        // Honest about where it stands: admitted, not run, not complete.
-        PARKED.put(
-            vault,
-            txn,
-            &attempt,
-            &DreamerParkedAttemptRecord {
-                attempt_id: attempt,
-                reason: PARK_REASON.to_owned(),
-                cause: DreamerParkCause::Other,
-                park_owner: PARK_OWNER.to_owned(),
-                parked_at: now,
-            },
-        )?;
     }
     WAKE.delete(vault, txn, &wake.key())?;
     Ok(record.receipt(true))
@@ -190,7 +179,8 @@ fn gate_decision_in_txn(
 
 /// Queues the admitted program as one Dreamer attempt with no parent: the
 /// root of its run tree. Its payload names the admission, which its stamp
-/// reads; its dedupe key and run id are the admission's.
+/// reads; its dedupe key is the admission's, and its run id the code run the
+/// admission fixes.
 fn queue_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
