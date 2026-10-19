@@ -1,6 +1,9 @@
 //! Atomic critic admission and exact-prefix replay for a tested proposal stack.
 use super::git::{canonical_repo_ref_for_root, resolve_mutable_repo_root};
-use super::oplog::{SNAPSHOT, repo_mutation_snapshot_key};
+use super::oplog::{
+    OPLOG, SNAPSHOT, repo_mutation_oplog_key, repo_mutation_repo_key_hash,
+    repo_mutation_snapshot_key,
+};
 use super::proposal::{
     self, PROPOSAL, RepoProposal, RepoProposalOperation, RepoProposalStatus, invalid,
 };
@@ -11,7 +14,7 @@ use crate::{
     codebase::RepoRef,
     error::{Error, Result},
     git_wire::{GitWire, GitWireRepo, lock_repository},
-    merge_queue::{LandingPermit, MergeBatch, TestedBatch},
+    merge_queue::{LandingPermit, MergeBatch, SpeculativePath, TestedBatch},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -23,13 +26,87 @@ struct ReviewedStack {
     expected_head: String,
     pre_snapshot: RepoForkHash,
     tested_tree: String,
-    proposals: Vec<String>,
+    /// The admitted members in order. An erase turns a pending one into an
+    /// erased slot in place (FIX 5219).
+    members: Vec<StackMember>,
+    end: StackEnd,
+}
+
+/// One position in a stack's history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+enum StackMember {
+    /// The proposal's hex id, as the batch names it.
+    Proposal(String),
+    /// A member deleted with its erased actor before it ran. It names nothing.
+    Erased,
+}
+
+impl StackMember {
+    fn proposal(&self) -> Result<Option<EntityId>> {
+        match self {
+            Self::Proposal(id) => EntityId::from_hex(id).map(Some),
+            Self::Erased => Ok(None),
+        }
+    }
+}
+
+/// Where a stack ends. Only an erase of a pending member, in a stack that
+/// already ran one, moves it (FIX 5219).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum StackEnd {
+    /// Every member lands.
+    Open,
+    /// The erase found a member Prepared. The repo writer reconciles it, then
+    /// freezes the end.
+    Requested,
+    /// The stack ends after this many landed members.
+    Landed(usize),
+}
+
+impl ReviewedStack {
+    /// Whether this stored row is `admitted`'s admission: the same identity and
+    /// the same members in order, each still itself or erased. The end and the
+    /// erased slots are all an erase changes (FIX 5219).
+    fn admits(&self, admitted: &Self) -> bool {
+        self.repo_identity == admitted.repo_identity
+            && self.batch == admitted.batch
+            && self.expected_head == admitted.expected_head
+            && self.pre_snapshot == admitted.pre_snapshot
+            && self.tested_tree == admitted.tested_tree
+            && self.members.len() == admitted.members.len()
+            && self
+                .members
+                .iter()
+                .zip(&admitted.members)
+                .all(|(stored, member)| stored == member || *stored == StackMember::Erased)
+    }
+}
+
+/// The staged path a batch lands, the one selector the tree check, the landing
+/// and the slow check read (FIX 5219): its full path, or once an erase ended its
+/// reviewed stack, the prefix path of the landed members. The batch keeps every
+/// path, so the prefix is a path all-path agreement already tested.
+fn landed_path<'a>(
+    stack: Option<&ReviewedStack>,
+    batch: &'a MergeBatch,
+) -> Result<&'a SpeculativePath> {
+    let landed = match stack.map(|stack| stack.end) {
+        Some(StackEnd::Landed(landed)) => landed,
+        _ => batch.proposals.len(),
+    };
+    let mask = (1_u64 << landed) - 1;
+    batch
+        .paths
+        .iter()
+        .find(|path| path.mask == mask)
+        .ok_or(Error::CorruptedIndex("landing path missing"))
 }
 
 /// Only this module can construct a step, after atomic stack admission and
 /// verification of the entire persisted prefix. It never replaces a proposal's
 /// reviewed base; it authorizes one derived snapshot in one tested stack.
 pub(super) struct StackStep {
+    key: String,
     stack: String,
     proposal: EntityId,
     expected: RepoForkHash,
@@ -41,6 +118,24 @@ impl StackStep {
         }
         if actual != self.expected {
             return Err(Error::ConcurrentWrite("reviewed stack prefix changed"));
+        }
+        Ok(())
+    }
+
+    /// Re-reads the stack's end and this member's binding in the writer that
+    /// prepares or resets the member, so an erase that ended the stack between
+    /// steps stops the next one (FIX 5219).
+    pub(super) fn require_open_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+        let open = REVIEWED_STACK
+            .get(&vault.store, txn, &self.key)?
+            .is_some_and(|stack| stack.end == StackEnd::Open);
+        let bound = PROPOSAL
+            .get(&vault.store, txn, &self.proposal)?
+            .is_some_and(|row| row.merge_stack.as_deref() == Some(self.stack.as_str()));
+        if !open || !bound {
+            return Err(Error::ConcurrentWrite(
+                "reviewed stack ended before this member",
+            ));
         }
         Ok(())
     }
@@ -62,11 +157,110 @@ fn read(vault: &Vault, identity: &str, batch: &str) -> Result<Option<ReviewedSta
     REVIEWED_STACK.get(&vault.store, &txn, &key(identity, batch))
 }
 
+/// The call for a member past an ended stack's end that never ran (FIX 5219):
+/// unbound and back to Proposed, it lands alone under today's per-proposal
+/// gate, its own critiques still counting.
+const ENDED_STACK_SURVIVOR_STATUS: RepoProposalStatus = RepoProposalStatus::Proposed;
+
+/// The call for what landed (FIX 5219): the contiguous prefix of members whose
+/// proposal is Applied and whose oplog receipt applied on the prefix before
+/// it. A sequence alone is no landing: Prepared allocates one and a failed
+/// attempt keeps it. Recovery proves the full receipt binding again.
+fn landed_prefix_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    stack: &ReviewedStack,
+) -> Result<usize> {
+    let mut hash = stack.pre_snapshot;
+    let mut sequence = 0;
+    let mut landed = 0;
+    for member in &stack.members {
+        let Some(id) = member.proposal()? else {
+            break;
+        };
+        let Some(row) = PROPOSAL.get(&vault.store, txn, &id)? else {
+            break;
+        };
+        let (Some(seq), RepoProposalStatus::Applied) = (row.operation_seq, row.status) else {
+            break;
+        };
+        let repo = repo_mutation_repo_key_hash(&RepoRef::parse(&row.repo)?);
+        let Some(entry) = OPLOG.get(&vault.store, txn, &repo_mutation_oplog_key(&repo, seq))?
+        else {
+            break;
+        };
+        let Some(post) = entry.expected_post_action_fork_hash else {
+            break;
+        };
+        if entry.status != RepoMutationStatus::Applied.as_str()
+            || entry.seq <= sequence
+            || entry.pre_action_fork_hash != hash
+            || entry.operation_subject.as_deref() != Some(row.path.as_str())
+        {
+            break;
+        }
+        hash = post;
+        sequence = entry.seq;
+        landed += 1;
+    }
+    Ok(landed)
+}
+
+/// The call for ending a stack (FIX 5219): while a member is Prepared the end
+/// stays requested and every binding stays. Once none is, the stack ends at its
+/// landed prefix. With none landed it goes, as a stack no member ran does.
+/// Each later member that never ran is unbound and Proposed again; one that
+/// ran keeps its terminal receipt. No reviewed base is rewritten.
+fn end_stack_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &String,
+    mut stack: ReviewedStack,
+) -> Result<()> {
+    let mut members = Vec::new();
+    for (index, member) in stack.members.iter().enumerate() {
+        if let Some(id) = member.proposal()?
+            && let Some(row) = PROPOSAL.get(&vault.store, wtxn, &id)?
+        {
+            members.push((index, row));
+        }
+    }
+    // Prepared binds a sequence and leaves the proposal Approved until it finishes.
+    if stack.end != StackEnd::Requested
+        || members.iter().any(|(_, row)| {
+            row.operation_seq.is_some() && row.status == RepoProposalStatus::Approved
+        })
+    {
+        return REVIEWED_STACK.put(&vault.store, wtxn, key, &stack);
+    }
+    let landed = landed_prefix_in_txn(vault, wtxn, &stack)?;
+    if landed == 0 {
+        REVIEWED_STACK.delete(&vault.store, wtxn, key)?;
+    } else {
+        stack.end = StackEnd::Landed(landed);
+        REVIEWED_STACK.put(&vault.store, wtxn, key, &stack)?;
+    }
+    for (index, mut row) in members {
+        if index < landed || row.merge_stack.as_deref() != Some(stack.batch.as_str()) {
+            continue;
+        }
+        if row.operation_seq.is_none() {
+            row.status = ENDED_STACK_SURVIVOR_STATUS;
+        } else if landed > 0 {
+            continue;
+        }
+        row.merge_stack = None;
+        proposal::store(vault, wtxn, &row)?;
+    }
+    Ok(())
+}
+
 /// Drops each admitted stack that listed a proposal in `gone`, deleted with
 /// its erased actor before it ran (FIX 4478), and unbinds the stack's other
 /// members, so each lands alone or in a new stack under its own approval. A
-/// stack that already ran a member stays as it is: its recovery replays only
-/// the proven prefix, and no receipt or outcome is rewritten.
+/// stack that already ran a member keeps the erased one as an erased slot and
+/// ends at its last landed member (FIX 5219); no receipt or outcome is
+/// rewritten.
 pub(super) fn drop_stacks_listing_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -75,22 +269,33 @@ pub(super) fn drop_stacks_listing_in_txn(
     let mut listing = Vec::new();
     for row in REVIEWED_STACK.iter_from(&vault.store, wtxn, &[])? {
         let (key, stack) = row?;
-        if stack
-            .proposals
-            .iter()
-            .any(|id| EntityId::from_hex(id).is_ok_and(|id| gone.contains(&id)))
-        {
+        if stack.members.iter().any(|member| {
+            member
+                .proposal()
+                .is_ok_and(|id| id.is_some_and(|id| gone.contains(&id)))
+        }) {
             listing.push((key, stack));
         }
     }
-    for (key, stack) in listing {
+    for (key, mut stack) in listing {
         let mut members = Vec::new();
-        for id in &stack.proposals {
-            if let Some(row) = PROPOSAL.get(&vault.store, wtxn, &EntityId::from_hex(id)?)? {
+        for member in &stack.members {
+            if let Some(id) = member.proposal()?
+                && let Some(row) = PROPOSAL.get(&vault.store, wtxn, &id)?
+            {
                 members.push(row);
             }
         }
         if members.iter().any(|row| row.operation_seq.is_some()) {
+            for member in &mut stack.members {
+                if member.proposal()?.is_some_and(|id| gone.contains(&id)) {
+                    *member = StackMember::Erased;
+                }
+            }
+            if stack.end == StackEnd::Open {
+                stack.end = StackEnd::Requested;
+            }
+            end_stack_in_txn(vault, wtxn, &key, stack)?;
             continue;
         }
         REVIEWED_STACK.delete(&vault.store, wtxn, &key)?;
@@ -111,6 +316,37 @@ impl Vault {
         batch: &MergeBatch,
     ) -> Result<bool> {
         Ok(read(self, &repo.identity().as_hex(), &batch.id)?.is_some())
+    }
+
+    /// Freezes an erase's end request at the landed prefix (FIX 5219). The merge
+    /// queue calls this under the repo writer after prepared recovery, so each
+    /// member that was Prepared has finished or failed.
+    pub(crate) fn end_reviewed_merge_stack(
+        &self,
+        repo: &GitWireRepo,
+        batch: &MergeBatch,
+    ) -> Result<()> {
+        let key = key(&repo.identity().as_hex(), &batch.id);
+        let mut wtxn = self.store.env.write_txn()?;
+        if let Some(stack) = REVIEWED_STACK.get(&self.store, &wtxn, &key)?
+            && stack.end == StackEnd::Requested
+        {
+            end_stack_in_txn(self, &mut wtxn, &key, stack)?;
+            wtxn.commit()?;
+        }
+        Ok(())
+    }
+
+    /// The staged path `batch` lands; see [`landed_path`].
+    pub(crate) fn reviewed_landed_path<'a>(
+        &self,
+        repo: &GitWireRepo,
+        batch: &'a MergeBatch,
+    ) -> Result<&'a SpeculativePath> {
+        landed_path(
+            read(self, &repo.identity().as_hex(), &batch.id)?.as_ref(),
+            batch,
+        )
     }
 
     /// Both input capabilities are issued by the merge queue under its writer
@@ -143,17 +379,39 @@ impl Vault {
             expected_head: batch.expected_head.clone(),
             pre_snapshot: snapshot,
             tested_tree: tested.tested_tree().to_owned(),
-            proposals: batch.proposals.iter().map(|p| p.id.clone()).collect(),
+            members: batch
+                .proposals
+                .iter()
+                .map(|p| StackMember::Proposal(p.id.clone()))
+                .collect(),
+            end: StackEnd::Open,
         };
-        match read(self, &expected.repo_identity, &expected.batch)? {
-            Some(stored) if stored == expected => {}
+        let stack = match read(self, &expected.repo_identity, &expected.batch)? {
+            Some(stored) if stored.admits(&expected) => stored,
             Some(_) => return Err(invalid("reviewed stack identity changed")),
-            None => self.admit_reviewed_stack(&repo, tested, &expected)?,
-        }
-        let ids = expected
-            .proposals
+            None => {
+                self.admit_reviewed_stack(&repo, tested, &expected)?;
+                expected
+            }
+        };
+        // An ended stack is complete through its last landed member (FIX 5219).
+        let landed = match stack.end {
+            StackEnd::Open => stack.members.len(),
+            StackEnd::Landed(landed) if landed <= stack.members.len() => landed,
+            StackEnd::Landed(_) => return Err(Error::CorruptedIndex("reviewed stack end")),
+            StackEnd::Requested => {
+                return Err(Error::ConcurrentWrite("reviewed stack end awaits recovery"));
+            }
+        };
+        let ids = stack
+            .members
             .iter()
-            .map(|id| EntityId::from_hex(id))
+            .take(landed)
+            .map(|member| {
+                member
+                    .proposal()?
+                    .ok_or(Error::CorruptedIndex("landed member erased"))
+            })
             .collect::<Result<Vec<_>>>()?;
         let rows = ids
             .iter()
@@ -161,11 +419,11 @@ impl Vault {
             .collect::<Result<Vec<_>>>()?;
         let oplog = self.repo_mutation_oplog_for_canonical(&repo_ref)?;
         let mut outcomes = Vec::new();
-        let mut hash = expected.pre_snapshot;
+        let mut hash = stack.pre_snapshot;
         let mut stopped = false;
         let mut sequence = 0;
         for row in &rows {
-            if row.merge_stack.as_deref() != Some(expected.batch.as_str()) || !row.eligible()? {
+            if row.merge_stack.as_deref() != Some(stack.batch.as_str()) || !row.eligible()? {
                 return Err(invalid("reviewed stack member binding changed"));
             }
             let entry = row
@@ -209,14 +467,25 @@ impl Vault {
         if capture_repo_snapshot(self, &root)?.0 != hash {
             return Err(Error::ConcurrentWrite("reviewed stack recovery diverged"));
         }
+        // An ended stack only proves its prefix; it writes no later member.
+        if stack.end != StackEnd::Open && outcomes.len() != rows.len() {
+            return Err(invalid("ended reviewed stack prefix is not applied"));
+        }
         for row in rows.into_iter().skip(outcomes.len()) {
             // An erased actor's member never runs again, so its failed attempt stays failed.
             row.actor.live()?;
+            let step = StackStep {
+                key: key(&stack.repo_identity, &stack.batch),
+                stack: stack.batch.clone(),
+                proposal: row.id,
+                expected: hash,
+            };
             if row.operation_seq.is_some() {
                 // Recovery proved this failed attempt had no repository effect.
                 // Keep its old terminal receipt, but allocate a fresh sequence on
                 // retry. The immutable edit ID makes the document step idempotent.
                 let mut txn = self.store.env.write_txn()?;
+                step.require_open_in_txn(self, &txn)?;
                 let mut current = PROPOSAL
                     .get(&self.store, &txn, &row.id)?
                     .ok_or(Error::EntityNotFound)?;
@@ -230,11 +499,6 @@ impl Vault {
                 proposal::store(self, &mut txn, &current)?;
                 txn.commit()?;
             }
-            let step = StackStep {
-                stack: expected.batch.clone(),
-                proposal: row.id,
-                expected: hash,
-            };
             let outcome = self.apply_repo_mutation_stack(row.request()?, row.id, &step)?;
             require_receipt(&row, &outcome.entry, hash)?;
             if outcome.entry.status != RepoMutationStatus::Applied {
@@ -261,7 +525,8 @@ impl Vault {
                 ));
             }
         }
-        if super::conflict::tree_hash_for_ref(&root, "HEAD")? != expected.tested_tree {
+        let tested_tree = &landed_path(Some(&stack), batch)?.tree;
+        if &super::conflict::tree_hash_for_ref(&root, "HEAD")? != tested_tree {
             return Err(Error::ConcurrentWrite(
                 "reviewed stack differs from tested tree",
             ));

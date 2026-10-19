@@ -31,8 +31,7 @@ impl MergeQueue<'_> {
         let prior = match phase {
             CheckPhase::Fast => path.verdict.as_ref(),
             CheckPhase::Slow => {
-                if mask != (1 << batch.proposals.len()) - 1
-                    || batch.state != BatchState::HeadAdvanced
+                if mask != self.landed_path(&batch)?.mask || batch.state != BatchState::HeadAdvanced
                 {
                     return Err(invalid("slow check must name the landed full batch"));
                 }
