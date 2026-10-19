@@ -48,6 +48,7 @@ mod checkpoint_image;
 mod checkpoint_policy;
 mod checkpoint_policy_choice;
 mod claim_write;
+mod conversation_training;
 mod critical_confirm_door;
 mod engine_machine;
 mod entry_transition;
@@ -185,6 +186,7 @@ pub use checkpoint_choice::CheckpointPolicyHead;
 pub use checkpoint_image::*;
 pub use checkpoint_policy::*;
 pub use checkpoint_policy_choice::CheckpointPolicyView;
+pub use conversation_training::ConversationTrainingView;
 pub use fold_engine::*;
 pub use fold_state::*;
 pub use forwarded_caller::{
