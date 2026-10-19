@@ -746,8 +746,8 @@ async fn restore_skill(
     Ok(Json(row))
 }
 
-/// `POST /v1/owner/packs/skills/restore-defaults`: restore every missing or
-/// retired embedded default as a fresh Candidate.
+/// `POST /v1/owner/packs/skills/restore-defaults`: restore missing or retired
+/// bootstrap and pinned first-hub defaults as fresh Candidates.
 async fn restore_default_skills(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,

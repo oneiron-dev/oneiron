@@ -1039,6 +1039,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skills_bootstrap(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.bootstrap", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skill_hubs_default_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skill_hubs.default.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_restoreDefaults(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.restoreDefaults", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_skill_hubs_put(
         &self,
         input: serde_json::Value,

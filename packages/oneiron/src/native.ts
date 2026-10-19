@@ -148,6 +148,9 @@ vaultInboxGroups(input: unknown): unknown
 vaultWeaveDigestRender(input: unknown): unknown
 vaultWeaveLinkCorrections(input: unknown): unknown
 selfInboxLens(input: unknown): unknown
+vaultSkillsBootstrap(input: unknown): unknown
+vaultSkillHubsDefaultGet(input: unknown): unknown
+vaultSkillsRestoredefaults(input: unknown): unknown
 vaultSkillHubsPut(input: unknown): unknown
 vaultSkillHubsGet(input: unknown): unknown
 vaultSkillHubsPublishersAdmit(input: unknown): unknown

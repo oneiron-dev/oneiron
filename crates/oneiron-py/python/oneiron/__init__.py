@@ -431,14 +431,14 @@ class Oneiron:
         def inbox(self) -> "Oneiron._VaultInboxVerbs":
             return Oneiron._VaultInboxVerbs(self._client)
         @property
+        def skills(self) -> "Oneiron._VaultSkillsVerbs":
+            return Oneiron._VaultSkillsVerbs(self._client)
+        @property
         def skill_hubs(self) -> "Oneiron._VaultSkillHubsVerbs":
             return Oneiron._VaultSkillHubsVerbs(self._client)
         @property
         def packs(self) -> "Oneiron._VaultPacksVerbs":
             return Oneiron._VaultPacksVerbs(self._client)
-        @property
-        def skills(self) -> "Oneiron._VaultSkillsVerbs":
-            return Oneiron._VaultSkillsVerbs(self._client)
         @property
         def connectors(self) -> "Oneiron._VaultConnectorsVerbs":
             return Oneiron._VaultConnectorsVerbs(self._client)
@@ -1150,9 +1150,114 @@ class Oneiron:
         def review(self, spec=None):
             """Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows."""
             return json.loads(_translate(lambda: self._client.vault_inbox_concerns_review(json.dumps({} if spec is None else spec))))
+    class _VaultSkillsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def bootstrap(self, spec=None):
+            """Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills."""
+            return json.loads(_translate(lambda: self._client.vault_skills_bootstrap(json.dumps({} if spec is None else spec))))
+        def restoreDefaults(self, spec=None):
+            """The owner explicitly re-imports missing or retired bootstrap and pinned first-hub defaults as fresh candidates, leaving unchanged defaults and local forks alone."""
+            return json.loads(_translate(lambda: self._client.vault_skills_restoreDefaults(json.dumps({} if spec is None else spec))))
+        def import_(self, spec):
+            """The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask."""
+            return json.loads(_translate(lambda: self._client.vault_skills_import(json.dumps(spec))))
+        def sync(self, spec):
+            """The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."""
+            return json.loads(_translate(lambda: self._client.vault_skills_sync(json.dumps(spec))))
+        def receipts(self, spec):
+            """Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_skills_receipts(json.dumps(spec))))
+        def convert(self, spec):
+            """Converts selected messages through the configured refiner; user initiation approves conversion, never admission."""
+            return json.loads(_translate(lambda: self._client.vault_skills_convert(json.dumps(spec))))
+        def get(self, spec):
+            """Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry."""
+            return json.loads(_translate(lambda: self._client.vault_skills_get(json.dumps(spec))))
+        def list(self, spec):
+            """Lists a page of the owner skill library, including inactive skills and their retained evidence."""
+            return json.loads(_translate(lambda: self._client.vault_skills_list(json.dumps(spec))))
+        def archive(self, spec):
+            """The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled."""
+            return json.loads(_translate(lambda: self._client.vault_skills_archive(json.dumps(spec))))
+        def restore(self, spec):
+            """The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring."""
+            return json.loads(_translate(lambda: self._client.vault_skills_restore(json.dumps(spec))))
+        def fork(self, spec):
+            """The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."""
+            return json.loads(_translate(lambda: self._client.vault_skills_fork(json.dumps(spec))))
+        @property
+        def rules(self) -> "Oneiron._VaultSkillsRulesVerbs":
+            return Oneiron._VaultSkillsRulesVerbs(self._client)
+        @property
+        def code_auto_install(self) -> "Oneiron._VaultSkillsCodeAutoInstallVerbs":
+            return Oneiron._VaultSkillsCodeAutoInstallVerbs(self._client)
+        @property
+        def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs":
+            return Oneiron._VaultSkillsPermissionsVerbs(self._client)
+        @property
+        def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs":
+            return Oneiron._VaultSkillsOptimizeVerbs(self._client)
+        @property
+        def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs":
+            return Oneiron._VaultSkillsGovernanceVerbs(self._client)
+        def pack_receipt(self, spec):
+            """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_skills_pack_receipt(json.dumps(spec))))
+        @property
+        def outcomes(self) -> "Oneiron._VaultSkillsOutcomesVerbs":
+            return Oneiron._VaultSkillsOutcomesVerbs(self._client)
+    class _VaultSkillsRulesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose."""
+            return json.loads(_translate(lambda: self._client.vault_skills_rules_set(json.dumps(spec))))
+    class _VaultSkillsCodeAutoInstallVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification."""
+            return json.loads(_translate(lambda: self._client.vault_skills_code_auto_install_set(json.dumps(spec))))
+    class _VaultSkillsPermissionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def approve(self, spec):
+            """The owner answers one imported skill permission ask at its exact hub source."""
+            return json.loads(_translate(lambda: self._client.vault_skills_permissions_approve(json.dumps(spec))))
+    class _VaultSkillsOptimizeVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def start(self, spec):
+            """The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued."""
+            return json.loads(_translate(lambda: self._client.vault_skills_optimize_start(json.dumps(spec))))
+        def result(self, spec):
+            """Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal."""
+            return json.loads(_translate(lambda: self._client.vault_skills_optimize_result(json.dumps(spec))))
+    class _VaultSkillsGovernanceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""
+            return json.loads(_translate(lambda: self._client.vault_skills_governance_get(json.dumps(spec))))
+        def set(self, spec):
+            """The owner marks or clears one skill governance tier; the mark changes no instruction content or version."""
+            return json.loads(_translate(lambda: self._client.vault_skills_governance_set(json.dumps(spec))))
+    class _VaultSkillsOutcomesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def project(self, spec):
+            """Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."""
+            return json.loads(_translate(lambda: self._client.vault_skills_outcomes_project(json.dumps(spec))))
+        def get(self, spec):
+            """Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_skills_outcomes_get(json.dumps(spec))))
     class _VaultSkillHubsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def default(self) -> "Oneiron._VaultSkillHubsDefaultVerbs":
+            return Oneiron._VaultSkillHubsDefaultVerbs(self._client)
         def put(self, spec):
             """The owner registers or revises a hub source; hub trust never grants activation authority."""
             return json.loads(_translate(lambda: self._client.vault_skill_hubs_put(json.dumps(spec))))
@@ -1165,6 +1270,12 @@ class Oneiron:
         @property
         def refs(self) -> "Oneiron._VaultSkillHubsRefsVerbs":
             return Oneiron._VaultSkillHubsRefsVerbs(self._client)
+    class _VaultSkillHubsDefaultVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source."""
+            return json.loads(_translate(lambda: self._client.vault_skill_hubs_default_get(json.dumps({} if spec is None else spec))))
     class _VaultSkillHubsPublishersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1267,102 +1378,6 @@ class Oneiron:
         def verify(self, spec):
             """Checks one pack connection with the engine's fixed read-only provider call for its declared check."""
             return json.loads(_translate(lambda: self._client.vault_packs_setup_verify(json.dumps(spec))))
-    class _VaultSkillsVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def import_(self, spec):
-            """The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask."""
-            return json.loads(_translate(lambda: self._client.vault_skills_import(json.dumps(spec))))
-        def sync(self, spec):
-            """The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."""
-            return json.loads(_translate(lambda: self._client.vault_skills_sync(json.dumps(spec))))
-        def receipts(self, spec):
-            """Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."""
-            return json.loads(_translate(lambda: self._client.vault_skills_receipts(json.dumps(spec))))
-        def convert(self, spec):
-            """Converts selected messages through the configured refiner; user initiation approves conversion, never admission."""
-            return json.loads(_translate(lambda: self._client.vault_skills_convert(json.dumps(spec))))
-        def get(self, spec):
-            """Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry."""
-            return json.loads(_translate(lambda: self._client.vault_skills_get(json.dumps(spec))))
-        def list(self, spec):
-            """Lists a page of the owner skill library, including inactive skills and their retained evidence."""
-            return json.loads(_translate(lambda: self._client.vault_skills_list(json.dumps(spec))))
-        def archive(self, spec):
-            """The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled."""
-            return json.loads(_translate(lambda: self._client.vault_skills_archive(json.dumps(spec))))
-        def restore(self, spec):
-            """The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring."""
-            return json.loads(_translate(lambda: self._client.vault_skills_restore(json.dumps(spec))))
-        def fork(self, spec):
-            """The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."""
-            return json.loads(_translate(lambda: self._client.vault_skills_fork(json.dumps(spec))))
-        @property
-        def rules(self) -> "Oneiron._VaultSkillsRulesVerbs":
-            return Oneiron._VaultSkillsRulesVerbs(self._client)
-        @property
-        def code_auto_install(self) -> "Oneiron._VaultSkillsCodeAutoInstallVerbs":
-            return Oneiron._VaultSkillsCodeAutoInstallVerbs(self._client)
-        @property
-        def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs":
-            return Oneiron._VaultSkillsPermissionsVerbs(self._client)
-        @property
-        def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs":
-            return Oneiron._VaultSkillsOptimizeVerbs(self._client)
-        @property
-        def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs":
-            return Oneiron._VaultSkillsGovernanceVerbs(self._client)
-        def pack_receipt(self, spec):
-            """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
-            return json.loads(_translate(lambda: self._client.vault_skills_pack_receipt(json.dumps(spec))))
-        @property
-        def outcomes(self) -> "Oneiron._VaultSkillsOutcomesVerbs":
-            return Oneiron._VaultSkillsOutcomesVerbs(self._client)
-    class _VaultSkillsRulesVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def set(self, spec):
-            """The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose."""
-            return json.loads(_translate(lambda: self._client.vault_skills_rules_set(json.dumps(spec))))
-    class _VaultSkillsCodeAutoInstallVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def set(self, spec):
-            """The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification."""
-            return json.loads(_translate(lambda: self._client.vault_skills_code_auto_install_set(json.dumps(spec))))
-    class _VaultSkillsPermissionsVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def approve(self, spec):
-            """The owner answers one imported skill permission ask at its exact hub source."""
-            return json.loads(_translate(lambda: self._client.vault_skills_permissions_approve(json.dumps(spec))))
-    class _VaultSkillsOptimizeVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def start(self, spec):
-            """The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued."""
-            return json.loads(_translate(lambda: self._client.vault_skills_optimize_start(json.dumps(spec))))
-        def result(self, spec):
-            """Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal."""
-            return json.loads(_translate(lambda: self._client.vault_skills_optimize_result(json.dumps(spec))))
-    class _VaultSkillsGovernanceVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def get(self, spec):
-            """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""
-            return json.loads(_translate(lambda: self._client.vault_skills_governance_get(json.dumps(spec))))
-        def set(self, spec):
-            """The owner marks or clears one skill governance tier; the mark changes no instruction content or version."""
-            return json.loads(_translate(lambda: self._client.vault_skills_governance_set(json.dumps(spec))))
-    class _VaultSkillsOutcomesVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def project(self, spec):
-            """Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."""
-            return json.loads(_translate(lambda: self._client.vault_skills_outcomes_project(json.dumps(spec))))
-        def get(self, spec):
-            """Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."""
-            return json.loads(_translate(lambda: self._client.vault_skills_outcomes_get(json.dumps(spec))))
     class _VaultConnectorsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

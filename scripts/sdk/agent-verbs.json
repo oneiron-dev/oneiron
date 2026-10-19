@@ -2050,6 +2050,51 @@
       "openapi": true
     },
     {
+      "name": "vault.skills.bootstrap",
+      "description": "Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::BootstrapSkillView>",
+      "call": "crate::task_verb::sdk::skill_bootstrap_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.bootstrap\")?, &_input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skill_hubs.default.get",
+      "description": "Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source.",
+      "input": "EmptyRequest",
+      "output": "crate::skill_hub::DefaultSkillHub",
+      "call": "crate::task_verb::sdk::default_skill_hub_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.default.get\")?, &_input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.restoreDefaults",
+      "description": "The owner explicitly re-imports missing or retired bootstrap and pinned first-hub defaults as fresh candidates, leaving unchanged defaults and local forks alone.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::skill_hub::HubImportReceipt>",
+      "call": "crate::task_verb::sdk::skill_restore_defaults_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.restoreDefaults\")?, &_input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.skill_hubs.put",
       "description": "The owner registers or revises a hub source; hub trust never grants activation authority.",
       "input": "SkillHubPutRequest",

@@ -591,6 +591,21 @@ export_facade! {
     let output = client.self_inbox_lens(&input)?;
     crate::codec::lift_record("self.inbox.lens", &output)
 };
+"vault.skills.bootstrap" => fn vault_skills_bootstrap(&self) -> Vec<BootstrapSkillView> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.skills.bootstrap")?;
+    let output = client.vault_skills_bootstrap(&input)?;
+    crate::codec::lift_record("vault.skills.bootstrap", &output)
+};
+"vault.skill_hubs.default.get" => fn vault_skill_hubs_default_get(&self) -> DefaultSkillHub = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.skill_hubs.default.get")?;
+    let output = client.vault_skill_hubs_default_get(&input)?;
+    crate::codec::lift_record("vault.skill_hubs.default.get", &output)
+};
+"vault.skills.restoreDefaults" => fn vault_skills_restoreDefaults(&self) -> Vec<HubImportReceipt> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.skills.restoreDefaults")?;
+    let output = client.vault_skills_restoreDefaults(&input)?;
+    crate::codec::lift_record("vault.skills.restoreDefaults", &output)
+};
 "vault.skill_hubs.put" => fn vault_skill_hubs_put(&self, input: SkillHubPutRequest) -> SkillHubConfigured = |client| {
     let input: oneiron::task_verb::sdk::SkillHubPutRequest = crate::codec::lower_record("vault.skill_hubs.put", input)?;
     let output = client.vault_skill_hubs_put(&input)?;

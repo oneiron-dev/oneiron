@@ -626,6 +626,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.skills.bootstrap",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.skill_hubs.default.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.skills.restoreDefaults",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
                 "vault.skill_hubs.put",
                 crate::code_run::vault_read::request_schema::<SkillHubPutRequest>(),
             ),
@@ -4310,6 +4322,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.weave.digest.render",
     "vault.weave.link.corrections",
     "self.inbox.lens",
+    "vault.skills.bootstrap",
+    "vault.skill_hubs.default.get",
+    "vault.skills.restoreDefaults",
     "vault.skill_hubs.put",
     "vault.skill_hubs.get",
     "vault.skill_hubs.publishers.admit",
@@ -4836,6 +4851,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "self.inbox.lens" => {
             crate::code_run::vault_read::request_schema::<crate::agent_inbox_lens::InboxLensPage>()
+        }
+        "vault.skills.bootstrap" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::BootstrapSkillView>,
+        >(),
+        "vault.skill_hubs.default.get" => {
+            crate::code_run::vault_read::request_schema::<crate::skill_hub::DefaultSkillHub>()
+        }
+        "vault.skills.restoreDefaults" => {
+            crate::code_run::vault_read::request_schema::<Vec<crate::skill_hub::HubImportReceipt>>()
         }
         "vault.skill_hubs.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SkillHubConfigured,
@@ -6813,6 +6837,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.inbox.lens" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.bootstrap" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skill_hubs.default.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.restoreDefaults" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -11648,6 +11693,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.inbox.lens" => {
             let _input: crate::agent_inbox_lens::InboxLensRequest = decode(value.clone())?;
         }
+        "vault.skills.bootstrap" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.skill_hubs.default.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.skills.restoreDefaults" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
         "vault.skill_hubs.put" => {
             let _input: SkillHubPutRequest = decode(value.clone())?;
         }
@@ -14131,6 +14185,13 @@ pub fn invoke(
             encode(vault_weave_link_corrections(memory, decode(value)?)?)
         }
         "self.inbox.lens" => encode(self_inbox_lens(memory, decode(value)?)?),
+        "vault.skills.bootstrap" => encode(vault_skills_bootstrap(memory, decode(value)?)?),
+        "vault.skill_hubs.default.get" => {
+            encode(vault_skill_hubs_default_get(memory, decode(value)?)?)
+        }
+        "vault.skills.restoreDefaults" => {
+            encode(vault_skills_restoreDefaults(memory, decode(value)?)?)
+        }
         "vault.skill_hubs.put" => encode(vault_skill_hubs_put(memory, decode(value)?)?),
         "vault.skill_hubs.get" => encode(vault_skill_hubs_get(memory, decode(value)?)?),
         "vault.skill_hubs.publishers.admit" => {
@@ -16498,6 +16559,36 @@ pub fn self_inbox_lens(
     input: crate::agent_inbox_lens::InboxLensRequest,
 ) -> MemoryResult<crate::agent_inbox_lens::InboxLensPage> {
     memory.inbox_lens(&input)
+}
+pub fn vault_skills_bootstrap(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::BootstrapSkillView>> {
+    crate::task_verb::sdk::skill_bootstrap_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.bootstrap")?,
+        &_input,
+    )
+}
+pub fn vault_skill_hubs_default_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::skill_hub::DefaultSkillHub> {
+    crate::task_verb::sdk::default_skill_hub_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skill_hubs.default.get")?,
+        &_input,
+    )
+}
+pub fn vault_skills_restoreDefaults(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::skill_hub::HubImportReceipt>> {
+    crate::task_verb::sdk::skill_restore_defaults_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.restoreDefaults")?,
+        &_input,
+    )
 }
 pub fn vault_skill_hubs_put(
     memory: &Memory<'_>,

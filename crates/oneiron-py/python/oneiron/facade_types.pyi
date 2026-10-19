@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 753 facade rows, 2655 declarations.
-Inputs: 701 of 753 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 676 of 753 fully typed, 77 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 756 facade rows, 2657 declarations.
+Inputs: 704 of 756 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 678 of 756 fully typed, 78 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -3095,40 +3095,6 @@ class InboxGroup(TypedDict):
     new_claim_count: int
     update_count: int
     conflict_count: int
-SkillHubKind = Literal["git", "http-index", "local-dir"]
-SkillHubTrustTier = Literal["untrusted", "community", "verified"]
-HubSyncPolicy = Literal["pinned-ref", "pinned-commit", "content-hash-frozen", "mirror-of-hub"]
-class SkillHubPutRequest(TypedDict):
-    hub: EntityId
-    kind: SkillHubKind
-    endpoint: str
-    trust_tier: SkillHubTrustTier
-    sync_policy: HubSyncPolicy
-HubConsentOutcome = Literal["approved", "denied", "revoked"]
-class HubConsentReceipt(TypedDict):
-    outcome: HubConsentOutcome
-    decision: str
-    grant_ref: NotRequired[str | None]
-class SkillHubConfigured(TypedDict):
-    hub: EntityId
-    consent: HubConsentReceipt
-class SkillHubRequest(TypedDict):
-    hub: EntityId
-class SkillHubRecord(TypedDict):
-    kind: SkillHubKind
-    endpoint: str
-    trust_tier: SkillHubTrustTier
-    sync_policy: HubSyncPolicy
-class SkillPublisherRequest(TypedDict):
-    hub: EntityId
-    identity: str
-class SkillPublisherAdmission(TypedDict):
-    hub: EntityId
-    identity: str
-    grant_ref: str
-class HubRefRequest(TypedDict):
-    hub: EntityId
-    ref_string: str
 class HubPinSemver(TypedDict):
     type: Literal["semver"]
     value: str
@@ -3148,11 +3114,158 @@ class HubRef(TypedDict):
     hub_id: EntityId
     ref_string: str
     pin: HubPin
+SkillLibraryLifecycle = Literal["candidate", "active", "stale", "archived", "superseded"]
+class SkillLibraryCall(TypedDict):
+    reference: str
+    arguments: Any
+    returns: Any
+class SkillLibraryDependency(TypedDict):
+    skill_id: str
+    min_version: NotRequired[str | None]
+class SkillSourceEvidence(TypedDict):
+    message_ref: EntityId
+    available: bool
+class SkillStaleView(TypedDict):
+    reason: str
+    deleted_refs: list[EntityId]
+class SkillForkLineage(TypedDict):
+    parent: EntityId
+    parent_version: NotRequired[str | None]
+    parent_document: NotRequired[EntityId | None]
+    parent_frontier: NotRequired[list[int] | None]
+    parent_available: bool
+    hub_sources: list[HubRef]
+class SkillLibraryFile(TypedDict):
+    path: str
+    content: list[int]
+class SkillCapabilityView(TypedDict):
+    bins: list[str]
+    env: list[str]
+    mcp: list[str]
+    allowed_tools: list[str]
+class SkillLibraryScan(TypedDict):
+    contentHash: str
+    provider: str
+    scannedAt: int
+    verdict: str
+    riskLevel: str
+    completeness: str
+    governance: str
+    scannedAtDeclared: NotRequired[int | None]
+InstallLifecycle = Literal["candidate", "active", "stale", "quarantined", "superseded"]
+InstallHoldReason = Literal["source_only", "rules_hit", "code_auto_install_off", "qualification_required", "no_fit", "local_approval", "unloadable_approval", "stale", "quarantined", "superseded", "advisories"]
+class InstallDispositionNotInstalled(TypedDict):
+    not_installed: InstallHoldReason
+InstallDisposition = Literal["installed", "already_installed", "pending_permission"] | InstallDispositionNotInstalled
+class HubImportReceipt(TypedDict):
+    entity: str
+    content_hash: str
+    hub_id: str
+    ref_string: str
+    pin_type: str
+    pin_value: NotRequired[str | None]
+    publisher: NotRequired[str | None]
+    publisher_grant: NotRequired[str | None]
+    installed_as: InstallLifecycle
+    disposition: InstallDisposition
+    fit_analysis: NotRequired[str | None]
+    requested_permissions: NotRequired[list[str]]
+    at: int
+class HubAdmissionReceipt(TypedDict):
+    receipt_id: str
+    candidate: str
+    content_hash: str
+    binding: str
+    consent_digest: str
+    publisher: str
+    publisher_grant: str
+    hub_id: str
+    hub_ref: str
+    evidence_skill: str
+    held_out_digest: str
+    held_out_count: int
+    before: float
+    after: float
+    accepted: bool
+    judge_revision: str
+    displaced_by_revision: NotRequired[str | None]
+    at: int
+class HubSkillReceipts(TypedDict):
+    sources: list[HubRef]
+    imports: list[HubImportReceipt]
+    admission: NotRequired[HubAdmissionReceipt | None]
+class SkillLibraryView(TypedDict):
+    entity: EntityId
+    skill_id: str
+    desc: str
+    version: str
+    content_hash: NotRequired[str | None]
+    lifecycle: SkillLibraryLifecycle
+    approval: ClaimApprovalStatus
+    loadable: bool
+    source: str
+    role: str
+    call: NotRequired[SkillLibraryCall | None]
+    governance_tier: NotRequired[str | None]
+    generated: bool
+    human_authored: bool
+    dependencies: list[SkillLibraryDependency]
+    provenance: Any
+    source_messages: list[SkillSourceEvidence]
+    stale: NotRequired[SkillStaleView | None]
+    lineage: list[SkillForkLineage]
+    files: NotRequired[list[SkillLibraryFile] | None]
+    capabilities: NotRequired[SkillCapabilityView | None]
+    scans: list[SkillLibraryScan]
+    receipts: HubSkillReceipts
+class BootstrapSkillView(TypedDict):
+    skill_id: str
+    content_hash: str
+    source: HubRef
+    resident: NotRequired[SkillLibraryView | None]
+SkillHubKind = Literal["git", "http-index", "local-dir"]
+SkillHubTrustTier = Literal["untrusted", "community", "verified"]
+HubSyncPolicy = Literal["pinned-ref", "pinned-commit", "content-hash-frozen", "mirror-of-hub"]
+class SkillHubRecord(TypedDict):
+    kind: SkillHubKind
+    endpoint: str
+    trust_tier: SkillHubTrustTier
+    sync_policy: HubSyncPolicy
 class TrackedHubRef(TypedDict):
     hub_ref: HubRef
     sync_policy: HubSyncPolicy
     latest_seen: NotRequired[str | None]
     latest_trusted: NotRequired[str | None]
+class DefaultSkillHub(TypedDict):
+    hub: EntityId
+    record: SkillHubRecord
+    skills: TrackedHubRef
+class SkillHubPutRequest(TypedDict):
+    hub: EntityId
+    kind: SkillHubKind
+    endpoint: str
+    trust_tier: SkillHubTrustTier
+    sync_policy: HubSyncPolicy
+HubConsentOutcome = Literal["approved", "denied", "revoked"]
+class HubConsentReceipt(TypedDict):
+    outcome: HubConsentOutcome
+    decision: str
+    grant_ref: NotRequired[str | None]
+class SkillHubConfigured(TypedDict):
+    hub: EntityId
+    consent: HubConsentReceipt
+class SkillHubRequest(TypedDict):
+    hub: EntityId
+class SkillPublisherRequest(TypedDict):
+    hub: EntityId
+    identity: str
+class SkillPublisherAdmission(TypedDict):
+    hub: EntityId
+    identity: str
+    grant_ref: str
+class HubRefRequest(TypedDict):
+    hub: EntityId
+    ref_string: str
 class HubRefSetRequest(TypedDict):
     hub_ref: HubRef
     sync_policy: HubSyncPolicy
@@ -3253,48 +3366,6 @@ class HubSkillSyncReceipt(TypedDict):
     outcome: HubSkillSyncOutcome
     proposal: NotRequired[EntityId | None]
     approval: NotRequired[ClaimApprovalStatus | None]
-InstallLifecycle = Literal["candidate", "active", "stale", "quarantined", "superseded"]
-InstallHoldReason = Literal["source_only", "rules_hit", "code_auto_install_off", "qualification_required", "no_fit", "local_approval", "unloadable_approval", "stale", "quarantined", "superseded", "advisories"]
-class InstallDispositionNotInstalled(TypedDict):
-    not_installed: InstallHoldReason
-InstallDisposition = Literal["installed", "already_installed", "pending_permission"] | InstallDispositionNotInstalled
-class HubImportReceipt(TypedDict):
-    entity: str
-    content_hash: str
-    hub_id: str
-    ref_string: str
-    pin_type: str
-    pin_value: NotRequired[str | None]
-    publisher: NotRequired[str | None]
-    publisher_grant: NotRequired[str | None]
-    installed_as: InstallLifecycle
-    disposition: InstallDisposition
-    fit_analysis: NotRequired[str | None]
-    requested_permissions: NotRequired[list[str]]
-    at: int
-class HubAdmissionReceipt(TypedDict):
-    receipt_id: str
-    candidate: str
-    content_hash: str
-    binding: str
-    consent_digest: str
-    publisher: str
-    publisher_grant: str
-    hub_id: str
-    hub_ref: str
-    evidence_skill: str
-    held_out_digest: str
-    held_out_count: int
-    before: float
-    after: float
-    accepted: bool
-    judge_revision: str
-    displaced_by_revision: NotRequired[str | None]
-    at: int
-class HubSkillReceipts(TypedDict):
-    sources: list[HubRef]
-    imports: list[HubImportReceipt]
-    admission: NotRequired[HubAdmissionReceipt | None]
 class SkillConvertRequest(TypedDict):
     message_refs: list[EntityId]
     hint: NotRequired[str | None]
@@ -3309,68 +3380,6 @@ class SkillConvertReceiptMergeProposed(TypedDict):
     existing: EntityId
     proposal: EntityId
 SkillConvertReceipt = SkillConvertReceiptCreated | SkillConvertReceiptDupPointer | SkillConvertReceiptMergeProposed
-SkillLibraryLifecycle = Literal["candidate", "active", "stale", "archived", "superseded"]
-class SkillLibraryCall(TypedDict):
-    reference: str
-    arguments: Any
-    returns: Any
-class SkillLibraryDependency(TypedDict):
-    skill_id: str
-    min_version: NotRequired[str | None]
-class SkillSourceEvidence(TypedDict):
-    message_ref: EntityId
-    available: bool
-class SkillStaleView(TypedDict):
-    reason: str
-    deleted_refs: list[EntityId]
-class SkillForkLineage(TypedDict):
-    parent: EntityId
-    parent_version: NotRequired[str | None]
-    parent_document: NotRequired[EntityId | None]
-    parent_frontier: NotRequired[list[int] | None]
-    parent_available: bool
-    hub_sources: list[HubRef]
-class SkillLibraryFile(TypedDict):
-    path: str
-    content: list[int]
-class SkillCapabilityView(TypedDict):
-    bins: list[str]
-    env: list[str]
-    mcp: list[str]
-    allowed_tools: list[str]
-class SkillLibraryScan(TypedDict):
-    contentHash: str
-    provider: str
-    scannedAt: int
-    verdict: str
-    riskLevel: str
-    completeness: str
-    governance: str
-    scannedAtDeclared: NotRequired[int | None]
-class SkillLibraryView(TypedDict):
-    entity: EntityId
-    skill_id: str
-    desc: str
-    version: str
-    content_hash: NotRequired[str | None]
-    lifecycle: SkillLibraryLifecycle
-    approval: ClaimApprovalStatus
-    loadable: bool
-    source: str
-    role: str
-    call: NotRequired[SkillLibraryCall | None]
-    governance_tier: NotRequired[str | None]
-    generated: bool
-    human_authored: bool
-    dependencies: list[SkillLibraryDependency]
-    provenance: Any
-    source_messages: list[SkillSourceEvidence]
-    stale: NotRequired[SkillStaleView | None]
-    lineage: list[SkillForkLineage]
-    files: NotRequired[list[SkillLibraryFile] | None]
-    capabilities: NotRequired[SkillCapabilityView | None]
-    scans: list[SkillLibraryScan]
-    receipts: HubSkillReceipts
 class SkillLibraryListRequest(TypedDict):
     after: NotRequired[EntityId | None]
     limit: int

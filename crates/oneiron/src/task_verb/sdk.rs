@@ -583,6 +583,7 @@ pub use super::sdk_share::*;
 pub use super::sdk_shared::*;
 pub use super::sdk_shared_members::*;
 pub use super::sdk_shared_policy::*;
+pub use super::sdk_skill_defaults::*;
 pub use super::sdk_skill_execution::*;
 pub use super::sdk_skills::*;
 pub use super::sdk_standing::*;

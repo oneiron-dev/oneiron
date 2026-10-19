@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 789 code-mode rows (767 host rows, 22 run rows), 2699 declarations.
-// Replies: 705 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 792 code-mode rows (770 host rows, 22 run rows), 2701 declarations.
+// Replies: 707 fully typed, 81 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 97; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -631,21 +631,39 @@ declare namespace Sdk {
   type InboxPointerRow = { claim_id: string; duplicate_of_claim_id: string; duplicate_of_group_key: string };
   type InboxSubCluster = { key: string; member_claim_ids: string[] };
   type InboxGroup = { group_key: string; run_id: string; headline: string; created_at: number; members?: InboxGroupMember[]; held_member_count: number; pointer_rows?: InboxPointerRow[]; sub_clusters?: InboxSubCluster[]; new_claim_count: number; update_count: number; conflict_count: number };
+  type HubPin = { type: "semver"; value: string } | { type: "tag"; value: string } | { type: "commit"; value: string } | { type: "content_hash"; value: string } | { type: "none" };
+  type HubRef = { hub_id: EntityId; ref_string: string; pin: HubPin };
+  type SkillLibraryLifecycle = "candidate" | "active" | "stale" | "archived" | "superseded";
+  type SkillLibraryCall = { reference: string; arguments: unknown; returns: unknown };
+  type SkillLibraryDependency = { skill_id: string; min_version?: string | null };
+  type SkillSourceEvidence = { message_ref: EntityId; available: boolean };
+  type SkillStaleView = { reason: string; deleted_refs: EntityId[] };
+  type SkillForkLineage = { parent: EntityId; parent_version?: string | null; parent_document?: EntityId | null; parent_frontier?: number[] | null; parent_available: boolean; hub_sources: HubRef[] };
+  type SkillLibraryFile = { path: string; content: number[] };
+  type SkillCapabilityView = { bins: string[]; env: string[]; mcp: string[]; allowed_tools: string[] };
+  type SkillLibraryScan = { contentHash: string; provider: string; scannedAt: number; verdict: string; riskLevel: string; completeness: string; governance: string; scannedAtDeclared?: number | null };
+  type InstallLifecycle = "candidate" | "active" | "stale" | "quarantined" | "superseded";
+  type InstallHoldReason = "source_only" | "rules_hit" | "code_auto_install_off" | "qualification_required" | "no_fit" | "local_approval" | "unloadable_approval" | "stale" | "quarantined" | "superseded" | "advisories";
+  type InstallDisposition = "installed" | "already_installed" | "pending_permission" | { not_installed: InstallHoldReason };
+  type HubImportReceipt = { entity: string; content_hash: string; hub_id: string; ref_string: string; pin_type: string; pin_value?: string | null; publisher?: string | null; publisher_grant?: string | null; installed_as: InstallLifecycle; disposition: InstallDisposition; fit_analysis?: string | null; requested_permissions?: string[]; at: number };
+  type HubAdmissionReceipt = { receipt_id: string; candidate: string; content_hash: string; binding: string; consent_digest: string; publisher: string; publisher_grant: string; hub_id: string; hub_ref: string; evidence_skill: string; held_out_digest: string; held_out_count: number; before: number; after: number; accepted: boolean; judge_revision: string; displaced_by_revision?: string | null; at: number };
+  type HubSkillReceipts = { sources: HubRef[]; imports: HubImportReceipt[]; admission?: HubAdmissionReceipt | null };
+  type SkillLibraryView = { entity: EntityId; skill_id: string; desc: string; version: string; content_hash?: string | null; lifecycle: SkillLibraryLifecycle; approval: ClaimApprovalStatus; loadable: boolean; source: string; role: string; call?: SkillLibraryCall | null; governance_tier?: string | null; generated: boolean; human_authored: boolean; dependencies: SkillLibraryDependency[]; provenance: unknown; source_messages: SkillSourceEvidence[]; stale?: SkillStaleView | null; lineage: SkillForkLineage[]; files?: SkillLibraryFile[] | null; capabilities?: SkillCapabilityView | null; scans: SkillLibraryScan[]; receipts: HubSkillReceipts };
+  type BootstrapSkillView = { skill_id: string; content_hash: string; source: HubRef; resident?: SkillLibraryView | null };
   type SkillHubKind = "git" | "http-index" | "local-dir";
   type SkillHubTrustTier = "untrusted" | "community" | "verified";
   type HubSyncPolicy = "pinned-ref" | "pinned-commit" | "content-hash-frozen" | "mirror-of-hub";
+  type SkillHubRecord = { kind: SkillHubKind; endpoint: string; trust_tier: SkillHubTrustTier; sync_policy: HubSyncPolicy };
+  type TrackedHubRef = { hub_ref: HubRef; sync_policy: HubSyncPolicy; latest_seen?: string | null; latest_trusted?: string | null };
+  type DefaultSkillHub = { hub: EntityId; record: SkillHubRecord; skills: TrackedHubRef };
   type SkillHubPutRequest = { hub: EntityId; kind: SkillHubKind; endpoint: string; trust_tier: SkillHubTrustTier; sync_policy: HubSyncPolicy };
   type HubConsentOutcome = "approved" | "denied" | "revoked";
   type HubConsentReceipt = { outcome: HubConsentOutcome; decision: string; grant_ref?: string | null };
   type SkillHubConfigured = { hub: EntityId; consent: HubConsentReceipt };
   type SkillHubRequest = { hub: EntityId };
-  type SkillHubRecord = { kind: SkillHubKind; endpoint: string; trust_tier: SkillHubTrustTier; sync_policy: HubSyncPolicy };
   type SkillPublisherRequest = { hub: EntityId; identity: string };
   type SkillPublisherAdmission = { hub: EntityId; identity: string; grant_ref: string };
   type HubRefRequest = { hub: EntityId; ref_string: string };
-  type HubPin = { type: "semver"; value: string } | { type: "tag"; value: string } | { type: "commit"; value: string } | { type: "content_hash"; value: string } | { type: "none" };
-  type HubRef = { hub_id: EntityId; ref_string: string; pin: HubPin };
-  type TrackedHubRef = { hub_ref: HubRef; sync_policy: HubSyncPolicy; latest_seen?: string | null; latest_trusted?: string | null };
   type HubRefSetRequest = { hub_ref: HubRef; sync_policy: HubSyncPolicy };
   type HubImportRequest = { hub_ref: HubRef; publisher: string };
   type PackPutOutcome = "installed" | "candidate" | "blocked";
@@ -670,24 +688,8 @@ declare namespace Sdk {
   type HubSkillRequest = { entity: EntityId };
   type HubSkillSyncOutcome = "applied" | "proposed" | "refused_by_policy";
   type HubSkillSyncReceipt = { outcome: HubSkillSyncOutcome; proposal?: EntityId | null; approval?: ClaimApprovalStatus | null };
-  type InstallLifecycle = "candidate" | "active" | "stale" | "quarantined" | "superseded";
-  type InstallHoldReason = "source_only" | "rules_hit" | "code_auto_install_off" | "qualification_required" | "no_fit" | "local_approval" | "unloadable_approval" | "stale" | "quarantined" | "superseded" | "advisories";
-  type InstallDisposition = "installed" | "already_installed" | "pending_permission" | { not_installed: InstallHoldReason };
-  type HubImportReceipt = { entity: string; content_hash: string; hub_id: string; ref_string: string; pin_type: string; pin_value?: string | null; publisher?: string | null; publisher_grant?: string | null; installed_as: InstallLifecycle; disposition: InstallDisposition; fit_analysis?: string | null; requested_permissions?: string[]; at: number };
-  type HubAdmissionReceipt = { receipt_id: string; candidate: string; content_hash: string; binding: string; consent_digest: string; publisher: string; publisher_grant: string; hub_id: string; hub_ref: string; evidence_skill: string; held_out_digest: string; held_out_count: number; before: number; after: number; accepted: boolean; judge_revision: string; displaced_by_revision?: string | null; at: number };
-  type HubSkillReceipts = { sources: HubRef[]; imports: HubImportReceipt[]; admission?: HubAdmissionReceipt | null };
   type SkillConvertRequest = { message_refs: EntityId[]; hint?: string | null };
   type SkillConvertReceipt = { outcome: "created"; entity: EntityId } | { outcome: "dup_pointer"; entity: EntityId } | { outcome: "merge_proposed"; existing: EntityId; proposal: EntityId };
-  type SkillLibraryLifecycle = "candidate" | "active" | "stale" | "archived" | "superseded";
-  type SkillLibraryCall = { reference: string; arguments: unknown; returns: unknown };
-  type SkillLibraryDependency = { skill_id: string; min_version?: string | null };
-  type SkillSourceEvidence = { message_ref: EntityId; available: boolean };
-  type SkillStaleView = { reason: string; deleted_refs: EntityId[] };
-  type SkillForkLineage = { parent: EntityId; parent_version?: string | null; parent_document?: EntityId | null; parent_frontier?: number[] | null; parent_available: boolean; hub_sources: HubRef[] };
-  type SkillLibraryFile = { path: string; content: number[] };
-  type SkillCapabilityView = { bins: string[]; env: string[]; mcp: string[]; allowed_tools: string[] };
-  type SkillLibraryScan = { contentHash: string; provider: string; scannedAt: number; verdict: string; riskLevel: string; completeness: string; governance: string; scannedAtDeclared?: number | null };
-  type SkillLibraryView = { entity: EntityId; skill_id: string; desc: string; version: string; content_hash?: string | null; lifecycle: SkillLibraryLifecycle; approval: ClaimApprovalStatus; loadable: boolean; source: string; role: string; call?: SkillLibraryCall | null; governance_tier?: string | null; generated: boolean; human_authored: boolean; dependencies: SkillLibraryDependency[]; provenance: unknown; source_messages: SkillSourceEvidence[]; stale?: SkillStaleView | null; lineage: SkillForkLineage[]; files?: SkillLibraryFile[] | null; capabilities?: SkillCapabilityView | null; scans: SkillLibraryScan[]; receipts: HubSkillReceipts };
   type SkillLibraryListRequest = { after?: EntityId | null; limit: number };
   type SkillLibraryPage = { skills: SkillLibraryView[]; next_after?: EntityId | null };
   type SkillRestoreAdmission = { source: HubRef; publisher: string; evidence_skill: EntityId; effect_digest?: string | null };
@@ -4419,6 +4421,10 @@ declare const vault: Sdk.VaultHost & {
     retained(input: Sdk.SievePageRequest): Promise<Sdk.SieveRetainedPage | StoredResult>;
   };
   skill_hubs: {
+    default: {
+      /** Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.DefaultSkillHub | StoredResult>;
+    };
     /** Reads one configured hub as the owner. */
     get(input: Sdk.SkillHubRequest): Promise<Sdk.SkillHubRecord | StoredResult>;
     publishers: {
@@ -4439,6 +4445,8 @@ declare const vault: Sdk.VaultHost & {
   skills: {
     /** The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled. */
     archive(input: Sdk.HubSkillRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
+    /** Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills. */
+    bootstrap(input: Sdk.EmptyRequest): Promise<Sdk.BootstrapSkillView[] | StoredResult>;
     code_auto_install: {
       /** The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification. */
       set(input: Sdk.SkillCodeAutoInstallRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;
@@ -4481,6 +4489,8 @@ declare const vault: Sdk.VaultHost & {
     receipts(input: Sdk.HubSkillRequest): Promise<Sdk.HubSkillReceipts | StoredResult>;
     /** The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring. */
     restore(input: Sdk.SkillLibraryRestoreRequest): Promise<Sdk.SkillLibraryRestoreReceipt | StoredResult>;
+    /** The owner explicitly re-imports missing or retired bootstrap and pinned first-hub defaults as fresh candidates, leaving unchanged defaults and local forks alone. */
+    restoreDefaults(input: Sdk.EmptyRequest): Promise<Sdk.HubImportReceipt[] | StoredResult>;
     rules: {
       /** The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose. */
       set(input: Sdk.SkillHashRuleRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;

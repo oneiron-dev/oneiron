@@ -443,11 +443,11 @@ class Oneiron:
         @property
         def inbox(self) -> "Oneiron._VaultInboxVerbs": ...
         @property
+        def skills(self) -> "Oneiron._VaultSkillsVerbs": ...
+        @property
         def skill_hubs(self) -> "Oneiron._VaultSkillHubsVerbs": ...
         @property
         def packs(self) -> "Oneiron._VaultPacksVerbs": ...
-        @property
-        def skills(self) -> "Oneiron._VaultSkillsVerbs": ...
         @property
         def connectors(self) -> "Oneiron._VaultConnectorsVerbs": ...
         @property
@@ -874,7 +874,70 @@ class Oneiron:
     class _VaultInboxConcernsVerbs:
         def review(self, spec: Facade.EmptyRequest | None = None) -> Facade.DreamerAttemptRef:
             """Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows."""
+    class _VaultSkillsVerbs:
+        def bootstrap(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.BootstrapSkillView]:
+            """Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills."""
+        def restoreDefaults(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.HubImportReceipt]:
+            """The owner explicitly re-imports missing or retired bootstrap and pinned first-hub defaults as fresh candidates, leaving unchanged defaults and local forks alone."""
+        def import_(self, spec: Facade.HubImportRequest) -> Facade.HubSkillImported:
+            """The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask."""
+        def sync(self, spec: Facade.HubSkillRequest) -> Facade.HubSkillSyncReceipt:
+            """The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."""
+        def receipts(self, spec: Facade.HubSkillRequest) -> Facade.HubSkillReceipts:
+            """Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."""
+        def convert(self, spec: Facade.SkillConvertRequest) -> Facade.SkillConvertReceipt:
+            """Converts selected messages through the configured refiner; user initiation approves conversion, never admission."""
+        def get(self, spec: Facade.HubSkillRequest) -> Facade.SkillLibraryView:
+            """Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry."""
+        def list(self, spec: Facade.SkillLibraryListRequest) -> Facade.SkillLibraryPage:
+            """Lists a page of the owner skill library, including inactive skills and their retained evidence."""
+        def archive(self, spec: Facade.HubSkillRequest) -> Facade.SkillLibraryView:
+            """The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled."""
+        def restore(self, spec: Facade.SkillLibraryRestoreRequest) -> Facade.SkillLibraryRestoreReceipt:
+            """The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring."""
+        def fork(self, spec: Facade.SkillLibraryForkRequest) -> Facade.SkillLibraryView:
+            """The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."""
+        @property
+        def rules(self) -> "Oneiron._VaultSkillsRulesVerbs": ...
+        @property
+        def code_auto_install(self) -> "Oneiron._VaultSkillsCodeAutoInstallVerbs": ...
+        @property
+        def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs": ...
+        @property
+        def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs": ...
+        @property
+        def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs": ...
+        def pack_receipt(self, spec: Facade.SkillPackReceiptRequest) -> Facade.SkillPackReceipt:
+            """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
+        @property
+        def outcomes(self) -> "Oneiron._VaultSkillsOutcomesVerbs": ...
+    class _VaultSkillsRulesVerbs:
+        def set(self, spec: Facade.SkillHashRuleRequest) -> Facade.HubConsentReceipt:
+            """The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose."""
+    class _VaultSkillsCodeAutoInstallVerbs:
+        def set(self, spec: Facade.SkillCodeAutoInstallRequest) -> Facade.HubConsentReceipt:
+            """The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification."""
+    class _VaultSkillsPermissionsVerbs:
+        def approve(self, spec: Facade.HubSkillPermissionRequest) -> Facade.HubConsentReceipt:
+            """The owner answers one imported skill permission ask at its exact hub source."""
+    class _VaultSkillsOptimizeVerbs:
+        def start(self, spec: Facade.SkillOptimizeStartRequest) -> Facade.SkillOptimizeStartReceipt:
+            """The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued."""
+        def result(self, spec: Facade.SkillOptimizeResultRequest) -> Facade.SkillOptimizeResultView:
+            """Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal."""
+    class _VaultSkillsGovernanceVerbs:
+        def get(self, spec: Facade.HubSkillRequest) -> Facade.SkillGovernanceView:
+            """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""
+        def set(self, spec: Facade.SkillGovernanceSetRequest) -> Facade.SkillGovernanceView:
+            """The owner marks or clears one skill governance tier; the mark changes no instruction content or version."""
+    class _VaultSkillsOutcomesVerbs:
+        def project(self, spec: Facade.SkillPackOutcomeRequest) -> Facade.SkillPackOutcomeProjection:
+            """Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."""
+        def get(self, spec: Facade.SkillPackCreditRequest) -> Facade.LateCreditReceipt | None:
+            """Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."""
     class _VaultSkillHubsVerbs:
+        @property
+        def default(self) -> "Oneiron._VaultSkillHubsDefaultVerbs": ...
         def put(self, spec: Facade.SkillHubPutRequest) -> Facade.SkillHubConfigured:
             """The owner registers or revises a hub source; hub trust never grants activation authority."""
         def get(self, spec: Facade.SkillHubRequest) -> Facade.SkillHubRecord:
@@ -883,6 +946,9 @@ class Oneiron:
         def publishers(self) -> "Oneiron._VaultSkillHubsPublishersVerbs": ...
         @property
         def refs(self) -> "Oneiron._VaultSkillHubsRefsVerbs": ...
+    class _VaultSkillHubsDefaultVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.DefaultSkillHub:
+            """Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source."""
     class _VaultSkillHubsPublishersVerbs:
         def admit(self, spec: Facade.SkillPublisherRequest) -> Facade.SkillPublisherAdmission:
             """The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else."""
@@ -944,63 +1010,6 @@ class Oneiron:
             """The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here."""
         def verify(self, spec: Facade.PackSetupVerifyRequest) -> Facade.PackSetupReceipt:
             """Checks one pack connection with the engine's fixed read-only provider call for its declared check."""
-    class _VaultSkillsVerbs:
-        def import_(self, spec: Facade.HubImportRequest) -> Facade.HubSkillImported:
-            """The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask."""
-        def sync(self, spec: Facade.HubSkillRequest) -> Facade.HubSkillSyncReceipt:
-            """The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."""
-        def receipts(self, spec: Facade.HubSkillRequest) -> Facade.HubSkillReceipts:
-            """Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."""
-        def convert(self, spec: Facade.SkillConvertRequest) -> Facade.SkillConvertReceipt:
-            """Converts selected messages through the configured refiner; user initiation approves conversion, never admission."""
-        def get(self, spec: Facade.HubSkillRequest) -> Facade.SkillLibraryView:
-            """Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry."""
-        def list(self, spec: Facade.SkillLibraryListRequest) -> Facade.SkillLibraryPage:
-            """Lists a page of the owner skill library, including inactive skills and their retained evidence."""
-        def archive(self, spec: Facade.HubSkillRequest) -> Facade.SkillLibraryView:
-            """The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled."""
-        def restore(self, spec: Facade.SkillLibraryRestoreRequest) -> Facade.SkillLibraryRestoreReceipt:
-            """The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring."""
-        def fork(self, spec: Facade.SkillLibraryForkRequest) -> Facade.SkillLibraryView:
-            """The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."""
-        @property
-        def rules(self) -> "Oneiron._VaultSkillsRulesVerbs": ...
-        @property
-        def code_auto_install(self) -> "Oneiron._VaultSkillsCodeAutoInstallVerbs": ...
-        @property
-        def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs": ...
-        @property
-        def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs": ...
-        @property
-        def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs": ...
-        def pack_receipt(self, spec: Facade.SkillPackReceiptRequest) -> Facade.SkillPackReceipt:
-            """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
-        @property
-        def outcomes(self) -> "Oneiron._VaultSkillsOutcomesVerbs": ...
-    class _VaultSkillsRulesVerbs:
-        def set(self, spec: Facade.SkillHashRuleRequest) -> Facade.HubConsentReceipt:
-            """The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose."""
-    class _VaultSkillsCodeAutoInstallVerbs:
-        def set(self, spec: Facade.SkillCodeAutoInstallRequest) -> Facade.HubConsentReceipt:
-            """The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification."""
-    class _VaultSkillsPermissionsVerbs:
-        def approve(self, spec: Facade.HubSkillPermissionRequest) -> Facade.HubConsentReceipt:
-            """The owner answers one imported skill permission ask at its exact hub source."""
-    class _VaultSkillsOptimizeVerbs:
-        def start(self, spec: Facade.SkillOptimizeStartRequest) -> Facade.SkillOptimizeStartReceipt:
-            """The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued."""
-        def result(self, spec: Facade.SkillOptimizeResultRequest) -> Facade.SkillOptimizeResultView:
-            """Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal."""
-    class _VaultSkillsGovernanceVerbs:
-        def get(self, spec: Facade.HubSkillRequest) -> Facade.SkillGovernanceView:
-            """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""
-        def set(self, spec: Facade.SkillGovernanceSetRequest) -> Facade.SkillGovernanceView:
-            """The owner marks or clears one skill governance tier; the mark changes no instruction content or version."""
-    class _VaultSkillsOutcomesVerbs:
-        def project(self, spec: Facade.SkillPackOutcomeRequest) -> Facade.SkillPackOutcomeProjection:
-            """Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."""
-        def get(self, spec: Facade.SkillPackCreditRequest) -> Facade.LateCreditReceipt | None:
-            """Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."""
     class _VaultConnectorsVerbs:
         @property
         def subscriptions(self) -> "Oneiron._VaultConnectorsSubscriptionsVerbs": ...

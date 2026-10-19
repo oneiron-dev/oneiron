@@ -1225,6 +1225,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_skills_bootstrap(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.bootstrap")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.bootstrap", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skill_hubs_default_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skill_hubs.default.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skill_hubs.default.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_restoreDefaults(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.restoreDefaults")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.restoreDefaults", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_skill_hubs_put(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.skill_hubs.put")?;
         let output = py

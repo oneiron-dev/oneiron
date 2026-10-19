@@ -547,7 +547,67 @@ export class Oneiron {
       /** Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof. */
       groups: (input: Facade.InboxRunGroupsRequest): Facade.InboxGroup[] => this.#call(() => this.#client.vaultInboxGroups(input) as Facade.InboxGroup[]),
     },
+    skills: {
+      /** Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills. */
+      bootstrap: (input: Facade.EmptyRequest = {}): Facade.BootstrapSkillView[] => this.#call(() => this.#client.vaultSkillsBootstrap(input) as Facade.BootstrapSkillView[]),
+      /** The owner explicitly re-imports missing or retired bootstrap and pinned first-hub defaults as fresh candidates, leaving unchanged defaults and local forks alone. */
+      restoreDefaults: (input: Facade.EmptyRequest = {}): Facade.HubImportReceipt[] => this.#call(() => this.#client.vaultSkillsRestoredefaults(input) as Facade.HubImportReceipt[]),
+      /** The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask. */
+      import: (input: Facade.HubImportRequest): Facade.HubSkillImported => this.#call(() => this.#client.vaultSkillsImport(input) as Facade.HubSkillImported),
+      /** The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities. */
+      sync: (input: Facade.HubSkillRequest): Facade.HubSkillSyncReceipt => this.#call(() => this.#client.vaultSkillsSync(input) as Facade.HubSkillSyncReceipt),
+      /** Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner. */
+      receipts: (input: Facade.HubSkillRequest): Facade.HubSkillReceipts => this.#call(() => this.#client.vaultSkillsReceipts(input) as Facade.HubSkillReceipts),
+      /** Converts selected messages through the configured refiner; user initiation approves conversion, never admission. */
+      convert: (input: Facade.SkillConvertRequest): Facade.SkillConvertReceipt => this.#call(() => this.#client.vaultSkillsConvert(input) as Facade.SkillConvertReceipt),
+      /** Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry. */
+      get: (input: Facade.HubSkillRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsGet(input) as Facade.SkillLibraryView),
+      /** Lists a page of the owner skill library, including inactive skills and their retained evidence. */
+      list: (input: Facade.SkillLibraryListRequest): Facade.SkillLibraryPage => this.#call(() => this.#client.vaultSkillsList(input) as Facade.SkillLibraryPage),
+      /** The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled. */
+      archive: (input: Facade.HubSkillRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsArchive(input) as Facade.SkillLibraryView),
+      /** The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring. */
+      restore: (input: Facade.SkillLibraryRestoreRequest): Facade.SkillLibraryRestoreReceipt => this.#call(() => this.#client.vaultSkillsRestore(input) as Facade.SkillLibraryRestoreReceipt),
+      /** The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
+      fork: (input: Facade.SkillLibraryForkRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsFork(input) as Facade.SkillLibraryView),
+      rules: {
+        /** The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose. */
+        set: (input: Facade.SkillHashRuleRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsRulesSet(input) as Facade.HubConsentReceipt),
+      },
+      code_auto_install: {
+        /** The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification. */
+        set: (input: Facade.SkillCodeAutoInstallRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsCodeAutoInstallSet(input) as Facade.HubConsentReceipt),
+      },
+      permissions: {
+        /** The owner answers one imported skill permission ask at its exact hub source. */
+        approve: (input: Facade.HubSkillPermissionRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsPermissionsApprove(input) as Facade.HubConsentReceipt),
+      },
+      optimize: {
+        /** The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued. */
+        start: (input: Facade.SkillOptimizeStartRequest): Facade.SkillOptimizeStartReceipt => this.#call(() => this.#client.vaultSkillsOptimizeStart(input) as Facade.SkillOptimizeStartReceipt),
+        /** Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal. */
+        result: (input: Facade.SkillOptimizeResultRequest): Facade.SkillOptimizeResultView => this.#call(() => this.#client.vaultSkillsOptimizeResult(input) as Facade.SkillOptimizeResultView),
+      },
+      governance: {
+        /** Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it. */
+        get: (input: Facade.HubSkillRequest): Facade.SkillGovernanceView => this.#call(() => this.#client.vaultSkillsGovernanceGet(input) as Facade.SkillGovernanceView),
+        /** The owner marks or clears one skill governance tier; the mark changes no instruction content or version. */
+        set: (input: Facade.SkillGovernanceSetRequest): Facade.SkillGovernanceView => this.#call(() => this.#client.vaultSkillsGovernanceSet(input) as Facade.SkillGovernanceView),
+      },
+      /** Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner. */
+      pack_receipt: (input: Facade.SkillPackReceiptRequest): Facade.SkillPackReceipt => this.#call(() => this.#client.vaultSkillsPackReceipt(input) as Facade.SkillPackReceipt),
+      outcomes: {
+        /** Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win. */
+        project: (input: Facade.SkillPackOutcomeRequest): Facade.SkillPackOutcomeProjection => this.#call(() => this.#client.vaultSkillsOutcomesProject(input) as Facade.SkillPackOutcomeProjection),
+        /** Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner. */
+        get: (input: Facade.SkillPackCreditRequest): Facade.LateCreditReceipt | null => this.#call(() => this.#client.vaultSkillsOutcomesGet(input) as Facade.LateCreditReceipt | null),
+      },
+    },
     skill_hubs: {
+      default: {
+        /** Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source. */
+        get: (input: Facade.EmptyRequest = {}): Facade.DefaultSkillHub => this.#call(() => this.#client.vaultSkillHubsDefaultGet(input) as Facade.DefaultSkillHub),
+      },
       /** The owner registers or revises a hub source; hub trust never grants activation authority. */
       put: (input: Facade.SkillHubPutRequest): Facade.SkillHubConfigured => this.#call(() => this.#client.vaultSkillHubsPut(input) as Facade.SkillHubConfigured),
       /** Reads one configured hub as the owner. */
@@ -611,58 +671,6 @@ export class Oneiron {
         answer: (input: Facade.PackSetupAnswerRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupAnswer(input) as Facade.PackSetupReceipt),
         /** Checks one pack connection with the engine's fixed read-only provider call for its declared check. */
         verify: (input: Facade.PackSetupVerifyRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupVerify(input) as Facade.PackSetupReceipt),
-      },
-    },
-    skills: {
-      /** The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask. */
-      import: (input: Facade.HubImportRequest): Facade.HubSkillImported => this.#call(() => this.#client.vaultSkillsImport(input) as Facade.HubSkillImported),
-      /** The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities. */
-      sync: (input: Facade.HubSkillRequest): Facade.HubSkillSyncReceipt => this.#call(() => this.#client.vaultSkillsSync(input) as Facade.HubSkillSyncReceipt),
-      /** Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner. */
-      receipts: (input: Facade.HubSkillRequest): Facade.HubSkillReceipts => this.#call(() => this.#client.vaultSkillsReceipts(input) as Facade.HubSkillReceipts),
-      /** Converts selected messages through the configured refiner; user initiation approves conversion, never admission. */
-      convert: (input: Facade.SkillConvertRequest): Facade.SkillConvertReceipt => this.#call(() => this.#client.vaultSkillsConvert(input) as Facade.SkillConvertReceipt),
-      /** Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry. */
-      get: (input: Facade.HubSkillRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsGet(input) as Facade.SkillLibraryView),
-      /** Lists a page of the owner skill library, including inactive skills and their retained evidence. */
-      list: (input: Facade.SkillLibraryListRequest): Facade.SkillLibraryPage => this.#call(() => this.#client.vaultSkillsList(input) as Facade.SkillLibraryPage),
-      /** The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled. */
-      archive: (input: Facade.HubSkillRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsArchive(input) as Facade.SkillLibraryView),
-      /** The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring. */
-      restore: (input: Facade.SkillLibraryRestoreRequest): Facade.SkillLibraryRestoreReceipt => this.#call(() => this.#client.vaultSkillsRestore(input) as Facade.SkillLibraryRestoreReceipt),
-      /** The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
-      fork: (input: Facade.SkillLibraryForkRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsFork(input) as Facade.SkillLibraryView),
-      rules: {
-        /** The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose. */
-        set: (input: Facade.SkillHashRuleRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsRulesSet(input) as Facade.HubConsentReceipt),
-      },
-      code_auto_install: {
-        /** The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification. */
-        set: (input: Facade.SkillCodeAutoInstallRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsCodeAutoInstallSet(input) as Facade.HubConsentReceipt),
-      },
-      permissions: {
-        /** The owner answers one imported skill permission ask at its exact hub source. */
-        approve: (input: Facade.HubSkillPermissionRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsPermissionsApprove(input) as Facade.HubConsentReceipt),
-      },
-      optimize: {
-        /** The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued. */
-        start: (input: Facade.SkillOptimizeStartRequest): Facade.SkillOptimizeStartReceipt => this.#call(() => this.#client.vaultSkillsOptimizeStart(input) as Facade.SkillOptimizeStartReceipt),
-        /** Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal. */
-        result: (input: Facade.SkillOptimizeResultRequest): Facade.SkillOptimizeResultView => this.#call(() => this.#client.vaultSkillsOptimizeResult(input) as Facade.SkillOptimizeResultView),
-      },
-      governance: {
-        /** Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it. */
-        get: (input: Facade.HubSkillRequest): Facade.SkillGovernanceView => this.#call(() => this.#client.vaultSkillsGovernanceGet(input) as Facade.SkillGovernanceView),
-        /** The owner marks or clears one skill governance tier; the mark changes no instruction content or version. */
-        set: (input: Facade.SkillGovernanceSetRequest): Facade.SkillGovernanceView => this.#call(() => this.#client.vaultSkillsGovernanceSet(input) as Facade.SkillGovernanceView),
-      },
-      /** Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner. */
-      pack_receipt: (input: Facade.SkillPackReceiptRequest): Facade.SkillPackReceipt => this.#call(() => this.#client.vaultSkillsPackReceipt(input) as Facade.SkillPackReceipt),
-      outcomes: {
-        /** Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win. */
-        project: (input: Facade.SkillPackOutcomeRequest): Facade.SkillPackOutcomeProjection => this.#call(() => this.#client.vaultSkillsOutcomesProject(input) as Facade.SkillPackOutcomeProjection),
-        /** Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner. */
-        get: (input: Facade.SkillPackCreditRequest): Facade.LateCreditReceipt | null => this.#call(() => this.#client.vaultSkillsOutcomesGet(input) as Facade.LateCreditReceipt | null),
       },
     },
     connectors: {
