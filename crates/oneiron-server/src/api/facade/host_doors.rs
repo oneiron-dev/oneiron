@@ -87,6 +87,7 @@ pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::mesh_doors::*;
 pub(crate) use super::model_catalog_doors::*;
 pub(crate) use super::model_step_doors::*;
+pub(crate) use super::model_stream_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 pub(crate) use super::run_review_doors::*;
@@ -1167,6 +1168,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
             .map_err(|error| super::FacadeApiError::from(error).into_memory_error()),
         "ai.steps.submit"
         | "ai.steps.receipt"
+        | "ai.streams.open"
+        | "ai.streams.subscribe"
+        | "ai.streams.events"
+        | "ai.streams.detach"
+        | "ai.streams.abort"
+        | "ai.streams.terminal"
         | "vault.models.catalog.refresh"
         | "vault.models.catalog.get"
         | "vault.models.catalog.diff"

@@ -6524,6 +6524,48 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn ai_streams_open(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.streams.open")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.streams.open", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_streams_subscribe(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.streams.subscribe")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.streams.subscribe", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_streams_events(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.streams.events")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.streams.events", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_streams_detach(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.streams.detach")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.streams.detach", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_streams_abort(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.streams.abort")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.streams.abort", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_streams_terminal(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.streams.terminal")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.streams.terminal", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn ai_reply(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "ai.reply")?;
         let output = py
