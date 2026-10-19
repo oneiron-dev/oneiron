@@ -1,15 +1,25 @@
 //! First-run embedder and tagger choices, using the same config and providers as serve.
 //! `init` asks the questions; [`setup_models`] is the shared non-terminal
-//! operation that writes the config and opens the vault (ARCH-0036).
+//! operation that writes the config and opens the vault (ARCH-0036). A vault
+//! init creates also asks, once, whether its conversations may be used for
+//! training (FIX 5537).
 use crate::cli::InitArgs;
 use crate::config::{
     EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider, EnvConfig, OneironerConfig,
     OneironerMode, OneironerProvider, ServeArgs, ServeConfig,
 };
+use anyhow::Context as _;
+use oneiron::authority::{ActSurface, MachineRole};
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 const EMBEDDER_DOCS: &str = "https://oneiron.dev/oneiron/agents/oneiron-arch-0036-runtime-v1/";
+/// The question init asks once, on a terminal, when it creates the vault: the
+/// vault's conversation-learning setting, off unless the answer is yes.
+const CONVERSATION_LEARNING_QUESTION: &str = "Use conversations in this vault for training? People, agents and guests count; private worlds never do. [y/N]: ";
+/// What init says to a yes it cannot write: the setting is an act this
+/// install carries, and a vault with no host root has no install profile yet.
+const CONVERSATION_LEARNING_NEEDS_ROOT: &str = "conversation learning stays off: this vault has no signing root yet (no auth_secret or ONEIRON_AUTH_SECRET is configured). Once `oneiron serve` runs with one, turn it on with the conversation-learning setting (PUT /v1/owner/conversation-learning).";
 
 pub fn init(args: InitArgs) -> anyhow::Result<()> {
     init_with_env(
@@ -50,6 +60,12 @@ fn init_with_env(
     if args.oneironer.is_none() && input.is_terminal() {
         ask_tagger(&mut args, &mut input, &mut output)?;
     }
+    // Asked once: only when this init creates the vault, and only on a
+    // terminal. Anything but a yes writes nothing, which reads as off.
+    let vault_dir = env.vault_path().unwrap_or(args.path.as_path());
+    let learning = !vault_dir.join("data.mdb").exists()
+        && input.is_terminal()
+        && ask_learning(&mut input, &mut output)?;
     let path = args
         .config
         .clone()
@@ -61,7 +77,11 @@ fn init_with_env(
     if args.maximum_tier {
         writeln!(output, "warning: {}", oneiron::PAGE_SEAL_WARNING)?;
     }
-    let (vault, outcome) = setup_models(&args, &path, env)?;
+    let (vault, outcome) = setup_models(&args, &path, env.clone())?;
+    if learning {
+        turn_on_learning(&vault, &read_config(&path, env)?, &mut output)
+            .context("conversation learning was not turned on; it stays off")?;
+    }
     super::print_doctor_report(&vault)?;
     writeln!(output, "config: {}", outcome.config.display())?;
     if let Some(embedder) = &outcome.embedder {
@@ -250,6 +270,44 @@ fn open_vault(answers: &InitArgs, config: &ServeConfig) -> anyhow::Result<oneiro
         vault.ensure_serving_install_profile_at_start(Some(&issuer), "init");
     }
     Ok(vault)
+}
+
+/// The conversation-learning question: only `y` or `yes` turns it on; Enter,
+/// `n` and `no` leave it off.
+fn ask_learning(input: &mut impl BufRead, output: &mut impl Write) -> anyhow::Result<bool> {
+    let answer = ask_line(input, output, CONVERSATION_LEARNING_QUESTION)?;
+    match answer.to_ascii_lowercase().as_str() {
+        "y" | "yes" => Ok(true),
+        "" | "n" | "no" => Ok(false),
+        _ => anyhow::bail!("answer y or n"),
+    }
+}
+
+/// Turns the new vault's conversation learning on, the admin having said yes
+/// (FIX 5537), through the setting's own writer, as the vault's embedded
+/// owner on this install. The configured host root first roots the vault
+/// and profiles this install, as serve's first start would: it signs the
+/// enrolment, never the setting. With no host root configured, nothing is
+/// written and learning stays off.
+fn turn_on_learning(
+    vault: &oneiron::Vault,
+    config: &ServeConfig,
+    output: &mut impl Write,
+) -> anyhow::Result<()> {
+    let Some(issuer) = super::owner::configured_host_issuer(config, vault) else {
+        writeln!(output, "{CONVERSATION_LEARNING_NEEDS_ROOT}")?;
+        return Ok(());
+    };
+    vault.ensure_host_root_slip(&issuer)?;
+    if !vault.vault_pages_sealed() {
+        config.keystore.install_on(vault, &config.vault_path);
+    }
+    vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
+    let owner = crate::owner::local_owner(vault)?;
+    let seen = vault.conversation_learning_view(&owner)?.revision;
+    vault.set_conversation_learning(&owner, ActSurface::ThisInstall, true, false, Some(seen))?;
+    writeln!(output, "conversation learning: on")?;
+    Ok(())
 }
 
 /// Asks for the tagger the way the embedder is asked for: local, endpoint or

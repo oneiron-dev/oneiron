@@ -82,7 +82,7 @@ fi
 # The credential frame and the ready byte ride the vsock boot port; the host
 # reaches HTTP and ctl through vsock ports the engine bridges onto these paths.
 /usr/bin/oneiron-server serve --managed-by-hypnos --vsock-guest \
-  --contract-version 2 \
+  --contract-version 3 \
   --vault-name "$vault" \
   --derivation-owner "$owner" \
   --data-dir /vault/data \
