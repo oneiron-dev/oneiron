@@ -31,6 +31,31 @@ pub enum EditOrigin {
     Peer(PeerMachine),
 }
 
+/// Who a settings edit is written as, once its door checked them in the
+/// writer: the PERSON whose will it is (a holder of the world's settings
+/// right, or for an agent's act the vault owner its Grant carries), who
+/// decided (the holder himself, or an agent within its Grant), where (audit
+/// only), and the request a holder's yes answers (FIX 4480).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WorldEditAuthor {
+    pub(crate) owner: EntityId,
+    pub(crate) by: ActBy,
+    pub(crate) surface: ActSurface,
+    pub(crate) answer: Option<EntityId>,
+}
+
+impl WorldEditAuthor {
+    /// A holder's own say-so, answering nothing.
+    pub(crate) const fn holder(owner: EntityId, surface: ActSurface) -> Self {
+        Self {
+            owner,
+            by: ActBy::Owner,
+            surface,
+            answer: None,
+        }
+    }
+}
+
 /// One signed and folded settings edit.
 pub(crate) struct WorldPrivacyChange {
     pub(crate) machine: EntityId,
@@ -85,16 +110,16 @@ impl Vault {
     }
 
     /// Signs and lands one edit in the caller's transaction. The caller has
-    /// revalidated the owner and holds the release lock. `surface` is where
-    /// the owner said so, for audit only. `seen` is the settings revision the
-    /// deciding surface showed him: it must be the world's current one, else
-    /// the edit is a conflict, never a silent overwrite; `None` takes the
-    /// current revision (a caller that showed none).
+    /// revalidated `author` (a holder, or an agent's Grant) and holds the
+    /// release lock. Its surface is where the will was said, for audit only.
+    /// `seen` is the settings revision the deciding surface showed: it must be
+    /// the world's current one, else the edit is a conflict, never a silent
+    /// overwrite; `None` takes the current revision (a caller that showed
+    /// none).
     pub(crate) fn append_world_privacy_edit_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        owner: EntityId,
-        surface: ActSurface,
+        author: WorldEditAuthor,
         world: EntityId,
         settings: WorldPrivacy,
         seen: Option<PolicyRevision>,
@@ -173,7 +198,15 @@ impl Vault {
         let signer = AuthorityKey::Ed25519(public_key);
         let seq = next_sequence(&fold, &signer)?;
         let now = self.instant_in_txn(txn)?.secs();
-        let act = OwnerAct::by_owner(owner, OwnerActKind::WorldPrivacy, world, surface, current.0);
+        let act = OwnerAct {
+            owner: author.owner,
+            by: author.by,
+            surface: author.surface,
+            act: OwnerActKind::WorldPrivacy,
+            target: world,
+            seen: current.0,
+            answer: author.answer,
+        };
         let entry = sign_side_entry(
             &fold,
             &key,
@@ -240,11 +273,17 @@ impl WorldPrivacyView {
     /// Refused under a conflicted vault root: its fold knows no world's
     /// settings, so no door may judge a world portable from it.
     pub fn load_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Self> {
+        Self::load_unless_conflicted_in(vault, txn)?.ok_or_else(invalid_authority)
+    }
+
+    /// [`Self::load_in`], or `None` under a conflicted vault root, for a
+    /// door that names that integrity hold rather than failing on it.
+    pub(crate) fn load_unless_conflicted_in(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<Self>> {
         let view = vault.authority_view_readonly_in_txn(txn)?;
-        if view.vault_root_is_conflicted() {
-            return Err(invalid_authority());
-        }
-        Ok(Self { view })
+        Ok((!view.vault_root_is_conflicted()).then_some(Self { view }))
     }
 
     #[must_use]
@@ -260,15 +299,34 @@ impl WorldPrivacyView {
     /// Revalidate a connection's machine proof in this very snapshot, then
     /// apply the world's read setting. Actor identity is never a machine proof.
     pub fn withheld_for_peer(&self, peer: PeerMachine) -> Result<BTreeSet<EntityId>> {
-        let destination = match peer {
+        self.withheld_for(self.destination_for_peer(peer))
+    }
+
+    /// The destination a connection's machine proof names in this very
+    /// snapshot: its machine while the proof still stands on the key it
+    /// proved, else one nobody proved (mesh PR2b). An unanswered install's
+    /// proof never stands ([`AuthorityFold::machine_proof_key`]).
+    #[must_use]
+    pub fn destination_for_peer(&self, peer: PeerMachine) -> Destination {
+        match peer {
             PeerMachine::Proven { machine, key }
                 if self.view.machine_proof_key(machine) == Some(key) =>
             {
                 Destination::Machine(machine)
             }
             _ => Destination::Unknown,
-        };
-        self.withheld_for(destination)
+        }
+    }
+
+    /// Where `world` may be read, as the owner's recipient choice sets it.
+    pub(crate) fn world_read(&self, world: EntityId) -> EffectiveRead {
+        self.view.world_privacy(world).read
+    }
+
+    /// Whether `machine` is one the owner marked his: the recipient test the
+    /// judge reads, never the carrier rule.
+    pub(crate) fn marked_mine(&self, machine: EntityId) -> bool {
+        self.view.trusted_machine(machine).is_some()
     }
 }
 

@@ -1,16 +1,21 @@
-//! Typed symbol lease, proposal submit and mutation oplog doors (DOOR-137).
+//! Typed code leases, proposals, conflicts and settlement doors (DOOR-137/057).
 //! Each one projects an engine path that exists: the trusted task symbol
 //! declaration, the one-file repository proposal and the durable mutation
 //! oplog. None schedules a proposal behind a lease, allocates a queue entry,
-//! fences a release by epoch or mints a receipt; the engine has none of them.
+//! or fences a release by epoch. Conflict settlement retains its own decision
+//! receipt and leaves execution to the existing tested merge queue.
 //!
 //! Authority is the owner's live proof alone (`Memory::code_owner`). The
 //! lease holder and the proposal actor are always that caller.
 
+mod conflict_types;
+mod conflicts;
 mod leases;
 mod proposals;
+mod resolutions;
 mod types;
 
+pub use conflict_types::*;
 pub use types::*;
 
 use std::collections::BTreeSet;

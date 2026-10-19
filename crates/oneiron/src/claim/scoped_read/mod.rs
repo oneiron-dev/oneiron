@@ -51,6 +51,7 @@ pub(crate) use weave_lens::{
 };
 mod weave_report;
 mod weave_serve;
+mod weave_trigger;
 pub(crate) use claim_admission::ClaimReadStatus;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
@@ -64,6 +65,7 @@ pub use weave_serve::{
     WeaveScheduleView, WeaveSectionInput, WeaveSectionView, WeaveWrongItemRequest,
     WeaveWrongLinkRequest,
 };
+pub use weave_trigger::WeaveDigestRendered;
 
 mod access_gate;
 pub(crate) use access_gate::{RelationshipRead, claim_access_axes, relationship_read};

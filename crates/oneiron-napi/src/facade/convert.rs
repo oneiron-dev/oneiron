@@ -11,11 +11,12 @@ use super::boundary::{
 };
 use super::dtos::{
     NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiCitedMessage, NapiClaimView,
-    NapiCommitOutcome, NapiCommitReceipt, NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt,
-    NapiMemoryItem, NapiMemoryPack, NapiMemoryProvenance, NapiMemoryStaleStamp, NapiQuoteSpan,
-    NapiReadReceipt, NapiReadScope, NapiRecallScope, NapiRecordRef, NapiRecordRefusal,
-    NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint,
-    NapiWitnessReceipt, NapiWitnessTurn,
+    NapiCommitOutcome, NapiCommitReceipt, NapiDreamerParkedJobView, NapiEntityRefReceipt,
+    NapiEntityView, NapiGateReceipt, NapiMemoryItem, NapiMemoryPack, NapiMemoryProvenance,
+    NapiMemoryStaleStamp, NapiQuoteSpan, NapiReadReceipt, NapiReadScope, NapiRecallResidence,
+    NapiRecallResidenceHit, NapiRecallScope, NapiRecordRef, NapiRecordRefusal, NapiRetrievalMeta,
+    NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint, NapiWitnessReceipt,
+    NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -366,8 +367,35 @@ pub(super) fn gate_receipt_from_engine(
         actor_ref: record.actor_ref,
         content_kind: record.content_kind,
         claim_ref: record.claim_ref,
+        claim: record.claim.map(record_ref_from_engine),
         fields: record.fields.into_iter().collect(),
     })
+}
+
+/// Projects one engine Dreamer park (DOOR-144 A) onto the boundary DTO; its
+/// cause keeps the engine's own wire label.
+pub(super) fn parked_job_from_engine(
+    parked: oneiron::memory::DreamerParkedAttemptView,
+) -> BoundaryResult<NapiDreamerParkedJobView> {
+    let cause = match serde_json::to_value(parked.cause) {
+        Ok(serde_json::Value::String(cause)) => cause,
+        _ => return Err("a Dreamer park cause did not write as its label".to_owned()),
+    };
+    Ok(NapiDreamerParkedJobView {
+        job_ref: parked.job_ref,
+        cause,
+        parked_at: ts_from_engine(parked.parked_at, "parked_at")?,
+    })
+}
+
+/// Projects one engine typed record ref (OF-063) onto the boundary DTO.
+fn record_ref_from_engine(record: oneiron::lens::RecordRef) -> NapiRecordRef {
+    NapiRecordRef {
+        kind: record.kind,
+        id: record.id,
+        short_id: record.short_id,
+        label: record.label,
+    }
 }
 
 /// Projects one engine memory item onto the boundary DTO.
@@ -401,12 +429,7 @@ pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> Napi
             .map(|cited| NapiCitedMessage {
                 short_id: cited.short_id,
                 value_text: cited.value_text,
-                record: cited.record.map(|record| NapiRecordRef {
-                    kind: record.kind,
-                    id: record.id,
-                    short_id: record.short_id,
-                    label: record.label,
-                }),
+                record: cited.record.map(record_ref_from_engine),
             })
             .collect(),
         conversation_id: item.conversation_id,
@@ -504,7 +527,32 @@ pub(super) fn memory_pack_from_engine(
         rendered: pack.rendered,
         narrowing: read_receipt_from_engine(*pack.narrowing)?,
         retrieval_run_id: pack.retrieval_run_id.map(|id| id.as_bytes().to_vec()),
+        residence: pack.residence.map(recall_residence_from_engine),
     })
+}
+
+/// Projects an opened device's recall residence onto the boundary DTO.
+fn recall_residence_from_engine(
+    residence: oneiron::memory::RecallResidence,
+) -> NapiRecallResidence {
+    NapiRecallResidence {
+        source: match residence.source {
+            oneiron::memory::RecallResidenceSource::Home => "home",
+            oneiron::memory::RecallResidenceSource::LocalOnly => "local_only",
+        }
+        .to_owned(),
+        complete: residence.complete,
+        capped: residence.capped,
+        hits: residence
+            .hits
+            .into_iter()
+            .map(|hit| NapiRecallResidenceHit {
+                id: hit.id,
+                score: f64::from(hit.score),
+                window: hit.window,
+            })
+            .collect(),
+    }
 }
 
 /// Lowers the boundary media query onto the engine's wire type; an unknown

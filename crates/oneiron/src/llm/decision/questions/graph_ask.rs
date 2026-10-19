@@ -655,6 +655,59 @@ pub(super) fn sources_unchanged_in_txn(
     Ok(Some(rows))
 }
 
+/// Re-read the answer's original evidence only while every body still matches
+/// its recorded hash. A trial never substitutes a newer source frontier.
+pub(crate) fn trial_unit_context(
+    vault: &Vault,
+    principal: EntityId,
+    locality: crate::claim::CallerLocality,
+    answer: &AnswerRecord,
+) -> Result<GraphUnitContext> {
+    let txn = vault.store.env.read_txn()?;
+    trial_unit_context_in_txn(vault, &txn, principal, locality, answer)
+}
+
+pub(crate) fn trial_unit_context_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    locality: crate::claim::CallerLocality,
+    answer: &AnswerRecord,
+) -> Result<GraphUnitContext> {
+    let lane = vault.scoped_read(asker_reader_in_txn(vault, txn, principal)?.at(locality));
+    let mut sources = Vec::new();
+    for pin in &answer.decision.receipt.evidence_versions {
+        let raw = lane
+            .graph_ask_raw_in_txn(txn, &pin.id)?
+            .ok_or(Error::EntityNotFound)?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("model trial source header"))?;
+        let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+        if *blake3::hash(&body).as_bytes() != pin.body_hash
+            || !source_eligible(vault, txn, &pin.id, header.entity_type)?
+        {
+            return Err(Error::ConcurrentWrite(
+                "model trial source frontier changed",
+            ));
+        }
+        sources.push(source(pin.id, header.entity_type, body));
+    }
+    if sources
+        .first()
+        .is_none_or(|source| source.id != answer.unit)
+        || super::refresh::trial_source_frontier(vault, txn, principal, answer.unit)?
+            != Some(answer.frontier)
+    {
+        return Err(Error::ConcurrentWrite(
+            "model trial source frontier changed",
+        ));
+    }
+    Ok(GraphUnitContext {
+        unit: answer.unit,
+        sources,
+    })
+}
+
 fn source(id: EntityId, entity_type: u8, body: Vec<u8>) -> GraphContextSource {
     GraphContextSource {
         id,
@@ -842,7 +895,7 @@ pub(super) fn unit_audio(
 /// A full decision is for this question, asker and contract; an answer
 /// carries a probability; no person answered it; and its readings are
 /// well formed.
-pub(crate) fn validate_decision(
+pub fn validate_decision(
     question: &DecisionQuestion,
     principal: EntityId,
     decision: &TypedDecision,

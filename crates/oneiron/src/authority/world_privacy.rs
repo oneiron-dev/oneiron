@@ -111,6 +111,10 @@ pub enum Destination {
 pub struct FoldedWorld {
     /// Each live edit and the machine that signed it.
     pub live: BTreeMap<AuthorityEntryHash, EntityId>,
+    /// Each live edit's settings as it states them: the heads a change's
+    /// direction is judged against (FIX 4480).
+    #[serde(default)]
+    pub live_settings: BTreeMap<AuthorityEntryHash, WorldPrivacy>,
     pub effective: EffectiveWorldPrivacy,
     /// The read the roster rule alone gives, the same on every install.
     pub roster_read: EffectiveRead,
@@ -467,6 +471,11 @@ pub(super) fn folded_worlds(
                         .iter()
                         .map(|(hash, edit)| (*hash, edit.machine))
                         .collect(),
+                    live_settings: frontier
+                        .live
+                        .iter()
+                        .map(|(hash, edit)| (*hash, edit.settings.clone()))
+                        .collect(),
                     effective: world_meet(&standing, *world, StandingView::Install).effective(),
                     roster_read,
                     local_read,
@@ -590,10 +599,45 @@ pub(super) fn live_edits_by(
         .filter(|(_, signer)| **signer == machine)
         .map(|(hash, _)| *hash)
         .chain(super::grant_travel::live_choices_by(fold, machine))
+        .chain(super::checkpoint_choice::live_choices_by(fold, machine))
         .chain(super::machine_profile::live_answers_by(fold, machine))
         .chain(super::owner_work::pending_carried_by(fold, machine))
         .take(MACHINE_SEEN_WORLD_EDITS_MAX)
         .collect()
+}
+
+/// Whether a fold past a base (a resumed fold's chain, or the tail past an
+/// adopted image) moved no world but those its own rows edit: every other
+/// world reads as the base read it, and the only refused edits it adds are
+/// its own (FIX 4535). A settings edit judges only its own world's edits, as
+/// a grant travel choice judges only its grant's, and neither changes a
+/// machine's standing, which the caller compares whole.
+pub(super) fn worlds_unmoved_past<E: std::borrow::Borrow<AuthorityLogEntry>>(
+    fold: &AuthorityFold,
+    base: &AuthorityFold,
+    rows: impl IntoIterator<Item = (AuthorityEntryHash, E)>,
+) -> bool {
+    let mut edited = BTreeSet::new();
+    let mut own = BTreeSet::new();
+    for (hash, entry) in rows {
+        if let AuthorityOp::WorldPrivacy(edit) = &entry.borrow().op {
+            edited.insert(edit.world);
+            own.insert(hash);
+        }
+    }
+    let unedited = |worlds: &BTreeMap<EntityId, FoldedWorld>| {
+        worlds
+            .iter()
+            .filter(|(world, _)| !edited.contains(*world))
+            .map(|(world, folded)| (*world, folded.clone()))
+            .collect::<Vec<_>>()
+    };
+    unedited(&fold.worlds) == unedited(&base.worlds)
+        && fold
+            .refused_world_edits
+            .iter()
+            .filter(|hash| !own.contains(*hash))
+            .eq(base.refused_world_edits.iter())
 }
 
 /// The edits that never count at full strength on this install: each one

@@ -15,6 +15,7 @@ mod team_submit_output;
 mod team_verbs;
 mod verb_hooks;
 mod wake_policy;
+mod world_privacy_set;
 
 use std::cell::{Cell, RefCell};
 
@@ -531,6 +532,8 @@ impl<'a> HostSelfDispatcher<'a> {
                 self.dispatch_tasks_wait(call, run_id, turn)
             }
             SelfCall::TasksRefuse(call) => self.dispatch_tasks_refuse(call),
+            // The landing reads its refs under the key its door admitted it with.
+            SelfCall::ConsultResult(call) => self.dispatch_consult_result(call, read_as),
             SelfCall::SkillsCall(_) => Ok(Self::dispatch_skills_call_unhosted()),
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call, read_as),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
@@ -560,6 +563,7 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::WakePolicyWrite(call) => self.dispatch_wake_policy_write(call),
             SelfCall::AgentVerb(call) => self.dispatch_agent_verb(call, site),
             SelfCall::ConnectorAnswer(request) => self.dispatch_connector_answer(request, site),
+            SelfCall::WorldPrivacySet(input) => self.dispatch_world_privacy_set(&input),
             SelfCall::Fold(call) => self.dispatch_fold(&call, site),
             SelfCall::ReaderSpawn(call) => self.dispatch_reader_spawn(*call, site),
             SelfCall::ReaderReport(call) => self.dispatch_reader_report(call),

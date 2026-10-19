@@ -166,7 +166,9 @@ impl Memory<'_> {
 
     /// Whether the rows a run's answers were served from (`None` when it kept
     /// no set, which is unknown) stay where this reader is not: a reader off
-    /// this device reads nothing a device-local world keeps (DEC-0005).
+    /// this device reads nothing a world withheld from the machine its rows
+    /// go to keeps (DEC-0005, mesh PR2b). Unknown producers stay withheld,
+    /// a proved destination too: that is integrity, not the owner's choice.
     fn withholds_served_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -178,7 +180,7 @@ impl Memory<'_> {
         let Some(rows) = rows else {
             return Ok(true);
         };
-        let kept = crate::settings::device_local_worlds_at(self.vault, txn, self.locality())?;
+        let kept = crate::settings::device_local_worlds_for(self.vault, txn, self.destination())?;
         for row in rows {
             if crate::settings::device_local_keeps_among(&self.vault.store, txn, &kept, row)? {
                 return Ok(true);

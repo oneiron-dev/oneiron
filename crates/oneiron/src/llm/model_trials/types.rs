@@ -5,7 +5,7 @@ use crate::llm::registry::{ModelBackendPin, ModelCostReceipt, PricedModelBackend
 use crate::{EntityId, llm::LlmUsage};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TrialSetPin {
     pub id: String,
@@ -13,7 +13,7 @@ pub struct TrialSetPin {
     pub rubric_version: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HeldOutSelection {
     pub answer: EntityId,
@@ -22,7 +22,7 @@ pub struct HeldOutSelection {
     pub source_family: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelTrialPolicy {
     /// Remaining monetary exploration allowance on the goal record. Ordinary
@@ -36,7 +36,7 @@ pub struct ModelTrialPolicy {
     pub candidate_needs_download: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelTrialRequest {
     pub principal: EntityId,
@@ -56,14 +56,14 @@ pub struct ModelTrialRequest {
     pub policy: ModelTrialPolicy,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TrialAdmission {
     Ready,
     AskExploration,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FrozenTrialCase {
     pub selection: HeldOutSelection,
@@ -126,7 +126,7 @@ pub struct TrialEvidence {
     pub trial_cost: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PairedQualityInterval {
     /// Positive gain means the candidate has lower loss than the incumbent.
@@ -136,7 +136,7 @@ pub struct PairedQualityInterval {
 
 /// The OF-578 sufficiency result is bound to the exact set and measured reads.
 /// Interval construction, family derivations and exposure retirement belong there.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TrialAssessment {
     pub set: TrialSetPin,
@@ -150,7 +150,7 @@ pub struct TrialAssessment {
     pub canary_diverged: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TrialQuality {
     Better,
@@ -160,7 +160,7 @@ pub enum TrialQuality {
 }
 
 /// These are offers/approvals for the activation owner, not routing mutations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelTrialAction {
     Stay,
@@ -170,7 +170,7 @@ pub enum ModelTrialAction {
     Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelTrialReceipt {
     pub assessment: TrialAssessment,

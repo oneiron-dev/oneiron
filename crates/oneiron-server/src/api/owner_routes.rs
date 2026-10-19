@@ -42,6 +42,7 @@ use crate::owner::{
 use crate::server::SyncServer;
 mod browser_takeover_routes;
 mod budget_hold_routes;
+mod checkpoint_policy_routes;
 mod commitment_routes;
 mod concern_routes;
 mod conflict_routes;
@@ -85,6 +86,7 @@ mod vault_key_routes;
 mod weave_routes;
 mod widen_proposal_routes;
 mod wire_health_routes;
+mod world_privacy_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
 
@@ -125,6 +127,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/model-catalog", get(model_catalog).put(set_model_catalog))
         .route("/model-catalog/sync", post(sync_model_catalog))
         .merge(budget_hold_routes::routes())
+        .merge(checkpoint_policy_routes::routes())
         .merge(commitment_routes::routes())
         .merge(conflict_routes::routes())
         .merge(connector_admission_routes::routes())
@@ -169,6 +172,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(secret_lift_routes::routes())
         .merge(steer_routes::routes())
         .merge(training_swap_routes::routes())
+        .merge(world_privacy_routes::routes())
         .merge(super::owner_origin::routes())
         .merge(super::packs::routes())
 }

@@ -34,8 +34,10 @@ pub(crate) use self::types::RetrievalRunFinalize;
 pub use self::types::{
     RetrievalAction, RetrievalBlendSignal, RetrievalBlendTuningConfig,
     RetrievalBlendWeightDataWindow, RetrievalBlendWeightTableEntry, RetrievalBlendWeights,
-    RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalRewardEvidence,
-    RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalScoreComponent,
-    RetrievalSignal, RetrievalTrace, RetrievalTraceChannelRecord, RetrievalTraceForkHash,
-    RetrievalTraceStage, RetrievalTraceStageRecord,
+    RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalPolicyCandidate,
+    RetrievalPolicyEvaluation, RetrievalPolicyHeldOut, RetrievalPolicyPin, RetrievalPolicyPins,
+    RetrievalPolicyVerdict, RetrievalRewardEvidence, RetrievalRunId, RetrievalRunRecord,
+    RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal, RetrievalTrace,
+    RetrievalTraceChannelRecord, RetrievalTraceForkHash, RetrievalTraceStage,
+    RetrievalTraceStageRecord, RetrievalWeightOrigin, RetrievalWeightRow, retrieval_weight_rows,
 };

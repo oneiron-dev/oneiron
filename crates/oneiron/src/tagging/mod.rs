@@ -64,6 +64,7 @@ pub use tags::{
     TurnTags,
 };
 pub use trace::{HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace};
+pub(crate) use verbs::{envelope_view, mention_view};
 pub use verbs::{
     DerivationEnvelopeView, MentionLinkView, MentionReferenceView, MergeEvidenceView,
     TaggedMentionView, TaggingFailureView, TaggingHistoryView, TaggingMarkerState,

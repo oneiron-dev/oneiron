@@ -161,17 +161,32 @@ impl GrantedAct {
 }
 
 /// Policy hook (CALLS "mesh PR2a agent act Grant line", open): the act kinds an
-/// agent's Grant may name in this build. Topology seals only; each other door
-/// takes agents when its lane writes the Grant line that names its act
-/// (contract §4).
-const AGENT_GRANTABLE_ACTS: [OwnerActKind; 1] = [OwnerActKind::TopologySeal];
+/// agent's Grant may name in this build. Topology seals, and a world's
+/// settings for a tighten only (FIX 4480, CALLS "FIX 4480 agent tighten Grant
+/// line"); each other door takes agents when its lane writes the Grant line
+/// that names its act (contract §4).
+const AGENT_GRANTABLE_ACTS: [OwnerActKind; 2] =
+    [OwnerActKind::TopologySeal, OwnerActKind::WorldPrivacy];
+
+/// The verb a Grant names a world-settings act by. A Grant can only ever name
+/// a tighten: a widen is never an agent's act (FIX 4480), so no verb names it.
+pub(crate) const WORLD_PRIVACY_TIGHTEN_VERB: &str = "world_privacy_tighten";
+
+/// The verb an agent's Grant lists to name `act`: the act's wire tag, but for
+/// a world's settings, whose one grantable direction is the tighten.
+fn grant_verb(act: OwnerActKind) -> &'static str {
+    match act {
+        OwnerActKind::WorldPrivacy => WORLD_PRIVACY_TIGHTEN_VERB,
+        other => other.as_str(),
+    }
+}
 
 /// Policy hook (same CALLS row): whether FederationGrant `grant` names `act`
 /// for `agent` at `at`, as a named action grant does (`policy.change` is the
 /// precedent): its member is the agent, it confers at `at`, and its authority
-/// scope names the act's wire tag among an explicit verb set. A grant whose
-/// verbs are "all" names no act: a broad grant about other verbs never
-/// authorizes this one.
+/// scope names the act's verb ([`grant_verb`]) among an explicit verb set. A
+/// grant whose verbs are "all" names no act: a broad grant about other verbs
+/// never authorizes this one.
 fn grant_names_act(
     grant: &crate::federation::FederationGrant,
     agent: EntityId,
@@ -183,8 +198,22 @@ fn grant_names_act(
         && grant.confers_at(at)
         && matches!(
             &grant.authority_scope.verbs,
-            crate::federation::ScopeAxis::Some(verbs) if verbs.contains(act.as_str())
+            crate::federation::ScopeAxis::Some(verbs) if verbs.contains(grant_verb(act))
         )
+}
+
+/// Policy hook (CALLS "FIX 4480 agent tighten Grant line", accepted with the
+/// Engine's amendment of 10-19 05:0x): whether `grant` names `world` as the
+/// target of its act. Its worlds axis covers the world the way every Grant
+/// axis covers its targets ([`crate::federation::ScopeAxis::contains`]): an
+/// explicit name and the grammar's all-worlds form both count, since a
+/// tighten only lowers exposure. The verbs axis stays explicit
+/// ([`grant_names_act`]): a grant over every verb still names no act.
+fn grant_names_world(grant: &crate::federation::FederationGrant, world: EntityId) -> bool {
+    grant
+        .authority_scope
+        .worlds
+        .contains(&crate::federation::ScopeId(world))
 }
 
 /// What this replica holds of an agent act's Grant.
@@ -281,6 +310,76 @@ impl crate::Vault {
             .first()
             .copied()
             .ok_or_else(|| authority_refused(NO_LIVE_OWNER))
+    }
+}
+
+impl crate::Vault {
+    /// The live Grant of `agent` that names a tighten of `world`'s settings
+    /// now (FIX 4480), when one does: a FEDERATION_GRANT row whose member is
+    /// the agent, that confers now, lists [`WORLD_PRIVACY_TIGHTEN_VERB`] among
+    /// its verbs, and whose worlds axis covers `world` (by name, or as all
+    /// worlds). The first such row, in id order.
+    pub(crate) fn agent_world_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+        world: EntityId,
+    ) -> crate::error::Result<Option<EntityId>> {
+        let now = self.instant_in_txn(txn)?.secs();
+        for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+            &self.store,
+            txn,
+            crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+            None,
+        )? {
+            let id = id?;
+            if self.grant_names_world_act_in_txn(txn, id, agent, world, now)? {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The writer's check of `granted` for a world's settings in its own
+    /// transaction: the Grant still names a tighten of `world` for the agent,
+    /// now. Returns the vault owner whose will the agent's act carries, as
+    /// [`Self::granted_act_owner_in_txn`] does.
+    pub(crate) fn granted_world_act_owner_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        granted: &GrantedAct,
+        world: EntityId,
+    ) -> crate::error::Result<EntityId> {
+        let owner = self.granted_act_owner_in_txn(txn, granted, OwnerActKind::WorldPrivacy)?;
+        let now = self.instant_in_txn(txn)?.secs();
+        if !self.grant_names_world_act_in_txn(txn, granted.grant, granted.agent, world, now)? {
+            return Err(authority_refused(GRANT_NAMES_NO_ACT));
+        }
+        Ok(owner)
+    }
+
+    /// Whether the live row `grant` names a tighten of `world` for `agent` at
+    /// `at`.
+    fn grant_names_world_act_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant: EntityId,
+        agent: EntityId,
+        world: EntityId,
+        at: u64,
+    ) -> crate::error::Result<bool> {
+        Ok(
+            match crate::vault::live_entity_row_in_txn(&self.store, txn, &grant)? {
+                crate::vault::LiveEntityRow::Live {
+                    entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+                    body,
+                } => crate::federation::decode_federation_grant_body(&body).is_ok_and(|decoded| {
+                    grant_names_act(&decoded, agent, OwnerActKind::WorldPrivacy, at)
+                        && grant_names_world(&decoded, world)
+                }),
+                _ => false,
+            },
+        )
     }
 }
 

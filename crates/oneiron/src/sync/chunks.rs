@@ -9,6 +9,7 @@ use super::selector::{
     SyncSelector, decode_sync_selector, encode_sync_selector, filtered_window_doc,
 };
 use super::types::WindowKey;
+use crate::authority::PeerMachine;
 use crate::error::{ArtifactError, Error, Result};
 use crate::federation::FederationGrantScope;
 use crate::origin::lfs::{LfsManifest, LfsOid, LfsPutOutcome};
@@ -146,7 +147,7 @@ pub fn serve_chunk_request(
     if !admitted {
         return Err(invalid());
     }
-    respond(vault, request)
+    respond(vault, request, PeerMachine::Unknown)
 }
 
 /// Whether a device-only world keeps an object's bytes on this device: every
@@ -156,6 +157,14 @@ pub fn serve_chunk_request(
 /// queued reply is released, so neither a known OID nor an earlier manifest
 /// is standing authority to export.
 pub fn lfs_object_withheld(vault: &Vault, oid: LfsOid) -> Result<bool> {
+    lfs_object_withheld_for(vault, oid, PeerMachine::Unknown)
+}
+
+/// [`lfs_object_withheld`] for the machine `peer` proved on the connection
+/// that asks (mesh PR2b): the device-only worlds are those the world settings
+/// keep off that machine, its proof revalidated in this read; an unproved
+/// peer is an unknown destination.
+pub fn lfs_object_withheld_for(vault: &Vault, oid: LfsOid, peer: PeerMachine) -> Result<bool> {
     use crate::ports::{EdgeDirection, EdgeStoreRead};
     // An object the lift sweep marked holds a hit a new upload is refused
     // for (OF-067): it stays on this device.
@@ -165,11 +174,8 @@ pub fn lfs_object_withheld(vault: &Vault, oid: LfsOid) -> Result<bool> {
     let _accepting = vault.device_only_acceptance();
     let object = vault.lfs_object(oid)?.ok_or_else(invalid)?;
     let txn = vault.store.env.read_txn()?;
-    let flagged = crate::settings::device_local_worlds_at(
-        vault,
-        &txn,
-        crate::claim::CallerLocality::OffDevice,
-    )?;
+    let destination = crate::settings::ReadDestination::toward(peer);
+    let flagged = crate::settings::device_local_worlds_for(vault, &txn, &destination)?;
     if flagged.is_empty() {
         return Ok(false);
     }
@@ -201,6 +207,17 @@ pub fn chunk_request_object(bytes: &[u8]) -> Result<LfsOid> {
 /// Owner-socket sibling. Only the transport's owner-authenticated sync lane may
 /// call this; narrowed credentials must use `serve_chunk_request` instead.
 pub fn serve_owner_chunk_request(vault: &Vault, bytes: &[u8]) -> Result<Vec<u8>> {
+    serve_owner_chunk_request_for(vault, bytes, PeerMachine::Unknown)
+}
+
+/// [`serve_owner_chunk_request`] for the machine `peer` proved on the owner's
+/// socket: the manifest and every WANT are judged for that machine (mesh
+/// PR2b).
+pub fn serve_owner_chunk_request_for(
+    vault: &Vault,
+    bytes: &[u8],
+    peer: PeerMachine,
+) -> Result<Vec<u8>> {
     let request: ChunkSyncRequest = decode(bytes)?;
     if !request.selector.is_empty()
         || request.have.len() > MAX_WANT_CHUNKS
@@ -211,12 +228,12 @@ pub fn serve_owner_chunk_request(vault: &Vault, bytes: &[u8]) -> Result<Vec<u8>>
     {
         return Err(invalid());
     }
-    respond(vault, request)
+    respond(vault, request, peer)
 }
 
-fn respond(vault: &Vault, request: ChunkSyncRequest) -> Result<Vec<u8>> {
+fn respond(vault: &Vault, request: ChunkSyncRequest, peer: PeerMachine) -> Result<Vec<u8>> {
     let oid = LfsOid::from_bytes(request.oid);
-    if lfs_object_withheld(vault, oid)? {
+    if lfs_object_withheld_for(vault, oid, peer)? {
         return Err(invalid());
     }
     let manifest = vault.lfs_manifest(oid)?.ok_or_else(invalid)?;

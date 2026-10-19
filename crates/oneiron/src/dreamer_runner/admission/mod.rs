@@ -9,6 +9,7 @@ mod validation;
 use self::validation::validate_admission_input;
 
 use std::collections::HashSet;
+use std::ops::Bound;
 
 use crate::Vault;
 use crate::attempt_queue::{
@@ -659,11 +660,62 @@ impl DreamerRunnerStore<'_> {
         })
     }
 
+    /// Refills one wake-budget counter to a replacement total, as the
+    /// owner. Spent and reserved units keep their claim: the refill only
+    /// raises what is left, and replaying the same total adds nothing
+    /// twice. The owner's proof is checked in the refill's transaction.
+    pub fn refill_budget_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        budget_id: &str,
+        total_units: u64,
+        now: u64,
+    ) -> Result<DreamerBudgetRecord> {
+        validate_budget_id(budget_id)?;
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        crate::dreamer_runner::maintenance::validate_owner_in_txn(self.vault, &wtxn, owner)?;
+        let mut record =
+            read_or_initialize_budget_in_txn(self.vault, &wtxn, budget_id, total_units, now)?;
+        validate_budget_record(&record)?;
+        let spent_units = record
+            .total_units
+            .checked_sub(record.remaining_units)
+            .and_then(|free| free.checked_sub(record.reserved_units))
+            .ok_or(invalid_dreamer_runner(
+                "dreamer budget counter is inconsistent",
+            ))?;
+        let committed_units = spent_units
+            .checked_add(record.reserved_units)
+            .ok_or(Error::ArithmeticOverflow("dreamer budget refill units"))?;
+        if total_units < committed_units {
+            return Err(invalid_dreamer_runner(
+                "dreamer budget refill total is below spent and reserved units",
+            ));
+        }
+        record.total_units = total_units;
+        record.remaining_units = total_units - committed_units;
+        record.updated_at = now;
+        validate_budget_record(&record)?;
+        put_budget_record_in_txn(self.vault, &mut wtxn, &record)?;
+        wtxn.commit()?;
+        Ok(record)
+    }
+
     /// Reads a private Dreamer budget row.
     pub fn budget(&self, budget_id: &str) -> Result<Option<DreamerBudgetRecord>> {
-        validate_budget_id(budget_id)?;
         let rtxn = self.vault.store.env.read_txn()?;
-        BUDGET.get(&self.vault.store, &rtxn, &budget_id.to_owned())
+        self.budget_in_txn(&rtxn, budget_id)
+    }
+
+    /// Reads a private Dreamer budget row in the caller's snapshot. A read
+    /// never initializes the row.
+    pub(crate) fn budget_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        budget_id: &str,
+    ) -> Result<Option<DreamerBudgetRecord>> {
+        validate_budget_id(budget_id)?;
+        BUDGET.get(&self.vault.store, txn, &budget_id.to_owned())
     }
 
     /// Reads the remaining units in a private Dreamer budget row.
@@ -688,6 +740,46 @@ impl DreamerRunnerStore<'_> {
                 attempt_id: child_attempt,
             },
         )
+    }
+
+    /// The child reservations held against one private budget row in the
+    /// caller's snapshot, in attempt-id order, strictly after `after` and at
+    /// most `take` of them. Each row's key and body must name this budget
+    /// and the same child.
+    pub(crate) fn budget_reservations_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        budget_id: &str,
+        after: Option<AttemptId>,
+        take: usize,
+    ) -> Result<Vec<DreamerBudgetReservation>> {
+        validate_budget_id(budget_id)?;
+        let reservation_key = |attempt_id| BudgetReservationKey {
+            budget_id: budget_id.to_owned(),
+            attempt_id,
+        };
+        let first = reservation_key(AttemptId::from_bytes(&[0; 16])?);
+        let last = reservation_key(AttemptId::from_bytes(&[u8::MAX; 16])?);
+        let after = after.map(reservation_key);
+        let start = after
+            .as_ref()
+            .map_or(Bound::Included(&first), Bound::Excluded);
+        BUDGET_RESERVATION
+            .iter_range(&self.vault.store, txn, start, Bound::Included(&last))?
+            .take(take)
+            .map(|row| {
+                let (key, reservation) = row?;
+                if key.budget_id != budget_id
+                    || reservation.budget_id != budget_id
+                    || reservation.attempt_id != key.attempt_id
+                {
+                    return Err(invalid_dreamer_runner(
+                        "dreamer budget reservation key/body mismatch",
+                    ));
+                }
+                Ok(reservation)
+            })
+            .collect()
     }
 }
 

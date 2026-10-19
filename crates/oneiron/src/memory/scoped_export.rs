@@ -280,9 +280,14 @@ impl Memory<'_> {
         }
         let selector = self.export_selector(&input.selector)?;
         let channel = self.export_channel_scope(&input.channel.scope)?;
-        let rows = self
-            .vault
-            .export_records_in_scope(&selector, proof.scope(), &channel)?;
+        // The export goes where this surface's rows go: the machine its
+        // connection proved, else a recipient nobody proved (mesh PR2b).
+        let rows = self.vault.export_records_in_scope_for(
+            &selector,
+            proof.scope(),
+            &channel,
+            &self.destination,
+        )?;
         let ids: Vec<_> = rows.iter().map(|row| row.id).collect();
         // The export evaluator does not replace relationship grants, NOTE privacy,
         // device locality or record caveats; the credential's own read lane also binds.

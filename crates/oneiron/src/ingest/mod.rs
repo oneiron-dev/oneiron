@@ -25,7 +25,7 @@ pub use docs_import::{
 pub use summary_ladder::{DocsExpansion, DocsExpansionLevel, DocsSummaryHit};
 mod identity_key;
 pub use identity_key::identity_fields_for_kind;
-pub(crate) use identity_key::{identity_hint_digest, reindex_identity_hints};
+pub(crate) use identity_key::{identity_hint_body, identity_hint_digest, reindex_identity_hints};
 mod admission;
 mod bulk_review;
 pub mod image;
@@ -49,6 +49,7 @@ pub use self::admission::{
 };
 pub(crate) use self::admission::{
     admit_imported_evidence_claim_for_memory, admit_imported_evidence_claim_typed_for_machine,
+    admit_imported_evidence_in_content,
 };
 pub use self::bulk_review::{
     ImportedClaimBatch, ImportedClaimBatchEntry, ImportedClaimBatchReceipt,
@@ -60,6 +61,7 @@ pub use self::registry::{
     JSONL_TRANSCRIPT_SOURCE_ID, KNOWN_INGEST_HARNESS_CONFIG, MEETING_TRANSCRIPT_SCHEMA_V1,
     MEETING_TRANSCRIPT_SOURCE_ID,
 };
+pub(crate) use self::resolution::score_entity_resolution_waterfall_in_txn;
 pub use self::resolution::{
     EntityMentionRequest, EntityResolutionCandidate, EntityResolutionRoute,
     EntityResolutionWaterfallDecision, ScoredEntityResolutionCandidate,

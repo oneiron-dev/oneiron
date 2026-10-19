@@ -277,6 +277,15 @@ side_tables! {
     /// Receipt of one owner change to a world's privacy settings on this machine, in revision
     /// order. Key: u64be revision.
     OWNER_POLICY_WORLD_PRIVACY_RECEIPT: VaultMeta b"owner_policy:world_privacy:receipt:v1:" Named;
+    /// An agent's world-privacy proposal or a widen ask, frozen, with its settlement (FIX 4480).
+    /// Key: request id.
+    OWNER_POLICY_WORLD_PRIVACY_REQUEST: VaultMeta b"owner_policy:world_privacy:request:v1:" Named;
+    /// The "widen needs every owner" row: the vault's setting and per-world overrides (FIX 4480).
+    /// Key: ().
+    OWNER_POLICY_WORLD_PRIVACY_UNANIMITY: VaultMeta b"owner_policy:world_privacy:unanimity:v1" Named;
+    /// A "widen needs every owner" change that turns it off while on, waiting for every live
+    /// Owner's yes, with its settlement (FIX 4480). Key: request id.
+    OWNER_POLICY_WORLD_PRIVACY_UNANIMITY_OFF: VaultMeta b"owner_policy:world_privacy:unanimity_off:v1:" Named;
     /// Marker (engine version string) that the built-in connector packs have been seeded. Key: ().
     SKILL_HUB_PACK_BUILTIN_SEED: VaultMeta b"pack.builtin.seeded.v1" Raw;
     /// Candidate knowledge-pack receipt. Key: lowercase hex content hash.
@@ -303,6 +312,8 @@ side_tables! {
     /// One person's PEOPLE `about` lines, one per sensitivity band, and the fact digests they stand
     /// on. Key: id16 (PERSON).
     PEOPLE_ABOUT: VaultMeta b"people:about:v1:" Named;
+    /// Accepted persona copy and curation for an immutable mode-A export. Key: id16(export).
+    PERSONA_SNAPSHOT_COPY: VaultMeta b"persona_snapshot:copy:v1:" Named Authored;
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3
     /// hash of caller/row/content-hash/frontier-hash).
     POLICY_HOLD_QUEUE: VaultMeta b"policy-hold:v1:" LegacyJson;
@@ -393,7 +404,8 @@ side_tables! {
         => crate::workspace_roster::erase_pending_actor_in_txn;
     /// The project question's yes, or its ask of a person, on one source message, with its
     /// decision receipt. Key: id16 (source message).
-    PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named;
+    PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named
+        => crate::Vault::erase_project_verdict_actor_in_txn;
     /// A held revision waiting for its slip's mint. Key: slip id32 + id16 (project) + hash32
     /// (revision).
     PROJECT_REVISION_AWAITING_MINT: VaultMeta b"project.revision_awaiting_mint.v1/" Raw;
@@ -523,6 +535,8 @@ side_tables! {
     /// strict-msgpack decode does not run; `RawValue` delegates to the
     /// module's own `encode_retrieval_outcome`/`decode_retrieval_outcome`.
     RETRIEVAL_OUTCOME: VaultMeta b"retr_out:v0:" Raw;
+    /// Owner-pinned retrieval blend weights no learned update may move. Key: ().
+    RETRIEVAL_POLICY_PINS: VaultMeta b"retr_policy_pins:v1:" Named;
     /// Account-local contextual retrieval posterior, updated by the Coach at sleep. Key: ().
     RETRIEVAL_POLICY_POSTERIOR: VaultMeta b"retr_policy_posterior:v1:" Named;
     /// Retrieval run telemetry record. Key: id16.
@@ -584,7 +598,8 @@ side_tables! {
     /// when, written once and never rewritten. Key: id16 (room) + 16 bytes (thread, all zero for the
     /// room itself) + u8 (subject kind) + id16 (subject) + u8 (cause kind) + 16 bytes (the cause's turn
     /// or task id, or an offer id's digest).
-    ROOMS_PARTICIPATION: VaultMeta b"rooms.participation.v1/" LegacyJson;
+    ROOMS_PARTICIPATION: VaultMeta b"rooms.participation.v1/" LegacyJson
+        => crate::Vault::erase_participation_actor_in_txn;
     /// Maps a host-configured platform handle to the one present actor it addresses within a room.
     /// Key: id16 (room id) + bytes (platform handle).
     ROOMS_HANDLE: VaultMeta b"rooms.platform_handle.v1/" Raw;
@@ -602,4 +617,6 @@ side_tables! {
     ROOMS_TURN: VaultMeta b"rooms.turn.v1/" LegacyJson;
     /// Durable wait binding for a run-branch ask. Key: attempt id16 + handle hash32 + step hash32.
     RUN_TREE_ASK_WAIT: VaultMeta b"run.ask.wait.v1/" Named;
+    /// One explicitly reviewed run's settlement and compensating-operation handles. Key: job id.
+    RUN_REVIEW_SETTLEMENT: VaultMeta b"run_review:settlement:v1:" Named;
 }

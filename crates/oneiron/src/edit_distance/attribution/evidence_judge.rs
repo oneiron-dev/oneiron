@@ -204,6 +204,82 @@ pub fn judge_amendment_hunks(
     let Some(split) = classify_amendment(&evidence, decisions, hunks, floor)? else {
         return withdraw_judgment(vault, receipt_id).map(|()| None);
     };
+    persist_amendment_split(vault, receipt_id, &evidence, &delta, split)
+}
+
+/// Judges the amendment recorded against `receipt_id` from explicitly
+/// supplied per-hunk verdicts — the owner settlement door's scripted labels.
+///
+/// The verdicts meet the same lane, floor and note rules a judge's answers
+/// meet, and each hunk weighs its own measured edit mass, so the persisted
+/// shares are computed here, never caller-stamped. `expected`, when given,
+/// is the caller's claimed percentage vector: it is validated as a
+/// distribution (see [`super::taxonomy::validate_share_vector`]) before
+/// anything is persisted, and a malformed vector refuses the whole
+/// settlement rather than being renormalized into a charge.
+///
+/// Returns `None` when no facts were recorded or no Δ was measured, as
+/// [`judge_amendment_hunks`] does.
+///
+/// # Errors
+///
+/// Storage errors, a verdict count that does not cover the hunks, a doubtful
+/// verdict without a note, or a malformed `expected` vector.
+pub fn judge_amendment_verdicts(
+    vault: &Vault,
+    receipt_id: &str,
+    hunks: &[EditHunk<'_>],
+    verdicts: Vec<crate::skill_attribution::HunkVerdict>,
+    expected: Option<&[(AmendmentClass, f32)]>,
+) -> Result<Option<AmendmentJudgment>> {
+    if let Some(expected) = expected {
+        super::taxonomy::validate_share_vector(expected)?;
+    }
+    let Some(evidence) = amendment_evidence(vault, receipt_id)? else {
+        return Ok(None);
+    };
+    let Some(delta) = amendment_delta(vault, receipt_id)? else {
+        return withdraw_judgment(vault, receipt_id).map(|()| None);
+    };
+    let masses: Vec<f64> = hunks
+        .iter()
+        .map(|hunk| {
+            crate::edit_distance::delta::delta_from_reconstructed(hunk.before, hunk.after)
+                .ops_summary
+                .edit_mass()
+        })
+        .collect();
+    let floor = unclear_floor(vault)?;
+    let split = crate::skill_attribution::split_from_verdicts(
+        AttributionLane::Amendment,
+        &masses,
+        verdicts,
+        floor,
+    )?;
+    // The computed split is itself a distribution by construction; stating
+    // the check keeps a future split-path change from landing a vector that
+    // does not sum to one.
+    let computed: Vec<(AmendmentClass, f32)> = split
+        .shares
+        .iter()
+        .map(|share| (share.verdict, share.share))
+        .collect();
+    if !computed.is_empty() {
+        super::taxonomy::validate_share_vector(&computed)?;
+    }
+    persist_amendment_split(vault, receipt_id, &evidence, &delta, split)
+}
+
+/// Persists one judged split for `receipt_id`: the judgment row, its
+/// preference note, unclear row and discovery proposal land in one write
+/// transaction. Shared by the judge tiers and the verdict door above.
+fn persist_amendment_split(
+    vault: &Vault,
+    receipt_id: &str,
+    evidence: &AmendmentEvidence,
+    delta: &crate::edit_distance::delta::AmendmentDelta,
+    split: crate::skill_attribution::AttributionSplit,
+) -> Result<Option<AmendmentJudgment>> {
     let shares: Vec<AmendmentShare> = split
         .shares
         .iter()

@@ -27,21 +27,37 @@ pub mod affect;
 mod answer_boundary;
 mod archive_purge;
 mod artifact_hosting_doors;
+mod asset_doors;
 mod asset_resolve;
 mod authorship;
+mod critical_confirm;
+pub use critical_confirm::{
+    CriticalWriteConfirmAnswer, CriticalWriteConfirmPending, CriticalWriteConfirmPendingRequest,
+    CriticalWriteConfirmReceipt, CriticalWriteConfirmReceiptRequest, CriticalWriteConfirmRequest,
+    CriticalWriteConfirmSettlement,
+};
 mod birth_position;
 mod booking;
 mod claim_admission;
 mod claim_conflict;
 mod claim_stale;
+pub mod clustering;
+pub mod commitment_doors;
 mod conflict_settle;
 pub mod consolidation;
+pub mod consolidation_frontier;
+pub mod coping_doors;
+mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
 mod people_verbs;
+mod plugin_sections;
+pub mod run_review;
 mod skill_authoring;
+pub mod wellness_doors;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
+pub(crate) use outbound::parse_job_ref;
 pub(crate) mod booking_publication;
 mod campaign;
 mod campaign_actions;
@@ -52,6 +68,7 @@ pub mod checkout_doors;
 mod claims;
 pub mod code_doors;
 pub mod code_run_doors;
+pub mod code_view_doors;
 pub mod code_wait_doors;
 pub mod codebase_doors;
 mod conversation_list;
@@ -59,11 +76,15 @@ mod credential_key;
 mod dreamer;
 mod entity_delete;
 mod entity_erase;
+pub mod erase_sweep;
 mod export;
 mod expression_preference;
 pub mod extraction;
+pub mod foreign_code;
+pub mod graph_fs_doors;
 pub mod hook_regen_doors;
 mod inspection;
+pub mod identity_doors;
 mod key_value;
 mod lifted_view;
 mod locality;
@@ -87,6 +108,7 @@ mod room_turn;
 mod scoped_export;
 mod search_hybrid;
 mod search_temporal;
+mod search_vector;
 mod session_writes;
 mod shape_doors;
 mod signal_extraction;
@@ -94,6 +116,7 @@ mod structural;
 mod subscriptions;
 mod support;
 mod transcript;
+mod web_fetch;
 mod witness;
 
 #[cfg(test)]
@@ -103,6 +126,7 @@ mod tests_regressions;
 
 pub use answer_boundary::AnswerAdmission;
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
+pub use asset_doors::{AssetIngestReceipt, AssetIngestRequest, AssetResolveRequest, AssetResolved};
 pub use asset_resolve::{
     AssetConsumer, HydratedAsset, IMAGE_FULL, ImageHandle, ImagePick, ImageViewRequest,
     LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
@@ -138,6 +162,10 @@ pub use claims::{
     RecordRefusal, RefusalReason, SafeDeleteReason,
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
+pub use diagnostics::{
+    BlockedReportView, CoachInspectRequest, CoachInspectionView, CoachProposalView,
+    CoachWorkingSetView, DiagnosticEventView, DiagnosticsGetRequest, DiagnosticsListRequest,
+};
 pub use diary_read::{
     DIARY_READ_VERB, DiaryAgentRead, DiaryEntry, DiaryEntryAdmission, DiaryReadGate, DiaryReadHold,
     DiaryReadOutcome, DiaryReadReceipt, DiaryReadRecord, DiaryReadRequest, DiaryReadsRequest,
@@ -171,6 +199,14 @@ pub use oneiron_contracts::memory::{
     MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult,
     MemoryWrongRoot,
 };
+pub use plugin_sections::{
+    PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest,
+    PluginSectionGrantState, PluginSectionListRequest, PluginSectionPackRow,
+    PluginSectionPendingRow, PluginSectionProposal, PluginSectionProposeRequest,
+    PluginSectionRevokeRequest, PluginSectionRevoked, PluginSectionSuggestRequest,
+    PluginSectionSuggestion, PluginSectionSuggestionState, PluginSectionTargetInput,
+    PluginSectionsView, PluginSuggestionsSetRequest, PluginSuggestionsView,
+};
 pub use people_verbs::{
     GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
     PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
@@ -203,11 +239,15 @@ pub use read_selection::RecallWorlds;
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
 pub(crate) use recall::check_recall_request;
 pub use recall::{
-    CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, MEMORY_PACK_VERSION,
-    MemoryItem, MemoryPack, MemoryProvenance, MemoryStaleStamp, RecallEffort, RecallRerank,
-    RecallRerankHost, RecallScope, RerankDocument, RerankEgress, RerankReport, RerankScores,
-    RerankSkip, RetrievalMeta, ScopeHonesty, resolve_recall_dial,
+    CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, HOME_RECALL_MERGE_ORDER,
+    HomeRecallCaller, HomeRecallMergeOrder, MEMORY_PACK_VERSION, MemoryItem, MemoryPack,
+    MemoryProvenance, MemoryStaleStamp, RecallEffort, RecallRerank, RecallRerankHost,
+    RecallResidence, RecallResidenceHit, RecallResidenceSource, RecallScope, RerankDocument,
+    RerankEgress, RerankReport, RerankScores, RerankSkip, RetrievalMeta, ScopeHonesty,
+    resolve_recall_dial,
 };
+#[cfg(feature = "sync")]
+pub use recall::{HomeRecallAsk, complete_with_home};
 pub use result_attachment::{
     MESSAGE_RESULT_METADATA_KEY, MessageResultAttachment, MessageResultSource,
 };
@@ -223,6 +263,10 @@ pub use search_hybrid::{
 pub use search_temporal::{
     TemporalSearchHit, TemporalSearchRange, TemporalSearchRequest, TemporalSearchResult,
 };
+pub use search_vector::{
+    VectorPutReceipt, VectorPutRequest, VectorSearchConfig, VectorSearchHit, VectorSearchLane,
+    VectorSearchRequest, VectorSearchResult,
+};
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};
 pub(crate) use structural::append_agent_diary_in_txn;
@@ -236,6 +280,12 @@ pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
 pub use support::{HostWriteOrigin, Memory, RewriteAdmit, parse_actor_key, resolve_entity_ref};
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
+};
+pub use witness::{
+    AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
+    MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
+    MessageCustomCancel, MessageCustomCancelKind, MessageDocumentState, MessageDurability,
+    MessageDurabilityRequest, MessageStreamMode, MessageStreamOptions, MessageStreamRequest,
 };
 pub use witness::{
     DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MessageCompletion,

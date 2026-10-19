@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::memory::{Memory, MemoryResult};
-use crate::skill_hub::pack_catalog::{PackHookBinding, PackInstallReceipt};
+use crate::runtime_hooks::HookGrant;
+use crate::skill_hub::pack_catalog::{PackHookBinding, PackHookQualification, PackInstallReceipt};
 use crate::skill_hub::{
     HubAdmissionReceipt, HubImportReceipt, HubRef, HubSyncDisposition, HubSyncPolicy, SkillHubKind,
     SkillHubRecord, SkillHubTrustTier, TrackedHubRef,
@@ -214,6 +215,32 @@ pub struct HubHookBindRequest {
 pub struct HubHookBindingRow {
     pub id: EntityId,
     pub binding: PackHookBinding,
+    /// The owner's assignment, or the author's ceiling when none was set.
+    pub grant: HookGrant,
+}
+
+/// The binding claim named by `vault.packs.hooks.list`, not its CODE id.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HookGrantRequest {
+    pub binding: EntityId,
+}
+
+/// The owner sets or changes a binding's read grant. This does not change
+/// the author whose authority its outcomes run under.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HookGrantSetRequest {
+    pub binding: EntityId,
+    pub grant: HookGrant,
+}
+
+/// The effective grant of one live binding, including its default when no
+/// manual grant has been assigned.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HookGrantView {
+    pub binding: EntityId,
+    pub grant: HookGrant,
 }
 
 pub fn skill_hub_put_as_owner(
@@ -390,14 +417,39 @@ pub fn hub_hooks_bind_as_owner(
 
 pub fn hub_hooks_list_as_owner(
     vault: &Vault,
-    _owner: &AuthenticatedOwner,
+    owner: &AuthenticatedOwner,
     _input: &super::sdk::EmptyRequest,
 ) -> MemoryResult<Vec<HubHookBindingRow>> {
+    owner.revalidate(vault)?;
     Ok(vault
-        .pack_hook_bindings()?
+        .pack_hook_bindings_with_grants()?
         .into_iter()
-        .map(|(id, binding)| HubHookBindingRow { id, binding })
+        .map(|(id, binding, grant)| HubHookBindingRow { id, binding, grant })
         .collect())
+}
+
+pub fn hook_grant_set_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &HookGrantSetRequest,
+) -> MemoryResult<HookGrantView> {
+    vault.set_hook_grant(owner, input.binding, input.grant.clone())?;
+    Ok(HookGrantView {
+        binding: input.binding,
+        grant: input.grant.clone(),
+    })
+}
+
+pub fn hook_grant_get_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &HookGrantRequest,
+) -> MemoryResult<HookGrantView> {
+    owner.revalidate(vault)?;
+    Ok(HookGrantView {
+        binding: input.binding,
+        grant: vault.effective_hook_grant(input.binding)?,
+    })
 }
 
 pub fn hub_hooks_qualify_as_owner(
@@ -407,7 +459,29 @@ pub fn hub_hooks_qualify_as_owner(
     input: &HubHookQualifyRequest,
 ) -> MemoryResult<HubHookQualificationReceipt> {
     let qualified = vault.qualify_pack_hooks(owner, runtime, input.source)?;
-    Ok(HubHookQualificationReceipt {
+    Ok(qualification_receipt(qualified))
+}
+
+/// [`hub_hooks_qualify_as_owner`], beside the rows its answer is read from
+/// ([`Vault::qualify_pack_hooks_listing`]): the pack source and every row
+/// each hook's listing replay lists, `None` when a replay's evidence is not
+/// listed, never an empty list standing in for it.
+///
+/// # Errors
+/// As [`hub_hooks_qualify_as_owner`].
+pub fn hub_hooks_qualify_as_owner_listing(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
+    input: &HubHookQualifyRequest,
+) -> MemoryResult<(HubHookQualificationReceipt, Option<Vec<EntityId>>)> {
+    let (qualified, rows) = vault.qualify_pack_hooks_listing(owner, runtime, input.source)?;
+    Ok((qualification_receipt(qualified), rows))
+}
+
+/// A hook pack's test as its wire receipt.
+fn qualification_receipt(qualified: PackHookQualification) -> HubHookQualificationReceipt {
+    HubHookQualificationReceipt {
         put: qualified.disposition.into(),
         replays: qualified
             .replays
@@ -421,7 +495,7 @@ pub fn hub_hooks_qualify_as_owner(
                     .collect(),
             })
             .collect(),
-    })
+    }
 }
 
 pub fn hub_hooks_qualify_embedded(

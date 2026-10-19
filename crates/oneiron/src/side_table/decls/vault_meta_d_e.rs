@@ -84,6 +84,9 @@ side_tables! {
     /// Key: ().
     DREAMER_FAILURE_RULES: VaultMeta b"dreamer:consolidation:failure_rules:v1" Raw;
     DREAMER_CONSOLIDATION_KEY_RULES: VaultMeta b"dreamer:consolidation:keys:v1" LegacyJson;
+    /// Owner-root reference pins and immutable child evidence accounting. Key: id16(root).
+    DREAMER_CONSOLIDATION_ROOT: VaultMeta b"dreamer:consolidation:root:v1:" Named
+        => crate::dreamer_consolidation::root_evidence::erase_actor_in_txn;
     /// Operator-set consolidation candidate-selection config (strength weights, caps). Key: ().
     DREAMER_CONSOLIDATION_SELECTION: VaultMeta b"dreamer:consolidation:selection:v1" LegacyJson;
     /// Parent-verified promotion evidence observations. Key: id16(claim).
@@ -119,6 +122,9 @@ side_tables! {
     /// A settled identity's context hint: a name, the words around it and the entity it named.
     /// Key: u8(kind) + hash32(name) + id16(entity).
     DREAMER_IDENTITY_HINT: VaultMeta b"dreamer:identity:v1:hint:" Named;
+    /// The original mention and its resolving evidence, written with the link.
+    /// Key: id16(turn) + hash32(message, span).
+    DREAMER_IDENTITY_RESOLUTION: VaultMeta b"dreamer:identity:v1:resolution:" Named;
     /// OF-023: one Dreamer maintenance write applied at once: its kind, attempt, the finding's
     /// revision, the before-state its effect changed, its receipt and, once the owner reverts
     /// it, the revert. Key: id16 (finding).
@@ -200,6 +206,9 @@ side_tables! {
     DREAMER_SELECTION_SCOPE: VaultMeta b"dreamer:selection_scope:v1:" LegacyJson;
     /// Sample audit grade per durable rung attempt. Key: id16.
     DREAMER_SIEVE_AUDIT: VaultMeta b"dreamer:sieve:audit:v1:" Named;
+    /// One span the nightly spending consumed, by the attempt that spent it.
+    /// Key: id16(attempt) + hash32(span).
+    DREAMER_SIEVE_CONSUMED: VaultMeta b"dreamer:sieve:consumed:v1:" Named;
     /// A TURN whose sieve read the pass's text bound stopped, with the chunks it reads on in.
     /// Key: id16(turn).
     DREAMER_SIEVE_CONTINUE: VaultMeta b"dreamer:sieve:continue:v1:" Named;
