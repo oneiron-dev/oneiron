@@ -5642,7 +5642,7 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "fetch"),
                 input,
             )
             .await;
@@ -5665,7 +5665,7 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "crawl"),
                 input,
             )
             .await;
@@ -5829,7 +5829,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.focus.wakes",
+                ),
                 input,
             )
             .await
@@ -5918,7 +5921,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.identity.answer",
+                ),
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
             )
@@ -6044,7 +6050,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.people.create",
+                ),
                 input,
             )
             .await;
@@ -6068,7 +6077,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.entities.look_before_mint",
+                ),
                 input,
             )
             .await;
@@ -6092,7 +6104,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.identity.mention",
+                ),
                 input,
             )
             .await;
@@ -7892,7 +7907,10 @@ async fn execute_agent_verb_row(
                     server,
                     auth,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.campaign.compliance.install",
+                    ),
                     input,
                 )
                 .await;
@@ -7925,7 +7943,10 @@ async fn execute_agent_verb_row(
                     server,
                     auth,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.campaign.compliance.approve",
+                    ),
                     input,
                 )
                 .await;
@@ -7950,7 +7971,10 @@ async fn execute_agent_verb_row(
                     server,
                     auth,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.campaign.compliance.reject",
+                    ),
                     input,
                 )
                 .await;
@@ -7975,7 +7999,10 @@ async fn execute_agent_verb_row(
                     server,
                     auth,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.campaign.compliance.verify",
+                    ),
                     input,
                 )
                 .await;
@@ -8015,7 +8042,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.campaign.stage.evidence",
+                ),
                 input,
             )
             .await;
@@ -8135,7 +8165,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.saved_query.evaluate",
+                ),
                 input,
             )
             .await
@@ -8272,7 +8305,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.weave.enqueue",
+                ),
                 input,
             )
             .await;
@@ -8296,7 +8332,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.weave.schedules.list",
+                ),
                 input,
             )
             .await;
@@ -8320,7 +8359,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.weave.schedules.put",
+                ),
                 input,
             )
             .await;
@@ -8344,7 +8386,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.weave.schedules.clear",
+                ),
                 input,
             )
             .await;
@@ -8368,7 +8413,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.weave.owner.digest.render",
+                ),
                 input,
             )
             .await;
@@ -8392,7 +8440,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.inbox.concerns.review",
+                ),
                 input,
             )
             .await;
@@ -8416,7 +8467,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.inbox.lens",
+                ),
                 input,
             )
             .await;
@@ -8440,7 +8494,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.inbox.groups",
+                ),
                 input,
             )
             .await;
@@ -9537,7 +9594,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.packs.sections.propose",
+                ),
                 input,
             )
             .await;
@@ -9561,7 +9621,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.packs.sections.list",
+                ),
                 input,
             )
             .await;
@@ -9585,7 +9648,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.packs.sections.grant",
+                ),
                 input,
             )
             .await;
@@ -9609,7 +9675,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.packs.sections.revoke",
+                ),
                 input,
             )
             .await;
@@ -9633,7 +9702,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.packs.sections.suggest",
+                ),
                 input,
             )
             .await;
@@ -9658,7 +9730,10 @@ async fn execute_agent_verb_row(
                     server,
                     auth,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.packs.sections.suggestions.get",
+                    ),
                     input,
                 )
                 .await;
@@ -9683,7 +9758,10 @@ async fn execute_agent_verb_row(
                     server,
                     auth,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.packs.sections.suggestions.set",
+                    ),
                     input,
                 )
                 .await;
@@ -11439,7 +11517,10 @@ async fn execute_agent_verb_row(
                     server,
                     auth,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.trusted_contacts.concern.propose",
+                    ),
                     input,
                 )
                 .await;
@@ -11467,7 +11548,10 @@ async fn execute_agent_verb_row(
                     server,
                     auth,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.trusted_contacts.concern.deliver",
+                    ),
                     input,
                 )
                 .await;
@@ -13361,7 +13445,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.policy.outbound.decide",
+                ),
                 input,
             )
             .await;
@@ -13391,7 +13478,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.policy.relay.decide",
+                ),
                 input,
             )
             .await;
@@ -14170,7 +14260,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.claims.review",
+                ),
                 input,
             )
             .await;
@@ -14194,7 +14287,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.claims.settle",
+                ),
                 input,
             )
             .await;
@@ -14378,7 +14474,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.lenses.select",
+                ),
                 input,
             )
             .await;
@@ -14402,7 +14501,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.lenses.resolve",
+                ),
                 input,
             )
             .await;
@@ -14426,7 +14528,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.lenses.result_set.action",
+                ),
                 input,
             )
             .await
@@ -14591,7 +14696,7 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.use"),
                 input,
             )
             .await;
@@ -14616,7 +14721,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.secrets.materialize",
+                ),
                 input,
             )
             .await;
@@ -14641,7 +14749,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.secrets.renew",
+                ),
                 input,
             )
             .await;
@@ -14666,7 +14777,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.secrets.teardown",
+                ),
                 input,
             )
             .await;
@@ -14691,7 +14805,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.secrets.use",
+                ),
                 input,
             )
             .await;
@@ -14759,7 +14876,7 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "host.compact"),
                 input,
             )
             .await;
@@ -14783,7 +14900,7 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "host.wake"),
                 input,
             )
             .await;
@@ -14807,7 +14924,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "host.budget.hit",
+                ),
                 input,
             )
             .await;
@@ -15041,7 +15161,10 @@ async fn execute_agent_verb_row(
                     server,
                     auth,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.artifacts.live_preview.read",
+                    ),
                     input,
                 )
                 .await;
@@ -16657,7 +16780,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.workflows.dispatch_bound",
+                ),
                 input,
             )
             .await;
@@ -17011,7 +17137,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.artifacts.keep_outline",
+                ),
                 input,
             )
             .await;
@@ -17035,7 +17164,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.artifacts.decline_outline",
+                ),
                 input,
             )
             .await;
@@ -17963,7 +18095,7 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "ai.reply"),
                 input,
             )
             .await;
@@ -18157,7 +18289,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "ai.voice.tool",
+                ),
                 input,
             )
             .await;
@@ -19064,7 +19199,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "connector.call",
+                ),
                 input,
             )
             .await;
@@ -19685,7 +19823,10 @@ async fn execute_agent_verb_row(
                     server,
                     auth,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.writes.critical_confirm.pending",
+                    ),
                     input,
                 )
                 .await;
@@ -19710,7 +19851,10 @@ async fn execute_agent_verb_row(
                     server,
                     auth,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.writes.critical_confirm.clear",
+                    ),
                     input,
                 )
                 .await;
@@ -19738,7 +19882,10 @@ async fn execute_agent_verb_row(
                     server,
                     auth,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.writes.critical_confirm.decline",
+                    ),
                     input,
                 )
                 .await;
@@ -19766,7 +19913,10 @@ async fn execute_agent_verb_row(
                     server,
                     auth,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.writes.critical_confirm.receipt",
+                    ),
                     input,
                 )
                 .await;
@@ -20326,7 +20476,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.runs.step",
+                ),
                 input,
             )
             .await;
@@ -20350,7 +20503,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.runs.checkpoint",
+                ),
                 input,
             )
             .await;
@@ -20435,7 +20591,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.consolidation.promote",
+                ),
                 input,
             )
             .await;
@@ -20459,7 +20618,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.consolidation.pin",
+                ),
                 input,
             )
             .await;
@@ -20483,7 +20645,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.consolidation.frontier",
+                ),
                 input,
             )
             .await;
@@ -20507,7 +20672,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.consolidation.accounting",
+                ),
                 input,
             )
             .await;
@@ -20531,7 +20699,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.consolidation.evidence",
+                ),
                 input,
             )
             .await;
@@ -20811,7 +20982,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.claims.vet",
+                ),
                 input,
             )
             .await;
@@ -20835,7 +21009,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.claims.vetting",
+                ),
                 input,
             )
             .await;
@@ -20865,7 +21042,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.memory.signal_extraction",
+                ),
                 input,
             )
             .await;
@@ -20899,7 +21079,10 @@ async fn execute_agent_verb_row(
                         .transpose()
                         .map_err(|_| invalid())?,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.memory.signal_extraction.result",
+                    ),
                     input,
                 )
                 .await;
@@ -21190,7 +21373,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.summaries.create",
+                ),
                 input,
             )
             .await;
@@ -21230,7 +21416,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.summaries.keep",
+                ),
                 input,
             )
             .await;
@@ -21254,7 +21443,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.summaries.edit",
+                ),
                 input,
             )
             .await;
@@ -21278,7 +21470,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.summaries.patch",
+                ),
                 input,
             )
             .await;
@@ -21302,7 +21497,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.summaries.regenerate",
+                ),
                 input,
             )
             .await;
@@ -21334,7 +21532,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.summaries.proposals.merge",
+                ),
                 input,
             )
             .await;
@@ -21359,7 +21560,10 @@ async fn execute_agent_verb_row(
                     server,
                     auth,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.summaries.proposals.switch",
+                    ),
                     input,
                 )
                 .await;
@@ -21384,7 +21588,10 @@ async fn execute_agent_verb_row(
                     server,
                     auth,
                     (actor.actor_ref, actor.actor_class),
-                    memory.invocation(),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.summaries.proposals.reject",
+                    ),
                     input,
                 )
                 .await;
@@ -21608,7 +21815,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.notes.editor.bind",
+                ),
                 input,
             )
             .await;
@@ -21632,7 +21842,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.notes.editor.close",
+                ),
                 input,
             )
             .await;
@@ -21704,7 +21917,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.tasks.linear.mapping.edit",
+                ),
                 input,
             )
             .await;
@@ -21742,7 +21958,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.run.attach",
+                ),
                 input,
             )
             .await;
@@ -21766,7 +21985,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.folds.describe",
+                ),
                 input,
             )
             .await;
@@ -21790,7 +22012,7 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.history"),
                 input,
             )
             .await;
@@ -21814,7 +22036,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.runs.review",
+                ),
                 input,
             )
             .await;
@@ -21838,7 +22063,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.runs.settle",
+                ),
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
             )
@@ -21863,7 +22091,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.runs.settlement",
+                ),
                 input,
             )
             .await;
@@ -21887,7 +22118,10 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.revert_run",
+                ),
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
             )
@@ -22139,7 +22373,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.open",
+                ),
                 input,
             )
             .await;
@@ -22170,7 +22407,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.observe",
+                ),
                 input,
             )
             .await;
@@ -22201,7 +22441,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.find",
+                ),
                 input,
             )
             .await;
@@ -22232,7 +22475,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.click",
+                ),
                 input,
             )
             .await;
@@ -22263,7 +22509,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.click_at",
+                ),
                 input,
             )
             .await;
@@ -22294,7 +22543,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.type",
+                ),
                 input,
             )
             .await;
@@ -22325,7 +22577,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.select",
+                ),
                 input,
             )
             .await;
@@ -22356,7 +22611,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.wait_for",
+                ),
                 input,
             )
             .await;
@@ -22387,7 +22645,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.expect",
+                ),
                 input,
             )
             .await;
@@ -22418,7 +22679,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.screenshot",
+                ),
                 input,
             )
             .await;
@@ -22449,7 +22713,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.view",
+                ),
                 input,
             )
             .await;
@@ -22480,7 +22747,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.crop",
+                ),
                 input,
             )
             .await;
@@ -22511,7 +22781,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.zoom",
+                ),
                 input,
             )
             .await;
@@ -22542,7 +22815,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.batch",
+                ),
                 input,
             )
             .await;
@@ -22573,7 +22849,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.library.find",
+                ),
                 input,
             )
             .await;
@@ -22604,7 +22883,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.library.propose",
+                ),
                 input,
             )
             .await;
@@ -22635,7 +22917,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.library.retire",
+                ),
                 input,
             )
             .await;
@@ -22666,7 +22951,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.library.retired",
+                ),
                 input,
             )
             .await;
@@ -22697,7 +22985,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.library.run",
+                ),
                 input,
             )
             .await;
@@ -22728,7 +23019,10 @@ async fn execute_agent_verb_row(
                     .transpose()
                     .map_err(|_| invalid())?,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.handover",
+                ),
                 input,
             )
             .await;
@@ -22781,7 +23075,7 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.fold"),
                 input,
             )
             .await;
@@ -22805,7 +23099,7 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.compact"),
                 input,
             )
             .await;
@@ -22829,7 +23123,7 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.unfold"),
                 input,
             )
             .await;
@@ -22853,7 +23147,7 @@ async fn execute_agent_verb_row(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
-                memory.invocation(),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.folds"),
                 input,
             )
             .await;

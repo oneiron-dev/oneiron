@@ -51995,7 +51995,7 @@
      "path": "src/sync/ingest/promotion.rs",
      "purpose": "What a promotion owes the TURNs it lands (OF-534)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -52458,7 +52458,7 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 14,
       "re-export": 16,
       "struct": 2
@@ -52628,6 +52628,7 @@
      "path": "src/sync/residence/discover.rs",
      "purpose": "Discover locally held world/month partitions without loading their Docs",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -54645,6 +54646,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/revoke_lands/payload.rs",
+     "purpose": "The polymorphic restrictive rows (FIX 5137-5139): calls whose restrictive part is in what they carry, judged…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -56631,7 +56642,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 12,
+      "fn": 17,
       "struct": 1
      }
     },
@@ -63013,7 +63024,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 196,
+     "files": 197,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63183,7 +63194,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3880,
+   "source_files": 3881,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72186,6 +72197,7 @@
      "path": "src/lib/vault.rs",
      "purpose": "Legacy buffer-oriented NapiVault binding and all its verbs",
      "surface": {
+      "crate-vis": 1,
       "fn": 30,
       "struct": 1
      }
@@ -75039,7 +75051,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/ai/chat.rs",
@@ -83567,7 +83579,7 @@
      "path": "src/owner/cooperative_deletion.rs",
      "purpose": "Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle): after a disconnect the owner asks a former peer…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
