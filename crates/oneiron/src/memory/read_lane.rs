@@ -389,13 +389,29 @@ impl Memory<'_> {
         }
     }
 
-    /// One entity's live view as a collection read serves it: `None` when
-    /// absent, withheld or kept from use by a legal order, never a named
-    /// read's refusal (FIX 5226).
-    pub(super) fn collection_view(&self, id: &EntityId) -> MemoryResult<Option<EntityView>> {
+    /// [`Self::get_entity`] as a collection read serves it, for an internal
+    /// probe or listing that skips, answers `None` or judges `false` on a row
+    /// it cannot read: a row a legal order keeps from use reads as absent
+    /// there, as before, never as the named read's refusal (FIX 5226).
+    pub fn get_entity_tolerant(
+        &self,
+        entity_ref: &str,
+    ) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
+        let (reference, mode) = match entity_ref.rsplit_once('@') {
+            Some((reference, revision)) => (
+                reference,
+                ReadMode::Pinned(crate::vault::RevisionRef::from_hex(revision)?),
+            ),
+            None => (entity_ref, ReadMode::Live),
+        };
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let target = self.read_target(&id.to_hex(), ReadMode::Live)?;
-        Ok(self.read_views(&lane, &[target])?.single().value)
+        let target = self.read_target(reference, mode)?;
+        Ok(self.read_views(&lane, &[target])?.single())
+    }
+
+    /// [`Self::get_entity_tolerant`]'s live view of `id`.
+    pub(super) fn collection_view(&self, id: &EntityId) -> MemoryResult<Option<EntityView>> {
+        Ok(self.get_entity_tolerant(&id.to_hex())?.value)
     }
 
     /// One admitted row's view at `mode`. With `whole_body` a body the write

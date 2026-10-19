@@ -149,7 +149,7 @@ impl Memory<'_> {
         };
         // The proposal claim is read through the caller's credential, so a
         // withheld proposal answers as an absent one (FIX 4344).
-        if self.get_entity(&proposal.id.to_hex())?.value.is_none() {
+        if self.get_entity_tolerant(&proposal.id.to_hex())?.value.is_none() {
             return Ok(None);
         }
         self.produced_from([proposal.id]);
@@ -312,7 +312,7 @@ impl Memory<'_> {
                 };
                 // The revision is read through the caller's credential, so a
                 // withheld revision answers as an absent one (FIX 4344).
-                if self.get_entity(&id.to_hex())?.value.is_none() {
+                if self.get_entity_tolerant(&id.to_hex())?.value.is_none() {
                     return Ok(None);
                 }
                 self.produced_from([id]);
@@ -334,7 +334,7 @@ impl Memory<'_> {
                 // A snapshot is its CODE_ARTIFACT's, read through the
                 // caller's credential before it is mounted, so a withheld
                 // artifact answers as an absent one (FIX 4344).
-                if self.get_entity(&id.to_hex())?.value.is_none() {
+                if self.get_entity_tolerant(&id.to_hex())?.value.is_none() {
                     return Ok(None);
                 }
                 self.produced_from([id]);
@@ -349,7 +349,7 @@ impl Memory<'_> {
                     // the manifest's content hash, their BLAKE3, which names
                     // the ASSET.
                     let asset = snapshot_asset_entity_id(blake3::hash(bytes).as_bytes())?;
-                    if self.get_entity(&asset.to_hex())?.value.is_none() {
+                    if self.get_entity_tolerant(&asset.to_hex())?.value.is_none() {
                         continue;
                     }
                     self.produced_from([asset]);
