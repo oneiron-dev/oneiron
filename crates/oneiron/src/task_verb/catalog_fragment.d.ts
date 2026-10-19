@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1096 code-mode rows (1071 host rows, 25 run rows), 3664 declarations.
-// Replies: 979 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1100 code-mode rows (1075 host rows, 25 run rows), 3687 declarations.
+// Replies: 983 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -402,7 +402,7 @@ declare namespace Sdk {
   type RunnerBudgetReservation = { job_ref: string; reserved_units: number; created_at: number; updated_at: number };
   type RunnerBudgetReservationsView = { budget_id: string; counter?: LocalRunnerBudgetCounter | null; reservations: RunnerBudgetReservation[]; next?: string | null; local_only: boolean };
   type RunSettlementsRequest = { run: string };
-  type RunRungSettlement = { instance: string; lease: string; revision: number; model?: string | null; offer: string; route: string; reserved_units: number; settled_units: number; unit: string; usage_reported: boolean; settlement_refused: boolean; occurred_at: number; cost_amount?: number | null; currency?: string | null; price_table_snapshot?: string | null };
+  type RunRungSettlement = { instance: string; lease: string; run: string; revision: number; model?: string | null; offer: string; route: string; purpose?: string | null; agent?: string | null; cycle?: string | null; item?: string | null; spend_scope?: string | null; reserved_units: number; settled_units: number; unit: string; usage_reported: boolean; settlement_refused: boolean; occurred_at: number; cost_amount?: number | null; currency?: string | null; price_table_snapshot?: string | null };
   type RunSettlementsView = { run: string; metering_enabled: boolean; settlements: RunRungSettlement[] };
   type RsiBudgetShare = { units: number; pinned: boolean };
   type RsiBudgetConfig = { limit: number; exploration_exposure_limit: number; shares: Record<string, RsiBudgetShare> };
@@ -3365,6 +3365,29 @@ declare namespace Sdk {
   type SieveLeaseCounter = { total_units: number; remaining_units: number; reserved_units: number; updated_at: number };
   type SieveLeaseView = { budget_id: string; counter?: SieveLeaseCounter | null };
   type SieveLeaseRefillRequest = { budget_id: string; total_units: number };
+  type FreeTimePolicyRequest = { agent: string };
+  type FreeTimePolicyState = "set" | "disabled";
+  type FreeTimeCadence = "daily" | "nightly";
+  type FreeTimeSchedule = { cadence: FreeTimeCadence; hour: number; minute: number; zone: string };
+  type FreeTimeSplit = { for_human_units: number; own_time_units: number };
+  type FreeTimePolicyRow = { total_units: number; unit: string; schedule: FreeTimeSchedule; pinned_split?: FreeTimeSplit | null; cap_shown_at_ms: number; set_by: string; set_at: number };
+  type FreeTimePolicyView = { agent: string; state: FreeTimePolicyState; revision: number; policy?: FreeTimePolicyRow | null };
+  type FreeTimePolicyInput = { total_units: number; schedule: FreeTimeSchedule; pinned_split?: FreeTimeSplit | null; cap_shown_at_ms: number };
+  type FreeTimePolicySetRequest = { agent: string; expected_revision: number; policy?: FreeTimePolicyInput | null };
+  type FreeTimeCyclesRequest = { agent: string; cursor?: string | null; limit?: number | null };
+  type FreeTimeCycleState = "open" | "closed";
+  type FreeTimeFloor = "met" | "not_met" | "unknown";
+  type FreeTimeCycleSummary = { cycle: string; state: FreeTimeCycleState; policy_revision: number; total_units: number; period_start: number; boundary: number; next_boundary?: number | null; opened_at: number; closed_at?: number | null; floor: FreeTimeFloor; items_complete: boolean; has_note: boolean };
+  type FreeTimeCyclesPage = { agent: string; cycles: FreeTimeCycleSummary[]; next?: string | null };
+  type FreeTimeCycleRequest = { agent: string; cycle: string };
+  type FreeTimeKind = "for_human" | "own_time";
+  type FreeTimeItemOutcome = "completed" | "rested" | "failed" | "cancelled";
+  type FreeTimeItemReceiptView = { outcome: FreeTimeItemOutcome; policy_revision: number; attempt?: string | null; proposal?: string | null; at: number };
+  type FreeTimeItemView = { item: string; kind: FreeTimeKind; purpose: string; attempt?: string | null; spend_scope?: string | null; receipt?: FreeTimeItemReceiptView | null };
+  type FreeTimeNoteView = { author: string; at: number; text: string };
+  type FreeTimeLabelSpend = { purpose?: string | null; settlements: RunRungSettlement[] };
+  type FreeTimeSpendView = { metering_enabled: boolean; complete: boolean; by_label: FreeTimeLabelSpend[] };
+  type FreeTimeCycleView = { agent: string; cycle: string; state: FreeTimeCycleState; policy_revision: number; total_units: number; unit: string; pinned_split?: FreeTimeSplit | null; period_start: number; boundary: number; next_boundary?: number | null; opened_at: number; closed_at?: number | null; root_scope: string; floor: FreeTimeFloor; items_complete: boolean; items: FreeTimeItemView[]; note?: FreeTimeNoteView | null; spend: FreeTimeSpendView };
   type SignalExtractionRequest = { turn_refs: string[] };
   type SignalExtractionTicket = { job_refs: string[] };
   type SignalExtractionResultRequest = { job_ref: string };
@@ -5138,6 +5161,18 @@ declare const vault: Sdk.VaultHost & {
   flush_stream(input: Sdk.MessageStreamRequest): Promise<null | StoredResult>;
   /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
   forget(input: Sdk.ForgetRequest): Promise<Sdk.CommitReceipt[] | StoredResult>;
+  free_time: {
+    /** The owner reads one free-time cycle: its state, the floor and whether every item receipt read, the agent's short note, each item's receipt, and the spend records by label with their own completeness. Never the agent's diary. */
+    cycle(input: Sdk.FreeTimeCycleRequest): Promise<Sdk.FreeTimeCycleView | null | StoredResult>;
+    /** The owner reads one agent's free-time cycles a page at a time, newest first: each cycle's state, period and floor from its item receipts, with the cursor of the next page. */
+    cycles(input: Sdk.FreeTimeCyclesRequest): Promise<Sdk.FreeTimeCyclesPage | StoredResult>;
+    policy: {
+      /** The owner reads one agent's free-time policy with its revision: the total one cycle may spend, its daily clock in an IANA zone and any pinned split, or disabled when none is set. */
+      get(input: Sdk.FreeTimePolicyRequest): Promise<Sdk.FreeTimePolicyView | StoredResult>;
+      /** The owner sets one agent's free-time policy at the revision it read, or clears it with no policy; a clear ends the open cycle and the agent goes back to its nightly dreaming. */
+      set(input: Sdk.FreeTimePolicySetRequest): Promise<Sdk.FreeTimePolicyView | StoredResult>;
+    };
+  };
   gate: {
     checker: {
       /** The owner reads the calibrated checker verdict role from the vault model manifest. */

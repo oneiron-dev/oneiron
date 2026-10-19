@@ -1939,6 +1939,10 @@ fn mcp_agent_verb_input(
         "vault.sieve.recipe_policy.set" => a.spec.clone().ok_or_else(invalid),
         "vault.sieve.lease" => a.spec.clone().ok_or_else(invalid),
         "vault.sieve.lease.refill" => a.spec.clone().ok_or_else(invalid),
+        "vault.free_time.policy.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.free_time.policy.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.free_time.cycles" => a.spec.clone().ok_or_else(invalid),
+        "vault.free_time.cycle" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.vet" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.vetting" => a.spec.clone().ok_or_else(invalid),
         "vault.memory.signal_extraction" => a.spec.clone().ok_or_else(invalid),
@@ -4994,6 +4998,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.sieve.lease.refill" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.free_time.policy.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.free_time.policy.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.free_time.cycles" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.free_time.cycle" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.claims.vet" => {
@@ -21156,6 +21172,80 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_sieve_lease_refill(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.free_time.policy.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.free_time.policy.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::dreamer_runner::FreeTimePolicyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_free_time_policy_get(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.free_time.policy.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.free_time.policy.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::dreamer_runner::FreeTimePolicySetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_free_time_policy_set(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.free_time.cycles" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.free_time.cycles", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::dreamer_runner::FreeTimeCyclesRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_free_time_cycles(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.free_time.cycle" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.free_time.cycle", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::dreamer_runner::FreeTimeCycleRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_free_time_cycle(server, auth, input).await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
