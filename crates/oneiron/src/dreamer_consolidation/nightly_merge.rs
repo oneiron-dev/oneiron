@@ -11,8 +11,8 @@ use crate::claim::{
     ScopedReadActorKey, claim_evidence_taint,
 };
 use crate::dreamer_runner::{
-    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerConsolidationScope, DreamerParkCause,
-    DreamerRunnerStore,
+    DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope,
+    DreamerParkCause, DreamerRunnerStore,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::llm::{
@@ -89,7 +89,7 @@ pub(crate) fn extraction_outputs(vault: &Vault, attempt: AttemptId) -> Result<Ve
 pub(crate) fn enqueue_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    parent: &DreamerAdmittedAttempt,
+    parent: &DreamerAttemptStatus,
     children: Vec<AttemptId>,
     now: u64,
 ) -> Result<()> {
@@ -110,10 +110,10 @@ pub(crate) fn enqueue_in_txn(
         DreamerAttemptPayload {
             attempt_type: ATTEMPT.into(),
             input: input.into(),
-            parent_attempt: Some(parent.status.attempt.id),
+            parent_attempt: Some(parent.attempt.id),
         },
         Some(dedupe),
-        parent.status.attempt.run_id.clone(),
+        parent.attempt.run_id.clone(),
         now,
     )?;
     Ok(())

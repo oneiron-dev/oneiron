@@ -15,8 +15,8 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use oneiron_vault_contract::ManagedWidenAction;
 use oneiron_vault_contract::{
-    CONTRACT_VERSION, CtlRequest, CtlResponse, REAP_PAUSE_REFUSAL, UnixTs, now_ts,
-    validate_wake_entries,
+    CONTRACT_VERSION, CtlRequest, CtlResponse, ManagedReadiness, REAP_PAUSE_REFUSAL, UnixTs,
+    now_ts, validate_wake_entries,
 };
 use tokio::sync::{Mutex, watch};
 
@@ -148,6 +148,9 @@ pub struct ManagedState {
     /// The voice hello attestations already taken, each kept until its
     /// `issued_at` leaves the skew window (FIX 2391).
     voice_actions: std::sync::Mutex<std::collections::HashMap<String, UnixTs>>,
+    /// How the vault came up, as every `Ping` reports it (WILL-PLAN L14 row
+    /// 17): set once at boot, before ctl serves.
+    readiness: ManagedReadiness,
 }
 
 /// A supervisor-signed account action, not the child process's host-root slip.
@@ -383,7 +386,16 @@ impl ManagedState {
             ledger,
             background_waiting: AtomicBool::new(false),
             voice_actions: std::sync::Mutex::default(),
+            readiness: ManagedReadiness::Ready,
         }
+    }
+
+    /// This state with `readiness`, how the vault came up, for every `Ping`
+    /// to report; `Ready` until set.
+    #[must_use]
+    pub fn with_readiness(mut self, readiness: ManagedReadiness) -> Self {
+        self.readiness = readiness;
+        self
     }
 
     /// The owner a managed voice hello's supervisor attestation names
@@ -569,6 +581,7 @@ impl ManagedState {
                 vault: self.vault_name.clone(),
                 pid: std::process::id(),
                 contract_version: CONTRACT_VERSION,
+                readiness: self.readiness.clone(),
             }),
             CtlRequest::Shed { cause, waited_secs } => {
                 self.guard_write()?;
@@ -739,13 +752,13 @@ async fn freeze_gate(
             }
         }
         // A request the supervisor attests is the vault owner's own
-        // (`ManagedOwnerAction`), on every route whose body the buffer holds,
-        // and on every route whose body streams once that body is staged on
-        // the vault's disk (`owner_stage`): verified the same way, over the
-        // method, path, raw query, placing headers and exact body, before
-        // any handler runs. A verified one names the owner, as a request
-        // extension the credential reads; one that does not verify is
-        // refused, never served as the host's root.
+        // (`ManagedOwnerAction`), on every route whose body the buffer holds
+        // (staged on the vault's disk past it, FIX 5619), and on every route
+        // whose body streams once that body is staged there (`owner_stage`):
+        // verified the same way, over the method, path, raw query, placing
+        // headers and exact body, before any handler runs. A verified one
+        // names the owner, as a request extension the credential reads; one
+        // that does not verify is refused, never served as the host's root.
         let staged = match surface {
             Surface::Api => {
                 super::attested_routes::staged_route(request.method(), request.uri().path())
@@ -777,39 +790,17 @@ async fn freeze_gate(
                     Err(refusal) => return refusal,
                 };
             } else if let Some(assertion) = assertion {
-                let (parts, body) = request.into_parts();
-                let Ok(bytes) =
-                    to_bytes(body, oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES).await
-                else {
-                    return StatusCode::PAYLOAD_TOO_LARGE.into_response();
-                };
-                let header = |name: &'static str| {
-                    parts
-                        .headers
-                        .get(name)
-                        .and_then(|value| value.to_str().ok())
-                        .unwrap_or("")
-                };
-                let [room_turn, invocation, session] =
-                    oneiron_vault_contract::MANAGED_OWNER_BOUND_HEADERS.map(header);
-                let verified = state.ledger.verify_owner_action(
+                request = match super::owner_stage::verify_held(
+                    &state.server,
+                    &state.ledger,
                     &assertion,
-                    &oneiron_vault_contract::ManagedOwnerRequest {
-                        method: parts.method.as_str(),
-                        path: parts.uri.path(),
-                        query: parts.uri.query().unwrap_or(""),
-                        headers: [room_turn, invocation, session],
-                        body: &bytes,
-                    },
-                );
-                let holder = oneiron::EntityId::from_hex(&assertion.holder_ref)
-                    .ok()
-                    .filter(|_| verified);
-                let Some(holder) = holder else {
-                    return owner_attestation_refused(parts.uri.path());
+                    request,
+                )
+                .await
+                {
+                    Ok(request) => request,
+                    Err(refusal) => return refusal,
                 };
-                request = Request::from_parts(parts, Body::from(bytes));
-                request.extensions_mut().insert(ManagedOwnerHolder(holder));
             } else if request
                 .headers()
                 .contains_key(oneiron_vault_contract::MANAGED_OWNER_ACTION_HEADER)
@@ -1083,7 +1074,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // at (argv over the file), so what settling decides is logged.
     let settings = super::settings::prepare(&managed, args, &mut config)?;
     init_managed_tracing(super::settings::log_level(settings.as_ref(), &config));
-    super::settings::settle(settings, &mut config)?;
+    let settled = super::settings::settle(settings, &mut config)?;
     let cors = crate::commands::build_cors_layer(&config.sync_server_config())?;
     tracing::info!(
         vault = %managed.vault_name,
@@ -1147,7 +1138,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     );
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(&issuer_key)?;
     issuer_key.fill(0);
-    provision_host_authority(&vault, &issuer, &config.keystore, &managed.data_dir)?;
+    let readiness = provision_host_authority(
+        &vault,
+        &issuer,
+        &config.keystore,
+        settled.keystore_unbound,
+        &managed.data_dir,
+    )?;
     // The delivered DEK is the vault's data key (CROSS-ARCH-0022
     // #ov-custody): its sealed artifacts derive from it, and each escrow
     // recipient the node's operator installed keeps a copy of it.
@@ -1210,6 +1207,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     if managed.artifact_socket.is_some() {
         sync_server = sync_server.with_artifact_socket();
     }
+    // Pack organ builds, the seal's among them, land on the tenant's own
+    // storage before any worker installs one, never in the shared temp
+    // directory (FIX 3565).
+    #[cfg(unix)]
+    {
+        sync_server = sync_server.with_organ_dir(super::owner_storage::organ_dir(&managed));
+    }
     // Model seats, the Dreamer and the decision ladder from `[models]`, as
     // plain serve attaches them: a vault that dials a home, by the owner's
     // `[device_sync]` or its enrolment, is a device of that home and never
@@ -1259,11 +1263,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // rest of the process lifetime.
     drop(credentials);
     host.clear_secrets();
-    let state = Arc::new(ManagedState::new(
-        managed.vault_name.clone(),
-        Arc::clone(&sync_server),
-        ledger,
-    ));
+    let state = Arc::new(
+        ManagedState::new(managed.vault_name.clone(), Arc::clone(&sync_server), ledger)
+            .with_readiness(readiness.clone()),
+    );
     let _ = reap_gate.set(Arc::clone(&state));
     // A public live voice session (`ai.voice.start`) holds an admission like
     // a served write, as a voice loop call does: a session in flight keeps a
@@ -1323,7 +1326,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
 
     // Both sockets are bound, the credentials are consumed, and the open gates
     // have passed. Only now is this process something the supervisor may route
-    // traffic to.
+    // traffic to. A facility it serves without is named first, and the ready
+    // signal is the same either way.
+    super::vault_gates::warn_degraded(&readiness);
     host.ready()?;
     tracing::info!(vault = %managed.vault_name, "managed vault ready");
     #[cfg(target_os = "linux")]
@@ -1499,10 +1504,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // `quiescent: true` is a claim about a gate that nothing reaches.
     let app = build_managed_app(Arc::clone(&sync_server), Arc::clone(&state)).layer(cors);
     // The paired-machine mesh listener (OF-535), as `serve` starts it: off
-    // unless the host names its bind address.
+    // unless the supervisor names its bind address on argv (WILL-PLAN L14
+    // row 14); managed mode never reads `ONEIRON_MESH_*`.
     let mesh = crate::handler::mesh::start(
         Arc::clone(&sync_server),
-        &crate::handler::mesh::MeshConfig::from_env()?,
+        &crate::handler::mesh::MeshConfig::from_parts(
+            managed.mesh_bind,
+            managed.mesh_relays.clone(),
+        ),
         &app,
         config.limits.connections(),
     )

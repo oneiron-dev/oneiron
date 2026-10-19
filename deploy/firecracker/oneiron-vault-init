@@ -77,6 +77,13 @@ if [ "$config" = "1" ]; then
       set -- "$@" "--$flag" "$(head -n 1 "/config/$flag")"
     fi
   done
+  # The supervisor's bindings for the guests' container CLIs (paths in this
+  # rootfs) and the mesh listener's bind and comma-separated relays.
+  for flag in browser-runtime desktop-runtime mesh-bind mesh-relays; do
+    if [ -f "/config/$flag" ]; then
+      set -- "$@" "--$flag" "$(head -n 1 "/config/$flag")"
+    fi
+  done
 fi
 
 # The credential frame and the ready byte ride the vsock boot port; the host

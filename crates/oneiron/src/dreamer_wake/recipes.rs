@@ -109,7 +109,7 @@ pub(crate) fn weave_in_txn(
     let policy = policy_in_txn(vault, txn)?;
     let store = DreamerRunnerStore::new(vault);
     for span in sieve::audit_sample_in_txn(vault, txn, attempt.status.attempt.id, &policy)? {
-        sieve::enqueue_rungs_in_txn(&store, txn, attempt, &span, true, now)?;
+        sieve::enqueue_rungs_in_txn(&store, txn, &attempt.status, &span, true, now)?;
     }
     Ok(())
 }

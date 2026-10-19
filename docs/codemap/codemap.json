@@ -20167,7 +20167,7 @@
      "path": "src/dreamer_consolidation/conflict.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 9,
       "struct": 9
      }
@@ -20179,7 +20179,7 @@
      "path": "src/dreamer_consolidation/evidence.rs",
      "purpose": "Parent-verified evidence is the sole scoped consolidation handoff",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -20303,7 +20303,7 @@
      "surface": {
       "crate-vis": 23,
       "mod": 4,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -20344,6 +20344,16 @@
      "purpose": "ARCH-0032 stage 2 (OF-073): the Dreamer reviews NOTEs",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/note_text.rs",
+     "purpose": "The text of one NOTE as the Dreamer may read it (ARCH-0032 stage 2), in the caller's transaction: one…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -20522,6 +20532,19 @@
      "surface": {
       "crate-vis": 15,
       "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RetainedAlternative"
+     ],
+     "path": "src/dreamer_consolidation/retained_conflict.rs",
+     "purpose": "The candidates an escalated consolidation round dropped, retained on its `conflict.open` marker (OF-023, FIX…",
+     "surface": {
+      "crate-vis": 3,
       "struct": 1
      }
     },
@@ -21080,7 +21103,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4,
       "re-export": 5,
       "struct": 3
@@ -21134,6 +21157,16 @@
      "purpose": "Persisted-head convergence through the existing promotion, claim Gate, semantic-edge and provenance doors",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_promotion/settlement.rs",
+     "purpose": "The selected landing (OF-023, FIX 496): a consolidation round's retained alternative that a conflict…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -22655,7 +22688,7 @@
      "path": "src/dreamer_wake/nightly.rs",
      "purpose": "Budgeted interest-queue spending",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -25880,7 +25913,7 @@
      "path": "src/federation/agent_grant.rs",
      "purpose": "The owner's grant of an explicit verb list to a named agent (FIX 5628): `vault.agents.grants.mint` and…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -55329,13 +55362,15 @@
       "AgentGrantMinted",
       "AgentGrantRevokeRequest",
       "AgentGrantRevoked",
-      "AgentGrantView"
+      "AgentGrantView",
+      "BaseAgentList",
+      "BaseAgentPrincipal"
      ],
      "path": "src/task_verb/sdk_agent_grant.rs",
      "purpose": "The inputs and answers of the owner's agent grant rows (FIX 5628): `vault.agents.grants.mint` and `.revoke`…",
      "surface": {
-      "fn": 2,
-      "struct": 5
+      "fn": 3,
+      "struct": 7
      }
     },
     {
@@ -55801,7 +55836,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1096
+      "fn": 1097
      }
     },
     {
@@ -62751,7 +62786,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 70,
+     "files": 72,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62772,7 +62807,7 @@
      "purpose": "ORF-2 / OF-361 — the BudgetMem statistical PRE-FILTER: the cheap screen that decides what is worth…"
     },
     "dreamer_promotion": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -63796,7 +63831,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3929,
+   "source_files": 3932,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72762,7 +72797,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1067
+      "fn": 1068
      }
     },
     {
@@ -73901,7 +73936,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1068
+      "fn": 1069
      }
     },
     {
@@ -77017,9 +77052,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/agent_grant_doors.rs",
-     "purpose": "The host doors of the owner's agent grant rows (FIX 5628): `vault.agents.grants.mint` and `.revoke`",
+     "purpose": "The host doors of the owner's agent grant rows (FIX 5628): `vault.agents.grants.mint` and `.revoke`, and…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -81532,14 +81567,15 @@
      "kind": "src",
      "notable": [
       "KeystoreBackend",
-      "KeystoreConfig"
+      "KeystoreConfig",
+      "KeystoreInstall"
      ],
      "path": "src/config/keystore.rs",
      "purpose": "The `[keystore]` section: where this install keeps its this-device-only key slots (world privacy P6b, P6c)",
      "surface": {
       "crate-vis": 4,
-      "enum": 1,
-      "fn": 3,
+      "enum": 2,
+      "fn": 4,
       "re-export": 1,
       "struct": 1
      }
@@ -82712,7 +82748,7 @@
      "path": "src/handler/mesh.rs",
      "purpose": "The paired-machine mesh listener (OF-535)",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -83391,13 +83427,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/managed/owner_stage.rs",
      "purpose": "Managed ingress's byte-exact staging of an owner-attested request whose body streams (FIX 5255, part 2 of…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -83407,7 +83443,7 @@
      "path": "src/managed/owner_storage.rs",
      "purpose": "The owner host a managed vault serves with: its backups and restore rehearsals on the tenant's own disk, in…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -83469,7 +83505,7 @@
      "path": "src/managed/settings.rs",
      "purpose": "The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -83495,7 +83531,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 17,
-      "fn": 20,
+      "fn": 21,
       "struct": 3,
       "type": 1
      }
@@ -83508,7 +83544,7 @@
      "purpose": "Managed vault open gates: credentials, the canary marker, and the DEK MAC",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 3
      }
     },
@@ -85291,7 +85327,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 19,
       "re-export": 5
      }
     },
@@ -85312,7 +85348,7 @@
      "path": "src/server/organs.rs",
      "purpose": "The organs on the server's one host ([`SyncServer::organs`]): every organ an Active pack carries a build of…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -87191,6 +87227,8 @@
       "AxisScores",
       "B2bExemption",
       "BandMode",
+      "BaseAgentList",
+      "BaseAgentPrincipal",
       "BatchInput",
       "BatchOutput",
       "BatchState",
@@ -90575,7 +90613,7 @@
      "purpose": "—",
      "surface": {
       "enum": 864,
-      "struct": 2750
+      "struct": 2752
      }
     },
     {
@@ -90775,6 +90813,10 @@
       "CtlRequest",
       "CtlResponse",
       "CtlResumeOn",
+      "FacilityNotice",
+      "FacilityReason",
+      "ManagedFacility",
+      "ManagedReadiness",
       "ShedBlockerWire",
       "ShedCause",
       "ShedStatus"
@@ -90783,9 +90825,9 @@
      "purpose": "Supervisor ctl request/response wire types and shed/slim validation",
      "surface": {
       "const": 1,
-      "enum": 9,
-      "fn": 6,
-      "struct": 3
+      "enum": 12,
+      "fn": 9,
+      "struct": 4
      }
     },
     {

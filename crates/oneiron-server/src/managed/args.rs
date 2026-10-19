@@ -1,5 +1,6 @@
 //! Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals.
 
+use std::net::SocketAddr;
 use std::os::fd::RawFd;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -188,8 +189,9 @@ pub struct ManagedArgs {
     /// The process is a Firecracker vault VM's engine (`--vsock-guest`).
     pub vsock_guest: bool,
     /// Where this install keeps its this-device-only key slots, a place the
-    /// supervisor chose. Without it managed mode installs no keystore, and a
-    /// settings file that asks for one is refused.
+    /// supervisor chose. Without it managed mode installs no keystore, and
+    /// serves on with that facility named missing in its readiness unless
+    /// the settings file turns the keystore off (WILL-PLAN L14 row 17).
     pub keystore_dir: Option<PathBuf>,
     /// The node's managed escrow recipient's public key file
     /// (`--escrow-recipient-file`).
@@ -236,6 +238,20 @@ pub struct ManagedArgs {
     /// supervisor to ship, and reads the intake's receipts
     /// (`--publisher-training-outbox-dir`); no outbox runs without it.
     pub publisher_training_outbox: Option<PathBuf>,
+    /// The browser guest's container CLI the supervisor binds
+    /// (`--browser-runtime`), set on the settings file's `[browser]`.
+    pub browser_runtime: Option<PathBuf>,
+    /// The desktop guest's (`--desktop-runtime`), set on its `[desktop]`.
+    pub desktop_runtime: Option<PathBuf>,
+    /// Where pack organ builds are written (`--organ-dir`); `organs` under
+    /// the data directory without it.
+    pub organ_dir: Option<PathBuf>,
+    /// Where the mesh listener binds (`--mesh-bind`); the mesh is off
+    /// without it.
+    pub mesh_bind: Option<SocketAddr>,
+    /// The mesh's private relays (`--mesh-relays`); direct paths only
+    /// without them.
+    pub mesh_relays: Vec<String>,
 }
 
 impl ManagedArgs {
@@ -347,6 +363,13 @@ impl ManagedArgs {
             seal_organ: args.seal_organ.clone(),
             esign_delivery_outbox: args.esign_delivery_outbox_dir.clone(),
             publisher_training_outbox: args.publisher_training_outbox_dir.clone(),
+            browser_runtime: args.browser_runtime.clone(),
+            desktop_runtime: args.desktop_runtime.clone(),
+            organ_dir: args.organ_dir.clone(),
+            mesh_bind: args.mesh_bind,
+            mesh_relays: crate::config::normalize_list(
+                args.mesh_relays.clone().unwrap_or_default(),
+            ),
         };
         if managed
             .artifact_socket
@@ -380,6 +403,9 @@ impl ManagedArgs {
                 "publisher-training-outbox-dir",
                 &managed.publisher_training_outbox,
             ),
+            ("browser-runtime", &managed.browser_runtime),
+            ("desktop-runtime", &managed.desktop_runtime),
+            ("organ-dir", &managed.organ_dir),
         ] {
             if path.as_deref().is_some_and(std::path::Path::is_relative) {
                 return Err(ManagedError::RelativeRecipientFile { flag });
@@ -748,6 +774,25 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "publisher-training-outbox-dir",
         |args| args.publisher_training_outbox_dir.is_some(),
+        ArgvUse::Read,
+    ),
+    // The supervisor's bindings for the guests' container CLIs, the pack
+    // organ directory and the mesh listener (WILL-PLAN L14 rows 05, 14).
+    (
+        "browser-runtime",
+        |args| args.browser_runtime.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "desktop-runtime",
+        |args| args.desktop_runtime.is_some(),
+        ArgvUse::Read,
+    ),
+    ("organ-dir", |args| args.organ_dir.is_some(), ArgvUse::Read),
+    ("mesh-bind", |args| args.mesh_bind.is_some(), ArgvUse::Read),
+    (
+        "mesh-relays",
+        |args| args.mesh_relays.is_some(),
         ArgvUse::Read,
     ),
     // The bind: the supervisor's socket, never a host:port.

@@ -675,6 +675,7 @@ vaultAgentsDreamingGet(input: unknown): unknown
 vaultAgentsDreamingSet(input: unknown): unknown
 vaultAgentsGrantsMint(input: unknown): unknown
 vaultAgentsGrantsRevoke(input: unknown): unknown
+vaultAgentsBase(input: unknown): unknown
 vaultStandingBlocksConfigure(input: unknown): unknown
 vaultStandingBlocksReconfigure(input: unknown): unknown
 vaultStandingBlocksGet(input: unknown): unknown
