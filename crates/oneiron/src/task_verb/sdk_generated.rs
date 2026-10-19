@@ -3821,6 +3821,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
             (
+                "vault.rooms.thread_audience.add",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ThreadAudienceAddRequest,
+                >(),
+            ),
+            (
+                "vault.rooms.thread_audience.remove",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ThreadAudienceRemoveRequest,
+                >(),
+            ),
+            (
                 "vault.projects.propose",
                 crate::code_run::vault_read::request_schema::<
                     crate::workspace_roster::ProjectProposalRequest,
@@ -13744,6 +13756,20 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["spec", "room_ref"]
         }
+        "vault.rooms.thread_audience.add" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.thread_audience.remove" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.projects.propose" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -18591,6 +18617,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.speak" => {
             let _input: crate::memory::WitnessTurn = decode(value.clone())?;
         }
+        "vault.rooms.thread_audience.add" => {
+            let _input: crate::workspace_roster::ThreadAudienceAddRequest = decode(value.clone())?;
+        }
+        "vault.rooms.thread_audience.remove" => {
+            let _input: crate::workspace_roster::ThreadAudienceRemoveRequest =
+                decode(value.clone())?;
+        }
         "vault.projects.propose" => {
             let _input: crate::workspace_roster::ProjectProposalRequest = decode(value.clone())?;
         }
@@ -21274,6 +21307,12 @@ pub fn invoke(
         "vault.rooms.reply_strips" => encode(vault_rooms_reply_strips(memory, decode(value)?)?),
         "vault.rooms.claim" => encode(vault_rooms_claim(memory, decode(value)?)?),
         "vault.rooms.speak" => encode(vault_rooms_speak(memory, decode(value)?)?),
+        "vault.rooms.thread_audience.add" => {
+            encode(vault_rooms_thread_audience_add(memory, decode(value)?)?)
+        }
+        "vault.rooms.thread_audience.remove" => {
+            encode(vault_rooms_thread_audience_remove(memory, decode(value)?)?)
+        }
         "vault.projects.propose" => encode(vault_projects_propose(memory, decode(value)?)?),
         "vault.projects.proposals" => encode(vault_projects_proposals(memory, decode(value)?)?),
         "vault.projects.dismiss_card" => {
@@ -27915,6 +27954,18 @@ pub fn vault_rooms_speak(
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
     memory.rooms_speak(&input)
+}
+pub fn vault_rooms_thread_audience_add(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ThreadAudienceAddRequest,
+) -> MemoryResult<crate::workspace_roster::ThreadAudienceReceipt> {
+    memory.rooms_thread_audience_add(&input)
+}
+pub fn vault_rooms_thread_audience_remove(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ThreadAudienceRemoveRequest,
+) -> MemoryResult<crate::workspace_roster::ThreadAudienceReceipt> {
+    memory.rooms_thread_audience_remove(&input)
 }
 pub fn vault_projects_propose(
     memory: &Memory<'_>,

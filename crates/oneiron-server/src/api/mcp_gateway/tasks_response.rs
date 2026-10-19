@@ -1648,6 +1648,8 @@ fn mcp_agent_verb_input(
             }
             Ok(input)
         }
+        "vault.rooms.thread_audience.add" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.thread_audience.remove" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.propose" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.proposals" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.dismiss_card" => a.spec.clone().ok_or_else(invalid),
@@ -4210,6 +4212,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             if let Some(value) = input.get("conversation_ref") {
                 arguments.insert("room_ref".to_owned(), value.clone());
             }
+        }
+        "vault.rooms.thread_audience.add" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.rooms.thread_audience.remove" => {
+            arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.projects.propose" => {
             arguments.insert("spec".to_owned(), input.clone());
@@ -17401,6 +17409,29 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_rooms_speak(&memory, input)
                 .map_err(mcp_facade_error)?;
+            server
+                .ai
+                .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.thread_audience.add" => {
+            let input: oneiron::workspace_roster::ThreadAudienceAddRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_thread_audience_add(&memory, input)
+                .map_err(mcp_facade_error)?;
+            server
+                .ai
+                .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.thread_audience.remove" => {
+            let input: oneiron::workspace_roster::ThreadAudienceRemoveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::vault_rooms_thread_audience_remove(&memory, input)
+                    .map_err(mcp_facade_error)?;
             server
                 .ai
                 .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
