@@ -189,6 +189,9 @@ impl ServedCompactionBackend {
         // (OF-531); a payer this host cannot bill holds the pass for the turn.
         let (guard, payer) = match &self.meter {
             CompactionMeter::CodeMode(guard) => (guard.clone(), None),
+            // A chat turn's flight bills the payer its turn resolved, on its
+            // own guard on the chat actor's line (FIX 4465 D).
+            CompactionMeter::Chat { guard, payer } => (guard.clone(), payer.clone()),
             CompactionMeter::Scope(scope) => {
                 let payer = scope_funding(&self.vault, Some(scope), false)
                     .map_err(|fault| turn(fault.to_string()))?;
