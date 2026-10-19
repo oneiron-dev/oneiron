@@ -6505,10 +6505,10 @@
       "EsignRateReceipt"
      ],
      "path": "src/blob_artifact/esign/rate.rs",
-     "purpose": "Vault-local, receipt-backed ceremony observation; rate never denies signing",
+     "purpose": "Vault-local, receipt-backed ceremony observation and signature-upload `[limits]` crossings; neither ever…",
      "surface": {
-      "const": 1,
-      "crate-vis": 1,
+      "const": 2,
+      "crate-vis": 3,
       "fn": 3,
       "struct": 2
      }
@@ -6635,7 +6635,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/reseal.rs",
-     "purpose": "Owner-tier reseal admission and bounded repair sweep",
+     "purpose": "Owner-tier reseal admission and the repair sweep",
      "surface": {
       "fn": 2
      }
