@@ -1,6 +1,6 @@
 use super::ViewQuery;
-use super::check_api_owner_act;
 use super::query_params;
+use super::scoped_auth::check_request_owner_act;
 use super::scoped_read_for_legacy_api;
 use crate::auth::Locality;
 use crate::error::ApiError;
@@ -11,8 +11,8 @@ use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::rejection::QueryRejection;
-use axum::http::HeaderMap;
 use axum::http::StatusCode;
+use axum::http::request::Parts;
 use axum::response::IntoResponse;
 use axum::response::Json;
 use axum::response::Response;
@@ -101,13 +101,13 @@ use utoipa::ToSchema;
     )
 )]
 pub(crate) async fn get_entity(
-    headers: HeaderMap,
+    parts: Parts,
     Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    let auth = check_api_owner_act(&headers, &server)?.at(locality);
+    let auth = check_request_owner_act(&parts, &server)?.at(locality);
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Standard);
 
@@ -239,13 +239,13 @@ mod credential_tests {
     )
 )]
 pub(crate) async fn get_edges(
-    headers: HeaderMap,
+    parts: Parts,
     Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
     query: Result<Query<ViewQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    let auth = check_api_owner_act(&headers, &server)?.at(locality);
+    let auth = check_request_owner_act(&parts, &server)?.at(locality);
     let params = query_params(query)?;
     let view = params.view.unwrap_or(View::Summary);
 

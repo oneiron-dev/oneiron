@@ -40,6 +40,7 @@ pub(crate) use failure_rules::{
 };
 mod gap;
 mod judge_context;
+mod kept_ask;
 mod neighbourhood;
 pub(crate) mod nightly_merge;
 mod note_parts;

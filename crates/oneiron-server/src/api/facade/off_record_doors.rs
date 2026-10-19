@@ -584,9 +584,12 @@ async fn off_record_execute(
     let outcome = host
         .execute_in_off_record_session(
             Arc::clone(&server.vault),
+            // The run's reads in the room read under this request's own
+            // caller, credential and place (WILL L11-01).
             OffRecordRunSession {
                 session_ref: input.session_ref,
                 creator,
+                caller: auth.clone(),
             },
             WriteActor::new(actor, class),
             input.run_ref.clone(),

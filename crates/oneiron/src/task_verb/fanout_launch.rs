@@ -738,7 +738,7 @@ fn launch_role_holders_in(
     };
     let to = AskTo {
         role: AskRole::Responsible {
-            actor: EntityId::from_hex(&effective.leader)?,
+            actor: crate::llm::decision::AnswerActor::Actor(EntityId::from_hex(&effective.leader)?),
             project: Some(project),
         },
         ceiling: RoleRank::Board,
