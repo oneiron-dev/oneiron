@@ -50,7 +50,10 @@ fn seal_standing_text(seal: Option<&[u8; 32]>, image: Option<&[u8; 32]>) -> Stri
         failed.push(format!("decision seal {}", revision_hex(seal)));
     }
     if let Some(image) = image {
-        failed.push(format!("adopted authority checkpoint image {}", revision_hex(image)));
+        failed.push(format!(
+            "adopted authority checkpoint image {}",
+            revision_hex(image)
+        ));
     }
     if failed.is_empty() {
         failed.push("the stored authority log".to_owned());
