@@ -672,7 +672,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/control_keys/tests.rs` | test | s | — | — | — |
 | `src/conversation_training/account.rs` | src | s | 1 crate-vis | — | C1 (CALLS-1): a self-hosted vault's binding to the publisher's intake as the person's Oneiron account… |
 | `src/conversation_training/mod.rs` | src | s | 3 crate-vis | — | The publisher training outbox (OF-420 A1, "Learn from my conversations"): the worker that writes this… |
-| `src/conversation_training/outbox.rs` | src | s | 2 crate-vis | — | The outbox directory as the engine's training transport: three protocol subdirectories under one lock… |
+| `src/conversation_training/outbox.rs` | src | m | 2 crate-vis | — | The outbox directory as the engine's training transport: three protocol subdirectories and the vault's… |
 | `src/conversation_training/worker.rs` | src | s | 1 crate-vis | — | The outbox's periodic tick |
 | `src/credential_resume.rs` | src | s | 4 crate-vis | — | The server's check for a credential caller's call a verb hook's ask stopped (ARCH-0080 §3 Ask, OF-580) |
 | `src/decision_artifact.rs` | src | s | 4 crate-vis | — | Typed judgments over artifact units (ARCH-0076, OF-506): the host's decide() for a sheet row, a paragraph, a… |
