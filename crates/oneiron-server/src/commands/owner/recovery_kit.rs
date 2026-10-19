@@ -9,22 +9,20 @@
 //! device-piece custody: no keystore slot holds a piece yet.
 
 use std::collections::BTreeSet;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use oneiron::authority::EditOrigin;
-use oneiron::recovery::{
-    CodeKeeping, KitCoverage, KitError, KitIssue, KitMachine, KitPassphrase, KitPiece,
-    KitSecretKind, PassphraseCost, PieceHome, restore_kit,
-};
+use oneiron::error::SecretError;
+use oneiron::recovery::{KitError, KitPassphrase, KitPiece, KitSecretKind, restore_kit};
 use oneiron::sync::WindowManager;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::client::fetch_sealed_bundle_with_kit;
 use oneiron::sync::residence::{RecoveryCheckpointTrust, sealed_generation_from_hex};
 use oneiron::world_keys::{
-    IssuedWorldKit, KitConfirmation, RecoveryRootId, RecoveryRootSeed, SealedKeyPads,
-    SealedVaultBundle, VaultKeyStatus, WORLD_KIT_ESCROW, Withheld, WorldKeyId, WorldKitRestore,
+    KitConfirmation, RecoveryRootId, RecoveryRootSeed, SealedKeyPads, SealedVaultBundle,
+    VaultKeyStatus, WORLD_KIT_ESCROW, Withheld, WorldKeyId, WorldKitRestore,
 };
 use serde::Serialize;
 use zeroize::Zeroizing;
@@ -32,14 +30,16 @@ use zeroize::Zeroizing;
 use super::vault_key::{HostUnlock, read_secret};
 use super::{emit, open_stopped_vault};
 use crate::cli::{
-    KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs,
-    RecoveryKitRestoreArgs, RestoreArgs, SecretSourceArgs,
+    KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitRestoreArgs, RestoreArgs,
+    SecretSourceArgs,
 };
 use crate::commands::credential_file;
 use crate::config::resolve_serve_config;
 use crate::owner::local_owner;
 use crate::owner::recovery_kit::{self as view, kit_id};
 use crate::owner::vault_key::{WrapView, hex, secret32};
+
+mod issue;
 
 /// The most a piece file is: an export is 89 bytes, a code 99 characters.
 const PIECE_LIMIT: usize = 1024;
@@ -70,7 +70,8 @@ pub fn recovery_kit(command: RecoveryKitCommand) -> anyhow::Result<()> {
             let vault = open(&args.serve)?;
             emit(&view::report(&vault)?)
         }
-        RecoveryKitCommand::Issue(args) => issue(*args),
+        RecoveryKitCommand::Issue(args) => issue::issue(*args),
+        RecoveryKitCommand::IssueVaultKey(args) => issue::issue_vault_key(*args),
         RecoveryKitCommand::Confirm(args) => confirm(*args),
         RecoveryKitCommand::Restore(args) => restore(*args),
     }
@@ -79,139 +80,6 @@ pub fn recovery_kit(command: RecoveryKitCommand) -> anyhow::Result<()> {
 fn open(serve: &crate::config::ServeArgs) -> anyhow::Result<oneiron::Vault> {
     let config = resolve_serve_config(serve)?;
     open_stopped_vault(&config, INSTEAD)
-}
-
-/// One stored piece's file.
-#[derive(Serialize)]
-struct PieceFile {
-    x: u8,
-    file: PathBuf,
-}
-
-/// What issuing a kit did. The pieces are in their files, never here.
-#[derive(Serialize)]
-struct Issued {
-    /// The vault id the kit is bound to: a restore on a new host names it.
-    vault_id: String,
-    kit_id: String,
-    /// The root's fingerprint, to check on another machine.
-    root: String,
-    homes: [PieceHome; 3],
-    coverage: KitCoverage,
-    pieces: Vec<PieceFile>,
-}
-
-fn issue(args: RecoveryKitIssueArgs) -> anyhow::Result<()> {
-    let homes = args
-        .homes
-        .iter()
-        .map(|home| parse_home(home))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let homes: [PieceHome; 3] = homes
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("a kit has three homes: give --home three times"))?;
-    let passphrase = if homes.contains(&PieceHome::Passphrase) {
-        Some(read_passphrase(args.secret_file.as_deref())?)
-    } else {
-        anyhow::ensure!(
-            args.secret_file.is_none(),
-            "--secret-file is the passphrase of a `passphrase` home, and no home is one"
-        );
-        None
-    };
-    for (x, home) in (1u8..).zip(&homes) {
-        let file = piece_file(&args.out, x);
-        anyhow::ensure!(
-            *home == PieceHome::Passphrase || !file.exists(),
-            "{} already exists; name an empty --out",
-            file.display()
-        );
-    }
-    create_owner_dir(&args.out)?;
-    let vault = open(&args.serve)?;
-    let owner = local_owner(&vault)?;
-    let vault_id = vault
-        .world_kit_status()?
-        .vault_id
-        .ok_or_else(|| anyhow::anyhow!("the vault has no authority genesis yet"))?;
-    let IssuedWorldKit {
-        vault_id,
-        root,
-        manifest,
-        pieces,
-    } = vault.issue_world_kit(
-        &owner,
-        &KitIssue {
-            vault_id,
-            homes,
-            passphrase: passphrase.as_ref(),
-            cost: PassphraseCost::DEFAULT,
-            only_machine: false,
-        },
-    )?;
-    let mut files = Vec::with_capacity(pieces.len());
-    for piece in &pieces {
-        let file = piece_file(&args.out, piece.x());
-        let mut out = credential_file::create(&file)?;
-        let line = Zeroizing::new(format!("{}\n", piece.recovery_code().reveal()));
-        out.write_all(line.as_bytes())?;
-        out.sync_all()?;
-        files.push(PieceFile { x: piece.x(), file });
-    }
-    emit(&Issued {
-        vault_id: hex(&vault_id),
-        kit_id: kit_id(manifest.kit_id),
-        root: hex(&root.0),
-        homes: manifest.homes,
-        coverage: manifest.coverage,
-        pieces: files,
-    })
-}
-
-fn piece_file(out: &Path, x: u8) -> PathBuf {
-    out.join(format!("piece-{x}.txt"))
-}
-
-/// One `--home`, as the flag's help spells it.
-fn parse_home(text: &str) -> anyhow::Result<PieceHome> {
-    let machine = |id: &str| {
-        oneiron::EntityId::from_hex(id)
-            .map_err(|_| anyhow::anyhow!("--home {text}: a machine is its 32-hex id"))
-    };
-    Ok(match text.split_once(':') {
-        Some(("file-on", id)) => {
-            PieceHome::RecoveryCode(CodeKeeping::FileOn(KitMachine::Other(machine(id)?)))
-        }
-        Some(("other-machine", id)) => PieceHome::OtherMachine(machine(id)?),
-        _ => match text {
-            "paper" => PieceHome::RecoveryCode(CodeKeeping::Paper),
-            "password-manager" => PieceHome::RecoveryCode(CodeKeeping::PasswordManager),
-            "own-email" => PieceHome::RecoveryCode(CodeKeeping::OwnEmail),
-            "file-elsewhere" => PieceHome::RecoveryCode(CodeKeeping::FileElsewhere),
-            "file-here" => PieceHome::RecoveryCode(CodeKeeping::FileOn(KitMachine::ThisMachine)),
-            "trusted-person" => PieceHome::TrustedPerson,
-            "security-key" => PieceHome::SecurityKey,
-            "passphrase" => PieceHome::Passphrase,
-            "this-machine" => anyhow::bail!(
-                "--home this-machine waits for device-piece custody; pick another home"
-            ),
-            _ => anyhow::bail!("--home {text} is not a kit home"),
-        },
-    })
-}
-
-/// `dir` and its parents; a directory it makes is owner-only.
-fn create_owner_dir(dir: &Path) -> anyhow::Result<()> {
-    let mut builder = std::fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    builder
-        .create(dir)
-        .map_err(|error| anyhow::anyhow!("create {}: {error}", dir.display()))
 }
 
 /// The kit passphrase, from the owner-only file or else stdin.
@@ -418,7 +286,10 @@ fn restore(args: RecoveryKitRestoreArgs) -> anyhow::Result<()> {
             let root = secret32(fingerprint.as_bytes(), "a root fingerprint")?;
             Some(KitConfirmation::Fingerprint(RecoveryRootId(*root)))
         }
-        None => args.confirm_unverified.then_some(KitConfirmation::Owner),
+        // The go-ahead names the root the refusal showed (FIX 4533).
+        None => args
+            .confirm_root
+            .map(|root| KitConfirmation::Owner(RecoveryRootId(root))),
     };
     if args.sealed_bundle.is_some() || args.sealed_home.is_some() {
         return restore_from_bundle(&args, confirm);
@@ -427,14 +298,41 @@ fn restore(args: RecoveryKitRestoreArgs) -> anyhow::Result<()> {
     let vault = open(&args.serve)?;
     let owner = local_owner(&vault)?;
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
-    let restored = vault.restore_world_kit(
-        &owner,
-        EditOrigin::ThisMachine,
-        &pieces,
-        passphrase.as_ref(),
-        confirm,
-    )?;
+    let restored = vault
+        .restore_world_kit(
+            &owner,
+            EditOrigin::ThisMachine,
+            &pieces,
+            passphrase.as_ref(),
+            confirm,
+        )
+        .map_err(show_root)?;
     emit(&Restored::from(restored))
+}
+
+/// A kit seed refused for want of a confirmation, worded with the root its
+/// pieces rebuild, a public id (FIX 4533): the owner checks it on one of his
+/// machines and gives it back with `--fingerprint`, or goes ahead with
+/// `--confirm-root`, which holds for that root alone. A go-ahead given for
+/// another root is refused with this one, so he confirms again in one step.
+fn show_root(error: oneiron::Error) -> anyhow::Error {
+    match &error {
+        oneiron::Error::Secret(SecretError::UnverifiedKitRestore { root, .. }) => {
+            let root = hex(root);
+            anyhow::anyhow!(
+                "{error}: these pieces rebuild root {root}. Give --fingerprint with the root one \
+                 of your machines pins, or go ahead with --confirm-root {root}"
+            )
+        }
+        oneiron::Error::Secret(SecretError::KitConfirmationStale { root, confirmed }) => {
+            let (root, confirmed) = (hex(root), hex(confirmed));
+            anyhow::anyhow!(
+                "--confirm-root {confirmed} is not this kit's root: these pieces rebuild root \
+                 {root}. To go ahead with this kit, rerun with --confirm-root {root}"
+            )
+        }
+        _ => error.into(),
+    }
 }
 
 /// What a kit restore from the sealed cloud bundle did: the keys, as a kit
@@ -531,20 +429,24 @@ fn restore_from_bundle(
         }
     };
     let restored = match (carried, trust) {
-        (_, Some(trust)) => manager.restore_sealed_bundle_with_kit_checkpoint(
-            &owner, &vault_id, &bundle, &pads, &seed, confirm, trust,
-        )?,
+        (_, Some(trust)) => manager
+            .restore_sealed_bundle_with_kit_checkpoint(
+                &owner, &vault_id, &bundle, &pads, &seed, confirm, trust,
+            )
+            .map_err(show_root)?,
         // A tail that stands on the image refuses without it.
         (Some(digest), None) => manager
             .restore_sealed_bundle_with_kit(&owner, &vault_id, &bundle, &pads, &seed, confirm)
             .map_err(|error| {
                 anyhow::anyhow!(
-                    "{error}; to adopt the bundle's checkpoint image, rerun with {}",
+                    "{:#}; to adopt the bundle's checkpoint image, rerun with {}",
+                    show_root(error),
                     adopt_flags(&digest)
                 )
             })?,
         (None, None) => manager
-            .restore_sealed_bundle_with_kit(&owner, &vault_id, &bundle, &pads, &seed, confirm)?,
+            .restore_sealed_bundle_with_kit(&owner, &vault_id, &bundle, &pads, &seed, confirm)
+            .map_err(show_root)?,
     };
     let take = restored.take;
     emit(&BundleRestored {
@@ -637,13 +539,15 @@ fn fetch_from_home(
                 .ok_or_else(|| anyhow::anyhow!("--sealed-generation is 48 lower-case hex digits"))
         })
         .transpose()?;
-    if matches!(confirm, Some(KitConfirmation::Fingerprint(id)) if id != root) {
-        anyhow::bail!("the fingerprint is not this kit's root");
+    if let Some(confirm) = confirm {
+        confirm.check(root).map_err(show_root)?;
     }
     anyhow::ensure!(
         seed.authenticated() || confirm.is_some(),
-        "a kit opened with one piece and the passphrase is not verified: give --fingerprint, \
-         read on one of your machines, or --confirm-unverified"
+        "a kit opened with one piece and the passphrase is not verified: these pieces rebuild \
+         root {root}. Give --fingerprint with the root one of your machines pins, or go ahead \
+         with --confirm-root {root}",
+        root = hex(&root.0)
     );
     // The command runs on the CLI's runtime, so the fetch gets a thread and a
     // runtime of its own.
