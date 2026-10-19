@@ -27,8 +27,9 @@
 //! manifest's text or a sealed register with every manifest the vault
 //! publishes attached may be, travels in numbered parts (Rule 5: split,
 //! never skip; CALLS CUSTODY_MANIFEST_UNSTATED_MULTI). No seal, door or
-//! open refuses an input for its whole length (FIX 5445); one envelope
-//! keeps its codec's own bound, and each row the 4 MiB one. Each
+//! open refuses an input for its whole length (FIX 5445): a body past one
+//! envelope's plaintext bound seals as numbered envelopes, each within it
+//! (FIX 5521, `envelopes`), and each row keeps the 4 MiB bound. Each
 //! part row carries its index, every part's digest and its own bytes, and
 //! the digest the request names is over that list, so one 32-byte digest
 //! commits to the whole input and each part is checked on its own as it is
@@ -36,6 +37,7 @@
 //! is missing, the request stays pending.
 
 mod attached;
+mod envelopes;
 
 use getrandom::SysRng;
 use oneiron_crypto::{
@@ -110,8 +112,9 @@ pub(crate) struct InputBinding<'a> {
 }
 
 impl InputBinding<'_> {
-    /// The envelope key id: a label, then a digest of every bound field,
-    /// within the envelope's 64-byte id.
+    /// A one-envelope input's key id: a label, then a digest of every bound
+    /// field, within the envelope's 64-byte id. A numbered envelope's adds
+    /// its place (`envelopes`).
     fn key_id(&self) -> Vec<u8> {
         let mut hasher = blake3::Hasher::new();
         hasher.update(BINDING_DOMAIN);
@@ -135,11 +138,22 @@ impl InputBinding<'_> {
     }
 
     /// Seals `body` to the holder's `key` under this binding: the input's
-    /// envelope bytes. An envelope past one row's bound is carried, in
-    /// numbered parts, never refused for its length (FIX 5445): only the
-    /// envelope codec's own bound on one plaintext refuses.
+    /// bytes. A body that fits one envelope seals as one, the form an input
+    /// has always had; a longer one as numbered envelopes in one frame
+    /// (FIX 5521, `envelopes`). Either is carried past one row's bound in
+    /// numbered parts (FIX 5445). Nothing refuses its length but the codec
+    /// bounds of one envelope and of the frame.
     pub(crate) fn seal(&self, key: &HybridPublicKey, body: &[u8]) -> Result<Vec<u8>> {
-        let key_id = self.key_id();
+        if envelopes::fits_one(body) {
+            self.seal_one(key, body, &self.key_id())
+        } else {
+            self.seal_numbered(key, body)
+        }
+    }
+
+    /// Seals `body`, within one envelope's bound, to the holder's `key` as
+    /// one envelope under `key_id`.
+    fn seal_one(&self, key: &HybridPublicKey, body: &[u8], key_id: &[u8]) -> Result<Vec<u8>> {
         let recipient = WrapRecipient::Machine(self.holder).envelope_recipient();
         let mut payload = Zeroizing::new(Vec::with_capacity(INPUT_LABEL.len() + body.len()));
         payload.extend_from_slice(INPUT_LABEL);
@@ -148,7 +162,7 @@ impl InputBinding<'_> {
             suite: AEAD,
             purpose: Purpose::SecretFile,
             epoch: EPOCH,
-            key_id: &key_id,
+            key_id,
             recipient: &recipient,
             vault_id: &self.vault_id,
         };
@@ -165,27 +179,38 @@ impl InputBinding<'_> {
         .map_err(|_| refused("sealing the custody input to its holder failed"))
     }
 
-    /// The body `envelope` holds, opened with the holder's `secret` under
-    /// this binding. `None` when `secret` is not the holder's, the envelope
-    /// does not parse under its codec, or it was sealed to another key or
-    /// under another binding. Its length past one row's bound is no reason:
-    /// such an envelope comes joined from its parts (FIX 5445).
-    pub(crate) fn open(
-        &self,
-        envelope: &[u8],
-        secret: &MachineSecret,
-    ) -> Option<Zeroizing<Vec<u8>>> {
+    /// The body `input` holds, opened with the holder's `secret` under this
+    /// binding: one envelope, or every numbered envelope of a frame, each
+    /// opened and verified at its place before the body is joined (FIX
+    /// 5521). `None` when `secret` is not the holder's, an envelope does not
+    /// parse under its codec, or one was sealed to another key, under
+    /// another binding or at another place. Its length past one row's bound
+    /// is no reason: such an input comes joined from its parts (FIX 5445).
+    pub(crate) fn open(&self, input: &[u8], secret: &MachineSecret) -> Option<Zeroizing<Vec<u8>>> {
         if secret.machine != self.holder {
             return None;
         }
+        match envelopes::numbered_frame(input) {
+            Some(frame) => self.open_numbered(frame, secret),
+            None => self.open_one(input, secret, &self.key_id()),
+        }
+    }
+
+    /// The body one `envelope` holds, opened with the holder's `secret`
+    /// under `key_id`.
+    fn open_one(
+        &self,
+        envelope: &[u8],
+        secret: &MachineSecret,
+        key_id: &[u8],
+    ) -> Option<Zeroizing<Vec<u8>>> {
         let envelope = Envelope::parse(envelope).ok()?;
-        let key_id = self.key_id();
         let recipient = WrapRecipient::Machine(self.holder).envelope_recipient();
         let policy = OpenPolicy {
             purpose: Purpose::SecretFile,
             vault_id: &self.vault_id,
             recipient: &recipient,
-            key_id: &key_id,
+            key_id,
             wraps: &[WrapType::HybridCapsule],
             aead_suites: &[AEAD],
             kem_suites: &[KEM],

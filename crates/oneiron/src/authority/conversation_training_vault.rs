@@ -247,6 +247,19 @@ impl Vault {
         self.setting_view_in_txn(&txn, &fold)
     }
 
+    /// The vault's setting as the vault itself reads it, for the status its
+    /// host reports to a supervisor (FIX 5575): one read transaction, no
+    /// person, no act and no writer. It grants nothing, and the reader rule
+    /// above still decides who reads it through a door.
+    ///
+    /// # Errors
+    /// Storage faults, and history this vault lacks, as the fold reads them.
+    pub fn conversation_learning_status(&self) -> Result<ConversationLearningView> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        self.setting_view_in_txn(&txn, &fold)
+    }
+
     /// The vault's admin sets the vault's training setting from `surface`
     /// (audit only): `on`, and whether people may opt out
     /// (`allow_opt_out`). `seen` is the revision their surface showed them
@@ -336,6 +349,9 @@ impl Vault {
         }
         let view = self.setting_view_in_txn(&txn, &after)?;
         txn.commit()?;
+        // Its watchers re-read it now: a managed host reports it to its
+        // supervisor (FIX 5575).
+        self.store.notify_proactivity_changes();
         Ok(view)
     }
 

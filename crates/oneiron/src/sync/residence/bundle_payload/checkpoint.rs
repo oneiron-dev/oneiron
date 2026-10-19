@@ -134,8 +134,8 @@ pub(super) fn adopt(
         },
     };
     let root = seed.public(vault_id)?;
-    if matches!(confirm, Some(KitConfirmation::Fingerprint(id)) if id != root.id) {
-        return Err(refused("the fingerprint is not this seed's root"));
+    if let Some(confirm) = confirm {
+        confirm.check(root.id)?;
     }
     if !seed.authenticated() && confirm.is_none() {
         return Err(refused(
