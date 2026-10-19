@@ -44,9 +44,7 @@ impl GraphFsResolver<'_, '_> {
             .map(|hit| hit.id)
             .collect();
         let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
-        let projection = self
-            .scoped_read
-            .read(&reads, Some(&hits.receipt.applied.as_filter()))?;
+        let projection = self.file_rows(&reads, Some(&hits.receipt.applied.as_filter()))?;
         let mut receipt = hits.receipt;
         receipt.restrict_with(&projection.receipt);
         let mut out = CommandOutputBuilder::new(self.options);

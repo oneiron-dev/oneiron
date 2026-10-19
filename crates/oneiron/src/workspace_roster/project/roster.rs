@@ -42,12 +42,63 @@ impl Memory<'_> {
         project: EntityId,
         record: &ProjectRecord,
     ) -> MemoryResult<ProjectRosterWriteOutcome> {
+        self.write_project_roster(project, record, None)
+    }
+
+    /// Reset shared project access through the signed project write door. The
+    /// named Admin power does not replace a project authority proof.
+    pub fn projects_reset_access(
+        &self,
+        vault_id: u64,
+        project: EntityId,
+        record: &ProjectRecord,
+    ) -> MemoryResult<ProjectRosterWriteOutcome> {
+        self.write_project_roster(project, record, Some(vault_id))
+    }
+
+    fn write_project_roster(
+        &self,
+        project: EntityId,
+        record: &ProjectRecord,
+        reset_vault: Option<u64>,
+    ) -> MemoryResult<ProjectRosterWriteOutcome> {
         let vault = self.vault();
         let caller = WriteActor::new(self.actor(), self.actor_class());
-        let written = self.with_verified_actor_write_txn(|txn| {
-            let (_, before) = vault
+        let written = vault.write_txn_door(crate::store::Callback::Audited, |txn| {
+            if let Some(vault_id) = reset_vault {
+                if vault
+                    .shared_vault_creation_in_txn(txn)?
+                    .is_none_or(|creation| creation.vault_id != vault_id)
+                    || super::root_project_in(&vault.store, txn)? == Some(project)
+                {
+                    return Err(Error::InvalidConfig(
+                        "reset requires a non-root shared project".into(),
+                    ).into());
+                }
+                vault.authorize_shared_vault_write_in_txn(
+                    txn,
+                    vault_id,
+                    &caller,
+                    &crate::federation::SharedVaultWrite::Admin(
+                        crate::federation::OrgAdminPower::ResetSharedProjectAccess,
+                    ),
+                )?;
+            } else {
+                self.verify_actor_write_in_txn(txn)?;
+            }
+            let (stored, before) = vault
                 .effective_project_in_txn(txn, project)?
                 .ok_or(Error::EntityNotFound)?;
+            if reset_vault.is_some() {
+                let mut permitted = stored;
+                permitted.roster = record.roster.clone();
+                permitted.write_proof = record.write_proof.clone();
+                if permitted != *record {
+                    return Err(Error::InvalidConfig(
+                        "reset changes only the signed access roster".into(),
+                    ).into());
+                }
+            }
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             let outcome = vault.write_project_in_txn(txn, project, record, now)?;
             let mut invitations = Vec::new();
@@ -71,7 +122,7 @@ impl Memory<'_> {
                         )?;
                 }
             }
-            Ok(ProjectRosterWriteOutcome {
+            Ok::<_, crate::memory::MemoryError>(ProjectRosterWriteOutcome {
                 installed: matches!(outcome, ProjectWriteOutcome::Installed(_)),
                 invitations,
             })

@@ -8,6 +8,13 @@ use axum::http::HeaderMap;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::IntoResponse;
 use axum::response::Json;
+use oneiron::blob_artifact::DeckProposeRejection;
+use oneiron::edit_settle::PendingProposalView;
+use oneiron::task_verb::sdk::{
+    CourtesyDeleteAnswerRequest, CourtesyDeleteIncoming, CourtesyDeleteSendRequest,
+    CourtesyDeleteSent,
+};
+use oneiron_contracts::code_run::vault_read::request_schema;
 use serde_json::Value;
 use serde_json::json;
 use std::sync::Arc;
@@ -106,8 +113,11 @@ pub(crate) fn openapi_document() -> Value {
     super::owner_paths::merge_owner_paths(&mut spec);
     super::owner_paths::merge_left_slip_paths(&mut spec);
     super::facade_paths::merge_facade_paths(&mut spec);
+    super::openai_proxy_paths::merge_openai_proxy_paths(&mut spec);
     super::anonymous_chat_paths::merge_anonymous_chat_paths(&mut spec);
+    super::signing_paths::merge_signing_paths(&mut spec);
     super::voice_bank_paths::merge_voice_bank_paths(&mut spec);
+    merge_typed_rest_bodies(&mut spec);
     add_security_scheme(&mut spec);
     mark_entity_response_as_binary(&mut spec);
     fill_schema_description_gaps(&mut spec);
@@ -211,6 +221,113 @@ pub(crate) fn merge_booking_components(spec: &mut Value) {
         oneiron::booking::agent_api::BOOKING_AGENT_INSTRUCTIONS_MIME,
         "BookingAgentInstructionsBlock",
     );
+}
+
+// -------------------------------------------------------------------------
+// FIX 3140, FIX 4485: typed REST bodies
+//
+// The courtesy-delete owner routes and the deck proposal route read and write
+// the engine's own SDK types, which derive `JsonSchema` and carry no utoipa
+// `ToSchema`. Their bodies and answers are bound here from those types, after
+// the owner table wrote its generic operations, so the REST document names
+// the same shapes the `vault.courtesy_delete.*` and
+// `vault.artifacts.propose_deck` rows take and answer, with no second set of
+// server-side DTOs.
+// -------------------------------------------------------------------------
+const DECK_PROPOSALS_PATH: &str = "/v1/core/artifacts/{artifact}/deck/proposals";
+
+pub(crate) fn merge_typed_rest_bodies(spec: &mut Value) {
+    let bodies = [
+        (
+            "/v1/owner/courtesy-delete/send",
+            "post",
+            "requestBody",
+            request_schema::<CourtesyDeleteSendRequest>(),
+        ),
+        (
+            "/v1/owner/courtesy-delete/send",
+            "post",
+            "200",
+            request_schema::<CourtesyDeleteSent>(),
+        ),
+        (
+            "/v1/owner/courtesy-delete/sent",
+            "get",
+            "200",
+            request_schema::<Vec<CourtesyDeleteSent>>(),
+        ),
+        (
+            "/v1/owner/courtesy-delete/incoming",
+            "get",
+            "200",
+            request_schema::<Vec<CourtesyDeleteIncoming>>(),
+        ),
+        (
+            "/v1/owner/courtesy-delete/answer",
+            "post",
+            "requestBody",
+            request_schema::<CourtesyDeleteAnswerRequest>(),
+        ),
+        (
+            "/v1/owner/courtesy-delete/answer",
+            "post",
+            "200",
+            request_schema::<CourtesyDeleteIncoming>(),
+        ),
+        (
+            DECK_PROPOSALS_PATH,
+            "post",
+            "requestBody",
+            request_schema::<super::super::blob_artifacts::ProposeDeck>(),
+        ),
+        (
+            DECK_PROPOSALS_PATH,
+            "post",
+            "201",
+            keyed_answer("proposed", request_schema::<PendingProposalView>()),
+        ),
+        (
+            DECK_PROPOSALS_PATH,
+            "post",
+            "422",
+            keyed_answer("rejected", request_schema::<DeckProposeRejection>()),
+        ),
+    ];
+    for (path, method, slot, schema) in bodies {
+        bind_inline_schema(spec, path, method, slot, schema);
+    }
+}
+
+/// An answer that is one object under one key, as the deck route writes
+/// `{proposed}` and `{rejected}`.
+fn keyed_answer(key: &str, schema: Value) -> Value {
+    let mut properties = serde_json::Map::new();
+    properties.insert(key.to_owned(), schema);
+    json!({"type": "object", "required": [key], "properties": properties})
+}
+
+/// Sets the JSON schema of one operation's request body, or of one of its
+/// responses by status, where the operation already declares that JSON
+/// content.
+fn bind_inline_schema(spec: &mut Value, path: &str, method: &str, slot: &str, schema: Value) {
+    let operation = spec
+        .get_mut("paths")
+        .and_then(|paths| paths.get_mut(path))
+        .and_then(|item| item.get_mut(method));
+    let container = if slot == "requestBody" {
+        operation.and_then(|operation| operation.get_mut("requestBody"))
+    } else {
+        operation
+            .and_then(|operation| operation.get_mut("responses"))
+            .and_then(|responses| responses.get_mut(slot))
+    };
+    if let Some(content) = container
+        .and_then(|value| value.get_mut("content"))
+        .and_then(|content| content.get_mut("application/json"))
+        .and_then(Value::as_object_mut)
+    {
+        content.insert("schema".to_owned(), schema);
+    }
 }
 
 // -------------------------------------------------------------------------

@@ -28,7 +28,14 @@
 //! publication, custody control and a root request each add an
 //! `OwnerWorkBody` variant (with its act kind and wire map) and one arm in
 //! [`pickup`]'s dispatch; the request, result, executor pin, receipts and the
-//! drain stay shared.
+//! drain stay shared. A root request names its target install as executor,
+//! exactly ([`super::root_work`]). A bundle publication names the lowest
+//! install that holds every key the bundle seals; its pickup only rechecks,
+//! and the sealed bundle relay publishes (`super::bundle`'s publication). A
+//! custody change names its holder, and a revoke the install that records
+//! it, which enacts it in the same commit (`crate::secret_custody`'s
+//! control); a pickup loads this install's hybrid secret only for the kinds
+//! that read it, so a revoke needs no byte.
 //!
 //! No location, origin or hosted-mode rule reads anything here: the carrier
 //! is any live linked machine the carrier rule admits, and `surface` is audit
@@ -48,13 +55,41 @@ use crate::authority::{
 
 pub use self::pickup::OwnerWorkDrain;
 
-/// Why an act's work names no executor (CALLS OWNER_WORK_NO_EXECUTOR).
+/// Why an act's work names no executor (CALLS OWNER_WORK_NO_EXECUTOR,
+/// ROOT_WORK_EXECUTOR).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OwnerWorkUnassigned {
     /// No install but this one may read the world: nobody can do its key
     /// work until the owner links one or widens the read.
     NoEligibleReader,
+    /// A root change's target is the install the owner asked on: its own
+    /// root door makes the change here.
+    TargetIsRecorder,
+    /// A root change's target, or a publication's home, is not a linked
+    /// install of the vault whose proof key stands here.
+    TargetNotLinked,
+    /// No linked install but the home holds a counted wrap of the current
+    /// key of every world the home's bundle seals (CALLS
+    /// BUNDLE_PUBLISH_EXECUTOR).
+    NoBundleHolder,
+    /// An active custody change names no linked install to hold the
+    /// secret's value (CALLS CUSTODY_EXECUTOR).
+    NoCustodyHolder,
+}
+
+impl OwnerWorkUnassigned {
+    /// The words a surface shows.
+    #[must_use]
+    pub fn text(self) -> &'static str {
+        match self {
+            Self::NoEligibleReader => "no other install may read the world",
+            Self::TargetIsRecorder => "this install is the target; make the change here",
+            Self::TargetNotLinked => "the target is not a linked install",
+            Self::NoBundleHolder => "no install holds every world's key",
+            Self::NoCustodyHolder => "no linked install was named to hold the secret",
+        }
+    }
 }
 
 /// The reason a receipt gives when no install can be named: no request is
@@ -96,7 +131,9 @@ pub struct OwnerWorkReceipt {
     /// install could be named and no request was recorded.
     pub request: Option<String>,
     pub kind: OwnerWorkKind,
-    /// What the work is for: the world.
+    /// What the work is for: the world, the install a root change is for,
+    /// the home a bundle publication is for, or the secret's custody record
+    /// a custody change is for.
     pub target: EntityId,
     /// The one install that is to do it; `None` with no request.
     pub executor: Option<EntityId>,
@@ -107,15 +144,16 @@ pub struct OwnerWorkReceipt {
 }
 
 impl OwnerWorkReceipt {
-    /// No install could be named: nothing was recorded.
-    fn unassigned(kind: OwnerWorkKind, target: EntityId) -> Self {
+    /// No install could be named, for the reason given: nothing was
+    /// recorded.
+    fn unassigned(kind: OwnerWorkKind, target: EntityId, why: OwnerWorkUnassigned) -> Self {
         Self {
             request: None,
             kind,
             target,
             executor: None,
             status: OwnerWorkStatus::RecordedAwaitingHolder,
-            unassigned: Some(OWNER_WORK_NO_EXECUTOR),
+            unassigned: Some(why),
         }
     }
 
@@ -144,11 +182,14 @@ impl OwnerWorkReceipt {
     /// This receipt again from `fold`, when it names a request the fold
     /// holds: what a stored receipt reads as now.
     pub(crate) fn refreshed(self, fold: &AuthorityFold) -> Self {
-        self.request
-            .as_deref()
-            .and_then(parse_entry_hex)
+        self.request_entry()
             .and_then(|request| Self::of(fold, request))
             .unwrap_or(self)
+    }
+
+    /// The request's signed entry; `None` when nothing was recorded.
+    pub(crate) fn request_entry(&self) -> Option<AuthorityEntryHash> {
+        self.request.as_deref().and_then(parse_entry_hex)
     }
 }
 

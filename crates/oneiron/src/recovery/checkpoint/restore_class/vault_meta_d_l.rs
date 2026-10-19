@@ -261,6 +261,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::LINEAR_TASK_WRITER, CONTENT),
     (&t::LINEAR_EFFECT_AUTHORIZED, LIVE),
     (&t::LINEAR_SYNC_LINK, CONTENT),
+    (&t::LLM_BINDING_PROPOSAL, LIVE),
+    (&t::LLM_CATALOG_HEAD, LIVE),
+    (&t::LLM_CATALOG_REVISION, LIVE),
     (&t::LLM_DESCRIPTION_MEASUREMENTS, LIVE),
     (&t::LLM_DESCRIPTION_POLICY, LIVE),
     (&t::LLM_DESCRIPTION_REASK, LIVE),
@@ -275,4 +278,5 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::LLM_ROUTED_SEAT, LIVE),
     (&t::LLM_RUN_SEAT, CONTENT),
     (&t::LLM_SCORE_DIFFS, LIVE),
+    (&t::LLM_TRIAL_CATALOG, LIVE),
 ];

@@ -5,10 +5,10 @@ use std::sync::Arc;
 
 use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
+use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{self, *};
 
-use super::host_doors::{Listed, MaybeListed, internal, owner_proof, refused};
+use super::host_doors::{Listed, MaybeListed, internal, no_hook_sandbox, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -324,6 +324,44 @@ pub(crate) async fn vault_packs_hooks_list(
     .await
 }
 
+/// `vault.packs.hooks.grant.set`: assign a live binding's read grant as
+/// the owner. The engine revalidates the proof and binding in its writer.
+pub(crate) async fn vault_packs_hooks_grant_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: HookGrantSetRequest,
+) -> Listed<HookGrantView> {
+    owner_call(
+        server,
+        auth,
+        "vault.packs.hooks.grant.set",
+        move |server, owner| {
+            let answer = sdk::hook_grant_set_as_owner(server.vault(), owner, &input)?;
+            Ok((answer, vec![input.binding]))
+        },
+    )
+    .await
+}
+
+/// `vault.packs.hooks.grant.get`: read the grant a live binding uses,
+/// including its author's ceiling when no manual assignment stands.
+pub(crate) async fn vault_packs_hooks_grant_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: HookGrantRequest,
+) -> Listed<HookGrantView> {
+    owner_call(
+        server,
+        auth,
+        "vault.packs.hooks.grant.get",
+        move |server, owner| {
+            let answer = sdk::hook_grant_get_as_owner(server.vault(), owner, &input)?;
+            Ok((answer, vec![input.binding]))
+        },
+    )
+    .await
+}
+
 /// Qualification runs the server's real hook sandbox and preserves each
 /// replay (`host_door_lists`). It lists the pack's source row and what each
 /// hook's listing replay lists, as `vault.hooks.replay` does: the binding
@@ -342,15 +380,11 @@ pub(crate) async fn vault_packs_hooks_qualify(
     };
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
-        let Some(runtime) = server.hook_runtime.get().cloned() else {
-            return (
-                Err(MemoryError::new(
-                    MEMORY_CODE_MODEL_UNAVAILABLE,
-                    "no hook sandbox runs on this server",
-                    &["Serve with fact hooks enabled on a build with the code sandbox."],
-                )),
-                Some(Vec::new()),
-            );
+        // The one sandbox, taken here when no runner took it: `--no-hooks`
+        // stops the runner, not an explicit qualification (FIX 1122).
+        let runtime = match crate::commands::hook_sandbox(&server) {
+            Ok(runtime) => runtime,
+            Err(reason) => return (Err(no_hook_sandbox(reason)), Some(Vec::new())),
         };
         match sdk::hub_hooks_qualify_as_owner_listing(
             server.vault(),
