@@ -261,6 +261,13 @@ vaultPacksConnectorUpdate(input: unknown): unknown
 vaultPacksConnectorGrantsGet(input: unknown): unknown
 vaultPacksConnectorGrantsPut(input: unknown): unknown
 vaultPacksRemove(input: unknown): unknown
+vaultPacksSectionsPropose(input: unknown): unknown
+vaultPacksSectionsList(input: unknown): unknown
+vaultPacksSectionsGrant(input: unknown): unknown
+vaultPacksSectionsRevoke(input: unknown): unknown
+vaultPacksSectionsSuggest(input: unknown): unknown
+vaultPacksSectionsSuggestionsGet(input: unknown): unknown
+vaultPacksSectionsSuggestionsSet(input: unknown): unknown
 aiChatCompletions(input: unknown): unknown
 vaultConnectorsProxyAdmit(input: unknown): unknown
 vaultConnectorsProxyRevokeWrite(input: unknown): unknown

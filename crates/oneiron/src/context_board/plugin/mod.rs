@@ -23,6 +23,7 @@
 
 mod admission;
 mod claim;
+mod doors;
 mod codec;
 mod errors;
 mod install;
@@ -44,6 +45,7 @@ pub use self::codec::{
     PluginSuggestionKey, decode_section_manifest, digest_to_hex, encode_section_manifest,
     section_manifest_digest,
 };
+pub use self::doors::{EngineSectionBindings, VaultPluginInstallExecutor, VaultPluginInstallSource};
 pub use self::errors::{PluginResult, PluginSectionError};
 pub use self::install::{PluginInstallOrigin, PluginInstallTarget, ValidatedSectionManifest};
 pub use self::manifest::{

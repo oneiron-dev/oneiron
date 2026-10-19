@@ -192,6 +192,8 @@ pub(crate) use super::vector_doors::*;
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
+// The plugin Context Board section doors (DOOR-112), likewise.
+pub(crate) use super::plugin_section_doors::*;
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;
 pub(crate) use super::critical_confirm_doors::*;
@@ -1358,6 +1360,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.writes.critical_confirm.receipt"
         | "vault.claims.review"
         | "vault.claims.settle"
+        | "vault.packs.sections.grant"
+        | "vault.packs.sections.revoke"
+        | "vault.packs.sections.suggestions.get"
+        | "vault.packs.sections.suggestions.set"
         | "vault.claims.vet"
         | "vault.claims.vetting"
         | "vault.consolidation.promote"

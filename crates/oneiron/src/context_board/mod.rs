@@ -109,6 +109,7 @@ pub use notifications::{
 };
 pub use plugin::{
     AdmittedPluginSection, AuthorityLaneRef, BoardBlockKind, BoardBlockRecord, BoardBlockScope,
+    EngineSectionBindings, VaultPluginInstallExecutor, VaultPluginInstallSource,
     BoardBlockWriteEnvelope, CORE_SECTION_IDS, PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION,
     PLUGIN_PROPOSALS_SECTION_NAME, PREDICATE_PLUGIN_SECTION_INSTALL, PackSectionRegistration,
     PluginInstallClaimPayload, PluginInstallExecutor, PluginInstallOrigin, PluginInstallSource,
