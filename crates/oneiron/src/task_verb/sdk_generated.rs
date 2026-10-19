@@ -1617,6 +1617,58 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.federation.burst.baseline",
+                crate::code_run::vault_read::request_schema::<
+                    crate::sync::federation_burst::FederationBurstPeerRequest,
+                >(),
+            ),
+            (
+                "vault.federation.burst.policy",
+                crate::code_run::vault_read::request_schema::<
+                    crate::sync::federation_burst::FederationBurstPeerRequest,
+                >(),
+            ),
+            (
+                "vault.federation.burst.policy.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::sync::federation_burst::FederationBurstPolicySetRequest,
+                >(),
+            ),
+            (
+                "vault.federation.burst.ingress",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectDelivery>(
+                ),
+            ),
+            (
+                "vault.federation.burst.disposition",
+                crate::code_run::vault_read::request_schema::<
+                    crate::sync::federation_burst::FederationBurstReplayRequest,
+                >(),
+            ),
+            (
+                "vault.federation.burst.review",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.federation.burst.review.release",
+                crate::code_run::vault_read::request_schema::<
+                    crate::sync::federation_burst::FederationBurstReviewRequest,
+                >(),
+            ),
+            (
+                "vault.federation.burst.review.reject",
+                crate::code_run::vault_read::request_schema::<
+                    crate::sync::federation_burst::FederationBurstReviewRequest,
+                >(),
+            ),
+            (
+                "vault.federation.burst.replay",
+                crate::code_run::vault_read::request_schema::<
+                    crate::sync::federation_burst::FederationBurstReplayRequest,
+                >(),
+            ),
+            (
                 "vault.federation.connect.identity",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
                 ),
@@ -3189,6 +3241,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.export",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::CodeExportRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.register",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginRegisterRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.mirror.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginRepoRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.mirror.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginMirrorSetRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.mirror.clear",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginRepoRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.mirror.push",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginRepoRequest,
                 >(),
             ),
             (
@@ -6008,6 +6090,15 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.federation.coreference.confirm",
     "vault.federation.coreference.share_consent",
     "vault.federation.coreference.unlink",
+    "vault.federation.burst.baseline",
+    "vault.federation.burst.policy",
+    "vault.federation.burst.policy.set",
+    "vault.federation.burst.ingress",
+    "vault.federation.burst.disposition",
+    "vault.federation.burst.review",
+    "vault.federation.burst.review.release",
+    "vault.federation.burst.review.reject",
+    "vault.federation.burst.replay",
     "vault.federation.connect.identity",
     "vault.federation.connect.grants.mint",
     "vault.federation.connect.offer",
@@ -6197,6 +6288,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.results.read",
     "vault.results.slice",
     "vault.code.export",
+    "vault.code.origin.register",
+    "vault.code.origin.mirror.get",
+    "vault.code.origin.mirror.set",
+    "vault.code.origin.mirror.clear",
+    "vault.code.origin.mirror.push",
     "vault.code.origin.authority.get",
     "vault.code.origin.authority.set",
     "vault.code.origin.publications",
@@ -7145,6 +7241,33 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.federation.coreference.unlink" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::CoreferenceUnlinkReceipt,
         >(),
+        "vault.federation.burst.baseline" => crate::code_run::vault_read::request_schema::<
+            crate::sync::federation_burst::FederationBurstBaselineState,
+        >(),
+        "vault.federation.burst.policy" => crate::code_run::vault_read::request_schema::<
+            crate::sync::federation_burst::FederationBurstPolicy,
+        >(),
+        "vault.federation.burst.policy.set" => crate::code_run::vault_read::request_schema::<
+            crate::sync::federation_burst::FederationBurstPolicy,
+        >(),
+        "vault.federation.burst.ingress" => crate::code_run::vault_read::request_schema::<
+            crate::sync::federation_burst::FederationBurstReceipt,
+        >(),
+        "vault.federation.burst.disposition" => crate::code_run::vault_read::request_schema::<
+            crate::sync::federation_burst::FederationBurstReceipt,
+        >(),
+        "vault.federation.burst.review" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::sync::federation_burst::FederationBurstReviewBundle>,
+        >(),
+        "vault.federation.burst.review.release" => crate::code_run::vault_read::request_schema::<
+            crate::sync::federation_burst::FederationBurstReviewReceipt,
+        >(),
+        "vault.federation.burst.review.reject" => crate::code_run::vault_read::request_schema::<
+            crate::sync::federation_burst::FederationBurstReviewReceipt,
+        >(),
+        "vault.federation.burst.replay" => crate::code_run::vault_read::request_schema::<
+            crate::sync::federation_burst::FederationBurstReceipt,
+        >(),
         "vault.federation.connect.identity" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectIdentity>()
         }
@@ -7724,6 +7847,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.export" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::CodeExportResult,
         >(),
+        "vault.code.origin.register" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::OriginRegistered,
+        >(),
+        "vault.code.origin.mirror.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::OriginMirrorView,
+        >(),
+        "vault.code.origin.mirror.set" => crate::code_run::vault_read::request_schema::<
+            crate::origin::mirror::OriginMirrorTarget,
+        >(),
+        "vault.code.origin.mirror.clear" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::OriginMirrorCleared,
+        >(),
+        "vault.code.origin.mirror.push" => {
+            crate::code_run::vault_read::request_schema::<crate::origin::mirror::OriginMirrorRun>()
+        }
         "vault.code.origin.authority.get" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::OriginAuthorityView,
         >(),
@@ -10877,6 +11015,63 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.federation.burst.baseline" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.burst.policy" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.burst.policy.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.burst.ingress" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.burst.disposition" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.burst.review" => &[],
+        "vault.federation.burst.review.release" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.burst.review.reject" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.burst.replay" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.federation.connect.identity" => &[],
         "vault.federation.connect.grants.mint" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -12707,6 +12902,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.register" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.mirror.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.mirror.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.mirror.clear" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.mirror.push" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -16896,6 +17126,40 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.federation.coreference.unlink" => {
             let _input: crate::task_verb::sdk::CoreferencePairRequest = decode(value.clone())?;
         }
+        "vault.federation.burst.baseline" => {
+            let _input: crate::sync::federation_burst::FederationBurstPeerRequest =
+                decode(value.clone())?;
+        }
+        "vault.federation.burst.policy" => {
+            let _input: crate::sync::federation_burst::FederationBurstPeerRequest =
+                decode(value.clone())?;
+        }
+        "vault.federation.burst.policy.set" => {
+            let _input: crate::sync::federation_burst::FederationBurstPolicySetRequest =
+                decode(value.clone())?;
+        }
+        "vault.federation.burst.ingress" => {
+            let _input: crate::task_verb::sdk::ConnectDelivery = decode(value.clone())?;
+        }
+        "vault.federation.burst.disposition" => {
+            let _input: crate::sync::federation_burst::FederationBurstReplayRequest =
+                decode(value.clone())?;
+        }
+        "vault.federation.burst.review" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.federation.burst.review.release" => {
+            let _input: crate::sync::federation_burst::FederationBurstReviewRequest =
+                decode(value.clone())?;
+        }
+        "vault.federation.burst.review.reject" => {
+            let _input: crate::sync::federation_burst::FederationBurstReviewRequest =
+                decode(value.clone())?;
+        }
+        "vault.federation.burst.replay" => {
+            let _input: crate::sync::federation_burst::FederationBurstReplayRequest =
+                decode(value.clone())?;
+        }
         "vault.federation.connect.identity" => {
             let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
         }
@@ -17802,6 +18066,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.code.export" => {
             let _input: crate::memory::origin_doors::CodeExportRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.register" => {
+            let _input: crate::memory::origin_doors::OriginRegisterRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.mirror.get" => {
+            let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.mirror.set" => {
+            let _input: crate::memory::origin_doors::OriginMirrorSetRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.origin.mirror.clear" => {
+            let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.mirror.push" => {
+            let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
         }
         "vault.code.origin.authority.get" => {
             let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
@@ -20030,6 +20310,35 @@ pub fn invoke(
         "vault.federation.coreference.unlink" => {
             encode(vault_federation_coreference_unlink(memory, decode(value)?)?)
         }
+        "vault.federation.burst.baseline" => {
+            encode(vault_federation_burst_baseline(memory, decode(value)?)?)
+        }
+        "vault.federation.burst.policy" => {
+            encode(vault_federation_burst_policy(memory, decode(value)?)?)
+        }
+        "vault.federation.burst.policy.set" => {
+            encode(vault_federation_burst_policy_set(memory, decode(value)?)?)
+        }
+        "vault.federation.burst.ingress" => {
+            encode(vault_federation_burst_ingress(memory, decode(value)?)?)
+        }
+        "vault.federation.burst.disposition" => {
+            encode(vault_federation_burst_disposition(memory, decode(value)?)?)
+        }
+        "vault.federation.burst.review" => {
+            encode(vault_federation_burst_review(memory, decode(value)?)?)
+        }
+        "vault.federation.burst.review.release" => encode(vault_federation_burst_review_release(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.federation.burst.review.reject" => encode(vault_federation_burst_review_reject(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.federation.burst.replay" => {
+            encode(vault_federation_burst_replay(memory, decode(value)?)?)
+        }
         "vault.federation.connect.identity" => {
             encode(vault_federation_connect_identity(memory, decode(value)?)?)
         }
@@ -20574,6 +20883,19 @@ pub fn invoke(
         "vault.results.slice" => encode(vault_results_slice(memory, decode(value)?)?),
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.code.export" => encode(vault_code_export(memory, decode(value)?)?),
+        "vault.code.origin.register" => encode(vault_code_origin_register(memory, decode(value)?)?),
+        "vault.code.origin.mirror.get" => {
+            encode(vault_code_origin_mirror_get(memory, decode(value)?)?)
+        }
+        "vault.code.origin.mirror.set" => {
+            encode(vault_code_origin_mirror_set(memory, decode(value)?)?)
+        }
+        "vault.code.origin.mirror.clear" => {
+            encode(vault_code_origin_mirror_clear(memory, decode(value)?)?)
+        }
+        "vault.code.origin.mirror.push" => {
+            encode(vault_code_origin_mirror_push(memory, decode(value)?)?)
+        }
         "vault.code.origin.authority.get" => {
             encode(vault_code_origin_authority_get(memory, decode(value)?)?)
         }
@@ -24193,6 +24515,95 @@ pub fn vault_federation_coreference_unlink(
         input,
     )
 }
+pub fn vault_federation_burst_baseline(
+    memory: &Memory<'_>,
+    input: crate::sync::federation_burst::FederationBurstPeerRequest,
+) -> MemoryResult<crate::sync::federation_burst::FederationBurstBaselineState> {
+    crate::task_verb::sdk::federation_burst_baseline_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.federation.burst.baseline")?,
+        input,
+    )
+}
+pub fn vault_federation_burst_policy(
+    memory: &Memory<'_>,
+    input: crate::sync::federation_burst::FederationBurstPeerRequest,
+) -> MemoryResult<crate::sync::federation_burst::FederationBurstPolicy> {
+    crate::task_verb::sdk::federation_burst_policy_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.federation.burst.policy")?,
+        input,
+    )
+}
+pub fn vault_federation_burst_policy_set(
+    memory: &Memory<'_>,
+    input: crate::sync::federation_burst::FederationBurstPolicySetRequest,
+) -> MemoryResult<crate::sync::federation_burst::FederationBurstPolicy> {
+    crate::task_verb::sdk::set_federation_burst_policy_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.federation.burst.policy.set")?,
+        input,
+    )
+}
+pub fn vault_federation_burst_ingress(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ConnectDelivery,
+) -> MemoryResult<crate::sync::federation_burst::FederationBurstReceipt> {
+    crate::task_verb::sdk::federation_burst_host_only(
+        memory,
+        "vault.federation.burst.ingress",
+        &input,
+    )
+}
+pub fn vault_federation_burst_disposition(
+    memory: &Memory<'_>,
+    input: crate::sync::federation_burst::FederationBurstReplayRequest,
+) -> MemoryResult<crate::sync::federation_burst::FederationBurstReceipt> {
+    crate::task_verb::sdk::federation_burst_host_only(
+        memory,
+        "vault.federation.burst.disposition",
+        &input,
+    )
+}
+pub fn vault_federation_burst_review(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<Vec<crate::sync::federation_burst::FederationBurstReviewBundle>> {
+    crate::task_verb::sdk::federation_burst_reviews_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.federation.burst.review")?,
+    )
+}
+pub fn vault_federation_burst_review_release(
+    memory: &Memory<'_>,
+    input: crate::sync::federation_burst::FederationBurstReviewRequest,
+) -> MemoryResult<crate::sync::federation_burst::FederationBurstReviewReceipt> {
+    crate::task_verb::sdk::release_federation_burst_review_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.federation.burst.review.release")?,
+        input,
+    )
+}
+pub fn vault_federation_burst_review_reject(
+    memory: &Memory<'_>,
+    input: crate::sync::federation_burst::FederationBurstReviewRequest,
+) -> MemoryResult<crate::sync::federation_burst::FederationBurstReviewReceipt> {
+    crate::task_verb::sdk::reject_federation_burst_review_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.federation.burst.review.reject")?,
+        input,
+    )
+}
+pub fn vault_federation_burst_replay(
+    memory: &Memory<'_>,
+    input: crate::sync::federation_burst::FederationBurstReplayRequest,
+) -> MemoryResult<crate::sync::federation_burst::FederationBurstReceipt> {
+    crate::task_verb::sdk::federation_burst_host_only(
+        memory,
+        "vault.federation.burst.replay",
+        &input,
+    )
+}
 pub fn vault_federation_connect_identity(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::EmptyRequest,
@@ -26379,6 +26790,48 @@ pub fn vault_code_export(
     input: crate::memory::origin_doors::CodeExportRequest,
 ) -> MemoryResult<crate::memory::origin_doors::CodeExportResult> {
     memory.code_export_as(&memory.embedded_owner("vault.code.export")?, input)
+}
+pub fn vault_code_origin_register(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginRegisterRequest,
+) -> MemoryResult<crate::memory::origin_doors::OriginRegistered> {
+    memory.origin_register_as(&memory.embedded_owner("vault.code.origin.register")?, input)
+}
+pub fn vault_code_origin_mirror_get(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginRepoRequest,
+) -> MemoryResult<crate::memory::origin_doors::OriginMirrorView> {
+    memory.origin_mirror_get_as(
+        &memory.embedded_owner("vault.code.origin.mirror.get")?,
+        input,
+    )
+}
+pub fn vault_code_origin_mirror_set(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginMirrorSetRequest,
+) -> MemoryResult<crate::origin::mirror::OriginMirrorTarget> {
+    memory.origin_mirror_set_as(
+        &memory.embedded_owner("vault.code.origin.mirror.set")?,
+        input,
+    )
+}
+pub fn vault_code_origin_mirror_clear(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginRepoRequest,
+) -> MemoryResult<crate::memory::origin_doors::OriginMirrorCleared> {
+    memory.origin_mirror_clear_as(
+        &memory.embedded_owner("vault.code.origin.mirror.clear")?,
+        input,
+    )
+}
+pub fn vault_code_origin_mirror_push(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginRepoRequest,
+) -> MemoryResult<crate::origin::mirror::OriginMirrorRun> {
+    memory.origin_mirror_push_as(
+        &memory.embedded_owner("vault.code.origin.mirror.push")?,
+        input,
+    )
 }
 pub fn vault_code_origin_authority_get(
     memory: &Memory<'_>,

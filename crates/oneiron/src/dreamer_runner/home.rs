@@ -118,6 +118,15 @@ impl DreamerRunnerStore<'_> {
         HOME_NODE.get(&self.vault.store, txn, &())
     }
 
+    /// Reads the host's last candidate set as it supplied it; `None` while
+    /// no election has kept one.
+    pub(crate) fn home_candidates_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Option<Vec<DreamerHomeNodeCandidate>>> {
+        HOME_CANDIDATES.get(&self.vault.store, txn, &())
+    }
+
     pub fn home_node_designation(&self) -> Result<Option<DreamerHomeNodeDesignation>> {
         let rtxn = self.vault.store.env.read_txn()?;
         self.home_node_designation_in_txn(&rtxn)

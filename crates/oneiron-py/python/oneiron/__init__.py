@@ -2220,6 +2220,9 @@ class Oneiron:
         def coreference(self) -> "Oneiron._VaultFederationCoreferenceVerbs":
             return Oneiron._VaultFederationCoreferenceVerbs(self._client)
         @property
+        def burst(self) -> "Oneiron._VaultFederationBurstVerbs":
+            return Oneiron._VaultFederationBurstVerbs(self._client)
+        @property
         def connect(self) -> "Oneiron._VaultFederationConnectVerbs":
             return Oneiron._VaultFederationConnectVerbs(self._client)
     class _VaultFederationCoreferenceVerbs:
@@ -2237,6 +2240,48 @@ class Oneiron:
         def unlink(self, spec):
             """The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims."""
             return json.loads(_translate(lambda: self._client.vault_federation_coreference_unlink(json.dumps(spec))))
+    class _VaultFederationBurstVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def baseline(self, spec):
+            """The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_baseline(json.dumps(spec))))
+        @property
+        def policy(self) -> "Oneiron._VaultFederationBurstPolicyVerbs":
+            return Oneiron._VaultFederationBurstPolicyVerbs(self._client)
+        def ingress(self, spec):
+            """The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_ingress(json.dumps(spec))))
+        def disposition(self, spec):
+            """The owner reads an authenticated batch original disposition, named baseline context and current durable replay state."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_disposition(json.dumps(spec))))
+        @property
+        def review(self) -> "Oneiron._VaultFederationBurstReviewVerbs":
+            return Oneiron._VaultFederationBurstReviewVerbs(self._client)
+        def replay(self, spec):
+            """The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_replay(json.dumps(spec))))
+    class _VaultFederationBurstPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner reads one grant-bound peer's relative-burst outcome policy."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_policy(json.dumps(spec))))
+        def set(self, spec):
+            """The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_policy_set(json.dumps(spec))))
+    class _VaultFederationBurstReviewVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner reads retained peer review bundles, coalesced once per peer and kept after replay or rejection."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_review(json.dumps(spec))))
+        def release(self, spec):
+            """The owner releases a bundle's burst hold for current-grant replay without importing evidence or widening authority."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_review_release(json.dumps(spec))))
+        def reject(self, spec):
+            """The owner rejects a bundle's pending batches while retaining its review evidence and terminal dispositions."""
+            return json.loads(_translate(lambda: self._client.vault_federation_burst_review_reject(json.dumps(spec))))
     class _VaultFederationConnectVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3392,12 +3437,33 @@ class Oneiron:
     class _VaultCodeOriginVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def register(self, spec):
+            """Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_register(json.dumps(spec))))
+        @property
+        def mirror(self) -> "Oneiron._VaultCodeOriginMirrorVerbs":
+            return Oneiron._VaultCodeOriginMirrorVerbs(self._client)
         @property
         def authority(self) -> "Oneiron._VaultCodeOriginAuthorityVerbs":
             return Oneiron._VaultCodeOriginAuthorityVerbs(self._client)
         def publications(self, spec):
             """Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_publications(json.dumps(spec))))
+    class _VaultCodeOriginMirrorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_get(json.dumps(spec))))
+        def set(self, spec):
+            """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_set(json.dumps(spec))))
+        def clear(self, spec):
+            """Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_clear(json.dumps(spec))))
+        def push(self, spec):
+            """Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_push(json.dumps(spec))))
     class _VaultCodeOriginAuthorityVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4224,10 +4290,10 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def get(self, spec=None):
-            """The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything."""
+            """The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_home_get(json.dumps({} if spec is None else spec))))
         def pick(self, spec):
-            """The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget."""
+            """The owner picks or clears the node that runs his vault's MACRO consolidation: a signed act every linked machine folds, recorded even for a node unknown here; a stale seen revision refuses. It re-elects this home and moves no job or lease."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_home_pick(json.dumps(spec))))
     class _VaultSieveVerbs:
         def __init__(self, client: _NativeClient) -> None:
