@@ -83,7 +83,14 @@ impl Memory<'_> {
             author_ref: self.actor,
             markdown: markdown.to_owned(),
         })?;
-        let ops = vec![
+        // The NOTE's birth facet: the one a NOTE born in the vault without a
+        // batch facet is born under, the vault's default, while it is a
+        // stored FACET (WILL L11-01). The room places the NOTE there, as base
+        // stamps a NOTE from its `FacetOf`; with none, it stays unplaced.
+        let default = self.vault.default_facet()?;
+        let stored = self.vault.get_entity_type(&default)?;
+        let facet = (stored == Some(crate::registry::ENTITY_TYPE_FACET)).then_some(default);
+        let mut ops = vec![
             BatchOp::Put {
                 id,
                 entity_type: crate::registry::ENTITY_TYPE_NOTE,
@@ -106,7 +113,18 @@ impl Memory<'_> {
                 vad: Vad::NEUTRAL,
             },
         ];
-        let short = session.stage_session_rows(&route, id, occurred, at, &[self.actor], ops)?;
+        let mut needs = vec![self.actor];
+        if let Some(facet) = facet {
+            ops.push(BatchOp::Edge {
+                src: id,
+                kind: EdgeKind::FacetOf,
+                tgt: facet,
+                weight: 1.0,
+                vad: Vad::NEUTRAL,
+            });
+            needs.push(facet);
+        }
+        let short = session.stage_session_rows(&route, id, occurred, at, &needs, ops)?;
         Ok(EntityRefReceipt {
             entity_ref: short,
             id_hex: id.to_hex(),

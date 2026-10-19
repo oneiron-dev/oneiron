@@ -54,6 +54,9 @@ impl ChannelIdentityThreadPin {
 
 /// One selection question.
 pub struct ChannelIdentitySelectionQuery<'a> {
+    /// Selection only selects; the host that keeps this value hands it to
+    /// the send it builds (`OutboundDispatchRequest::send_autonomy`), where
+    /// the Gate's envelope release reads it.
     pub relationship: RelationshipContext,
     /// Every scope key that applies right now. Order does not matter.
     pub applicable_scopes: &'a [SelectionRuleScope],

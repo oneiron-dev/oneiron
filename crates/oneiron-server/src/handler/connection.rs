@@ -851,6 +851,7 @@ async fn handle_connection(
     // engine's drain go, so no worker stops under one.
     drop(transport);
     while verb_calls.join_next().await.is_some() {}
+    conn_state.closed(server.vault());
     tracing::info!(conn_id, "connection closed");
 }
 

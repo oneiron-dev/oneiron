@@ -2573,7 +2573,7 @@ declare namespace Sdk {
   type ModelRouteReplace = { slot: ModelSlot; route: ModelLocality };
   type ModelRoleRead = { role: ModelRole };
   type ModelRoleReceipt = { role: ModelRole; model: ModelId; revision: string; provider: string; slot: ModelSlot; tier: ModelTierRef; route: ModelLocality; catalog_revision?: string | null };
-  type CallPurpose = "extraction" | "consolidation" | "answer_gen" | "auto_check" | "tool_routing" | "voice" | "eval" | { other: { name: string } };
+  type CallPurpose = "extraction" | "consolidation" | "answer_gen" | "auto_check" | "tool_routing" | "voice" | "eval" | "autonomy.for_human" | "autonomy.own_time" | { other: { name: string } };
   type DeterministicFallback = { name: string; config?: unknown | null };
   type CallClass = { kind: "durable"; fallback: DeterministicFallback } | { kind: "best_effort" };
   type TierPrecedence = { per_seat?: ModelTierRef | null; vault_policy?: ModelTierRef | null; purpose_default?: ModelTierRef | null; global_default: ModelTierRef; seat?: ModelTierRef | null };
@@ -3238,7 +3238,7 @@ declare namespace Sdk {
   type ConsolidationLineageRequest = { job_ref: string; from_step?: string | null; limit?: number | null };
   type ConsolidationTryView = { job_ref: string; kind: string; state: AttemptState; run_id?: string | null; parent_attempt?: string | null; retry_of?: string | null; folded_retries: number; attempt_count: number; lease_owner?: string | null; result_ref?: string | null; resume_point?: AttemptResumePoint | null; parked?: DreamerParkedAttemptView | null };
   type ConsolidationStepRef = { step_hash: string; claim_ref: EntityId };
-  type ConsolidationLineageView = { job_ref: string; tries: ConsolidationTryView[]; chain_complete: boolean; steps: ConsolidationStepRef[]; next_step?: string | null };
+  type ConsolidationLineageView = { job_ref: string; tries: ConsolidationTryView[]; chain_complete: boolean; latest_job_ref?: string | null; steps: ConsolidationStepRef[]; next_step?: string | null };
   type EvidenceKind = "turn" | "message" | "note" | "asset_text" | "import_record";
   type CursorSpan = { start: number[]; end: number[] };
   type EvidenceRef = { kind: EvidenceKind; entity: string; doc: string; at: number[]; span?: CursorSpan | null; quote_sha256?: number[] | null };

@@ -130,5 +130,6 @@ fn send(address: &str, channel: &str, identity: Option<EntityId>) -> ExternalEff
         has_opted_in: false,
         has_permission: false,
         policy_risk: ExternalEffectPolicyRisk::default(),
+        send_autonomy: None,
     }
 }
