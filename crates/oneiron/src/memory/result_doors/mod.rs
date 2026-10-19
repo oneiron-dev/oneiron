@@ -42,7 +42,7 @@ impl Memory<'_> {
             return Ok(true);
         };
         let txn = self.vault.store.env.read_txn()?;
-        let kept = crate::settings::device_local_worlds_at(self.vault, &txn, self.locality())?;
+        let kept = crate::settings::device_local_worlds_for(self.vault, &txn, self.destination())?;
         for row in rows {
             if crate::settings::device_local_keeps_among(&self.vault.store, &txn, &kept, row)? {
                 return Ok(true);
