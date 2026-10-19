@@ -44,7 +44,9 @@
 
 mod authoring;
 mod cohort;
+pub(super) use cohort::cohort_in_txn as cohort_for_offer_in_txn;
 mod cut_audit;
+pub mod doors;
 mod sufficiency;
 
 use std::collections::BTreeSet;
@@ -143,7 +145,7 @@ pub enum FamilyPurpose {
 /// The records that share a source, and what their rows are for. A family is
 /// never re-purposed; retirement is read from its cohort
 /// ([`Vault::eval_family_feeds_training`]).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SourceFamily {
     pub id: EntityId,
@@ -157,7 +159,7 @@ pub struct SourceFamily {
 }
 
 /// How a case came from its sources.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DerivationKind {
     /// A past task picked from receipts as it ran.
@@ -192,7 +194,7 @@ impl EvalLabelKind {
 
 /// One dated, weighted label on a case. `reference` names the outcome fact,
 /// ask or audit it came from.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalLabel {
     pub kind: EvalLabelKind,
@@ -204,7 +206,7 @@ pub struct EvalLabel {
 
 /// What the eval-authoring skill proposes to record. The family is not part
 /// of it: it is inherited from the roots and parents.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalCaseDraft {
     pub seat: EvalSeat,
@@ -222,7 +224,7 @@ pub struct EvalCaseDraft {
 }
 
 /// A case in the derivation ledger.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalCase {
     pub id: EntityId,
@@ -397,57 +399,7 @@ impl Vault {
         purpose: FamilyPurpose,
         at: u64,
     ) -> Result<SourceFamily> {
-        if roots.is_empty() || roots.len() > MAX_ROOTS {
-            return Err(invalid("an eval family needs 1..=256 source roots"));
-        }
-        for root in roots {
-            bounded_ref(root)?;
-        }
-        self.with_write_txn_grouped(|txn| {
-            let mut known = BTreeSet::new();
-            for root in roots {
-                if let Some(raw) = self.store.vault_meta.get(txn, &root_key(seat, root)?)? {
-                    known.insert(id_of(&raw)?);
-                }
-            }
-            if known.len() > 1 {
-                return Err(invalid(
-                    "these roots already belong to different eval families",
-                ));
-            }
-            let mut family = match known.first() {
-                Some(id) => family_in_txn(self, txn, id)?.ok_or(Error::CorruptedIndex(LABEL))?,
-                None => SourceFamily {
-                    id: self.store.clock.entity_id()?,
-                    seat: seat.clone(),
-                    purpose,
-                    roots: BTreeSet::new(),
-                    assigned_at: at,
-                },
-            };
-            if family.purpose != purpose || &family.seat != seat {
-                return Err(invalid("an eval family keeps the purpose it was assigned"));
-            }
-            if family.roots.len() + roots.difference(&family.roots).count() > MAX_ROOTS {
-                return Err(invalid("an eval family holds at most 256 source roots"));
-            }
-            let fresh: Vec<String> = roots.difference(&family.roots).cloned().collect();
-            if fresh.is_empty() {
-                return Ok(family);
-            }
-            for root in &fresh {
-                self.store
-                    .vault_meta
-                    .put(txn, &root_key(seat, root)?, family.id.as_bytes())?;
-            }
-            family.roots.extend(fresh);
-            self.store.vault_meta.put(
-                txn,
-                &[FAMILY_PREFIX, family.id.as_bytes()].concat(),
-                &encode(&family)?,
-            )?;
-            Ok(family)
-        })
+        self.with_write_txn_grouped(|txn| assign_family_in_txn(self, txn, seat, roots, purpose, at))
     }
 
     /// The family `root` belongs to for `seat`, if assigned.
@@ -470,69 +422,7 @@ impl Vault {
     /// Unbounded references, an unassigned receipt, lineage that spans
     /// families or seats, an invalid draw probability, or storage errors.
     pub fn record_eval_case(&self, draft: &EvalCaseDraft, at: u64) -> Result<EvalCase> {
-        if (draft.receipts.is_empty() && draft.parents.is_empty())
-            || draft.receipts.len() > MAX_ROOTS
-            || draft.parents.len() > MAX_PARENTS
-        {
-            return Err(invalid(
-                "an eval case names 1..=256 receipts or 1..=64 parents",
-            ));
-        }
-        for receipt in &draft.receipts {
-            bounded_ref(receipt)?;
-        }
-        if draft
-            .stratum
-            .as_ref()
-            .is_some_and(|stratum| stratum.trim().is_empty() || stratum.len() > MAX_NAME_BYTES)
-            || draft
-                .draw_probability
-                .is_some_and(|p| !p.is_finite() || p <= 0.0 || p > 1.0)
-        {
-            return Err(invalid(
-                "an eval case stratum or draw probability is invalid",
-            ));
-        }
-        self.with_write_txn_grouped(|txn| {
-            let mut families = BTreeSet::new();
-            for receipt in &draft.receipts {
-                let raw = self
-                    .store
-                    .vault_meta
-                    .get(txn, &root_key(&draft.seat, receipt)?)?
-                    .ok_or(invalid(
-                        "assign the receipt's family before deriving a case from it",
-                    ))?;
-                families.insert(id_of(&raw)?);
-            }
-            for parent in &draft.parents {
-                let parent = case_in_txn(self, txn, parent)?
-                    .ok_or(invalid("an eval case parent is not in the ledger"))?;
-                if parent.seat != draft.seat {
-                    return Err(invalid("an eval case cannot derive across seats"));
-                }
-                families.insert(parent.family);
-            }
-            if families.len() != 1 {
-                return Err(invalid("an eval case's lineage spans more than one family"));
-            }
-            let family = families.pop_first().ok_or(Error::CorruptedIndex(LABEL))?;
-            let mut case = EvalCase {
-                id: self.store.clock.entity_id()?,
-                family,
-                seat: draft.seat.clone(),
-                kind: draft.kind,
-                receipts: draft.receipts.clone(),
-                parents: draft.parents.clone(),
-                stratum: draft.stratum.clone(),
-                draw_probability: draft.draw_probability,
-                source_at: draft.source_at,
-                recorded_at: at,
-                labels: Vec::new(),
-            };
-            put_case_in_txn(self, txn, &mut case)?;
-            Ok(case)
-        })
+        self.with_write_txn_grouped(|txn| record_case_in_txn(self, txn, draft, at))
     }
 
     /// Attach an outcome, audit or judge label to a case. An owner's pick
@@ -591,6 +481,135 @@ impl Vault {
         let family = family_in_txn(self, &txn, family)?.ok_or(Error::EntityNotFound)?;
         Ok(family.purpose == FamilyPurpose::Development)
     }
+}
+
+fn assign_family_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    seat: &EvalSeat,
+    roots: &BTreeSet<String>,
+    purpose: FamilyPurpose,
+    at: u64,
+) -> Result<SourceFamily> {
+    if roots.is_empty() || roots.len() > MAX_ROOTS {
+        return Err(invalid("an eval family needs 1..=256 source roots"));
+    }
+    for root in roots {
+        bounded_ref(root)?;
+    }
+    let mut known = BTreeSet::new();
+    for root in roots {
+        if let Some(raw) = vault.store.vault_meta.get(txn, &root_key(seat, root)?)? {
+            known.insert(id_of(&raw)?);
+        }
+    }
+    if known.len() > 1 {
+        return Err(invalid(
+            "these roots already belong to different eval families",
+        ));
+    }
+    let mut family = match known.first() {
+        Some(id) => family_in_txn(vault, txn, id)?.ok_or(Error::CorruptedIndex(LABEL))?,
+        None => SourceFamily {
+            id: vault.store.clock.entity_id()?,
+            seat: seat.clone(),
+            purpose,
+            roots: BTreeSet::new(),
+            assigned_at: at,
+        },
+    };
+    if family.purpose != purpose || &family.seat != seat {
+        return Err(invalid("an eval family keeps the purpose it was assigned"));
+    }
+    if family.roots.len() + roots.difference(&family.roots).count() > MAX_ROOTS {
+        return Err(invalid("an eval family holds at most 256 source roots"));
+    }
+    let fresh: Vec<String> = roots.difference(&family.roots).cloned().collect();
+    if fresh.is_empty() {
+        return Ok(family);
+    }
+    for root in &fresh {
+        vault
+            .store
+            .vault_meta
+            .put(txn, &root_key(seat, root)?, family.id.as_bytes())?;
+    }
+    family.roots.extend(fresh);
+    vault.store.vault_meta.put(
+        txn,
+        &[FAMILY_PREFIX, family.id.as_bytes()].concat(),
+        &encode(&family)?,
+    )?;
+    Ok(family)
+}
+
+fn record_case_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    draft: &EvalCaseDraft,
+    at: u64,
+) -> Result<EvalCase> {
+    if (draft.receipts.is_empty() && draft.parents.is_empty())
+        || draft.receipts.len() > MAX_ROOTS
+        || draft.parents.len() > MAX_PARENTS
+    {
+        return Err(invalid(
+            "an eval case names 1..=256 receipts or 1..=64 parents",
+        ));
+    }
+    for receipt in &draft.receipts {
+        bounded_ref(receipt)?;
+    }
+    if draft
+        .stratum
+        .as_ref()
+        .is_some_and(|stratum| stratum.trim().is_empty() || stratum.len() > MAX_NAME_BYTES)
+        || draft
+            .draw_probability
+            .is_some_and(|p| !p.is_finite() || p <= 0.0 || p > 1.0)
+    {
+        return Err(invalid(
+            "an eval case stratum or draw probability is invalid",
+        ));
+    }
+    let mut families = BTreeSet::new();
+    for receipt in &draft.receipts {
+        let raw = vault
+            .store
+            .vault_meta
+            .get(txn, &root_key(&draft.seat, receipt)?)?
+            .ok_or(invalid(
+                "assign the receipt's family before deriving a case from it",
+            ))?;
+        families.insert(id_of(&raw)?);
+    }
+    for parent in &draft.parents {
+        let parent = case_in_txn(vault, txn, parent)?
+            .ok_or(invalid("an eval case parent is not in the ledger"))?;
+        if parent.seat != draft.seat {
+            return Err(invalid("an eval case cannot derive across seats"));
+        }
+        families.insert(parent.family);
+    }
+    if families.len() != 1 {
+        return Err(invalid("an eval case's lineage spans more than one family"));
+    }
+    let family = families.pop_first().ok_or(Error::CorruptedIndex(LABEL))?;
+    let mut case = EvalCase {
+        id: vault.store.clock.entity_id()?,
+        family,
+        seat: draft.seat.clone(),
+        kind: draft.kind,
+        receipts: draft.receipts.clone(),
+        parents: draft.parents.clone(),
+        stratum: draft.stratum.clone(),
+        draw_probability: draft.draw_probability,
+        source_at: draft.source_at,
+        recorded_at: at,
+        labels: Vec::new(),
+    };
+    put_case_in_txn(vault, txn, &mut case)?;
+    Ok(case)
 }
 
 pub(super) fn append_label_in_txn(

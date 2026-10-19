@@ -6,7 +6,8 @@ use crate::error::{Error, Result};
 use crate::pipeline::{RetrievalWithTelemetry, ScoredEntity};
 use crate::store::{
     GateDecisionRecord, PendingGateConsentGroup, PendingGateConsentRecord, RetrievalAction,
-    RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry, RetrievalBlendWeights,
+    RetrievalBlendSignal, RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry,
+    RetrievalBlendWeights,
     RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalPolicyPins,
     RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalScoreComponent,
     RetrievalSignal, RetrievalTrace, RetrievalTraceForkHash,
@@ -362,6 +363,16 @@ impl Vault {
         pins: RetrievalPolicyPins,
     ) -> Result<RetrievalBlendWeightTableEntry> {
         self.store.put_retrieval_policy_pins(pins)
+    }
+
+    /// Sets one owner retrieval-policy pin, or clears it when `value` is
+    /// absent, merging inside the store's write transaction.
+    pub fn put_retrieval_policy_pin(
+        &self,
+        signal: RetrievalBlendSignal,
+        value: Option<f32>,
+    ) -> Result<RetrievalBlendWeightTableEntry> {
+        self.store.put_retrieval_policy_pin(signal, value)
     }
 
     /// Trains a retrieval-policy candidate from gated outcomes without

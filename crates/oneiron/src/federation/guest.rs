@@ -45,7 +45,9 @@ const KEY_GUEST_SIGNATURE: &str = GUEST_SHARE_ENVELOPE_KEYS[1];
 /// Membership lists, authority rosters, topology summaries, and counts are not
 /// representable in this body. Callers must place only selector-filtered,
 /// redacted update bytes in `update`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct GuestShareEnvelopeBody {
     /// Shared-vault scope for the guest share.
     pub scope: FederationGrantScope,
@@ -80,7 +82,9 @@ impl GuestShareEnvelopeBody {
 }
 
 /// Signed guest-share envelope.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct GuestShareEnvelope {
     /// Body that was signed.
     pub body: GuestShareEnvelopeBody,

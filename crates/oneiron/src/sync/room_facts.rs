@@ -34,6 +34,9 @@
 //! - Every export, and the erase sweep, drops each row of a room this vault
 //!   deleted or of a thread it erased.
 
+mod erased;
+pub(crate) use erased::erase_carried_actors;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use loro::event::MapDelta;
@@ -298,10 +301,13 @@ pub(crate) fn mirror_room_facts(
     let map = doc.get_map(ROOM_FACTS_MAP);
     let mut wrote = false;
     let mut seen = BTreeSet::new();
+    // FIX 4227: a window copy naming an actor this vault erased waits for
+    // the export scrub, which pins the window history-free first.
+    let rtxn = vault.store.env.read_txn()?;
     for row in &rows {
         let bytes = encode(row)?;
         let key = carrier_key(row, &bytes);
-        if !seen.insert(key.clone()) {
+        if !seen.insert(key.clone()) || erased::copy_names_erased(vault, &rtxn, &map, &key)? {
             continue;
         }
         if is_shared(&key) {
@@ -321,7 +327,9 @@ pub(crate) fn mirror_room_facts(
         wrote = true;
     }
     for cleared in ours {
-        if map_contains_binary(&map, &cleared) {
+        if map_contains_binary(&map, &cleared)
+            && !erased::copy_names_erased(vault, &rtxn, &map, &cleared)?
+        {
             map_delete(&map, &cleared)?;
             wrote = true;
         }
@@ -652,10 +660,12 @@ fn logged(window: &str, key: &str, merge: SideMerge) -> usize {
 /// Drops from `doc` every side row of a room this vault deleted, or of a
 /// thread it erased: erase wins over every side row, and an erased room's
 /// rows stop riding its window. A row of a room this vault holds no record
-/// of stays. A live doc keeps the old rows in its history, so `pin` names
-/// the window pinned history-free before any row goes, as
-/// `room_turns::scrub_deleted_room_turns` does; the sweep, whose shallow cut
-/// drops that history, passes `None`. Returns whether a row went, committed.
+/// of stays. A row that names an actor this vault erased is rewritten
+/// naming no one, or goes (FIX 4227, 4228). A live doc keeps the old rows
+/// in its history, so `pin` names the window pinned history-free before
+/// any row goes, as `room_turns::scrub_deleted_room_turns` does; the sweep,
+/// whose shallow cut drops that history, passes `None`. Returns whether a
+/// row went or changed, committed.
 pub(crate) fn scrub_room_facts(
     vault: &Vault,
     doc: &LoroDoc,
@@ -673,7 +683,7 @@ pub(crate) fn scrub_room_facts(
             places.push((map_key.to_owned(), place));
         }
     });
-    let gone = {
+    let (gone, named) = {
         let rtxn = vault.store.env.read_txn()?;
         let mut removed = BTreeMap::new();
         let mut gone = Vec::new();
@@ -693,9 +703,10 @@ pub(crate) fn scrub_room_facts(
                 gone.push(map_key);
             }
         }
-        gone
+        let named = erased::erased_rows(vault, &rtxn, &map)?;
+        (gone, named)
     };
-    if gone.is_empty() {
+    if gone.is_empty() && named.is_empty() {
         return Ok(false);
     }
     if let Some(key) = pin {
@@ -703,6 +714,13 @@ pub(crate) fn scrub_room_facts(
     }
     for map_key in &gone {
         map_delete(&map, map_key)?;
+    }
+    for (map_key, bytes) in &named {
+        match bytes {
+            _ if gone.contains(map_key) => {}
+            None => map_delete(&map, map_key)?,
+            Some(bytes) => map_insert_bytes(&map, map_key, bytes)?,
+        }
     }
     doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     Ok(true)

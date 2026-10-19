@@ -83,6 +83,21 @@ impl PipelineBuilder<'_> {
                 None
             };
             let pair = media_space_floors(&floors, &space, kind);
+            if let Some(embedding_kind) =
+                crate::embed::media_vector_kind_in_txn(&self.read, rtxn, &space, &scored.id)?
+            {
+                evidence.matches.entry(scored.id).or_default().push(
+                    crate::embed::EmbeddingMatchEvidence {
+                        space: space.id.clone(),
+                        embedding_kind,
+                        query_kind: query.query_kind,
+                        score: scored.score,
+                        floor: pair.floor,
+                        strong: pair.strong,
+                        matched: scored.score.is_finite() && scored.score >= pair.floor,
+                    },
+                );
+            }
             if scored.score.is_finite() && scored.score >= pair.floor {
                 evidence.kept.insert(scored.id);
             } else {

@@ -183,7 +183,7 @@ pub struct WaitingDecision {
 }
 
 /// One owner-label question about one case, put because a decision waits.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalLabelAsk {
     pub id: EntityId,

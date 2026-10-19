@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use heed::RoTxn;
+use heed::{RoTxn, RwTxn};
 use oneiron_contracts::retrieval_telemetry::validate_retrieval_blend_weights;
 
 use crate::error::{Error, Result};
@@ -16,7 +16,8 @@ use super::types::{
     RetrievalBlendTuningConfig, RetrievalBlendWeightDataWindow, RetrievalBlendWeightTableEntry,
     RetrievalBlendWeights, RetrievalOutcomeRecord, RetrievalPolicyCandidate,
     RetrievalPolicyEvaluation, RetrievalPolicyHeldOut, RetrievalPolicyPins,
-    RetrievalPolicyVerdict, RetrievalRunRecord, RetrievalSignal, RetrievalWeightOrigin,
+    RetrievalPolicyPin, RetrievalPolicyVerdict, RetrievalRunRecord, RetrievalSignal,
+    RetrievalWeightOrigin,
     retrieval_weight_rows,
 };
 
@@ -131,17 +132,42 @@ impl Store {
         pins: RetrievalPolicyPins,
     ) -> Result<RetrievalBlendWeightTableEntry> {
         pins.validate()?;
-        if active_write_txn_depth() > 0 {
-            return Err(Error::ConcurrentWrite(
-                "retrieval policy pin skipped inside active write transaction",
-            ));
-        }
         let _tuning_guard = self
-            .retrieval_blend_tuning_lock
-            .lock()
-            .map_err(|_| Error::InvariantViolation("retrieval blend tuning mutex poisoned"))?;
+            .tuning_guard("retrieval policy pin skipped inside active write transaction")?;
         let mut wtxn = self.env.write_txn()?;
-        let previous = self.retrieval_blend_weight_table_in_txn(&wtxn)?;
+        let entry = self.write_retrieval_policy_pins_in_txn(&mut wtxn, &pins)?;
+        wtxn.commit()?;
+        Ok(entry)
+    }
+
+    /// Sets one owner pin at `value`, or clears it when `value` is absent,
+    /// merging against the pins read inside the same write transaction so
+    /// a concurrent pin change is never silently dropped.
+    pub fn put_retrieval_policy_pin(
+        &self,
+        signal: RetrievalBlendSignal,
+        value: Option<f32>,
+    ) -> Result<RetrievalBlendWeightTableEntry> {
+        let _tuning_guard = self
+            .tuning_guard("retrieval policy pin skipped inside active write transaction")?;
+        let mut wtxn = self.env.write_txn()?;
+        let mut pins = self.retrieval_policy_pins_in_txn(&wtxn)?;
+        pins.pins.retain(|pin| pin.signal != signal);
+        if let Some(value) = value {
+            pins.pins.push(RetrievalPolicyPin { signal, value });
+        }
+        pins.validate()?;
+        let entry = self.write_retrieval_policy_pins_in_txn(&mut wtxn, &pins)?;
+        wtxn.commit()?;
+        Ok(entry)
+    }
+
+    fn write_retrieval_policy_pins_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        pins: &RetrievalPolicyPins,
+    ) -> Result<RetrievalBlendWeightTableEntry> {
+        let previous = self.retrieval_blend_weight_table_in_txn(wtxn)?;
         let mut provenance = previous.provenance.clone();
         provenance.insert("owner_pins".to_owned(), pins.pins.len().to_string());
         let entry = RetrievalBlendWeightTableEntry {
@@ -153,9 +179,8 @@ impl Store {
         };
         vet_retrieval_blend_weight_table_entry(&entry)
             .map_err(|_| Error::InvalidConfig("invalid retrieval blend weight table".to_owned()))?;
-        PINS.put(self, &mut wtxn, &(), &pins)?;
-        TABLE.put(self, &mut wtxn, &(), &entry)?;
-        wtxn.commit()?;
+        PINS.put(self, wtxn, &(), pins)?;
+        TABLE.put(self, wtxn, &(), &entry)?;
         Ok(entry)
     }
 

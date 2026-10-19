@@ -659,6 +659,47 @@ impl DreamerRunnerStore<'_> {
         })
     }
 
+    /// Refills one wake-budget counter to a replacement total, as the
+    /// owner. Spent and reserved units keep their claim: the refill only
+    /// raises what is left, and replaying the same total adds nothing
+    /// twice. The owner's proof is checked in the refill's transaction.
+    pub fn refill_budget_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        budget_id: &str,
+        total_units: u64,
+        now: u64,
+    ) -> Result<DreamerBudgetRecord> {
+        validate_budget_id(budget_id)?;
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        crate::dreamer_runner::maintenance::validate_owner_in_txn(self.vault, &wtxn, owner)?;
+        let mut record =
+            read_or_initialize_budget_in_txn(self.vault, &wtxn, budget_id, total_units, now)?;
+        validate_budget_record(&record)?;
+        let spent_units = record
+            .total_units
+            .checked_sub(record.remaining_units)
+            .and_then(|free| free.checked_sub(record.reserved_units))
+            .ok_or(invalid_dreamer_runner(
+                "dreamer budget counter is inconsistent",
+            ))?;
+        let committed_units = spent_units
+            .checked_add(record.reserved_units)
+            .ok_or(Error::ArithmeticOverflow("dreamer budget refill units"))?;
+        if total_units < committed_units {
+            return Err(invalid_dreamer_runner(
+                "dreamer budget refill total is below spent and reserved units",
+            ));
+        }
+        record.total_units = total_units;
+        record.remaining_units = total_units - committed_units;
+        record.updated_at = now;
+        validate_budget_record(&record)?;
+        put_budget_record_in_txn(self.vault, &mut wtxn, &record)?;
+        wtxn.commit()?;
+        Ok(record)
+    }
+
     /// Reads a private Dreamer budget row.
     pub fn budget(&self, budget_id: &str) -> Result<Option<DreamerBudgetRecord>> {
         validate_budget_id(budget_id)?;

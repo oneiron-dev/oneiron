@@ -47,6 +47,13 @@ pub struct SlipClaims {
     /// and delegation keeps it unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegation: Option<super::SupportDelegation>,
+    /// Whom the slip's holder may message (FIX 3899): a ceiling the owner
+    /// set at mint, never at redeem or message time. `None` is the
+    /// vault-wide reach ([`super::effective_slip_comm`], CALLS C5). A bound
+    /// run's reach is the narrower of its own and this; a caveat only
+    /// lowers it, and delegation keeps it or narrows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comm: Option<super::CommReach>,
 }
 
 /// The signed SlipMint payload. The credential signature is not log material.
@@ -139,6 +146,9 @@ impl SlipClaims {
             && self.grant_ref == parent.grant_ref
             && self.invitation_ref == parent.invitation_ref
             && self.delegation == parent.delegation
+            // An absent reach is the vault's, so a child that names none
+            // never erases a narrower parent (FIX 3899).
+            && super::effective_slip_comm(self.comm) <= super::effective_slip_comm(parent.comm)
             && (self.records == parent.records
                 || (!self.records.is_empty()
                     && ((parent.records.is_empty() && parent.channels.is_empty())

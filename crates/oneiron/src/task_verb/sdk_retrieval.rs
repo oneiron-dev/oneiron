@@ -7,7 +7,7 @@ use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::store::{
     RetrievalBlendSignal, RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry,
     RetrievalBlendWeights, RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord,
-    RetrievalPolicyCandidate, RetrievalPolicyEvaluation, RetrievalPolicyPin, RetrievalPolicyPins,
+    RetrievalPolicyCandidate, RetrievalPolicyEvaluation, RetrievalPolicyPin,
     RetrievalPolicyVerdict, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
     RetrievalState, RetrievalTrace, RetrievalTurn, RetrievalWeightRow,
 };
@@ -433,15 +433,9 @@ pub fn retrieval_policy_pin_as_owner(
     input: RetrievalPolicyPinRequest,
 ) -> MemoryResult<RetrievalPolicyView> {
     admitted(memory, owner)?;
-    let mut pins = memory.vault().retrieval_policy_pins()?;
-    pins.pins.retain(|pin| pin.signal != input.signal);
-    if let Some(value) = input.value {
-        pins.pins.push(RetrievalPolicyPin {
-            signal: input.signal,
-            value,
-        });
-    }
-    memory.vault().put_retrieval_policy_pins(pins)?;
+    memory
+        .vault()
+        .put_retrieval_policy_pin(input.signal, input.value)?;
     policy_view(memory)
 }
 
