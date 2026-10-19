@@ -1613,7 +1613,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/digest/tests.rs` | test | m | — | — | — |
 | `src/dreamer_runner/maintenance/evaluation.rs` | src | m | 4 struct · 3 fn · 1 const · 2 crate-vis | DreamerTuningConfig, HarnessEvaluation, HarnessEvaluationTarget, RetuneThresholds | Eval-schedule observations over actual immutable config artifact versions |
 | `src/dreamer_runner/maintenance/honesty.rs` | src | s | 1 const · 2 crate-vis | — | The Coach's audit-draw recipe on the shared, gated maintenance lane |
-| `src/dreamer_runner/maintenance/identity.rs` | src | XL | 10 struct · 4 enum · 9 fn · 4 const · 7 crate-vis | IdentityActNow, IdentityActNowRequest, IdentityAnswerRequest, IdentityAsk, IdentityAskReason, IdentityAskView, IdentityCardCopy, IdentityDecisions +6 | Background identity checks (OF-123; owner ruling: ask rule B) |
+| `src/dreamer_runner/maintenance/identity.rs` | src | XL | 10 struct · 4 enum · 9 fn · 4 const · 1 re-export · 8 crate-vis | IdentityActNow, IdentityActNowRequest, IdentityAnswerRequest, IdentityAsk, IdentityAskReason, IdentityAskView, IdentityCardCopy, IdentityDecisions +6 | Background identity checks (OF-123; owner ruling: ask rule B) |
+| `src/dreamer_runner/maintenance/identity/evidence.rs` | src | s | 3 struct · 1 enum · 2 fn · 5 crate-vis | IdentityAnswerEvidenceRequest, IdentityMentionState, IdentityMentionView, IdentityResolutionView | A mention's saved resolution, separate from the tagger's original suggestion |
 | `src/dreamer_runner/maintenance/judge_label_rechecks.rs` | src | s | 1 fn | — | The judge labels' re-check after a rubric edit, run (ARCH-0042 "A human edits the rubric at any time |
 | `src/dreamer_runner/maintenance/mod.rs` | src | m | 1 fn · 3 const · 17 mod · 8 re-export · 9 crate-vis | — | Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly… |
 | `src/dreamer_runner/maintenance/optimize.rs` | src | m | 2 struct · 1 crate-vis | CoachLiveSlice, CoachSkillOptimizer | The Coach's skill-maintenance body on the shared wake runner |
@@ -2228,7 +2229,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/history/tests.rs` | test | L | — | — | Substrate invariants of an imported transcript (ARCH-0027, ARCH-0040): whose words they are, when the vault… |
 | `src/ingest/history/text.rs` | src | s | 7 crate-vis | — | Field readers the history decoders share: records, times and text |
 | `src/ingest/history/tree.rs` | src | s | 2 crate-vis | — | Threads of a branching export: the main path, and each edit or regeneration the source kept beside it |
-| `src/ingest/identity_key.rs` | src | m | 3 fn · 5 crate-vis | — | Per-kind identity hints and the lookup-before-mint entity-resolution door |
+| `src/ingest/identity_key.rs` | src | m | 3 fn · 6 crate-vis | — | Per-kind identity hints and the lookup-before-mint entity-resolution door |
 | `src/ingest/image.rs` | src | m | 5 struct · 1 enum · 2 trait · 5 fn · 1 const · 2 static | ExifEvidence, GeoPoint, ImageCaptionRecognizer, ImageIngestSource, ImageTextRecognizer, LocalityRung, NormalizedIngestEntity, RecognizedText | Local, binary image normalization for the OF-014 ingest station |
 | `src/ingest/meeting_audio/alignment.rs` | src | s | 1 fn · 1 crate-vis | — | Exclusive full-file speaker alignment and label-preserving turn assembly |
 | `src/ingest/meeting_audio/artifact.rs` | src | s | 2 struct · 10 fn · 1 crate-vis | AuthorizedMeetingImport, ProducedMeetingTranscript | Immutable producer artifact and one approval for the complete import batch |
@@ -2250,12 +2251,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/meeting_audio/tests/producer.rs` | test | s | — | — | — |
 | `src/ingest/meeting_audio/tests/support.rs` | test | m | 8 crate-vis | — | Synthetic callback fixtures only: no decoder or model runs in these tests |
 | `src/ingest/meeting_audio/types.rs` | src | m | 24 struct · 4 enum · 2 trait · 3 fn | AllowedWordCorrection, AsrOutput, AsrPackRequest, AsrRole, AsrRoute, AsrWord, AudioFile, BatchAsrRequest +22 | Typed host ports for file decoding, inference, routing and explicit import consent |
-| `src/ingest/mod.rs` | src | s | 4 mod · 16 re-export · 4 crate-vis | — | Ingest source registry and source-local normalization |
+| `src/ingest/mod.rs` | src | s | 4 mod · 16 re-export · 5 crate-vis | — | Ingest source registry and source-local normalization |
 | `src/ingest/parsed.rs` | src | s | 2 struct · 2 crate-vis | ParsedImport, ParsedMessage | Shared pre-semantic import shape |
 | `src/ingest/pdf.rs` | src | s | 1 struct · 1 enum · 1 fn | PdfText, PdfTextError | A PDF's text, for the notes import and the attached folder (OF-554, ARCH-0027: "The first adapter reads a… |
 | `src/ingest/provider.rs` | src | s | 2 crate-vis | — | Provider conversation decoders |
 | `src/ingest/registry.rs` | src | m | 6 struct · 1 enum · 1 trait · 18 fn · 5 const · 2 static | IngestAdapterSkillRef, IngestHarnessConfig, IngestSource, IngestSourceConfig, IngestSourceFormat, IngestSourceRegistration, IngestSourceRegistry, IngestTrustCeiling | Ingest source registry: source ids, configs, harness, registry map, and the ingest source trait |
-| `src/ingest/resolution.rs` | src | m | 4 struct · 1 enum · 2 fn · 1 crate-vis | EntityMentionRequest, EntityResolutionCandidate, EntityResolutionRoute, EntityResolutionWaterfallDecision, ScoredEntityResolutionCandidate | ARCH-0024 entity-resolution waterfall: candidate scoring, routing, and canonical subject |
+| `src/ingest/resolution.rs` | src | m | 4 struct · 1 enum · 2 fn · 2 crate-vis | EntityMentionRequest, EntityResolutionCandidate, EntityResolutionRoute, EntityResolutionWaterfallDecision, ScoredEntityResolutionCandidate | ARCH-0024 entity-resolution waterfall: candidate scoring, routing, and canonical subject |
 | `src/ingest/summary_ladder.rs` | src | m | 2 struct · 1 enum · 5 fn | DocsExpansion, DocsExpansionLevel, DocsSummaryHit | Read-only knowledge ladder |
 | `src/ingest/tests.rs` | test | m | — | — | — |
 | `src/ingest/transcripts.rs` | src | m | 2 struct | JsonlTranscriptSource, MeetingTranscriptSource | Transcript sources: JSONL, file-drop, and meeting normalization plus document helpers |
@@ -2559,6 +2560,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/graph_fs_doors/types.rs` | src | s | 12 struct · 3 enum | GraphFsDirectoryView, GraphFsEncoding, GraphFsEntryView, GraphFsFindRequest, GraphFsGrepRequest, GraphFsHeadRequest, GraphFsKind, GraphFsLinkRequest +7 | — |
 | `src/memory/hook_regen_doors/mod.rs` | src | s | 3 fn · 1 re-export | — | Typed hook regeneration doors (DOOR-077): `vault.hooks.regen.due` lists the vault's own hook bindings whose… |
 | `src/memory/hook_regen_doors/types.rs` | src | s | 3 struct | HookRegenAdoptRequest, HookRegenBindingRequest, HookRegenView | — |
+| `src/memory/identity_doors.rs` | src | s | 7 struct · 1 enum · 2 fn · 2 crate-vis | IdentityConfidenceEvidence, IdentityHints, IdentityKind, IdentityLookup, IdentityLookupCandidate, IdentityLookupRequest, PersonCreateRequest, PersonCreated | Typed PERSON setup and look-before-mint over the declared identity index |
 | `src/memory/inspection.rs` | src | s | 1 fn · 1 crate-vis | — | `vault.inspection.resolve` (OF-235): the bound actor reopens an inspection link through its own read lane |
 | `src/memory/key_value/mod.rs` | src | s | 3 fn · 1 re-export · 1 crate-vis | — | Exact actor-owned keyed facts over canonical CLAIMs |
 | `src/memory/key_value/tests.rs` | test | L | — | — | Behavior proofs through the real facade and production gate |
@@ -2572,7 +2574,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/merge_queue_doors/operations.rs` | src | s | 6 fn | — | — |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 9 struct | MergeQueueBatchRequest, MergeQueueBatchView, MergeQueueEnqueueRequest, MergeQueueObservation, MergeQueueObserveRequest, MergeQueuePathView, MergeQueuePointersView, MergeQueueRepoRequest +1 | — |
 | `src/memory/message_result.rs` | src | s | 1 fn · 2 crate-vis | — | The result a MESSAGE carries, read by the bound actor (FIX 365): its card, or a `slice`, `search`, `query`… |
-| `src/memory/mod.rs` | src | m | 24 mod · 53 re-export · 16 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `src/memory/mod.rs` | src | m | 25 mod · 53 re-export · 16 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/note_tombstone.rs` | src | s | 3 fn | — | The owner's NOTE tombstone doors (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed, and… |
 | `src/memory/notes.rs` | src | s | 3 fn | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/origin_doors/mod.rs` | src | s | 1 re-export | — | Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication… |
@@ -2624,7 +2626,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/structural/guards.rs` | src | s | 1 crate-vis | — | Create-only guards for the structural write door (ONE-1889) |
 | `src/memory/structural/mod.rs` | src | s | 2 re-export · 3 crate-vis | — | Structural puts (habit checkins, imported-claim admission, blob artifacts) and `author_take` |
 | `src/memory/structural/productivity.rs` | src | s | 4 struct · 2 enum · 2 fn | ProductivityCreateRequest, ProductivityCreateRole, ProductivityNode, ProductivityRole, ProductivityTree, ProductivityTreeRequest | Typed productivity roles (DOOR-113): an inert Goal, Milestone or Habit TASK under its checked `ChildOf`… |
-| `src/memory/structural/puts.rs` | src | m | 5 fn | — | Generic structural puts, habit check-ins, and blob artifact verbs |
+| `src/memory/structural/puts.rs` | src | m | 5 fn · 1 crate-vis | — | Generic structural puts, habit check-ins, and blob artifact verbs |
 | `src/memory/structural/types.rs` | src | s | 9 struct | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput +1 | Read-facing views and per-verb inputs for structural puts |
 | `src/memory/subscriptions.rs` | src | s | 1 struct · 1 trait · 2 fn | MemorySubscriptionOwner, ScopedView | Transport-neutral subscription verbs |
 | `src/memory/support.rs` | src | L | 2 struct · 33 fn · 1 type · 50 crate-vis | HostWriteOrigin, Memory | Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and… |
@@ -4014,7 +4016,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/tagging/history.rs` | src | s | 1 struct · 1 fn · 7 crate-vis | TaggingTraceRecord | The trace history: what stays of a turn's tagging once its settled marker has left the job ledger |
 | `src/tagging/input.rs` | src | m | 12 crate-vis | — | The tagger's input for one turn: the turn's MESSAGE rows, and the live register's bounded window of earlier… |
 | `src/tagging/marker.rs` | src | m | 2 struct · 1 enum · 9 fn · 6 const · 10 crate-vis | TaggingMarkerConfig, TaggingMode, TaggingTraceHistory | The marker row: its kind, payload, dedupe key, derived id and the in-transaction doors that commit it |
-| `src/tagging/mod.rs` | src | s | 9 re-export · 9 crate-vis | — | The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036… |
+| `src/tagging/mod.rs` | src | s | 9 re-export · 10 crate-vis | — | The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036… |
 | `src/tagging/output.rs` | src | s | 1 enum · 5 crate-vis | OutputRefusal | What a tagger's answer must satisfy before a marker settles on it |
 | `src/tagging/provisional.rs` | src | m | 1 struct · 5 fn · 14 crate-vis | ProvisionalEntity | Provisional entities: what a save mints when the identity key names nothing (ARCH-0055 §10), for the Dreamer… |
 | `src/tagging/reconciler.rs` | src | L | 3 struct · 9 fn · 1 crate-vis | TaggingBackoff, TaggingPass, TaggingReconciler | The drain pass a host worker drives: claim ready markers, read each turn, call the tagger outside any write… |
@@ -4023,7 +4025,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/tagging/tags.rs` | src | L | 5 struct · 2 enum · 7 fn · 21 crate-vis | DerivationEnvelope, MentionHit, MentionLink, MentionReference, MergeEvidence, TaggedMention, TurnTags | The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the… |
 | `src/tagging/tests.rs` | test | XL | — | — | Laws of the tagging marker and its drain, observed through the job tables, the traces and the vault's stored… |
 | `src/tagging/trace.rs` | src | s | 1 struct · 4 enum · 2 crate-vis | HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace | One trace per settled marker attempt |
-| `src/tagging/verbs.rs` | src | m | 15 struct · 5 enum · 4 fn | DerivationEnvelopeView, MentionLinkView, MentionReferenceView, MergeEvidenceView, TaggedMentionView, TaggingFailureView, TaggingHistoryView, TaggingMarkerState +12 | Typed public reads of the tagging marker and the saved tag sets: the `vault.tagging.*` doors over… |
+| `src/tagging/verbs.rs` | src | m | 15 struct · 5 enum · 4 fn · 2 crate-vis | DerivationEnvelopeView, MentionLinkView, MentionReferenceView, MergeEvidenceView, TaggedMentionView, TaggingFailureView, TaggingHistoryView, TaggingMarkerState +12 | Typed public reads of the tagging marker and the saved tag sets: the `vault.tagging.*` doors over… |
 | `src/task_authority/binding_generation.rs` | src | s | 1 struct · 1 fn · 1 type · 1 const · 6 crate-vis | BindingGeneration | The binding generation a consult party held when its consult was minted |
 | `src/task_authority/mod.rs` | src | L | 2 struct · 1 enum · 3 fn · 2 const · 1 re-export · 24 crate-vis | TaskAuthorityFact, TaskAuthorityFactKind, TaskAuthorityState | Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities |
 | `src/task_authority/tests.rs` | test | m | — | — | — |
@@ -4138,7 +4140,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_fanout_launch.rs` | src | s | 5 struct · 1 enum · 7 fn | FanoutAckRequest, FanoutLaunchHold, FanoutLaunchRequest, FanoutLaunchRuling, FanoutLaunchView, FanoutResumeRequest | The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out… |
 | `src/task_verb/sdk_federation.rs` | src | s | 19 struct · 1 enum · 1 fn · 1 crate-vis | AcceptConnect, AcceptRescopeConnect, ConnectAccepted, ConnectDelivery, ConnectDisconnected, ConnectExportRequest, ConnectGrant, ConnectIdentity +12 | Typed Connect, reciprocal re-scope, disconnect and foreign-world delivery |
 | `src/task_verb/sdk_feedback.rs` | src | m | 11 struct · 7 fn | FeedbackPreviewRequest, FeedbackSendSubjectRequest, FeedbackSubjectPreview, FeedbackSubjectSent, ReportDisclosureRequest, ReportOutboundRequest, ReportOutboundView, ReportPayloadView +3 | Subject-bound feedback over one report issue: its publisher disclosure, its content-free outbound payload… |
-| `src/task_verb/sdk_generated.rs` | src | XL | 1027 fn · 4 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 1030 fn · 4 const | — | — |
 | `src/task_verb/sdk_goal_optimize.rs` | src | m | 15 struct · 12 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +7 | Full witnessed goal intake and explicit optimizer proposal/admission doors |
 | `src/task_verb/sdk_guest_document.rs` | src | s | 3 struct · 1 fn · 1 crate-vis | GuestDocumentContext, GuestDocumentEnvelope, GuestDocumentShareRequest | Typed guest document sharing over live Connect grants (ARCH-0043) |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |

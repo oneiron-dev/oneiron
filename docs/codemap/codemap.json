@@ -20856,10 +20856,29 @@
      "purpose": "Background identity checks (OF-123; owner ruling: ask rule B)",
      "surface": {
       "const": 4,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 4,
       "fn": 9,
+      "re-export": 1,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IdentityAnswerEvidenceRequest",
+      "IdentityMentionState",
+      "IdentityMentionView",
+      "IdentityResolutionView"
+     ],
+     "path": "src/dreamer_runner/maintenance/identity/evidence.rs",
+     "purpose": "A mention's saved resolution, separate from the tagger's original suggestion",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -28513,7 +28532,7 @@
      "path": "src/ingest/identity_key.rs",
      "purpose": "Per-kind identity hints and the lookup-before-mint entity-resolution door",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -28808,7 +28827,7 @@
      "path": "src/ingest/mod.rs",
      "purpose": "Ingest source registry and source-local normalization",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 4,
       "re-export": 16
      }
@@ -28889,7 +28908,7 @@
      "path": "src/ingest/resolution.rs",
      "purpose": "ARCH-0024 entity-resolution waterfall: candidate scoring, routing, and canonical subject",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 2,
       "struct": 4
@@ -33457,6 +33476,28 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "IdentityConfidenceEvidence",
+      "IdentityHints",
+      "IdentityKind",
+      "IdentityLookup",
+      "IdentityLookupCandidate",
+      "IdentityLookupRequest",
+      "PersonCreateRequest",
+      "PersonCreated"
+     ],
+     "path": "src/memory/identity_doors.rs",
+     "purpose": "Typed PERSON setup and look-before-mint over the declared identity index",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/memory/inspection.rs",
      "purpose": "`vault.inspection.resolve` (OF-235): the bound actor reopens an inspection link through its own read lane",
@@ -33616,7 +33657,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 16,
-      "mod": 24,
+      "mod": 25,
       "re-export": 53
      }
     },
@@ -34381,6 +34422,7 @@
      "path": "src/memory/structural/puts.rs",
      "purpose": "Generic structural puts, habit check-ins, and blob artifact verbs",
      "surface": {
+      "crate-vis": 1,
       "fn": 5
      }
     },
@@ -51435,7 +51477,7 @@
      "path": "src/tagging/mod.rs",
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 9
      }
     },
@@ -51575,6 +51617,7 @@
      "path": "src/tagging/verbs.rs",
      "purpose": "Typed public reads of the tagging marker and the saved tag sets: the `vault.tagging.*` doors over…",
      "surface": {
+      "crate-vis": 2,
       "enum": 5,
       "fn": 4,
       "struct": 15
@@ -53226,7 +53269,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1027
+      "fn": 1030
      }
     },
     {
@@ -59984,7 +60027,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60320,7 +60363,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 215,
+     "files": 216,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61001,7 +61044,7 @@
    },
    "over_bar": 201,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3714,
+   "source_files": 3716,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69633,7 +69676,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 998
+      "fn": 1001
      }
     },
     {
@@ -70729,7 +70772,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 999
+      "fn": 1002
      }
     },
     {
@@ -74283,7 +74326,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 160
+      "crate-vis": 161
      }
     },
     {
@@ -74314,6 +74357,16 @@
      "purpose": "Typed host configuration, work and completion receipts for HydeExpander",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/identity_doors.rs",
+     "purpose": "PERSON identity setup, look-before-mint and saved-mention provenance",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -82401,7 +82454,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 426,
+     "files": 427,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82830,7 +82883,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 783,
+   "source_files": 784,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -84469,8 +84522,9 @@
       "IdentityActNow",
       "IdentityActNowRequest",
       "IdentityAmendment",
-      "IdentityAnswerRequest",
+      "IdentityAnswerEvidenceRequest",
       "IdentityAssertDistinctRequest",
+      "IdentityConfidenceEvidence",
       "IdentityEffect",
       "IdentityEntityRequest",
       "IdentityEventAction",
@@ -84478,7 +84532,14 @@
       "IdentityEvidence",
       "IdentityFacetRequest",
       "IdentityFacetSpec",
+      "IdentityHints",
+      "IdentityKind",
       "IdentityLifecycle",
+      "IdentityLookup",
+      "IdentityLookupCandidate",
+      "IdentityLookupRequest",
+      "IdentityMentionState",
+      "IdentityMentionView",
       "IdentityMergeRequest",
       "IdentityPairProposals",
       "IdentityPairRequest",
@@ -84492,6 +84553,7 @@
       "IdentityReassignmentItem",
       "IdentityReassignmentTarget",
       "IdentityResolution",
+      "IdentityResolutionView",
       "IdentitySettled",
       "IdentitySplitRequest",
       "IdentitySurvivorshipPlan",
@@ -85130,6 +85192,8 @@
       "PendingProposalView",
       "PeopleListRequest",
       "PeoplePage",
+      "PersonCreateRequest",
+      "PersonCreated",
       "PersonKind",
       "PersonRequest",
       "PersonRow",
@@ -86352,6 +86416,7 @@
       "WireCommitOutcome",
       "WireCommitReceipt",
       "WireDeleteReceipt",
+      "WireEntityRefReceipt",
       "WireEntityView",
       "WireMentionProvenance",
       "WireQueryAffect",
@@ -86420,8 +86485,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 814,
-      "struct": 2575
+      "enum": 816,
+      "struct": 2585
      }
     },
     {
