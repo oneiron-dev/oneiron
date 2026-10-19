@@ -3067,7 +3067,7 @@
      "purpose": "A raw open's own machine profile, from the host's root secret (FIX 4730)",
      "surface": {
       "enum": 1,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -3140,7 +3140,7 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 11,
       "struct": 3
@@ -71093,14 +71093,15 @@
      "purpose": "VaultBridge root and ActorScopedVault handle plus the facade() accessor",
      "surface": {
       "crate-vis": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "NapiHostRootProfile",
       "NapiPaired",
       "NapiWitnessTurnInput",
       "NativeClient"
@@ -71108,8 +71109,8 @@
      "path": "src/facade/client.rs",
      "purpose": "Remote-backed NativeClient SDK seam with its stamped-turn input",
      "surface": {
-      "fn": 10,
-      "struct": 3
+      "fn": 12,
+      "struct": 4
      }
     },
     {
@@ -71361,7 +71362,7 @@
      "path": "src/lib/vault.rs",
      "purpose": "Legacy buffer-oriented NapiVault binding and all its verbs",
      "surface": {
-      "fn": 29,
+      "fn": 30,
       "struct": 1
      }
     },
@@ -72268,6 +72269,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/embedded/host_root.rs",
+     "purpose": "The embedded half of [`crate::OneironClient::open_with_host_root`] (FIX 4730): the shared open, then this…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/error.rs",
      "purpose": "The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7)",
      "surface": {
@@ -72322,16 +72333,17 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "HostRootProfile",
       "OneironClient",
       "OpenOptions"
      ],
      "path": "src/lib.rs",
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
-      "fn": 17,
+      "fn": 19,
       "mod": 1,
       "re-export": 5,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -72500,10 +72512,10 @@
      "purpose": "Shared boundary caps live with the engine DTOs so HTTP ingress and SDK dispatch use the same validators"
     },
     "embedded": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The embedded backend: path resolution, the process-local vault registry, and the single-writer lease…"
     },
     "error": {
@@ -72551,7 +72563,7 @@
    },
    "over_bar": 1,
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
-   "source_files": 17,
+   "source_files": 18,
    "test_files": 8
   },
   "oneiron-retrieval": {
@@ -88430,6 +88442,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "HostRootProfile"
+     ],
+     "path": "src/host_root.rs",
+     "purpose": "`Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "Oneiron"
      ],
      "path": "src/lib.rs",
@@ -88437,7 +88462,7 @@
      "surface": {
       "const": 1,
       "fn": 10,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 1
      }
     },
@@ -88513,6 +88538,13 @@
      "layout": "file",
      "purpose": "—"
     },
+    "host_root": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the…"
+    },
     "pairing": {
      "files": 1,
      "impl_vault": false,
@@ -88523,7 +88555,7 @@
    },
    "over_bar": 4,
    "purpose": "The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound",
-   "source_files": 10,
+   "source_files": 11,
    "test_files": 0
   },
   "oneiron-vault-contract": {

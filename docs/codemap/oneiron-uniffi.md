@@ -19,5 +19,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error.rs` | src | s | 1 enum | OneironError | The single exported error type for the UniFFI head-contract surface |
 | `src/facade_generated.rs` | src | XL | — | — | — |
 | `src/facade_types_generated.rs` | src | XL | 2682 struct · 840 enum | AcceptConnect, AcceptRescopeConnect, AccessFactorPolicy, AccessRequestStatus, AccessStatus, ActExecution, ActionBoundRequest, ActionEnvelopeRequest +3514 | — |
-| `src/lib.rs` | src | s | 1 struct · 10 fn · 1 const · 5 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |
+| `src/host_root.rs` | src | s | 1 struct · 2 fn | HostRootProfile | `Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the… |
+| `src/lib.rs` | src | s | 1 struct · 10 fn · 1 const · 6 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |
 | `src/pairing.rs` | src | s | 6 struct · 3 enum | CheckpointPin, CheckpointPinBinding, CheckpointPinKey, CheckpointPinPolicy, CheckpointPinPosture, CheckpointPinRoot, CheckpointPinSignature, CheckpointPinSuite +1 | The checkpoint pin `pair` returns (OF-469, FIX 3376), lifted whole from… |
