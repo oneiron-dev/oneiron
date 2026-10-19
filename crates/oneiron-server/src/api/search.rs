@@ -36,9 +36,11 @@ use utoipa::IntoParams;
 use utoipa::ToSchema;
 
 mod deadline;
+mod home_text;
 use deadline::{
     SearchPage, read_by_deadline, search_deadline, search_page, search_page_by_deadline,
 };
+pub(crate) use home_text::complete_bm25_with_home;
 
 /// Search responses always preserve each executed read receipt.
 #[derive(Serialize)]
@@ -122,41 +124,29 @@ impl From<oneiron::sync::ResidenceSearch> for ResidenceAnswer {
 }
 
 /// Asks the home a text search an opened machine cannot answer locally
-/// (ARCH-0023b partial sync). `None` on a machine that holds every window.
-/// An owner-grade caller is the device's paired owner, so the home answers
-/// it within this device's own grants. A narrower caller is judged at the
-/// home on its own holder proof, `forwarded` (FIX 2907); one with none to
-/// forward gets the local page, marked incomplete. A deadline bounds the ask
-/// as it bounds the page.
+/// (ARCH-0023b partial sync), through the text search's shared home step
+/// ([`home_text::ask_home_text`]). `None` on a machine that holds every
+/// window. An owner-grade caller is the device's paired owner, so the home
+/// answers it within this device's own grants. A narrower caller is judged
+/// at the home on its own holder proof, `forwarded` (FIX 2907); one with
+/// none to forward gets the local page, marked incomplete, as does a device
+/// whose own sync connection dropped. A deadline bounds the ask as it
+/// bounds the page.
 async fn ask_home(
-    home: Option<Arc<oneiron::sync::HomeSearch>>,
+    vault: Arc<oneiron::Vault>,
     owner_grade: bool,
     forwarded: Option<oneiron::authority::ForwardedCallerProof>,
     query: String,
     limit: usize,
     due: Option<Instant>,
 ) -> Option<ResidenceAnswer> {
-    let home = home?;
-    let forwarded = match (owner_grade, forwarded) {
-        (true, _) => None,
-        (false, Some(caller)) => Some(caller),
-        (false, None) => return Some(ResidenceAnswer::local_only()),
-    };
-    let search = async {
-        match &forwarded {
-            Some(caller) => home.search_for(&query, limit, caller).await,
-            None => home.search(&query, limit).await,
-        }
-    };
-    let answer = match due {
-        Some(due) => tokio::time::timeout_at(due.into(), search).await.ok(),
-        None => Some(search.await),
-    };
+    let caller = oneiron::memory::HomeRecallCaller::admitted(owner_grade, forwarded);
     // A refused or late ask leaves the local page, marked incomplete.
-    Some(match answer {
-        Some(Ok(search)) => search.into(),
-        Some(Err(_)) | None => ResidenceAnswer::local_only(),
-    })
+    match home_text::ask_home_text(&vault, &caller, &query, limit, due).await {
+        home_text::HomeText::Whole => None,
+        home_text::HomeText::LocalOnly => Some(ResidenceAnswer::local_only()),
+        home_text::HomeText::Answered { search, .. } => Some(search.into()),
+    }
 }
 
 /// Query parameters for vector similarity search.
@@ -508,7 +498,7 @@ pub(crate) async fn search_text(
     let deadline = search_deadline(params.deadline_ms)?;
     // An opened machine asks its home alongside its own page (OF-534).
     let home = ask_home(
-        server.vault().home_search(),
+        Arc::clone(server.vault()),
         auth.is_owner_grade(),
         (!auth.is_owner_grade())
             .then(|| auth.forwarded_caller_proof(&parts.headers))

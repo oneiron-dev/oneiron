@@ -24,16 +24,21 @@ use crate::auth::CoreAuth;
 use crate::server::{LiveRunCaller, LiveRunRefusal, SyncServer};
 
 /// `self.skills.call` (`host_door_lists`): a callable skill answers JSON
-/// made from its stored source, the verbs it calls and retained results,
-/// and the executor returns that output without the rows it was made from,
-/// so the list is unknown (`None`), never `[]` read off the SKILL id.
+/// made from its stored source, the verbs it calls and retained results.
+/// Beside it, the rows the same execution read them from
+/// ([`oneiron::engine_executor::execute_live_skill_call_listing`]): `None`
+/// when one nested answer kept no set, never `[]` read off the SKILL id. A
+/// refusal before the call runs, or after it for a revoked credential, lists
+/// none.
 pub(crate) async fn self_skills_call(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
     input: LiveRunRequest<oneiron::code_run::SkillCallInput>,
 ) -> MaybeListed<serde_json::Value> {
-    (skills_call(server, auth, session, input).await, None)
+    skills_call(server, auth, session, input)
+        .await
+        .unwrap_or_else(|refusal| (Err(refusal), Some(Vec::new())))
 }
 
 async fn skills_call(
@@ -41,7 +46,7 @@ async fn skills_call(
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
     input: LiveRunRequest<oneiron::code_run::SkillCallInput>,
-) -> MemoryResult<serde_json::Value> {
+) -> MemoryResult<MaybeListed<serde_json::Value>> {
     const VERB: &str = "self.skills.call";
     if session.is_some() {
         return Err(MemoryError::new(
@@ -100,7 +105,7 @@ async fn skills_call(
         };
     let auth = auth.clone();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> MemoryResult<MaybeListed<serde_json::Value>> {
         let binding = held.proof();
         let memory = crate::api::credential_memory(server.vault(), Some(&auth), actor, class)
             .at(auth.locality());
@@ -111,7 +116,7 @@ async fn skills_call(
             .with_callable_skills(Arc::clone(&server.vault))?
             .with_agent_verb_door(door.clone());
         let mut runtime = provider.runtime();
-        let answer = oneiron::engine_executor::execute_live_skill_call(
+        let answer = oneiron::engine_executor::execute_live_skill_call_listing(
             server.vault(),
             &binding,
             &dispatcher,
@@ -126,7 +131,7 @@ async fn skills_call(
             .credential_read_key(proof)?
             .ok_or_else(credential_required)?;
         drop(held);
-        answer
+        Ok(answer)
     })
     .await
     .map_err(|_| internal(VERB))?

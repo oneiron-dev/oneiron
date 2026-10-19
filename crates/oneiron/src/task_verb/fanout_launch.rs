@@ -1241,7 +1241,14 @@ impl Memory<'_> {
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         Ok(self
             .readable_task_fanout_in(&txn, launch_ref)?
-            .map(|launch| launch.receipt()))
+            .map(|launch| self.listed_receipt(&launch)))
+    }
+
+    /// `launch`'s receipt, listing the TASKs it launched: the rows behind it
+    /// that no caller names (DEC-0005).
+    fn listed_receipt(&self, launch: &StoredLaunch) -> FanoutLaunchReceipt {
+        self.produced_from(launch.task_refs.iter().copied());
+        launch.receipt()
     }
 
     /// The launch door's same admission inside a batch observation's snapshot.
@@ -1396,7 +1403,7 @@ impl Memory<'_> {
                     "Use the TASK cancellation door.",
                 ));
             }
-            return Ok(launch.receipt());
+            return Ok(self.listed_receipt(&launch));
         }
         let row = launch.pause.clone().ok_or_else(|| {
             consult_refusal(
@@ -1474,7 +1481,7 @@ impl Memory<'_> {
             self.launch_approved_in(txn, &mut launch, approver.entity_ref(), now)?;
         }
         save_launch(self.vault(), txn, &launch)?;
-        Ok(launch.receipt())
+        Ok(self.listed_receipt(&launch))
     }
 
     /// The owner's answer to the width check of a fan-out that went out
@@ -1518,7 +1525,7 @@ impl Memory<'_> {
                 };
                 // One ruling per check: a repeated answer returns the recorded one.
                 if launch.choice_receipt_ref.is_some() {
-                    return Ok(launch.receipt());
+                    return Ok(self.listed_receipt(&launch));
                 }
                 let count = u64::from(launch.estimate.total_count);
                 if remembered_cap.is_some_and(|cap| cap < count) {
@@ -1568,7 +1575,7 @@ impl Memory<'_> {
                     now,
                 )?;
                 save_launch(self.vault(), txn, &launch)?;
-                Ok(launch.receipt())
+                Ok(self.listed_receipt(&launch))
             })
     }
 
@@ -1692,7 +1699,7 @@ impl Memory<'_> {
             {
                 continue;
             }
-            let receipt = launch.receipt();
+            let receipt = self.listed_receipt(&launch);
             if receipt.paused.is_some()
                 || (receipt.check_row_ref.is_some() && receipt.choice_receipt_ref.is_none())
             {

@@ -4,6 +4,7 @@ use super::{RAW_OUTPUT_SECRETS, ResultBodyPin, raw_output_handle};
 use crate::code_run::ResultOccurrence;
 use crate::memory::MessageResultAttachment;
 use crate::side_table::SideTableDbs;
+use crate::store::{BodyKeyRow, body_key_row_in_txn};
 use crate::{EntityId, Error, Result, Vault};
 
 impl Vault {
@@ -13,7 +14,10 @@ impl Vault {
     /// secret mark (`secret`: the occurrence the base row will name, and the
     /// scan's reason) on that occurrence in the base vault: all before any
     /// base row names it. A body `bodies/` holds already stays as
-    /// it is. The returned pin keeps the collector off the body until the
+    /// it is. A sealed vault's session file comes in as its ciphertext,
+    /// each envelope checked, under `key`, its key row in the room; the save
+    /// wraps that key again for the vault before its row commits (FIX 5348).
+    /// The returned pin keeps the collector off the body until the
     /// caller's row naming it has committed.
     ///
     /// # Errors
@@ -25,17 +29,18 @@ impl Vault {
         session_ref: &str,
         digest: &[u8; 32],
         len: u64,
+        key: Option<&BodyKeyRow>,
         secret: Option<(ResultOccurrence, &str)>,
     ) -> Result<ResultBodyPin> {
         let pin = self.pin_result_body(*digest);
         let target = self.store.body_dir()?;
         let source = match self.store.session_body_dir(session_ref, false)? {
-            Some(dir) => dir.open_body(digest, len)?,
+            Some(dir) => dir.open_reader(digest, len, key)?,
             None => None,
         };
         match source {
-            Some(mut file) => target.import(digest, len, &mut file)?,
-            None if target.open_body(digest, len)?.is_some() => {}
+            Some(file) => target.import_body(&self.store, digest, len, file)?,
+            None if self.store.body_file_present(digest, len)? => {}
             None => return Err(Error::CorruptedIndex("off-record result body missing")),
         }
         if let Some((occurrence, reason)) = secret {
@@ -67,8 +72,14 @@ impl Vault {
         attachment: &MessageResultAttachment,
     ) -> Result<ResultBodyPin> {
         let output = attachment.output()?;
+        let key = {
+            let rtxn = self.store.env.read_txn()?;
+            body_key_row_in_txn(room, &rtxn, &output.raw_blake3)?
+        };
         let spilled = match self.store.session_body_dir(session_ref, false)? {
-            Some(dir) => dir.open_body(&output.raw_blake3, output.raw_len)?.is_some(),
+            Some(dir) => dir
+                .open_reader(&output.raw_blake3, output.raw_len, key.as_ref())?
+                .is_some(),
             None => false,
         };
         if !spilled {
@@ -84,6 +95,7 @@ impl Vault {
             session_ref,
             &output.raw_blake3,
             output.raw_len,
+            key.as_ref(),
             secret.as_deref().map(|reason| (held, reason)),
         )
     }

@@ -43,13 +43,9 @@ impl ResultBodyPins {
         }
     }
 
-    /// Whether a reader holds `digest`.
-    pub(super) fn holds(&self, digest: &[u8; 32]) -> bool {
-        lock(&self.counts).holds(digest)
-    }
-
     /// Runs `remove` unless a reader holds `digest`, keeping new pins out
-    /// until it returns. `None` when a reader holds it.
+    /// until it returns: the collector's retirement of a body's rows and key
+    /// row, then its unlink (FIX 5348). `None` when a reader holds it.
     pub(super) fn unless_pinned<T>(
         &self,
         digest: &[u8; 32],

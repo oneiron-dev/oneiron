@@ -592,8 +592,8 @@ impl Vault {
 
     /// [`Self::check_space_move`], beside the rows its reading stands on: each live probe's
     /// family and targets, and every hit up to and including the first target in each run (the
-    /// documents a reciprocal rank stands on). `None` while the candidate is still filling: its
-    /// backlog scan lists no row.
+    /// documents a reciprocal rank stands on). While the candidate is still filling, the
+    /// pending document its backlog scan found.
     ///
     /// # Errors
     ///
@@ -614,11 +614,10 @@ impl Vault {
                 )));
             };
             let mut report = super::MediaEmbedReport::default();
-            if !self
-                .media_backlog_in_txn(&rtxn, &candidate_space, &moving.kinds, 1, &mut report)?
-                .is_empty()
-            {
-                return Ok((SpaceMoveOutcome::Filling, None));
+            let pending =
+                self.media_backlog_in_txn(&rtxn, &candidate_space, &moving.kinds, 1, &mut report)?;
+            if let Some(witness) = pending.first() {
+                return Ok((SpaceMoveOutcome::Filling, Some(vec![witness.id])));
             }
             let incumbent_space = match &moving.incumbent {
                 SpaceRef::TextIndex => self.text_index_space(),

@@ -126,6 +126,29 @@ impl SlipAuthorityState {
         }
         Some(path)
     }
+    /// The logged delegation chain of slip `id` in this snapshot (FIX 5064):
+    /// `id` itself, then each parent its logged mint names, never the mint's
+    /// signer, ending at its delegation root, the earliest ancestor known
+    /// here. A mint this fold lacks ends the walk at that id and refuses
+    /// nothing (CALLS `FIX 5064 cut lineage`); a repeated id ends it too.
+    /// Revocation and consumption do not erase lineage, so neither ends it.
+    #[must_use]
+    pub(crate) fn delegation_chain(&self, id: &[u8; 32]) -> Vec<[u8; 32]> {
+        let mut current = Some(*id);
+        let mut seen = BTreeSet::new();
+        let mut chain = Vec::new();
+        while let Some(id) = current {
+            if !seen.insert(id) {
+                break;
+            }
+            chain.push(id);
+            current = self
+                .mints
+                .get(&id)
+                .and_then(|mint| mint.action.claims.parent_id);
+        }
+        chain
+    }
     /// Whether the slip or an ancestor carries a revocation or id collision.
     #[must_use]
     pub fn is_revoked(&self, id: &[u8; 32]) -> bool {

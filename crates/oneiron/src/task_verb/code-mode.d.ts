@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1086 code-mode rows (1061 host rows, 25 run rows), 3600 declarations.
+// Census: 1086 code-mode rows (1061 host rows, 25 run rows), 3603 declarations.
 // Replies: 969 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
@@ -412,6 +412,8 @@ declare namespace Sdk {
   type RsiTopUp = { line: "tokens"; units: number } | { line: "exploration"; units: number } | { line: "share"; share: string; units: number };
   type FanoutLaunchRuling = "approve_once" | "approve_and_remember" | "deny";
   type FanoutResumeRequest = { launch_ref: EntityId; plan_digest: string; ruling: FanoutLaunchRuling; remembered_cap?: number | null };
+  type DetailsOnDevice = { details_on_device: boolean };
+  type ActAnswer<T> = DetailsOnDevice | T;
   type FanoutCheckChoice = "ack" | "ack_and_remember";
   type FanoutAckRequest = { launch_ref: EntityId; plan_digest: string; answer: FanoutCheckChoice; remembered_cap?: number | null };
   type TaskReportBody = "ack" | { progress: { evidence_refs?: EntityId[]; renew_lease?: boolean } } | { blocked: { on?: TaskHandle[]; note?: string | null; ask?: TaskAskSpec | null } } | { done: { result_ref: EntityId; confession?: string | null } } | { failed: { error: string; retryable: boolean; result_ref?: EntityId | null } } | { release: { reason: string } } | { brief: QueueTaskBrief } | { edit: { expected_revision: number; title: string } };
@@ -3027,6 +3029,7 @@ declare namespace Sdk {
   type TemporalSearchResult = { hits: TemporalSearchHit[]; widening?: TemporalSearchReport | null };
   type QueryBm25Request = { query: string; limit: number };
   type LexicalHit = { short_id: string; kind: string; score: number; snippet?: string | null; record?: RecordRef | null };
+  type Bm25Search = { value: LexicalHit[]; narrowing: ScopedReadReceipt; residence?: RecallResidence | null };
   type NeighborOpts = { edge_kind?: string | null; min_weight?: number | null; limit: number };
   type NeighborsRequest = { entity_ref: string; opts: NeighborOpts };
   type NeighborHit = { short_id: string; kind: string; edge_kind: string; weight: number; direction: string; record?: RecordRef | null };
@@ -4996,13 +4999,13 @@ declare const vault: Sdk.VaultHost & {
   };
   fanout: {
     /** The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied. */
-    ack(input: Sdk.FanoutAckRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
+    ack(input: Sdk.FanoutAckRequest): Promise<Sdk.ActAnswer<Sdk.FanoutLaunchView> | StoredResult>;
     /** One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none. */
     launch(input: Sdk.FanoutLaunchRequest): Promise<Sdk.FanoutLaunchView | null | StoredResult>;
     /** The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible. */
-    resume(input: Sdk.FanoutResumeRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
+    resume(input: Sdk.FanoutResumeRequest): Promise<Sdk.ActAnswer<Sdk.FanoutLaunchView> | StoredResult>;
     /** A live lead or board holder of a held fan-out launch's project rules on it by the digest they saw: approve once, or deny, which keeps the hold visible; only the owner may remember. */
-    resume_as(input: Sdk.FanoutResumeRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
+    resume_as(input: Sdk.FanoutResumeRequest): Promise<Sdk.ActAnswer<Sdk.FanoutLaunchView> | StoredResult>;
     /** Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree. */
     slots(input: Sdk.FanoutLaunchRequest): Promise<Sdk.FanoutBatchView | null | StoredResult>;
     /** Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree. */
@@ -5608,7 +5611,7 @@ declare const vault: Sdk.VaultHost & {
   };
   records: {
     /** Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead. */
-    erase_confirm(input: Sdk.RecordEraseConfirmRequest): Promise<Sdk.RecordEraseOutcome | StoredResult>;
+    erase_confirm(input: Sdk.RecordEraseConfirmRequest): Promise<Sdk.ActAnswer<Sdk.RecordEraseOutcome> | StoredResult>;
     /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
     erase_preview(input: Sdk.RecordEraseRequest): Promise<Sdk.RecordErasePreview | StoredResult>;
     /** Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep. */
@@ -5854,8 +5857,8 @@ declare const vault: Sdk.VaultHost & {
     run(input: Sdk.SealRunRequest): Promise<Sdk.SealRunReceipt | StoredResult>;
   };
   search: ((input: Sdk.MemorySearchInput) => Promise<Sdk.MemorySearchOutput | StoredResult>) & {
-    /** BM25 text search over the engine index; surfaceable claims only. */
-    bm25(input: Sdk.QueryBm25Request): Promise<Sdk.ScopedReadResult<Sdk.LexicalHit[]> | StoredResult>;
+    /** BM25 text search over the engine index; surfaceable claims only. On a device that syncs only what it opened, a server's door asks the home under the caller's own proof, and its references ride in residence. */
+    bm25(input: Sdk.QueryBm25Request): Promise<Sdk.Bm25Search | StoredResult>;
     /** Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence. */
     hybrid(input: Sdk.HybridSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.HybridSearchHit[]> | StoredResult>;
     /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */
@@ -5906,7 +5909,7 @@ declare const vault: Sdk.VaultHost & {
     /** The erase asks the caller may see: every ask for an Owner, their own for anyone else. */
     erase_asks(input: Sdk.SharedVaultRequest): Promise<Sdk.SharedEraseAsk[] | StoredResult>;
     /** A live Owner runs a matured shared-vault act and gets its receipt. */
-    execute(input: Sdk.SharedActRequest): Promise<Sdk.SharedActExecuted | StoredResult>;
+    execute(input: Sdk.SharedActRequest): Promise<Sdk.ActAnswer<Sdk.SharedActExecuted> | StoredResult>;
     /** The caller's own notices of shared acts whose veto window has passed. */
     matured(input: Sdk.SharedVaultRequest): Promise<Sdk.PendingActMatured[] | StoredResult>;
     /** A holder of a pending shared act's objector role objects inside its veto window. */

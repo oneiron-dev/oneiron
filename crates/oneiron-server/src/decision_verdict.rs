@@ -215,7 +215,8 @@ impl HeldImage {
 /// `principal` with no limit ([`BudgetGuard::uncapped`]), and its spend counts
 /// toward the caller's check (FIX 1123). `payer` is the PERSON the caller's
 /// run line bills when a room's root spend scope funds the run (FIX 3574),
-/// as the host bound it; `None` bills the vault owner.
+/// as the host bound it; `None` bills the vault owner. `evidence_read`
+/// holds the rows the evidence refs and images resolved to, once read.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the caller's verdict"
@@ -229,6 +230,7 @@ pub(crate) fn run_verdict(
     held: Option<DecisionImage>,
     request: &AiVerdictRequest,
     payer: Option<&PayerPerson>,
+    evidence_read: &mut Vec<EntityId>,
 ) -> MemoryResult<AiVerdict> {
     let vault = server.vault();
     // The caller's own Read line: it admits and charges every rung's call,
@@ -244,7 +246,16 @@ pub(crate) fn run_verdict(
     );
     let answered = on_caller_meter(&meter, || {
         on_caller_payer(payer, || {
-            answer_verdict(server, principal, class, reader, lane, held, request)
+            answer_verdict(
+                server,
+                principal,
+                class,
+                reader,
+                lane,
+                held,
+                request,
+                evidence_read,
+            )
         })
     });
     let now = vault.now_recorded_at();
@@ -276,6 +287,10 @@ pub(crate) fn run_verdict(
 
 /// [`run_verdict`]'s question through the ladder, on whatever line the
 /// calling thread meters.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "run_verdict's axes and its evidence list"
+)]
 fn answer_verdict(
     server: &SyncServer,
     principal: EntityId,
@@ -284,6 +299,7 @@ fn answer_verdict(
     lane: Option<&ScopedRead<'_>>,
     held: Option<DecisionImage>,
     request: &AiVerdictRequest,
+    evidence_read: &mut Vec<EntityId>,
 ) -> MemoryResult<AiVerdict> {
     let started = Instant::now();
     oneiron::memory::caps::check_deadline_ms(request.deadline_ms)?;
@@ -344,6 +360,7 @@ fn answer_verdict(
         (None, _) => Vec::new(),
     };
     evidence.extend(images.iter().map(|image| image.evidence.id));
+    evidence_read.clone_from(&evidence);
     let (budget, until_ms) = clock(request);
     let deadline = RetrievalDeadline::hard(started, budget);
     let host = server.decision_host();

@@ -445,12 +445,18 @@ fn settle_tail(
         .collect();
     let mut states =
         super::fold_schedule::fold_entry_states_seeded(&judged, &seed, context, &mut issues);
-    // A world key record on a row with no state here is folded again with
-    // that row crossed (`world_refold`), which only the whole history does.
+    // A world key record, or a restrictive main-log choice (a world edit,
+    // grant travel, checkpoint policy, home pick or training choice), on a
+    // row with no state here (a frontier row the image holds rejected, a
+    // rejected tail row) is folded again with that row crossed
+    // (`world_refold`), which only the whole history does (FIX 4881, 5463).
     if judged.iter().any(|(hash, entry)| {
-        !is_main(entry)
+        super::world_refold::refolds(&entry.op)
             && !states.contains_key(hash)
-            && entry.parent_hashes.iter().any(|parent| !states.contains_key(parent))
+            && entry
+                .parent_hashes
+                .iter()
+                .any(|parent| !states.contains_key(parent))
     }) {
         return Ok(None);
     }
