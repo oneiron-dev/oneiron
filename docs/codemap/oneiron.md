@@ -2834,7 +2834,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/publication/publication_tests_c.rs` | src | s | — | — | Tests: a saved ref effect from a previous authority epoch, reached through generic GitWire recovery |
 | `src/origin/publication/publication_types.rs` | src | m | 4 struct · 5 enum · 11 fn · 10 const · 1 crate-vis | OriginActor, OriginCensusDisposition, OriginCensusReport, OriginKeepRefKind, OriginPublicationAnswer, OriginPublicationReceipt, OriginPublicationRecord, OriginPublicationRequest +1 | Pinned constants, protocol enums with string tables, and request/record/receipt/report types |
 | `src/origin/registration.rs` | src | s | 1 fn | — | Owner registration of a new, empty served origin |
-| `src/origin/residence.rs` | src | m | 2 struct · 2 enum · 7 fn · 16 crate-vis | OriginAuthority, OriginAuthorityLease, OriginHostAuthority, OriginResidence | Explicit owner-controlled origin epochs |
+| `src/origin/residence.rs` | src | m | 2 struct · 2 enum · 7 fn · 1 const · 16 crate-vis | OriginAuthority, OriginAuthorityLease, OriginHostAuthority, OriginResidence | Explicit owner-controlled origin epochs |
 | `src/origin/secret_manifest.rs` | src | s | 1 struct · 1 fn · 1 const | OriginSecretManifest | The repo secret manifest, read from a repository the vault serves as origin (ARCH-0069 S2; ARCH-0068 RC4 and… |
 | `src/origin/smart_http/advertise.rs` | src | m | 6 crate-vis | — | The publication-gated ref-advertisement rewrite: pkt-line state machine and keep policy |
 | `src/origin/smart_http/advertise_tests.rs` | test | m | — | — | Advertisement gate and stock-client roundtrip tests, plus the LFS attach/detach landing tests and the room… |
