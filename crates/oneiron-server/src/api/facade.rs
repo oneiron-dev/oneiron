@@ -100,6 +100,7 @@ mod linear_doors;
 mod live_run_doors;
 mod live_voice_doors;
 mod merge_queue_doors;
+mod mesh_doors;
 mod model_catalog_doors;
 mod model_step_doors;
 mod note_doors;

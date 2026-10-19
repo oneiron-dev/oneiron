@@ -1915,6 +1915,16 @@ class Oneiron:
     class _VaultMeshVerbs:
         def path_receipts(self, spec: Facade.MeshPathReceiptsRequest) -> list[Facade.MeshPathReceipt]:
             """The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."""
+        def identity(self, spec: Facade.EmptyRequest) -> Facade.MeshBindingIdentity:
+            """This install's public mesh keys and both binding proofs, for the owner; no private key or grant is returned."""
+        def bind_machine(self, spec: Facade.MeshMachineBinding) -> Facade.MeshMachineBound:
+            """Bind a paired MACHINE's address and transport key using both possession proofs; the binding starts with no ALPN grants."""
+        def set_alpn_grant(self, spec: Facade.MeshAlpnGrant) -> Facade.MeshAlpnGrant:
+            """Allow or revoke one exact ALPN for a paired MACHINE and endpoint key, under the caller's own owner proof."""
+        def revoke_machine(self, spec: Facade.MeshMachineRevokeRequest) -> Facade.MeshMachineRevoked:
+            """Permanently revoke a MACHINE's mesh admission and all its ALPN grants; a new enrollment needs a new MACHINE and pairing."""
+        def dial(self, spec: Facade.MeshDialRequest) -> Facade.MeshPathReceipt:
+            """Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream."""
     class _VaultInspectionVerbs:
         def resolve(self, spec: Facade.InspectionResolveRequest) -> Facade.InspectionResolved:
             """Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item."""

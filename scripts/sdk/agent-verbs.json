@@ -4224,6 +4224,82 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.mesh.identity",
+      "description": "This install's public mesh keys and both binding proofs, for the owner; no private key or grant is returned.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::MeshBindingIdentity",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.mesh.identity\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mesh.bind_machine",
+      "description": "Bind a paired MACHINE's address and transport key using both possession proofs; the binding starts with no ALPN grants.",
+      "input": "crate::task_verb::sdk::MeshMachineBinding",
+      "output": "crate::task_verb::sdk::MeshMachineBound",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.mesh.bind_machine\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mesh.set_alpn_grant",
+      "description": "Allow or revoke one exact ALPN for a paired MACHINE and endpoint key, under the caller's own owner proof.",
+      "input": "crate::task_verb::sdk::MeshAlpnGrant",
+      "output": "crate::task_verb::sdk::MeshAlpnGrant",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.mesh.set_alpn_grant\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mesh.revoke_machine",
+      "description": "Permanently revoke a MACHINE's mesh admission and all its ALPN grants; a new enrollment needs a new MACHINE and pairing.",
+      "input": "crate::task_verb::sdk::MeshMachineRevokeRequest",
+      "output": "crate::task_verb::sdk::MeshMachineRevoked",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.mesh.revoke_machine\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mesh.dial",
+      "description": "Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream.",
+      "input": "crate::task_verb::sdk::MeshDialRequest",
+      "output": "crate::sync::mesh_path::MeshPathReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.mesh.dial\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {

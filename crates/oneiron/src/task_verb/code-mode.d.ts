@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1035 code-mode rows (1011 host rows, 24 run rows), 3468 declarations.
-// Replies: 929 fully typed, 102 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1040 code-mode rows (1016 host rows, 24 run rows), 3476 declarations.
+// Replies: 934 fully typed, 102 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 106; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1111,6 +1111,14 @@ declare namespace Sdk {
   type MeshPathOutcome = "admitted" | "refused" | "failed";
   type MeshPathKind = "direct" | "relayed" | "mixed" | "none";
   type MeshPathReceipt = { id: string; direction: MeshPathDirection; outcome: MeshPathOutcome; machine?: string | null; endpoint_key?: string | null; alpn: string; opened_at_ms: number; closed_at_ms?: number | null; paths: MeshPathKind; used_direct: boolean; used_relay: boolean; direct_addr?: string | null; relay_url?: string | null; detail?: string | null; attempts: number };
+  type MeshBindingIdentity = { machine: EntityId; device_key: number[]; endpoint_key: number[]; device_proof: number[]; transport_proof: number[] };
+  type MeshMachineAddress = { endpoint_key: number[]; direct_addrs: string[]; relay_url?: string | null };
+  type MeshMachineBinding = { machine: EntityId; address: MeshMachineAddress; device_key: number[]; pairing_slip_id: number[]; device_proof: number[]; transport_proof: number[] };
+  type MeshMachineBound = { machine: EntityId; endpoint_key: number[] };
+  type MeshAlpnGrant = { machine: EntityId; endpoint_key: number[]; alpn: number[]; allow: boolean };
+  type MeshMachineRevokeRequest = { machine: EntityId };
+  type MeshMachineRevoked = { machine: EntityId };
+  type MeshDialRequest = { address: MeshMachineAddress; alpn: number[] };
   type InspectionResolveRequest = { handle: string };
   type LensBackingTargetKind = "entity" | "claim";
   type InspectionState = { target_ref: EntityId; target_kind: LensBackingTargetKind };
@@ -5035,8 +5043,18 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   mesh: {
+    /** Bind a paired MACHINE's address and transport key using both possession proofs; the binding starts with no ALPN grants. */
+    bind_machine(input: Sdk.MeshMachineBinding): Promise<Sdk.MeshMachineBound | StoredResult>;
+    /** Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream. */
+    dial(input: Sdk.MeshDialRequest): Promise<Sdk.MeshPathReceipt | StoredResult>;
+    /** This install's public mesh keys and both binding proofs, for the owner; no private key or grant is returned. */
+    identity(input: Sdk.EmptyRequest): Promise<Sdk.MeshBindingIdentity | StoredResult>;
     /** The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner. */
     path_receipts(input: Sdk.MeshPathReceiptsRequest): Promise<Sdk.MeshPathReceipt[] | StoredResult>;
+    /** Permanently revoke a MACHINE's mesh admission and all its ALPN grants; a new enrollment needs a new MACHINE and pairing. */
+    revoke_machine(input: Sdk.MeshMachineRevokeRequest): Promise<Sdk.MeshMachineRevoked | StoredResult>;
+    /** Allow or revoke one exact ALPN for a paired MACHINE and endpoint key, under the caller's own owner proof. */
+    set_alpn_grant(input: Sdk.MeshAlpnGrant): Promise<Sdk.MeshAlpnGrant | StoredResult>;
   };
   /** Reads only this actor's accepted in-memory partial using its generation-bound stream handle. */
   message_stream_partial(input: Sdk.MessageStreamRequest): Promise<Sdk.MessageStreamPartial | StoredResult>;
