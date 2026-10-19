@@ -507,11 +507,15 @@ pub(crate) fn evidence_floors(config: &EmbedderConfig) -> VectorEvidenceFloors {
 ///
 /// An error means the local model's metadata could not be fetched, verified
 /// or read, or the endpoint's listing did not answer, and the transform the
-/// section makes is unknown.
-pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<Option<String>> {
+/// section makes is unknown. An endpoint's `key_secret` key is sent through
+/// `broker`.
+pub(crate) fn resolve_transform(
+    config: &EmbedderConfig,
+    broker: Option<&crate::models::BrokerContext>,
+) -> oneiron::Result<Option<String>> {
     match config.provider {
         EmbedderProvider::None => Ok(None),
-        EmbedderProvider::Endpoint => endpoint::resolve_transform(config),
+        EmbedderProvider::Endpoint => endpoint::resolve_transform_with_broker(config, broker),
         EmbedderProvider::Local => local::resolve_transform(config).map(Some),
     }
 }

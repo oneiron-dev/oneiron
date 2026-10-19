@@ -19,6 +19,8 @@
 //!
 //! `--force` runs the same swap under the pins the vault already holds.
 
+use std::sync::Arc;
+
 use oneiron::error::StoreError;
 use serde::Serialize;
 
@@ -73,9 +75,28 @@ fn reembed_with_config(config: &ServeConfig, force: bool) -> anyhow::Result<Reem
             config.vault_path.display()
         );
     }
+    let mut vault_config = config.vault_config();
+    vault_config.dict_search_paths =
+        super::resolve_dict_search_paths(&config.dict_search_paths).paths;
+    // An endpoint whose key is a vault secret is asked through the vault's
+    // credential broker, which reads the key at the vault's custody door: the
+    // vault opens first for it, as it is, and closes again once the endpoint
+    // has answered, before anything is decided.
+    let held = match (&embedder.provider, &embedder.endpoint.key_secret) {
+        (EmbedderProvider::Endpoint, Some(_)) => {
+            Some(open_as_held(config, vault_config.clone(), &target)?)
+        }
+        _ => None,
+    };
+    let broker = held
+        .as_ref()
+        .and_then(|vault| crate::models::BrokerContext::for_serve(vault, config));
+    let resolved = crate::embedder::resolve_transform(embedder, broker.as_ref());
+    drop(broker);
+    drop(held);
     // Known before anything is decided: a vault is never left in, or moved to,
     // a transform nobody resolved.
-    let transform = crate::embedder::resolve_transform(embedder).map_err(|error| {
+    let transform = resolved.map_err(|error| {
         let context = match embedder.provider {
             EmbedderProvider::Endpoint => format!(
                 "reembed could not resolve how the configured model {target} makes vectors from \
@@ -92,9 +113,6 @@ fn reembed_with_config(config: &ServeConfig, force: bool) -> anyhow::Result<Reem
         };
         anyhow::Error::from(error).context(context)
     })?;
-    let mut vault_config = config.vault_config();
-    vault_config.dict_search_paths =
-        super::resolve_dict_search_paths(&config.dict_search_paths).paths;
     vault_config.embedding_transform.clone_from(&transform);
     let from = match oneiron::Vault::open_owned(&config.vault_path, vault_config.clone()) {
         Ok(mut already) => {
@@ -130,6 +148,27 @@ fn reembed_with_config(config: &ServeConfig, force: bool) -> anyhow::Result<Reem
         transform,
         migrated: true,
     })
+}
+
+/// The vault as it is, for its custody door: opened under the model it holds
+/// (the configured `target` when it holds that one, or none yet) and no
+/// transform, so the open neither refuses nor pins one.
+fn open_as_held(
+    config: &ServeConfig,
+    mut vault_config: oneiron::VaultConfig,
+    target: &str,
+) -> anyhow::Result<Arc<oneiron::Vault>> {
+    vault_config.embedding_model = Some(target.to_owned());
+    vault_config.embedding_transform = None;
+    let opened = match oneiron::Vault::open_owned(&config.vault_path, vault_config.clone()) {
+        Err(oneiron::Error::Store(StoreError::EmbeddingModelChanged { stored, .. })) => {
+            vault_config.embedding_model = Some(stored);
+            oneiron::Vault::open_owned(&config.vault_path, vault_config)
+        }
+        opened => opened,
+    };
+    let vault = opened.map_err(|error| open_refusal(config, error))?;
+    Ok(Arc::new(vault))
 }
 
 /// Why the vault did not open, with the typed refusal kept underneath.

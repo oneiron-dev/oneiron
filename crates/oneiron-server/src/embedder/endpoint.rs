@@ -349,12 +349,13 @@ fn pod_error(error: &GpuRegistryError) -> oneiron::Error {
 }
 
 impl HttpEmbedder {
+    #[cfg(test)]
     pub(super) fn from_config(config: &EmbedderConfig) -> oneiron::Result<Arc<Self>> {
         Self::with_broker(config, None)
     }
 
-    /// [`Self::from_config`], with the vault's credential-broker context a
-    /// `key_secret` key is sent through, request by request.
+    /// The embedder `config` names, with the vault's credential-broker
+    /// context a `key_secret` key is sent through, request by request.
     pub(super) fn with_broker(
         config: &EmbedderConfig,
         broker: Option<&BrokerContext>,
@@ -840,7 +841,7 @@ impl Embedder for HttpEmbedder {
     }
     /// An answer that does not name its device was computed on one the vault
     /// does not see; it is named as an offer, model at place. The URL holds no
-    /// credential or query ([`Self::from_config`] refuses one).
+    /// credential or query ([`Self::with_broker`] refuses one).
     fn provenance(&self) -> EmbeddingProvenance {
         self.provenance_at(&self.endpoint)
     }
@@ -962,15 +963,25 @@ fn no_listing_route(status: reqwest::StatusCode) -> bool {
     )
 }
 
+/// [`resolve_transform_with_broker`], with no credential-broker context.
+#[cfg(test)]
+pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<Option<String>> {
+    resolve_transform_with_broker(config, None)
+}
+
 /// How the configured remote makes vectors, asked now: what `embedder serve`
 /// lists for the model, `None` for any other remote. `embedder serve` must
 /// serve the configured model itself, and the remote must then pass the
 /// startup probe held to that listing — it lists the model key and answers at
 /// the configured width, naming the listed model and transform — so a vault
 /// is never moved to a remote that cannot fill it, nor to a listing no answer
-/// came from. An error when it does not answer or does not pass.
-pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<Option<String>> {
-    let embedder = HttpEmbedder::from_config(config)?;
+/// came from. An error when it does not answer or does not pass. A
+/// `key_secret` key is sent through `broker`.
+pub(crate) fn resolve_transform_with_broker(
+    config: &EmbedderConfig,
+    broker: Option<&BrokerContext>,
+) -> oneiron::Result<Option<String>> {
+    let embedder = HttpEmbedder::with_broker(config, broker)?;
     // The probe is a paid call like serve's; its rows go to the log.
     super::admitted::pay_primary(
         &embedder,
