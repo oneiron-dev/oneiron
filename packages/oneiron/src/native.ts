@@ -613,6 +613,11 @@ vaultResultsRead(input: unknown): unknown
 vaultResultsSlice(input: unknown): unknown
 vaultCodeRepoDiff(requestJson: string): string
 vaultCodeExport(input: unknown): unknown
+vaultCodeOriginRegister(input: unknown): unknown
+vaultCodeOriginMirrorGet(input: unknown): unknown
+vaultCodeOriginMirrorSet(input: unknown): unknown
+vaultCodeOriginMirrorClear(input: unknown): unknown
+vaultCodeOriginMirrorPush(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown

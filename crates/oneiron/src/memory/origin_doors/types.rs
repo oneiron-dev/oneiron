@@ -160,3 +160,51 @@ pub struct OriginPublicationView {
     pub created_at: u64,
     pub finished_at: Option<u64>,
 }
+
+/// Registers a new, empty repository for smart-HTTP and vault-LFS. The first
+/// authenticated push publishes its content; this call imports no host path.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OriginRegisterRequest {
+    /// The served name, with no `.git` suffix.
+    pub repo: String,
+    /// The short branch name HEAD points at, such as `main`. Required: no
+    /// ambient Git init.defaultBranch setting decides the repository's HEAD.
+    pub default_branch: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OriginRegistered {
+    pub repo: String,
+    /// The object-store-derived repository id, also used by vault-LFS.
+    pub repo_id: EntityId,
+    pub default_branch: String,
+}
+
+/// The owner's outbound mirror setup. The token is already in custody,
+/// bound to `origin:mirror-push`; this request never carries its value.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OriginMirrorSetRequest {
+    pub repo: String,
+    /// HTTPS, with no credential, query or fragment.
+    pub url: String,
+    pub secret_ref: String,
+    /// `x-access-token` when absent.
+    pub user: Option<String>,
+    /// At least 60 seconds; the configured cadence is the mirror's RPO.
+    pub every_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OriginMirrorView {
+    pub repo: String,
+    pub mirror: Option<crate::origin::mirror::OriginMirrorTarget>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OriginMirrorCleared {
+    pub repo: String,
+    /// The remote retains the refs and bytes it already holds.
+    pub cleared: bool,
+}

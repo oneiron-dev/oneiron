@@ -111,11 +111,21 @@ impl Vault {
     /// refuse is refused before it starts.
     pub fn check_secret_at_door(&self, secret_ref: &str, effector: &str) -> Result<()> {
         let txn = self.store.env.read_txn()?;
-        let (id, rec) = read_record_for_ref_in_txn(&self.store, &txn, secret_ref)?;
-        let floor = SecretCustodyFloor::resolve(&self.store, &txn)?;
+        self.check_secret_at_door_in_txn(&txn, secret_ref, effector)
+    }
+
+    /// The value-free door check in the transaction that installs its use.
+    pub(crate) fn check_secret_at_door_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        secret_ref: &str,
+        effector: &str,
+    ) -> Result<()> {
+        let (id, rec) = read_record_for_ref_in_txn(&self.store, txn, secret_ref)?;
+        let floor = SecretCustodyFloor::resolve(&self.store, txn)?;
         admit_record_use(&rec, effector, CustodyTier::T0Doored, &floor)?;
-        crate::secret_custody::refuse_revoked_use_in_txn(self, &txn, &id, rec.class, &rec.name)?;
-        crate::credential_door::admit_materialization_in_txn(&self.store, &txn, effector, None)?;
+        crate::secret_custody::refuse_revoked_use_in_txn(self, txn, &id, rec.class, &rec.name)?;
+        crate::credential_door::admit_materialization_in_txn(&self.store, txn, effector, None)?;
         if rec
             .binding_for(effector)
             .is_some_and(SecretBinding::grants_read)

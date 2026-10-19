@@ -589,6 +589,11 @@ both bindings and their export-census tests in one change.
 - `vault.results.slice`
 - `vault.code.repo_diff`
 - `vault.code.export`
+- `vault.code.origin.register`
+- `vault.code.origin.mirror.get`
+- `vault.code.origin.mirror.set`
+- `vault.code.origin.mirror.clear`
+- `vault.code.origin.mirror.push`
 - `vault.code.origin.authority.get`
 - `vault.code.origin.authority.set`
 - `vault.code.origin.publications`
