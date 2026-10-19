@@ -3081,7 +3081,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "MeshMachineAddress",
@@ -3091,8 +3091,24 @@
      "purpose": "Local host-authorized mesh binding and grants, distinct from address hints",
      "surface": {
       "const": 1,
-      "fn": 10,
+      "fn": 7,
+      "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MeshAlpnGrant",
+      "MeshBindingIdentity",
+      "MeshMachineBinding"
+     ],
+     "path": "src/authority/mesh_machine/doors.rs",
+     "purpose": "Public mesh setup inputs and owner-bound doors over the host's existing binding, ALPN and terminal…",
+     "surface": {
+      "fn": 7,
+      "struct": 3
      }
     },
     {
@@ -53269,7 +53285,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1030
+      "fn": 1035
      }
     },
     {
@@ -53564,6 +53580,10 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "MeshDialRequest",
+      "MeshMachineBound",
+      "MeshMachineRevokeRequest",
+      "MeshMachineRevoked",
       "MeshPathReceiptsRequest"
      ],
      "path": "src/task_verb/sdk_mesh.rs",
@@ -53571,7 +53591,8 @@
      "surface": {
       "const": 1,
       "fn": 2,
-      "struct": 1
+      "re-export": 1,
+      "struct": 5
      }
     },
     {
@@ -59586,7 +59607,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 163,
+     "files": 164,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61042,9 +61063,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 201,
+   "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3716,
+   "source_files": 3717,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68834,7 +68855,7 @@
   "oneiron-mesh-transport": {
    "files": [
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "IrohTransport"
@@ -68844,6 +68865,17 @@
      "surface": {
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/iroh_transport/dial.rs",
+     "purpose": "The shared authenticated handshake used by a paired dial and by the owner's explicit-address admission attempt",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -68924,10 +68956,10 @@
    ],
    "modules": {
     "iroh_transport": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "Private iroh data plane"
     },
     "sync_dialer": {
@@ -68945,9 +68977,9 @@
      "purpose": "Pairing derives a distinct transport signer; only the public endpoint key is recorded"
     }
    },
-   "over_bar": 1,
+   "over_bar": 0,
    "purpose": "Vault-scoped mesh transport",
-   "source_files": 4,
+   "source_files": 5,
    "test_files": 2
   },
   "oneiron-model": {
@@ -69676,7 +69708,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1001
+      "fn": 1006
      }
     },
     {
@@ -70772,7 +70804,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1002
+      "fn": 1007
      }
     },
     {
@@ -74326,7 +74358,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 161
+      "crate-vis": 162
      }
     },
     {
@@ -74447,6 +74479,16 @@
      "purpose": "Credential-bound host projections of the typed speculative merge queue doors (DOOR-132)",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/mesh_doors.rs",
+     "purpose": "Owner-bound mesh setup and a real admission-only dial",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -82454,7 +82496,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 427,
+     "files": 428,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82883,7 +82925,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 784,
+   "source_files": 785,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -84836,6 +84878,14 @@
       "MergeQueueRepoRequest",
       "MergeQueueRequeueView",
       "MergedFinding",
+      "MeshAlpnGrant",
+      "MeshBindingIdentity",
+      "MeshDialRequest",
+      "MeshMachineAddress",
+      "MeshMachineBinding",
+      "MeshMachineBound",
+      "MeshMachineRevokeRequest",
+      "MeshMachineRevoked",
       "MeshPathDirection",
       "MeshPathKind",
       "MeshPathOutcome",
@@ -86486,7 +86536,7 @@
      "purpose": "—",
      "surface": {
       "enum": 816,
-      "struct": 2585
+      "struct": 2593
      }
     },
     {
