@@ -2995,6 +2995,33 @@ class Oneiron:
         def offer(self, spec):
             """An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."""
             return json.loads(_translate(lambda: self._client.vault_disclosure_offer(json.dumps(spec))))
+        @property
+        def ceiling(self) -> "Oneiron._VaultDisclosureCeilingVerbs":
+            return Oneiron._VaultDisclosureCeilingVerbs(self._client)
+        @property
+        def reveals(self) -> "Oneiron._VaultDisclosureRevealsVerbs":
+            return Oneiron._VaultDisclosureRevealsVerbs(self._client)
+    class _VaultDisclosureCeilingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Reads the owner registry dial for one model connection, optionally one data class."""
+            return json.loads(_translate(lambda: self._client.vault_disclosure_ceiling_get(json.dumps(spec))))
+        def set(self, spec):
+            """The owner sets one connection or class disclosure ceiling; no read authority changes."""
+            return json.loads(_translate(lambda: self._client.vault_disclosure_ceiling_set(json.dumps(spec))))
+        def clear(self, spec):
+            """The owner clears one dial, restoring connection or actor-class inference."""
+            return json.loads(_translate(lambda: self._client.vault_disclosure_ceiling_clear(json.dumps(spec))))
+    class _VaultDisclosureRevealsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner reads model-disclosure asks and receipts, including PERSON handles, without values."""
+            return json.loads(_translate(lambda: self._client.vault_disclosure_reveals(json.dumps(spec))))
+        def answer(self, spec):
+            """The owner approves once, approves standing, or denies the exact frozen reveal ask."""
+            return json.loads(_translate(lambda: self._client.vault_disclosure_reveals_answer(json.dumps(spec))))
     class _VaultSharesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4199,6 +4226,9 @@ class Oneiron:
         def get(self, spec=None):
             """The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_home_get(json.dumps({} if spec is None else spec))))
+        def pick(self, spec):
+            """The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_home_pick(json.dumps(spec))))
     class _VaultSieveVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5030,13 +5060,13 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def __call__(self, spec):
-            """Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""
+            """Asks for a custody or PERSON handle's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""
             return json.loads(_translate(lambda: self._client.reveal(json.dumps(spec))))
         def wait(self, spec):
             """Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."""
             return json.loads(_translate(lambda: self._client.reveal_wait(json.dumps(spec))))
         def describe(self, spec):
-            """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
+            """What a custody or PERSON handle names, where it was found and what a reveal of it would do now; never the value."""
             return json.loads(_translate(lambda: self._client.reveal_describe(json.dumps(spec))))
     class _HostVerbs:
         def __init__(self, client: _NativeClient) -> None:

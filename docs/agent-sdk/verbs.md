@@ -171,6 +171,12 @@ both bindings and their export-census tests in one change.
 - `vault.campaign.program.read`
 - `vault.campaign.program.update`
 - `vault.campaign.program.archive`
+- `self.saved_query.create`
+- `self.saved_query.read`
+- `self.saved_query.update`
+- `self.saved_query.archive`
+- `self.saved_query.members`
+- `self.saved_query.evaluate`
 - `vault.weave.report`
 - `vault.weave.digest`
 - `vault.weave.lens`
@@ -504,6 +510,11 @@ both bindings and their export-census tests in one change.
 - `vault.lenses.result_set.action`
 - `vault.lenses.default`
 - `vault.disclosure.offer`
+- `vault.disclosure.ceiling.get`
+- `vault.disclosure.ceiling.set`
+- `vault.disclosure.ceiling.clear`
+- `vault.disclosure.reveals`
+- `vault.disclosure.reveals.answer`
 - `reveal`
 - `reveal.wait`
 - `reveal.describe`
@@ -885,6 +896,7 @@ both bindings and their export-census tests in one change.
 - `vault.runs.step`
 - `vault.runs.checkpoint`
 - `vault.consolidation.home.get`
+- `vault.consolidation.home.pick`
 - `vault.consolidation.lineage`
 - `vault.consolidation.promote`
 - `vault.consolidation.pin`

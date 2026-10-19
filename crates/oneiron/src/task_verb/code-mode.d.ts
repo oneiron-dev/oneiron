@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1051 code-mode rows (1027 host rows, 24 run rows), 3504 declarations.
-// Replies: 938 fully typed, 109 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1057 code-mode rows (1033 host rows, 24 run rows), 3517 declarations.
+// Replies: 944 fully typed, 109 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 106; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1883,14 +1883,24 @@ declare namespace Sdk {
   type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[]; as_of?: number | null };
   type DisclosureOfferRequest = { contact: string; scope: Scope; purpose: string; channel: string; beneficiary: string; ask?: string | null; owner_ref: string; expires_at: number };
   type DisclosureOffered = { proposal_ref: string; owner_ref: string; created_at: number; expires_at: number };
+  type DisclosureDataClass = "names" | "dates" | "contact" | "ids" | "health";
+  type DisclosureCeilingRequest = { connection: string; class?: DisclosureDataClass | null };
+  type DisclosureBand = "public" | "private" | "sensitive" | "restricted";
+  type DisclosureCeilingView = { connection: string; class?: DisclosureDataClass | null; ceiling?: DisclosureBand | null };
+  type DisclosureCeilingSet = { connection: string; class?: DisclosureDataClass | null; ceiling: DisclosureBand };
+  type RevealAsksRequest = { pending?: boolean; limit?: number | null };
+  type RevealReceipt = { reveal: string; handle: string; class: string; why: string; connection?: string | null; provider?: string | null; project?: string | null; run?: string | null; answered_by?: string | null; decision?: string | null; lease?: string | null; asked_at: number; delivered_at?: number | null };
+  type RevealAskView = { receipt: RevealReceipt; state: string; expires_at: number; disclosure?: string | null; expected_digest?: string | null; grant_ref?: string | null };
+  type RevealOutcome = "once" | "standing" | "deny";
+  type RevealAnswerRequest = { reveal: string; expected_digest: string; outcome: RevealOutcome };
+  type RevealAnsweredView = { reveal: string; outcome: string; receipt_ref: string; grant_ref?: string | null };
   type RevealRequest = { handle: string; why: string };
   type RevealPending = { reveal: string };
   type RevealWaitRequest = { reveal: string };
   type RevealDecision = "pending" | "granted" | "denied" | "expired";
-  type RevealReceipt = { reveal: string; handle: string; class: string; why: string; connection?: string | null; provider?: string | null; project?: string | null; run?: string | null; answered_by?: string | null; decision?: string | null; lease?: string | null; asked_at: number; delivered_at?: number | null };
   type RevealWaitAnswer = { decision: RevealDecision; value?: string | null; value_base64?: string | null; receipt?: RevealReceipt | null };
   type RevealDescribeRequest = { handle: string };
-  type RevealProvenance = { record: string; place: string; kind: string; masked_at: number };
+  type RevealProvenance = { record: string; place: string; kind: string; masked_at?: number | null; learned_at?: number | null };
   type RevealHandleCard = { handle: string; label: string; class: string; status: string; band: string; provenance?: RevealProvenance | null; reveal: string; grant_ref?: string | null; refusal?: string | null };
   type SecretUseRequest = { handle: string; operation: string; arguments?: unknown };
   type SecretUseStatus = "answered" | "failed" | "withheld";
@@ -3160,8 +3170,11 @@ declare namespace Sdk {
   type CheckpointStepView = { step: number; label: string; state_hash: string; created_at_ms: number };
   type CheckpointResumeView = { step: number; wait_ref: string; effect: string; output_handle: string; reply?: unknown | null };
   type CheckpointView = { run_ref: string; completed_steps: number; steps: CheckpointStepView[]; resumed: CheckpointResumeView[]; next_step?: number | null };
-  type ConsolidationHomeNode = { node_id: number; class: string; elected_at: number };
-  type ConsolidationHomeView = { home?: ConsolidationHomeNode | null; this_node?: number | null; candidates_available: boolean };
+  type ConsolidationHomeNode = { node_id: string; class: string; elected_at: number };
+  type ConsolidationHomePickHead = { act_ref: string; machine: EntityId; node_id?: string | null; at: number };
+  type ConsolidationHomeView = { home?: ConsolidationHomeNode | null; this_node?: string | null; candidates_available: boolean; pick?: string | null; revision: string; heads: ConsolidationHomePickHead[]; conflict: ConsolidationHomePickHead[] };
+  type ConsolidationHomePickRequest = { node_id?: string | null };
+  type ConsolidationHomePickReceipt = { pick?: string | null; act_ref: string; revision: string; heads: ConsolidationHomePickHead[]; conflict: ConsolidationHomePickHead[]; home?: ConsolidationHomeNode | null };
   type ConsolidationLineageRequest = { job_ref: string; from_step?: string | null; limit?: number | null };
   type ConsolidationTryView = { job_ref: string; kind: string; state: AttemptState; run_id?: string | null; parent_attempt?: string | null; retry_of?: string | null; folded_retries: number; attempt_count: number; lease_owner?: string | null; result_ref?: string | null; resume_point?: AttemptResumePoint | null; parked?: DreamerParkedAttemptView | null };
   type ConsolidationStepRef = { step_hash: string; claim_ref: EntityId };
@@ -3688,9 +3701,9 @@ declare function mount(input: Sdk.GraphFsMountRequest): Promise<Sdk.GraphFsMount
 declare function peek(input: Sdk.TaskAskHandle): Promise<Sdk.TaskAskPersonEvidence[] | StoredResult>;
 /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
 declare function report(input: Sdk.ReportRequest): Promise<Sdk.ReportReceipt | StoredResult>;
-/** Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
+/** Asks for a custody or PERSON handle's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
 declare const reveal: ((input: Sdk.RevealRequest) => Promise<Sdk.RevealPending | StoredResult>) & {
-  /** What a secret handle names, where it was found and what a reveal of it would do now; never the value. */
+  /** What a custody or PERSON handle names, where it was found and what a reveal of it would do now; never the value. */
   describe(input: Sdk.RevealDescribeRequest): Promise<Sdk.RevealHandleCard | StoredResult>;
   /** Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt. */
   wait(input: Sdk.RevealWaitRequest): Promise<Sdk.RevealWaitAnswer | StoredResult>;
@@ -4643,6 +4656,8 @@ declare const vault: Sdk.VaultHost & {
     home: {
       /** The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything. */
       get(input: Sdk.EmptyRequest): Promise<Sdk.ConsolidationHomeView | StoredResult>;
+      /** The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget. */
+      pick(input: Sdk.ConsolidationHomePickRequest): Promise<Sdk.ConsolidationHomePickReceipt | StoredResult>;
     };
     /** The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model. */
     lineage(input: Sdk.ConsolidationLineageRequest): Promise<Sdk.ConsolidationLineageView | null | StoredResult>;
@@ -4729,8 +4744,21 @@ declare const vault: Sdk.VaultHost & {
     list(input: Sdk.DiagnosticsListRequest): Promise<Sdk.ScopedReadResult<Sdk.DiagnosticEventView[]> | StoredResult>;
   };
   disclosure: {
+    ceiling: {
+      /** The owner clears one dial, restoring connection or actor-class inference. */
+      clear(input: Sdk.DisclosureCeilingRequest): Promise<Sdk.DisclosureCeilingView | StoredResult>;
+      /** Reads the owner registry dial for one model connection, optionally one data class. */
+      get(input: Sdk.DisclosureCeilingRequest): Promise<Sdk.DisclosureCeilingView | StoredResult>;
+      /** The owner sets one connection or class disclosure ceiling; no read authority changes. */
+      set(input: Sdk.DisclosureCeilingSet): Promise<Sdk.DisclosureCeilingView | StoredResult>;
+    };
     /** An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses. */
     offer(input: Sdk.DisclosureOfferRequest): Promise<Sdk.DisclosureOffered | StoredResult>;
+    /** The owner reads model-disclosure asks and receipts, including PERSON handles, without values. */
+    reveals: ((input: Sdk.RevealAsksRequest) => Promise<Sdk.RevealAskView[] | StoredResult>) & {
+      /** The owner approves once, approves standing, or denies the exact frozen reveal ask. */
+      answer(input: Sdk.RevealAnswerRequest): Promise<Sdk.RevealAnsweredView | StoredResult>;
+    };
   };
   edges: {
     put(input: Sdk.MemoryEdgeInput): Promise<Sdk.MemoryEdgeOutput | StoredResult>;

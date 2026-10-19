@@ -179,25 +179,56 @@ A `key_secret` provider answers whole chat replies only for now: a streamed chat
 call to it is refused before it starts. Its media calls go through the same
 broker (§10).
 
-A managed vault (`serve --managed-by-hypnos`) reads no config file and no
-environment. Its supervisor passes the models table as `--models-file <path>`.
-The path is absolute and names a TOML file that holds only the `[models]`
-table, written as above. Relative `prompt_file` paths resolve beside it. Every
-provider there names its key with `key_secret`; a `key_env` provider or a
-`[models.decisions.system_one]` seat (whose bearer is an environment variable)
-stops the vault at start. Without the flag a managed vault runs with no model
-seats: its ladder is the rule table and the owner's asks.
+A managed vault (`serve --managed-by-hypnos`) reads no environment and no
+config file of its own. Its supervisor passes the owner's settings as one file,
+`--settings-file <path>`: an absolute path to a TOML file in the same schema as
+a self-hosted server's config file, `[models]`, `[embedder]` and `[gpu]` (§12)
+included. A vault VM finds it at `/config/settings.toml` on its config drive.
+The file is read once at start, before anything else reads the configuration,
+and it is the vault's one settings layer. Each section the owner sets
+(`[limits]`, `[connectors.<name>]`, `[native_mail]`, `[browser]`, `[desktop]`,
+`[oneironer]`, `[embedding]`, `[self_heal]`, `[recall]`, `[skills]`,
+`[failure_signals]`, `[feedback]`, `[runtime]` and the rest) works as it does
+on a self-hosted server. A value the supervisor also passes on argv
+(`--dimensions`, `--fast-dims`, `--map-size`, `--log-level`,
+`--dict-search-paths`, `--assistant-display-names`, `--maximum-tier`,
+`--failure-signal-export`, `--failure-signal-training`) keeps the supervisor's
+value.
 
-Its embedder comes the same way, as `--embedder-file <path>`: an absolute path
-to a TOML file that holds only `[embedder]` and, optionally, `[gpu]` (§12),
-written as a config file writes them. The file is the section's one layer, and
-the `--embedder-*` flags stop a managed vault at start. Managed mode reads no
-environment, so an `api_key_env` in either table (the endpoint's, the remote
-rung's or the pods') stops the vault too, and a `local` provider names its files
-with an absolute `model_dir` or `models_dir`, because the XDG data root is never
-read. Each fill pass runs under the vault's write admission, so a vault frozen
-for reap fills nothing until it thaws. Without the flag a managed vault has no
-embedder: it answers lexical and graph recall only.
+Some leaves stop the vault at start, by their presence alone (an empty value,
+`false` or the supervisor's own value too), with a typed `SettingsRefused` that
+names the field and never its value:
+
+- the supervisor's bindings (`SupervisorOwned`): `vault_path`, `host`, `port`,
+  `artifact_port`, `auth_secret`, the `oauth_*` fields,
+  `allow_unauthenticated`, `allowed_origins`, `artifact_domains`,
+  `artifact_vault_name`, `trusted_proxies`, `lease_vault_id`,
+  `privacy_posture`, `hosted_kms_key_ref`, `device_class`, every
+  `[models.broker]` key, `[models.voice] socket` and `[keystore] dir`. The
+  supervisor passes the voice loop's socket as `--voice-socket` and the key
+  directory as `--keystore-dir`.
+- a key named by an environment variable (`EnvironmentSecret`): a provider's
+  or System One's `key_env`, both embedder `api_key_env` keys, `[gpu]
+  api_key_env`, `[runtime] byo_key_env`, and a `byo_cloud_key` runtime mode,
+  which reads one. A provider names its key with `key_secret`, a secret held in
+  the vault that the credential broker sends.
+- a key the schema does not have (`UnknownField`).
+- an owner path outside the vault (`OutsideVault`): every path in the file
+  (prompt files, the decision recipe, the code-mode prompt package and `tsc`,
+  tagger and embedder model directories, publisher candidate files, dictionary
+  roots, import and backup folders, the device-sync credential file, the guest
+  runtimes) must be absolute, hold no `~` or `..`, exist, and lie under the
+  vault's data directory or the settings file's own directory once its links
+  are resolved. An import queue with no `claude_code_root` and `codex_root` of
+  its own would read the defaults under HOME, so it stops the vault too.
+
+A `local` embedder names its files with `model_dir` or `models_dir`, because
+the XDG data root is never read, and a `[keystore]` that asks for a keystore
+needs the supervisor's `--keystore-dir`. Every embedding, tagging and other
+background pass runs under the vault's write admission, so a vault frozen for
+reap fills nothing until it thaws. Without the file a managed vault runs on the
+defaults: no model seats (its ladder is the rule table and the owner's asks),
+no embedder (lexical and graph recall only) and no tagger.
 
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
@@ -1355,7 +1386,8 @@ A call opens with one JSON line:
 - A bad or missing token closes the socket before any audio. An admitted call
   is answered `{"op":"accepted"}`.
 - On a managed vault (`serve --managed-by-hypnos`, its `[models.voice]` from
-  `--models-file`) the hello carries no slip:
+  `--settings-file` and its socket from `--voice-socket`) the hello carries no
+  slip:
   `{"op":"hello","managed_owner":{"holder_ref":"..","mac":".."},"issued_at":..,"sample_rate":16000,"channels":1}`.
   `managed_owner` is the supervisor's `ManagedOwnerAction` for the vault's
   owner, signed with `ManagedOwnerRequest::voice(room, roster, issued_at)`:

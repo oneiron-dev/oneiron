@@ -424,7 +424,8 @@ such as `connector:github`.
 Name the secret by `handle` or `name`. `tier_ceiling` is the binding's rung, 0 (doored) by default
 and never above the class's live floor, and `scopes` defaults to `["read"]`. A binding for the same
 effector is replaced. The reply lists the record's bindings and the Gate record that keeps the
-binding. A portable secret's new binding reaches your other machines as a signed custody transition.
+binding. A portable secret's new binding stays on this install until you next rotate the secret:
+the rotation's custody transition carries the record as it then stands.
 
 ## Hand a served repository's origin to another host
 
@@ -885,10 +886,12 @@ carries its arrival number `seq`; a sweep keeps the last one it read and passes 
 A participating deployment sends its publisher two things, and nothing else: the content-free
 tier-1 failure counts, and the Coach's sealed code-fix records (an invented example verified in
 the vault, and a candidate fix's fixed or not-fixed result). No world text leaves, and a failure
-that touched a private world sends its counts only. A vault our cloud hosts participates by its
-terms; a self-hosted server participates only once you set `failure_signal_export = true`
-(`ONEIRON_FAILURE_SIGNAL_EXPORT`). Training on what leaves is a separate yes,
-`failure_signal_training` (`ONEIRON_FAILURE_SIGNAL_TRAINING`). Where it goes:
+that touched a private world sends its counts only. A vault our cloud hosts (the managed vault
+Hypnos runs) shares them by default, and you can turn that off: "Help improve Oneiron" off, or
+`failure_signal_export = false` in its settings. A server you run yourself shares nothing until you
+set `failure_signal_export = true` (`ONEIRON_FAILURE_SIGNAL_EXPORT`), whatever privacy posture it
+declares. Training on what leaves is a separate yes, `failure_signal_training`
+(`ONEIRON_FAILURE_SIGNAL_TRAINING`). Where it goes:
 
 ```toml
 [failure_signals]
@@ -1170,7 +1173,8 @@ incarnations, and an open takes the one that opens its vault; once the swap is o
 names the copy's alone. A rehearsal beside a running `serve` reads the vault with its unlocked page
 seal.
 
-A managed vault is plain unless its supervisor passes `--maximum-tier` when the vault is created.
+A managed vault is plain unless, when the vault is created, its supervisor passes `--maximum-tier`
+or its settings file says `maximum_tier = true`.
 Its pages then seal under the data key the supervisor delivers at every start, with a fresh vault
 id and incarnation, and the mirror beside the data directory is written at the first open, before
 any wrap: the next start reopens from its id and incarnation with the delivered key, which must be
@@ -1642,22 +1646,64 @@ The SDK verbs `vault.embedding_spaces.list`, `.declare`, `.bind`, `.one_space`, 
 bodies and answers. An embedded vault has no `ai.embed` towers, so it refuses `.move_check`. The
 SDK client waits up to 30 minutes for a check, as for an export.
 
-## Sign a secret's custody with your owner anchor
+## Choose who holds a portable secret
 
-A portable secret's custody moves between your machines under a signed transition. An install
-that cannot sign as one of your machines can have its current transition signed with the owner
-anchor of your recovery kit instead. The record keeps its generation, status and value, and the
-value is sealed to every machine of yours. The kit is read on this machine only: stop `serve`,
-then pipe the kit's recovery codes in, one per line (with `--with-passphrase`, the kit
-passphrase on the first line, and then one code is enough):
+A portable secret's register, rotate, rewrap and revoke are each a custody request your install
+carries for your other machines. The request names the install that holds the secret and does the
+change (this install unless you name another) and the installs you permit to hold its value. Any
+linked install may hold it or be permitted, in any role. A machine you mark yours gets each portable
+secret on its own: once it is admitted, every install of yours that holds the secret rewraps it to
+that machine as its holder, with no step of yours. A linked machine you have not marked yours (work,
+school, rented, a hosted node) gets a secret only when you rewrap it to that machine. A changed key
+on a machine needs a fresh permit; a role change alone does not.
 
 ```sh
-oneiron secrets anchor-sign --name NAME < kit.txt
+oneiron api raw POST /v1/owner/secrets/register --data '{"name": "deploy-token",
+  "class": "custody-portable", "rung": 0, "value_base64": "...",
+  "holder": "<32 hex>", "recipients": ["<32 hex>", "<32 hex>"]}'
+oneiron api raw POST /v1/owner/secrets/rotate --data '{"name": "deploy-token", "value_base64": "..."}'
+oneiron api raw POST /v1/owner/secrets/rewrap \
+  --data '{"name": "deploy-token", "recipients": ["<32 hex>", "<32 hex>"]}'
+oneiron api raw GET '/v1/owner/secrets/custody?name=deploy-token'
+```
+
+Without `recipients`, a register permits its holder alone and a rotate keeps the permits of the
+secret's last change. A rewrap always names its recipients. `oneiron secrets register`, `rotate`
+and `rewrap` take `--holder MACHINE` and `--recipient MACHINE` (repeat it) the same way.
+
+Each reply carries `custody`: the request's receipt (`recorded, awaiting a holder`, `enacted by its
+holder` or `refused by its holder`, with the reason), or why the change stayed on this install, and
+`delivery`. Enacted means the holder committed it; no machine acknowledges a transition it took, so
+`delivery` stays `unknown`. When this install holds the secret, the change happens in the same
+commit. Any other holder gets the value sealed to its own key and does it on its next pickup.
+
+To keep the value off this install entirely, read `GET /v1/owner/secrets/custody` for the
+secret's id, generation, revision and each linked install's permit and key, seal the input to the
+holder yourself, and send only the ciphertext:
+
+```sh
+oneiron api raw POST /v1/owner/secrets/custody --data '{"change": "rotate",
+  "secret_id": "<32 hex>", "generation": 2, "seen": "<64 hex>", "holder": "<32 hex>",
+  "recipients": [{"machine": "<32 hex>", "profile": "<64 hex>", "encryption_key_digest": "<64 hex>"}],
+  "input_base64": "..."}'
+```
+
+The same input sent again returns the request it already made.
+
+### Push with your recovery kit from an install with no profile
+
+An install with no live machine profile in the vault cannot carry your acts, so it cannot be a
+holder. If it holds a portable secret, your recovery kit can push it: the kit is your authority.
+Stop `serve`, then pipe the kit's recovery codes in, one per line (with `--with-passphrase`, the kit
+passphrase on the first line, and then one code is enough), naming each install to seal it to:
+
+```sh
+oneiron secrets anchor-sign --name NAME --recipient MACHINE < kit.txt
 ```
 
 It prints `{"name", "signed"}`. `signed` is false for a record that stays on its device
-(device-bound, cross-vault or "this device only") or a value no machine of yours here can open.
-No route or SDK verb takes the kit.
+(device-bound, cross-vault or "this device only"). Any install with a live profile refuses this
+and tells you to rewrap the secret as its holder instead. No route or SDK verb takes the kit.
 
 ## Calling the owner routes
 

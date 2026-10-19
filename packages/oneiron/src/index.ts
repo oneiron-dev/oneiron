@@ -1633,6 +1633,19 @@ export class Oneiron {
     disclosure: {
       /** An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses. */
       offer: (input: Facade.DisclosureOfferRequest): Facade.DisclosureOffered => this.#call(() => this.#client.vaultDisclosureOffer(input) as Facade.DisclosureOffered),
+      ceiling: {
+        /** Reads the owner registry dial for one model connection, optionally one data class. */
+        get: (input: Facade.DisclosureCeilingRequest): Facade.DisclosureCeilingView => this.#call(() => this.#client.vaultDisclosureCeilingGet(input) as Facade.DisclosureCeilingView),
+        /** The owner sets one connection or class disclosure ceiling; no read authority changes. */
+        set: (input: Facade.DisclosureCeilingSet): Facade.DisclosureCeilingView => this.#call(() => this.#client.vaultDisclosureCeilingSet(input) as Facade.DisclosureCeilingView),
+        /** The owner clears one dial, restoring connection or actor-class inference. */
+        clear: (input: Facade.DisclosureCeilingRequest): Facade.DisclosureCeilingView => this.#call(() => this.#client.vaultDisclosureCeilingClear(input) as Facade.DisclosureCeilingView),
+      },
+      /** The owner reads model-disclosure asks and receipts, including PERSON handles, without values. */
+      reveals: Object.assign((input: Facade.RevealAsksRequest): Facade.RevealAskView[] => this.#call(() => this.#client.vaultDisclosureReveals(input) as Facade.RevealAskView[]), {
+        /** The owner approves once, approves standing, or denies the exact frozen reveal ask. */
+        answer: (input: Facade.RevealAnswerRequest): Facade.RevealAnsweredView => this.#call(() => this.#client.vaultDisclosureRevealsAnswer(input) as Facade.RevealAnsweredView),
+      }),
     },
     shares: {
       /** The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels. */
@@ -2334,6 +2347,8 @@ export class Oneiron {
       home: {
         /** The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything. */
         get: (input: Facade.EmptyRequest = {}): Facade.ConsolidationHomeView => this.#call(() => this.#client.vaultConsolidationHomeGet(input) as Facade.ConsolidationHomeView),
+        /** The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget. */
+        pick: (input: Facade.ConsolidationHomePickRequest): Facade.ConsolidationHomePickReceipt => this.#call(() => this.#client.vaultConsolidationHomePick(input) as Facade.ConsolidationHomePickReceipt),
       },
       /** The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model. */
       lineage: (input: Facade.ConsolidationLineageRequest): Facade.ConsolidationLineageView | null => this.#call(() => this.#client.vaultConsolidationLineage(input) as Facade.ConsolidationLineageView | null),
@@ -2816,11 +2831,11 @@ export class Oneiron {
     /** The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt. */
     verdict: (input: Facade.AiVerdictRequest): Facade.AiVerdict => this.#call(() => this.#client.aiVerdict(input) as Facade.AiVerdict),
   }
-  /** Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
+  /** Asks for a custody or PERSON handle's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
   readonly reveal = Object.assign((input: Facade.RevealRequest): Facade.RevealPending => this.#call(() => this.#client.reveal(input) as Facade.RevealPending), {
     /** Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt. */
     wait: (input: Facade.RevealWaitRequest): Facade.RevealWaitAnswer => this.#call(() => this.#client.revealWait(input) as Facade.RevealWaitAnswer),
-    /** What a secret handle names, where it was found and what a reveal of it would do now; never the value. */
+    /** What a custody or PERSON handle names, where it was found and what a reveal of it would do now; never the value. */
     describe: (input: Facade.RevealDescribeRequest): Facade.RevealHandleCard => this.#call(() => this.#client.revealDescribe(input) as Facade.RevealHandleCard),
   })
   readonly host = {
