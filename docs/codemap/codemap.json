@@ -19120,7 +19120,7 @@
      "purpose": "Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle)",
      "surface": {
       "const": 4,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 4,
       "fn": 13,
       "struct": 5
@@ -44704,7 +44704,7 @@
      "path": "src/runtime_hooks/verb/ask/session.rs",
      "purpose": "A session-only call's hook ask (L13 PR-D, FIX 4283, FIX 5383; Engine 10-19 16:1x ruling (a), 17:3x)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -44859,7 +44859,7 @@
      "path": "src/runtime_hooks/verb/storage.rs",
      "purpose": "Where one verb hook chain reads content and keeps its records (WILL L11-01 S01-2c): the vault, or a…",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -56781,7 +56781,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 17,
+      "fn": 19,
       "struct": 1
      }
     },
@@ -75367,6 +75367,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/chat/sitting.rs",
+     "purpose": "Whether a chat turn signals its caller's durable sitting (FIX 5564; Engine #1968: an anonymous off-record…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -76371,7 +76381,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 37
      }
     },
     {
@@ -85680,7 +85690,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 457,
+     "files": 458,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -86130,7 +86140,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 843,
+   "source_files": 844,
    "test_files": 182
   },
   "oneiron-spawn": {
