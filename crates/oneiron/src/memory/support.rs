@@ -440,6 +440,11 @@ pub struct Memory<'v> {
     /// The logical verb's id a host carried in (`with_invocation`): verb
     /// hooks run once per id, across wrappers (ARCH-0080 §3).
     pub(super) invocation: Option<crate::runtime_hooks::InvocationId>,
+    /// The hook pause a transport's call names as the one it resumes, by
+    /// its ask handle (`with_hook_ask`, L13 PR-D): a session-only call's
+    /// pause the keep no longer holds then refuses, never running as a new
+    /// call. Context, not authority.
+    pub(super) hook_ask: Option<EntityId>,
     /// The signed instrument the caller's request was admitted on, when a
     /// host bound one (`with_invocation_slip`): work this surface queues
     /// carries it, and it is verified again when that work runs.
@@ -591,6 +596,7 @@ impl Vault {
             owner_surface: crate::authority::ActSurface::ThisInstall,
             host_slip_issuer: None,
             invocation: None,
+            hook_ask: None,
             invocation_slip: None,
             transport_invocation: false,
             task_grant: None,
@@ -640,6 +646,7 @@ impl Vault {
             owner_surface: crate::authority::ActSurface::ThisInstall,
             host_slip_issuer: None,
             invocation: None,
+            hook_ask: None,
             invocation_slip: None,
             transport_invocation: false,
             task_grant: None,
@@ -698,6 +705,7 @@ impl<'v> Memory<'v> {
                 host_slip_issuer: None,
                 // The same logical verb, run inside the turn.
                 invocation: self.invocation,
+                hook_ask: self.hook_ask,
                 invocation_slip: self.invocation_slip.clone(),
                 transport_invocation: self.transport_invocation,
                 task_grant: self.task_grant,
@@ -843,6 +851,22 @@ impl Memory<'_> {
         self
     }
 
+    /// Binds the ask handle of the hook pause a transport's call names as
+    /// the one it resumes (`x-oneiron-hook-ask`, MCP `_meta.hook_ask`; L13
+    /// PR-D, FIX 4283), beside its invocation. It grants nothing: a pause
+    /// the call's session no longer holds refuses instead of running as a
+    /// new call.
+    #[must_use]
+    pub fn with_hook_ask(mut self, ask: EntityId) -> Self {
+        self.hook_ask = Some(ask);
+        self
+    }
+
+    /// The hook pause this surface's call names as the one it resumes.
+    pub(crate) fn hook_ask(&self) -> Option<EntityId> {
+        self.hook_ask
+    }
+
     /// Binds the signed instrument the caller's request was admitted on.
     /// Work this surface queues carries it, and that work's standing is the
     /// slip's own when it runs: verified again then, a revoked slip stops it.
@@ -969,6 +993,19 @@ impl Memory<'_> {
             self.vault
                 .off_record_session_is_anonymous_for(session, principal)
         })
+    }
+
+    /// The off-record session this surface binds and the principal it binds
+    /// it for, as [`Self::keeps_no_record`] reads them: where a call that
+    /// keeps no record keeps its verb hooks' records (FIX 4283). `None` when
+    /// it binds no session.
+    pub(crate) fn off_record_binding(&self) -> Option<(&str, Option<EntityId>)> {
+        let session = self.off_record_session.as_deref()?;
+        let principal = match &self.read_proof {
+            Some(proof) => EntityId::from_hex(&proof.claims().holder_ref).ok(),
+            None => Some(self.actor),
+        };
+        Some((session, principal))
     }
 
     /// The logical verb's id a host bound, if any.
