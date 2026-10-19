@@ -461,6 +461,7 @@ impl VaultVm {
             quiescent,
             ledger_rev,
             next_wake,
+            training: _,
         } = self.ctl(&CtlRequest::PrepareReap).await?
         else {
             anyhow::bail!("prepare_reap answered with another verb");
