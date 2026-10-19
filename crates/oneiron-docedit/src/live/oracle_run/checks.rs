@@ -3,12 +3,14 @@
 //! integrity after a merge (step 4). Each reads the exported bytes again
 //! through its own path; none trusts what the projector reported.
 
+use super::edits::office_text;
 use super::record::{DOCUMENT, Res, failed, text};
+use super::text_check::{Fields, same_text};
 use super::variants::{COMMENT_REL, P, P188, PC, PROBE_NS, part_text, presentation_part, xml_tree};
 use crate::deck::{DeckView, SlideView};
 use crate::edit::NoAssets;
 use crate::live::deck_export::{ExportOutcome, ExportProfile, StepOutcome, project};
-use crate::live::{DeckNode, LiveDeck, NodeId, NodeKind, NodePayload, TextBody};
+use crate::live::{DeckNode, LiveDeck, NodeId, NodeKind, NodePayload};
 use crate::ooxml::{CONTENT_TYPES, DOCUMENT_RELATIONSHIPS};
 use crate::retained_opc::{Limits, Package};
 use std::collections::{BTreeMap, BTreeSet};
@@ -345,14 +347,15 @@ pub(super) fn probes(package: &Package) -> Res<BTreeMap<String, ProbeSite>> {
     Ok(out)
 }
 
-/// The plain text of each text shape, per slide in order.
+/// The plain text of each text shape, per slide in order, as the Office
+/// half reads it.
 pub(super) fn typed_reads(deck: &LiveDeck) -> Vec<Vec<String>> {
     slides(deck)
         .into_iter()
         .map(|slide| {
             deck.descendants(slide)
                 .into_iter()
-                .filter_map(|node| deck.texts.get(&node).map(TextBody::plain))
+                .filter_map(|node| deck.texts.get(&node).map(|body| office_text(&body.plain())))
                 .collect()
         })
         .collect()
@@ -407,9 +410,11 @@ fn keys(deck: &LiveDeck) -> Res<BTreeMap<Key, NodeId>> {
 /// model, bound to that output. Supported values, retained structure and
 /// identity bindings must match (never the operation counter), and the
 /// re-import's own export must be a no-op returning the same bytes, so
-/// relationships keep their meaning.
+/// relationships keep their meaning. `base` is the package the edit was
+/// projected over: a run split at a field must keep a field it held.
 pub(super) fn fixed_point(
     edited: &LiveDeck,
+    base: &Package,
     outcome: &ExportOutcome,
     limits: Limits,
 ) -> StepOutcome {
@@ -425,7 +430,8 @@ pub(super) fn fixed_point(
         Ok(deck) => deck,
         Err(error) => return failed(format!("the export does not re-import: {error}")),
     };
-    if let Err(why) = same_model(&bound, &reread) {
+    let fields = Fields::new(edited, base, &package);
+    if let Err(why) = same_model(&bound, &reread, &fields) {
         return failed(why);
     }
     match project(
@@ -444,7 +450,7 @@ pub(super) fn fixed_point(
     }
 }
 
-fn same_model(model: &LiveDeck, reread: &LiveDeck) -> Res<()> {
+fn same_model(model: &LiveDeck, reread: &LiveDeck, fields: &Fields<'_>) -> Res<()> {
     let (left, right) = (keys(model)?, keys(reread)?);
     let only: Vec<&Key> = left
         .keys()
@@ -464,7 +470,15 @@ fn same_model(model: &LiveDeck, reread: &LiveDeck) -> Res<()> {
     }
     for (key, id) in &left {
         let other = right[key];
-        same_node(model, *id, reread, other).map_err(|why| format!("{key:?}: {why}"))?;
+        same_node(model, *id, reread, other)
+            .and_then(|()| {
+                same_text(
+                    model.texts.get(id),
+                    reread.texts.get(&other),
+                    &|paragraph, run| fields.kept(*id, (key.1.as_str(), key.2), paragraph, run),
+                )
+            })
+            .map_err(|why| format!("{key:?}: {why}"))?;
     }
     Ok(())
 }
@@ -518,8 +532,7 @@ fn same_node(model: &LiveDeck, id: NodeId, reread: &LiveDeck, other: NodeId) -> 
             a.preset, b.preset
         ));
     }
-    same_payload(model, a.payload.as_ref(), reread, b.payload.as_ref())?;
-    same_text(model.texts.get(&id), reread.texts.get(&other))
+    same_payload(model, a.payload.as_ref(), reread, b.payload.as_ref())
 }
 
 fn same_payload(
@@ -548,6 +561,26 @@ fn same_payload(
                 && glue(model, start) == glue(reread, read_start)
                 && glue(model, end) == glue(reread, read_end)
         }
+        (
+            Some(NodePayload::Chart {
+                family,
+                categories,
+                series,
+                source,
+            }),
+            Some(NodePayload::Chart {
+                family: read_family,
+                categories: read_categories,
+                series: read_series,
+                source: read_source,
+            }),
+        ) => {
+            family == read_family
+                && categories == read_categories
+                && source == read_source
+                && series.len() == read_series.len()
+                && series.iter().zip(read_series).all(same_series)
+        }
         (Some(a), Some(b)) => a == b,
         (Some(_), None) => false,
     };
@@ -558,45 +591,49 @@ fn same_payload(
     }
 }
 
-/// Text compares by paragraph level and runs; paragraph identities are the
-/// model's own and a standalone re-import mints new ones. A run property the
-/// model leaves unset may read back with any value.
-fn same_text(a: Option<&TextBody>, b: Option<&TextBody>) -> Res<()> {
-    let (Some(a), Some(b)) = (a, b) else {
-        return if a.is_none_or(|body| body.paragraphs.is_empty()) {
-            Ok(())
-        } else {
-            Err("the text body is gone".to_owned())
-        };
+/// One chart series reads back unchanged: name, plot family, point count
+/// and missing points exactly; values and scatter x by number, since a
+/// chart cache holds no JSON number representation (`12` reads back as
+/// `12.0`).
+fn same_series((a, b): (&crate::live::ChartSeries, &crate::live::ChartSeries)) -> bool {
+    let points = |a: &[Option<serde_json::Number>], b: &[Option<serde_json::Number>]| {
+        a.len() == b.len()
+            && a.iter().zip(b).all(|pair| match pair {
+                (None, None) => true,
+                (Some(a), Some(b)) => same_number(a, b),
+                _ => false,
+            })
     };
-    if a.paragraphs.len() != b.paragraphs.len() {
-        return Err(format!(
-            "text {:?} reads back as {:?}",
-            a.plain(),
-            b.plain()
-        ));
-    }
-    for (pa, pb) in a.paragraphs.iter().zip(&b.paragraphs) {
-        if pa.level != pb.level || pa.runs.len() != pb.runs.len() {
-            return Err(format!(
-                "paragraph {:?} reads back as {:?}",
-                pa.text(),
-                pb.text()
-            ));
+    a.name == b.name
+        && a.family == b.family
+        && points(&a.values, &b.values)
+        && match (&a.x, &b.x) {
+            (None, None) => true,
+            (Some(xa), Some(xb)) => points(xa, xb),
+            _ => false,
         }
-        for (ra, rb) in pa.runs.iter().zip(&pb.runs) {
-            let props = [
-                ra.bold.is_none() || ra.bold == rb.bold,
-                ra.italic.is_none() || ra.italic == rb.italic,
-                ra.size.is_none() || ra.size == rb.size,
-                ra.latin.is_none() || ra.latin == rb.latin,
-            ];
-            if ra.text != rb.text || props.contains(&false) {
-                return Err(format!("run {ra:?} reads back as {rb:?}"));
-            }
-        }
+}
+
+/// The same number, with no epsilon: two integers exactly, an integer and
+/// a float only when the float is exactly that integer, two floats exactly.
+fn same_number(a: &serde_json::Number, b: &serde_json::Number) -> bool {
+    let int = |n: &serde_json::Number| {
+        n.as_i64()
+            .map(i128::from)
+            .or_else(|| n.as_u64().map(i128::from))
+    };
+    // A finite whole float within range converts exactly; `as` saturates
+    // beyond i128, past every JSON integer.
+    let float_is = |n: &serde_json::Number, whole: i128| {
+        n.as_f64()
+            .is_some_and(|f| f.is_finite() && f.fract() == 0.0 && f as i128 == whole)
+    };
+    match (int(a), int(b)) {
+        (Some(x), Some(y)) => x == y,
+        (Some(whole), None) => float_is(b, whole),
+        (None, Some(whole)) => float_is(a, whole),
+        (None, None) => a.as_f64().is_some_and(|x| b.as_f64() == Some(x)),
     }
-    Ok(())
 }
 
 /// No dangling references in a live tree: parents and children agree, text

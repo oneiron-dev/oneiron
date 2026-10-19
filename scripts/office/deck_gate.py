@@ -17,7 +17,10 @@ records. docs/ops/deck-gate.md has the commands.
   office RUN           Mac mini only: open everything serially, then assemble
   assemble RUN         join the Office results to the engine's; no Office
 
-An unrun, timed-out or unsupported case is inconclusive, never a pass.
+An unrun, timed-out or unsupported case is inconclusive, never a pass. A run
+the engine half did not finish (a journal, results.jsonl, and no manifest)
+is reported from its journal and refused for every command: no Office pass
+and no receipt come from an incomplete run.
 """
 from __future__ import annotations
 
@@ -38,6 +41,8 @@ sys.path.insert(0, str(ROOT))
 import deck_oracle as oracle_mod  # noqa: E402  (beside this file, in the repo and in a run)
 
 RUN_SCHEMA = 'oneiron.deck-gate-run/1'
+JOURNAL = 'results.jsonl'
+JOURNAL_SCHEMA = 'oneiron.deck-gate-journal/1'
 PROFILE = 'pptx-live-v1'
 CASE_MANIFEST = 'scripts/office/pptx-live-v1.json'
 ORACLE, NON_PDF, REGRESSION = 6, 7, 8
@@ -98,7 +103,59 @@ def worst(engine, office):
 # ---- the run directory -----------------------------------------------------
 
 def load_run(run: Path) -> dict:
-    return json.loads((run / 'manifest.json').read_text())
+    """The run manifest. Without one, a journal is reported and the run refused."""
+    manifest = run / 'manifest.json'
+    if manifest.is_file():
+        return json.loads(manifest.read_text())
+    if (run / JOURNAL).is_file():
+        report_partial(run)
+        print(f'REFUSED: {run} is incomplete (no manifest.json): the engine half stopped before '
+              'it finished. No Office pass and no approval come from an incomplete run; run the '
+              'engine half again.', file=sys.stderr)
+    else:
+        print(f'REFUSED: {run} holds neither manifest.json nor {JOURNAL}', file=sys.stderr)
+    raise SystemExit(2)
+
+
+def report_partial(run: Path) -> None:
+    """What a cut-short run finished, from its journal's complete lines only."""
+    lines = (run / JOURNAL).read_text(errors='replace').splitlines()
+    header, cases, torn = None, [], 0
+    for at, line in enumerate(lines):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            torn += 1  # a line cut by the stop: the case in progress, never counted
+            continue
+        if at == 0 and entry.get('line') == 'header' and entry.get('schema') == JOURNAL_SCHEMA:
+            header = entry
+        elif entry.get('line') == 'case':
+            cases.append(entry)
+    if header is None:
+        print(f'{run / JOURNAL}: no {JOURNAL_SCHEMA} header; nothing to report', file=sys.stderr)
+        return
+    print(f"PARTIAL run {run}: profile {header.get('profile')}, projector {header.get('projector')}, "
+          f"source {header.get('source')}")
+    counts: dict[str, int] = {}
+    for case in cases:
+        kind, _ = split(case.get('outcome'))
+        counts[kind] = counts.get(kind, 0) + 1
+    print(f"{len(cases)} cases finished: " + ', '.join(f'{n} {kind}' for kind, n in sorted(counts.items()))
+          + (f'; {torn} unreadable line(s) not counted' if torn else ''))
+    steps: dict[int, dict[str, int]] = {}
+    for case in cases:
+        for result in case.get('results', []):
+            kind, _ = split(result.get('outcome'))
+            row = steps.setdefault(result.get('step'), {})
+            row[kind] = row.get(kind, 0) + 1
+    for step in sorted(s for s in steps if isinstance(s, int)):
+        print(f"step {step}: " + ', '.join(f'{n} {kind}' for kind, n in sorted(steps[step].items())))
+    for case in cases:
+        kind, detail = split(case.get('outcome'))
+        if kind != 'passed':
+            print(f"  {case.get('id')} {kind} ({case.get('elapsed_ms')} ms): {detail}")
+    candidates = sum(len(case.get('candidates', [])) for case in cases)
+    print(f'{candidates} candidates written by finished cases')
 
 
 def verify(run: Path, manifest: dict) -> list[str]:
@@ -444,7 +501,8 @@ def font_families(paths: list[Path]) -> set[str]:
 
 def font_versions(run: Path, manifest: dict, environment: dict) -> list[str]:
     """Canon: PowerPoint, macOS and font versions on every receipt (step 8)."""
-    lines = [f"font inventory sha256 {environment.get('font_inventory_sha256')}"]
+    lines = [f"font inventory sha256 {environment.get('font_inventory_sha256')} "
+             f"(account {environment.get('font_account')})"]
     families = font_families([run / entry['file'] for entry in manifest['candidates'] if entry['trust'] == 'fixture'])
     try:
         out = subprocess.run(['system_profiler', '-json', 'SPFontsDataType'], capture_output=True,
@@ -497,6 +555,9 @@ def cmd_office(args) -> int:
         return 2
     results = (args.results or run / 'office-results').resolve()
     results.mkdir(parents=True, exist_ok=True)
+    account, inventory, rows = oracle_mod.font_inventory()
+    (results / 'font-inventory.json').write_text(json.dumps(
+        {'font_account': account, 'font_inventory_sha256': inventory, 'rows': list(rows)}, indent=2) + '\n')
     take_lock(f'deck-gate {manifest.get("source")} {run}')
     already_running = oracle_mod.app_pid() is not None
     stopped = quit_error = None

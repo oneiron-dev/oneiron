@@ -458,6 +458,21 @@ fn shape_in<'v>(view: &'v DeckView, slide: &str, id: u32) -> Result<&'v ShapeVie
         .ok_or(EditRefusal::ReadBack("the target is gone"))
 }
 
+/// The target's text body as the text mapping reads it: each paragraph's
+/// characters, U+000B for a break.
+fn body_paragraphs(
+    candidate: &Package,
+    target: &super::Target<'_>,
+) -> Result<Vec<Vec<char>>, EditRefusal> {
+    let (_, tree) = xml::read(candidate, target.slide)?;
+    let at = find_shape(&tree, target.shape).ok_or(EditRefusal::ReadBack("the target is gone"))?;
+    let body = xml::child(&tree, at, P, "txBody").ok_or(EditRefusal::ReadBack("no text body"))?;
+    Ok(paragraphs(&tree, body)
+        .into_iter()
+        .map(|p| p.text)
+        .collect())
+}
+
 /// The written values read back from the candidate.
 fn reads_back(
     candidate: &Package,
@@ -468,16 +483,12 @@ fn reads_back(
     let fault = |why| Err(EditRefusal::ReadBack(why));
     match *op {
         ValueEdit::SetText { target, text } => {
-            let (_, tree) = xml::read(candidate, target.slide)?;
-            let at = find_shape(&tree, target.shape)
-                .ok_or(EditRefusal::ReadBack("the target is gone"))?;
-            let body =
-                xml::child(&tree, at, P, "txBody").ok_or(EditRefusal::ReadBack("no text body"))?;
-            let read: Vec<Vec<char>> = paragraphs(&tree, body)
-                .into_iter()
-                .map(|p| p.text)
-                .collect();
-            if read != split(text)? {
+            if body_paragraphs(candidate, &target)? != split(text)? {
+                return fault("the text body does not read as written");
+            }
+        }
+        ValueEdit::SetParagraphs { target, paragraphs } => {
+            if body_paragraphs(candidate, &target)? != paragraphs {
                 return fault("the text body does not read as written");
             }
         }

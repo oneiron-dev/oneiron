@@ -12,7 +12,8 @@ use super::LiveError;
 use super::convert::{self, Conversion, HELD_MEDIA, SMART_ART_NODES};
 use super::held;
 use crate::deck::{DeckView, ShapeKind, ShapeView, TextView};
-use crate::edit::{AssetRef, ConnectorPreset, Digest, Effect, IdMarks, Preset};
+use crate::edit::{AssetRef, BREAK, ConnectorPreset, Digest, Effect, IdMarks, Preset};
+use crate::ooxml::XmlTree;
 use crate::retained_opc::Package;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -558,6 +559,7 @@ impl LiveDeck {
             // First pass mints every shape identity in document order; the
             // second wires parents from each shape's group path.
             let mut ids: Vec<NodeId> = Vec::with_capacity(slide.shapes.len());
+            let tree = held::slide_tree(package, &slide.part)?;
             for shape in &slide.shapes {
                 let id = deck.mint();
                 ids.push(id);
@@ -591,7 +593,7 @@ impl LiveDeck {
                     },
                 );
                 if let Some(text) = &shape.text {
-                    let body = text_body(text, || deck.mint());
+                    let body = text_body(text, &tree, || deck.mint());
                     deck.texts.insert(id, body);
                 }
             }
@@ -612,7 +614,6 @@ impl LiveDeck {
                     .push(id);
             }
             // Third, what each element is written as, glue by live node.
-            let tree = held::slide_tree(package, &slide.part)?;
             let native: BTreeMap<u32, NodeId> = slide
                 .shapes
                 .iter()
@@ -719,28 +720,56 @@ pub(crate) fn geometry_of(shape: &ShapeView) -> GeometryProps {
 }
 
 /// A retained text body as the live model holds it, paragraph identities
-/// drawn from `mint`.
-pub(crate) fn text_body(text: &TextView, mut mint: impl FnMut() -> NodeId) -> TextBody {
+/// drawn from `mint`. `tree` is the slide the body is read from: each soft
+/// break (`a:br`) in it is a run of its own holding one U+000B, as the text
+/// mapping counts it. A break declares no property, so its `a:rPr` stays
+/// as written.
+pub(crate) fn text_body(
+    text: &TextView,
+    tree: &XmlTree,
+    mut mint: impl FnMut() -> NodeId,
+) -> TextBody {
     TextBody {
         paragraphs: text
             .paragraphs
             .iter()
-            .map(|paragraph| Paragraph {
-                id: mint(),
-                level: paragraph.level.value.unwrap_or(0),
-                runs: paragraph
-                    .runs
-                    .iter()
-                    .map(|run| Run {
+            .map(|paragraph| {
+                let id = mint();
+                let mut breaks = crate::deck::soft_breaks(tree, paragraph.node.index)
+                    .into_iter()
+                    .peekable();
+                let mut runs = Vec::with_capacity(paragraph.runs.len());
+                for (at, run) in paragraph.runs.iter().enumerate() {
+                    while breaks.next_if_eq(&at).is_some() {
+                        runs.push(soft_break());
+                    }
+                    runs.push(Run {
                         text: run.text.clone(),
                         bold: run.bold.value,
                         italic: run.italic.value,
                         size: run.size.value,
                         latin: run.latin.value.as_ref().map(|font| font.typeface.clone()),
-                    })
-                    .collect(),
+                    });
+                }
+                runs.extend(breaks.map(|_| soft_break()));
+                Paragraph {
+                    id,
+                    level: paragraph.level.value.unwrap_or(0),
+                    runs,
+                }
             })
             .collect(),
+    }
+}
+
+/// A soft break in live text: one U+000B, declaring no property.
+fn soft_break() -> Run {
+    Run {
+        text: BREAK.to_string(),
+        bold: None,
+        italic: None,
+        size: None,
+        latin: None,
     }
 }
 

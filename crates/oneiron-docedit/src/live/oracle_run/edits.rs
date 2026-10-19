@@ -11,7 +11,7 @@ use super::record::{
 };
 use super::spec::Recipe;
 use super::variants::{SHAPE_PROBE, presentation_part};
-use crate::edit::{Assets, Preset};
+use crate::edit::{Assets, BREAK, Preset};
 use crate::live::deck_export::{ExportOutcome, ExportProfile, project};
 use crate::live::{
     DeckOp, GeometryProps, LiveDeck, LiveError, NodeId, NodeKind, NodePayload, Paragraph,
@@ -349,7 +349,7 @@ pub(super) fn diff_explained(before: &Package, after: &Package, allowed: &Allowe
 }
 
 /// The text body with `mark` appended to the last run of its first
-/// paragraph, and that paragraph's new text.
+/// paragraph, and that paragraph's new text as Office reads it.
 pub(super) fn appended(body: &TextBody, mark: &str) -> Res<(TextBody, String)> {
     let mut next = body.clone();
     let paragraph = next
@@ -362,8 +362,15 @@ pub(super) fn appended(body: &TextBody, mark: &str) -> Res<(TextBody, String)> {
         .ok_or("the first paragraph has no run")?
         .text
         .push_str(mark);
-    let edited = paragraph.text();
+    let edited = office_text(&paragraph.text());
     Ok((next, edited))
+}
+
+/// Live text as the Office half reads a paragraph (`deck_gate.py`'s text,
+/// each paragraph's `a:t` joined): a soft break, U+000B in live text, reads
+/// as nothing.
+pub(super) fn office_text(text: &str) -> String {
+    text.replace(BREAK, "")
 }
 
 /// The subject of the core mutations: the probed baseline, its anchor and
@@ -451,13 +458,23 @@ pub(super) fn edit_case(
     assets: &OracleAssets,
 ) -> Res<()> {
     let case = format!("{}.edit.{}", subject.deck.id, recipe.name());
+    run.case(&case, |run| edit_body(run, &case, subject, recipe, assets))
+}
+
+fn edit_body(
+    run: &mut Run,
+    case: &str,
+    subject: &Subject<'_>,
+    recipe: Recipe,
+    assets: &OracleAssets,
+) -> Res<()> {
     let mut ids = Ids::above(&subject.deck.deck);
     let plan = match plan(recipe, subject, &mut ids, assets) {
         Ok(plan) => plan,
         Err(why) => {
             run.record(
                 EDIT,
-                &case,
+                case,
                 failed(format!("the case does not fit the baseline: {why}")),
             );
             return Ok(());
@@ -466,7 +483,7 @@ pub(super) fn edit_case(
     let exported = match export(subject.deck, &plan.ops, assets) {
         Ok(exported) => exported,
         Err(refused) => {
-            run.record(EDIT, &case, failed(refused.why()));
+            run.record(EDIT, case, failed(refused.why()));
             return Ok(());
         }
     };
@@ -475,7 +492,7 @@ pub(super) fn edit_case(
         Err(error) => {
             run.record(
                 EDIT,
-                &case,
+                case,
                 failed(format!("the export does not reopen: {error}")),
             );
             return Ok(());
@@ -484,18 +501,23 @@ pub(super) fn edit_case(
     let preserved = allowed(plan.scope, &exported.touched, &subject.deck.package)
         .and_then(|allowed| diff_explained(&subject.deck.package, &output, &allowed))
         .and_then(|()| probes_kept(subject, &output, &exported.outcome, plan.removes_shape));
-    run.record(EDIT, &case, verdict(preserved));
+    run.record(EDIT, case, verdict(preserved));
     run.record(
         FIXED_POINT,
-        &case,
-        checks::fixed_point(&exported.deck, &exported.outcome, run.limits),
+        case,
+        checks::fixed_point(
+            &exported.deck,
+            &subject.deck.package,
+            &exported.outcome,
+            run.limits,
+        ),
     );
     let slides = checks::slides(&exported.deck).len();
     let mut owed = plan.checks;
     owed.push(OfficeCheck::Slides { count: slides });
     owed.push(OfficeCheck::Pages { count: slides });
     run.candidate(Emit {
-        id: &case,
+        id: case,
         bytes: &exported.outcome.bytes,
         steps: &[ORACLE],
         lane: Lane::Core,

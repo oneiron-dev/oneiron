@@ -7,11 +7,13 @@ Repair, permission prompts, and unrelated open decks cannot be clean opens.
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
+import pwd
 import shutil
 import subprocess
 import sys
@@ -63,35 +65,167 @@ def command(args: list[str], timeout: int = 8) -> str:
     return r.stdout.strip()
 
 
+# ---- font inventory: the font files on disk, per account -------------------
+#
+# The renderer's fonts are the files it can load: the system's, the machine's,
+# the running account's and the ones the Office install carries. Each is
+# identified by its bytes (SHA-256), never by mtime or by the session's
+# activated list (`atsutil` reports on-demand activation, which differs per
+# login session). A missing root or an unreadable file is a row of its own.
+FONT_SUFFIXES = frozenset({'.ttf', '.otf', '.ttc', '.otc', '.dfont', '.fon', '.pfb', '.pfm',
+                           '.afm', '.woff', '.woff2', '.suit'})
+MISSING_ROOT = 'missing-root'
+UNREADABLE = 'unreadable'
+
+
+def font_account() -> str:
+    """The effective OS account: whose ~/Library/Fonts PowerPoint loads."""
+    return pwd.getpwuid(os.geteuid()).pw_name
+
+
+def font_roots() -> list[tuple[str, Path]]:
+    resources = APP / 'Contents/Resources'
+    return [('system', Path('/System/Library/Fonts')), ('local', Path('/Library/Fonts')),
+            ('user', Path.home() / 'Library/Fonts'), ('office-dfonts', resources / 'DFonts'),
+            ('office-fonts', resources / 'Fonts')]
+
+
+def font_file(path: Path) -> bool:
+    """A font file: a known font suffix, or an extensionless resource (a suitcase)."""
+    return not path.name.startswith('.') and (path.suffix.lower() in FONT_SUFFIXES or not path.suffix)
+
+
+def inventory_rows() -> list[dict]:
+    """Sorted rows {root_label, relative_path, bytes, sha256} over every font root."""
+    rows = []
+
+    def problem(label: str, relative: str, why: str) -> None:
+        rows.append({'root_label': label, 'relative_path': relative, 'bytes': None, 'sha256': why})
+
+    for label, root in font_roots():
+        if not root.is_dir():
+            problem(label, '.', MISSING_ROOT)
+            continue
+        unreadable: list[OSError] = []
+        for folder, _, names in os.walk(root, onerror=unreadable.append):
+            for name in names:
+                path = Path(folder) / name
+                if not font_file(path) or not path.is_file():
+                    continue
+                relative = path.relative_to(root).as_posix()
+                try:
+                    rows.append({'root_label': label, 'relative_path': relative,
+                                 'bytes': path.stat().st_size, 'sha256': digest(path)})
+                except OSError as exc:
+                    problem(label, relative, f'{UNREADABLE}: {exc.strerror or exc}')
+        for exc in unreadable:
+            where = Path(exc.filename).relative_to(root).as_posix() if exc.filename else '.'
+            problem(label, where, f'{UNREADABLE}: {exc.strerror or exc}')
+    return sorted(rows, key=lambda row: (row['root_label'], row['relative_path']))
+
+
+def inventory_digest(rows: list[dict]) -> str:
+    """SHA-256 of the rows as canonical UTF-8 JSON."""
+    canonical = json.dumps(rows, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+    return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+
+
+@functools.lru_cache(maxsize=1)
+def font_inventory() -> tuple[str, str, tuple]:
+    """(account, digest, rows), measured once per process: one Office pass shares it."""
+    rows = inventory_rows()
+    return font_account(), inventory_digest(rows), tuple(rows)
+
+
+def inventory_problems(rows) -> list[str]:
+    return [f"{row['root_label']}/{row['relative_path']}: {row['sha256']}" for row in rows
+            if row['sha256'] == MISSING_ROOT or row['sha256'].startswith(UNREADABLE)]
+
+
+def approve_command() -> str:
+    """The exact command that approves this account's inventory, in the source checkout."""
+    script, config = Path(__file__).resolve(), ROOT / 'environment.json'
+    if ROOT.name == 'office' and ROOT.parent.name == 'scripts':
+        return f'python3 -I {script} fonts --approve {config}'
+    return ('python3 -I scripts/office/deck_oracle.py fonts --approve scripts/office/environment.json '
+            '(from the source checkout, as this account; a run directory pins its copy, so approve '
+            'in source and start a new run)')
+
+
 def env_pin(observer: str) -> dict:
     info = command(['/usr/libexec/PlistBuddy', '-c', 'Print CFBundleShortVersionString',
                     str(APP / 'Contents/Info.plist')])
-    fonts = command(['atsutil', 'fonts', '-list'], timeout=30)
+    account, inventory, _ = font_inventory()
     return {'harness': VERSION, 'powerpoint': info,
             'macos': command(['sw_vers', '-productVersion']),
             'macos_build': command(['sw_vers', '-buildVersion']),
             'pdfkit': platform.mac_ver()[0], 'raster_scale': 2,
-            'font_inventory_sha256': hashlib.sha256(fonts.encode()).hexdigest(),
+            'font_account': account, 'font_inventory_sha256': inventory,
             'observer': observer, 'locale': os.environ.get('LANG', '')}
 
 
 ENV_FIELDS = frozenset({'harness', 'powerpoint', 'macos', 'macos_build', 'pdfkit',
-                        'raster_scale', 'font_inventory_sha256', 'observer', 'locale'})
+                        'raster_scale', 'observer', 'locale'})
+ENV_VERSION = 2
 
 
 def environment_mismatch(observed: dict) -> str | None:
-    """Only the explicitly approved Mac/renderer combination may produce a clean receipt."""
+    """Only the explicitly approved Mac/renderer combination may produce a clean receipt.
+    Fonts are judged against the account the receipt records, not the one reading it."""
     try:
         config = json.loads((ROOT / 'environment.json').read_text())
         expected = config['environment']
+        approved = config['approved_font_inventories']
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return f'approved environment unavailable: {exc}'
-    if config.get('version') != 1 or not isinstance(expected, dict) or set(expected) != ENV_FIELDS:
+    if (config.get('version') != ENV_VERSION or not isinstance(expected, dict)
+            or set(expected) != ENV_FIELDS or not isinstance(approved, dict)):
         return 'approved environment configuration is incomplete or unsupported'
+    if not isinstance(observed, dict):
+        return 'no environment was recorded'
     for field in sorted(ENV_FIELDS):
-        if not isinstance(observed, dict) or observed.get(field) != expected[field]:
-            return f'unapproved environment {field}: expected {expected[field]!r}, observed {observed.get(field) if isinstance(observed, dict) else None!r}'
+        if observed.get(field) != expected[field]:
+            return f'unapproved environment {field}: expected {expected[field]!r}, observed {observed.get(field)!r}'
+    account, inventory = observed.get('font_account'), observed.get('font_inventory_sha256')
+    if not account or not inventory:
+        return 'the environment records no font account or font inventory'
+    if approved.get(account) != inventory:
+        held = approved.get(account)
+        why = (f'approved {held}' if held else 'none approved')
+        return (f'unapproved font inventory for account {account!r}: observed {inventory}, {why}; '
+                f'inspect with `deck_oracle.py fonts`, then approve as {account} with: {approve_command()}')
     return None
+
+
+def write_json_atomic(path: Path, value) -> None:
+    aside = path.with_name(path.name + '.part')
+    with aside.open('w') as out:
+        out.write(json.dumps(value, indent=2, sort_keys=True) + '\n')
+        out.flush()
+        os.fsync(out.fileno())
+    os.replace(aside, path)
+
+
+def fonts(approve: Path | None) -> int:
+    """Print this account's font inventory and digest; with --approve, record it."""
+    account, inventory, rows = font_inventory()
+    for row in rows:
+        print(json.dumps(row, sort_keys=True, ensure_ascii=False))
+    problems = inventory_problems(rows)
+    for problem in problems:
+        print(f'WARNING {problem}', file=sys.stderr)
+    print(f'account {account} font_inventory_sha256 {inventory} ({len(rows)} rows, '
+          f'{len(problems)} missing or unreadable)')
+    if approve is None:
+        return 0
+    config = json.loads(approve.read_text())
+    if config.get('version') != ENV_VERSION or not isinstance(config.get('approved_font_inventories'), dict):
+        print(f'REFUSED: {approve} is not a version {ENV_VERSION} environment', file=sys.stderr)
+        return 2
+    config['approved_font_inventories'][account] = inventory
+    write_json_atomic(approve, config)
+    print(f'approved {account} -> {inventory} in {approve}')
+    return 0
 
 
 def observer_status(observer: str) -> str | None:
@@ -334,7 +468,7 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
         mismatch = environment_mismatch(receipt['environment'])
         if mismatch:
             receipt['detail'] = mismatch
-            return receipt
+            return record()
         stage = STAGING / f'{candidate.stem}-{os.getpid()}-{uuid.uuid4().hex[:8]}'
         stage.mkdir(parents=True, exist_ok=False)
         staged = stage / f'{candidate.stem}-{os.getpid()}-{uuid.uuid4().hex[:8]}.pptx'
@@ -344,7 +478,7 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
         if (receipt['staged_input_sha256'] != receipt['input']['sha256']
                 or staged.stat().st_size != receipt['input']['bytes']):
             receipt['detail'] = 'input changed before staging; refusing a different snapshot'
-            return receipt
+            return record()
         launch_hidden()
         if names := presentations():
             receipt['detail'] = f'PowerPoint has open presentation(s): {names}'
@@ -529,8 +663,6 @@ def acquire(case_id: str, destination: Path) -> dict:
             with urllib.request.urlopen(url, timeout=30) as response, path.open('wb') as out:
                 while chunk := response.read(1024 * 1024):
                     out.write(chunk)
-                    if out.tell() > 50 * 1024 * 1024:
-                        raise ValueError('corpus file exceeds 50 MiB cap')
             actual = digest(path)
             if actual != item['sha256']:
                 raise ValueError(f'{kind} hash mismatch: {actual}')
@@ -556,7 +688,12 @@ def main() -> int:
     fetch = sub.add_parser('acquire', help='download one pinned PPTArena pair (never opens it)')
     fetch.add_argument('case_id')
     fetch.add_argument('destination', type=Path, help='new directory; binaries are not committed')
+    font = sub.add_parser('fonts', help="print this account's font file inventory and its digest")
+    font.add_argument('--approve', type=Path, metavar='ENVIRONMENT_JSON',
+                      help="record this account's digest as approved in that environment.json")
     args = p.parse_args()
+    if args.command == 'fonts':
+        return fonts(args.approve)
     if args.command == 'acquire':
         if args.destination.exists():
             p.error('destination must be new')

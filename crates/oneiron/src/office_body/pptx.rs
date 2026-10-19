@@ -502,7 +502,7 @@ impl Vault {
                 at,
                 changes: export.outcome.changed_parts.len() as u64,
                 recalc: None,
-                effects: Vec::new(),
+                effects: export.outcome.effects.iter().map(effect_receipt).collect(),
             };
             EXPORTS.put(
                 &self.store,

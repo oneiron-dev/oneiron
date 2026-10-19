@@ -9,7 +9,9 @@
 //! concurrent cases in both landing orders, and runs the regression corpus
 //! and the adversarial fixtures through the same path. Every exported
 //! candidate is written to a new directory with its SHA-256 and the checks
-//! PowerPoint owes it, beside the engine outcome of each step.
+//! PowerPoint owes it, beside the engine outcome of each step. Each case is
+//! journaled as it finishes (`results.jsonl`), so a run cut short keeps
+//! every case it finished; the run manifest is folded from that journal.
 //!
 //! The Office half (`scripts/office/deck_gate.py`, on the Mac mini) opens
 //! those candidates under the pinned environment, joins its outcomes to the
@@ -20,6 +22,7 @@
 mod assets;
 mod checks;
 mod edits;
+mod journal;
 mod merge;
 mod nonpdf;
 mod recipes;
@@ -27,10 +30,11 @@ mod record;
 mod regression;
 mod spec;
 mod suite;
+mod text_check;
 mod variants;
 
 use super::deck_export::{ExportProfile, PROJECTOR_VERSION, StepOutcome};
-use record::{ORACLE, Run, RunManifest};
+use record::{ORACLE, Run};
 use std::path::PathBuf;
 
 /// What one run reads and where it writes.
@@ -79,32 +83,47 @@ pub fn run(options: &RunOptions) -> Result<RunSummary, String> {
     let mut run = Run::create(&options.out)?;
     let scripts = run.copy_scripts(&options.repo, &cases.office.scripts)?;
     let case_manifest = run.write_file("case-manifest.json", &manifest_bytes)?;
+    run.begin(&cases, options.source.clone(), case_manifest, scripts)?;
     for baseline in &cases.baselines {
-        suite::baseline(&mut run, &options.repo, baseline, &cases)?;
+        run.case(&baseline.id, |run| {
+            suite::baseline(run, &options.repo, baseline, &cases)
+        })?;
     }
-    regression::adversarial(
-        &mut run,
-        &options.repo,
-        &cases.regression.adversarial,
-        cases.office.timeout_seconds,
-    )?;
-    regression::corpus(
-        &mut run,
-        &options.repo,
-        options.corpus.as_deref(),
-        &cases.regression.pptarena,
-    )?;
+    run.case("adversarial", |run| {
+        regression::adversarial(
+            run,
+            &options.repo,
+            &cases.regression.adversarial,
+            cases.office.timeout_seconds,
+        )
+    })?;
+    run.case("pptarena", |run| {
+        regression::corpus(
+            run,
+            &options.repo,
+            options.corpus.as_deref(),
+            &cases.regression.pptarena,
+        )
+    })?;
     let office = run
-        .candidates
+        .journaled()?
         .iter()
+        .flat_map(|line| &line.candidates)
         .filter(|c| c.steps.contains(&ORACLE))
         .count();
     if office > 0 {
-        run.record(ORACLE, "candidates", StepOutcome::Passed);
+        run.case("candidates", |run| {
+            run.record(ORACLE, "candidates", StepOutcome::Passed);
+            Ok(())
+        })?;
     }
-    let steps = run.steps();
-    let engine_passed = steps.iter().all(|step| step.engine == StepOutcome::Passed);
-    let lines = steps
+    let manifest = run.complete()?;
+    let engine_passed = manifest
+        .steps
+        .iter()
+        .all(|step| step.engine == StepOutcome::Passed);
+    let lines = manifest
+        .steps
         .iter()
         .map(|step| {
             format!(
@@ -116,25 +135,15 @@ pub fn run(options: &RunOptions) -> Result<RunSummary, String> {
         })
         .chain(std::iter::once(format!(
             "{} candidates, {} calibration fixtures, profile {}, projector {PROJECTOR_VERSION}",
-            run.candidates.len(),
-            run.calibration.len(),
+            manifest.candidates.len(),
+            manifest.calibration.len(),
             cases.profile
         )))
         .collect();
-    let manifest = RunManifest::new(
-        &cases,
-        options.source.clone(),
-        case_manifest,
-        scripts,
-        steps,
-        &mut run,
-    );
-    let bytes = serde_json::to_vec_pretty(&manifest).map_err(record::text)?;
-    run.write_file("manifest.json", &bytes)?;
     Ok(RunSummary {
         lines,
         engine_passed,
-        manifest: options.out.join("manifest.json"),
+        manifest: options.out.join(record::MANIFEST),
     })
 }
 

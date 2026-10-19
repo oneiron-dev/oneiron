@@ -35,45 +35,55 @@ pub(super) fn adversarial(
         .ok_or("the fixture manifest has no folder")?;
     for case in &spec.cases {
         let id = format!("adversarial.{}", case.id);
-        let Some(fixture) = list.cases.iter().find(|fixture| fixture.id == case.id) else {
-            run.record(
-                REGRESSION,
-                &id,
-                failed("the fixture manifest has no such case"),
-            );
-            continue;
-        };
-        let path = folder.join(&fixture.file);
-        let bytes = std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
-        let actual = sha256_hex(&bytes);
-        if actual != fixture.sha256 {
-            run.record(
-                REGRESSION,
-                &id,
-                failed(format!(
-                    "{} hashes {actual}; its pin is {}",
-                    fixture.file, fixture.sha256
-                )),
-            );
-            continue;
-        }
-        let imported = Deck::load(&id, bytes.clone(), run.limits);
-        let outcome = match (case.engine, imported) {
-            (EngineExpect::Refuses, Err(_)) | (EngineExpect::Imports, Ok(_)) => StepOutcome::Passed,
-            (EngineExpect::Refuses, Ok(_)) => failed("the engine imported a deck it must refuse"),
-            (EngineExpect::Imports, Err(why)) => failed(format!("the engine refused it: {why}")),
-        };
-        run.record(REGRESSION, &id, outcome);
-        let file = format!("calibration/{}.pptx", case.id);
-        let written = run.write_file(&file, &bytes)?;
-        run.calibration.push(Calibration {
-            id: case.id.clone(),
-            file,
-            sha256: written.sha256,
-            bytes: written.bytes,
-            expected_oracle: fixture.expected_oracle.clone(),
-            timeout_seconds: case.timeout_seconds.unwrap_or(timeout_seconds),
-        });
+        run.case(&id, |run| {
+            let Some(fixture) = list.cases.iter().find(|fixture| fixture.id == case.id) else {
+                run.record(
+                    REGRESSION,
+                    &id,
+                    failed("the fixture manifest has no such case"),
+                );
+                return Ok(());
+            };
+            let path = folder.join(&fixture.file);
+            let bytes =
+                std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+            let actual = sha256_hex(&bytes);
+            if actual != fixture.sha256 {
+                run.record(
+                    REGRESSION,
+                    &id,
+                    failed(format!(
+                        "{} hashes {actual}; its pin is {}",
+                        fixture.file, fixture.sha256
+                    )),
+                );
+                return Ok(());
+            }
+            let imported = Deck::load(&id, bytes.clone(), run.limits);
+            let outcome = match (case.engine, imported) {
+                (EngineExpect::Refuses, Err(_)) | (EngineExpect::Imports, Ok(_)) => {
+                    StepOutcome::Passed
+                }
+                (EngineExpect::Refuses, Ok(_)) => {
+                    failed("the engine imported a deck it must refuse")
+                }
+                (EngineExpect::Imports, Err(why)) => {
+                    failed(format!("the engine refused it: {why}"))
+                }
+            };
+            run.record(REGRESSION, &id, outcome);
+            let file = format!("calibration/{}.pptx", case.id);
+            let written = run.write_file(&file, &bytes)?;
+            run.calibrate(Calibration {
+                id: case.id.clone(),
+                file,
+                sha256: written.sha256,
+                bytes: written.bytes,
+                expected_oracle: fixture.expected_oracle.clone(),
+                timeout_seconds: case.timeout_seconds.unwrap_or(timeout_seconds),
+            });
+            Ok(())
+        })?;
     }
     Ok(())
 }
@@ -89,56 +99,66 @@ pub(super) fn corpus(
 ) -> Res<()> {
     let (arena, _): (Arena, _) = read_json(&repo.join(&spec.manifest))?;
     let excluded: Vec<&str> = spec.exclude.iter().map(|rule| rule.id.as_str()).collect();
-    run.excluded
-        .extend(spec.exclude.iter().map(|rule| Excluded {
-            id: rule.id.clone(),
-            reason: rule.reason.clone(),
-        }));
+    run.case("pptarena.excluded", |run| {
+        for rule in &spec.exclude {
+            run.exclude(Excluded {
+                id: rule.id.clone(),
+                reason: rule.reason.clone(),
+            });
+        }
+        Ok(())
+    })?;
     for case in &arena.cases {
         let listed = spec.select == Selection::All || spec.cases.contains(&case.id);
         if !listed || excluded.contains(&case.id.as_str()) {
             continue;
         }
-        let Some(corpus) = corpus else {
-            run.record(
-                REGRESSION,
-                &case.id,
-                StepOutcome::Inconclusive("no corpus directory was given".to_owned()),
-            );
-            continue;
-        };
-        let path = corpus.join(&case.id).join("original.pptx");
-        let Ok(bytes) = std::fs::read(&path) else {
-            run.record(
-                REGRESSION,
-                &case.id,
-                StepOutcome::Inconclusive(format!("{} was not acquired", path.display())),
-            );
-            continue;
-        };
-        let actual = sha256_hex(&bytes);
-        if actual != case.original.sha256 {
-            run.record(
-                REGRESSION,
-                &case.id,
-                failed(format!(
-                    "the original hashes {actual}; its pin is {}",
-                    case.original.sha256
-                )),
-            );
-            continue;
-        }
-        match Deck::load(&case.id, bytes, run.limits) {
-            Ok(deck) => {
-                noop(run, &deck, None, Lane::Corpus, &[REGRESSION], Vec::new())?;
-                corpus_edit(run, &deck)?;
+        run.case(&case.id, |run| {
+            let Some(corpus) = corpus else {
+                run.record(
+                    REGRESSION,
+                    &case.id,
+                    StepOutcome::Inconclusive("no corpus directory was given".to_owned()),
+                );
+                return Ok(());
+            };
+            let path = corpus.join(&case.id).join("original.pptx");
+            let Ok(bytes) = std::fs::read(&path) else {
+                run.record(
+                    REGRESSION,
+                    &case.id,
+                    StepOutcome::Inconclusive(format!("{} was not acquired", path.display())),
+                );
+                return Ok(());
+            };
+            let actual = sha256_hex(&bytes);
+            if actual != case.original.sha256 {
+                run.record(
+                    REGRESSION,
+                    &case.id,
+                    failed(format!(
+                        "the original hashes {actual}; its pin is {}",
+                        case.original.sha256
+                    )),
+                );
+                return Ok(());
             }
-            Err(why) => run.record(
-                REGRESSION,
-                &case.id,
-                failed(format!("does not import: {why}")),
-            ),
-        }
+            match Deck::load(&case.id, bytes, run.limits) {
+                Ok(deck) => {
+                    noop(run, &deck, None, Lane::Corpus, &[REGRESSION], Vec::new())?;
+                    let id = format!("{}.edit.set_text", deck.id);
+                    run.case(&id, |run| corpus_edit(run, &deck, &id))
+                }
+                Err(why) => {
+                    run.record(
+                        REGRESSION,
+                        &case.id,
+                        failed(format!("does not import: {why}")),
+                    );
+                    Ok(())
+                }
+            }
+        })?;
     }
     Ok(())
 }
@@ -146,8 +166,7 @@ pub(super) fn corpus(
 /// One text edit of a corpus deck: the first bound text shape whose edit
 /// the projector takes. A refusal canon accepts (an animated text range)
 /// moves on to the next shape.
-fn corpus_edit(run: &mut Run, deck: &Deck) -> Res<()> {
-    let id = format!("{}.edit.set_text", deck.id);
+fn corpus_edit(run: &mut Run, deck: &Deck, id: &str) -> Res<()> {
     let slides = checks::slides(&deck.deck);
     let mut last = None;
     for (at, slide) in slides.iter().enumerate() {
@@ -175,10 +194,15 @@ fn corpus_edit(run: &mut Run, deck: &Deck) -> Res<()> {
                     run.record(
                         REGRESSION,
                         &format!("{id} fixed point"),
-                        checks::fixed_point(&exported.deck, &exported.outcome, run.limits),
+                        checks::fixed_point(
+                            &exported.deck,
+                            &deck.package,
+                            &exported.outcome,
+                            run.limits,
+                        ),
                     );
                     return run.candidate(Emit {
-                        id: &id,
+                        id,
                         bytes: &exported.outcome.bytes,
                         steps: &[REGRESSION],
                         lane: Lane::Corpus,
@@ -195,7 +219,7 @@ fn corpus_edit(run: &mut Run, deck: &Deck) -> Res<()> {
                     last = Some(error.to_string());
                 }
                 Err(refused) => {
-                    run.record(REGRESSION, &id, failed(refused.why()));
+                    run.record(REGRESSION, id, failed(refused.why()));
                     return Ok(());
                 }
             }
@@ -205,7 +229,7 @@ fn corpus_edit(run: &mut Run, deck: &Deck) -> Res<()> {
         || "no editable text shape; the no-op path only".to_owned(),
         |why| format!("every text shape is animated text the projector refuses to restructure ({why}); the no-op path only"),
     );
-    run.record(REGRESSION, &id, StepOutcome::Passed);
-    run.note(&id, note);
+    run.record(REGRESSION, id, StepOutcome::Passed);
+    run.note(id, note);
     Ok(())
 }
