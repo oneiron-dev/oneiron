@@ -52869,6 +52869,66 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/home_handoff/envelope.rs",
+     "purpose": "The sealed handoff and its ack",
+     "surface": {
+      "crate-vis": 21
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/home_handoff/lineage.rs",
+     "purpose": "The home-state lineage (CALLS: home handoff lineage)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/home_handoff/mod.rs",
+     "purpose": "FIX 5661 C1: the typed home-to-home handoff carrier",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/home_handoff/store.rs",
+     "purpose": "The carrier's four side tables and their typed access",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/home_handoff/table.rs",
+     "purpose": "The tables a home move carries",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/home_handoff/transfer.rs",
+     "purpose": "The carrier's steps: the drain request an election records, the fence a registered table's write asks, the…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -53126,7 +53186,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "mod": 24,
       "re-export": 16
      }
@@ -64106,7 +64166,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 204,
+     "files": 210,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -64304,7 +64364,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3969,
+   "source_files": 3975,
    "test_files": 902
   },
   "oneiron-android": {
