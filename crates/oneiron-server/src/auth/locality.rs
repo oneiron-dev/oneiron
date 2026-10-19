@@ -22,15 +22,15 @@ const FORWARDING_HEADERS: [&str; 4] = [
 /// request carrying a proxy forwarding header is off it even on loopback: a
 /// header can only narrow, never widen, so a spoofed one costs its sender
 /// only. A reverse proxy on this device that adds no such header passes its
-/// callers as local.
+/// callers as local. A request managed ingress handed on
+/// ([`ManagedIngress`](crate::managed::ManagedIngress)) came from its
+/// supervisor on a caller's behalf, so it is off this device too, though it
+/// reached a local socket (FIX 5125).
 pub(crate) fn caller_locality(
     headers: &HeaderMap,
     extensions: &axum::http::Extensions,
 ) -> CallerLocality {
-    if FORWARDING_HEADERS
-        .iter()
-        .any(|name| headers.contains_key(*name))
-    {
+    if forwarded(headers) || managed_ingress(extensions) {
         return CallerLocality::OffDevice;
     }
     let loopback = extensions
@@ -51,18 +51,30 @@ pub(crate) fn caller_locality(
 /// verified from the request's own slip and machine proof, never a TCP
 /// address or an owner principal. A request a proxy forwarded carries an
 /// onward hop nobody proved, so it is `Unknown`; a header only narrows here
-/// too. A request the binding door never saw is `Unknown`.
+/// too. A request the binding door never saw is `Unknown`. Through managed
+/// ingress the forwarding hop is the supervisor's own, which passes the
+/// caller's slip, holder proof and machine proof on unchanged: the machine
+/// that proof shows stays the request's, off this device (FIX 5125).
 pub(crate) fn proved_peer(headers: &HeaderMap, extensions: &axum::http::Extensions) -> PeerMachine {
-    if FORWARDING_HEADERS
-        .iter()
-        .any(|name| headers.contains_key(*name))
-    {
+    if forwarded(headers) && !managed_ingress(extensions) {
         return PeerMachine::Unknown;
     }
     extensions
         .get::<PeerMachine>()
         .copied()
         .unwrap_or(PeerMachine::Unknown)
+}
+
+/// Whether `headers` carry any proxy forwarding header.
+fn forwarded(headers: &HeaderMap) -> bool {
+    FORWARDING_HEADERS
+        .iter()
+        .any(|name| headers.contains_key(*name))
+}
+
+/// Whether managed ingress handed this request on.
+fn managed_ingress(extensions: &axum::http::Extensions) -> bool {
+    extensions.get::<crate::managed::ManagedIngress>().is_some()
 }
 
 impl super::CoreAuth {

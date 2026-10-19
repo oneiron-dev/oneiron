@@ -97,16 +97,21 @@ pub(crate) async fn admit_http_binding(
     }
     // Public endpoints retain their no-credential behavior. Their protected
     // siblings still reject absent or malformed credentials in the handler.
-    let mcp_credential = matches!(request.uri().path(), "/mcp" | "/mcp/tool-first")
-        .then(|| {
-            request
-                .headers()
-                .get("x-oneiron-mcp-credential")
-                .and_then(|value| value.to_str().ok())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        })
-        .flatten();
+    // The OpenAI proxy takes the MCP connector credential as `/mcp` does, so
+    // its holder proof is spent here once too (FIX 5124).
+    let mcp_credential = matches!(
+        request.uri().path(),
+        "/mcp" | "/mcp/tool-first" | "/v1/chat/completions"
+    )
+    .then(|| {
+        request
+            .headers()
+            .get("x-oneiron-mcp-credential")
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    })
+    .flatten();
     // MCP's credential header has the same precedence at admission and use.
     // It cannot sidestep nonce consumption with an unrelated Bearer header.
     let mut machine = PeerMachine::Unknown;

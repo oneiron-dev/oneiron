@@ -10,7 +10,7 @@ mod presentation;
 #[cfg(unix)]
 pub(crate) mod seal_worker;
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header, request::Parts};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -56,11 +56,12 @@ pub(super) fn public_routes() -> Router<Arc<SyncServer>> {
 }
 async fn action(
     State(server): State<Arc<SyncServer>>,
-    headers: HeaderMap,
+    parts: Parts,
     peer: NetworkPeer,
     local_peer: LocalPeer,
     Json(request): Json<EsignSigningRequest>,
 ) -> Response {
+    let headers = &parts.headers;
     let token = match EsignCapability::parse(&request.token) {
         Ok(token) => token,
         Err(_) => return refused(),
@@ -76,7 +77,7 @@ async fn action(
     let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
     };
-    let Ok(caller) = signing_caller(&headers, &server) else {
+    let Ok(caller) = signing_caller(&parts, &server) else {
         return refused();
     };
     match server
@@ -99,14 +100,33 @@ async fn action(
 /// credential (the page posts with `credentials: "omit"`), so the capability
 /// stands alone; a call that presents one is classed by the actor class its
 /// credential binds, and only `human` is a person. A credential that does not
-/// verify is refused.
-fn signing_caller(headers: &HeaderMap, server: &SyncServer) -> Result<SigningCaller, ()> {
+/// verify is refused. On a managed vault a call its supervisor attested for
+/// the vault's owner, with no credential of its own, is that person while
+/// the vault records him as its live owner; otherwise its capability stands
+/// alone, as a browser signer's does.
+fn signing_caller(request: &Parts, server: &SyncServer) -> Result<SigningCaller, ()> {
+    let headers = &request.headers;
     if !headers.contains_key(header::AUTHORIZATION) {
-        return Ok(SigningCaller::Bearer);
+        let owner =
+            crate::auth::attested_owner(&request.extensions, server).is_some_and(|holder| {
+                crate::auth::CoreAuth::for_attested_owner(holder, server).is_ok()
+            });
+        return Ok(if owner {
+            SigningCaller::Person
+        } else {
+            SigningCaller::Bearer
+        });
     }
-    let auth =
+    let auth = crate::auth::CoreAuth::for_managed_request(
+        headers,
+        &request.extensions,
+        crate::auth::request_path(request),
+        server,
+    )
+    .unwrap_or_else(|| {
         crate::auth::CoreAuth::from_headers(headers, &server.config, server.vault().as_ref())
-            .map_err(|_| ())?;
+    })
+    .map_err(|_| ())?;
     Ok(match auth.actor_class() {
         Some("human") => SigningCaller::Person,
         _ => SigningCaller::Agent,

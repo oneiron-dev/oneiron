@@ -34,7 +34,7 @@ pub(crate) use machine_proof::{
 };
 pub(crate) use managed_request::{
     attested_owner, caller_slip_too_narrow, carries_caller_slip, forward_caller_credentials,
-    request_path,
+    owner_attestation_refused, request_path,
 };
 pub(crate) use slips::{BindingProof, INVITEE_DOORS, parse_signature, parse_slip_id};
 
@@ -282,6 +282,15 @@ impl CoreScope {
         .into_iter()
         .collect()
     }
+
+    /// Every scope a vault's owner holds in person: all but the organization
+    /// powers, which only an organization-bound slip carries.
+    fn owner() -> BTreeSet<Self> {
+        Self::all()
+            .into_iter()
+            .filter(|scope| !matches!(scope, Self::OrgAdmin(_)))
+            .collect()
+    }
 }
 
 /// Authenticated `/v1/core` caller plus extracted scopes.
@@ -332,7 +341,7 @@ pub(crate) struct CoreAuth {
     off_record_session: Option<String>,
     /// The managed vault's owner, as its supervisor attested this one
     /// request (`ManagedOwnerAction`, verified at managed ingress); `None`
-    /// for every other request ([`Self::as_managed_owner`]).
+    /// for every other request ([`Self::for_attested_owner`]).
     managed_owner: Option<oneiron::EntityId>,
 }
 
@@ -401,7 +410,10 @@ impl CoreAuth {
 
     /// The caller `headers` name. On a managed vault that is the caller's
     /// own forwarded slip, or with none the host's root as the supervisor
-    /// it serves ([`Self::managed_caller`]); a slip is never replaced.
+    /// it serves ([`Self::managed_caller`]); a slip is never replaced. It
+    /// reads headers alone, so it never names an attested owner: a door
+    /// that may take one asks [`Self::for_request`] or
+    /// [`Self::for_managed_request`].
     pub(crate) fn for_server(headers: &HeaderMap, server: &SyncServer) -> Result<Self, ApiError> {
         if let Some(issuer) = server.managed_issuer.as_ref() {
             return Self::managed_caller(headers, server, issuer);
@@ -496,27 +508,8 @@ impl CoreAuth {
         self.verified_slip.as_ref()
     }
 
-    /// This request as the managed vault's owner `holder`, whom its
-    /// supervisor attested for this one request: that person's principal
-    /// and the human class, so the facade binds its writes to them. Its
-    /// scopes stay the host root's. It keeps no slip, since the host root's
-    /// binds no person's reads, so its reads run on the person's own lane;
-    /// the owner door still judges `holder` as the vault's live owner
-    /// (`api::facade::owner_authorship`). Only a request that carries no
-    /// caller slip is projected so ([`Self::for_request`]).
-    pub(crate) fn as_managed_owner(mut self, holder: oneiron::EntityId) -> Self {
-        self.principal = holder.to_hex();
-        self.principal_ref = Some(holder.to_hex());
-        self.actor_class = Some("human".to_owned());
-        self.verified_slip = None;
-        self.invocation_slip = None;
-        self.instrument = None;
-        self.managed_owner = Some(holder);
-        self
-    }
-
     /// The managed owner this request was attested as
-    /// ([`Self::as_managed_owner`]).
+    /// ([`Self::for_attested_owner`]).
     pub(crate) fn managed_owner(&self) -> Option<oneiron::EntityId> {
         self.managed_owner
     }
@@ -603,8 +596,8 @@ impl CoreAuth {
     /// bound to an identified holder. Identity is not a capability restriction.
     /// Org-bound, caveated, record/channel-bound and single-use slips are not.
     /// The explicit development hatch keeps its separate legacy predicate.
-    /// A managed vault's attested owner ([`Self::as_managed_owner`]) keeps the
-    /// host root's grade: the person is the vault's owner in person.
+    /// A managed vault's attested owner ([`Self::for_attested_owner`]) is
+    /// owner grade: the person is the vault's owner in person.
     pub(crate) fn is_owner_grade(&self) -> bool {
         self.implicit_all_scopes
             && (self.verified_slip.is_some()

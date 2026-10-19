@@ -13,9 +13,7 @@ mod voice_bank_paths;
 
 // The children keep the `super::...` paths they carried in the flat module;
 // these names resolve through this module back into `api`.
-use super::{
-    ApiDoc, BOOKING_ROUTE_PREFIX, RETRIEVAL_EFFORT_VALUES, check_api_auth, skills_pack_artifact,
-};
+use super::{ApiDoc, BOOKING_ROUTE_PREFIX, RETRIEVAL_EFFORT_VALUES, skills_pack_artifact};
 
 use self::booking_schemas::{
     bind_schema_ref, booking_instructions_block_schema, booking_operation_response_schema,

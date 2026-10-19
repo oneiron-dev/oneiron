@@ -1,4 +1,3 @@
-use super::check_api_owner_act;
 use super::context_pack::embed_semantic_text;
 use super::core_engine_error;
 use super::default_limit;
@@ -19,7 +18,7 @@ use crate::server::{QueryDoor, SyncServer, query_caller};
 use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::rejection::QueryRejection;
-use axum::http::{HeaderMap, request::Parts};
+use axum::http::request::Parts;
 use axum::response::Json;
 use oneiron::Effort;
 use oneiron::claim::ScopedRead;
@@ -859,13 +858,13 @@ pub(crate) struct SemanticSearchRequest {
     )
 )]
 pub(crate) async fn search_semantic(
-    headers: HeaderMap,
+    parts: Parts,
     Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     body: Result<Json<SemanticSearchRequest>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let arrived = Instant::now();
-    let auth = check_api_owner_act(&headers, &server)?.at(locality);
+    let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?.at(locality);
     let Json(params) = body.map_err(|rejection| {
         ApiError::bad_request(format!("invalid semantic search body: {rejection}"), None)
     })?;

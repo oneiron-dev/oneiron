@@ -1,15 +1,18 @@
 //! `/v1/operator`: the host operator's own acts. Only the host's root
 //! credential passes their door, never an owner's or a member's slip, and no
 //! SDK verb row reaches them, so no agent does: MCP, code mode and the facade
-//! serve verb rows only.
+//! serve verb rows only. On a managed vault the account's owner, whom his
+//! supervisor attested for the one request, passes it too, as himself.
 //!
 //! `POST /v1/operator/shared/recover-owner` is proof-of-control owner recovery
 //! (ARCH-0043, OF-163): a shared vault with no live Owner left takes the
 //! claimant as its Owner. The operator judges the claimant's proof that they
 //! control the organization owning the vault, outside the engine and outside
 //! this route; the engine has no check for that proof and no owner lane takes
-//! it. The engine checks what it holds and signs the `OwnerHandover` (cause
-//! `proof_of_control`) with the host's slip issuer.
+//! it. On a managed vault the attested account owner's own say-so stands in
+//! that judgment's place (FIX 5255): the hosting account is the organization's
+//! control the operator would judge. The engine checks what it holds and signs
+//! the `OwnerHandover` (cause `proof_of_control`) with the host's slip issuer.
 
 use std::sync::Arc;
 
@@ -17,6 +20,7 @@ use axum::Router;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::http::HeaderMap;
+use axum::http::request::Parts;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::EntityId;
@@ -54,6 +58,31 @@ fn operator(headers: &HeaderMap, server: &SyncServer) -> Result<(), ApiError> {
     }
 }
 
+/// Who answers for one owner recovery.
+#[derive(Clone, Copy)]
+enum Recoverer {
+    /// The host operator, on the host's own root credential.
+    Operator,
+    /// A managed vault's account owner, whom his supervisor attested for
+    /// this one request (`ManagedOwnerAction`, verified at managed ingress),
+    /// with no caller slip of its own: the recovery is his own act, never
+    /// the host's. He need not be a live Owner, since a vault this door
+    /// recovers has none left.
+    AccountOwner(EntityId),
+}
+
+/// The door of `POST /v1/operator/shared/recover-owner`: a managed vault's
+/// attested account owner as himself, else the host operator's root
+/// ([`operator`]), unchanged.
+fn recoverer(request: &Parts, server: &SyncServer) -> Result<Recoverer, ApiError> {
+    if let Some(holder) = crate::auth::attested_owner(&request.extensions, server)
+        && !crate::auth::carries_caller_slip(&request.headers)
+    {
+        return Ok(Recoverer::AccountOwner(holder));
+    }
+    operator(&request.headers, server).map(|()| Recoverer::Operator)
+}
+
 /// `POST /v1/operator/shared/recover-owner`'s body.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -73,11 +102,11 @@ struct RecoverSharedOwner {
 /// Answers the engine's receipt, the one the `vault.members.*` doors answer:
 /// the `owner_recovered` change, the grants rewritten and the slips revoked.
 async fn recover_shared_owner(
-    headers: HeaderMap,
+    parts: Parts,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<RecoverSharedOwner>, JsonRejection>,
 ) -> Result<Json<SharedActExecutionReceipt>, FacadeApiError> {
-    operator(&headers, &server)?;
+    let by = recoverer(&parts, &server)?;
     let request = super::json_payload(payload)?;
     let person = |field: &'static str, hex: &str| {
         EntityId::from_hex(hex)
@@ -107,8 +136,8 @@ async fn recover_shared_owner(
         Some(*digest.as_bytes()),
     )
     .await;
-    match &recovered {
-        Ok(receipt) => tracing::info!(
+    match (&recovered, by) {
+        (Ok(receipt), Recoverer::Operator) => tracing::info!(
             vault_id,
             from = %from.to_hex(),
             claimant = %claimant.to_hex(),
@@ -116,11 +145,27 @@ async fn recover_shared_owner(
             proof_note_blake3 = %note,
             "operator recovered a shared vault's owner on proof of control"
         ),
-        Err(error) => tracing::warn!(
+        (Err(error), Recoverer::Operator) => tracing::warn!(
             vault_id,
             code = %error.code,
             proof_note_blake3 = %note,
             "operator owner recovery refused"
+        ),
+        (Ok(receipt), Recoverer::AccountOwner(owner)) => tracing::info!(
+            vault_id,
+            owner = %owner.to_hex(),
+            from = %from.to_hex(),
+            claimant = %claimant.to_hex(),
+            receipt = %receipt.id,
+            proof_note_blake3 = %note,
+            "the attested account owner recovered a shared vault's owner"
+        ),
+        (Err(error), Recoverer::AccountOwner(owner)) => tracing::warn!(
+            vault_id,
+            owner = %owner.to_hex(),
+            code = %error.code,
+            proof_note_blake3 = %note,
+            "the attested account owner's owner recovery refused"
         ),
     }
     Ok(Json(recovered?))

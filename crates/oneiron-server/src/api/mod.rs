@@ -200,9 +200,10 @@ use self::params::{
 };
 pub(crate) use self::reactive::*;
 pub(crate) use self::run_tree::*;
-use self::scoped_auth::{check_api_auth, check_api_owner_act, scoped_read_for_legacy_api};
+use self::scoped_auth::{check_api_auth, scoped_read_for_legacy_api};
 pub(crate) use self::scoped_auth::{
-    credential_memory, credential_read_key, mcp_credential_memory, scoped_read_for_core_auth,
+    credential_memory, credential_read_key, mcp_credential_memory, require_live_managed_owner,
+    scoped_read_for_core_auth,
 };
 pub(crate) use self::search::*;
 pub(crate) use self::surface_events::*;
