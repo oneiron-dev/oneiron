@@ -11,7 +11,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{GeneratedUiValidatedAction, LensRenderFrame};
+use super::{
+    GeneratedUiAgentCallback, GeneratedUiValidatedAction, LensReadHandle, LensRenderFrame,
+};
 use crate::claim::{ClaimReadStatus, ScopedReadResult};
 use crate::error::Result;
 use crate::lens::LensDefaultRequest;
@@ -102,9 +104,11 @@ impl Memory<'_> {
 
     /// One client event on a card whose frame this host holds, checked
     /// against that frame, the exact `render` it handed out and the card's
-    /// current `state`, under this handle's own read: its key, the emitter,
-    /// the card, the declared action and its tier, the patch, and each
-    /// backing ref's reach now. Nothing runs here.
+    /// current `state`, under this handle's own read: the card, the declared
+    /// action and its tier, the patch, and each backing ref's reach now. The
+    /// handle's actor authors it, whoever rendered the card (FIX 3267): the
+    /// validated action's emitter is this handle's principal, and every
+    /// backing ref it uses is proved again on its read. Nothing runs here.
     pub fn lens_frame_event(
         &self,
         frame: &LensRenderFrame,
@@ -113,6 +117,23 @@ impl Memory<'_> {
         event: &GeneratedUiActionEvent,
     ) -> MemoryResult<GeneratedUiValidatedAction> {
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        Ok(frame.validate_action_event(&read, frame.principal(), render, state, event)?)
+        let author = frame.for_event_author(&read)?;
+        Ok(author.validate_action_event(&read, author.principal(), render, state, event)?)
+    }
+
+    /// `selected`, read reach this handle's actor selected on the card, as
+    /// a model round trip's context (FIX 3268): each handle proved again
+    /// against the held `frame`, its exact `render` and this handle's read
+    /// before it rides `callback`. Context, never approval or authority.
+    pub fn lens_frame_selected_context(
+        &self,
+        frame: &LensRenderFrame,
+        render: &GeneratedUiRender,
+        callback: GeneratedUiAgentCallback,
+        selected: Vec<LensReadHandle>,
+    ) -> MemoryResult<GeneratedUiAgentCallback> {
+        let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let author = frame.for_event_author(&read)?;
+        Ok(author.with_selected_context(&read, render, callback, selected)?)
     }
 }

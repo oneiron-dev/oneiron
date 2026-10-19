@@ -70,7 +70,7 @@ fn split_list(value: &str) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn normalize_list(values: Vec<String>) -> Vec<String> {
+pub(crate) fn normalize_list(values: Vec<String>) -> Vec<String> {
     values
         .into_iter()
         .map(|value| value.trim().to_owned())

@@ -3971,7 +3971,7 @@ export_facade! {
     let output = client.vault_questions_answers(&input)?;
     crate::codec::lift_record("vault.questions.answers", &output)
 };
-"vault.questions.refresh" => fn vault_questions_refresh(&self, input: QuestionRefreshRequest) -> Vec<AnswerRecord> = |client| {
+"vault.questions.refresh" => fn vault_questions_refresh(&self, input: QuestionRefreshRequest) -> Vec<QuestionAnswer> = |client| {
     let input: oneiron::receipt::QuestionRefreshRequest = crate::codec::lower_record("vault.questions.refresh", input)?;
     let output = client.vault_questions_refresh(&input)?;
     crate::codec::lift_record("vault.questions.refresh", &output)
@@ -4565,6 +4565,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::ConsolidationStatusRequest = job_ref.lower()?;
     let output = client.vault_consolidation_status(&input)?;
     Lift::lift(output)
+};
+"vault.consolidation.wake.status" => fn vault_consolidation_wake_status(&self, input: ConsolidationWakeStatusRequest) -> Option<DreamerWakeView> = |client| {
+    let input: oneiron::memory::ConsolidationWakeStatusRequest = crate::codec::lower_record("vault.consolidation.wake.status", input)?;
+    let output = client.vault_consolidation_wake_status(&input)?;
+    crate::codec::lift_record("vault.consolidation.wake.status", &output)
 };
 "vault.runs.step" => fn vault_runs_step(&self, input: SettledStepRequest) -> Option<SettledStepView> = |client| {
     let input: oneiron::llm::model_step::SettledStepRequest = crate::codec::lower_record("vault.runs.step", input)?;

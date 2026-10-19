@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::{
     Ask, Call, CancelReason, DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, Hash32, Hello, HelloAck,
-    Limits, PROTOCOL, ProtocolVersion, Reply, ToOrgan, recv_frame_polled, recv_frame_until,
+    Limits, PROTOCOL, ProtocolVersion, Reply, ToOrgan, recv_frame_polled_len, recv_frame_until,
     send_frame_if, send_frame_until, spin,
 };
 
@@ -94,6 +94,10 @@ struct Inbox {
     cancels: AtomicU64,
     /// Asks that came for calls not in flight.
     stale_asks: AtomicU64,
+    /// The largest frame body the organ has sent: a reply or an ask.
+    largest_received: AtomicU64,
+    /// The largest frame body the host has sent it: a call or an answer.
+    largest_sent: AtomicU64,
 }
 
 impl Inbox {
@@ -482,6 +486,21 @@ impl OrganProcess {
         self.inbox.alive.load(Ordering::SeqCst)
     }
 
+    /// The largest frame bodies, as encoded, this process has been sent and
+    /// has sent back since it started; the handshake aside.
+    pub(crate) fn largest_frames(&self) -> (u64, u64) {
+        (
+            self.inbox.largest_sent.load(Ordering::SeqCst),
+            self.inbox.largest_received.load(Ordering::SeqCst),
+        )
+    }
+
+    fn sent_frame(&self, len: u32) {
+        self.inbox
+            .largest_sent
+            .fetch_max(u64::from(len), Ordering::SeqCst);
+    }
+
     /// Whether the organ has exited, whether or not the reader has seen
     /// its socket close yet. It looks without reaping.
     pub(crate) fn exited(&self) -> bool {
@@ -612,7 +631,9 @@ impl OrganProcess {
         deadline: Instant,
     ) -> Result<(), FrameError> {
         let writer = lock_until(&self.writer, deadline, || false).ok_or(FrameError::Late)?;
-        send_frame_until(&writer, msg, fds, limit, Some(deadline))
+        let len = send_frame_until(&writer, msg, fds, limit, Some(deadline))?;
+        self.sent_frame(len);
+        Ok(())
     }
 
     /// Sends the answer to call `id`'s ask; `false` when it is dropped
@@ -673,7 +694,10 @@ impl OrganProcess {
         };
         let limit = self.max_call_frame;
         match send_frame_if(&writer, answer, fds, limit, deadline, still, started) {
-            Ok(()) => Ok(true),
+            Ok(len) => {
+                self.sent_frame(len);
+                Ok(true)
+            }
             Err(FrameError::Withdrawn) => Ok(false),
             Err(err) => Err(err),
         }
@@ -1067,7 +1091,13 @@ fn check_handshake(spec: &OrganSpec, ack: &HelloAck) -> Result<(), HostError> {
 fn read_replies(stream: &UnixStream, inbox: &Inbox, lifeline: &Lifeline, limit: u32) {
     loop {
         spin::poll_readable(stream);
-        match recv_frame_polled::<FromOrgan>(stream, limit) {
+        let received = recv_frame_polled_len::<FromOrgan>(stream, limit);
+        if let Ok((_, _, len)) = &received {
+            inbox
+                .largest_received
+                .fetch_max(u64::from(*len), Ordering::SeqCst);
+        }
+        match received.map(|(message, fds, _)| (message, fds)) {
             Ok((FromOrgan::Reply(reply), fds)) => {
                 // Queued under the lock the call is taken under, so a call
                 // taken for its reply already has the reply waiting.

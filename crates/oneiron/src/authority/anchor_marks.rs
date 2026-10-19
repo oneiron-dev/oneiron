@@ -76,7 +76,12 @@ impl Vault {
             role: MachineRole::Owned(MachineOwnership::Yours),
             revision,
             machine_proof: request.machine_proof,
-            seen_world_edits: super::world_privacy::live_edits_by(&fold, request.machine),
+            seen_world_edits: super::act_standing::acknowledged_by_in_txn(
+                &self.store,
+                txn,
+                &fold,
+                request.machine,
+            )?,
             // An anchor's mark is its own proof arm (C4): no install carries
             // it, and no owner act rides it. A later owner answer that saw
             // it supersedes it.

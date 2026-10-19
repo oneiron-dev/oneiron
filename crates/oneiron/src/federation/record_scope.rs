@@ -855,7 +855,6 @@ pub(crate) fn validate_edit_birth_scope(
 /// Derive only an intrinsic current stamp or a birth-facet-bound persisted stamp.
 /// A text document pointer changes representation, not birth authority.
 /// The birth stamp is body-independent, so there is nothing to restamp.
-#[cfg(feature = "sync")]
 pub(crate) fn restamp_document_pointer(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,

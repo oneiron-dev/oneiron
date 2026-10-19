@@ -257,6 +257,17 @@ pub(super) fn dreamer_attempt_status(
     memory.dreamer_attempt_status(&input.job_ref)
 }
 
+/// A wake read is the bound actor's, as its status sibling is (DOOR-144 B):
+/// its binding is proved before one page of the addressed attempt's or
+/// pass's observation is read.
+pub(super) fn dreamer_wake_status(
+    memory: &Memory<'_>,
+    input: crate::memory::ConsolidationWakeStatusRequest,
+) -> MemoryResult<Option<crate::memory::DreamerWakeView>> {
+    crate::memory::verify_actor_binding(memory.vault(), memory.actor(), memory.actor_class())?;
+    memory.dreamer_wake_status(&input)
+}
+
 /// Each claim through its own gate, forced proposed: one landed receipt or
 /// typed refusal per claim, never one all-or-nothing batch.
 pub(super) fn seed_claims(

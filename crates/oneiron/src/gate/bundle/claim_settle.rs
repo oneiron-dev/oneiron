@@ -43,10 +43,12 @@ impl Vault {
     /// owner, in `wtxn`. `owner_answer` is the owner-tier proof that answers
     /// the claim's owner-answer obligation, when the proof holds one.
     ///
-    /// A decline needs the claim's pending-consent row: its rejection is the
-    /// consent transition that row binds. A tray row whose binding moved since
-    /// it was parked refuses [`GateError::GateConsentStale`], and a gate
-    /// denial or hold refuses as the gate answers it, so nothing changes.
+    /// A decline of a claim in the pending-consent tray is the consent
+    /// transition its row binds, and a MACHINE claim's decline needs that row
+    /// too. An ordinary proposal in no tray row is rejected as the owner's
+    /// reviewed rejection. A tray row whose binding moved since it was parked
+    /// refuses [`GateError::GateConsentStale`], and a gate denial or hold
+    /// refuses as the gate answers it, so nothing changes.
     pub(crate) fn settle_proposed_claim_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -154,9 +156,10 @@ impl Vault {
             }
             GateConsentBundleAction::Decline => {
                 // A Proposed claim may have no pending obligation (for
-                // example an explicit proposal). The same gate and signed
-                // rejection still apply; close_settled_tray_row handles the
-                // absent row without inventing consent.
+                // example an explicit proposal). The same gate still applies;
+                // its reviewed rejection is the proof, and
+                // close_settled_tray_row handles the absent row without
+                // inventing consent.
                 // A MACHINE claim changes only through its signed history,
                 // whose fold rejects without retracting.
                 let machine =
@@ -203,8 +206,18 @@ impl Vault {
                     allow_reserved_predicate: false,
                     hub_sync_imported: false,
                 };
-                let transition =
-                    crate::batch::VerifiedClaimTransition::after_consent(&self.store, wtxn, &put)?;
+                // A tray row keeps the consent transition it binds, and a
+                // MACHINE claim keeps its signed path, which needs that row.
+                let transition = if pending.is_none() && !machine {
+                    crate::batch::VerifiedClaimTransition::after_reviewed_rejection(
+                        &self.store,
+                        wtxn,
+                        &put,
+                        now,
+                    )?
+                } else {
+                    crate::batch::VerifiedClaimTransition::after_consent(&self.store, wtxn, &put)?
+                };
                 let tray_receipt =
                     close_settled_tray_row_in_txn(self, wtxn, &id, owner_answer, action, now)?;
                 crate::batch::apply_session_bundle_claim_puts_with_transitions(

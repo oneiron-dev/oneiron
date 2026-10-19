@@ -24,8 +24,8 @@ use oneiron::llm::decision::questions::{
     QuestionScheduleHead, ScheduledBackfill, answer_records, artifact_ask_records,
     calibration_pairs, create_question, edit_question, outcome_labels, pause_question,
     project_bound_outcomes, question_call_budget, read_question, read_question_schedule,
-    refresh_question_with, run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type,
-    standing_ask_route,
+    refresh_artifact_question_now, refresh_question_with, run_graph_ask_receipted,
+    schedule_backfill, select_graph_units_by_type, standing_ask_route,
 };
 use oneiron::llm::decision::{
     DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion, DecisionRung, TypedDecision,
@@ -42,6 +42,7 @@ use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
 use super::host_doors::{Listed, hex_rows, internal, naming};
 use crate::auth::CoreAuth;
+use crate::decision_artifact::HostUnitDecider;
 use crate::decision_graph::LadderGraphAnswerer;
 use crate::server::SyncServer;
 
@@ -413,17 +414,20 @@ async fn vault_questions_answers_answer(
 /// criteria, posture and call clock, a person ask routed to the question's
 /// principal and climbing to the vault's owners. The caller writes the
 /// answers as the question's principal; another principal's question is not
-/// found, and a paused one answers nothing. The ladder runs on a blocking
-/// thread.
-/// Beside it, the rows each answer names ([`answer_rows`]).
+/// found, and a paused one answers nothing. An artifact question (FIX 3085)
+/// asks its artifacts now through the pump's own unit decider and answers
+/// where each artifact's last ask stands, as `vault.questions.answers` does;
+/// an artifact whose earlier answers still wait for Keep is not asked again.
+/// The ladder runs on a blocking thread.
+/// Beside it, the rows each answer names ([`question_answer_rows`]).
 pub(crate) async fn vault_questions_refresh(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: QuestionRefreshRequest,
-) -> Listed<Vec<AnswerRecord>> {
+) -> Listed<Vec<QuestionAnswer>> {
     naming(
         vault_questions_refresh_answer(server, auth, input).await,
-        |answers| answers.iter().flat_map(answer_rows).collect(),
+        |answers| answers.iter().flat_map(question_answer_rows).collect(),
     )
 }
 
@@ -431,19 +435,32 @@ async fn vault_questions_refresh_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: QuestionRefreshRequest,
-) -> MemoryResult<Vec<AnswerRecord>> {
+) -> MemoryResult<Vec<QuestionAnswer>> {
     const VERB: &str = "vault.questions.refresh";
     let asker = asker(auth, server, VERB)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<Vec<AnswerRecord>> {
+    tokio::task::spawn_blocking(move || -> MemoryResult<Vec<QuestionAnswer>> {
         let vault = server.vault();
-        Ok(refresh_question_with(
+        let now = oneiron_vault_contract::now_ts();
+        let bands = server.decision_host().bands();
+        let asked = refresh_artifact_question_now(
             vault,
-            asker,
             asker.entity_ref(),
             input.id,
-            oneiron_vault_contract::now_ts(),
-            |record| {
+            now,
+            &bands,
+            |record, actor| {
+                Ok(
+                    HostUnitDecider::new(&server, actor.actor_class(), "vault.artifacts.ask")
+                        .with_question(&record.definition),
+                )
+            },
+        )?;
+        if let Some(asks) = asked {
+            return Ok(QuestionAnswer::union(Vec::new(), asks));
+        }
+        let graph =
+            refresh_question_with(vault, asker, asker.entity_ref(), input.id, now, |record| {
                 Ok(LadderGraphAnswerer::routed(
                     &server,
                     record.principal,
@@ -454,8 +471,8 @@ async fn vault_questions_refresh_answer(
                 )
                 .with_criteria(record.definition.criteria.clone())
                 .with_posture(record.definition.posture))
-            },
-        )?)
+            })?;
+        Ok(QuestionAnswer::union(graph, Vec::new()))
     })
     .await
     .map_err(|_| internal(VERB))?
