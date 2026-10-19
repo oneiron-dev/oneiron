@@ -77,6 +77,7 @@ pub(crate) use super::voice_bank_doors::*;
 pub(crate) use super::asr_doors::*;
 pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::clustering_doors::*;
+pub(crate) use super::identity_doors::*;
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
@@ -1277,6 +1278,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.records.erase_sweep"
         | "vault.cleanup.run"
         | "vault.entities.mention"
+        | "vault.people.create"
+        | "vault.entities.look_before_mint"
+        | "vault.identity.mention"
+        | "self.identity.answer"
         | "vault.legal_holds.place"
         | "vault.legal_holds.widen"
         | "vault.legal_holds.list"

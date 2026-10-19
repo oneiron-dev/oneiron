@@ -67,6 +67,9 @@ vaultDiagnosticsGet(input: unknown): unknown
 vaultCoachInspect(input: unknown): unknown
 vaultPeopleList(input: unknown): unknown
 vaultPeopleGet(input: unknown): unknown
+vaultPeopleCreate(input: unknown): unknown
+vaultEntitiesLookBeforeMint(input: unknown): unknown
+vaultIdentityMention(input: unknown): unknown
 vaultShapeRead(input: unknown): unknown
 vaultShapePlan(input: unknown): unknown
 vaultShapeApply(input: unknown): unknown

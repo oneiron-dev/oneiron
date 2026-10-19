@@ -430,15 +430,19 @@
     },
     {
       "name": "self.identity.answer",
-      "description": "A vault owner's tap on an identity choice card: who a person named in their conversations is.",
-      "input": "crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest",
+      "description": "The owner answers an identity choice with supporting evidence refs; the original mention and verified owner resolution provenance are retained atomically.",
+      "input": "crate::dreamer_runner::maintenance::identity::IdentityAnswerEvidenceRequest",
       "output": "crate::dreamer_runner::maintenance::identity::IdentitySettled",
-      "call": "memory.identity_answer(&input)?",
+      "call": "memory.identity_answer_with_evidence_as_owner(&memory.embedded_owner(\"self.identity.answer\")?, &input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "self.identity.settle",
@@ -450,7 +454,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "self.inbox.list",
@@ -585,6 +590,54 @@
       "output": "crate::context_board::PersonRow",
       "call": "memory.people_get(&input)?",
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.people.create",
+      "description": "The owner creates a distinct PERSON with declared identity hints and existing identity-evidence refs, looking before minting an opaque id without selecting or merging a namesake.",
+      "input": "crate::memory::identity_doors::PersonCreateRequest",
+      "output": "crate::memory::identity_doors::PersonCreated",
+      "call": "memory.people_create_as_owner(&memory.embedded_owner(\"vault.people.create\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.entities.look_before_mint",
+      "description": "The owner queries the declared PERSON, ORG or PLACE identity hints for N candidates with evidence and provenance; only stored mention evidence is scored by the waterfall, and no entity is restored, linked or minted.",
+      "input": "crate::memory::identity_doors::IdentityLookupRequest",
+      "output": "crate::memory::identity_doors::IdentityLookup",
+      "call": "memory.entities_look_before_mint_as_owner(&memory.embedded_owner(\"vault.entities.look_before_mint\")?, &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.identity.mention",
+      "description": "The owner reads one saved mention as unresolved, candidates or resolved, preserving the original tagger suggestion and the resolving owner evidence and provenance.",
+      "input": "crate::dreamer_runner::maintenance::identity::MentionProvenance",
+      "output": "crate::dreamer_runner::maintenance::identity::IdentityMentionView",
+      "call": "memory.identity_mention_as_owner(&memory.embedded_owner(\"vault.identity.mention\")?, &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "openapi": true,
       "admission": {
         "unrestricted_record_scope": true
       },

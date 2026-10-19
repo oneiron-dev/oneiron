@@ -84,6 +84,7 @@ pub mod foreign_code;
 pub mod graph_fs_doors;
 pub mod hook_regen_doors;
 mod inspection;
+pub mod identity_doors;
 mod key_value;
 mod lifted_view;
 mod locality;

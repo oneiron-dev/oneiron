@@ -43,6 +43,9 @@ both bindings and their export-census tests in one change.
 - `vault.coach.inspect`
 - `vault.people.list`
 - `vault.people.get`
+- `vault.people.create`
+- `vault.entities.look_before_mint`
+- `vault.identity.mention`
 - `vault.shape.read`
 - `vault.shape.plan`
 - `vault.shape.apply`

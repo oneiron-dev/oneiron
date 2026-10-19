@@ -429,6 +429,10 @@ class Oneiron:
         @property
         def people(self) -> "Oneiron._VaultPeopleVerbs": ...
         @property
+        def entities(self) -> "Oneiron._VaultEntitiesVerbs": ...
+        @property
+        def identity(self) -> "Oneiron._VaultIdentityVerbs": ...
+        @property
         def shape(self) -> "Oneiron._VaultShapeVerbs": ...
         @property
         def companions(self) -> "Oneiron._VaultCompanionsVerbs": ...
@@ -534,8 +538,6 @@ class Oneiron:
         def evals(self) -> "Oneiron._VaultEvalsVerbs": ...
         @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs": ...
-        @property
-        def entities(self) -> "Oneiron._VaultEntitiesVerbs": ...
         @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs": ...
         @property
@@ -656,8 +658,6 @@ class Oneiron:
         def notes(self) -> "Oneiron._VaultNotesVerbs": ...
         def revert_run(self, spec: Facade.RevertRunRequest) -> Facade.RevertRunOutcome:
             """The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."""
-        @property
-        def identity(self) -> "Oneiron._VaultIdentityVerbs": ...
     class _VaultCommitmentsVerbs:
         def create(self, spec: Facade.CommitmentCreateRequest) -> Facade.CommitmentCreateReceipt:
             """Creates an authored commitment series and its due index atomically, without approving a reminder."""
@@ -724,6 +724,42 @@ class Oneiron:
             """One page of the people the caller reads, in handle order."""
         def get(self, spec: Facade.PersonRequest) -> Facade.PersonRow:
             """One person the vault knows, by their pr handle."""
+        def create(self, spec: Facade.PersonCreateRequest) -> Facade.PersonCreated:
+            """The owner creates a distinct PERSON with declared identity hints and existing identity-evidence refs, looking before minting an opaque id without selecting or merging a namesake."""
+    class _VaultEntitiesVerbs:
+        def look_before_mint(self, spec: Facade.IdentityLookupRequest) -> Facade.IdentityLookup:
+            """The owner queries the declared PERSON, ORG or PLACE identity hints for N candidates with evidence and provenance; only stored mention evidence is scored by the waterfall, and no entity is restored, linked or minted."""
+        def mention(self, spec: Facade.EntityMentionRequest) -> Facade.EntityResolutionWaterfallDecision:
+            """The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate."""
+    class _VaultIdentityVerbs:
+        def mention(self, spec: Facade.MentionProvenance) -> Facade.IdentityMentionView:
+            """The owner reads one saved mention as unresolved, candidates or resolved, preserving the original tagger suggestion and the resolving owner evidence and provenance."""
+        def merge(self, spec: Facade.IdentityMergeRequest) -> Facade.IdentityTopologyResult:
+            """The owner merges source identities into a survivor, retaining claim subjects and append-only evidence."""
+        def split(self, spec: Facade.IdentitySplitRequest) -> Facade.IdentityTopologyResult:
+            """The owner splits an identity into zero, one or many heads using an evidence-guided reassignment map."""
+        def facet(self, spec: Facade.IdentityFacetRequest) -> Facade.IdentityTopologyResult:
+            """The owner mints identity facets and forks assigned claims under their masks without restamping original claims."""
+        def assert_distinct(self, spec: Facade.IdentityAssertDistinctRequest) -> Facade.IdentityTopologyResult:
+            """The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."""
+        def propose(self, spec: Facade.IdentityProposeRequest) -> Facade.IdentityTopologyResult:
+            """The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."""
+        def undo(self, spec: Facade.IdentityUndoRequest) -> Facade.IdentityTopologyResult:
+            """The owner undoes one current topology event by appending a counter-event under its observed revision."""
+        def resolve(self, spec: Facade.IdentityEntityRequest) -> Facade.IdentityResolution:
+            """The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments."""
+        @property
+        def events(self) -> "Oneiron._VaultIdentityEventsVerbs": ...
+        @property
+        def proposals(self) -> "Oneiron._VaultIdentityProposalsVerbs": ...
+    class _VaultIdentityEventsVerbs:
+        def get(self, spec: Facade.IdentityEventRequest) -> Facade.IdentityTopologyReceipt:
+            """The owner reads one topology decision with its actor, evidence, action and current decision revision."""
+    class _VaultIdentityProposalsVerbs:
+        def resolve(self, spec: Facade.IdentityProposalResolveRequest) -> Facade.IdentityProposalResolutionResult:
+            """The owner approves, amends then approves, or rejects a parked topology proposal under its observed revision."""
+        def for_pair(self, spec: Facade.IdentityPairRequest) -> Facade.IdentityPairProposals:
+            """The owner reads open merge proposals and effective distinctness claims for an unordered identity pair."""
     class _VaultShapeVerbs:
         def read(self, spec: Facade.EmptyRequest | None = None) -> Facade.ShapeRead:
             """The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read."""
@@ -1721,9 +1757,6 @@ class Oneiron:
     class _VaultCleanupVerbs:
         def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
-    class _VaultEntitiesVerbs:
-        def mention(self, spec: Facade.EntityMentionRequest) -> Facade.EntityResolutionWaterfallDecision:
-            """The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate."""
     class _VaultLegalHoldsVerbs:
         def place(self, spec: Facade.LegalHoldPlaceRequest) -> Facade.LegalHold:
             """The owner places a customer legal hold on the named records or gate partitions."""
@@ -2798,33 +2831,6 @@ class Oneiron:
             """Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."""
         def close(self, spec: Facade.NoteEditorCloseRequest) -> Facade.NoteEditorClosed:
             """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
-    class _VaultIdentityVerbs:
-        def merge(self, spec: Facade.IdentityMergeRequest) -> Facade.IdentityTopologyResult:
-            """The owner merges source identities into a survivor, retaining claim subjects and append-only evidence."""
-        def split(self, spec: Facade.IdentitySplitRequest) -> Facade.IdentityTopologyResult:
-            """The owner splits an identity into zero, one or many heads using an evidence-guided reassignment map."""
-        def facet(self, spec: Facade.IdentityFacetRequest) -> Facade.IdentityTopologyResult:
-            """The owner mints identity facets and forks assigned claims under their masks without restamping original claims."""
-        def assert_distinct(self, spec: Facade.IdentityAssertDistinctRequest) -> Facade.IdentityTopologyResult:
-            """The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."""
-        def propose(self, spec: Facade.IdentityProposeRequest) -> Facade.IdentityTopologyResult:
-            """The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."""
-        def undo(self, spec: Facade.IdentityUndoRequest) -> Facade.IdentityTopologyResult:
-            """The owner undoes one current topology event by appending a counter-event under its observed revision."""
-        def resolve(self, spec: Facade.IdentityEntityRequest) -> Facade.IdentityResolution:
-            """The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments."""
-        @property
-        def events(self) -> "Oneiron._VaultIdentityEventsVerbs": ...
-        @property
-        def proposals(self) -> "Oneiron._VaultIdentityProposalsVerbs": ...
-    class _VaultIdentityEventsVerbs:
-        def get(self, spec: Facade.IdentityEventRequest) -> Facade.IdentityTopologyReceipt:
-            """The owner reads one topology decision with its actor, evidence, action and current decision revision."""
-    class _VaultIdentityProposalsVerbs:
-        def resolve(self, spec: Facade.IdentityProposalResolveRequest) -> Facade.IdentityProposalResolutionResult:
-            """The owner approves, amends then approves, or rejects a parked topology proposal under its observed revision."""
-        def for_pair(self, spec: Facade.IdentityPairRequest) -> Facade.IdentityPairProposals:
-            """The owner reads open merge proposals and effective distinctness claims for an unordered identity pair."""
     class _FeedbackVerbs:
         def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
             """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""
@@ -2921,8 +2927,8 @@ class Oneiron:
         def edit(self, spec: Facade.StandingBlockEditRequest) -> Facade.StandingBlockEditReceipt:
             """This agent proposes one persona field's new text for its standing block, as a Generated claim its gate settles; compiled text is never edited."""
     class _SelfIdentityVerbs:
-        def answer(self, spec: Facade.IdentityAnswerRequest) -> Facade.IdentitySettled:
-            """A vault owner's tap on an identity choice card: who a person named in their conversations is."""
+        def answer(self, spec: Facade.IdentityAnswerEvidenceRequest) -> Facade.IdentitySettled:
+            """The owner answers an identity choice with supporting evidence refs; the original mention and verified owner resolution provenance are retained atomically."""
         def settle(self, spec: Facade.IdentityActNowRequest) -> Facade.IdentityActNow:
             """Before acting on a person known only by a name, settles who that name is from its newest saved mention, or opens an ask."""
     class _SelfInboxVerbs:
