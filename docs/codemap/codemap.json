@@ -34913,6 +34913,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "RecordEraseCustody",
       "RecordEraseSweep",
       "RecordEraseSweepRequest"
      ],
@@ -34920,7 +34921,7 @@
      "purpose": "Owner-bound historical erasure timing from the immutable redaction receipt",
      "surface": {
       "fn": 1,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -43422,16 +43423,34 @@
      "kind": "src",
      "notable": [
       "CustodyAnchorRoot",
-      "CustodyRecovery",
-      "CustodyStatus"
+      "CustodyRecovery"
      ],
      "path": "src/recovery/checkpoint/custody_head.rs",
-     "purpose": "Custody heads at the vault's surface (KS-4A1, FIX 5685): publishing a vault's exterior key custody beside…",
+     "purpose": "Custody heads at the vault's surface (KS-4A1/KS-4A2, FIX 5685): publishing a vault's exterior key custody to…",
      "surface": {
-      "const": 5,
-      "crate-vis": 1,
-      "fn": 9,
-      "struct": 3
+      "crate-vis": 3,
+      "fn": 14,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CustodyPendingStep",
+      "CustodyRetirement",
+      "CustodyStatus",
+      "CustodyTargetState",
+      "DeclaredTarget"
+     ],
+     "path": "src/recovery/checkpoint/custody_head/status.rs",
+     "purpose": "The status names of a vault's custody (KS-4A1/KS-4A2, FIX 5685), on the owner's status read (`doctor`, `GET…",
+     "surface": {
+      "const": 7,
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 5
      }
     },
     {
@@ -43682,7 +43701,7 @@
      "surface": {
       "enum": 1,
       "fn": 19,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 3
      }
     },
@@ -50685,7 +50704,7 @@
      "path": "src/store/key_custody/anchor.rs",
      "purpose": "The custody anchor (KS-4, FIX 5685): one lineage's current position, kept where neither the vault's image…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 7
      }
     },
     {
@@ -50696,6 +50715,16 @@
      "purpose": "The local exterior backend: one owner-only directory tree beside the vault root, never inside it, so…",
      "surface": {
       "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/folder.rs",
+     "purpose": "The folder target (KS-4A1; acknowledgements KS-4A2, FIX 5685): `<folder>/oneiron-custody/<namespace…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -50719,23 +50748,43 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/store/key_custody/identity.rs",
-     "purpose": "Typed custody identities and their codecs: who a custody entry belongs to (vault, kind, item, generation)…",
+     "path": "src/store/key_custody/home.rs",
+     "purpose": "The residence home's side of the residence target (KS-4A2, FIX 5685)",
      "surface": {
-      "crate-vis": 41
+      "crate-vis": 4
      }
     },
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "CustodyNamespace",
+      "CustodyVaultId"
+     ],
+     "path": "src/store/key_custody/identity.rs",
+     "purpose": "Typed custody identities and their codecs: who a custody entry belongs to (vault, kind, item, generation)…",
+     "surface": {
+      "crate-vis": 36,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CustodyEpoch",
+      "CustodyPosition"
+     ],
      "path": "src/store/key_custody/log.rs",
      "purpose": "The keyless custody log (KS-4, FIX 5685) and the local journal it is kept in, beside the vault and outside…",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 28,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -50745,7 +50794,45 @@
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 29,
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AckOperation",
+      "AckPosition",
+      "AckRecord",
+      "AnchorAdvance",
+      "AnchorStore",
+      "CustodyBatch",
+      "CustodySource",
+      "CustodyTarget",
+      "DeletionEvidence",
+      "EvidenceKind",
+      "HostedKind",
+      "Lineage",
+      "PendingCode",
+      "ResidenceCommit",
+      "TargetId",
+      "TargetKind",
+      "TargetPending",
+      "TargetPublication",
+      "TargetScope",
+      "TargetSpec"
+     ],
+     "path": "src/store/key_custody/protocol.rs",
+     "purpose": "The KS-4 custody protocol (FIX 5685), public so the holders of a vault's custody outside this crate keep one…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 7,
+      "enum": 8,
+      "fn": 22,
+      "re-export": 2,
+      "struct": 9,
+      "trait": 3
      }
     },
     {
@@ -50753,9 +50840,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/store/key_custody/publish.rs",
-     "purpose": "Publishing one lineage's custody (KS-4, FIX 5685): its keyless log, then its latest sealed head, to a…",
+     "purpose": "Publishing one lineage's custody (KS-4, FIX 5685): its keyless log, then its latest sealed head, to every…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -50775,7 +50862,17 @@
      "path": "src/store/key_custody/retirement.rs",
      "purpose": "Durable retirement intents and the one finisher that carries them out",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/targets.rs",
+     "purpose": "The all-target acknowledgement journal (KS-4A2, FIX 5685), kept beside the keyless log in…",
+     "surface": {
+      "crate-vis": 19
      }
     },
     {
@@ -50858,7 +50955,7 @@
      "surface": {
       "crate-vis": 19,
       "mod": 1,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -51995,7 +52092,7 @@
      "path": "src/sync/client/mod.rs",
      "purpose": "Client-side sync over WebSocket",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 5
      }
     },
@@ -52022,7 +52119,7 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 7,
       "re-export": 3,
@@ -52115,6 +52212,16 @@
      "notable": [],
      "path": "src/sync/client/residence/checkpoint_roots.rs",
      "purpose": "Checkpoint root attestations between this machine and its home (FIX 4882), on the steady pass after the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/custody.rs",
+     "purpose": "This machine's key custody to its residence home (KS-4A2, FIX 5685): the residence member of the required…",
      "surface": {
       "crate-vis": 1
      }
@@ -53115,7 +53222,7 @@
       "const": 2,
       "crate-vis": 12,
       "fn": 14,
-      "re-export": 16,
+      "re-export": 17,
       "struct": 2
      }
     },
@@ -53260,6 +53367,16 @@
      "surface": {
       "crate-vis": 3,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/custody.rs",
+     "purpose": "The residence home's door for the key custody of the owner's machines (KS-4A2, FIX 5685): the residence target",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -63487,7 +63604,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 64,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -63732,7 +63849,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 91,
+     "files": 95,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63760,7 +63877,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 200,
+     "files": 202,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63958,7 +64075,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3943,
+   "source_files": 3950,
    "test_files": 902
   },
   "oneiron-android": {
@@ -81143,7 +81260,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 12,
       "re-export": 21,
       "struct": 1
@@ -83339,6 +83456,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/livequery/residence/custody.rs",
+     "purpose": "`residence.custody.status`, `.frames`, `.put` and `.commit`: this home as the residence target of its…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/livequery/residence/machine_history.rs",
      "purpose": "`residence.machine-history` (FIX 3820): a target's machine-claim history, a page at a time, for a machine…",
      "surface": {
@@ -84797,13 +84924,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/backup/custody.rs",
-     "purpose": "Custody heads beside the backups (KS-4A1, FIX 5685)",
+     "purpose": "Custody heads beside the backups (KS-4A1/KS-4A2, FIX 5685)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/custody/anchor_client.rs",
+     "purpose": "The HTTP custody anchor (FIX 5788, CALLS CUSTODY_ANCHOR_URL): a host whose own disks would roll back with…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -86856,7 +86993,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 27,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -86912,7 +87049,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -87033,7 +87170,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 864,
+   "source_files": 866,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -89722,6 +89859,7 @@
       "RecipientRole",
       "RecipientState",
       "RecordEraseConfirmRequest",
+      "RecordEraseCustody",
       "RecordEraseOutcome",
       "RecordErasePreview",
       "RecordEraseRequest",
@@ -90854,7 +90992,7 @@
      "purpose": "—",
      "surface": {
       "enum": 867,
-      "struct": 2752
+      "struct": 2753
      }
     },
     {
