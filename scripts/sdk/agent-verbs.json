@@ -3805,6 +3805,118 @@
       "section": false
     },
     {
+      "name": "vault.packs.sections.propose",
+      "description": "The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing.",
+      "input": "crate::memory::PluginSectionProposeRequest",
+      "output": "crate::memory::PluginSectionProposal",
+      "call": "memory.plugin_section_propose(&input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.list",
+      "description": "Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project.",
+      "input": "crate::memory::PluginSectionListRequest",
+      "output": "crate::memory::PluginSectionsView",
+      "call": "memory.plugin_sections_list(&input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.grant",
+      "description": "The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent.",
+      "input": "crate::memory::PluginSectionGrantRequest",
+      "output": "crate::memory::PluginSectionGrant",
+      "call": "memory.plugin_section_grant_as_owner(&memory.embedded_owner(\"vault.packs.sections.grant\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.revoke",
+      "description": "The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild.",
+      "input": "crate::memory::PluginSectionRevokeRequest",
+      "output": "crate::memory::PluginSectionRevoked",
+      "call": "memory.plugin_section_revoke_as_owner(&memory.embedded_owner(\"vault.packs.sections.revoke\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.suggest",
+      "description": "Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal.",
+      "input": "crate::memory::PluginSectionSuggestRequest",
+      "output": "crate::memory::PluginSectionSuggestion",
+      "call": "memory.plugin_section_suggest(&input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.suggestions.get",
+      "description": "The owner's plugin suggestion knob: whether workflow-pattern suggestion passes may run at all.",
+      "input": "EmptyRequest",
+      "output": "crate::memory::PluginSuggestionsView",
+      "call": "memory.plugin_suggestions_as_owner(&memory.embedded_owner(\"vault.packs.sections.suggestions.get\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.suggestions.set",
+      "description": "The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted.",
+      "input": "crate::memory::PluginSuggestionsSetRequest",
+      "output": "crate::memory::PluginSuggestionsView",
+      "call": "memory.plugin_suggestions_set_as_owner(&memory.embedded_owner(\"vault.packs.sections.suggestions.set\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "ai.chat.completions",
       "description": "Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling.",
       "input": "ChatCompletionRequest",

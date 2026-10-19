@@ -1626,6 +1626,9 @@ class Oneiron:
             """The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."""
             return json.loads(_translate(lambda: self._client.vault_packs_remove(json.dumps(spec))))
         @property
+        def sections(self) -> "Oneiron._VaultPacksSectionsVerbs":
+            return Oneiron._VaultPacksSectionsVerbs(self._client)
+        @property
         def setup(self) -> "Oneiron._VaultPacksSetupVerbs":
             return Oneiron._VaultPacksSetupVerbs(self._client)
     class _VaultPacksHooksVerbs:
@@ -1682,6 +1685,36 @@ class Oneiron:
         def put(self, spec):
             """Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint."""
             return json.loads(_translate(lambda: self._client.vault_packs_connector_grants_put(json.dumps(spec))))
+    class _VaultPacksSectionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def propose(self, spec):
+            """The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing."""
+            return json.loads(_translate(lambda: self._client.vault_packs_sections_propose(json.dumps(spec))))
+        def list(self, spec):
+            """Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project."""
+            return json.loads(_translate(lambda: self._client.vault_packs_sections_list(json.dumps(spec))))
+        def grant(self, spec):
+            """The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent."""
+            return json.loads(_translate(lambda: self._client.vault_packs_sections_grant(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild."""
+            return json.loads(_translate(lambda: self._client.vault_packs_sections_revoke(json.dumps(spec))))
+        def suggest(self, spec):
+            """Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal."""
+            return json.loads(_translate(lambda: self._client.vault_packs_sections_suggest(json.dumps(spec))))
+        @property
+        def suggestions(self) -> "Oneiron._VaultPacksSectionsSuggestionsVerbs":
+            return Oneiron._VaultPacksSectionsSuggestionsVerbs(self._client)
+    class _VaultPacksSectionsSuggestionsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """The owner's plugin suggestion knob: whether workflow-pattern suggestion passes may run at all."""
+            return json.loads(_translate(lambda: self._client.vault_packs_sections_suggestions_get(json.dumps({} if spec is None else spec))))
+        def set(self, spec):
+            """The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted."""
+            return json.loads(_translate(lambda: self._client.vault_packs_sections_suggestions_set(json.dumps(spec))))
     class _VaultPacksSetupVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

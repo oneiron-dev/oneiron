@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 991 facade rows, 3367 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 943.
+// UniFFI census: 998 facade rows, 3388 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 950.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -14879,6 +14879,306 @@ pub struct ConnectorPackGrantsPutRequest {
 pub struct PackRemoveRequest {
     #[serde(rename = "pack")]
     pub pack: String,
+}
+
+/// `oneiron::context_board::plugin::manifest::SectionManifestProvenance`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SectionManifestProvenance {
+    #[serde(rename = "pack_id")]
+    pub pack_id: String,
+    #[serde(rename = "skill_id")]
+    pub skill_id: String,
+    #[serde(rename = "skill_version")]
+    pub skill_version: String,
+    #[serde(rename = "content_hash_hex")]
+    pub content_hash_hex: String,
+}
+
+/// `oneiron::context_board::plugin::manifest::SectionManifest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SectionManifest {
+    #[serde(rename = "section_id")]
+    pub section_id: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "state_family")]
+    pub state_family: StateFamilyRef,
+    #[serde(rename = "verbs")]
+    pub verbs: Vec<String>,
+    #[serde(rename = "authority_lane")]
+    pub authority_lane: String,
+    #[serde(rename = "budget_policy")]
+    pub budget_policy: String,
+    #[serde(rename = "provenance")]
+    pub provenance: SectionManifestProvenance,
+}
+
+/// `oneiron::context_board::plugin::manifest::SectionManifestEnvelope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SectionManifestEnvelope {
+    #[serde(rename = "schema_version")]
+    pub schema_version: u16,
+    #[serde(rename = "manifest")]
+    pub manifest: SectionManifest,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionTargetInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum PluginSectionTargetInput {
+    #[serde(rename = "existing_skill")]
+    ExistingSkill {
+        #[serde(rename = "skill_ref")]
+        skill_ref: String,
+    },
+    #[serde(rename = "hub_package")]
+    HubPackage {
+        #[serde(rename = "hub_ref")]
+        hub_ref: HubRef,
+        #[serde(rename = "target_skill_ref")]
+        target_skill_ref: String,
+    },
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionProposeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PluginSectionProposeRequest {
+    #[serde(rename = "manifest")]
+    pub manifest: SectionManifestEnvelope,
+    #[serde(rename = "target")]
+    pub target: PluginSectionTargetInput,
+    #[serde(rename = "turn_ref")]
+    pub turn_ref: String,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionProposal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PluginSectionProposal {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "pending_ref")]
+    pub pending_ref: String,
+    #[serde(rename = "manifest_digest")]
+    pub manifest_digest: String,
+    #[serde(rename = "section_id")]
+    pub section_id: String,
+    #[serde(rename = "manifest")]
+    pub manifest: SectionManifestEnvelope,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionListRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PluginSectionListRequest {
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionPendingRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PluginSectionPendingRow {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "pack_id")]
+    pub pack_id: String,
+    #[serde(rename = "section_id")]
+    pub section_id: String,
+    #[serde(rename = "label")]
+    pub label: String,
+    #[serde(rename = "origin")]
+    pub origin: String,
+    #[serde(rename = "awaiting_owner_consent")]
+    pub awaiting_owner_consent: bool,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionAdmittedRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PluginSectionAdmittedRow {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "section_id")]
+    pub section_id: String,
+    #[serde(rename = "manifest")]
+    pub manifest: SectionManifestEnvelope,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionPackRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PluginSectionPackRow {
+    #[serde(rename = "section_id")]
+    pub section_id: String,
+    #[serde(rename = "pack_name")]
+    pub pack_name: String,
+    #[serde(rename = "source_id")]
+    pub source_id: String,
+    #[serde(rename = "content_hash")]
+    pub content_hash: String,
+    #[serde(rename = "section")]
+    pub section: PackSection,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionsView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PluginSectionsView {
+    #[serde(rename = "pending")]
+    pub pending: Vec<PluginSectionPendingRow>,
+    #[serde(rename = "admitted")]
+    pub admitted: Vec<PluginSectionAdmittedRow>,
+    #[serde(rename = "pack_sections")]
+    pub pack_sections: Vec<PluginSectionPackRow>,
+    #[serde(rename = "rendered_pack_sections")]
+    pub rendered_pack_sections: Vec<String>,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionGrantRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PluginSectionGrantRequest {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "review_id", default, skip_serializing_if = "Option::is_none")]
+    pub review_id: Option<String>,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionGrantState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum PluginSectionGrantState {
+    #[serde(rename = "admitted")]
+    Admitted,
+    #[serde(rename = "pending_activation")]
+    PendingActivation,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionGrant`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PluginSectionGrant {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "state")]
+    pub state: PluginSectionGrantState,
+    #[serde(
+        rename = "section_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub section_id: Option<String>,
+    #[serde(rename = "skill_ref")]
+    pub skill_ref: String,
+    #[serde(
+        rename = "settlement_receipt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub settlement_receipt_ref: Option<String>,
+    #[serde(rename = "manifest")]
+    pub manifest: SectionManifestEnvelope,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionRevokeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PluginSectionRevokeRequest {
+    #[serde(rename = "claim_ref", default, skip_serializing_if = "Option::is_none")]
+    pub claim_ref: Option<String>,
+    #[serde(
+        rename = "section_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub section_id: Option<String>,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionRevoked`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PluginSectionRevoked {
+    #[serde(
+        rename = "section_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub section_id: Option<String>,
+    #[serde(rename = "claim_refs")]
+    pub claim_refs: Vec<String>,
+    #[serde(rename = "revoked")]
+    pub revoked: u32,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionSuggestRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PluginSectionSuggestRequest {
+    #[serde(rename = "hub_ref")]
+    pub hub_ref: HubRef,
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "digest_window")]
+    pub digest_window: String,
+    #[serde(rename = "pattern_key")]
+    pub pattern_key: String,
+    #[serde(rename = "summary")]
+    pub summary: String,
+    #[serde(rename = "evidence_refs")]
+    pub evidence_refs: Vec<String>,
+    #[serde(rename = "observed_at")]
+    pub observed_at: u64,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionSuggestionState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum PluginSectionSuggestionState {
+    #[serde(rename = "disabled")]
+    Disabled,
+    #[serde(rename = "no_match")]
+    NoMatch,
+    #[serde(rename = "suppressed_duplicate")]
+    SuppressedDuplicate,
+    #[serde(rename = "proposed")]
+    Proposed,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSectionSuggestion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PluginSectionSuggestion {
+    #[serde(rename = "state")]
+    pub state: PluginSectionSuggestionState,
+    #[serde(
+        rename = "suggestion_key",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub suggestion_key: Option<String>,
+    #[serde(rename = "claim_ref", default, skip_serializing_if = "Option::is_none")]
+    pub claim_ref: Option<String>,
+    #[serde(rename = "pack_id", default, skip_serializing_if = "Option::is_none")]
+    pub pack_id: Option<String>,
+    #[serde(
+        rename = "section_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub section_id: Option<String>,
+    #[serde(rename = "label", default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSuggestionsView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PluginSuggestionsView {
+    #[serde(rename = "enabled")]
+    pub enabled: bool,
+}
+
+/// `oneiron::memory::plugin_sections::PluginSuggestionsSetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PluginSuggestionsSetRequest {
+    #[serde(rename = "enabled")]
+    pub enabled: bool,
 }
 
 /// `oneiron::task_verb::sdk_proxy::ChatRole`.

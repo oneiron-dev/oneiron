@@ -878,6 +878,24 @@ export class Oneiron {
       },
       /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
       remove: (input: Facade.PackRemoveRequest): Facade.PackInstallReceipt => this.#call(() => this.#client.vaultPacksRemove(input) as Facade.PackInstallReceipt),
+      sections: {
+        /** The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing. */
+        propose: (input: Facade.PluginSectionProposeRequest): Facade.PluginSectionProposal => this.#call(() => this.#client.vaultPacksSectionsPropose(input) as Facade.PluginSectionProposal),
+        /** Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project. */
+        list: (input: Facade.PluginSectionListRequest): Facade.PluginSectionsView => this.#call(() => this.#client.vaultPacksSectionsList(input) as Facade.PluginSectionsView),
+        /** The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent. */
+        grant: (input: Facade.PluginSectionGrantRequest): Facade.PluginSectionGrant => this.#call(() => this.#client.vaultPacksSectionsGrant(input) as Facade.PluginSectionGrant),
+        /** The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild. */
+        revoke: (input: Facade.PluginSectionRevokeRequest): Facade.PluginSectionRevoked => this.#call(() => this.#client.vaultPacksSectionsRevoke(input) as Facade.PluginSectionRevoked),
+        /** Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal. */
+        suggest: (input: Facade.PluginSectionSuggestRequest): Facade.PluginSectionSuggestion => this.#call(() => this.#client.vaultPacksSectionsSuggest(input) as Facade.PluginSectionSuggestion),
+        suggestions: {
+          /** The owner's plugin suggestion knob: whether workflow-pattern suggestion passes may run at all. */
+          get: (input: Facade.EmptyRequest = {}): Facade.PluginSuggestionsView => this.#call(() => this.#client.vaultPacksSectionsSuggestionsGet(input) as Facade.PluginSuggestionsView),
+          /** The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted. */
+          set: (input: Facade.PluginSuggestionsSetRequest): Facade.PluginSuggestionsView => this.#call(() => this.#client.vaultPacksSectionsSuggestionsSet(input) as Facade.PluginSuggestionsView),
+        },
+      },
       setup: {
         /** The owner opens, or resumes, a pack's guided setup; opening grants nothing. */
         prepare: (input: Facade.PackSetupRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupPrepare(input) as Facade.PackSetupReceipt),

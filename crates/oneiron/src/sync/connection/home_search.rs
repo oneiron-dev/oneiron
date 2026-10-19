@@ -2,7 +2,7 @@
 //! connection (OF-534): a search an opened machine cannot answer locally goes
 //! to the home node (ARCH-0023b, partial sync).
 
-use std::sync::{Arc, PoisonError};
+use std::sync::{Arc, PoisonError, Weak};
 
 use tokio::sync::watch;
 
@@ -20,6 +20,32 @@ pub struct HomeSearch {
     mode: watch::Receiver<SyncResidenceMode>,
 }
 
+/// The vault's hold on its own sync connection's home search: the live
+/// search, and the mode the last own-device connection that attached ran,
+/// which the vault keeps once that connection drops (FIX 2905).
+#[derive(Default)]
+pub(crate) struct HomeSearchSlot {
+    search: Weak<HomeSearch>,
+    /// The mode the attached connection ran when it attached, or when it
+    /// dropped; `None` until one attaches.
+    mode: Option<SyncResidenceMode>,
+}
+
+/// What this device's own sync connection says of its residence (FIX 2905):
+/// whether its local answers are the whole vault it may read.
+pub enum DeviceResidence {
+    /// The device holds every window it may read, or no own-device sync
+    /// connection ever attached over the vault: its local answer is whole.
+    HoldsEverything,
+    /// The device syncs only what it opened. `search` is the live
+    /// connection's home search; `None` once that connection dropped, when
+    /// the home cannot be asked and a local answer is not the whole one.
+    Opened {
+        /// The live connection's home search, when one lives.
+        search: Option<Arc<HomeSearch>>,
+    },
+}
+
 impl HomeSearch {
     /// Lends `vault`'s query doors this connection's home search. The last
     /// own-device connection over the vault wins.
@@ -33,10 +59,13 @@ impl HomeSearch {
             config,
             mode,
         });
-        *vault
+        let mut slot = vault
             .home_search
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Arc::downgrade(&search);
+            .unwrap_or_else(PoisonError::into_inner);
+        slot.search = Arc::downgrade(&search);
+        slot.mode = Some(*search.mode.borrow());
+        drop(slot);
         search
     }
 
@@ -81,6 +110,23 @@ impl HomeSearch {
     }
 }
 
+impl Drop for HomeSearch {
+    /// The connection let go: the vault keeps the mode it ran, so a device
+    /// that syncs only what it opened still answers as one with no home to
+    /// ask. A connection that attached since keeps its own.
+    fn drop(&mut self) {
+        let this: *const Self = self;
+        let mut slot = self
+            .vault
+            .home_search
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if std::ptr::eq(slot.search.as_ptr(), this) {
+            slot.mode = Some(*self.mode.borrow());
+        }
+    }
+}
+
 impl Vault {
     /// This device's home search, while it syncs only what it opened and an
     /// own-device sync connection over it lives. `None` on a machine that
@@ -88,12 +134,34 @@ impl Vault {
     /// the whole answer.
     #[must_use]
     pub fn home_search(&self) -> Option<Arc<HomeSearch>> {
-        let search = self
-            .home_search
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .upgrade()?;
-        let opened = *search.mode.borrow() == SyncResidenceMode::Opened;
-        opened.then_some(search)
+        match self.device_residence() {
+            DeviceResidence::Opened { search } => search,
+            DeviceResidence::HoldsEverything => None,
+        }
+    }
+
+    /// Whether this device syncs only what it opened, as the last
+    /// own-device sync connection that attached over the vault runs it: the
+    /// mode it runs now while it lives, the mode it ran when it dropped
+    /// after. A host whose connection never attached reads as holding
+    /// everything.
+    #[must_use]
+    pub fn device_residence(&self) -> DeviceResidence {
+        // The slot is let go before a search is: dropping the last one
+        // takes the slot again.
+        let (search, kept) = {
+            let slot = self
+                .home_search
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            (slot.search.upgrade(), slot.mode)
+        };
+        let mode = search
+            .as_ref()
+            .map_or(kept, |search| Some(*search.mode.borrow()));
+        match mode {
+            Some(SyncResidenceMode::Opened) => DeviceResidence::Opened { search },
+            Some(SyncResidenceMode::All) | None => DeviceResidence::HoldsEverything,
+        }
     }
 }

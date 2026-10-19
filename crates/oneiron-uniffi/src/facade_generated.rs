@@ -1171,6 +1171,41 @@ export_facade! {
     let output = client.vault_packs_remove(&input)?;
     crate::codec::lift_record("vault.packs.remove", &output)
 };
+"vault.packs.sections.propose" => fn vault_packs_sections_propose(&self, input: PluginSectionProposeRequest) -> PluginSectionProposal = |client| {
+    let input: oneiron::memory::PluginSectionProposeRequest = crate::codec::lower_record("vault.packs.sections.propose", input)?;
+    let output = client.vault_packs_sections_propose(&input)?;
+    crate::codec::lift_record("vault.packs.sections.propose", &output)
+};
+"vault.packs.sections.list" => fn vault_packs_sections_list(&self, input: PluginSectionListRequest) -> PluginSectionsView = |client| {
+    let input: oneiron::memory::PluginSectionListRequest = crate::codec::lower_record("vault.packs.sections.list", input)?;
+    let output = client.vault_packs_sections_list(&input)?;
+    crate::codec::lift_record("vault.packs.sections.list", &output)
+};
+"vault.packs.sections.grant" => fn vault_packs_sections_grant(&self, input: PluginSectionGrantRequest) -> PluginSectionGrant = |client| {
+    let input: oneiron::memory::PluginSectionGrantRequest = crate::codec::lower_record("vault.packs.sections.grant", input)?;
+    let output = client.vault_packs_sections_grant(&input)?;
+    crate::codec::lift_record("vault.packs.sections.grant", &output)
+};
+"vault.packs.sections.revoke" => fn vault_packs_sections_revoke(&self, input: PluginSectionRevokeRequest) -> PluginSectionRevoked = |client| {
+    let input: oneiron::memory::PluginSectionRevokeRequest = crate::codec::lower_record("vault.packs.sections.revoke", input)?;
+    let output = client.vault_packs_sections_revoke(&input)?;
+    crate::codec::lift_record("vault.packs.sections.revoke", &output)
+};
+"vault.packs.sections.suggest" => fn vault_packs_sections_suggest(&self, input: PluginSectionSuggestRequest) -> PluginSectionSuggestion = |client| {
+    let input: oneiron::memory::PluginSectionSuggestRequest = crate::codec::lower_record("vault.packs.sections.suggest", input)?;
+    let output = client.vault_packs_sections_suggest(&input)?;
+    crate::codec::lift_record("vault.packs.sections.suggest", &output)
+};
+"vault.packs.sections.suggestions.get" => fn vault_packs_sections_suggestions_get(&self) -> PluginSuggestionsView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.packs.sections.suggestions.get")?;
+    let output = client.vault_packs_sections_suggestions_get(&input)?;
+    crate::codec::lift_record("vault.packs.sections.suggestions.get", &output)
+};
+"vault.packs.sections.suggestions.set" => fn vault_packs_sections_suggestions_set(&self, input: PluginSuggestionsSetRequest) -> PluginSuggestionsView = |client| {
+    let input: oneiron::memory::PluginSuggestionsSetRequest = crate::codec::lower_record("vault.packs.sections.suggestions.set", input)?;
+    let output = client.vault_packs_sections_suggestions_set(&input)?;
+    crate::codec::lift_record("vault.packs.sections.suggestions.set", &output)
+};
 "ai.chat.completions" => fn ai_chat_completions(&self, input: ChatCompletionRequest) -> ChatCompletionResponse = |client| {
     let input: oneiron::task_verb::sdk::ChatCompletionRequest = crate::codec::lower_record("ai.chat.completions", input)?;
     let output = client.ai_chat_completions(&input)?;
