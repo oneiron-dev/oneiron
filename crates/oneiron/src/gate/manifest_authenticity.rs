@@ -350,7 +350,10 @@ impl Vault {
     /// writes go through the install and quarantine doors' own writes, in a
     /// transaction that never commits. A manifest the door refuses, and every
     /// one after it, reads as no narrowing; then, or when a retire names no
-    /// stored manifest, `read` does not run.
+    /// stored manifest, `read` does not run. `folded` sees this writer's
+    /// snapshot at each policy it resolves and once the retires are in
+    /// place, so a caller lists the stored manifests each one folds
+    /// (`host_door_lists`).
     ///
     /// # Errors
     /// A store failure, an unreadable manifest row, or `read`'s own.
@@ -360,10 +363,12 @@ impl Vault {
         retires: &[EntityId],
         now: u64,
         read: impl FnOnce(&heed::RoTxn<'_>) -> Result<T>,
+        folded: &mut dyn FnMut(&heed::RoTxn<'_>),
     ) -> Result<(Vec<bool>, Option<T>)> {
         let mut steps = vec![false; installs.len()];
         let mut txn = self.store.env.write_txn()?;
         let mut before = super::resolve_policy_manifest(&self.store, &txn)?;
+        folded(&txn);
         let mut placed = true;
         for ((id, data), step) in installs.iter().zip(&mut steps) {
             if self
@@ -374,11 +379,15 @@ impl Vault {
                 break;
             }
             let after = super::resolve_policy_manifest(&self.store, &txn)?;
+            folded(&txn);
             *step = super::resolution::manifest_resolution_narrows(&before, &after);
             before = after;
         }
         for id in retires {
             placed = placed && quarantine_current_in_txn(&self.store, &mut txn, id)?;
+        }
+        if placed && !retires.is_empty() {
+            folded(&txn);
         }
         let seen = if placed { Some(read(&txn)?) } else { None };
         txn.abort();
@@ -389,7 +398,8 @@ impl Vault {
     /// when it narrows the resolved policy the vault holds just before it,
     /// on every axis (ARCH-0070). The check and the write share one writer,
     /// so no landing in between can make it a widening. `Ok(false)`: nothing
-    /// was written.
+    /// was written. `folded` sees the writer's snapshot at the policy before
+    /// and after the write, as [`Self::project_manifest_changes`] shows it.
     ///
     /// # Errors
     /// As [`Self::install_owner_policy_manifest`].
@@ -399,11 +409,14 @@ impl Vault {
         id: EntityId,
         data: Vec<u8>,
         now: u64,
+        folded: &mut dyn FnMut(&heed::RoTxn<'_>),
     ) -> Result<bool> {
         let mut txn = self.store.env.write_txn()?;
         let before = super::resolve_policy_manifest(&self.store, &txn)?;
+        folded(&txn);
         self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
         let after = super::resolve_policy_manifest(&self.store, &txn)?;
+        folded(&txn);
         if !super::resolution::manifest_resolution_narrows(&before, &after) {
             txn.abort();
             return Ok(false);

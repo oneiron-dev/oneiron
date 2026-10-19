@@ -323,9 +323,9 @@ impl Vault {
     /// [`Self::plan_shape_visible`], listing in `sources` the rows its
     /// items, frontier and reach stand on, as
     /// [`Self::read_live_shape_into`] lists them, and each person a reach
-    /// line is named from. Its manifest projection re-reads the stored
-    /// manifests the frontier folds and the sending identities' heads, both
-    /// listed there; the bytes it projects are the caller's.
+    /// line is named from. Its manifest projection lists the stored
+    /// manifests its own writer folds, and re-reads the sending identities'
+    /// heads, listed there; the bytes it projects are the caller's.
     pub(super) fn plan_shape_into(
         &self,
         seed: Option<&ShapeSeed>,
@@ -393,7 +393,7 @@ impl Vault {
             .iter()
             .map(|sender| sender.entity)
             .collect();
-        let sends = self.classify_shape_manifests(&mut items, &senders)?;
+        let sends = self.classify_shape_manifests(&mut items, &senders, sources)?;
         let summary = ShapePlanSummary::of(&items);
         let named: BTreeSet<ShapeTarget> = seed.rows.iter().map(ShapeRow::target).collect();
         let undeclared = live
