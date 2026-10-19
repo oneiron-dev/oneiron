@@ -203,13 +203,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/anchor_fold.rs` | src | s | 1 crate-vis | — | The owner anchor's entries (world privacy P6b, contract §4 and E2(b)): a root record, which its own anchor… |
 | `src/authority/anchor_marks.rs` | src | s | 4 crate-vis | — | An owner anchor's writes (world privacy P6b, contract §4 and E2(b)): its root's record, and its… |
 | `src/authority/causal_write.rs` | src | s | 1 enum · 1 fn · 3 crate-vis | CausalWriteDisposition | Causal authorization across actor revoke/regrant windows |
-| `src/authority/checkpoint.rs` | src | m | 1 enum · 4 fn · 3 const · 6 crate-vis | AuthorityCheckpointUpkeep | The checkpoint v2 images this vault built and keeps (OF-469): each image's canonical bytes keyed by its id… |
+| `src/authority/checkpoint.rs` | src | m | 1 enum · 4 fn · 3 const · 8 crate-vis | AuthorityCheckpointUpkeep | The checkpoint v2 images this vault built and keeps (OF-469): each image's canonical bytes keyed by its id… |
 | `src/authority/checkpoint_adopt.rs` | src | m | 3 struct · 11 fn · 3 crate-vis | AuthorityCheckpointBundle, AuthorityCheckpointExpectation, VerifiedAuthorityCheckpoint | Checkpoint v2 adoption (OF-469): the one image a vault trusts in place of replaying the history it covers |
-| `src/authority/checkpoint_attest.rs` | src | m | 3 struct · 13 fn · 1 const · 6 crate-vis | AuthorityCheckpointAttestation, AuthorityCheckpointKeyBinding, AuthorityCheckpointPin | Checkpoint v2 attestations (OF-469): an eligible root attests one authority checkpoint image with two… |
+| `src/authority/checkpoint_attest.rs` | src | m | 3 struct · 13 fn · 1 const · 18 crate-vis | AuthorityCheckpointAttestation, AuthorityCheckpointKeyBinding, AuthorityCheckpointPin | Checkpoint v2 attestations (OF-469): an eligible root attests one authority checkpoint image with two… |
 | `src/authority/checkpoint_choice.rs` | src | s | 1 type · 4 crate-vis | — | Folds the owner's signed choices of his vault's checkpoint root policy (mesh PR2c, §A 06, K06; CALLS "mesh… |
-| `src/authority/checkpoint_image.rs` | src | L | 6 struct · 6 fn · 5 const · 10 crate-vis | AuthorityArchiveContent, AuthorityArchiveCustodian, AuthorityArchiveManifest, AuthorityCheckpointRow, AuthorityCheckpointUnresolved, AuthorityCheckpointV2 | The portable authority checkpoint v2 image (OF-469): the exact fold a vault builds of its covered history… |
+| `src/authority/checkpoint_image.rs` | src | L | 6 struct · 6 fn · 5 const · 11 crate-vis | AuthorityArchiveContent, AuthorityArchiveCustodian, AuthorityArchiveManifest, AuthorityCheckpointRow, AuthorityCheckpointUnresolved, AuthorityCheckpointV2 | The portable authority checkpoint v2 image (OF-469): the exact fold a vault builds of its covered history… |
 | `src/authority/checkpoint_policy.rs` | src | m | 2 struct · 1 enum · 9 fn · 3 const · 3 crate-vis | CheckpointPosture, CheckpointRoot, CheckpointRootPolicy | Who may attest a portable authority checkpoint (OF-469, checkpoint v2): the eligible roots and the quorum… |
 | `src/authority/checkpoint_policy_choice.rs` | src | s | 1 struct · 2 fn | CheckpointPolicyView | The owner's checkpoint root policy door (mesh PR2c, §A 06, K06): he selects which roots attest his authority… |
+| `src/authority/checkpoint_root_attest.rs` | src | m | 3 enum · 1 trait · 5 fn · 3 const · 2 crate-vis | CheckpointRootSigner, RootCheckpointAttest, RootCheckpointAuthority, RootCheckpointPickup | A root of the vault's counted policy attests another host's checkpoint image (FIX 4882) |
+| `src/authority/checkpoint_root_intake.rs` | src | s | 2 enum · 1 fn · 1 const | CheckpointAttestationIntake, RootCheckpointRetry | The host intake for one root's attestation of a checkpoint image this host keeps (FIX 4882): a root this… |
+| `src/authority/checkpoint_root_status.rs` | src | s | 2 struct · 3 enum · 3 fn · 2 const · 2 crate-vis | AuthorityCheckpointRootState, AuthorityCheckpointRoots, CheckpointRootDelivery, RootCheckpointMissingSigner, RootCheckpointPolicyChange | Which roots this host's checkpoint head awaits (FIX 4882): for the head image under the root policy the… |
 | `src/authority/claim_write.rs` | src | s | 1 fn · 3 crate-vis | — | Claim write-window admission and read-time quarantine share one causal predicate |
 | `src/authority/critical_confirm_door.rs` | src | s | 1 crate-vis | — | Signed critical-claim answers, under the existing host-root owner ceremony |
 | `src/authority/engine_machine.rs` | src | s | 3 fn · 2 crate-vis | — | Host-provisioned software identities for the engine's own MACHINE writers |
@@ -257,7 +260,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/machine_write/successor.rs` | src | s | 1 crate-vis | — | Re-signing a MACHINE claim's successor with its writer's retained signer |
 | `src/authority/mesh_machine.rs` | src | m | 2 struct · 7 fn · 1 const · 1 re-export | MeshMachineAddress, MeshMachineAddressEnvelope | Local host-authorized mesh binding and grants, distinct from address hints |
 | `src/authority/mesh_machine/doors.rs` | src | m | 3 struct · 7 fn | MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding | Public mesh setup inputs and owner-bound doors over the host's existing binding, ALPN and terminal… |
-| `src/authority/mod.rs` | src | m | 48 re-export · 27 crate-vis | — | AUTHORITY_LOG record substrate |
+| `src/authority/mod.rs` | src | m | 51 re-export · 27 crate-vis | — | AUTHORITY_LOG record substrate |
 | `src/authority/observation_policy.rs` | src | s | 1 struct · 2 fn · 8 const · 1 crate-vis | AuthorityObservationPolicy | Device-local authority observation policy and its versioned duration row |
 | `src/authority/op_apply.rs` | src | m | 7 crate-vis | — | Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`] |
 | `src/authority/owner_act.rs` | src | m | 1 struct · 2 enum · 4 fn · 11 crate-vis | ActAuthority, GrantedAct, KeyWork | The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged… |
@@ -3889,13 +3892,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/lfs.rs` | src | s | 3 fn · 1 crate-vis | — | Object-scoped have/want state on the existing owner-authenticated sync client |
 | `src/sync/client/mod.rs` | src | s | 5 re-export · 1 crate-vis | — | Client-side sync over WebSocket |
 | `src/sync/client/note_session.rs` | src | s | 2 crate-vis | — | The existing app-tier MessagePack auth.bind handshake on the sync socket |
-| `src/sync/client/residence.rs` | src | L | 3 struct · 2 enum · 7 fn · 3 re-export · 6 crate-vis | OpenedItem, ResidenceHit, ResidenceSearch, SearchSource, ThinItem | Bounded on-demand home reads on an independent short-lived authenticated socket |
-| `src/sync/client/residence/authority.rs` | src | m | 1 fn · 2 crate-vis | — | Authority history from the home for a machine that syncs what it opened (OF-469) |
+| `src/sync/client/residence.rs` | src | L | 3 struct · 2 enum · 7 fn · 3 re-export · 7 crate-vis | OpenedItem, ResidenceHit, ResidenceSearch, SearchSource, ThinItem | Bounded on-demand home reads on an independent short-lived authenticated socket |
+| `src/sync/client/residence/authority.rs` | src | m | 1 fn · 3 crate-vis | — | Authority history from the home for a machine that syncs what it opened (OF-469) |
 | `src/sync/client/residence/bundle.rs` | src | m | 1 struct · 3 fn · 1 re-export · 3 crate-vis | SealedBundleRelay | The vault's sealed cloud bundle through the home (DEC-0005 "Sealed copies", FIX 922) |
 | `src/sync/client/residence/bundle/access.rs` | src | m | 1 struct · 1 fn · 4 crate-vis | PadAdmissionReport | This machine's side of a late joiner's access to kept pad objects (FIX 4271), over the home's one… |
 | `src/sync/client/residence/bundle/publication.rs` | src | s | 1 crate-vis | — | The owner's ask to publish the vault's sealed bundle (WILL L04 row 03), run by the install his counted… |
 | `src/sync/client/residence/bundle/sweep.rs` | src | s | 2 crate-vis | — | Erase's sweep of every pad object the home keeps (FIX 922): each world whose keys were destroyed here leaves… |
 | `src/sync/client/residence/bundle/turn.rs` | src | s | 2 crate-vis | — | This machine's side of the home's publisher turn (FIX 3351): a publisher asks for the turn before it… |
+| `src/sync/client/residence/checkpoint_roots.rs` | src | s | 1 crate-vis | — | Checkpoint root attestations between this machine and its home (FIX 4882), on the steady pass after the… |
 | `src/sync/client/residence/index.rs` | src | s | 1 struct · 3 fn | ResidenceIndexWindow | Paged, revision-bound current-window metadata enrolment |
 | `src/sync/client/residence/kit_fetch.rs` | src | s | 1 fn · 2 crate-vis | — | A restore's read of the sealed cloud bundle from the home with the kit alone (FIX 922): no session, slip or… |
 | `src/sync/client/residence/machine_history.rs` | src | s | 1 crate-vis | — | The machine-claim history this machine is owed, from the home (FIX 3820) |
@@ -4564,7 +4568,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/root_issue.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | PreparedRoot | Kit issue, phase 1: a fresh recovery root and its signed record, held in memory until the kit issuer reports… |
 | `src/world_keys/root_work/execute.rs` | src | m | 1 fn | — | The target's door for a root request and the material its change needs ([`Vault::run_root_request`]): the… |
 | `src/world_keys/root_work/mod.rs` | src | m | 3 enum · 3 fn · 2 crate-vis | RootMaterial, RootSecret, RootWorkDone | Root work (WILL L04 row 02): the owner decides a change to one install's recovery root on any surface he is… |
-| `src/world_keys/session.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | WorldKeyFrontierCheck | What one vault handle keeps for world privacy P6b, in memory only: this install's keystore, the world keys… |
+| `src/world_keys/session.rs` | src | s | 1 struct · 1 fn · 1 const · 3 crate-vis | WorldKeyFrontierCheck | What one vault handle keeps for world privacy P6b, in memory only: this install's keystore, the world keys… |
 | `src/world_keys/state.rs` | src | s | 1 enum · 1 fn | WorldRecoveryState | The no-kit warning (ruling fix 10): a typed state |
 | `src/world_keys/tests.rs` | test | m | — | — | P6b done-means checks on the key core |
 | `src/world_keys/vault_doors.rs` | src | s | 6 fn · 4 crate-vis | — | The vault-handle doors for this install's own keys: installing the keystore, loading this install's signing… |
