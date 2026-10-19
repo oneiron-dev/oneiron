@@ -78310,7 +78310,7 @@
      "path": "src/config/merge.rs",
      "purpose": "Layered merge: file, environment, and argv values into `ServeConfig`",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 6,
       "struct": 1
      }
@@ -79835,15 +79835,16 @@
      "kind": "src",
      "notable": [
       "ManagedArgs",
-      "ManagedError"
+      "ManagedError",
+      "SettingsRefusal"
      ],
      "path": "src/managed/args.rs",
      "purpose": "Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals",
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "enum": 1,
-      "fn": 5,
+      "enum": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -80012,6 +80013,16 @@
       "const": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/settings.rs",
+     "purpose": "The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -81967,7 +81978,7 @@
      "path": "src/server/tagging.rs",
      "purpose": "The tagging worker: the one thing that drives the engine's tagging reconciler",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -83046,7 +83057,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83202,7 +83213,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 788,
+   "source_files": 789,
    "test_files": 182
   },
   "oneiron-spawn": {
