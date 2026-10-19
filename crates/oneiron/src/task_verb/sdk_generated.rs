@@ -4806,6 +4806,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.consolidation.pin",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::consolidation_frontier::ConsolidationPinRequest,
+                >(),
+            ),
+            (
+                "vault.consolidation.frontier",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::consolidation_frontier::ConsolidationFrontierRequest,
+                >(),
+            ),
+            (
+                "vault.consolidation.accounting",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::consolidation_frontier::ConsolidationAccountingRequest,
+                >(),
+            ),
+            (
                 "vault.consolidation.evidence",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::consolidation::ConsolidationEvidenceRequest,
@@ -6135,6 +6153,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.consolidation.home.get",
     "vault.consolidation.lineage",
     "vault.consolidation.promote",
+    "vault.consolidation.pin",
+    "vault.consolidation.frontier",
+    "vault.consolidation.accounting",
     "vault.sieve.evidence",
     "vault.sieve.evidence.replay",
     "vault.sieve.cadence",
@@ -7891,6 +7912,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
             crate::memory::consolidation::ConsolidationPromotion,
+        >(),
+        "vault.consolidation.pin" => crate::code_run::vault_read::request_schema::<
+            crate::memory::consolidation_frontier::ConsolidationRootAccounting,
+        >(),
+        "vault.consolidation.frontier" => crate::code_run::vault_read::request_schema::<
+            crate::memory::consolidation_frontier::ConsolidationRootAccounting,
+        >(),
+        "vault.consolidation.accounting" => crate::code_run::vault_read::request_schema::<
+            crate::memory::consolidation_frontier::ConsolidationRootAccounting,
         >(),
         "vault.sieve.evidence" => crate::code_run::vault_read::request_schema::<
             crate::dreamer_wake::sieve_evidence::SieveEvidenceView,
@@ -14381,6 +14411,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.consolidation.pin" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consolidation.frontier" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consolidation.accounting" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.consolidation.evidence" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -18206,6 +18257,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::consolidation::ConsolidationPromoteRequest =
                 decode(value.clone())?;
         }
+        "vault.consolidation.pin" => {
+            let _input: crate::memory::consolidation_frontier::ConsolidationPinRequest =
+                decode(value.clone())?;
+        }
+        "vault.consolidation.frontier" => {
+            let _input: crate::memory::consolidation_frontier::ConsolidationFrontierRequest =
+                decode(value.clone())?;
+        }
+        "vault.consolidation.accounting" => {
+            let _input: crate::memory::consolidation_frontier::ConsolidationAccountingRequest =
+                decode(value.clone())?;
+        }
         "vault.consolidation.evidence" => {
             let _input: crate::memory::consolidation::ConsolidationEvidenceRequest =
                 decode(value.clone())?;
@@ -20350,6 +20413,13 @@ pub fn invoke(
         }
         "vault.consolidation.promote" => {
             encode(vault_consolidation_promote(memory, decode(value)?)?)
+        }
+        "vault.consolidation.pin" => encode(vault_consolidation_pin(memory, decode(value)?)?),
+        "vault.consolidation.frontier" => {
+            encode(vault_consolidation_frontier(memory, decode(value)?)?)
+        }
+        "vault.consolidation.accounting" => {
+            encode(vault_consolidation_accounting(memory, decode(value)?)?)
         }
         "vault.consolidation.evidence" => {
             encode(vault_consolidation_evidence(memory, decode(value)?)?)
@@ -28111,6 +28181,30 @@ pub fn vault_consolidation_promote(
     input: crate::memory::consolidation::ConsolidationPromoteRequest,
 ) -> MemoryResult<crate::memory::consolidation::ConsolidationPromotion> {
     crate::task_verb::sdk::host_only(memory, "vault.consolidation.promote", &input)
+}
+pub fn vault_consolidation_pin(
+    memory: &Memory<'_>,
+    input: crate::memory::consolidation_frontier::ConsolidationPinRequest,
+) -> MemoryResult<crate::memory::consolidation_frontier::ConsolidationRootAccounting> {
+    memory.consolidation_pin_as_owner(&memory.embedded_owner("vault.consolidation.pin")?, &input)
+}
+pub fn vault_consolidation_frontier(
+    memory: &Memory<'_>,
+    input: crate::memory::consolidation_frontier::ConsolidationFrontierRequest,
+) -> MemoryResult<crate::memory::consolidation_frontier::ConsolidationRootAccounting> {
+    memory.consolidation_frontier_as_owner(
+        &memory.embedded_owner("vault.consolidation.frontier")?,
+        &input,
+    )
+}
+pub fn vault_consolidation_accounting(
+    memory: &Memory<'_>,
+    input: crate::memory::consolidation_frontier::ConsolidationAccountingRequest,
+) -> MemoryResult<crate::memory::consolidation_frontier::ConsolidationRootAccounting> {
+    memory.consolidation_accounting_as_owner(
+        &memory.embedded_owner("vault.consolidation.accounting")?,
+        &input,
+    )
 }
 pub fn vault_consolidation_evidence(
     memory: &Memory<'_>,

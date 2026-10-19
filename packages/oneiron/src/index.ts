@@ -2285,6 +2285,12 @@ export class Oneiron {
       lineage: (input: Facade.ConsolidationLineageRequest): Facade.ConsolidationLineageView | null => this.#call(() => this.#client.vaultConsolidationLineage(input) as Facade.ConsolidationLineageView | null),
       /** Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals. */
       promote: (input: Facade.ConsolidationPromoteRequest): Facade.ConsolidationPromotion => this.#call(() => this.#client.vaultConsolidationPromote(input) as Facade.ConsolidationPromotion),
+      /** Pins reference-only evidence for six-axis consolidation buckets at one owner-scoped ledger revision. Hashes, lineage taint and source eligibility are derived by the root, never accepted from children. */
+      pin: (input: Facade.ConsolidationPinRequest): Facade.ConsolidationRootAccounting => this.#call(() => this.#client.vaultConsolidationPin(input) as Facade.ConsolidationRootAccounting),
+      /** Records immutable child judgements and reference sets against an existing root pin, in any completion order, and accounts source-plus-hash corroboration without merging projects. Does not settle claims. */
+      frontier: (input: Facade.ConsolidationFrontierRequest): Facade.ConsolidationRootAccounting => this.#call(() => this.#client.vaultConsolidationFrontier(input) as Facade.ConsolidationRootAccounting),
+      /** Reads the original root revision, source hashes, ancestor and edge provenance taint, zero-signal exclusions and per-bucket corroboration accounting under current owner read authority. */
+      accounting: (input: Facade.ConsolidationAccountingRequest): Facade.ConsolidationRootAccounting => this.#call(() => this.#client.vaultConsolidationAccounting(input) as Facade.ConsolidationRootAccounting),
       /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */
       evidence: (input: Facade.ConsolidationEvidenceRequest): Facade.ScopedReadResult<Facade.ConsolidationEvidenceSource[]> => this.#call(() => this.#client.vaultConsolidationEvidence(input) as Facade.ScopedReadResult<Facade.ConsolidationEvidenceSource[]>),
     },
