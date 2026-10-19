@@ -10682,6 +10682,7 @@ class TaskTypeTreePin(TypedDict):
     fork_ref: EntityId
     tree_version: int
     nodes: list[TaskTypeNodeSpec]
+    project_ref: NotRequired[EntityId | None]
 class TypeStamp(TypedDict):
     node_id: str
     tree_version: int
@@ -10697,7 +10698,9 @@ class TaskTypeTreeView(TypedDict):
 class TaskTypeTreePinReceipt(TypedDict):
     fork_ref: EntityId
     stored: TaskTypeTreeView
-    in_force: bool
+    requested_tree_version: NotRequired[int | None]
+    project_ref: NotRequired[EntityId | None]
+    in_force: NotRequired[bool | None]
 class TaskTypeTreeRead(TypedDict):
     project_ref: NotRequired[EntityId | None]
     tree_version: NotRequired[int | None]

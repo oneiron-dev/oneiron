@@ -2236,11 +2236,11 @@ declare namespace Sdk {
   type WorkflowRunView = { workflow_ref: EntityId; workflow_revision: number; root_attempt_ref: EntityId; active_attempt_ref: EntityId; steps: WorkflowStepCapture[]; results: WorkflowStepRun[] };
   type WorkflowRunRequest = { root_attempt_ref: EntityId };
   type TaskTypeNodeSpec = { node_id: string; parent?: string | null; name: string };
-  type TaskTypeTreePin = { fork_ref: EntityId; tree_version: number; nodes: TaskTypeNodeSpec[] };
+  type TaskTypeTreePin = { fork_ref: EntityId; tree_version: number; nodes: TaskTypeNodeSpec[]; project_ref?: EntityId | null };
   type TypeStamp = { node_id: string; tree_version: number };
   type TaskTypeNodeView = { node_id: string; parent?: string | null; name: string; live: boolean };
   type TaskTypeTreeView = { tree_version: number; root: TypeStamp; nodes: TaskTypeNodeView[] };
-  type TaskTypeTreePinReceipt = { fork_ref: EntityId; stored: TaskTypeTreeView; in_force: boolean };
+  type TaskTypeTreePinReceipt = { fork_ref: EntityId; stored: TaskTypeTreeView; requested_tree_version?: number | null; project_ref?: EntityId | null; in_force?: boolean | null };
   type TaskTypeTreeRead = { project_ref?: EntityId | null; tree_version?: number | null };
   type TaskTypeTreeReadReply = { project_ref?: EntityId | null; in_force_skill_ref?: EntityId | null; tree?: TaskTypeTreeView | null };
   type PlannedSpawnRead = { spawn_ref: EntityId };
