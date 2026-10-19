@@ -10673,6 +10673,7 @@ class WorkflowDispatchRequest(TypedDict):
     intent_key: str
     briefing: str
     context_spec: NotRequired[ContextSpec | None]
+    task_ref: NotRequired[EntityId | None]
 class WorkflowStepCapture(TypedDict):
     requested_agent_ref: EntityId
     agent_def_ref: EntityId

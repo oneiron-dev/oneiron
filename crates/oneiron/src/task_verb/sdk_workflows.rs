@@ -121,6 +121,12 @@ pub struct WorkflowDispatchRequest {
     pub briefing: String,
     #[serde(default)]
     pub context_spec: Option<ContextSpec>,
+    /// A TASK this run realizes: an idle standard task the owner owns, on
+    /// the engine's runner lane, that no try realizes now. The run's root is
+    /// its try and settles it when the run ends; the steps stay TASK-less.
+    /// Absent, the run realizes no TASK.
+    #[serde(default)]
+    pub task_ref: Option<EntityId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -209,25 +215,31 @@ pub fn dispatch_workflow_as(
     input: WorkflowDispatchRequest,
 ) -> MemoryResult<WorkflowRunView> {
     owner.revalidate(vault)?;
-    let outcome = AgentDispatcher::new(vault).dispatch_with_context(
-        DispatchAgent {
-            target: AgentDispatchTarget::Workflow(input.workflow_ref),
-            parent_attempt: None,
-            dedupe_key: Some(format!(
-                "vault.workflows.dispatch:{}:{}",
-                input.workflow_ref.to_hex(),
-                input.intent_key
-            )),
-            run_id: None,
-            now: vault.now_recorded_at(),
-        },
-        AgentSpawnContext::default().with_context_spec(
-            input
-                .context_spec
-                .unwrap_or_default()
-                .with_briefing(input.briefing),
-        ),
-    )?;
+    let request = DispatchAgent {
+        target: AgentDispatchTarget::Workflow(input.workflow_ref),
+        parent_attempt: None,
+        dedupe_key: Some(format!(
+            "vault.workflows.dispatch:{}:{}",
+            input.workflow_ref.to_hex(),
+            input.intent_key
+        )),
+        run_id: None,
+        now: vault.now_recorded_at(),
+    };
+    let spawn = AgentSpawnContext::default().with_context_spec(
+        input
+            .context_spec
+            .unwrap_or_default()
+            .with_briefing(input.briefing),
+    );
+    // FIX 4391: a run that realizes a TASK has its own admission; without
+    // one the dispatch is the one it always was.
+    let outcome = match input.task_ref {
+        None => AgentDispatcher::new(vault).dispatch_with_context(request, spawn)?,
+        Some(task_ref) => super::highway_runner::workflow_try::dispatch_bound(
+            vault, owner, request, spawn, task_ref,
+        )?,
+    };
     match outcome {
         AgentDispatchOutcome::WorkflowDispatched(status)
         | AgentDispatchOutcome::WorkflowExisting(status) => run_view(&status),
