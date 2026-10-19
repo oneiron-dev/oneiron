@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::agent_def::AgentModel;
 use crate::agent_dispatch::SpendScopeId;
 use crate::attempt_queue::AttemptId;
 use crate::vault::VaultId;
@@ -96,9 +97,10 @@ impl ReaderSpend {
 
 /// What the host lends a run that may spawn readers: what its children
 /// spend on, its clock, what each child holds at its claim, the window of
-/// the model its children and summaries run on, in tokens, and the memory one
-/// child may hold, in bytes. The run's actor and route are its dispatcher's
-/// own; the parent run is the bridge call's, never guest text.
+/// the model its children and summaries run on, in tokens, the memory one
+/// child may hold, in bytes, and the model list their seats are held to.
+/// The run's actor and route are its dispatcher's own; the parent run is the
+/// bridge call's, never guest text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpawnHostSeat {
     pub spend: ReaderSpend,
@@ -106,6 +108,9 @@ pub struct SpawnHostSeat {
     pub hold_units: u64,
     pub window_tokens: u64,
     pub memory_bytes: u64,
+    /// The list the run's agent froze (FIX 4539); empty for a run of no
+    /// agent, or of one that lists none.
+    pub listed: Vec<AgentModel>,
 }
 
 /// The window a seat names when its host knows none, in tokens.
@@ -496,8 +501,8 @@ pub struct ReaderRoute {
 }
 
 /// What a child is bound to: its parent run, actor and route, the source it
-/// reads, what it spends on and the clock it stops on. Never the parent's
-/// door, credential or body bytes.
+/// reads, what it spends on, the clock it stops on and the model list its
+/// seat is held to. Never the parent's door, credential or body bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpawnParentBinding {
     pub parent_run: EntityId,
@@ -507,6 +512,7 @@ pub struct SpawnParentBinding {
     pub spend: ReaderSpend,
     pub deadline: RunDeadline,
     pub child_cutoff_unix_ms: u64,
+    pub listed: Vec<AgentModel>,
 }
 
 /// Where a child stands. A settled one (`Done`, `Partial`, `Failed`) never
