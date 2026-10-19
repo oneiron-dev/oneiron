@@ -240,6 +240,22 @@ reap fills nothing until it thaws. Without the file a managed vault runs on the
 defaults: no model seats (its ladder is the rule table and the owner's asks),
 no embedder (lexical and graph recall only) and no tagger.
 
+The supervisor gives a vault its publisher training outbox (OF-420, "Learn from
+my conversations") as `--publisher-training-outbox-dir <vault>/training-outbox`,
+an absolute path, on argv only: a settings file that names
+`publisher_training_outbox_dir` is refused `SupervisorOwned`. The vault keeps
+three subdirectories there, `offers/`, `controls/` and `receipts/`
+(`oneiron_vault_contract::conversation_training`), and reads the intake's keys
+from `intake-recipient.v1` (every offer chunk is sealed to it) and
+`intake-receipt-key.v1` (every receipt is checked against it). Without the
+recipient key it writes no offer, logs offers as unavailable naming the missing
+file, and still writes withdrawals; without the receipt key it applies no
+receipt. Offers wait for the vault's admission like every background pass;
+withdrawals the vault already recorded are written even while it is frozen for
+reap, and stay shippable from a cold vault. The supervisor binds the registry
+vault id and the node's bearer when it ships: the files carry the engine vault
+id and the install's signature only.
+
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
 the broker as a second OS user. It needs an `/etc/subuid` and `/etc/subgid` range
