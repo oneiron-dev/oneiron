@@ -187,6 +187,9 @@ impl AgentDispatcher<'_> {
                 first = Some(frozen);
             }
         }
+        // Every step is snapshotted; a long composition asks through the
+        // workflow-steps row (Rule 5).
+        self.vault.measure_workflow_steps(&definition);
         let EnqueueDreamerAttemptOutcome::Enqueued(root) =
             self.runner.enqueue_with_task_ref_in_txn(
                 txn,
