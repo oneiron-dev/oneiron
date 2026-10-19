@@ -2187,8 +2187,14 @@ export class Oneiron {
       reply_strips: (input: Facade.ReplyStripsRequest): Facade.ReplyStripsPage => this.#call(() => this.#client.vaultRoomsReplyStrips(input) as Facade.ReplyStripsPage),
       /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */
       claim: (roomRef: string, turnRef: string): Facade.RoomClaimOutcome => this.#call(() => this.#client.vaultRoomsClaim({room_ref: roomRef, turn_ref: turnRef}) as Facade.RoomClaimOutcome),
-      /** Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later. */
+      /** Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove. */
       speak: (input: Facade.WitnessTurn): Facade.WitnessReceipt => this.#call(() => this.#client.vaultRoomsSpeak(input) as Facade.WitnessReceipt),
+      thread_audience: {
+        /** Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it. */
+        add: (input: Facade.ThreadAudienceAddRequest): Facade.ThreadAudienceReceipt => this.#call(() => this.#client.vaultRoomsThreadAudienceAdd(input) as Facade.ThreadAudienceReceipt),
+        /** Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it. */
+        remove: (input: Facade.ThreadAudienceRemoveRequest): Facade.ThreadAudienceReceipt => this.#call(() => this.#client.vaultRoomsThreadAudienceRemove(input) as Facade.ThreadAudienceReceipt),
+      },
       /** Files and decides a request to take part in a room or one of its threads. */
       join: (input: Facade.JoinRequest): Facade.JoinOutcome => this.#call(() => this.#client.vaultRoomsJoin(input) as Facade.JoinOutcome),
       /** The vault's owner invites a person into an ordinary room: files her join with the owner's admission yes, which holds until she answers yes through vault.rooms.consent. */

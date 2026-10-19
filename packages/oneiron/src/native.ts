@@ -730,6 +730,8 @@ vaultRoomsTrunk(input: unknown): unknown
 vaultRoomsReplyStrips(input: unknown): unknown
 vaultRoomsClaim(input: unknown): unknown
 vaultRoomsSpeak(input: unknown): unknown
+vaultRoomsThreadAudienceAdd(input: unknown): unknown
+vaultRoomsThreadAudienceRemove(input: unknown): unknown
 vaultProjectsPropose(input: unknown): unknown
 vaultProjectsProposals(input: unknown): unknown
 vaultProjectsDismissCard(input: unknown): unknown

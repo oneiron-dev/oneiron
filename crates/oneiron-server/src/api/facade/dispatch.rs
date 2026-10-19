@@ -16394,6 +16394,52 @@ async fn vault_rooms_speak(
     server.ai.turn_landed_by(server.vault(), actor, class);
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_rooms_thread_audience_add(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.thread_audience.add",
+        value,
+        &producers,
+    )?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_rooms_thread_audience_remove(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.thread_audience.remove",
+        value,
+        &producers,
+    )?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_projects_propose(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -26134,6 +26180,12 @@ pub(crate) async fn call_verb(
         "vault.rooms.reply_strips" => vault_rooms_reply_strips(server, call, input).await,
         "vault.rooms.claim" => vault_rooms_claim(server, call, input).await,
         "vault.rooms.speak" => vault_rooms_speak(server, call, input).await,
+        "vault.rooms.thread_audience.add" => {
+            vault_rooms_thread_audience_add(server, call, input).await
+        }
+        "vault.rooms.thread_audience.remove" => {
+            vault_rooms_thread_audience_remove(server, call, input).await
+        }
         "vault.projects.propose" => vault_projects_propose(server, call, input).await,
         "vault.projects.proposals" => vault_projects_proposals(server, call, input).await,
         "vault.projects.dismiss_card" => vault_projects_dismiss_card(server, call, input).await,

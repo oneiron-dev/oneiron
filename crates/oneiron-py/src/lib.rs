@@ -6414,6 +6414,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_rooms_thread_audience_add(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.thread_audience.add")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.rooms.thread_audience.add", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_rooms_thread_audience_remove(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.thread_audience.remove")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.rooms.thread_audience.remove", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_projects_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.projects.propose")?;
         let output = py

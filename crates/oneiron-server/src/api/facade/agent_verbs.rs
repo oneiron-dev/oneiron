@@ -766,6 +766,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.rooms.reply_strips", post(facade_route))
         .route("/vault.rooms.claim", post(facade_route))
         .route("/vault.rooms.speak", post(facade_route))
+        .route("/vault.rooms.thread_audience.add", post(facade_route))
+        .route("/vault.rooms.thread_audience.remove", post(facade_route))
         .route("/vault.projects.propose", post(facade_route))
         .route("/vault.projects.proposals", post(facade_route))
         .route("/vault.projects.dismiss_card", post(facade_route))

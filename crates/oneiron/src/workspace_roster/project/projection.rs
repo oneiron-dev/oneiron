@@ -81,7 +81,6 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         &body.roster,
         &body.sessions,
         &body.branches,
-        &body.skill_forks,
     ] {
         if list.len() > 4096 || list.iter().collect::<BTreeSet<_>>().len() != list.len() {
             return Err(invalid());
@@ -89,8 +88,10 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         refs.extend(list);
     }
     // TASK-bearing lists grow with use, so no count refuses them (rule 5);
-    // `normalize_project_body` counts them against a threshold row.
-    for list in [&body.tasks, &body.asks] {
+    // `normalize_project_body` counts them against a threshold row. The
+    // nightly fork pass appends to `skill_forks`, so it grows uncounted too
+    // (FIX 5174).
+    for list in [&body.tasks, &body.asks, &body.skill_forks] {
         if list.iter().collect::<BTreeSet<_>>().len() != list.len() {
             return Err(invalid());
         }

@@ -3491,6 +3491,16 @@ export_facade! {
     let output = client.vault_rooms_speak(&input)?;
     Lift::lift(output)
 };
+"vault.rooms.thread_audience.add" => fn vault_rooms_thread_audience_add(&self, input: ThreadAudienceAddRequest) -> ThreadAudienceReceipt = |client| {
+    let input: oneiron::workspace_roster::ThreadAudienceAddRequest = crate::codec::lower_record("vault.rooms.thread_audience.add", input)?;
+    let output = client.vault_rooms_thread_audience_add(&input)?;
+    crate::codec::lift_record("vault.rooms.thread_audience.add", &output)
+};
+"vault.rooms.thread_audience.remove" => fn vault_rooms_thread_audience_remove(&self, input: ThreadAudienceRemoveRequest) -> ThreadAudienceReceipt = |client| {
+    let input: oneiron::workspace_roster::ThreadAudienceRemoveRequest = crate::codec::lower_record("vault.rooms.thread_audience.remove", input)?;
+    let output = client.vault_rooms_thread_audience_remove(&input)?;
+    crate::codec::lift_record("vault.rooms.thread_audience.remove", &output)
+};
 "vault.projects.propose" => fn vault_projects_propose(&self, input: ProjectProposalRequest) -> ProjectProposalCard = |client| {
     let input: oneiron::workspace_roster::ProjectProposalRequest = crate::codec::lower_record("vault.projects.propose", input)?;
     let output = client.vault_projects_propose(&input)?;
