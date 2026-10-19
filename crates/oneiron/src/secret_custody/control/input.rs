@@ -23,9 +23,12 @@
 //! since the request names that digest: a window admits an input row only
 //! on a witness that proves the row names a real request for it.
 //!
-//! An input longer than one row carries, as a sealed register with every
-//! manifest the vault publishes attached may be, travels in numbered parts
-//! (Rule 5: split, never skip; CALLS CUSTODY_MANIFEST_UNSTATED_MULTI). Each
+//! An input longer than one row carries, as a register framed with its
+//! manifest's text or a sealed register with every manifest the vault
+//! publishes attached may be, travels in numbered parts (Rule 5: split,
+//! never skip; CALLS CUSTODY_MANIFEST_UNSTATED_MULTI). No seal, door or
+//! open refuses an input for its whole length (FIX 5445); one envelope
+//! keeps its codec's own bound, and each row the 4 MiB one. Each
 //! part row carries its index, every part's digest and its own bytes, and
 //! the digest the request names is over that list, so one 32-byte digest
 //! commits to the whole input and each part is checked on its own as it is
@@ -66,9 +69,10 @@ const DIGEST_DOMAIN: &[u8] = b"oneiron/custody-input-digest/v1";
 const EPOCH: u64 = 1;
 const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
 const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
-/// The largest input envelope a door takes, as for a custody transition,
-/// and the most bytes of an input one relayed row carries: a longer input
-/// splits into parts of at most this many bytes.
+/// The most bytes of an input one relayed row carries, as for a custody
+/// transition: a longer input, its envelope with whatever its recorder
+/// attached, splits into parts of at most this many bytes. It bounds a row,
+/// never the whole input (FIX 5445).
 pub(crate) const MAX_INPUT_BYTES: usize = 4 << 20;
 /// A relayed input's frame: the second it was sealed at, the request, then
 /// its witness's length. The witness and the row's body follow, each at most
@@ -131,7 +135,9 @@ impl InputBinding<'_> {
     }
 
     /// Seals `body` to the holder's `key` under this binding: the input's
-    /// envelope bytes.
+    /// envelope bytes. An envelope past one row's bound is carried, in
+    /// numbered parts, never refused for its length (FIX 5445): only the
+    /// envelope codec's own bound on one plaintext refuses.
     pub(crate) fn seal(&self, key: &HybridPublicKey, body: &[u8]) -> Result<Vec<u8>> {
         let key_id = self.key_id();
         let recipient = WrapRecipient::Machine(self.holder).envelope_recipient();
@@ -146,7 +152,7 @@ impl InputBinding<'_> {
             recipient: &recipient,
             vault_id: &self.vault_id,
         };
-        let envelope = seal(
+        seal(
             &params,
             SealKey::Hybrid {
                 recipient: key,
@@ -156,24 +162,20 @@ impl InputBinding<'_> {
             &mut SysRng,
         )
         .map(|envelope| envelope.to_bytes())
-        .map_err(|_| refused("sealing the custody input to its holder failed"))?;
-        if envelope.len() > MAX_INPUT_BYTES {
-            return Err(refused(
-                "the custody input is larger than one custody transition carries",
-            ));
-        }
-        Ok(envelope)
+        .map_err(|_| refused("sealing the custody input to its holder failed"))
     }
 
     /// The body `envelope` holds, opened with the holder's `secret` under
-    /// this binding. `None` when `secret` is not the holder's, or the
-    /// envelope was sealed to another key or under another binding.
+    /// this binding. `None` when `secret` is not the holder's, the envelope
+    /// does not parse under its codec, or it was sealed to another key or
+    /// under another binding. Its length past one row's bound is no reason:
+    /// such an envelope comes joined from its parts (FIX 5445).
     pub(crate) fn open(
         &self,
         envelope: &[u8],
         secret: &MachineSecret,
     ) -> Option<Zeroizing<Vec<u8>>> {
-        if secret.machine != self.holder || envelope.len() > MAX_INPUT_BYTES {
+        if secret.machine != self.holder {
             return None;
         }
         let envelope = Envelope::parse(envelope).ok()?;
@@ -437,7 +439,11 @@ impl RelayedInput {
     /// The request this input's witness proves (FIX 4996): the witness is a
     /// canonical authority entry whose signature verifies, it hashes to
     /// `request`, and it is a custody request naming this input's digest.
-    /// `None` otherwise.
+    /// `None` otherwise. It proves the row self-consistent, not its signer
+    /// one of this vault's machines: a row a key no machine here ever holds
+    /// signed is kept until its window retires, so an input that arrives
+    /// before its request still reaches its holder (CALLS
+    /// CUSTODY_INPUT_PRUNE, FIX 5405).
     #[cfg(feature = "sync")]
     pub(crate) fn witnessed(&self) -> Option<Witnessed> {
         let entry = decode_authority_log_entry_body(&self.witness).ok()?;
