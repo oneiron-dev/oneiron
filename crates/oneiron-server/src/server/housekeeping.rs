@@ -49,6 +49,15 @@ pub(crate) fn admit_every_pass() -> HousekeepingAdmission {
     Arc::new(|| Some(Box::new(())))
 }
 
+/// How the authority checkpoint upkeep last failed (FIX 3204): the engine
+/// error's kind, or the task's own end. A failure that repeats tick after
+/// tick warns once; any pass that ends `Ok` clears it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CheckpointFailure {
+    Engine(oneiron::ErrorKind),
+    Task { panicked: bool },
+}
+
 /// The housekeeping passes in flight, whoever started them: the lifecycle
 /// tick or the owner. A pass is held from before its starter can yield, so
 /// [`Self::stop`] misses none.
@@ -56,6 +65,9 @@ pub(crate) fn admit_every_pass() -> HousekeepingAdmission {
 pub(crate) struct HousekeepingPasses {
     stop: Arc<AtomicBool>,
     running: std::sync::Mutex<Vec<JoinHandle<()>>>,
+    /// The checkpoint upkeep's last failure, `None` once a pass ends `Ok`.
+    /// In RAM only: a restarted host warns again.
+    checkpoint_failure: std::sync::Mutex<Option<CheckpointFailure>>,
     /// The lifecycle tick's steps, in the order it took them.
     #[cfg(test)]
     pub(super) tick_steps: std::sync::Mutex<Vec<&'static str>>,
@@ -79,6 +91,16 @@ impl HousekeepingPasses {
 
     pub(super) fn stopping(&self) -> bool {
         self.stop.load(Ordering::Acquire)
+    }
+
+    /// Notes how the checkpoint upkeep's pass ended (`None`: `Ok`), and
+    /// whether that differs from how the last one ended (FIX 3204).
+    fn checkpoint_ended(&self, failure: Option<CheckpointFailure>) -> bool {
+        let mut last = self
+            .checkpoint_failure
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        std::mem::replace(&mut *last, failure) != failure
     }
 
     pub(super) fn hold(&self, pass: JoinHandle<()>) {
@@ -250,7 +272,22 @@ impl SyncServer {
         let run = tokio::spawn(async move {
             let _admission = admission;
             let upkeep = Arc::clone(&server);
-            match tokio::task::spawn_blocking(move || upkeep.upkeep_authority_checkpoint()).await {
+            let ended =
+                tokio::task::spawn_blocking(move || upkeep.upkeep_authority_checkpoint()).await;
+            // Every admitted tick still runs the upkeep; a failure warns
+            // when it starts or changes, and its end logs once (FIX 3204).
+            let failure = match &ended {
+                Ok(Ok(_)) => None,
+                Ok(Err(error)) => Some(CheckpointFailure::Engine(error.kind())),
+                Err(error) => Some(CheckpointFailure::Task {
+                    panicked: error.is_panic(),
+                }),
+            };
+            let changed = server.housekeeping_passes.checkpoint_ended(failure);
+            if changed && failure.is_none() {
+                tracing::info!("authority checkpoint upkeep recovered");
+            }
+            match ended {
                 Ok(Ok(AuthorityCheckpointUpkeep::Written(_))) => {
                     tracing::info!("authority checkpoint written and attested");
                 }
@@ -263,15 +300,16 @@ impl SyncServer {
                     tracing::info!("authority checkpoint head attested again");
                 }
                 Ok(Ok(AuthorityCheckpointUpkeep::Idle)) => {}
-                Ok(Err(error)) => {
+                Ok(Err(error)) if changed => {
                     tracing::warn!(kind = ?error.kind(), "authority checkpoint upkeep failed");
                 }
-                Err(error) => {
+                Err(error) if changed => {
                     tracing::warn!(
                         panicked = error.is_panic(),
                         "authority checkpoint task failed"
                     );
                 }
+                Ok(Err(_)) | Err(_) => {}
             }
             server
                 .end_lifecycle_job(LifecycleJobKind::AuthorityCheckpoint)

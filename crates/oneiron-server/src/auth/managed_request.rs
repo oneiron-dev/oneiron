@@ -147,6 +147,24 @@ impl CoreAuth {
         })
     }
 
+    /// The vault owner `holder` his supervisor attested for an act no HTTP
+    /// request carries: a managed voice hello's `ManagedOwnerAction`, once
+    /// the voice loop verified it (FIX 2391, FIX 5203). The same caller
+    /// [`Self::for_request`] makes of an attested request that carries no
+    /// slip, built without reading any header. Refused on a vault no
+    /// supervisor manages; the owner door still judges `holder` as the
+    /// vault's live owner.
+    pub(crate) fn for_attested_owner(
+        holder: oneiron::EntityId,
+        server: &SyncServer,
+    ) -> Result<Self, ApiError> {
+        let issuer = server
+            .managed_issuer
+            .as_ref()
+            .ok_or_else(ApiError::unauthorized)?;
+        Ok(Self::managed_supervisor(server, issuer)?.as_managed_owner(holder))
+    }
+
     /// The host's root on a managed vault, for a request that carries no
     /// caller slip: all scopes, as the supervisor's own.
     fn managed_supervisor(
@@ -168,7 +186,7 @@ impl CoreAuth {
     /// beside another person's attestation is refused. The caller is then
     /// placed where its connection sits, toward the machine it proved, at
     /// the invitee door its path names and inside the session it names.
-    pub(super) async fn for_request(parts: &Parts, server: &SyncServer) -> Result<Self, ApiError> {
+    pub(crate) async fn for_request(parts: &Parts, server: &SyncServer) -> Result<Self, ApiError> {
         let auth = Self::for_server_async(&parts.headers, server).await?;
         auth.of_request(
             &parts.headers,

@@ -41,6 +41,9 @@ pub(crate) async fn vault_org_admin_powers(
             &["Use a credential bound to this organization."],
         ));
     }
+    if let Err(refusal) = super::owner_binding::host_preflight(server, auth) {
+        return refused(refusal);
+    }
     let caller = match super::facade_actor(server, auth) {
         Ok(caller) => caller,
         Err(_) => {

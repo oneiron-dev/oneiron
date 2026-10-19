@@ -97,15 +97,7 @@ async fn run_action_answer(
     };
     let owner = match attested {
         Some(owner) => Some(owner),
-        None if needs_owner => {
-            Some(crate::api::owner_routes::owner(auth, server).map_err(|_| {
-                MemoryError::new(
-                    MEMORY_CODE_FORBIDDEN,
-                    format!("{verb} is the vault owner's"),
-                    &["Present the owner's own verified, unattenuated credential."],
-                )
-            })?)
-        }
+        None if needs_owner => Some(super::owner_binding::facade_owner(server, auth, verb)?),
         // The owner's own credential carries its proof; any other caller,
         // an agent within its Grant included, keeps the Auto ceiling alone.
         None => super::owner_authorship(auth, server)

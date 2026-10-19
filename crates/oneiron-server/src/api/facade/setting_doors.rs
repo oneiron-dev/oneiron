@@ -17,7 +17,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::learning_setting_doors::{
     self, LearningSettingClear, LearningSettingPut, LearningSettingsRequest, LearningSettingsView,
 };
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::memory::{MemoryError, MemoryResult};
 
 use super::host_doors::{Listed, internal};
 use crate::auth::CoreAuth;
@@ -29,13 +29,7 @@ fn owner_proof(
     auth: &CoreAuth,
     verb: &str,
 ) -> MemoryResult<AuthenticatedOwner> {
-    crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{verb} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })
+    super::owner_binding::facade_owner(server, auth, verb)
 }
 
 /// `act` off the runtime, as the vault owner: every setting door reads or
