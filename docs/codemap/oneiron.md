@@ -3667,7 +3667,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session_overlay/short_id.rs` | src | s | 5 crate-vis | — | — |
 | `src/session_overlay/snapshot.rs` | src | m | 18 crate-vis | — | — |
 | `src/session_overlay/tests.rs` | test | m | — | — | — |
-| `src/settings.rs` | src | m | 7 struct · 2 enum · 13 fn · 3 const · 1 mod · 2 re-export · 4 crate-vis | AccentLayer, CustomizationLayer, CustomizationLayerValue, CustomizationSettings, CustomizationSettingsChangeEvent, CustomizationSettingsUpdate, ModeLayer, TypeLayer +1 | Persisted customization settings and client-visible change events |
+| `src/settings.rs` | src | m | 7 struct · 2 enum · 13 fn · 3 const · 2 mod · 2 re-export · 4 crate-vis | AccentLayer, CustomizationLayer, CustomizationLayerValue, CustomizationSettings, CustomizationSettingsChangeEvent, CustomizationSettingsUpdate, ModeLayer, TypeLayer +1 | Persisted customization settings and client-visible change events |
+| `src/settings/backup.rs` | src | s | 1 struct · 3 fn · 2 const | BackupPolicy | The owner's backup setting (FIX 5621): whether a running server takes backups on its own, how many hours… |
 | `src/settings/destination.rs` | src | m | 2 struct · 3 enum · 14 fn · 5 crate-vis | ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold | Where an off-device read's rows go, and the one verdict every door asks about them (mesh PR2b, CALLS `mesh… |
 | `src/settings/device_local.rs` | src | s | 9 fn · 4 crate-vis | — | Which rows a device-local world keeps from a caller (DEC-0005): every judge a door asks, built on… |
 | `src/settings/device_only.rs` | src | m | 8 crate-vis | — | What a world flagged device-only keeps on this device, row by row (DEC-0005) |
