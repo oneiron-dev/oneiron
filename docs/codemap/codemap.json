@@ -83429,13 +83429,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/handler/connection.rs",
      "purpose": "Upgrade route, hello bootstrap, and the single-owner connection event loop",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/connection/run.rs",
+     "purpose": "The single-owner connection event loop: one socket's protocol hello, its root snapshot, then every frame it…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -83559,7 +83569,7 @@
      "path": "src/handler/protocol_close.rs",
      "purpose": "A socket the server closes on a protocol rejection (FIX 3303, OF-538): a hello it refused, a frame it would…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -85712,7 +85722,7 @@
      "path": "src/protocol.rs",
      "purpose": "Custom Oneiron sync protocol — server-side extensions",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 35
      }
     },
     {
@@ -87390,9 +87400,9 @@
      "purpose": "The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every…"
     },
     "handler": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "WebSocket upgrade handler and connection lifecycle"
     },
@@ -87628,9 +87638,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 55,
+   "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 869,
+   "source_files": 870,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -91493,7 +91503,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Oneiron"
