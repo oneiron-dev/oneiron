@@ -3227,7 +3227,7 @@
      "path": "src/authority/owner_work/custody.rs",
      "purpose": "Custody work in the fold (WILL L04 row 04): the revision a custody request's `seen` is over, and the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -43826,16 +43826,79 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "SecretRevoked"
+      "CustodyDelivery",
+      "CustodyKeptHere",
+      "CustodyPlan",
+      "SecretCustodyWork",
+      "SecretRevoked",
+      "SecretRotated"
      ],
      "path": "src/secret_custody/control.rs",
-     "purpose": "Custody control on the shared owner-work request (WILL L04 row 04): the owner's revoke of a portable secret…",
+     "purpose": "Custody control on the shared owner-work request (WILL L04 row 04): every change to a portable secret's…",
      "surface": {
-      "crate-vis": 7,
-      "struct": 1
+      "crate-vis": 16,
+      "enum": 2,
+      "fn": 4,
+      "re-export": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CustodyCandidate",
+      "SealedCustodyChange",
+      "SecretCustodyView"
+     ],
+     "path": "src/secret_custody/control/doors.rs",
+     "purpose": "The owner's custody doors beside register, rotate and revoke (WILL L04 row 04): a rewrap, a register or…",
+     "surface": {
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/control/execute.rs",
+     "purpose": "The holder's arm for an active custody change (WILL L04 row 04): the install a register, rotate or rewrap…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/control/input.rs",
+     "purpose": "The protected input of an active custody change (WILL L04 row 04): what a register or rotate hands its…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/control/permits.rs",
+     "purpose": "Who may hold an active custody change's bytes (WILL L04 row 04): the recipients the owner permits, each…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/control/roster.rs",
+     "purpose": "The holder's own rewrap when the roster gains one of the owner's machines (WILL L04 row 04, CALLS…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -43845,7 +43908,7 @@
      "path": "src/secret_custody/doors.rs",
      "purpose": "Name index, borrowing admission projection, sealed put, and Vault doors",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 4
      }
     },
@@ -43924,7 +43987,7 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 21,
       "re-export": 9
      }
     },
@@ -43940,7 +44003,7 @@
      "path": "src/secret_custody/owner_door.rs",
      "purpose": "The owner registers a secret (ARCH-0069 S1–S3): the production door that puts a value into custody",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "struct": 4
      }
     },
@@ -44046,20 +44109,20 @@
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/transition.rs",
-     "purpose": "OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as an…",
+     "purpose": "OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as a custody…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 15,
       "fn": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/transition/payload.rs",
      "purpose": "The bytes of a custody transition: its strict codec, the transcript its signature covers, and the value…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 14
      }
     },
     {
@@ -44330,14 +44393,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_rotation/owner_door.rs",
      "purpose": "The owner's rotation door and the one transaction body every rotation shares",
      "surface": {
       "crate-vis": 4,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -50036,9 +50099,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/custody.rs",
-     "purpose": "OF-422: owner-signed custody transitions on the window plane (ARCH-0069 `#custody-seal-planned`)",
+     "purpose": "OF-422: custody transitions on the window plane (ARCH-0069 `#custody-seal-planned`), each enacting an…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -58588,7 +58651,7 @@
      "path": "src/world_keys/owner_work/record.rs",
      "purpose": "Recording one owner work request in the act's own transaction, and the one rule that names its executor",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -60853,7 +60916,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 25,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61233,7 +61296,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3729,
+   "source_files": 3734,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76235,6 +76298,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/secret_control_routes.rs",
+     "purpose": "`/v1/owner/secrets/*`: the owner's custody doors over HTTP (OF-422, WILL L04 row 04)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -77502,6 +77575,7 @@
       "SecretRegisterArgs",
       "SecretRevealArgs",
       "SecretRevokeArgs",
+      "SecretRewrapArgs",
       "SecretRotateArgs",
       "SecretScanArgs",
       "SecretScanSwitch",
@@ -77520,7 +77594,7 @@
      "purpose": "Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret…",
      "surface": {
       "enum": 14,
-      "struct": 44
+      "struct": 45
      }
     },
     {
@@ -81221,7 +81295,7 @@
      "path": "src/owner/secrets.rs",
      "purpose": "The owner registers a secret (ARCH-0069 S1–S3) and rotates it (S6)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 20
      }
     },
     {
@@ -82699,7 +82773,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 430,
+     "files": 431,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -83128,7 +83202,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 787,
+   "source_files": 788,
    "test_files": 182
   },
   "oneiron-spawn": {
