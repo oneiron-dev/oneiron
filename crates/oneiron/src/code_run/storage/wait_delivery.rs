@@ -191,6 +191,18 @@ pub(crate) fn settled_wait_reply_in_txn(
         .map(|settled| settled.reply))
 }
 
+/// Whether `key`'s wait has a reply at `txn`'s revision: delivered to it, or
+/// settled for every waiter on it. A held turn program resumes on this alone
+/// (DOOR-141 PR3b).
+pub(crate) fn wait_delivered_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &WaitKey,
+) -> Result<bool> {
+    Ok(DELIVERIES.contains(&vault.store, txn, &key.row())?
+        || SETTLED.contains(&vault.store, txn, &(SETTLED_TAG, key.wait_id))?)
+}
+
 /// Writes one waiter's delivery unless it has one, and wakes the trap bound
 /// to it in the same transaction; `true` when this call delivered.
 fn deliver_in_txn(

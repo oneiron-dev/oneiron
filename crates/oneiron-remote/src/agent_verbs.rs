@@ -2902,6 +2902,9 @@ impl OneironClient {
                 "vault.runs.program_step" => remote_agent_verb_output::<
                     Option<oneiron::dreamer_runner::SettledProgramStepView>,
                 >(client, verb, &input),
+                "vault.runs.program_checkpoint" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::ProgramCheckpointView>,
+                >(client, verb, &input),
                 "vault.consolidation.home.get" => remote_agent_verb_output::<
                     oneiron::dreamer_runner::ConsolidationHomeView,
                 >(client, verb, &input),
@@ -14830,6 +14833,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.runs.program_step", value)
+    }
+    pub fn vault_runs_program_checkpoint(
+        &self,
+        input: &oneiron::dreamer_runner::ProgramCheckpointRequest,
+    ) -> Result<Option<oneiron::dreamer_runner::ProgramCheckpointView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runs.program_checkpoint", value)
     }
     pub fn vault_consolidation_home_get(
         &self,
