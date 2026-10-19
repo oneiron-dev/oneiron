@@ -16,6 +16,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+mod asset_body;
 pub(crate) mod asset_text;
 mod export;
 #[cfg(test)]
@@ -1087,10 +1088,13 @@ impl Vault {
             // are withdrawn or that a fence refuses: such a row keeps only
             // its header.
             let words = allowed || (!withdrawn && fences_pass([&Scope::top(), slip, channel])?);
-            let mut bytes = raw;
-            if !words {
+            let bytes = if words {
+                self.scoped_row_bytes_in_txn(&txn, &id, raw)?
+            } else {
+                let mut bytes = raw;
                 bytes.truncate(ENTITY_METADATA_HEADER_LEN);
-            }
+                bytes
+            };
             out.push(ScopedRecord {
                 id,
                 bytes,
