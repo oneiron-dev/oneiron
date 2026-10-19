@@ -504,6 +504,9 @@ class Oneiron:
         def authority(self) -> "Oneiron._VaultAuthorityVerbs":
             return Oneiron._VaultAuthorityVerbs(self._client)
         @property
+        def wire_health(self) -> "Oneiron._VaultWireHealthVerbs":
+            return Oneiron._VaultWireHealthVerbs(self._client)
+        @property
         def slim(self) -> "Oneiron._VaultSlimVerbs":
             return Oneiron._VaultSlimVerbs(self._client)
         @property
@@ -1868,6 +1871,21 @@ class Oneiron:
         def acknowledge(self, spec):
             """The owner acknowledges one saved handoff fork alarm."""
             return json.loads(_translate(lambda: self._client.vault_authority_handoff_alarms_acknowledge(json.dumps(spec))))
+    class _VaultWireHealthVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def thresholds(self) -> "Oneiron._VaultWireHealthThresholdsVerbs":
+            return Oneiron._VaultWireHealthThresholdsVerbs(self._client)
+    class _VaultWireHealthThresholdsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads the serving host's per-verb and per-actor wire detection thresholds and their window; crossings ask a health question, never refuse for rate."""
+            return json.loads(_translate(lambda: self._client.vault_wire_health_thresholds_get(json.dumps(spec))))
+        def set(self, spec):
+            """The owner replaces the serving host's positive wire detection thresholds and window, receiving the previous and installed policy without adding a rate refusal."""
+            return json.loads(_translate(lambda: self._client.vault_wire_health_thresholds_set(json.dumps(spec))))
     class _VaultSlimVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2572,6 +2590,18 @@ class Oneiron:
         def revoke(self, spec):
             """The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."""
             return json.loads(_translate(lambda: self._client.vault_consent_revoke(json.dumps(spec))))
+        def bypass_grant_warning(self, spec):
+            """The owner previews the exact actor, classes, envelope and project or thread of a scoped bypass; this warning grants nothing."""
+            return json.loads(_translate(lambda: self._client.vault_consent_bypass_grant_warning(json.dumps(spec))))
+        def create_bypass_grant(self, spec):
+            """The owner explicitly acknowledges a scoped bypass warning and atomically creates one receipted standing bypass per class."""
+            return json.loads(_translate(lambda: self._client.vault_consent_create_bypass_grant(json.dumps(spec))))
+        def active_bypass_grants(self, spec):
+            """The owner reads live scoped bypass states and their complete bounds, newest first; vault.consent.revoke ends each grant."""
+            return json.loads(_translate(lambda: self._client.vault_consent_active_bypass_grants(json.dumps(spec))))
+        def bypassed_effect_receipts(self, spec):
+            """The owner reads the existing Gate receipts for effects covered by one bypass grant, including after its revocation."""
+            return json.loads(_translate(lambda: self._client.vault_consent_bypassed_effect_receipts(json.dumps(spec))))
         @property
         def graduation(self) -> "Oneiron._VaultConsentGraduationVerbs":
             return Oneiron._VaultConsentGraduationVerbs(self._client)
@@ -2873,6 +2903,24 @@ class Oneiron:
         def ask(self, spec):
             """Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_ask(json.dumps(spec))))
+        def propose_outline(self, spec):
+            """Proposes a closed typed deck outline as a brief NOTE for the person to keep or decline."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_propose_outline(json.dumps(spec))))
+        def outline(self, spec):
+            """Reads a typed deck outline, its current NOTE frontier, its keep and its freshness."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_outline(json.dumps(spec))))
+        def keep_outline(self, spec):
+            """The owner keeps the exact outline frontier, freezing its version and content hash."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_keep_outline(json.dumps(spec))))
+        def decline_outline(self, spec):
+            """The owner declines the exact outline frontier, clearing its keep and design directions."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_decline_outline(json.dumps(spec))))
+        def design_deck(self, spec):
+            """Compiles one to three template directions from the exact fresh keep into validated plans or typed design decisions."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_design_deck(json.dumps(spec))))
+        def create_deck(self, spec):
+            """Emits one checked deck from a fresh kept outline and a planned template, retaining born-from and unverified fit."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_create_deck(json.dumps(spec))))
         def inspect_deck(self, spec):
             """Inspects one PPTX version for native edit targets and comment identities without minting ids."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_inspect_deck(json.dumps(spec))))
@@ -3818,9 +3866,27 @@ class Oneiron:
     class _VaultWritesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def critical_confirm(self) -> "Oneiron._VaultWritesCriticalConfirmVerbs":
+            return Oneiron._VaultWritesCriticalConfirmVerbs(self._client)
         def pending(self, input: dict[str, Any]) -> Any:
             """Gated writes parked for consent, newest first."""
             return json.loads(_translate(lambda: self._client.vault_writes_pending(json.dumps(input, allow_nan=False))))
+    class _VaultWritesCriticalConfirmVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def pending(self, spec):
+            """The owner reads a candidate's exact critical confirmation, with its nonce, effect digest, policy frontier and deadline."""
+            return json.loads(_translate(lambda: self._client.vault_writes_critical_confirm_pending(json.dumps(spec))))
+        def clear(self, spec):
+            """The owner clears exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt."""
+            return json.loads(_translate(lambda: self._client.vault_writes_critical_confirm_clear(json.dumps(spec))))
+        def decline(self, spec):
+            """The owner declines exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt."""
+            return json.loads(_translate(lambda: self._client.vault_writes_critical_confirm_decline(json.dumps(spec))))
+        def receipt(self, spec):
+            """The owner reads a critical confirmation's existing signed authority receipt without settling or rewriting the claim."""
+            return json.loads(_translate(lambda: self._client.vault_writes_critical_confirm_receipt(json.dumps(spec))))
     class _VaultRefsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

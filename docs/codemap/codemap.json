@@ -2551,6 +2551,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/critical_confirm_door.rs",
+     "purpose": "Signed critical-claim answers, under the existing host-root owner ceremony",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/engine_machine.rs",
      "purpose": "Host-provisioned software identities for the engine's own MACHINE writers",
      "surface": {
@@ -5963,6 +5973,102 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DeckDesignRequest",
+      "DeckDesignView",
+      "DeckEmissionNames",
+      "DeckEmissionOutcome",
+      "DeckEmissionRequest",
+      "DeckKeepBinding",
+      "DeckOutlineDeclined",
+      "DeckOutlineProposeRequest",
+      "DeckOutlineRefRequest",
+      "DeckOutlineSettleRequest",
+      "DeckOutlineView"
+     ],
+     "path": "src/blob_artifact/deck_creation/mod.rs",
+     "purpose": "Typed outline approval, design and emission doors over the native deck engine",
+     "surface": {
+      "enum": 1,
+      "mod": 2,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/deck_creation/operations.rs",
+     "purpose": "Credential-bound admission; every write rechecks its inputs in its writer",
+     "surface": {
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeckOutline",
+      "OutlineAsset",
+      "OutlineAssetKind",
+      "OutlineBlock",
+      "OutlineCarrier",
+      "OutlineCell",
+      "OutlineColumn",
+      "OutlineColumnKind",
+      "OutlineCommunication",
+      "OutlineDataset",
+      "OutlineDivision",
+      "OutlineMerge",
+      "OutlineNumberFormat",
+      "OutlinePage",
+      "OutlinePin",
+      "OutlinePriority"
+     ],
+     "path": "src/blob_artifact/deck_creation/outline.rs",
+     "purpose": "The closed outline wire grammar",
+     "surface": {
+      "enum": 7,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DeckAssetBinding",
+      "DeckAssetMedia",
+      "DeckDesignDecision",
+      "DeckDesignOption",
+      "DeckDesignShortfall",
+      "DeckDestination",
+      "DeckFallback",
+      "DeckFit",
+      "DeckFitPolicy",
+      "DeckNewPart",
+      "DeckPackagePlan",
+      "DeckPlacement",
+      "DeckPlanView",
+      "DeckPlannedContent",
+      "DeckPlannedRelationship",
+      "DeckPlannedSlide",
+      "DeckRect",
+      "DeckShortfallReason",
+      "DeckTraceEntry",
+      "DeckTraceOutcome",
+      "DeckVisualChoices"
+     ],
+     "path": "src/blob_artifact/deck_creation/plan.rs",
+     "purpose": "An owned wire view of a validated plan",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 8,
+      "struct": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DeckCommentInspection",
       "DeckInspectRequest",
       "DeckInspectionView",
@@ -6563,7 +6669,7 @@
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
       "crate-vis": 13,
-      "mod": 1,
+      "mod": 2,
       "re-export": 10
      }
     },
@@ -15217,7 +15323,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/connector_key/lifecycle/proxy.rs",
@@ -15623,10 +15729,31 @@
      "path": "src/consent/bypass.rs",
      "purpose": "The scoped catastrophe bypass (DEC-0006 invariant 7, `#bypass-grant`)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 7,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ActiveBypassGrantsRequest",
+      "BypassActionEnvelopeRequest",
+      "BypassActiveState",
+      "BypassGrantBoundRequest",
+      "BypassGrantWarningRequest",
+      "BypassGrantWarningView",
+      "BypassedEffectReceipt",
+      "BypassedEffectReceiptsRequest",
+      "CreateBypassGrantRequest"
+     ],
+     "path": "src/consent/bypass_lifecycle.rs",
+     "purpose": "Typed owner doors for the scoped catastrophe bypass (DEC-0006 #bypass-grant)",
+     "surface": {
+      "fn": 4,
+      "struct": 9
      }
     },
     {
@@ -15746,6 +15873,7 @@
      "path": "src/consent/lifecycle.rs",
      "purpose": "Typed public consent lifecycle calls",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 5,
       "struct": 9
@@ -15759,7 +15887,7 @@
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants",
      "surface": {
       "crate-vis": 4,
-      "mod": 2,
+      "mod": 3,
       "re-export": 10
      }
     },
@@ -22590,10 +22718,20 @@
      "purpose": "Deck creation from an approved outline (ARCH-0077, \"Create: an approved argument, then a design\")",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 10,
       "enum": 4,
       "fn": 7,
       "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/deck_create/store.rs",
+     "purpose": "Transaction-bound outline and version inputs shared by the engine and public doors",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -25239,7 +25377,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "crate-vis": 17,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 2,
       "struct": 1
@@ -32940,6 +33078,26 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CriticalWriteConfirmAnswer",
+      "CriticalWriteConfirmPending",
+      "CriticalWriteConfirmPendingRequest",
+      "CriticalWriteConfirmReceipt",
+      "CriticalWriteConfirmReceiptRequest",
+      "CriticalWriteConfirmRequest",
+      "CriticalWriteConfirmSettlement"
+     ],
+     "path": "src/memory/critical_confirm.rs",
+     "purpose": "The owner's nonce/frontier-bound critical-claim confirmation ceremony",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "BlockedReportView",
       "CoachInspectRequest",
       "CoachInspectionView",
@@ -33410,7 +33568,7 @@
      "surface": {
       "crate-vis": 16,
       "mod": 23,
-      "re-export": 50
+      "re-export": 51
      }
     },
     {
@@ -34935,7 +35093,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 38,
+      "crate-vis": 40,
       "enum": 3,
       "fn": 4,
       "re-export": 16,
@@ -35105,7 +35263,7 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "fn": 9
      }
     },
@@ -52499,7 +52657,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 65,
+      "re-export": 66,
       "struct": 40
      }
     },
@@ -52936,7 +53094,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 988
+      "fn": 1004
      }
     },
     {
@@ -53859,6 +54017,21 @@
      "purpose": "Typed owner setup for weave work and the inbox's real producers",
      "surface": {
       "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WireThresholds",
+      "WireThresholdsReceipt"
+     ],
+     "path": "src/task_verb/sdk_wire_health.rs",
+     "purpose": "Typed detection policy for the owner's wire-health doors (OF-520)",
+     "surface": {
+      "const": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -59182,7 +59355,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 162,
+     "files": 163,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59203,7 +59376,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 55,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59462,7 +59635,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59658,7 +59831,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59959,7 +60132,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 211,
+     "files": 212,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60470,7 +60643,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 182,
+     "files": 183,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60640,7 +60813,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3698,
+   "source_files": 3707,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65542,7 +65715,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 3,
-      "fn": 1,
+      "fn": 2,
       "struct": 11
      }
     },
@@ -69272,7 +69445,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 959
+      "fn": 975
      }
     },
     {
@@ -70366,7 +70539,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 960
+      "fn": 976
      }
     },
     {
@@ -73600,7 +73773,7 @@
      "path": "src/api/facade/consent_doors.rs",
      "purpose": "Consent lifecycle host doors, on the same owner proof as Gate policy",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 9
      }
     },
     {
@@ -73697,6 +73870,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/critical_confirm_doors.rs",
+     "purpose": "Typed critical-claim confirmations under the same owner proof as claim settlement",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/decision_ask_doors.rs",
      "purpose": "OF-493's role-holder doors (Q3 by role) as SDK verbs: a person or a bound agent that holds the role a…",
      "surface": {
@@ -73721,6 +73904,16 @@
      "purpose": "OF-516: a role holder's door to the ladder's person asks (Q3 by role)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/deck_creation_doors.rs",
+     "purpose": "The person's outline Keep and Decline use the same proof as other owner doors",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -73890,7 +74083,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 155
+      "crate-vis": 158
      }
     },
     {
@@ -74004,7 +74197,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/model_catalog_doors.rs",
@@ -74489,6 +74682,16 @@
      "purpose": "The host doors of the owner's context-widen proposals: `vault.widen_proposals`, `.approve` and `.decline`",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/wire_health_doors.rs",
+     "purpose": "The owner's wire detection policy, under the same proof as `/v1/owner/wire-health`",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -81637,17 +81840,17 @@
       "WireQuestion",
       "WireQuestionKind",
       "WireTelemetry",
-      "WireThresholds",
       "WireWindowReceipt"
      ],
      "path": "src/wire_telemetry.rs",
      "purpose": "RC42 observation-only wire counters",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 12,
-      "struct": 6
+      "re-export": 1,
+      "struct": 5
      }
     },
     {
@@ -81968,7 +82171,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 420,
+     "files": 423,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82397,7 +82600,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 776,
+   "source_files": 779,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82746,6 +82949,7 @@
       "ArtifactUnitsRequest",
       "ArtifactUnitsView",
       "ArtifactUnpublished",
+      "ArtifactVersionRef",
       "ArtifactVersionView",
       "ArtifactView",
       "AskAct",
@@ -82869,8 +83073,15 @@
       "BundleVerdict",
       "BundledSkillPermissions",
       "ButtonControl",
+      "BypassActionEnvelopeRequest",
+      "BypassActiveState",
       "BypassExtent",
+      "BypassGrantBoundRequest",
+      "BypassGrantWarningRequest",
+      "BypassGrantWarningView",
       "BypassScope",
+      "BypassedEffectReceipt",
+      "BypassedEffectReceiptsRequest",
       "CadencePrecedence",
       "CalendarCheckInAnswer",
       "CalendarCheckInDue",
@@ -82982,6 +83193,7 @@
       "CareLevel",
       "CaseDecision",
       "CatalogSeed",
+      "CatastropheClass",
       "CellTypeRef",
       "ChangeKind",
       "ChannelCeiling",
@@ -83409,10 +83621,13 @@
       "CrawlPageFailure",
       "CrawlResult",
       "CrawlScope",
+      "CreateBypassGrantRequest",
       "CreateCampaignProgramRequest",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
       "CreateStandingGrantRequest",
+      "CreatedEstimate",
+      "CreatedSlide",
       "CredentialAttenuated",
       "CredentialAttenuationRequest",
       "CredentialCaveat",
@@ -83427,6 +83642,14 @@
       "CriticPrediction",
       "CriticReviewOutcome",
       "CriticReviewSubmit",
+      "CriticalWriteConfirmAnswer",
+      "CriticalWriteConfirmPending",
+      "CriticalWriteConfirmPendingRequest",
+      "CriticalWriteConfirmReceipt",
+      "CriticalWriteConfirmReceiptRequest",
+      "CriticalWriteConfirmRequest",
+      "CriticalWriteConfirmResolution",
+      "CriticalWriteConfirmSettlement",
       "CritiqueArtifact",
       "CritiqueProvenance",
       "CritiqueSeverity",
@@ -83455,28 +83678,58 @@
       "DecisionReceipt",
       "DecisionRung",
       "DecisionTime",
+      "DeckAssetBinding",
+      "DeckAssetMedia",
       "DeckBodyView",
       "DeckCommentInspection",
+      "DeckCreationRecord",
+      "DeckDesignDecision",
+      "DeckDesignOption",
+      "DeckDesignRequest",
+      "DeckDesignShortfall",
+      "DeckDesignView",
+      "DeckDestination",
       "DeckDiff",
       "DeckEditContext",
+      "DeckEmissionNames",
+      "DeckEmissionOutcome",
+      "DeckEmissionRequest",
       "DeckExportRequest",
       "DeckExportView",
+      "DeckFallback",
+      "DeckFit",
+      "DeckFitPolicy",
       "DeckForkMergeRequest",
       "DeckGateRequest",
       "DeckGateView",
       "DeckIdentityAmbiguity",
       "DeckInspectRequest",
       "DeckInspectionView",
+      "DeckKeepBinding",
       "DeckNativeRefusal",
+      "DeckNewPart",
       "DeckNodeView",
       "DeckOp",
       "DeckOracleRequest",
+      "DeckOutline",
+      "DeckOutlineDeclined",
+      "DeckOutlineProposeRequest",
+      "DeckOutlineRefRequest",
+      "DeckOutlineSettleRequest",
+      "DeckOutlineView",
+      "DeckPackagePlan",
+      "DeckPlacement",
+      "DeckPlanView",
+      "DeckPlannedContent",
+      "DeckPlannedRelationship",
+      "DeckPlannedSlide",
       "DeckPreview",
       "DeckPreviewRequest",
       "DeckPreviewSlide",
       "DeckProposeOutcome",
       "DeckProposeRejection",
       "DeckProposeRequest",
+      "DeckRect",
       "DeckRejectionCheck",
       "DeckRejectionReport",
       "DeckRejectionSheet",
@@ -83487,11 +83740,15 @@
       "DeckReviewView",
       "DeckShapeInspection",
       "DeckShapeKind",
+      "DeckShortfallReason",
       "DeckSlideInspection",
       "DeckStep",
       "DeckStepRefusal",
+      "DeckTraceEntry",
+      "DeckTraceOutcome",
       "DeckTransaction",
       "DeckTransactionRefusal",
+      "DeckVisualChoices",
       "DeclaredMaximum",
       "DelegatedGrant",
       "DelegatedGrantScope",
@@ -83516,6 +83773,8 @@
       "DenyConsentRequest",
       "DerivationEnvelopeView",
       "DerivationKind",
+      "DesignDirection",
+      "DesignSpec",
       "DeterministicFallback",
       "DiagnosticEventView",
       "DiagnosticsGetRequest",
@@ -83531,6 +83790,8 @@
       "DiaryReadsView",
       "DiaryReviewAnswer",
       "DiaryReviewState",
+      "DirectionOutcome",
+      "DirectionSlide",
       "DiscardedProposal",
       "DisclosureBoundRequest",
       "DisclosureEnvelopeRequest",
@@ -84025,6 +84286,7 @@
       "JoinRequest",
       "JoinSubject",
       "KeepUndo",
+      "KeptOutline",
       "KeptProposal",
       "KeyValueAddress",
       "KeyValueDeleteReceipt",
@@ -84530,6 +84792,22 @@
       "OutcomeBinding",
       "OutcomeLabel",
       "OutcomeSource",
+      "OutlineAsset",
+      "OutlineAssetKind",
+      "OutlineBlock",
+      "OutlineCarrier",
+      "OutlineCell",
+      "OutlineColumn",
+      "OutlineColumnKind",
+      "OutlineCommunication",
+      "OutlineDataset",
+      "OutlineDivision",
+      "OutlineFreshness",
+      "OutlineMerge",
+      "OutlineNumberFormat",
+      "OutlinePage",
+      "OutlinePin",
+      "OutlinePriority",
       "OwnStandingBlockRequest",
       "OwnerPolicyConfiguration",
       "OwnerPolicyConfigurationReceipt",
@@ -85766,6 +86044,8 @@
       "WireRefusalReason",
       "WireRetrievalDegradation",
       "WireRetrievalQuality",
+      "WireThresholds",
+      "WireThresholdsReceipt",
       "WireWitnessAuthor",
       "WireWitnessMessage",
       "WireWitnessReceipt",
@@ -85822,8 +86102,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 783,
-      "struct": 2444
+      "enum": 804,
+      "struct": 2500
      }
     },
     {

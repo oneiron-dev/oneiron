@@ -50,6 +50,7 @@
 mod adapters;
 mod ask_holders;
 mod bound;
+pub mod bypass_lifecycle;
 mod codec;
 mod contact_clearance;
 mod doors;
