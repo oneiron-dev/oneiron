@@ -9743,7 +9743,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "MembershipPage",
@@ -9754,6 +9754,7 @@
      "purpose": "Read-only membership projection over CA-01 heads and CA-02 event history",
      "surface": {
       "const": 2,
+      "crate-vis": 1,
       "fn": 2,
       "struct": 3
      }
@@ -9765,8 +9766,8 @@
      "path": "src/campaign/surface/mod.rs",
      "purpose": "CA-07's SDK surface: one `self.*` verb vocabulary over the CRM pack",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 6
+      "crate-vis": 4,
+      "re-export": 7
      }
     },
     {
@@ -9804,6 +9805,38 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SavedQueryArchiveRequest",
+      "SavedQueryCreateRequest",
+      "SavedQueryDefinitionView",
+      "SavedQueryEntityReceipt",
+      "SavedQueryEvalSpec",
+      "SavedQueryEvaluateRequest",
+      "SavedQueryEvaluationReceipt",
+      "SavedQueryFilterSpec",
+      "SavedQueryMatcherSpec",
+      "SavedQueryMembersRequest",
+      "SavedQueryMembershipPageView",
+      "SavedQueryMembershipRowView",
+      "SavedQueryMemoReceipt",
+      "SavedQueryReadRequest",
+      "SavedQueryReadResult",
+      "SavedQueryRecordView",
+      "SavedQueryScopeSpec",
+      "SavedQueryUpdateRequest"
+     ],
+     "path": "src/campaign/surface/saved_query.rs",
+     "purpose": "Wire shapes of the six saved-query verbs (`self.saved_query.*`)",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 2,
+      "fn": 1,
+      "struct": 16
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -9822,7 +9855,7 @@
      "path": "src/campaign/surface/verbs.rs",
      "purpose": "Closed verb vocabulary and the single shared dispatch door",
      "surface": {
-      "const": 18,
+      "const": 19,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -32419,13 +32452,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/campaign.rs",
      "purpose": "Campaign + saved-query thin delegating wrappers over the domain surfaces (`crate::campaign::surface`…",
      "surface": {
-      "fn": 14
+      "fn": 19
      }
     },
     {
@@ -43441,15 +43474,16 @@
      "notable": [
       "EvaluationRequest",
       "SavedQueryEvaluator",
-      "SavedQueryJudgeBinding"
+      "SavedQueryJudgeBinding",
+      "WakeVisit"
      ],
      "path": "src/saved_query/evaluator.rs",
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 8,
-      "fn": 2,
-      "struct": 3
+      "crate-vis": 7,
+      "fn": 4,
+      "struct": 4
      }
     },
     {
@@ -43544,8 +43578,8 @@
      "path": "src/saved_query/mod.rs",
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)",
      "surface": {
-      "crate-vis": 3,
-      "re-export": 10
+      "crate-vis": 2,
+      "re-export": 11
      }
     },
     {
@@ -43564,6 +43598,21 @@
       "crate-vis": 2,
       "enum": 2,
       "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SavedQueryEvaluation",
+      "SavedQueryGenerationReceipt",
+      "SavedQueryJudgeReceipt"
+     ],
+     "path": "src/saved_query/receipts.rs",
+     "purpose": "Receipts from the existing saved-query evaluator, including actual generated usage",
+     "surface": {
+      "crate-vis": 1,
       "struct": 3
      }
     },
@@ -53487,7 +53536,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1046
+      "fn": 1052
      }
     },
     {
@@ -59915,7 +59964,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 50,
+     "files": 51,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -60895,7 +60944,7 @@
      "purpose": "Runtime hooks (ARCH-0080)"
     },
     "saved_query": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61296,7 +61345,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3734,
+   "source_files": 3736,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69954,7 +70003,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1017
+      "fn": 1023
      }
     },
     {
@@ -71050,7 +71099,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1018
+      "fn": 1024
      }
     },
     {
@@ -74614,7 +74663,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 165
+      "crate-vis": 166
      }
     },
     {
@@ -74955,6 +75004,16 @@
      "purpose": "The owner's cross-kind review and run compensation, on the caller's own credential handle",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/saved_query_doors.rs",
+     "purpose": "`self.saved_query.evaluate`, under the caller's own credential",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -81569,7 +81628,7 @@
      "path": "src/saved_query_sweep.rs",
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -82784,7 +82843,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 431,
+     "files": 432,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -83213,7 +83272,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 789,
+   "source_files": 790,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -84557,6 +84616,7 @@
       "EvalLabelAsk",
       "EvalLabelKind",
       "EvalLabelPickRequest",
+      "EvalMode",
       "EvalRelease",
       "EvalSeat",
       "EvalSeatRequest",
@@ -85145,6 +85205,7 @@
       "MadeByInputRole",
       "MadeByProcess",
       "MadeByTrigger",
+      "MatchVerdict",
       "MeasuredLearningEstimate",
       "MeasuredLearningPredicate",
       "MeasuredLearningValue",
@@ -86061,6 +86122,26 @@
       "RunnerBudgetReservationsRequest",
       "RunnerBudgetReservationsView",
       "SavedIntentState",
+      "SavedQueryArchiveRequest",
+      "SavedQueryCreateRequest",
+      "SavedQueryDefinitionView",
+      "SavedQueryEntityReceipt",
+      "SavedQueryEvalSpec",
+      "SavedQueryEvaluateRequest",
+      "SavedQueryEvaluationReceipt",
+      "SavedQueryGenerationReceipt",
+      "SavedQueryJudgeReceipt",
+      "SavedQueryLifecycle",
+      "SavedQueryMatcherSpec",
+      "SavedQueryMembersRequest",
+      "SavedQueryMembershipPageView",
+      "SavedQueryMembershipRowView",
+      "SavedQueryMemoReceipt",
+      "SavedQueryReadRequest",
+      "SavedQueryReadResult",
+      "SavedQueryRecordView",
+      "SavedQueryScopeSpec",
+      "SavedQueryUpdateRequest",
       "SavedResumeStep",
       "ScheduledBackfill",
       "Scope",
@@ -86840,8 +86921,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 819,
-      "struct": 2607
+      "enum": 823,
+      "struct": 2625
      }
     },
     {
