@@ -803,6 +803,43 @@ impl Memory<'_> {
         provenance: Value,
         witness: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
     ) -> MemoryResult<(EntityId, Option<String>)> {
+        let proposal_ref = self.land_proposal_claim(
+            predicate,
+            value,
+            subject,
+            now,
+            provenance,
+            witness,
+            |_, _| Ok(()),
+        )?;
+        let gate_decision_ref = self
+            .vault()
+            .gate_decisions(TASK_GATE_RECEIPT_SCAN_LIMIT)?
+            .into_iter()
+            .filter(|record| record.claim_id.as_ref() == Some(proposal_ref.as_bytes()))
+            .max_by_key(|record| record.decision_id.to_hex())
+            .map(|record| format!("gate:{}", record.decision_id.to_hex()));
+        Ok((proposal_ref, gate_decision_ref))
+    }
+
+    /// [`Self::persist_proposal_claim`]'s write, answering the proposal's id:
+    /// `witness` runs before the claim lands and `landed` after it, in the
+    /// same transaction, so what `landed` writes commits with the gate's
+    /// decision about the claim (FIX 3273).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one proposal's predicate, value, subject, time, provenance and its two in-transaction hooks"
+    )]
+    pub(super) fn land_proposal_claim(
+        &self,
+        predicate: &str,
+        value: Value,
+        subject: EntityId,
+        now: u64,
+        provenance: Value,
+        witness: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
+        landed: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
+    ) -> MemoryResult<EntityId> {
         let proposal_ref = self.vault().store.clock.entity_id()?;
         let mut candidate = ClaimCandidate::new(
             predicate.to_owned(),
@@ -849,16 +886,27 @@ impl Memory<'_> {
                 self.vault().text_index_trusted.load(Ordering::Acquire),
                 ApplyOpsGateMode::new(true, true),
             )
-            .map_err(MemoryError::from)
+            .map_err(MemoryError::from)?;
+            landed(wtxn, proposal_ref)
         })?;
-        let gate_decision_ref = self
+        Ok(proposal_ref)
+    }
+
+    /// The gate's decision about a proposal, as [`Self::persist_proposal_claim`]
+    /// names it (`gate:` and the newest decision's id), read in `txn`: in the
+    /// transaction that landed the proposal, the decision it landed under.
+    pub(super) fn proposal_decision_ref_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        proposal_ref: EntityId,
+    ) -> MemoryResult<Option<String>> {
+        Ok(self
             .vault()
-            .gate_decisions(TASK_GATE_RECEIPT_SCAN_LIMIT)?
+            .store
+            .gate_decisions_for_claim_in_txn(txn, proposal_ref.as_bytes())?
             .into_iter()
-            .filter(|record| record.claim_id.as_ref() == Some(proposal_ref.as_bytes()))
             .max_by_key(|record| record.decision_id.to_hex())
-            .map(|record| format!("gate:{}", record.decision_id.to_hex()));
-        Ok((proposal_ref, gate_decision_ref))
+            .map(|record| format!("gate:{}", record.decision_id.to_hex())))
     }
 }
 

@@ -235,8 +235,10 @@ pub(crate) struct ProseLink {
 /// Reference-style links are links too (Engine ruling 10-18): a full
 /// `[label][id]`, a collapsed `[id][]` and a shortcut `[id]` (not followed by
 /// `(`), each naming a definition `[id]: oneiron://<ref>` (or
-/// `[id]: <oneiron://<ref>>`, with an optional title) on one line at the
-/// start of a paragraph or after another definition. Ids match as CommonMark
+/// `[id]: <oneiron://<ref>>`, with an optional title) at the start of a
+/// paragraph or after another definition; its destination and its title may
+/// each start on the paragraph's next line, inside its containers or on a
+/// lazy continuation line, and a title may run across lines. Ids match as CommonMark
 /// matches them (trimmed, inner blanks collapsed, case folded); the first
 /// definition of an id wins, and an id with no `oneiron://` definition links
 /// nothing. So is an autolink `<oneiron://<ref>>`, whose label is its URI as
@@ -252,8 +254,10 @@ pub(crate) fn parse_record_links(text: &str) -> Vec<ProseLink> {
 pub(crate) struct ProseLinks {
     /// The links, as [`parse_record_links`] gives them.
     pub(crate) links: Vec<ProseLink>,
-    /// Each definition's byte range, from its `[` to its line's end, in
-    /// order. A definition is shown to no reader: it is never text.
+    /// Each definition line's byte range, from its first content byte (a
+    /// definition's `[` on its first line) to the line's end, in order: one
+    /// per line a definition takes, past the line's container markers, as a
+    /// link's span is. A definition is shown to no reader: it is never text.
     pub(crate) definitions: Vec<Range<usize>>,
 }
 
@@ -376,102 +380,169 @@ pub(crate) fn parse_prose_links(text: &str) -> ProseLinks {
 struct Definitions {
     /// Each matched id's ref; the first definition of an id wins.
     labels: BTreeMap<String, String>,
-    /// Each definition's range, keyed by the byte its line starts at.
+    /// Each definition line's content range, keyed by the byte the line
+    /// starts at.
     lines: BTreeMap<usize, Range<usize>>,
 }
 
-/// The definitions in `text`'s first `scan_end` bytes, read line by line
-/// through the same block structure the link scan reads: a definition sits
-/// on one inline line that opens a paragraph, or follows another
-/// definition, since a definition never interrupts a paragraph.
+/// The definitions in `text`'s first `scan_end` bytes, read through the same
+/// block structure the link scan reads. A definition opens a paragraph or
+/// follows another definition, since a definition never interrupts a
+/// paragraph, and it may take more than one of the paragraph's lines (FIX
+/// 3285): those inside its containers and the lazy lines that continue it
+/// outside them, each read from its first content byte, as the link scan
+/// reads them.
 fn definitions(text: &str, scan_end: usize) -> Definitions {
     let bytes = text.as_bytes();
     let mut found = Definitions::default();
     let mut blocks = blocks::Blocks::default();
-    let mut after_definition = false;
+    // The open paragraph's lines: each line's start and its content's range.
+    let mut paragraph: Vec<(usize, Range<usize>)> = Vec::new();
     let mut at = 0;
     while at < scan_end {
         let line_end = line_end_at(bytes, at, scan_end);
-        let mut definition = false;
-        if let blocks::Line::Inline {
-            from,
-            starts_paragraph,
-            heading,
-        } = blocks.line(&bytes[at..line_end])
-            && (starts_paragraph || after_definition)
-            && !heading
-            && let Some((label, reference)) = definition_at(&text[at + from..line_end])
-        {
-            definition = true;
-            found.labels.entry(label).or_insert(reference);
-            found.lines.insert(at, at + from..line_end);
+        match blocks.line(&bytes[at..line_end]) {
+            blocks::Line::Inline {
+                from,
+                starts_paragraph,
+                heading,
+            } => {
+                if starts_paragraph {
+                    read_definitions(bytes, &paragraph, &mut found);
+                    paragraph.clear();
+                }
+                // A heading is a line of its own, and never a definition.
+                if !heading {
+                    paragraph.push((at, at + from..line_end));
+                }
+            }
+            blocks::Line::Skip => {
+                read_definitions(bytes, &paragraph, &mut found);
+                paragraph.clear();
+            }
         }
-        after_definition = definition;
         at = line_end + 1;
     }
+    read_definitions(bytes, &paragraph, &mut found);
     found
 }
 
-/// The definition `line` (from its first content byte) is, when it names an
-/// `oneiron://` ref: its matched id and its ref.
-fn definition_at(line: &str) -> Option<(String, String)> {
-    let bytes = line.as_bytes();
-    if bytes.first() != Some(&b'[') {
+/// Reads the definitions that open the paragraph whose lines `paragraph`
+/// holds (each line's start and its content's range), one after another,
+/// until a line opens none: the rest of the paragraph is its text.
+fn read_definitions(bytes: &[u8], paragraph: &[(usize, Range<usize>)], found: &mut Definitions) {
+    let lines: Vec<&[u8]> = paragraph
+        .iter()
+        .map(|(_, content)| &bytes[content.clone()])
+        .collect();
+    let mut next = 0;
+    while let Some((label, reference, taken)) = definition_at(&lines[next..]) {
+        found.labels.entry(label).or_insert(reference);
+        for (start, content) in &paragraph[next..next + taken] {
+            found.lines.insert(*start, content.clone());
+        }
+        next += taken;
+    }
+}
+
+/// The definition `lines` open (a paragraph's lines from its first, each
+/// from its first content byte), when it names an `oneiron://` ref: its
+/// matched id, its ref, and how many of the lines it takes. The label sits
+/// on the first line; the destination on that line or alone at the start of
+/// the next; an optional title after a blank on the destination's line, or
+/// at the start of the line after it, and it may run across lines. A title
+/// that does not end its line unmakes the definition when it shares the
+/// destination's line; one that starts a line of its own then is that line's
+/// text, and the definition ends at its destination.
+fn definition_at(lines: &[&[u8]]) -> Option<(String, String, usize)> {
+    let first = *lines.first()?;
+    if first.first() != Some(&b'[') {
         return None;
     }
-    let close = label_close(bytes, 0)?;
-    let label = matched_label(&line[1..close])?;
-    let after = bytes.get(close + 1..)?.strip_prefix(b":")?;
-    let after = &after[after
+    let close = label_close(first, 0)?;
+    let label = matched_label(std::str::from_utf8(&first[1..close]).ok()?)?;
+    let after = skip_spaces(first.get(close + 1..)?.strip_prefix(b":")?);
+    let (line, after) = if after.trim_ascii().is_empty() {
+        (1, *lines.get(1)?)
+    } else {
+        (0, after)
+    };
+    let (reference, rest) = destination(after)?;
+    if !record_ref_ok(reference) {
+        return None;
+    }
+    let reference = std::str::from_utf8(reference).ok()?.to_owned();
+    if !rest.trim_ascii().is_empty() {
+        if !rest[0].is_ascii_whitespace() {
+            return None;
+        }
+        let title = rest.trim_ascii_start();
+        let last = title_end(&lines[line..], lines[line].len() - title.len())?;
+        return Some((label, reference, line + last + 1));
+    }
+    let taken = lines
+        .get(line + 1)
+        .filter(|next| matches!(next.first(), Some(b'"' | b'\'' | b'(')))
+        .and_then(|_| title_end(&lines[line + 1..], 0))
+        .map_or(line + 1, |last| line + 1 + last + 1);
+    Some((label, reference, taken))
+}
+
+/// `bytes` past its leading spaces and tabs.
+fn skip_spaces(bytes: &[u8]) -> &[u8] {
+    &bytes[bytes
         .iter()
         .take_while(|&&byte| byte == b' ' || byte == b'\t')
-        .count()..];
-    let (reference, rest) = match after.strip_prefix(b"<") {
+        .count()..]
+}
+
+/// The `oneiron://` destination `rest` opens, bare or in angle brackets: its
+/// ref and what follows it on its line.
+fn destination(rest: &[u8]) -> Option<(&[u8], &[u8])> {
+    match rest.strip_prefix(b"<") {
         Some(inner) => {
             let inner = inner.strip_prefix(PROSE_LINK_SCHEME.as_bytes())?;
             let length = inner.iter().position(|&byte| byte == b'>')?;
-            (&inner[..length], &inner[length + 1..])
+            Some((&inner[..length], &inner[length + 1..]))
         }
         None => {
-            let inner = after.strip_prefix(PROSE_LINK_SCHEME.as_bytes())?;
+            let inner = rest.strip_prefix(PROSE_LINK_SCHEME.as_bytes())?;
             let length = inner
                 .iter()
                 .position(u8::is_ascii_whitespace)
                 .unwrap_or(inner.len());
-            (&inner[..length], &inner[length..])
+            Some((&inner[..length], &inner[length..]))
         }
-    };
-    if !record_ref_ok(reference) {
-        return None;
     }
-    let title = rest.trim_ascii();
-    if !title.is_empty() && (!rest[0].is_ascii_whitespace() || !link_title(title)) {
-        return None;
-    }
-    Some((label, std::str::from_utf8(reference).ok()?.to_owned()))
 }
 
-/// Whether `title` is one link title: `"…"`, `'…'` or `(…)`, its closing
-/// mark escaped wherever it appears before its end.
-fn link_title(title: &[u8]) -> bool {
-    let close = match title.first() {
-        Some(b'"') => b'"',
-        Some(b'\'') => b'\'',
-        Some(b'(') => b')',
-        _ => return false,
+/// The index, among `lines`, of the line where the link title opening at
+/// byte `start` of the first ends: `"…"`, `'…'` or `(…)`, its closing mark
+/// escaped wherever it appears before its end, and nothing but blanks after
+/// it on its line. A title may run across lines; `None` when it never ends
+/// so.
+fn title_end(lines: &[&[u8]], start: usize) -> Option<usize> {
+    let close = match lines.first()?.get(start)? {
+        b'"' => b'"',
+        b'\'' => b'\'',
+        b'(' => b')',
+        _ => return None,
     };
-    if title.len() < 2 || title[title.len() - 1] != close {
-        return false;
-    }
-    let mut at = 1;
-    while at < title.len() - 1 {
-        match title[at] {
-            b'\\' => at += 2,
-            byte if byte == close => return false,
-            _ => at += 1,
+    let mut from = start + 1;
+    for (index, line) in lines.iter().enumerate() {
+        let mut at = from;
+        while at < line.len() {
+            match line[at] {
+                b'\\' => at += 2,
+                byte if byte == close => {
+                    return line[at + 1..].trim_ascii().is_empty().then_some(index);
+                }
+                _ => at += 1,
+            }
         }
+        from = 0;
     }
-    at == title.len() - 1
+    None
 }
 
 /// An id as CommonMark matches it: trimmed, each run of blanks one space,
@@ -974,6 +1045,27 @@ fn unlinked_text(
         })),
         Err(ReferenceRefusal::Read(error)) => Err(error),
     }
+}
+
+/// The facts of `unlinked` ([`witness_prose_unlinked`]) whose message the
+/// witness landed new: `lands_new[i]` for the turn's message `i` (FIX 3284),
+/// read from each fact's slot pointer. A message an exact retry found stored
+/// landed nothing, so its links earn no second receipt.
+pub(crate) fn landed_witness_prose(
+    unlinked: Vec<ReferenceRefusalFacts>,
+    lands_new: &[bool],
+) -> Vec<ReferenceRefusalFacts> {
+    unlinked
+        .into_iter()
+        .filter(|facts| {
+            facts
+                .field
+                .strip_prefix("/messages/")
+                .and_then(|rest| rest.split('/').next())
+                .and_then(|index| index.parse::<usize>().ok())
+                .is_some_and(|index| lands_new.get(index) == Some(&true))
+        })
+        .collect()
 }
 
 /// The row every witnessed message's prose links are receipted under.

@@ -12,7 +12,14 @@
 //! keeps none either (Engine ruling, #1968), as every receipt writer there:
 //! such a session keeps nothing.
 //!
+//! Each receipt is indexed in the transaction that keeps it: by its TASK and
+//! time, which a status read names the newest of (FIX 3270) and whose row of
+//! the write that settled the TASK a replayed Done names (FIX 3272), and by
+//! time alone, which a receipt query reads newest first (FIX 3271).
+//!
 //! The receipt is narrative, not authority: no gate or proof reads it.
+
+use std::ops::Bound;
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -22,7 +29,7 @@ use crate::receipt::{
     MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, append_task_type_fields,
     retain_newest_receipt,
 };
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::task_type::TaskTypeRef;
 
 use super::brief::QueueTaskBrief;
@@ -43,6 +50,17 @@ const FIELD_PROPOSAL_REF: &str = "proposal_ref";
 /// Receipt id → the call's receipt, as the receipt family reads it.
 const RECEIPTS: SideTable<String, ReceiptRecord, Named> =
     SideTable::new(&side_table::TASK_LIFECYCLE_RECEIPT);
+/// TASK, time and receipt id → the receipt's role for its TASK.
+const BY_TASK: SideTable<(EntityId, u64, String), [u8; 1], Raw> =
+    SideTable::new(&side_table::TASK_LIFECYCLE_RECEIPT_BY_TASK);
+/// Time and receipt id → a presence marker.
+const BY_TIME: SideTable<(u64, String), (), Raw> =
+    SideTable::new(&side_table::TASK_LIFECYCLE_RECEIPT_BY_TIME);
+
+/// A TASK index row's role: a receipt of its TASK.
+const ROLE_PLAIN: [u8; 1] = [0];
+/// A TASK index row's role: the receipt of the write that settled its TASK.
+const ROLE_SETTLED: [u8; 1] = [1];
 
 /// The id of the lifecycle receipt `call` keeps for the identity `parts`
 /// name: the same for a call and every replay of it.
@@ -91,8 +109,122 @@ pub(super) fn stamp_record_in(
         },
     };
     let row = project(&id, lifecycle, type_ref.as_ref())?;
+    let old = RECEIPTS.get(&vault.store, &*wtxn, &id)?;
+    index_in(&vault.store, wtxn, &id, old.as_ref(), &row)?;
     RECEIPTS.put(&vault.store, wtxn, &id, &row)?;
     Ok(id)
+}
+
+/// The TASK a receipt row names, when it names one.
+fn task_of(row: &ReceiptRecord) -> Option<EntityId> {
+    row.trigger_ref
+        .as_deref()
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+}
+
+/// Indexes `row`, kept under `id`, in its write's transaction: under its TASK
+/// and time, and its time. A rewrite of `old` drops `old`'s rows first, and
+/// its TASK row keeps the role it had.
+fn index_in(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &str,
+    old: Option<&ReceiptRecord>,
+    row: &ReceiptRecord,
+) -> crate::Result<()> {
+    let mut role = ROLE_PLAIN;
+    if let Some(old) = old {
+        if let Some(task) = task_of(old) {
+            let key = (task, old.occurred_at, id.to_owned());
+            if let Some(kept) = BY_TASK.get(store, &*wtxn, &key)? {
+                role = kept;
+            }
+            BY_TASK.delete(store, wtxn, &key)?;
+        }
+        BY_TIME.delete(store, wtxn, &(old.occurred_at, id.to_owned()))?;
+    }
+    if let Some(task) = task_of(row) {
+        BY_TASK.put(store, wtxn, &(task, row.occurred_at, id.to_owned()), &role)?;
+    }
+    BY_TIME.put(store, wtxn, &(row.occurred_at, id.to_owned()), &())
+}
+
+/// Drops `row`'s index rows, in the transaction that drops it.
+fn unindex_in(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &str,
+    row: &ReceiptRecord,
+) -> crate::Result<()> {
+    if let Some(task) = task_of(row) {
+        BY_TASK.delete(store, wtxn, &(task, row.occurred_at, id.to_owned()))?;
+    }
+    BY_TIME.delete(store, wtxn, &(row.occurred_at, id.to_owned()))?;
+    Ok(())
+}
+
+/// Marks the receipt kept under `id` as the one of the write that settled
+/// its TASK (FIX 3272), in that write's transaction, after the receipt is
+/// kept. Only a settling write marks one, so no replay ever does. A receipt
+/// that names no TASK marks nothing.
+pub(super) fn mark_settled_in(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &str,
+) -> MemoryResult<()> {
+    let Some(row) = RECEIPTS.get(&vault.store, &*wtxn, &id.to_owned())? else {
+        return Ok(());
+    };
+    let Some(task) = task_of(&row) else {
+        return Ok(());
+    };
+    BY_TASK.put(
+        &vault.store,
+        wtxn,
+        &(task, row.occurred_at, id.to_owned()),
+        &ROLE_SETTLED,
+    )?;
+    Ok(())
+}
+
+/// The receipt of the write that settled `task` at `finished_at` (FIX 3272),
+/// the least id when more than one was marked then: what a replay of that
+/// settlement names. `None` when that write kept none.
+pub(super) fn settled_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+    finished_at: u64,
+) -> MemoryResult<Option<String>> {
+    let mut prefix = task.as_bytes().to_vec();
+    prefix.extend_from_slice(&finished_at.to_be_bytes());
+    for row in BY_TASK.iter_from(&vault.store, txn, &prefix)? {
+        let ((_, _, id), role) = row?;
+        if role == ROLE_SETTLED {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
+}
+
+/// The newest lifecycle receipt naming `task` (FIX 3270), as a receipt query
+/// orders them: the latest time, and at one time the least id. `None` when
+/// none names it.
+pub(super) fn newest_for_task_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> MemoryResult<Option<String>> {
+    let mut newest: Option<(u64, String)> = None;
+    // Descending, so a later row at the newest time has a lesser id.
+    for row in BY_TASK.iter_rev_from(&vault.store, txn, task.as_bytes())? {
+        let ((_, at, id), _) = row?;
+        if newest.as_ref().is_some_and(|(time, _)| at < *time) {
+            break;
+        }
+        newest = Some((at, id));
+    }
+    Ok(newest.map(|(_, id)| id))
 }
 
 /// [`stamp_record_in`] for one answer: keeps its lifecycle, when it owes
@@ -168,6 +300,7 @@ pub(crate) fn erase_in_txn(
         if row.trigger_ref.as_deref() == Some(hex.as_str())
             || row.fields.get(FIELD_PROPOSAL_REF) == Some(&hex)
         {
+            unindex_in(store, txn, &key, &row)?;
             RECEIPTS.delete(store, txn, &key)?;
         }
     }
@@ -213,22 +346,44 @@ pub(crate) fn erase_lifecycle_actor_in_txn(
 }
 
 /// The kept lifecycle receipts `query` matches, for the receipt family
-/// (`Vault::receipts`). Reads at most [`MAX_RECEIPT_QUERY_SCAN`] rows, in
-/// id order, as the family's other store-backed projectors do.
+/// (`Vault::receipts`). Reads at most [`MAX_RECEIPT_QUERY_SCAN`] rows of the
+/// time index within the query's time bounds, newest first (FIX 3271), and
+/// stops once a full page can take no older row.
 pub(crate) fn task_lifecycle_receipts(
     vault: &Vault,
     query: &ReceiptQuery,
 ) -> crate::Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
+    let start = query
+        .start_at
+        .map_or(Bound::Unbounded, |start| Bound::Included((start, String::new())));
+    let end = query
+        .end_at
+        .and_then(|end| end.checked_add(1))
+        .map_or(Bound::Unbounded, |next| Bound::Excluded((next, String::new())));
     let mut out = Vec::new();
-    for row in RECEIPTS
-        .iter_from(&vault.store, &rtxn, &[])?
+    // The time of the last row taken: the oldest a full page holds, since
+    // rows come newest first. An older row cannot displace any of it; one as
+    // old may, by the page's tie order.
+    let mut floor: Option<u64> = None;
+    for row in BY_TIME
+        .iter_rev_range(&vault.store, &rtxn, start.as_ref(), end.as_ref())?
         .take(MAX_RECEIPT_QUERY_SCAN)
     {
-        let (_, receipt) = row?;
+        let ((at, id), ()) = row?;
+        if query.job_ref.is_none()
+            && out.len() >= query.limit
+            && floor.is_some_and(|floor| at < floor)
+        {
+            break;
+        }
+        let Some(receipt) = RECEIPTS.get(&vault.store, &rtxn, &id)? else {
+            return Err(Error::CorruptedIndex("task lifecycle receipt time index"));
+        };
         if !query.matches(&receipt) {
             continue;
         }
+        floor = Some(at);
         if query.job_ref.is_some() {
             out.push(receipt);
         } else {

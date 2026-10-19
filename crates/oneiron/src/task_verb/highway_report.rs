@@ -859,22 +859,27 @@ impl Memory<'_> {
     }
 
     /// The TASK, when it already completed with `result_ref` and this actor
-    /// is the one it was addressed to (or its owner, on a runner lane).
+    /// is the one it was addressed to (or its owner, on a runner lane), with
+    /// the lifecycle receipt of the write that completed it (FIX 3272), when
+    /// that write kept one.
     fn settled_by(
         &self,
         rt: &ReportTxn<'_, '_>,
         task_ref: EntityId,
         result_ref: EntityId,
-    ) -> MemoryResult<Option<TaskVerbBody>> {
+    ) -> MemoryResult<Option<(TaskVerbBody, Option<String>)>> {
         self.report_read(rt, |txn| {
             let body = task_body_in_txn(self.vault(), txn, task_ref)?;
-            let completed = body.terminal().is_some_and(|terminal| {
-                terminal.disposition == TaskTerminalDisposition::Completed
-                    && terminal.result_ref == Some(result_ref)
-            });
-            if !completed {
+            let Some(finished_at) = body
+                .terminal()
+                .filter(|terminal| {
+                    terminal.disposition == TaskTerminalDisposition::Completed
+                        && terminal.result_ref == Some(result_ref)
+                })
+                .map(|terminal| terminal.finished_at)
+            else {
                 return Ok(None);
-            }
+            };
             let standing = self.highway_task_actor_in(
                 txn,
                 task_ref,
@@ -884,7 +889,8 @@ impl Memory<'_> {
             if standing.assignee != Some(self.actor()) && standing.owner != self.actor() {
                 return Err(not_found());
             }
-            Ok(Some(body))
+            let settled = lifecycle_receipt::settled_in(self.vault(), txn, task_ref, finished_at)?;
+            Ok(Some((body, settled)))
         })
     }
 
@@ -930,10 +936,12 @@ impl Memory<'_> {
         }
     }
 
-    /// A replayed Done: the first terminal answers it.
+    /// A replayed Done: the first terminal answers it, and names the receipt
+    /// the write that landed it kept (FIX 3272). A replay keeps none of its
+    /// own, so no replay ever stands in for that one.
     fn replayed_done(
         task_ref: EntityId,
-        settled: &TaskVerbBody,
+        (settled, receipt_ref): &(TaskVerbBody, Option<String>),
         mut lifecycle: TaskLifecycleRecord,
     ) -> TaskCallReceipt {
         stamp_fields(&mut lifecycle.fields, settled.brief.as_ref());
@@ -944,7 +952,7 @@ impl Memory<'_> {
             outcome: TaskOutcome::Reported {
                 phase: phase_of(settled),
             },
-            receipt_ref: None,
+            receipt_ref: receipt_ref.clone(),
             lifecycle: Some(lifecycle),
             idempotent_replay: true,
         }
@@ -1634,6 +1642,11 @@ impl Memory<'_> {
         // receipt naming it, so a replay answers the same reference.
         if let Some(id) = receipt_id {
             lifecycle_receipt::stamp_in(self.vault(), wtxn, &mut receipt, id, None)?;
+        }
+        // A write that settled the TASK marks its receipt, so a replayed
+        // Done under another key names it (FIX 3272).
+        if settled && let Some(id) = &receipt.receipt_ref {
+            lifecycle_receipt::mark_settled_in(self.vault(), wtxn, id)?;
         }
         if let Some(identity) = journal {
             report_journal::put_in(self.vault(), wtxn, identity, &receipt)?;
