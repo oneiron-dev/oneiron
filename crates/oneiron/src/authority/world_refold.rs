@@ -1,6 +1,6 @@
-//! A world edit, a world key record, a grant travel choice, or a root request
-//! or the owner's cancel of one, above a main-log row the fold did not keep,
-//! folded again with that row crossed.
+//! A world edit, a world key record, a grant travel choice, or a root request,
+//! the owner's cancel of one or its result, above a main-log row the fold did
+//! not keep, folded again with that row crossed.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::world_privacy::side_world;
@@ -13,11 +13,17 @@ use super::*;
 /// for the mesh, contract §6), and neither may the owner's checkpoint policy
 /// choice (mesh PR2c), home pick (DOOR-101) or a person's conversation
 /// training choice (FIX 4489), nor a root request or the owner's cancel of
-/// one ([`closes_root_work`], FIX 5584). A fold past an adopted image reads
-/// the same class (FIX 5463).
-pub(super) fn refolds(op: &AuthorityOp) -> bool {
+/// one ([`closes_root_work`], FIX 5584), nor a root request's result
+/// ([`answers_root_work`], FIX 5649). `kind_of` reads the kind of the owner
+/// work request signed as a hash from the request's own row, where the fold
+/// holds one. A fold past an adopted image reads the same class (FIX 5463).
+pub(super) fn refolds(
+    op: &AuthorityOp,
+    kind_of: impl Fn(&AuthorityEntryHash) -> Option<OwnerWorkKind>,
+) -> bool {
     side_world(op).is_some()
         || closes_root_work(op)
+        || answers_root_work(op, kind_of)
         || matches!(
             op,
             AuthorityOp::WorldPrivacy(_)
@@ -31,14 +37,48 @@ pub(super) fn refolds(op: &AuthorityOp) -> bool {
 
 /// A root request, or the owner's cancel of one (CALLS "FIX 5584 refold
 /// scope"): either may close an older root request (CALLS ROOT_WORK_CANCEL,
-/// ROOT_WORK_SUPERSESSION), so neither falls with an unrelated row. A
-/// result, and a world key, bundle or custody request, is not folded again.
+/// ROOT_WORK_SUPERSESSION), so neither falls with an unrelated row. A world
+/// key, bundle or custody request is not folded again; a root request's
+/// result is ([`answers_root_work`]).
 fn closes_root_work(op: &AuthorityOp) -> bool {
     match op {
         AuthorityOp::OwnerWorkRequest(request) => request.kind() == OwnerWorkKind::Root,
         AuthorityOp::OwnerWorkCancel(_) => true,
         _ => false,
     }
+}
+
+/// A result of a root request (CALLS "FIX 5584 refold scope", FIX 5649), the
+/// request's kind judged as [`closes_root_work`] and the result transition
+/// judge it, from the request itself (`kind_of`): a root request recovered
+/// past a lost main-log row never reads unanswered and runnable again with
+/// its result lost, so root work never runs twice. A world key, bundle or
+/// custody request's result keeps today's path, and so does a result whose
+/// request the fold holds no row of.
+fn answers_root_work(
+    op: &AuthorityOp,
+    kind_of: impl Fn(&AuthorityEntryHash) -> Option<OwnerWorkKind>,
+) -> bool {
+    matches!(op, AuthorityOp::OwnerWorkResult(result)
+        if kind_of(&result.request) == Some(OwnerWorkKind::Root))
+}
+
+/// The kind of the owner work request `row` is; None for any other row.
+pub(super) fn request_kind(row: &AuthorityLogEntry) -> Option<OwnerWorkKind> {
+    match &row.op {
+        AuthorityOp::OwnerWorkRequest(request) => Some(request.kind()),
+        _ => None,
+    }
+}
+
+/// The kind of the owner work request signed as `hash` whose body `image`
+/// carries; None when it carries none, or no request's.
+pub(super) fn carried_request_kind(
+    image: &AuthorityCheckpointV2,
+    hash: &AuthorityEntryHash,
+) -> Option<OwnerWorkKind> {
+    let body = image.rows.get(hash)?.body.as_ref()?;
+    request_kind(&decode_authority_log_entry_body(body).ok()?)
 }
 
 /// Settlement drops every row above a main-log row it refuses (a retired
@@ -50,8 +90,9 @@ fn closes_root_work(op: &AuthorityOp) -> bool {
 /// crossed, never applied. An edit invalid on its own stays invalid. Crossing
 /// gives no signer more than this replica's fold already gives the same edit
 /// signed on the crossed row's parents instead (Wonder P2 round 2, W1). A
-/// root request or cancel folded again folds before the rows crossed above
-/// it, so what descends from it reads it (FIX 5584).
+/// root request, cancel or root request's result folded again folds before
+/// the rows crossed above it, so what descends from it reads it (FIX 5584,
+/// 5649).
 pub(super) fn refold_world_edits(
     states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -59,6 +100,7 @@ pub(super) fn refold_world_edits(
     context: FoldContext<'_>,
     issues: &mut Vec<AuthorityFoldIssue>,
 ) {
+    let kind_of = |request: &AuthorityEntryHash| by_hash.get(request).and_then(request_kind);
     let causal = |hashes: BTreeSet<AuthorityEntryHash>| {
         let mut hashes: Vec<_> = hashes.into_iter().collect();
         hashes.sort_by_key(|hash| (ancestors.get(hash).map_or(0, BTreeSet::len), *hash));
@@ -76,7 +118,7 @@ pub(super) fn refold_world_edits(
         by_hash
             .iter()
             .filter(|(hash, entry)| {
-                refolds(&entry.op)
+                refolds(&entry.op, kind_of)
                     && !states.contains_key(*hash)
                     && ancestors
                         .get(*hash)
@@ -103,12 +145,16 @@ pub(super) fn refold_world_edits(
     let mut stand_ins = BTreeMap::<AuthorityEntryHash, FoldState>::new();
     for hash in crossed {
         let entry = &by_hash[&hash];
-        // A root request or cancel folded again, with a row folded again
-        // above it, folds here on its parents' kept or standing-in states,
-        // before any row crossed above it: a cancel or newer request there so
-        // finds the request it closes (FIX 5584). One that does not fold
-        // stands for its parents' merge, as every other crossed row does.
-        if closes_root_work(&entry.op) && selected.contains(&hash) {
+        // A root request, cancel or root request's result folded again, with
+        // a row folded again above it, folds here on its parents' kept or
+        // standing-in states, before any row crossed above it: a cancel or
+        // newer request there so finds the request it closes (FIX 5584), and
+        // a request recovered here keeps the result recovered after it (FIX
+        // 5649). One that does not fold stands for its parents' merge, as
+        // every other crossed row does.
+        if (closes_root_work(&entry.op) || answers_root_work(&entry.op, kind_of))
+            && selected.contains(&hash)
+        {
             let parents = parent_states(entry, states, &stand_ins);
             if let EntryFold::Ready(state) = fold_entry_state(entry, hash, &parents, context) {
                 keep(states, issues, hash, state);

@@ -12,9 +12,10 @@
 //! count, is the fold's judgement.
 //!
 //! A record states its provenance under its signature: the owner work
-//! request it does (`request`, one of its parents), or none when an eligible
-//! reader wraps on its own; and the recipients its signer permits
-//! (`permitted`), sorted, exactly the ones it seals to.
+//! request it does (`request`, in its entry's causal past, which only the
+//! fold of its parents knows), or none when an eligible reader wraps on its
+//! own; and the recipients its signer permits (`permitted`), sorted, exactly
+//! the ones it seals to.
 
 use oneiron_crypto::{Envelope, Purpose, SuiteId, TAG_LEN, WrapParams, WrapType};
 use rmpv::Value;
@@ -158,9 +159,10 @@ pub struct WorldKeyWrapsRecord {
     pub machine: EntityId,
     /// One sealed envelope per recipient.
     pub wraps: Vec<(WrapRecipient, Vec<u8>)>,
-    /// The owner work request this record does, one of its entry's parents:
-    /// the executor the request names wraps for the owner's act. `None`: an
-    /// eligible reader wraps on its own.
+    /// The owner work request this record does, a parent of its entry or
+    /// beneath one (FIX 5464, CALLS "FIX 5464 request binding"): the executor
+    /// the request names wraps for the owner's act. `None`: an eligible reader
+    /// wraps on its own.
     pub request: Option<AuthorityEntryHash>,
     /// The recipients the signer permits, ascending: exactly those `wraps`
     /// seals to.
@@ -202,20 +204,17 @@ impl WorldKeyWrapsRecord {
         sealed.len() == self.wraps.len() && sealed == self.permitted
     }
 
-    /// The entry the record rides: one Ed25519 signer and no cosign, the
-    /// request it does among its parents, and every envelope's header made
-    /// for exactly this record, its vault and its list entry. No key
-    /// derivation runs here.
+    /// The entry the record rides: one Ed25519 signer and no cosign, and
+    /// every envelope's header made for exactly this record, its vault and its
+    /// list entry. No key derivation runs here. Its shape names no parent: the
+    /// request must be in the entry's causal past, a parent or beneath one,
+    /// which the fold judges before the record counts (CALLS "FIX 5464
+    /// request binding").
     pub(super) fn validate_entry(&self, entry: &AuthorityLogEntry) -> Result<()> {
         let Some(vault_id) = entry.vault_id else {
             return Err(invalid_authority());
         };
-        if entry.signer.suite != AuthoritySignatureSuite::Ed25519
-            || !entry.cosigns.is_empty()
-            || self
-                .request
-                .is_some_and(|request| !entry.parent_hashes.contains(&request))
-        {
+        if entry.signer.suite != AuthoritySignatureSuite::Ed25519 || !entry.cosigns.is_empty() {
             return Err(invalid_authority());
         }
         let key_id = self.key.envelope_key_id();

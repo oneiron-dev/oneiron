@@ -34,6 +34,7 @@ pub(super) fn fold_as_install(
         floor_vouched: None,
         install_held: None,
         entry_ancestors: None,
+        causal_past: None,
         peer_consent_roots,
         consent_arm,
         hosted: local.hosted,
