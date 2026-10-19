@@ -429,18 +429,22 @@ pub(crate) fn board_pins_projection<'a>(
     }))
 }
 
-/// The hook rows a board read under one lane pins into MEMORIES, for a reader that speaks to
-/// no contact and holds no [`CoreAuth`]: a pumped run's agent on its own board (OF-579). The
-/// lane is the clamp, no contact's clearance applies, and the receipt names no party. `None`
-/// when no row is admitted.
-pub(crate) fn lane_hook_pins_projection(
+/// The rows a board read under one lane pins into MEMORIES, for a reader that speaks to no
+/// contact and holds no [`CoreAuth`]: a pumped run's agent on its own board (OF-579). These are
+/// the policy manifest's pins, as a vault-wide connector's keyframe reads them (FIX 2646), and
+/// the rows its hook blocks pin. The lane is the clamp, no contact's clearance applies, and the
+/// receipt names no party. `None` when no row is admitted.
+pub(crate) fn lane_pins_projection(
     read: &oneiron::claim::ScopedRead<'_>,
     hooks: &[oneiron::context_board::HookPin],
 ) -> Result<Option<BoardPins>, ApiError> {
-    if hooks.is_empty() {
-        return Ok(None);
-    }
     let mut section = oneiron::MemoriesSection::pins_only(None);
+    let automatic = read
+        .manifest_pinned_refs()
+        .map_err(|error| core_engine_error("manifest pin read failed", error))?;
+    section
+        .include_pinned_refs_with_disclosure(read, &automatic.value, None)
+        .map_err(|error| core_engine_error("manifest pin disclosure failed", error))?;
     section
         .include_hook_pins(read, hooks, None)
         .map_err(|error| core_engine_error("hook pin read failed", error))?;
