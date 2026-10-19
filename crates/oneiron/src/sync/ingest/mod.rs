@@ -29,5 +29,7 @@ pub(in crate::sync) use self::peer_import::{
     carry_peer_rows, copy_peer_origins, forget_peer_origin, forget_peer_rows, peer_row_in_txn,
     record_peer_rows,
 };
-pub(in crate::sync) use self::promotion::with_promotion;
+pub(in crate::sync) use self::promotion::{
+    first_promotion_open, with_first_promotion_open, with_promotion,
+};
 pub(in crate::sync) use self::tombstone::{TombstoneStep, classify_tombstone};
