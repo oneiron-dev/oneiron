@@ -46,7 +46,10 @@ impl AtWriteFloor {
     /// Whether `error` is this refusal.
     #[must_use]
     pub fn is_in(error: &Error) -> bool {
-        matches!(error, Error::Io(io) if io.get_ref().is_some_and(|inner| inner.is::<Self>()))
+        let Error::Io(io) = error else {
+            return false;
+        };
+        matches!(io.get_ref(), Some(inner) if inner.is::<Self>())
     }
 }
 
