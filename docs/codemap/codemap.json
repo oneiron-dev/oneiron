@@ -2515,23 +2515,36 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AuthorityArchiveContent",
       "AuthorityArchiveCustodian",
       "AuthorityArchiveManifest",
-      "AuthorityCheckpointRow",
       "AuthorityCheckpointUnresolved",
       "AuthorityCheckpointV2"
      ],
-     "path": "src/authority/checkpoint_image.rs",
+     "path": "src/authority/checkpoint_image/mod.rs",
      "purpose": "The portable authority checkpoint v2 image (OF-469): the exact fold a vault builds of its covered history…",
      "surface": {
       "const": 5,
-      "crate-vis": 11,
+      "crate-vis": 8,
       "fn": 6,
-      "struct": 6
+      "re-export": 1,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityCheckpointRow"
+     ],
+     "path": "src/authority/checkpoint_image/row.rs",
+     "purpose": "One covered row's summary in a checkpoint v2 image: the row's scaffold and, for a row a fold or a store door…",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 1
      }
     },
     {
@@ -61044,7 +61057,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 175,
+     "files": 176,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62500,9 +62513,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 197,
+   "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3823,
+   "source_files": 3824,
    "test_files": 902
   },
   "oneiron-android": {
