@@ -25,6 +25,12 @@ pub struct RuntimeConfig {
     /// Environment variable name that must contain a BYO provider key.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub byo_key_env: Option<String>,
+    /// Vault secret name that holds the BYO provider key, read at the
+    /// vault's custody door when a call uses it: the one BYO key source on a
+    /// vault our cloud hosts, which reads no environment. Set beside
+    /// `byo_key_env` it is refused.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub byo_key_secret: Option<String>,
     /// Per-role default route targets.
     pub role_defaults: RuntimeRoleDefaults,
     #[serde(skip)]
@@ -36,6 +42,7 @@ impl PartialEq for RuntimeConfig {
     fn eq(&self, other: &Self) -> bool {
         self.mode == other.mode
             && self.byo_key_env == other.byo_key_env
+            && self.byo_key_secret == other.byo_key_secret
             && self.role_defaults == other.role_defaults
     }
 }
@@ -47,6 +54,7 @@ impl fmt::Debug for RuntimeConfig {
         f.debug_struct("RuntimeConfig")
             .field("mode", &self.mode)
             .field("byo_key_env", &self.byo_key_env)
+            .field("byo_key_secret", &self.byo_key_secret)
             .field("role_defaults", &self.role_defaults)
             .finish()
     }
@@ -67,12 +75,25 @@ impl RuntimeConfig {
         Self {
             mode,
             byo_key_env,
+            byo_key_secret: None,
             role_defaults: RuntimeRoleDefaults::for_mode(mode),
             role_default_explicit_fields: RuntimeRoleDefaultExplicitFields::default(),
         }
     }
 
     pub fn apply_override(&mut self, value: RuntimeConfigOverride) {
+        // The BYO key's source is one choice: a layer that names one replaces
+        // both, before a BYO mode looks for one.
+        if value.byo_key_env.is_some() || value.byo_key_secret.is_some() {
+            self.byo_key_env = value.byo_key_env.map(|byo_key_env| {
+                if byo_key_env.trim().is_empty() {
+                    String::new()
+                } else {
+                    byo_key_env
+                }
+            });
+            self.byo_key_secret = value.byo_key_secret;
+        }
         if let Some(mode) = value.mode {
             let previous_mode = self.mode;
             self.mode = mode;
@@ -81,25 +102,41 @@ impl RuntimeConfig {
                 mode,
                 &self.role_default_explicit_fields,
             );
-            if self.byo_key_env.is_none() && mode == RuntimeMode::ByoCloudKey {
+            if self.names_no_byo_key() && mode == RuntimeMode::ByoCloudKey {
                 self.byo_key_env = Some(DEFAULT_BYO_KEY_ENV.to_owned());
             }
-        }
-        if let Some(byo_key_env) = value.byo_key_env {
-            self.byo_key_env = if byo_key_env.trim().is_empty() {
-                Some(String::new())
-            } else {
-                Some(byo_key_env)
-            };
         }
         if let Some(role_defaults) = value.role_defaults {
             self.role_defaults
                 .apply_overrides(role_defaults, &mut self.role_default_explicit_fields);
         }
-        if self.byo_key_env.is_none() && self.role_defaults.contains_mode(RuntimeMode::ByoCloudKey)
-        {
+        if self.names_no_byo_key() && self.role_defaults.contains_mode(RuntimeMode::ByoCloudKey) {
             self.byo_key_env = Some(DEFAULT_BYO_KEY_ENV.to_owned());
         }
+    }
+
+    /// Whether neither BYO key source is named: a BYO mode then reads the
+    /// default variable.
+    const fn names_no_byo_key(&self) -> bool {
+        self.byo_key_env.is_none() && self.byo_key_secret.is_none()
+    }
+
+    /// The BYO key's source: an environment variable or a vault secret's
+    /// name, not both.
+    pub(crate) fn validate_key_source(&self) -> anyhow::Result<()> {
+        if self.byo_key_env.is_some() && self.byo_key_secret.is_some() {
+            anyhow::bail!("runtime: set byo_key_env or byo_key_secret, not both");
+        }
+        if let Some(secret) = &self.byo_key_secret
+            && (secret.is_empty()
+                || secret.len() > 256
+                || !secret.bytes().all(|b| b.is_ascii_graphic()))
+        {
+            anyhow::bail!(
+                "runtime.byo_key_secret must name a vault secret (printable ASCII, no spaces); put the key itself in the vault, never in the config file"
+            );
+        }
+        Ok(())
     }
 
     pub fn route_for_role(&self, role: RuntimeRole) -> RuntimeRoute {
@@ -189,6 +226,9 @@ impl RuntimeConfig {
                 RuntimeRouteReason::ProviderModeMismatch,
             )
         } else if target.mode == RuntimeMode::ByoCloudKey
+            // A named vault secret is checked at the custody door when a
+            // call reads it.
+            && self.byo_key_secret.is_none()
             && !self
                 .byo_key_env
                 .as_deref()

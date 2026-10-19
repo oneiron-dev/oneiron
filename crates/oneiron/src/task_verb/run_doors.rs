@@ -98,7 +98,7 @@ pub struct RunBranchView {
     pub run_id: Option<String>,
     pub state: AttemptState,
     /// The projection of `state` every run-tree viewer reads. A cancelled
-    /// branch reads `failed` here; its cause is `cancel_state`'s.
+    /// branch reads `cancelled` here; its cause is `cancel_state`'s.
     pub agent_status: AgentRunStatus,
     /// The lease generation within this try.
     pub attempt_count: u32,
