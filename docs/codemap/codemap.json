@@ -1209,7 +1209,7 @@
      "purpose": "The live task-type tree (ARCH-0079 #task-type, OF-541): data inside the team-shape skill, so it forks and…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -2077,7 +2077,7 @@
      "path": "src/attempt_queue/engine/workflow.rs",
      "purpose": "Transactional point-claim and retry lineage reads for ordered host composition",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -6505,10 +6505,10 @@
       "EsignRateReceipt"
      ],
      "path": "src/blob_artifact/esign/rate.rs",
-     "purpose": "Vault-local, receipt-backed ceremony observation; rate never denies signing",
+     "purpose": "Vault-local, receipt-backed ceremony observation and signature-upload `[limits]` crossings; neither ever…",
      "surface": {
-      "const": 1,
-      "crate-vis": 1,
+      "const": 2,
+      "crate-vis": 3,
       "fn": 3,
       "struct": 2
      }
@@ -6635,7 +6635,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/reseal.rs",
-     "purpose": "Owner-tier reseal admission and bounded repair sweep",
+     "purpose": "Owner-tier reseal admission and the repair sweep",
      "surface": {
       "fn": 2
      }
@@ -18608,9 +18608,9 @@
      "purpose": "Multi-critic review node primitives",
      "surface": {
       "const": 3,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 2,
-      "fn": 14,
+      "fn": 15,
       "mod": 1,
       "re-export": 3,
       "struct": 7
@@ -19849,6 +19849,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "KeptAnswer",
+      "KeptAsk",
+      "KeptRole",
+      "KeptRoute"
+     ],
+     "path": "src/dreamer_consolidation/kept_ask.rs",
+     "purpose": "The ask a kept decision went up as, kept actor-free (FIX 4591)",
+     "surface": {
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
@@ -19968,7 +19984,6 @@
       "ConsolidationProvenanceHop",
       "ConsolidationProvenanceHopKind",
       "ConsolidationSink",
-      "KeptAsk",
       "KeptDecision",
       "PeerAnswerLineage",
       "PeerTrustDigestLine",
@@ -19981,7 +19996,8 @@
       "crate-vis": 9,
       "enum": 1,
       "fn": 10,
-      "struct": 7,
+      "re-export": 1,
+      "struct": 6,
       "trait": 2
      }
     },
@@ -21213,14 +21229,26 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "ForkPromoteReport"
+      "ForkPromoteReport",
+      "UpstreamSeat"
      ],
      "path": "src/dreamer_runner/maintenance/fork_promote.rs",
      "purpose": "The project tree fork (ARCH-0079 #task-type, OF-420): a project whose receipts disagree with the vault tree…",
      "surface": {
-      "const": 1,
+      "const": 2,
       "fn": 1,
-      "struct": 1
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/fork_promote/leaf_promote.rs",
+     "purpose": "The promote step of the project tree fork pass (ARCH-0079 #task-type, OF-420): a type a project's own tree…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -25656,6 +25684,30 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConversationSource",
+      "ConversationText",
+      "ConversationTrainingChoice",
+      "Eligibility",
+      "NoChoicesYet",
+      "PublisherTrainingSink",
+      "ShareOutcome",
+      "ShareWithheld",
+      "Withheld"
+     ],
+     "path": "src/feedback/conversation_training.rs",
+     "purpose": "\"Learn from my conversations\" (FIX 4489, OF-420): the one check real conversation text passes before it may…",
+     "surface": {
+      "const": 1,
+      "enum": 4,
+      "fn": 2,
+      "struct": 3,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "FeedbackExportOutcome",
       "FeedbackSendContext",
       "FeedbackSendOutcome",
@@ -25749,7 +25801,26 @@
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export",
      "surface": {
       "mod": 1,
-      "re-export": 6
+      "re-export": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FilteredFeedback",
+      "FilteredText",
+      "TextFilter",
+      "TextFilterError",
+      "TextFilterIdentity"
+     ],
+     "path": "src/feedback/redaction.rs",
+     "purpose": "The engine text filter (OF-420): the seam every free text crosses before it may leave the vault, and the…",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "struct": 3,
+      "trait": 1
      }
     },
     {
@@ -31114,7 +31185,7 @@
      "path": "src/llm/decision/answer_actor.rs",
      "purpose": "Who an answer names, and the erase that forgets it (FIX 3520): an ask's answerer, and the owner whose reason…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 2
      }
@@ -31758,6 +31829,7 @@
      "path": "src/llm/inference_admission.rs",
      "purpose": "One snapshot and one admission for policy-managed inference calls",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 13,
       "struct": 4
@@ -31862,7 +31934,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 11,
       "re-export": 14
      }
@@ -42993,10 +43065,10 @@
       "ProposalActor"
      ],
      "path": "src/repo_mutation/proposal/actor_erase.rs",
-     "purpose": "Whose act a repo proposal records, and the erase that forgets it (FIX 3520)",
+     "purpose": "Whose act a repo proposal records, and the erase that forgets it (FIX 3520): its proposer, the critics whose…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 3
      }
@@ -43055,7 +43127,7 @@
      "path": "src/repo_mutation/reviewed_stack.rs",
      "purpose": "Atomic critic admission and exact-prefix replay for a tested proposal stack",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -47751,7 +47823,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SharedSkillDelta",
@@ -47760,7 +47832,7 @@
      "path": "src/skill_hub/shared_delta.rs",
      "purpose": "Submitted-byte federation merge-back and company PR staging",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -60946,7 +61018,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60974,7 +61046,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61093,7 +61165,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 14,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -61991,7 +62063,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3783,
+   "source_files": 3787,
    "test_files": 902
   },
   "oneiron-android": {
@@ -80124,6 +80196,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback_redaction.rs",
+     "purpose": "The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -83921,6 +84003,13 @@
      "layout": "file+dir",
      "purpose": "Deployment-selected feedback transport"
     },
+    "feedback_redaction": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every…"
+    },
     "handler": {
      "files": 22,
      "impl_vault": false,
@@ -84155,7 +84244,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 808,
+   "source_files": 809,
    "test_files": 182
   },
   "oneiron-spawn": {

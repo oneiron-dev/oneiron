@@ -10700,6 +10700,7 @@ class TaskTypeTreePin(TypedDict):
     fork_ref: EntityId
     tree_version: int
     nodes: list[TaskTypeNodeSpec]
+    project_ref: NotRequired[EntityId | None]
 class TypeStamp(TypedDict):
     node_id: str
     tree_version: int
@@ -10715,7 +10716,9 @@ class TaskTypeTreeView(TypedDict):
 class TaskTypeTreePinReceipt(TypedDict):
     fork_ref: EntityId
     stored: TaskTypeTreeView
-    in_force: bool
+    requested_tree_version: NotRequired[int | None]
+    project_ref: NotRequired[EntityId | None]
+    in_force: NotRequired[bool | None]
 class TaskTypeTreeRead(TypedDict):
     project_ref: NotRequired[EntityId | None]
     tree_version: NotRequired[int | None]
@@ -12657,7 +12660,7 @@ class CallPurposeOtherBody(TypedDict):
     name: str
 class CallPurposeOther(TypedDict):
     other: CallPurposeOtherBody
-CallPurpose = Literal["extraction", "consolidation", "answer_gen", "auto_check", "tool_routing", "voice", "eval"] | CallPurposeOther
+CallPurpose = Literal["extraction", "consolidation", "answer_gen", "auto_check", "tool_routing", "voice", "eval", "autonomy.for_human", "autonomy.own_time"] | CallPurposeOther
 class DeterministicFallback(TypedDict):
     name: str
     config: NotRequired[Any | None]
@@ -16134,6 +16137,7 @@ class ConsolidationLineageView(TypedDict):
     job_ref: str
     tries: list[ConsolidationTryView]
     chain_complete: bool
+    latest_job_ref: NotRequired[str | None]
     steps: list[ConsolidationStepRef]
     next_step: NotRequired[str | None]
 EvidenceKind = Literal["turn", "message", "note", "asset_text", "import_record"]
