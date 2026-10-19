@@ -105,8 +105,11 @@ async fn publish_all(
     }
     let asked = vault.pending_bundle_publications().map_err(storage)?;
     // What is resolved goes: an attempt whose request has its result, and
-    // what was observed of a request no longer pending here.
-    attempt::settle(vault).map_err(storage)?;
+    // what was observed of a request no longer pending here. Housekeeping
+    // that fails stops no publication.
+    if let Err(error) = attempt::settle(vault) {
+        tracing::warn!(kind = ?error.kind(), "resolved bundle publication attempts stay for now");
+    }
     vault.keep_bundle_publication_observations(&asked);
     if asked.is_empty() {
         return Ok(());
