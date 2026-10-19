@@ -84,9 +84,9 @@ pub struct SealedCustodyChange<'a> {
     /// For a register, the `manifest_ref` the sealed record names, as the
     /// surface states it: this install attaches the manifest it resolves
     /// for it, for the holder to check the record against (CALLS
-    /// CUSTODY_MANIFEST_RECHECK). A register that states none carries the
-    /// vault's one current approved manifest, or an explicit "no manifest"
-    /// mark (CALLS CUSTODY_MANIFEST_UNSTATED).
+    /// CUSTODY_MANIFEST_RECHECK). A register that states none carries every
+    /// secret manifest the vault publishes, or an explicit "no manifest" or
+    /// "unread" mark (CALLS CUSTODY_MANIFEST_UNSTATED_MULTI).
     pub manifest_ref: Option<&'a str>,
     pub change: CustodyChange,
     pub secret_id: EntityId,
@@ -330,13 +330,15 @@ impl Vault {
     /// states the `manifest_ref` its record names gets the manifest this
     /// install resolves for it attached to its input, under the digest the
     /// request names, and its holder checks the record against it (CALLS
-    /// CUSTODY_MANIFEST_RECHECK). One that states none gets the vault's one
-    /// current approved manifest attached there, which its holder checks a
-    /// record naming it against, or, when none applies, an explicit "no
-    /// manifest" mark, and the receipt says it registers without a manifest
-    /// check (CALLS CUSTODY_MANIFEST_UNSTATED). The same input sent again is
-    /// the request already recorded (CALLS CUSTODY_RETRY). `surface` is
-    /// audit only.
+    /// CUSTODY_MANIFEST_RECHECK). One that states none gets every secret
+    /// manifest the vault publishes attached there; its holder checks the
+    /// record against the one it names, and its signed result says what it
+    /// checked or why it registered without a manifest check. When the vault
+    /// publishes none, or they cannot be read, an explicit mark says so
+    /// (CALLS CUSTODY_MANIFEST_UNSTATED_MULTI). An input past one row's bound
+    /// travels in numbered parts; none is left out. The same input sent
+    /// again is the request already recorded (CALLS CUSTODY_RETRY).
+    /// `surface` is audit only.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is no
@@ -371,8 +373,8 @@ impl Vault {
         // Read before the writer is taken: the manifest comes out of git.
         let (attached, manifest_check) = match (sealed.change, sealed.manifest_ref) {
             (CustodyChange::Register, None) => {
-                let (attached, check) = unstated_input(self, sealed.input);
-                (attached, Some(check))
+                let (attached, check) = unstated_input(self, sealed.input)?;
+                (Some(attached), Some(check))
             }
             (_, None) => (None, None),
             (CustodyChange::Register, Some(manifest_ref)) => {

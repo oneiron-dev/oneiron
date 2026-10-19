@@ -45,7 +45,10 @@ use crate::error::Result;
 pub use self::custody::{
     CUSTODY_RECIPIENTS_MAX, CUSTODY_WORK_REVISION_CONTEXT, CustodyChange, CustodyRecipientPermit,
 };
-pub use self::result::{OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkResult};
+pub use self::result::{
+    CustodyRegisterCheck, CustodyUncheckedReason, OwnerWorkOutcome, OwnerWorkRefusal,
+    OwnerWorkResult,
+};
 pub(super) use self::result::{decode_owner_work_result, owner_work_result_value};
 use super::*;
 
