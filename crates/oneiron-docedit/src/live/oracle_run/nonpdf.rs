@@ -69,29 +69,31 @@ pub(super) fn comments(
     let cases = comment_edits(&commented, &anchor)?;
     for (name, op, check) in cases {
         let id = format!("{}.{name}", commented.id);
-        let exported = match export(&commented, &[op], assets) {
-            Ok(exported) => exported,
-            Err(refused) => {
-                run.record(NON_PDF, &id, failed(refused.why()));
-                continue;
-            }
-        };
-        let output = Package::open(&exported.outcome.bytes, run.limits).map_err(text)?;
-        let kept = comment_kept(&commented.package, &output, &exported, &anchor);
-        run.record(NON_PDF, &id, verdict(kept));
-        record_edit(run, &commented, &output, &exported, &id);
-        run.candidate(Emit {
-            id: &id,
-            bytes: &exported.outcome.bytes,
-            steps: &[ORACLE, NON_PDF],
-            lane: Lane::Core,
-            checks: vec![
-                comment.clone(),
-                check,
-                OfficeCheck::Slides { count: 1 },
-                OfficeCheck::Pages { count: 1 },
-            ],
-            baseline: &commented.defects,
+        run.case(&id, |run| {
+            let exported = match export(&commented, &[op], assets) {
+                Ok(exported) => exported,
+                Err(refused) => {
+                    run.record(NON_PDF, &id, failed(refused.why()));
+                    return Ok(());
+                }
+            };
+            let output = Package::open(&exported.outcome.bytes, run.limits).map_err(text)?;
+            let kept = comment_kept(&commented.package, &output, &exported, &anchor);
+            run.record(NON_PDF, &id, verdict(kept));
+            record_edit(run, &commented, &output, &exported, &id);
+            run.candidate(Emit {
+                id: &id,
+                bytes: &exported.outcome.bytes,
+                steps: &[ORACLE, NON_PDF],
+                lane: Lane::Core,
+                checks: vec![
+                    comment.clone(),
+                    check,
+                    OfficeCheck::Slides { count: 1 },
+                    OfficeCheck::Pages { count: 1 },
+                ],
+                baseline: &commented.defects,
+            })
         })?;
     }
     Ok(())
@@ -146,7 +148,7 @@ fn record_edit(run: &mut Run, base: &Deck, output: &Package, exported: &Exported
     run.record(
         FIXED_POINT,
         id,
-        checks::fixed_point(&exported.deck, &exported.outcome, run.limits),
+        checks::fixed_point(&exported.deck, &base.package, &exported.outcome, run.limits),
     );
 }
 
@@ -270,51 +272,74 @@ pub(super) fn animation(run: &mut Run, animated: &Deck, typed: Option<&[Vec<Stri
     let mut ids = Ids::above(&animated.deck);
     for case in &BUILD_CASES {
         let id = format!("{}.{}", animated.id, case.name);
-        let changed = rebuilt(case, original, &mut ids)?;
-        let op = DeckOp::SetText {
-            node: anchor.shape,
-            body: changed,
-        };
-        let exported = match export(animated, &[op], &NoAssets) {
-            Ok(exported) => exported,
-            Err(edits::Refused::Export(error)) if case.may_refuse && animation_refusal(&error) => {
-                run.record(NON_PDF, &id, StepOutcome::Passed);
-                continue;
-            }
-            Err(refused) => {
-                run.record(NON_PDF, &id, failed(refused.why()));
-                continue;
-            }
-        };
-        let ranges = built_ranges(&exported.outcome, run.limits, &anchor)?;
-        let held = !ranges.is_empty() && ranges.iter().all(|range| *range == case.range);
-        run.record(
-            NON_PDF,
-            &id,
-            if held {
-                StepOutcome::Passed
-            } else {
-                failed(format!(
-                    "the build targets paragraphs {ranges:?}; it must target {:?}",
-                    case.range
-                ))
-            },
-        );
-        let output = Package::open(&exported.outcome.bytes, run.limits).map_err(text)?;
-        record_edit(run, animated, &output, &exported, &id);
-        let slides = checks::slides(&exported.deck).len();
-        run.candidate(Emit {
-            id: &id,
-            bytes: &exported.outcome.bytes,
-            steps: &[ORACLE, NON_PDF],
-            lane: Lane::Core,
-            checks: vec![
-                timing(case.range),
-                OfficeCheck::Slides { count: slides },
-                OfficeCheck::Pages { count: slides },
-            ],
-            baseline: &animated.defects,
+        run.case(&id, |run| {
+            build_case(
+                run,
+                animated,
+                (&anchor, &timing),
+                case,
+                original,
+                &mut ids,
+                &id,
+            )
         })?;
     }
     Ok(())
+}
+
+/// One text edit of the animated variant's built shape.
+fn build_case(
+    run: &mut Run,
+    animated: &Deck,
+    (anchor, timing): (&Anchor, &dyn Fn((u32, u32)) -> OfficeCheck),
+    case: &BuildCase,
+    original: &TextBody,
+    ids: &mut Ids,
+    id: &str,
+) -> Res<()> {
+    let changed = rebuilt(case, original, ids)?;
+    let op = DeckOp::SetText {
+        node: anchor.shape,
+        body: changed,
+    };
+    let exported = match export(animated, &[op], &NoAssets) {
+        Ok(exported) => exported,
+        Err(edits::Refused::Export(error)) if case.may_refuse && animation_refusal(&error) => {
+            run.record(NON_PDF, id, StepOutcome::Passed);
+            return Ok(());
+        }
+        Err(refused) => {
+            run.record(NON_PDF, id, failed(refused.why()));
+            return Ok(());
+        }
+    };
+    let ranges = built_ranges(&exported.outcome, run.limits, anchor)?;
+    let held = !ranges.is_empty() && ranges.iter().all(|range| *range == case.range);
+    run.record(
+        NON_PDF,
+        id,
+        if held {
+            StepOutcome::Passed
+        } else {
+            failed(format!(
+                "the build targets paragraphs {ranges:?}; it must target {:?}",
+                case.range
+            ))
+        },
+    );
+    let output = Package::open(&exported.outcome.bytes, run.limits).map_err(text)?;
+    record_edit(run, animated, &output, &exported, id);
+    let slides = checks::slides(&exported.deck).len();
+    run.candidate(Emit {
+        id,
+        bytes: &exported.outcome.bytes,
+        steps: &[ORACLE, NON_PDF],
+        lane: Lane::Core,
+        checks: vec![
+            timing(case.range),
+            OfficeCheck::Slides { count: slides },
+            OfficeCheck::Pages { count: slides },
+        ],
+        baseline: &animated.defects,
+    })
 }
