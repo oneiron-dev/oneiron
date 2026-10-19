@@ -5,6 +5,11 @@
 //! the host. Cookies and the profile live and die in that guest; raw CDP
 //! never leaves this crate.
 //!
+//! An act resolves its target once: the live handle's own node, still in
+//! its document, or, once that node is gone, the row its locator names now,
+//! which the answer and the receipt name as `rebound`. The same resolved
+//! row is classified, pressed, acted on and receipted.
+//!
 //! A click whose control name says it sends, pays, signs in, publishes or
 //! deletes falls in an effect class. The vault's grant for the class, as
 //! the host resolved it into a [`SendPolicy`], decides the press: one per
@@ -40,17 +45,18 @@
 
 use crate::cdp::Pipe;
 use crate::driver::CdpDriver;
+use crate::driver::pages::Base;
 use crate::{
     AbandonedTakeover, BatchInput, BatchOutput, BrowserDriver, BrowserError, BrowserPersonInput,
     BrowserTab, ClickInput, CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE, EFFECT_PAY,
     EFFECT_PUBLISH, EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt, ExpectInput, ExpectOutput,
-    FindInput, FindOutput, HandoverInput, HandoverOutput, ImageOutput, LibraryFindInput,
-    LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput,
-    LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider, Observation,
-    ObservationPage, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput, ProposeOutput,
-    ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger,
-    SelectInput, SendPolicy, TabSwitch, Takeover, TakeoverRecord, TypeInput, ViewInput,
-    WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
+    FindInput, FindOutput, HandleInfo, HandoverInput, HandoverOutput, ImageOutput,
+    LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
+    LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider,
+    Observation, ObservationPage, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput,
+    ProposeOutput, ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput,
+    ScreenshotTrigger, SelectInput, SendPolicy, TabSwitch, Takeover, TakeoverRecord, TypeInput,
+    ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -499,6 +505,8 @@ impl BrowserSession {
             title: observation.title.clone(),
             target: target.map(|row| row.target.clone()),
             target_name: target.map(|row| row.name.clone()),
+            target_locator: target.map(|row| row.locator.clone()),
+            rebound: observation.rebound.clone(),
             effect_class: effect_class.map(str::to_owned),
             press: press.as_str().to_owned(),
             screenshot,
@@ -629,15 +637,15 @@ impl BrowserDriver for BrowserSession {
     }
 
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError> {
-        let row = self.live()?.row(&input.target)?;
-        let class = effect_class(&row.name);
+        let target = self.live()?.resolve_target(&input.target)?;
+        let class = effect_class(&target.row.name);
         let press = match class {
-            Some(class) => self.press_for(class, &row)?,
+            Some(class) => self.press_for(class, &target.row)?,
             None => PressMode::None,
         };
-        let mut observation = self.driver.click(input)?;
-        let class = receipt_class(class, Some(&row));
-        self.receipt("click", Some(&row), class, press, &mut observation);
+        let mut observation = self.driver.click_target(&target, &Base::of(input.base))?;
+        let class = receipt_class(class, Some(&target.row));
+        self.receipt("click", Some(&target.row), class, press, &mut observation);
         Ok(observation)
     }
 
@@ -649,25 +657,35 @@ impl BrowserDriver for BrowserSession {
             (Some(class), Some(row)) => self.press_for(class, row)?,
             _ => PressMode::None,
         };
-        let mut observation = self.driver.click_point(x, y)?;
+        let mut observation = self.driver.click_point(x, y, &Base::of(input.base))?;
         let class = receipt_class(class, row.as_ref());
         self.receipt("click_at", row.as_ref(), class, press, &mut observation);
         Ok(observation)
     }
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
-        let row = self.live()?.row(&input.target)?;
-        let mut observation = self.driver.type_text(input)?;
-        self.receipt("type", Some(&row), None, PressMode::None, &mut observation);
+        let target = self.live()?.resolve_target(&input.target)?;
+        let base = Base::of(input.base);
+        let mut observation = self
+            .driver
+            .type_target(&target, &input.text, input.clear, &base)?;
+        self.receipt(
+            "type",
+            Some(&target.row),
+            None,
+            PressMode::None,
+            &mut observation,
+        );
         Ok(observation)
     }
 
     fn select(&mut self, input: SelectInput) -> Result<Observation, BrowserError> {
-        let row = self.live()?.row(&input.target)?;
-        let mut observation = self.driver.select(input)?;
+        let target = self.live()?.resolve_target(&input.target)?;
+        let base = Base::of(input.base);
+        let mut observation = self.driver.select_target(&target, &input.option, &base)?;
         self.receipt(
             "select",
-            Some(&row),
+            Some(&target.row),
             None,
             PressMode::None,
             &mut observation,
@@ -701,6 +719,10 @@ impl BrowserDriver for BrowserSession {
 
     fn image_bytes(&self, image: &str) -> Option<Vec<u8>> {
         self.driver.image(image).map(<[u8]>::to_vec)
+    }
+
+    fn handle_info(&self, handle: &str) -> Option<HandleInfo> {
+        self.driver.handle_info(handle)
     }
 
     fn library_find(&mut self, input: LibraryFindInput) -> Result<LibraryFindOutput, BrowserError> {

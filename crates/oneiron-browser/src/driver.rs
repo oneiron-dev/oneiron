@@ -14,17 +14,27 @@
 //! act's observation reads, and a front tab that closes while the agent
 //! drives it gives way to its opener. The agent's next answer names the
 //! switch (`switched`).
+//!
+//! Every row the driver reads gets its live handle at one place
+//! (`handles`); a settle poll reads the outline without minting. An act
+//! resolves its target once and keeps that node from its checks to its
+//! effect.
+
+mod handles;
+pub(crate) mod pages;
 
 use crate::cdp::Pipe;
+use crate::observation::{HandleInfo, Rebound, match_target, rows_named};
 use crate::outline::{self, Line};
 use crate::{
     BrowserDriver, BrowserError, BrowserPersonInput, BrowserTab, ClickInput, CropInput,
     ExpectInput, ExpectOutput, FindInput, FindOutput, ImageOutput, Observation, ObservationPage,
-    ObserveInput, OpenInput, PartialTree, PointInput, Row, ScreenshotInput, ScreenshotOutput,
-    SelectInput, TabSwitch, TabSwitchCause, TypeInput, ViewInput, WaitForInput, WaitForOutput,
-    ZoomInput,
+    ObserveInput, OpenInput, PointInput, Row, ScreenshotInput, ScreenshotOutput, SelectInput,
+    TabSwitch, TabSwitchCause, TypeInput, ViewInput, WaitForInput, WaitForOutput, ZoomInput,
 };
 use base64::Engine as _;
+use handles::Handles;
+use pages::{Base, Observations, Read, find_cursor, session_token, wait_cursor};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Cursor;
@@ -41,16 +51,8 @@ const WAIT_DEFAULT: Duration = Duration::from_secs(5);
 /// The viewport, so a screenshot is never wider than 1,366 px.
 const WIDTH: u32 = 1366;
 const HEIGHT: u32 = 900;
-/// Observations a `since` diff can name, and answers of each kind held for
-/// their later pages.
-const HISTORY: usize = 8;
 /// Screenshots the driver holds for a later image read.
 const MEDIA: usize = 16;
-/// The most bytes of rows, then removed refs, as JSON, one observation
-/// answer carries (Rule 5: a long outline goes on in pages, never cut).
-/// Half the 512 KiB past which a code-mode answer crosses as a stored
-/// result, so a page crosses inline with its receipt and manifest.
-const OBSERVE_PAGE_BYTES: usize = 256 * 1024;
 /// Wheel notches a person's scroll moves when it names none, and the CSS
 /// pixels of one.
 const SCROLL_NOTCHES: u32 = 3;
@@ -73,9 +75,11 @@ pub(crate) struct CdpDriver {
     /// browser's startup page): never followed.
     ignored: HashSet<String>,
     seq: u64,
-    history: VecDeque<(u64, HashMap<String, Row>)>,
     media: VecDeque<Held>,
-    pages: Pages,
+    /// The observations a later one may edit, and the paged answers.
+    pages: Observations,
+    /// Every live handle the session minted.
+    handles: Handles,
     wait_cap: Duration,
     /// The agent's move to another tab since its last answer, for that
     /// answer to name.
@@ -93,252 +97,20 @@ struct Tab {
     opener: Option<String>,
 }
 
-/// The answers a driver holds for their later pages (Rule 5): its last
-/// [`HISTORY`] paged observations and its last [`HISTORY`] paged row
-/// answers (`find`, `wait_for`). An answer that fits one page is not held.
-#[derive(Default)]
-pub(crate) struct Pages {
-    observations: VecDeque<Paged>,
-    rows: VecDeque<(u64, Vec<Row>)>,
-    /// The number the last held row answer took.
-    rows_seq: u64,
-}
-
-/// An observation answered in pages: every row and removed ref it had, so
-/// a cursor reads on from where its page ended. A partial one (a desktop
-/// window's cut tree) is held whole or not, for its walk on.
-struct Paged {
-    seq: u64,
-    url: String,
-    title: String,
-    full: bool,
-    no_tree: bool,
-    partial: Option<PartialTree>,
-    rows: Vec<Row>,
-    removed: Vec<String>,
-}
-
-impl Paged {
-    /// The held observation with `rows` and `removed` of its own.
-    fn observation(&self, rows: Vec<Row>, removed: Vec<String>) -> Observation {
-        Observation {
-            seq: self.seq,
-            url: self.url.clone(),
-            title: self.title.clone(),
-            full: self.full,
-            rows,
-            removed,
-            receipt: None,
-            library: Vec::new(),
-            no_tree: self.no_tree,
-            partial: self.partial.clone(),
-        }
-    }
-
-    /// Where its rows and removed refs end: a partial observation's walk
-    /// on starts there.
-    fn end(&self) -> (usize, usize) {
-        (self.rows.len(), self.removed.len())
-    }
-}
-
-impl Pages {
-    /// `observation` as its first page; the rest is held for its cursor.
-    /// A partial observation is held even when it fits one page: its last
-    /// page's cursor walks on (Rule 5).
-    pub(crate) fn first(&mut self, mut observation: Observation) -> ObservationPage {
-        let (rows, removed, next) = page_of(&observation.rows, &observation.removed, (0, 0));
-        let next = match next {
-            Some(next) => next,
-            None if observation.partial.is_some() => {
-                (observation.rows.len(), observation.removed.len())
-            }
-            None => return ObservationPage::whole(observation),
-        };
-        let seq = observation.seq;
-        let held = Paged {
-            seq,
-            url: observation.url.clone(),
-            title: observation.title.clone(),
-            full: observation.full,
-            no_tree: observation.no_tree,
-            partial: observation.partial.clone(),
-            rows: std::mem::replace(&mut observation.rows, rows),
-            removed: std::mem::replace(&mut observation.removed, removed),
-        };
-        self.observations.retain(|paged| paged.seq != seq);
-        self.observations.push_back(held);
-        if self.observations.len() > HISTORY {
-            self.observations.pop_front();
-        }
-        ObservationPage {
-            observation,
-            next: Some(cursor_of(seq, next)),
-        }
-    }
-
-    /// The page of a held observation that `cursor` starts. The last page
-    /// of a partial one still names a cursor, at its end, to walk on.
-    pub(crate) fn next(&self, cursor: &str) -> Result<ObservationPage, BrowserError> {
-        let (held, from) = self.continued(cursor)?;
-        let (rows, removed, next) = page_of(&held.rows, &held.removed, from);
-        let next = next.or_else(|| held.partial.is_some().then(|| held.end()));
-        Ok(ObservationPage {
-            observation: held.observation(rows, removed),
-            next: next.map(|at| cursor_of(held.seq, at)),
-        })
-    }
-
-    /// The held partial observation `cursor` walks on from: its seq, its
-    /// url and where its walk stopped, when the cursor is at its end, or,
-    /// with `anywhere`, at any place in it. `None` for any other cursor.
-    pub(crate) fn walk_on(
-        &self,
-        cursor: &str,
-        anywhere: bool,
-    ) -> Result<Option<(u64, String, PartialTree)>, BrowserError> {
-        let (held, from) = self.continued(cursor)?;
-        Ok(held
-            .partial
-            .clone()
-            .filter(|_| anywhere || from == held.end())
-            .map(|cut| (held.seq, held.url.clone(), cut)))
-    }
-
-    /// Joins the rows a walk on read, past those held observation `seq`
-    /// already has, to it, with the walk's own cut, or none once the walk
-    /// reached the tree's end.
-    pub(crate) fn walked_on(&mut self, seq: u64, rows: Vec<Row>, partial: Option<PartialTree>) {
-        let Some(held) = self.observations.iter_mut().find(|held| held.seq == seq) else {
-            return;
-        };
-        let known: HashSet<String> = held.rows.iter().map(|row| row.target.clone()).collect();
-        held.rows
-            .extend(rows.into_iter().filter(|row| !known.contains(&row.target)));
-        held.partial = partial;
-    }
-
-    /// The whole rest of a held observation from `cursor`, unpaged.
-    pub(crate) fn rest(&self, cursor: &str) -> Result<Observation, BrowserError> {
-        let (held, (rows, removed)) = self.continued(cursor)?;
-        Ok(held.observation(
-            held.rows.get(rows..).unwrap_or_default().to_vec(),
-            held.removed.get(removed..).unwrap_or_default().to_vec(),
-        ))
-    }
-
-    /// A row answer's first page, and the cursor of the next when the rows
-    /// go on; the rest is held for it.
-    pub(crate) fn first_rows(&mut self, rows: Vec<Row>) -> (Vec<Row>, Option<String>) {
-        let (page, _, Some((at, _))) = page_of(&rows, &[], (0, 0)) else {
-            return (rows, None);
-        };
-        self.rows_seq += 1;
-        let answer = self.rows_seq;
-        self.rows.push_back((answer, rows));
-        if self.rows.len() > HISTORY {
-            self.rows.pop_front();
-        }
-        (page, Some(rows_cursor(answer, at)))
-    }
-
-    /// The page of a held row answer that `cursor` starts, and the cursor
-    /// of the next when the rows go on.
-    pub(crate) fn next_rows(
-        &self,
-        cursor: &str,
-    ) -> Result<(Vec<Row>, Option<String>), BrowserError> {
-        let parsed = cursor
-            .strip_prefix('r')
-            .and_then(|rest| rest.split_once('.'))
-            .and_then(|(answer, at)| {
-                Some((answer.parse::<u64>().ok()?, at.parse::<usize>().ok()?))
-            });
-        let Some((answer, at)) = parsed else {
-            return Err(BrowserError::Input(format!("{cursor} is no row cursor")));
-        };
-        let (_, rows) = self
-            .rows
-            .iter()
-            .find(|(held, _)| *held == answer)
-            .ok_or_else(|| {
-                BrowserError::Input(format!(
-                    "answer {answer} is no longer held for its later pages; ask again"
-                ))
-            })?;
-        let (page, _, next) = page_of(rows, &[], (at, 0));
-        Ok((page, next.map(|(at, _)| rows_cursor(answer, at))))
-    }
-
-    /// Forgets every held answer.
-    pub(crate) fn clear(&mut self) {
-        self.observations.clear();
-        self.rows.clear();
-    }
-
-    /// The paged observation `cursor` reads on, and where its next page
-    /// starts. A cursor whose observation has left the held ones refuses.
-    fn continued(&self, cursor: &str) -> Result<(&Paged, (usize, usize)), BrowserError> {
-        let parsed = cursor.split_once('.').and_then(|(seq, at)| {
-            let (rows, removed) = at.split_once('.')?;
-            Some((
-                seq.parse::<u64>().ok()?,
-                (rows.parse::<usize>().ok()?, removed.parse::<usize>().ok()?),
-            ))
-        });
-        let Some((seq, from)) = parsed else {
-            return Err(BrowserError::Input(format!(
-                "{cursor} is no observation cursor"
-            )));
-        };
-        let held = self
-            .observations
-            .iter()
-            .find(|held| held.seq == seq)
-            .ok_or_else(|| {
-                BrowserError::Input(format!(
-                    "observation {seq} is no longer held for its later pages; observe again"
-                ))
-            })?;
-        Ok((held, from))
-    }
-}
-
-/// The cursor a `find` reads on from, when it names one: a cursor beside a
-/// role or a name refuses.
-pub(crate) fn find_cursor(input: &FindInput) -> Result<Option<&str>, BrowserError> {
-    match input.cursor.as_deref() {
-        Some(_) if input.role.is_some() || input.name.is_some() => Err(BrowserError::Input(
-            "find reads a role and name or a cursor, not both".to_owned(),
-        )),
-        cursor => Ok(cursor),
-    }
-}
-
-/// The cursor a `wait_for` reads on from, when it names one: a cursor
-/// beside what to wait for refuses.
-pub(crate) fn wait_cursor(input: &WaitForInput) -> Result<Option<&str>, BrowserError> {
-    match input.cursor.as_deref() {
-        Some(_)
-            if !input.targets.is_empty()
-                || input.role.is_some()
-                || input.name.is_some()
-                || input.timeout_ms.is_some() =>
-        {
-            Err(BrowserError::Input(
-                "wait_for waits for rows or reads on from a cursor, not both".to_owned(),
-            ))
-        }
-        cursor => Ok(cursor),
-    }
-}
-
 /// One key as CDP's key events name it.
 struct KeySpec {
     key: String,
     code: String,
     vk: u32,
     text: Option<String>,
+}
+
+/// One act's target, resolved once: its row as read now, its DOM node, and
+/// how it rebound when the handle named no longer stood.
+pub(crate) struct Target {
+    pub(crate) row: Row,
+    node: Value,
+    rebound: Option<Rebound>,
 }
 
 /// An image the driver holds: its content ref, its PNG bytes and what of
@@ -408,9 +180,9 @@ impl CdpDriver {
             }],
             ignored,
             seq: 0,
-            history: VecDeque::new(),
             media: VecDeque::new(),
-            pages: Pages::default(),
+            pages: Observations::default(),
+            handles: Handles::new(session_token()),
             wait_cap,
             switched: None,
             agent_known: HashSet::from([target.clone()]),
@@ -597,13 +369,19 @@ impl CdpDriver {
             .call(Some(&self.session), method, params, Instant::now() + CALL)
     }
 
+    /// The front tab's accessibility nodes as they are now.
+    fn ax_nodes(&self) -> Result<Vec<Value>, BrowserError> {
+        let mut tree = self.page("Accessibility.getFullAXTree", json!({}))?;
+        Ok(match tree.get_mut("nodes").map(Value::take) {
+            Some(Value::Array(nodes)) => nodes,
+            _ => Vec::new(),
+        })
+    }
+
+    /// The outline as it is now, unminted: a settle poll's read, which
+    /// mints no handle.
     fn lines(&self) -> Result<Vec<Line>, BrowserError> {
-        let tree = self.page("Accessibility.getFullAXTree", json!({}))?;
-        let nodes = tree
-            .get("nodes")
-            .and_then(Value::as_array)
-            .map_or(&[][..], Vec::as_slice);
-        Ok(outline::lines(nodes))
+        Ok(outline::lines(&self.ax_nodes()?))
     }
 
     fn fingerprint(&self) -> Result<blake3::Hash, BrowserError> {
@@ -661,57 +439,53 @@ impl CdpDriver {
         Ok((field("url"), field("title")))
     }
 
-    fn observation(&mut self, since: Option<u64>) -> Result<Observation, BrowserError> {
-        let rows: Vec<Row> = self.lines()?.into_iter().map(|line| line.row).collect();
+    /// The page as it is now, whole or as an edit of `base`.
+    fn observation(&mut self, base: &Base) -> Result<Observation, BrowserError> {
+        let capture = self.capture()?;
         let (url, title) = self.page_info()?;
         self.seq += 1;
-        let current: HashMap<String, Row> = rows
-            .iter()
-            .map(|row| (row.target.clone(), row.clone()))
-            .collect();
-        let before = since
-            .and_then(|since| self.history.iter().find(|(seq, _)| *seq == since))
-            .map(|(_, rows)| rows);
-        let (full, shown, removed) = match before {
-            None => (true, rows, Vec::new()),
-            Some(before) => {
-                let shown = rows
-                    .into_iter()
-                    .filter(|row| before.get(&row.target) != Some(row))
-                    .collect();
-                let removed = before
-                    .keys()
-                    .filter(|r| !current.contains_key(*r))
-                    .cloned()
-                    .collect();
-                (false, shown, removed)
-            }
-        };
-        self.history.push_back((self.seq, current));
-        if self.history.len() > HISTORY {
-            self.history.pop_front();
-        }
-        Ok(Observation {
+        let read = Read {
             seq: self.seq,
+            scope: capture.scope,
             url,
             title,
-            full,
-            rows: shown,
-            removed,
-            receipt: None,
-            library: Vec::new(),
+            rows: capture.rows,
             no_tree: false,
             partial: None,
-        })
+        };
+        Ok(self.pages.observe(read, base))
     }
 
-    /// The row `target` names on the page as it is now.
-    pub(crate) fn row(&self, target: &str) -> Result<Row, BrowserError> {
-        self.lines()?
-            .into_iter()
-            .map(|line| line.row)
-            .find(|row| row.target == target)
-            .ok_or_else(|| BrowserError::StaleRef(target.to_owned()))
+    /// The row `target` names on the page as it is now, and its DOM node,
+    /// for one act to classify, press, act on and receipt. A live handle
+    /// takes its own node while its document holds it and it is still
+    /// connected; once the node is gone, the first row its locator names now
+    /// (`rebound`). A locator takes the first row carrying it. An unknown
+    /// handle, or no row, is a stale ref.
+    pub(crate) fn resolve_target(&mut self, target: &str) -> Result<Target, BrowserError> {
+        let stale = || BrowserError::StaleRef(target.to_owned());
+        let capture = self.capture()?;
+        let known = self.handles.info(target);
+        let (at, rebound) = match_target(target, &capture.rows, &capture.scope, known.as_ref())
+            .ok_or_else(stale)?;
+        let node = capture.nodes[at].ok_or_else(stale)?;
+        let resolved = self.page("DOM.resolveNode", json!({"backendNodeId": node}))?;
+        let object = resolved
+            .pointer("/object/objectId")
+            .cloned()
+            .ok_or_else(stale)?;
+        let node = json!({"backendNodeId": node, "objectId": object});
+        // Read in its document now, and still in it when resolved.
+        let connected =
+            self.call_on(&node, "function() { return this.isConnected; }", json!([]))?;
+        if connected != Value::Bool(true) {
+            return Err(stale());
+        }
+        Ok(Target {
+            row: capture.rows[at].clone(),
+            node,
+            rebound,
+        })
     }
 
     /// The PNG bytes of a screenshot this driver took, while it holds them.
@@ -797,7 +571,7 @@ impl CdpDriver {
     /// The outline row at viewport point (`x`, `y`): the row read from the
     /// element there, or from its nearest ancestor that makes one. None when
     /// no row covers the point.
-    pub(crate) fn row_at(&self, x: f64, y: f64) -> Result<Option<Row>, BrowserError> {
+    pub(crate) fn row_at(&mut self, x: f64, y: f64) -> Result<Option<Row>, BrowserError> {
         let hit = self.page(
             "DOM.getNodeForLocation",
             json!({"x": x.round() as i64, "y": y.round() as i64, "ignorePointerEventsNone": true}),
@@ -805,12 +579,9 @@ impl CdpDriver {
         let Some(hit) = hit.get("backendNodeId").and_then(Value::as_u64) else {
             return Ok(None);
         };
-        let tree = self.page("Accessibility.getFullAXTree", json!({}))?;
-        let nodes = tree
-            .get("nodes")
-            .and_then(Value::as_array)
-            .map_or(&[][..], Vec::as_slice);
-        let lines = outline::lines(nodes);
+        // The rows come minted, as every read's do.
+        let capture = self.capture()?;
+        let nodes = capture.ax.as_slice();
         let by_id: HashMap<&str, &Value> = nodes
             .iter()
             .filter_map(|node| Some((node.get("nodeId")?.as_str()?, node)))
@@ -823,9 +594,9 @@ impl CdpDriver {
                 break;
             };
             if let Some(at) = backend(current)
-                && let Some(line) = lines.iter().find(|line| line.backend_node == Some(at))
+                && let Some(row) = capture.nodes.iter().position(|read| *read == Some(at))
             {
-                return Ok(Some(line.row.clone()));
+                return Ok(Some(capture.rows[row].clone()));
             }
             node = current
                 .get("parentId")
@@ -846,9 +617,116 @@ impl CdpDriver {
         Ok(())
     }
 
-    /// Clicks at viewport point (`x`, `y`), then returns the settled page.
-    pub(crate) fn click_point(&mut self, x: f64, y: f64) -> Result<Observation, BrowserError> {
-        self.act(|driver| driver.mouse_click(x, y))
+    /// Clicks at viewport point (`x`, `y`), then returns the settled page,
+    /// as an edit of `base`.
+    pub(crate) fn click_point(
+        &mut self,
+        x: f64,
+        y: f64,
+        base: &Base,
+    ) -> Result<Observation, BrowserError> {
+        self.act(base, |driver| driver.mouse_click(x, y))
+    }
+
+    /// Clicks resolved `target`, then returns the settled page, as an edit
+    /// of `base`, naming the target's rebound. The click lands at the centre
+    /// of the target's box, and only when the target, not a cover, is there.
+    pub(crate) fn click_target(
+        &mut self,
+        target: &Target,
+        base: &Base,
+    ) -> Result<Observation, BrowserError> {
+        let node = &target.node;
+        let covered = || BrowserError::Covered(target.row.target.clone());
+        self.page(
+            "DOM.scrollIntoViewIfNeeded",
+            json!({"backendNodeId": node["backendNodeId"]}),
+        )?;
+        let model = self.page(
+            "DOM.getBoxModel",
+            json!({"backendNodeId": node["backendNodeId"]}),
+        )?;
+        let quad: Vec<f64> = model
+            .pointer("/model/content")
+            .and_then(Value::as_array)
+            .map(|q| q.iter().filter_map(Value::as_f64).collect())
+            .unwrap_or_default();
+        if quad.len() != 8 {
+            return Err(covered());
+        }
+        let x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4.0;
+        let y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4.0;
+        // The point must land on the element or inside it, not on a cover.
+        let hit = self.call_on(
+            node,
+            "function(x, y) { const e = document.elementFromPoint(x, y); return !!e && (e === this || this.contains(e)); }",
+            json!([{"value": x}, {"value": y}]),
+        )?;
+        if hit != Value::Bool(true) {
+            return Err(covered());
+        }
+        let mut observation = self.click_point(x, y, base)?;
+        observation.rebound.clone_from(&target.rebound);
+        Ok(observation)
+    }
+
+    /// Types `text` into resolved `target` (replacing its text with
+    /// `clear`), then returns the settled page, as `click_target` does.
+    pub(crate) fn type_target(
+        &mut self,
+        target: &Target,
+        text: &str,
+        clear: bool,
+        base: &Base,
+    ) -> Result<Observation, BrowserError> {
+        let node = &target.node;
+        let mut observation = self.act(base, |driver| {
+            driver.page("DOM.focus", json!({"backendNodeId": node["backendNodeId"]}))?;
+            if clear {
+                driver.call_on(
+                    node,
+                    "function() { if (typeof this.select === 'function') this.select(); else getSelection().selectAllChildren(this); }",
+                    json!([]),
+                )?;
+            }
+            driver.page("Input.insertText", json!({"text": text}))?;
+            Ok(())
+        })?;
+        observation.rebound.clone_from(&target.rebound);
+        Ok(observation)
+    }
+
+    /// Picks `option` of resolved `target`, a `<select>`, by its label,
+    /// text or value, then returns the settled page, as `click_target` does.
+    pub(crate) fn select_target(
+        &mut self,
+        target: &Target,
+        option: &str,
+        base: &Base,
+    ) -> Result<Observation, BrowserError> {
+        let node = &target.node;
+        let mut observation = self.act(base, |driver| {
+            let picked = driver.call_on(
+                node,
+                "function(want) {
+                    if (this.tagName !== 'SELECT') return false;
+                    const o = [...this.options].find(o => o.label === want || o.text.trim() === want || o.value === want);
+                    if (!o) return false;
+                    this.value = o.value;
+                    this.dispatchEvent(new Event('input', {bubbles: true}));
+                    this.dispatchEvent(new Event('change', {bubbles: true}));
+                    return true;
+                }",
+                json!([{"value": option}]),
+            )?;
+            if picked == Value::Bool(true) {
+                Ok(())
+            } else {
+                Err(BrowserError::NoOption(target.row.target.clone()))
+            }
+        })?;
+        observation.rebound.clone_from(&target.rebound);
+        Ok(observation)
     }
 
     /// Blacks out password, card and one-time-code fields, or restores them.
@@ -865,24 +743,6 @@ impl CdpDriver {
             json!({"expression": script, "returnByValue": true}),
         )?;
         Ok(())
-    }
-
-    /// The DOM node behind `target` on the page as it is now.
-    fn resolve(&self, target: &str) -> Result<(Row, Value), BrowserError> {
-        let line = self
-            .lines()?
-            .into_iter()
-            .find(|line| line.row.target == target)
-            .ok_or_else(|| BrowserError::StaleRef(target.to_owned()))?;
-        let node = line
-            .backend_node
-            .ok_or_else(|| BrowserError::StaleRef(target.to_owned()))?;
-        let resolved = self.page("DOM.resolveNode", json!({"backendNodeId": node}))?;
-        let object = resolved
-            .pointer("/object/objectId")
-            .cloned()
-            .ok_or_else(|| BrowserError::StaleRef(target.to_owned()))?;
-        Ok((line.row, json!({"backendNodeId": node, "objectId": object})))
     }
 
     fn call_on(&self, node: &Value, function: &str, args: Value) -> Result<Value, BrowserError> {
@@ -905,15 +765,15 @@ impl CdpDriver {
             .unwrap_or(Value::Null))
     }
 
-    /// Runs `act` on the page, then returns the settled page as a diff.
-    /// A tab the act opened comes to the front and is read whole once it
-    /// loads, as is the tab a front tab the act closed gave way to; the
-    /// agent's next answer names the switch.
+    /// Runs `act` on the page, then returns the settled page as an edit of
+    /// `base`. A tab the act opened comes to the front and is read whole
+    /// once it loads, as is the tab a front tab the act closed gave way to;
+    /// the agent's next answer names the switch.
     fn act(
         &mut self,
+        base: &Base,
         act: impl FnOnce(&Self) -> Result<(), BrowserError>,
     ) -> Result<Observation, BrowserError> {
-        let since = self.seq;
         let before = self.fingerprint()?;
         let start = Instant::now();
         // An act that closed its own tab can fail or stop settling as the
@@ -942,7 +802,7 @@ impl CdpDriver {
                 let _ = self.settle(before, Instant::now());
             }
         }
-        self.observation(Some(since))
+        self.observation(base)
     }
 
     /// Waits until the front tab's document has loaded, up to `deadline`:
@@ -963,19 +823,13 @@ impl CdpDriver {
         }
     }
 
-    fn matching(&self, keep: impl Fn(&Row) -> bool) -> Result<Vec<Row>, BrowserError> {
-        Ok(self
-            .lines()?
-            .into_iter()
-            .map(|line| line.row)
-            .filter(keep)
-            .collect())
+    fn matching(&mut self, keep: impl Fn(&Row) -> bool) -> Result<Vec<Row>, BrowserError> {
+        Ok(self.capture()?.rows.into_iter().filter(keep).collect())
     }
 
     /// Forgets every observation, so the next one is whole: a person drove
-    /// the page meanwhile.
+    /// the page meanwhile. The live handles stay: none is ever reused.
     pub(crate) fn forget_observations(&mut self) {
-        self.history.clear();
         self.pages.clear();
     }
 
@@ -1236,54 +1090,6 @@ fn modifier_of(name: &str) -> Result<(u32, KeySpec), BrowserError> {
     ))
 }
 
-/// The page of `rows`, then `removed`, that starts at `from` and fits
-/// [`OBSERVE_PAGE_BYTES`] as JSON, and where the next page starts, when one
-/// does. A page takes at least one entry, so every page moves on.
-fn page_of(
-    rows: &[Row],
-    removed: &[String],
-    from: (usize, usize),
-) -> (Vec<Row>, Vec<String>, Option<(usize, usize)>) {
-    let mut bytes = 0;
-    let mut page_rows = Vec::new();
-    let mut page_removed = Vec::new();
-    let (mut at_row, mut at_removed) = (from.0.min(rows.len()), from.1.min(removed.len()));
-    while at_row < rows.len() {
-        let len = json_len(&rows[at_row]);
-        if !page_rows.is_empty() && bytes + len > OBSERVE_PAGE_BYTES {
-            return (page_rows, page_removed, Some((at_row, at_removed)));
-        }
-        bytes += len;
-        page_rows.push(rows[at_row].clone());
-        at_row += 1;
-    }
-    while at_removed < removed.len() {
-        let len = json_len(&removed[at_removed]);
-        let empty = page_rows.is_empty() && page_removed.is_empty();
-        if !empty && bytes + len > OBSERVE_PAGE_BYTES {
-            return (page_rows, page_removed, Some((at_row, at_removed)));
-        }
-        bytes += len;
-        page_removed.push(removed[at_removed].clone());
-        at_removed += 1;
-    }
-    (page_rows, page_removed, None)
-}
-
-/// One entry's bytes in a page's JSON, with its comma.
-fn json_len(value: &impl serde::Serialize) -> usize {
-    serde_json::to_vec(value).map_or(0, |bytes| bytes.len()) + 1
-}
-
-fn cursor_of(seq: u64, (rows, removed): (usize, usize)) -> String {
-    format!("{seq}.{rows}.{removed}")
-}
-
-/// A row answer's cursor: the answer's number and the row its page starts at.
-fn rows_cursor(answer: u64, at: usize) -> String {
-    format!("r{answer}.{at}")
-}
-
 /// The guest's page targets as they are now, as CDP lists them.
 fn page_targets(pipe: &Pipe) -> Result<Vec<Value>, BrowserError> {
     let listed = pipe.call(None, "Target.getTargets", json!({}), Instant::now() + CALL)?;
@@ -1339,14 +1145,15 @@ impl BrowserDriver for CdpDriver {
         }
         let before = self.fingerprint()?;
         self.settle(before, Instant::now())?;
-        self.observation(None)
+        self.observation(&Base::Whole)
     }
 
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError> {
+        let base = Base::of_observe(&input)?;
         match input.cursor.as_deref() {
             // Unpaged, a cursor reads the whole rest of its observation.
             Some(cursor) => self.pages.rest(cursor),
-            None => self.observation(input.since),
+            None => self.observation(&base),
         }
     }
 
@@ -1355,16 +1162,14 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn observe_page(&mut self, input: ObserveInput) -> Result<ObservationPage, BrowserError> {
-        let Some(cursor) = input.cursor.as_deref() else {
-            let observation = self.observation(input.since)?;
-            return Ok(self.pages.first(observation));
-        };
-        if input.since.is_some() {
-            return Err(BrowserError::Input(
-                "observe reads since or a cursor, not both".to_owned(),
-            ));
+        let base = Base::of_observe(&input)?;
+        match input.cursor.as_deref() {
+            Some(cursor) => self.pages.next(cursor),
+            None => {
+                let observation = self.observation(&base)?;
+                Ok(self.pages.first(observation))
+            }
         }
-        self.pages.next(cursor)
     }
 
     fn find(&mut self, input: FindInput) -> Result<FindOutput, BrowserError> {
@@ -1383,77 +1188,23 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError> {
-        let (_, node) = self.resolve(&input.target)?;
-        self.page(
-            "DOM.scrollIntoViewIfNeeded",
-            json!({"backendNodeId": node["backendNodeId"]}),
-        )?;
-        let model = self.page(
-            "DOM.getBoxModel",
-            json!({"backendNodeId": node["backendNodeId"]}),
-        )?;
-        let quad: Vec<f64> = model
-            .pointer("/model/content")
-            .and_then(Value::as_array)
-            .map(|q| q.iter().filter_map(Value::as_f64).collect())
-            .unwrap_or_default();
-        if quad.len() != 8 {
-            return Err(BrowserError::Covered(input.target));
-        }
-        let x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4.0;
-        let y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4.0;
-        // The point must land on the element or inside it, not on a cover.
-        let hit = self.call_on(
-            &node,
-            "function(x, y) { const e = document.elementFromPoint(x, y); return !!e && (e === this || this.contains(e)); }",
-            json!([{"value": x}, {"value": y}]),
-        )?;
-        if hit != Value::Bool(true) {
-            return Err(BrowserError::Covered(input.target));
-        }
-        self.click_point(x, y)
+        let target = self.resolve_target(&input.target)?;
+        self.click_target(&target, &Base::of(input.base))
     }
 
     fn click_at(&mut self, input: PointInput) -> Result<Observation, BrowserError> {
         let (x, y) = self.point(&input)?;
-        self.click_point(x, y)
+        self.click_point(x, y, &Base::of(input.base))
     }
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
-        let (_, node) = self.resolve(&input.target)?;
-        self.act(|driver| {
-            driver.page("DOM.focus", json!({"backendNodeId": node["backendNodeId"]}))?;
-            if input.clear {
-                driver.call_on(
-                    &node,
-                    "function() { if (typeof this.select === 'function') this.select(); else getSelection().selectAllChildren(this); }",
-                    json!([]),
-                )?;
-            }
-            driver.page("Input.insertText", json!({"text": input.text}))?;
-            Ok(())
-        })
+        let target = self.resolve_target(&input.target)?;
+        self.type_target(&target, &input.text, input.clear, &Base::of(input.base))
     }
 
     fn select(&mut self, input: SelectInput) -> Result<Observation, BrowserError> {
-        let (_, node) = self.resolve(&input.target)?;
-        let target = input.target.clone();
-        self.act(|driver| {
-            let picked = driver.call_on(
-                &node,
-                "function(want) {
-                    if (this.tagName !== 'SELECT') return false;
-                    const o = [...this.options].find(o => o.label === want || o.text.trim() === want || o.value === want);
-                    if (!o) return false;
-                    this.value = o.value;
-                    this.dispatchEvent(new Event('input', {bubbles: true}));
-                    this.dispatchEvent(new Event('change', {bubbles: true}));
-                    return true;
-                }",
-                json!([{"value": input.option}]),
-            )?;
-            if picked == Value::Bool(true) { Ok(()) } else { Err(BrowserError::NoOption(target)) }
-        })
+        let target = self.resolve_target(&input.target)?;
+        self.select_target(&target, &input.option, &Base::of(input.base))
     }
 
     fn wait_for(&mut self, input: WaitForInput) -> Result<WaitForOutput, BrowserError> {
@@ -1465,6 +1216,7 @@ impl BrowserDriver for CdpDriver {
                 waited_ms: 0,
                 next,
                 partial: None,
+                rebindings: Vec::new(),
             });
         }
         let wanted = input
@@ -1473,7 +1225,22 @@ impl BrowserDriver for CdpDriver {
         let bound = wanted.min(self.wait_cap);
         let start = Instant::now();
         loop {
-            let rows = self.matching(|row| input.matches(row))?;
+            let capture = self.capture()?;
+            // A named handle matches its own row, or, once its node is
+            // gone, the row its locator names now, as a rebinding.
+            let (rows, rebindings) = if input.targets.is_empty() {
+                let query = input.query();
+                let rows = capture
+                    .rows
+                    .into_iter()
+                    .filter(|row| query.matches(row))
+                    .collect();
+                (rows, Vec::new())
+            } else {
+                rows_named(&input.targets, &capture.rows, &capture.scope, |target| {
+                    self.handles.info(target)
+                })
+            };
             let waited = start.elapsed();
             if !rows.is_empty() || waited >= bound {
                 let timed_out = rows.is_empty();
@@ -1484,6 +1251,7 @@ impl BrowserDriver for CdpDriver {
                     waited_ms: u64::try_from(waited.as_millis()).unwrap_or(u64::MAX),
                     next,
                     partial: None,
+                    rebindings,
                 });
             }
             std::thread::sleep(POLL * 2);
@@ -1491,11 +1259,27 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn expect(&mut self, input: ExpectInput) -> Result<ExpectOutput, BrowserError> {
-        let rows = self.lines()?.into_iter().map(|line| line.row);
-        let query = input.query();
-        let row = match &input.target {
-            Some(target) => rows.into_iter().find(|row| &row.target == target),
-            None => rows.into_iter().find(|row| query.matches(row)),
+        let capture = self.capture()?;
+        let (row, rebindings) = match &input.target {
+            // The named handle's own row, or once its node is gone the row
+            // its locator names now: an old handle is never met silently.
+            Some(target) => {
+                let known = self.handles.info(target);
+                match match_target(target, &capture.rows, &capture.scope, known.as_ref()) {
+                    Some((at, rebound)) => (
+                        Some(capture.rows[at].clone()),
+                        rebound.into_iter().collect(),
+                    ),
+                    None => (None, Vec::new()),
+                }
+            }
+            None => {
+                let query = input.query();
+                (
+                    capture.rows.into_iter().find(|row| query.matches(row)),
+                    Vec::new(),
+                )
+            }
         };
         let met = match (&row, input.absent) {
             (None, absent) => absent,
@@ -1509,6 +1293,7 @@ impl BrowserDriver for CdpDriver {
             met,
             row,
             partial: None,
+            rebindings,
         })
     }
 
@@ -1616,6 +1401,10 @@ impl BrowserDriver for CdpDriver {
 
     fn image_bytes(&self, image: &str) -> Option<Vec<u8>> {
         self.image(image).map(<[u8]>::to_vec)
+    }
+
+    fn handle_info(&self, handle: &str) -> Option<HandleInfo> {
+        self.handles.info(handle)
     }
 }
 
