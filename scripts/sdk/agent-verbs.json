@@ -15909,6 +15909,66 @@
       "openapi": true
     },
     {
+      "name": "vault.free_time.policy.get",
+      "description": "The owner reads one agent's free-time policy with its revision: the total one cycle may spend, its daily clock in an IANA zone and any pinned split, or disabled when none is set.",
+      "input": "crate::dreamer_runner::FreeTimePolicyRequest",
+      "output": "crate::dreamer_runner::FreeTimePolicyView",
+      "call": "crate::dreamer_runner::free_time_policy_as_owner(memory.vault(), &memory.embedded_owner(\"vault.free_time.policy.get\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.free_time.policy.set",
+      "description": "The owner sets one agent's free-time policy at the revision it read, or clears it with no policy; a clear ends the open cycle and the agent goes back to its nightly dreaming.",
+      "input": "crate::dreamer_runner::FreeTimePolicySetRequest",
+      "output": "crate::dreamer_runner::FreeTimePolicyView",
+      "call": "crate::dreamer_runner::free_time_policy_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.free_time.policy.set\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.free_time.cycles",
+      "description": "The owner reads one agent's free-time cycles a page at a time, newest first: each cycle's state, period and floor from its item receipts, with the cursor of the next page.",
+      "input": "crate::dreamer_runner::FreeTimeCyclesRequest",
+      "output": "crate::dreamer_runner::FreeTimeCyclesPage",
+      "call": "crate::dreamer_runner::free_time_cycles_as_owner(memory.vault(), &memory.embedded_owner(\"vault.free_time.cycles\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.free_time.cycle",
+      "description": "The owner reads one free-time cycle: its state, the floor and whether every item receipt read, the agent's short note, each item's receipt, and the spend records by label with their own completeness. Never the agent's diary.",
+      "input": "crate::dreamer_runner::FreeTimeCycleRequest",
+      "output": "Option<crate::dreamer_runner::FreeTimeCycleView>",
+      "call": "crate::dreamer_runner::free_time_cycle_as_owner(memory.vault(), &memory.embedded_owner(\"vault.free_time.cycle\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.claims.vet",
       "description": "Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration.",
       "input": "crate::memory::ClaimSettleRequest",

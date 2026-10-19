@@ -144,7 +144,7 @@ pub(super) struct RunInner {
     /// them (OF-531), fixed when the run starts.
     pub(super) payer: Option<PayerPerson>,
     /// The item a bound run serves (FIX 4453), fixed when the run starts.
-    attribution: Option<RunAttribution>,
+    pub(super) attribution: Option<RunAttribution>,
     receipts: Arc<dyn RunReceiptSink>,
     calls: Mutex<BTreeMap<String, CallFacts>>,
     /// The open paid-connector permits' leases. A model permit's lease is in
@@ -162,7 +162,7 @@ struct Revisioned {
 /// began (FIX 4453): the agent, its free-time cycle and item, the label every
 /// call carries and the spend scope its spend lands on. Fixed for the run's
 /// life; never read from a prompt or from the run's name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RunAttribution {
     pub agent: crate::EntityId,
     pub cycle: crate::EntityId,

@@ -35,7 +35,7 @@ use crate::{EntityId, Error, Result, Vault};
 const BOUNDARY_SEARCH_DAYS: usize = 4;
 
 /// Whether a cycle still admits its items.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FreeTimeCycleState {
     Open,
@@ -136,7 +136,7 @@ fn boundary_on(schedule: &FreeTimeSchedule, date: chrono::NaiveDate) -> Result<O
 }
 
 /// The latest boundary at or before `now`.
-fn boundary_at_or_before(schedule: &FreeTimeSchedule, now: u64) -> Result<Option<u64>> {
+pub(super) fn boundary_at_or_before(schedule: &FreeTimeSchedule, now: u64) -> Result<Option<u64>> {
     let mut date = local_date(schedule, now)?;
     for _ in 0..BOUNDARY_SEARCH_DAYS {
         if let Some(at) = boundary_on(schedule, date)?

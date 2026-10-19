@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{CLOCK, POLICY};
+use super::{CLOCK, CYCLE, POLICY};
 use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::{EntityId, Error, Result, Vault};
@@ -27,7 +27,7 @@ pub const FREE_TIME_WHEN_UNSET: UnsetFreeTimePolicy = UnsetFreeTimePolicy::Disab
 
 /// The two owner-facing names of a cycle's one daily clock: one cycle a day
 /// either way, at the policy's local time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FreeTimeCadence {
     Daily,
@@ -37,7 +37,7 @@ pub enum FreeTimeCadence {
 /// When each cycle opens: a local time of day in an IANA zone. A local time
 /// a spring-forward gap skips opens no cycle that date; a fall-back fold
 /// opens at its earlier instant. Never UTC by default.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FreeTimeSchedule {
     pub cadence: FreeTimeCadence,
@@ -52,7 +52,7 @@ pub struct FreeTimeSchedule {
 /// A split the owner pinned: what each kind may spend of the total, as a
 /// hard share each. Without one, both kinds draw on one shared total and the
 /// agent chooses; no share is a minimum or a target.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FreeTimeSplit {
     pub for_human_units: u64,
@@ -60,7 +60,7 @@ pub struct FreeTimeSplit {
 }
 
 /// What the owner sets for one agent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FreeTimePolicyInput {
     /// The most one cycle may spend, in tokens (input plus output).
@@ -136,21 +136,36 @@ pub(super) fn effective_policy(row: Option<FreeTimePolicy>) -> Option<FreeTimePo
     }
 }
 
-/// Whether `resident`'s dreaming is its free-time cycle's own-time item
-/// rather than the nightly child (the FIX 4453 narrowing rule): it holds an
-/// owner-set policy and its first cycle's boundary has come. Every other
-/// resident keeps its nightly dreaming exactly as before.
+/// Whether `resident`'s dreaming at `now` is its free-time cycle's own-time
+/// item rather than the nightly child (the FIX 4453 narrowing rule): it holds
+/// an owner-set policy, and a cycle actually opened at the boundary `now`
+/// falls after (FIX 5662). A boundary the clock passed with no cycle (one
+/// that failed to open, an agent that was off) owns nothing, nor does a
+/// policy or schedule that does not read: a cycle that did not open never
+/// costs the resident its nightly reflection. Every resident without a
+/// policy keeps its nightly dreaming exactly as before.
 pub(crate) fn free_time_owns_reflection_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     resident: EntityId,
+    now: u64,
 ) -> Result<bool> {
-    if effective_policy(POLICY.get(&vault.store, txn, &resident)?).is_none() {
+    let Some(policy) = effective_policy(POLICY.get_lenient(&vault.store, txn, &resident)?) else {
         return Ok(false);
-    }
-    Ok(CLOCK
-        .get(&vault.store, txn, &resident)?
-        .is_some_and(|clock| clock.last_boundary > 0))
+    };
+    let boundary = match super::cycle::boundary_at_or_before(&policy.schedule, now) {
+        Ok(Some(boundary)) => boundary,
+        Ok(None) => return Ok(false),
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                agent = %resident.to_hex(),
+                "a free-time schedule did not read; the nightly dreaming stays"
+            );
+            return Ok(false);
+        }
+    };
+    CYCLE.contains(&vault.store, txn, &(resident, boundary))
 }
 
 /// BLAKE3 over the policy a write replaces, as JSON.

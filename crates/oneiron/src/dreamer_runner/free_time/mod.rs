@@ -11,6 +11,8 @@
 //! floor reads those receipts alone (`receipt`). Beyond the floor the agent
 //! owes nothing: an own-time item may be rest with no output, unspent budget
 //! is no failure, and nothing here scores, limits or nudges its own time.
+//! The owner reads the policy, the cycles and each cycle's sheet (`doors`):
+//! the agent's short note and the spending records, never its diary.
 //!
 //! No policy, no cycle (`FREE_TIME_WHEN_UNSET`): a resident without one
 //! keeps its nightly dreaming exactly as before.
@@ -19,6 +21,7 @@
 //! cycle opens where its items run.
 
 mod cycle;
+mod doors;
 mod items;
 mod policy;
 mod receipt;
@@ -32,6 +35,13 @@ use crate::side_table::{self, Named, SideTable};
 
 pub use self::cycle::{
     FreeTimeCycle, FreeTimeCycleState, FreeTimeItemRef, FreeTimeNote, FreeTimeOwnTimeChoice,
+};
+pub use self::doors::{
+    FreeTimeCycleRequest, FreeTimeCycleSummary, FreeTimeCycleView, FreeTimeCyclesPage,
+    FreeTimeCyclesRequest, FreeTimeItemReceiptView, FreeTimeItemView, FreeTimeLabelSpend,
+    FreeTimeNoteView, FreeTimePolicyRequest, FreeTimePolicyRow, FreeTimePolicySetRequest,
+    FreeTimePolicyState, FreeTimePolicyView, FreeTimeSpendView, free_time_cycle_as_owner,
+    free_time_cycles_as_owner, free_time_policy_as_owner, free_time_policy_set_as_owner,
 };
 pub use self::items::FreeTimeItemBinding;
 pub(crate) use self::items::{
@@ -65,7 +75,19 @@ const RECEIPT: SideTable<(EntityId, EntityId, EntityId), receipt::FreeTimeItemRe
     SideTable::new(&side_table::DREAMER_FREE_TIME_RECEIPT);
 
 /// The two kinds of an agent's free time, by the label its calls carry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum FreeTimeKind {
     /// `autonomy.for_human`: it thinks how to help its human, and what it

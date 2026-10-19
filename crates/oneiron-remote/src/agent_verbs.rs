@@ -2952,6 +2952,18 @@ impl OneironClient {
                 "vault.sieve.lease.refill" => remote_agent_verb_output::<
                     oneiron::dreamer_wake::sieve_doors::SieveLeaseView,
                 >(client, verb, &input),
+                "vault.free_time.policy.get" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::FreeTimePolicyView,
+                >(client, verb, &input),
+                "vault.free_time.policy.set" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::FreeTimePolicyView,
+                >(client, verb, &input),
+                "vault.free_time.cycles" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::FreeTimeCyclesPage,
+                >(client, verb, &input),
+                "vault.free_time.cycle" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::FreeTimeCycleView>,
+                >(client, verb, &input),
                 "vault.claims.vet" => remote_agent_verb_output::<oneiron::memory::ClaimSettlement>(
                     client, verb, &input,
                 ),
@@ -14991,6 +15003,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.sieve.lease.refill", value)
+    }
+    pub fn vault_free_time_policy_get(
+        &self,
+        input: &oneiron::dreamer_runner::FreeTimePolicyRequest,
+    ) -> Result<oneiron::dreamer_runner::FreeTimePolicyView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.free_time.policy.get", value)
+    }
+    pub fn vault_free_time_policy_set(
+        &self,
+        input: &oneiron::dreamer_runner::FreeTimePolicySetRequest,
+    ) -> Result<oneiron::dreamer_runner::FreeTimePolicyView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.free_time.policy.set", value)
+    }
+    pub fn vault_free_time_cycles(
+        &self,
+        input: &oneiron::dreamer_runner::FreeTimeCyclesRequest,
+    ) -> Result<oneiron::dreamer_runner::FreeTimeCyclesPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.free_time.cycles", value)
+    }
+    pub fn vault_free_time_cycle(
+        &self,
+        input: &oneiron::dreamer_runner::FreeTimeCycleRequest,
+    ) -> Result<Option<oneiron::dreamer_runner::FreeTimeCycleView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.free_time.cycle", value)
     }
     pub fn vault_claims_vet(
         &self,

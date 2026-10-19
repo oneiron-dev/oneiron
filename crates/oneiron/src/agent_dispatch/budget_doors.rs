@@ -182,10 +182,22 @@ pub struct RunSettlementsView {
 pub struct RunRungSettlement {
     pub instance: String,
     pub lease: String,
+    /// The run the call was admitted on.
+    pub run: String,
     pub revision: u32,
     pub model: Option<String>,
     pub offer: String,
     pub route: String,
+    /// The label the call carried (FIX 4453): its envelope purpose, or a
+    /// paid connector call's bound item's.
+    pub purpose: Option<String>,
+    /// The agent, free-time cycle, item and spend scope a bound run's call
+    /// served, as the engine stamped them before the run began (FIX 4453);
+    /// `None` on every unbound run.
+    pub agent: Option<String>,
+    pub cycle: Option<String>,
+    pub item: Option<String>,
+    pub spend_scope: Option<String>,
     pub reserved_units: u64,
     pub settled_units: u64,
     pub unit: String,

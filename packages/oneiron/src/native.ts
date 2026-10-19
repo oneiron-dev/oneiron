@@ -981,6 +981,10 @@ vaultSieveRecipePolicy(input: unknown): unknown
 vaultSieveRecipePolicySet(input: unknown): unknown
 vaultSieveLease(input: unknown): unknown
 vaultSieveLeaseRefill(input: unknown): unknown
+vaultFreeTimePolicyGet(input: unknown): unknown
+vaultFreeTimePolicySet(input: unknown): unknown
+vaultFreeTimeCycles(input: unknown): unknown
+vaultFreeTimeCycle(input: unknown): unknown
 vaultClaimsVet(input: unknown): unknown
 vaultClaimsVetting(input: unknown): unknown
 vaultMemorySignalExtraction(input: unknown): unknown
