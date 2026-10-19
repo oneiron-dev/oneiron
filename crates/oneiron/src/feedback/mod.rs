@@ -129,10 +129,10 @@ pub use self::consent::{
 pub use self::conversation_training::{
     ConversationSource, ConversationText, ConversationTrainingChoice, Eligibility,
     IntakeReceiptKey, IntakeRecipient, NO_PUBLISHER_TRAINING_INTAKE, NoChoicesYet,
-    PersonTrainingControl, PersonTrainingReceipts, PersonTrainingSubmission,
-    PublisherTrainingLifecycle, PublisherTrainingSink, ReceiptCursor, ReceivedTrainingReceipt,
-    ReleaseDecision, SealedTrainingOffer, ShareOutcome, ShareWithheld, SignedTrainingControl,
-    TrainingControlId, TrainingCustody, TrainingOfferPass, TrainingQueued, TrainingReceiptPage,
+    PersonTrainingReceipts, PersonTrainingSubmission, PublisherTrainingLifecycle,
+    PublisherTrainingSink, ReceiptCursor, ReceivedTrainingReceipt, ReleaseDecision,
+    SealedTrainingOffer, ShareOutcome, ShareWithheld, SignedTrainingControl, TrainingControlId,
+    TrainingCustody, TrainingOfferPass, TrainingQueued, TrainingReceiptPage,
     TrainingReceiptsCursor, TrainingSubmissionId, TrainingUnavailable, TrainingUpkeep,
     TrainingUsedRun, TrainingWithheld, Withheld, eligible, share_for_publisher_training,
 };
