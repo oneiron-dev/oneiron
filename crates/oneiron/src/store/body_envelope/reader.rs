@@ -93,17 +93,6 @@ impl BodyFile {
         }
     }
 
-    /// The envelope's file, key and body digest, for a copy of its
-    /// ciphertext; a plain body's file as the error.
-    pub(super) fn into_sealed(self) -> std::result::Result<(File, Arc<FileKey>, [u8; 32]), File> {
-        match self.inner {
-            Inner::Plain(file) => Err(file),
-            Inner::Sealed {
-                file, key, digest, ..
-            } => Ok((file, key, digest)),
-        }
-    }
-
     /// `len` bytes of the body from `offset`, which must lie within it. An
     /// envelope's chunks are each authenticated before a byte of them is
     /// returned; no other chunk is read.

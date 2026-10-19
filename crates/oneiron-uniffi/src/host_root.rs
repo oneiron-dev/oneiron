@@ -40,23 +40,26 @@ impl Oneiron {
     /// not the vault's settled root, over a profile that already stands,
     /// opens and says so in `host_root_profile`. The handle binds the
     /// embedded owner actor, as `open` does, and carries no owner proof.
-    #[uniffi::constructor]
+    /// `device_class` is `open`'s (FIX 5577).
+    #[uniffi::constructor(default(device_class = None))]
     pub fn open_with_host_root(
         path: Option<String>,
         options: Option<OpenOptions>,
         host_root_secret: Vec<u8>,
+        device_class: Option<String>,
     ) -> Result<Arc<Self>, OneironError> {
         let host_root_secret = Zeroizing::new(host_root_secret);
         // Crash output never carries world text: the engine's hook goes in
         // before any vault opens (owner ruling 2026-10-14, fix 6).
         oneiron::panic_report::install_panic_hook();
         let dimensions: Option<usize> = options.and_then(|options| options.dimensions).lower()?;
+        let device_class = crate::host_device_class(device_class.as_deref())?;
         let path = path.map(std::path::PathBuf::from);
         let inner = oneiron_remote::OneironClient::open_with_host_root(
             path.as_deref(),
             &oneiron_remote::OpenOptions {
                 dimensions,
-                device_class: None,
+                device_class,
             },
             host_root_secret.as_slice(),
         )?;

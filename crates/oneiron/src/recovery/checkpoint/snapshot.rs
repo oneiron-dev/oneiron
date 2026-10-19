@@ -25,13 +25,37 @@ impl Vault {
         budget: &dyn RecoveryWriteBudget,
     ) -> Result<String> {
         self.unlock_vault_key()?;
+        loop {
+            // Every body the image carries has its instance minted and bound
+            // first, before the snapshot and its custody guard, the mints
+            // outside any writer (KS-2A). A body written since is bound by
+            // the next pass, and the snapshot taken again.
+            self.bind_carried_bodies()?;
+            if let Some(id) = self.snapshot_once(path, created_at, owner, kind, budget)? {
+                return Ok(id);
+            }
+        }
+    }
+
+    /// One snapshot: `None` when a body its rows name has no instance bound
+    /// yet.
+    fn snapshot_once(
+        &self,
+        path: &Path,
+        created_at: u64,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
+        kind: ArtifactKind,
+        budget: &dyn RecoveryWriteBudget,
+    ) -> Result<Option<String>> {
         let keys = self.checkpoint_signing_keys()?;
         let _custody = self.store.gate_custody_read_guard()?;
-        // What the image needs of its custody, read under the same guard:
-        // its position and every live id, never a key (KS-4).
-        let required = self.store.custody_requirement()?;
         let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
+        // What the image needs of its custody, read under the same guard
+        // once its snapshot is open, so every key a row of it names was
+        // journaled first: its position and every live id, never a key
+        // (KS-4).
+        let required = self.store.custody_requirement()?;
         if let Some(owner) = owner {
             owner.revalidate_in_txn(self, &txn)?;
         }
@@ -129,11 +153,14 @@ impl Vault {
                 if excluded_row {
                     return Ok(None);
                 }
-                // Every body file a row names goes with it: a result body's,
-                // a file-plane ASSET's (FIX 3677), each descriptor's, and a
-                // sealed file's key row (FIX 5348).
-                census.note(&self.store, &txn, entry.name, key, value)?;
-                let value = if entry.name == "job_records" {
+                // Every body a row names goes with it, sealed under its
+                // instance: a result body's file, a file-plane ASSET's (FIX
+                // 3677), each descriptor's, and an inline body, whose row
+                // goes without it (KS-2A).
+                let stripped = census.note(&self.store, &txn, entry.name, key, value)?;
+                let value = if let Some(stripped) = stripped {
+                    stripped
+                } else if entry.name == "job_records" {
                     rebuild::unlease_attempt(key, value)?
                 } else {
                     value.to_vec()
@@ -166,14 +193,17 @@ impl Vault {
         // immutable once named, so the ones the snapshot's rows name read the
         // same after its transaction. Each is sealed into the artifact after
         // the image, and never lands anywhere in the clear.
-        let files = census.finish(&self.store)?;
-        let (bodies, sealed_bodies) = files.image_bodies();
+        let Some(files) = census.finish(&self.store)? else {
+            return Ok(None);
+        };
+        let (bodies, sealed_bodies, inline_bodies) = files.image_bodies();
         let image = CheckpointImage {
-            version: 2,
+            version: super::image::IMAGE_VERSION,
             created_at,
             databases,
             bodies,
             sealed_bodies,
+            inline_bodies,
         };
         let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
         let (id, head) = artifact::write_artifact(
@@ -194,6 +224,6 @@ impl Vault {
             let _ = std::fs::remove_file(path);
             return Err(error);
         }
-        Ok(blake3::Hash::from(id).to_hex().to_string())
+        Ok(Some(blake3::Hash::from(id).to_hex().to_string()))
     }
 }
