@@ -660,7 +660,8 @@ async fn handle_connection(
                 tracing::warn!(conn_id, reason = "websocket_read_failed", "WebSocket error");
                 // A frame the WebSocket codec refused is a refusal, not a
                 // disconnect: receipted, then closed (FIX 5311).
-                super::protocol_close::close_read_error(&server, &mut transport, &error).await;
+                super::protocol_close::close_read_error(&server, &mut transport, &error, None)
+                    .await;
                 break;
             }
         };
@@ -673,6 +674,7 @@ async fn handle_connection(
                 &server,
                 close_codes::FRAME_TOO_LARGE,
                 "frame too large",
+                None,
             )
             .await;
             break;
@@ -779,6 +781,7 @@ async fn handle_connection(
                                 &server,
                                 close_codes::VERSION_MISMATCH,
                                 "window behind its history-free floor: upgrade this device to hello v13+ (v14 for residence)",
+                                None,
                             )
                             .await;
                             break;
@@ -794,6 +797,7 @@ async fn handle_connection(
                                 &server,
                                 close_codes::TRY_AGAIN_LATER,
                                 "waited for its turn past its deadline: nothing was applied",
+                                None,
                             )
                             .await;
                             break;
@@ -805,6 +809,7 @@ async fn handle_connection(
                                 &server,
                                 close_codes::DECODE_ERROR,
                                 "invalid payload",
+                                None,
                             )
                             .await;
                             break;
@@ -816,6 +821,7 @@ async fn handle_connection(
                                 &server,
                                 close_codes::UNKNOWN_TAG,
                                 "unknown tag",
+                                None,
                             )
                             .await;
                             break;
@@ -837,6 +843,7 @@ async fn handle_connection(
                                 &server,
                                 close_codes::FRAME_TOO_LARGE,
                                 "frame too large",
+                                None,
                             )
                             .await;
                             break;
@@ -871,6 +878,7 @@ async fn handle_connection(
                     &server,
                     close_codes::UNKNOWN_TAG,
                     "unknown tag",
+                    None,
                 )
                 .await;
                 break;
@@ -882,6 +890,7 @@ async fn handle_connection(
                     &server,
                     close_codes::DECODE_ERROR,
                     "invalid payload",
+                    None,
                 )
                 .await;
                 break;
@@ -893,6 +902,7 @@ async fn handle_connection(
                     &server,
                     close_codes::FRAME_TOO_LARGE,
                     "frame too large",
+                    None,
                 )
                 .await;
                 break;

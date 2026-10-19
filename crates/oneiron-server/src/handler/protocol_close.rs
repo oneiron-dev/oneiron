@@ -176,13 +176,16 @@ pub(super) async fn close_read_error(
     server: &SyncServer,
     transport: &mut StoppingTransport,
     error: &axum::Error,
+    admission: Option<&ManagedCarrierContext>,
 ) {
     if let Some(refusal) = codec_read_refusal(error) {
         tracing::warn!(
             code = refusal.code(),
             "websocket frame refused by the codec — closing"
         );
-        refusal.close(server, FRAME_VERB, transport).await;
+        refusal
+            .close(server, FRAME_VERB, transport, admission)
+            .await;
     }
 }
 

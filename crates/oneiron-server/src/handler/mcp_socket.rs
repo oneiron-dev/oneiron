@@ -413,7 +413,7 @@ async fn serve(
             // A frame the WebSocket codec refused is a refusal, not a
             // disconnect: receipted, then closed (FIX 5311).
             Event::Inbound(Some(Err(error))) => {
-                protocol_close::close_read_error(&server, &mut transport, &error).await;
+                protocol_close::close_read_error(&server, &mut transport, &error, admission).await;
                 break;
             }
             // A frame the transport refused is a refusal, not a disconnect.
