@@ -257,7 +257,9 @@ impl Memory<'_> {
                 let brief = oneiron_docedit::design_plan::Brief::parse(markdown.as_bytes())
                     .map_err(|error| MemoryError::bad_request(error.to_string()))?;
                 for block in brief.pages.iter().flat_map(|page| &page.blocks) {
-                    if let oneiron_docedit::design_plan::BlockContent::Claim { evidence, .. } = &block.content {
+                    if let oneiron_docedit::design_plan::BlockContent::Claim { evidence, .. } =
+                        &block.content
+                    {
                         for pin in evidence {
                             sources.push(EntityId::from_hex(&pin.document)?);
                         }

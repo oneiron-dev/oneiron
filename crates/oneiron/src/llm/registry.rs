@@ -314,7 +314,10 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.model_registry_rows_in_txn(&txn)
     }
-    pub(super) fn model_registry_rows_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<ModelRegistryRow>> {
+    pub(super) fn model_registry_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<ModelRegistryRow>> {
         let mut rows = Vec::new();
         for (_, row) in REGISTRY_ROW.scan(&self.store, txn)? {
             row.validate()?;

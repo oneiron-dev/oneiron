@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use crate::claim::{ClaimReadStatus, PointRead};
 use crate::consent::AuthenticatedOwner;
 use crate::federation::{
-    FederationGrant, FederationGrantRole, FederationGrantScope, MemberRelationship,
-    OrgAdminError, OrgAdminPolicy, OrgAdminPower, Scope,
+    FederationGrant, FederationGrantRole, FederationGrantScope, MemberRelationship, OrgAdminError,
+    OrgAdminPolicy, OrgAdminPower, Scope,
 };
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
@@ -106,8 +106,13 @@ pub fn configure_org_admin_as_owner(
     owner: &AuthenticatedOwner,
     input: OrgAdminConfigureRequest,
 ) -> MemoryResult<OrgAdminConfigured> {
-    vault.configure_org_admin_as_owner(owner, &input.policy).map_err(org_error)?;
-    Ok(OrgAdminConfigured { org_ref: input.policy.org_ref(), configured: true })
+    vault
+        .configure_org_admin_as_owner(owner, &input.policy)
+        .map_err(org_error)?;
+    Ok(OrgAdminConfigured {
+        org_ref: input.policy.org_ref(),
+        configured: true,
+    })
 }
 
 pub fn read_org_admin_powers(
@@ -115,8 +120,13 @@ pub fn read_org_admin_powers(
     input: OrgAdminPowersRequest,
 ) -> MemoryResult<OrgAdminPowers> {
     let _key = memory.read_key()?;
-    let policy = memory.vault().org_admin_policy(input.org_ref).map_err(org_error)?;
-    Ok(OrgAdminPowers { powers: policy.visible_powers(memory.actor()) })
+    let policy = memory
+        .vault()
+        .org_admin_policy(input.org_ref)
+        .map_err(org_error)?;
+    Ok(OrgAdminPowers {
+        powers: policy.visible_powers(memory.actor()),
+    })
 }
 
 fn member_grant(
@@ -126,7 +136,9 @@ fn member_grant(
     activated: bool,
 ) -> MemoryResult<FederationMemberGrant> {
     let FederationGrantScope::Vault { vault_id } = grant.scope else {
-        return Err(MemoryError::bad_request("expected a shared-vault member grant"));
+        return Err(MemoryError::bad_request(
+            "expected a shared-vault member grant",
+        ));
     };
     let active = activated && grant.confers_at(now);
     Ok(FederationMemberGrant {
@@ -147,7 +159,11 @@ pub fn create_federation_delegate_as(
     input: FederationDelegateRequest,
 ) -> MemoryResult<FederationMemberGrant> {
     let (id, grant) = vault.create_scoped_federation_delegate(
-        holder, input.parent_grant, input.member_ref, &input.authority_scope, input.expires_at,
+        holder,
+        input.parent_grant,
+        input.member_ref,
+        &input.authority_scope,
+        input.expires_at,
     )?;
     member_grant(id, grant, vault.store.clock.now_recorded_at(), true)
 }
@@ -156,11 +172,16 @@ pub fn reset_shared_project_access(
     memory: &Memory<'_>,
     input: SharedProjectAccessResetRequest,
 ) -> MemoryResult<SharedProjectAccessReset> {
-    let result = memory.projects_reset_access(input.vault_id, input.roster.project, &input.roster.record)?;
+    let result =
+        memory.projects_reset_access(input.vault_id, input.roster.project, &input.roster.record)?;
     Ok(SharedProjectAccessReset {
         project: input.roster.project,
         installed: result.installed,
-        invitations: result.invitations.into_iter().map(|join| join.join_ref).collect(),
+        invitations: result
+            .invitations
+            .into_iter()
+            .map(|join| join.join_ref)
+            .collect(),
     })
 }
 
@@ -176,18 +197,22 @@ pub fn read_member_projection(
     let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     let ids = {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        let ids = vault.store.port_entity_ids_by_type(
-            &txn, crate::registry::ENTITY_TYPE_FEDERATION_GRANT, None,
-        )?.collect::<crate::Result<Vec<_>>>()?;
+        let ids = vault
+            .store
+            .port_entity_ids_by_type(&txn, crate::registry::ENTITY_TYPE_FEDERATION_GRANT, None)?
+            .collect::<crate::Result<Vec<_>>>()?;
         ids
     };
     let mut grants = Vec::new();
     for id in ids {
         let mut rows = lane.read(&[PointRead::id(id)], None)?.value;
-        let Some(row) = rows.pop().flatten() else { continue };
+        let Some(row) = rows.pop().flatten() else {
+            continue;
+        };
         let Some(body) = row.body else { continue };
         let grant = crate::federation::decode_federation_grant_body(&body)?;
-        if grant.member_ref != member || grant.scope != FederationGrantScope::vault(input.vault_id) {
+        if grant.member_ref != member || grant.scope != FederationGrantScope::vault(input.vault_id)
+        {
             continue;
         }
         let activated = {
@@ -198,13 +223,29 @@ pub fn read_member_projection(
                 && crate::federation::pact_admits_grant(&fold, &id, &grant)
         };
         memory.produced_from([id]);
-        grants.push(member_grant(id, grant, vault.store.clock.now_recorded_at(), activated)?);
+        grants.push(member_grant(
+            id,
+            grant,
+            vault.store.clock.now_recorded_at(),
+            activated,
+        )?);
     }
-    let relationship = crate::federation::resolve_member_relationship_filtered(vault, member, |id| {
-        let readable = lane.read(&[PointRead::id(id)], None)?.value
-            .into_iter().flatten().any(|row| row.body.is_some());
-        if readable { memory.produced_from([id]); }
-        Ok(readable)
-    })?;
-    Ok(MemberProjection { member_ref: member, grants, relationship })
+    let relationship =
+        crate::federation::resolve_member_relationship_filtered(vault, member, |id| {
+            let readable = lane
+                .read(&[PointRead::id(id)], None)?
+                .value
+                .into_iter()
+                .flatten()
+                .any(|row| row.body.is_some());
+            if readable {
+                memory.produced_from([id]);
+            }
+            Ok(readable)
+        })?;
+    Ok(MemberProjection {
+        member_ref: member,
+        grants,
+        relationship,
+    })
 }

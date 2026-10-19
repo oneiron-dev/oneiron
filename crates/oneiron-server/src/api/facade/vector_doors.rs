@@ -16,8 +16,8 @@ pub(crate) async fn vault_vectors_put(
     let verb = "vault.vectors.put";
     let admitted = || -> MemoryResult<_> {
         let owner = owner_proof(auth, server, verb)?;
-        let caller = super::facade_actor(server, auth)
-            .map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok((owner, caller))
     };
     let (owner, caller) = match admitted() {

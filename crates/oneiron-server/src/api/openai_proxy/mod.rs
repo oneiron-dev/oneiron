@@ -33,15 +33,15 @@ use oneiron::{
 };
 use serde_json::json;
 
-use oneiron::task_verb::sdk::{
-    ChatCompletionMemory, ChatCompletionRememberError, ChatCompletionRemembered,
-    ChatCompletionRequest, ChatCompletionResponse, ChatMessage,
-};
 use self::wire::{error, invalid};
 use super::McpCallContext;
 use crate::auth::{CoreScope, Locality};
 use crate::mcp::McpSurfaceMode;
 use crate::server::SyncServer;
+use oneiron::task_verb::sdk::{
+    ChatCompletionMemory, ChatCompletionRememberError, ChatCompletionRemembered,
+    ChatCompletionRequest, ChatCompletionResponse, ChatMessage,
+};
 
 /// The predicate an exchange is proposed under (Engine ruling on OF-445,
 /// 10-17): the newest user text and the settled answer, one claim.
@@ -83,8 +83,14 @@ async fn complete(
     let chat: ChatCompletionRequest = serde_json::from_slice(body)
         .map_err(|refused| invalid("invalid_body", refused.to_string()))?;
     let actor = super::resolve_mcp_gateway_actor(
-        McpSurfaceMode::Primary, "memory-proxy", headers, locality, server,
-    ).await.map_err(|_| unauthorized())?;
+        McpSurfaceMode::Primary,
+        "memory-proxy",
+        headers,
+        locality,
+        server,
+    )
+    .await
+    .map_err(|_| unauthorized())?;
     complete_as(server, actor, chat, &mut Vec::new()).await
 }
 
@@ -175,7 +181,10 @@ async fn complete_as(
         super::params::unix_seconds_now(),
         &chat.model,
         &response,
-        ChatCompletionMemory { injected, remembered },
+        ChatCompletionMemory {
+            injected,
+            remembered,
+        },
     ))
 }
 
@@ -234,9 +243,13 @@ fn admit_connector(
             "the paired actor holds no live openai_proxy connector key with a stamped grant slate; the owner admits it at POST /v1/owner/connectors/proxy",
         ))?;
     if ["vault.recall", "vault.remember"].iter().any(|tool| {
-        registration.slate.tool_setting(tool) == oneiron::connector_key::SlateDisposition::NeverAllow
+        registration.slate.tool_setting(tool)
+            == oneiron::connector_key::SlateDisposition::NeverAllow
     }) {
-        return Err(forbidden("connector_grant_revoked", "the proxy needs both its read and remember grants"));
+        return Err(forbidden(
+            "connector_grant_revoked",
+            "the proxy needs both its read and remember grants",
+        ));
     }
     Ok(landing)
 }
@@ -410,10 +423,14 @@ fn remember(
         .and_then(|()| memory.claim_propose_for_proxy(&input))
     {
         Ok(receipt) => ChatCompletionRemembered::Saved {
-            claim: receipt.claim_short_id, approval: receipt.approval,
+            claim: receipt.claim_short_id,
+            approval: receipt.approval,
         },
         Err(refused) => ChatCompletionRemembered::Refused {
-            error: ChatCompletionRememberError { code: refused.code, message: refused.message },
+            error: ChatCompletionRememberError {
+                code: refused.code,
+                message: refused.message,
+            },
         },
     }
 }

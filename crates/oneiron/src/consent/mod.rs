@@ -50,12 +50,12 @@
 mod adapters;
 mod ask_holders;
 mod bound;
+pub mod bypass_lifecycle;
 mod codec;
 mod contact_clearance;
 mod doors;
 mod effect;
 mod grant;
-pub mod bypass_lifecycle;
 pub mod lifecycle;
 mod owner_reason;
 mod registry;

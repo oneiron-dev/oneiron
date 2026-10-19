@@ -86,15 +86,26 @@ pub struct GraphFsHeadRequest {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum GraphFsEncoding { Utf8, Base64 }
+pub enum GraphFsEncoding {
+    Utf8,
+    Base64,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum GraphFsPlan { Pushdown, Walk }
+pub enum GraphFsPlan {
+    Pushdown,
+    Walk,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum GraphFsKind { Directory, File, Symlink, Cursor }
+pub enum GraphFsKind {
+    Directory,
+    File,
+    Symlink,
+    Cursor,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GraphFsEntryView {

@@ -294,9 +294,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         warning: &BypassGrantWarning,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn_grouped(|wtxn| {
-            self.create_bypass_grant_in_txn(wtxn, owner, warning)
-        })
+        self.with_write_txn_grouped(|wtxn| self.create_bypass_grant_in_txn(wtxn, owner, warning))
     }
 
     /// The single-row creation door, shared by an atomic multi-class owner act.
@@ -306,12 +304,8 @@ impl Vault {
         owner: &AuthenticatedOwner,
         warning: &BypassGrantWarning,
     ) -> Result<ConsentReceipt> {
-        let current = self.check_bypass_request_in_txn(
-            wtxn,
-            owner,
-            warning.bound.clone(),
-            warning.scope,
-        )?;
+        let current =
+            self.check_bypass_request_in_txn(wtxn, owner, warning.bound.clone(), warning.scope)?;
         if current != *warning {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "the bypass warning was not shown to this owner for this grant",
@@ -368,14 +362,17 @@ impl Vault {
             let allows = floor
                 .member_named(bound.class().as_str())
                 .ok_or(Error::CorruptedIndex("consent bypass grant class"))?;
-            active.push((BypassActive {
-                grant_ref,
-                scope: extent.scope,
-                allows,
-                actor_ref: actor.actor_ref().to_owned(),
-                floor_version: extent.floor_version,
-                created_at: row.created_at,
-            }, bound.clone()));
+            active.push((
+                BypassActive {
+                    grant_ref,
+                    scope: extent.scope,
+                    allows,
+                    actor_ref: actor.actor_ref().to_owned(),
+                    floor_version: extent.floor_version,
+                    created_at: row.created_at,
+                },
+                bound.clone(),
+            ));
         }
         active.sort_by(|left, right| {
             right

@@ -38,7 +38,14 @@ pub(crate) async fn vault_writes_critical_confirm_clear(
     _invocation: Option<InvocationId>,
     input: CriticalWriteConfirmRequest,
 ) -> Listed<CriticalWriteConfirmSettlement> {
-    answer(server, auth, caller, input, CriticalWriteConfirmAnswer::Clear).await
+    answer(
+        server,
+        auth,
+        caller,
+        input,
+        CriticalWriteConfirmAnswer::Clear,
+    )
+    .await
 }
 
 pub(crate) async fn vault_writes_critical_confirm_decline(
@@ -48,7 +55,14 @@ pub(crate) async fn vault_writes_critical_confirm_decline(
     _invocation: Option<InvocationId>,
     input: CriticalWriteConfirmRequest,
 ) -> Listed<CriticalWriteConfirmSettlement> {
-    answer(server, auth, caller, input, CriticalWriteConfirmAnswer::Decline).await
+    answer(
+        server,
+        auth,
+        caller,
+        input,
+        CriticalWriteConfirmAnswer::Decline,
+    )
+    .await
 }
 
 async fn answer(

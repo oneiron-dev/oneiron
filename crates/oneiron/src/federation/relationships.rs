@@ -32,7 +32,17 @@ pub const MAX_RELATIONSHIP_LABEL_BYTES: usize = 64;
 /// The word lists are FIXED: there is no Unicode folding and no synonym model,
 /// so an unrecognized but well-formed label lands on [`Self::Unlabeled`] rather
 /// than being guessed into a class.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 pub enum RelationshipTrustClass {
     /// Partner-grade closeness.
     Intimate,
@@ -49,7 +59,9 @@ pub enum RelationshipTrustClass {
 }
 
 /// Resolved label context for a member bound to a PERSON.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct MemberRelationshipContext {
     /// PERSON entity the member is bound to.
     pub person: EntityId,
@@ -62,7 +74,9 @@ pub struct MemberRelationshipContext {
 }
 
 /// Relationship state of a federation grant's `member_ref`.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub enum MemberRelationship {
     /// Bound to a person carrying a valid label.
     Labeled(MemberRelationshipContext),

@@ -39,7 +39,9 @@ impl Vault {
             .filter(|state| {
                 state.authority_entry_hash == hash
                     && state.action == action
-                    && !after.conflicted_critical_write_confirms.contains(&action.confirm_id)
+                    && !after
+                        .conflicted_critical_write_confirms
+                        .contains(&action.confirm_id)
             })
             .cloned()
             .ok_or_else(invalid_authority)

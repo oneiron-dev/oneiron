@@ -76,7 +76,10 @@ impl GraphFsResolver<'_, '_> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
         let normalized = normalize_path(path)?;
-        if sort_by_time && self.snapshot.is_none() && matches!(normalized.as_str(), "/claims" | "/claims/by-id") {
+        if sort_by_time
+            && self.snapshot.is_none()
+            && matches!(normalized.as_str(), "/claims" | "/claims/by-id")
+        {
             let (bytes, next_cursor, total) = self.ls_claims_by_time_pushdown(cursor)?;
             return self.finish_coreutils_command(
                 GraphFsCoreutilsVerb::Ls,
@@ -146,9 +149,16 @@ impl GraphFsResolver<'_, '_> {
                     |walk| (walk.bytes, walk.next_cursor, walk.total, walk.receipt),
                 );
                 return self.finish_coreutils_command(
-                    GraphFsCoreutilsVerb::Find, started, started_at,
-                    GraphFsCoreutilsDecision::Walk, "snapshot import transaction time",
-                    bytes, next_cursor, Vec::new(), total, receipt,
+                    GraphFsCoreutilsVerb::Find,
+                    started,
+                    started_at,
+                    GraphFsCoreutilsDecision::Walk,
+                    "snapshot import transaction time",
+                    bytes,
+                    next_cursor,
+                    Vec::new(),
+                    total,
+                    receipt,
                 );
             }
             let (bytes, next_cursor, total) =

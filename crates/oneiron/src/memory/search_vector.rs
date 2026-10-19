@@ -13,7 +13,9 @@ pub struct VectorSearchConfig {
     pub fast_dims: Option<u16>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum VectorSearchLane {
     #[default]
@@ -132,12 +134,9 @@ impl Memory<'_> {
                 limit,
                 None,
             ),
-            None => lane.search_vector_revisioned_with_rescore(
-                &input.query,
-                limit,
-                None,
-                skip_rescore,
-            ),
+            None => {
+                lane.search_vector_revisioned_with_rescore(&input.query, limit, None, skip_rescore)
+            }
         }?;
         self.produced_from(found.hits.iter().map(|hit| hit.id));
         Ok(ScopedReadResult {

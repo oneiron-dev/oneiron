@@ -18,7 +18,17 @@ const EFFECT_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.effect_digest.v1\0";
 /// trust and grants, always Asks, and is rejected from standing-grant minting.
 /// It is not an owner-overridable deny — the owner may still approve the op in
 /// the moment, but may never make it automatic.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 pub enum CatastropheClass {
     /// An actor raising its own ceiling.
     WidenOwnAuthority,

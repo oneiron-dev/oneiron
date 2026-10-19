@@ -1,13 +1,13 @@
 //! Owner-only OpenAI proxy admission and selective remember-grant withdrawal.
-use std::sync::Arc;
+use super::host_doors::{Listed, internal, naming, owner_proof, refused};
+use crate::auth::CoreAuth;
+use crate::server::SyncServer;
+use oneiron::EntityId;
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     ProxyConnectorAdmitRequest, ProxyConnectorRegistration, ProxyConnectorRevokeWriteRequest,
 };
-use oneiron::EntityId;
-use crate::auth::CoreAuth;
-use crate::server::SyncServer;
-use super::host_doors::{Listed, internal, naming, owner_proof, refused};
+use std::sync::Arc;
 
 fn id(field: &str, reference: &str) -> MemoryResult<EntityId> {
     EntityId::from_hex(reference)
@@ -27,12 +27,22 @@ pub(crate) async fn vault_connectors_proxy_admit(
     let server = Arc::clone(server);
     let answer = tokio::task::spawn_blocking(move || {
         let actor = id("actor", &input.actor)?;
-        let registration = server.vault().admit_proxy_connector(
-            &owner, actor, crate::api::unix_seconds_now(),
-        )?;
-        Ok(ProxyConnectorRegistration::from_registration(server.vault(), registration)?)
-    }).await.unwrap_or_else(|_| Err(internal(VERB)));
-    naming(answer, |registration| EntityId::from_hex(&registration.key.id).into_iter().collect())
+        let registration =
+            server
+                .vault()
+                .admit_proxy_connector(&owner, actor, crate::api::unix_seconds_now())?;
+        Ok(ProxyConnectorRegistration::from_registration(
+            server.vault(),
+            registration,
+        )?)
+    })
+    .await
+    .unwrap_or_else(|_| Err(internal(VERB)));
+    naming(answer, |registration| {
+        EntityId::from_hex(&registration.key.id)
+            .into_iter()
+            .collect()
+    })
 }
 
 pub(crate) async fn vault_connectors_proxy_revoke_write(
@@ -50,9 +60,22 @@ pub(crate) async fn vault_connectors_proxy_revoke_write(
         let actor = id("actor", &input.actor)?;
         let key = id("key", &input.key)?;
         let registration = server.vault().revoke_proxy_connector_write(
-            &owner, actor, key, input.revision, crate::api::unix_seconds_now(),
+            &owner,
+            actor,
+            key,
+            input.revision,
+            crate::api::unix_seconds_now(),
         )?;
-        Ok(ProxyConnectorRegistration::from_registration(server.vault(), registration)?)
-    }).await.unwrap_or_else(|_| Err(internal(VERB)));
-    naming(answer, |registration| EntityId::from_hex(&registration.key.id).into_iter().collect())
+        Ok(ProxyConnectorRegistration::from_registration(
+            server.vault(),
+            registration,
+        )?)
+    })
+    .await
+    .unwrap_or_else(|_| Err(internal(VERB)));
+    naming(answer, |registration| {
+        EntityId::from_hex(&registration.key.id)
+            .into_iter()
+            .collect()
+    })
 }

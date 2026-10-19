@@ -11,7 +11,9 @@ use crate::codebase::{read_asset_blob_in_txn, snapshot_asset_entity_id};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use super::model::{GraphFsEntry, GraphFsFile, GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver};
+use super::model::{
+    GraphFsEntry, GraphFsFile, GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
+};
 use super::paging::{PageBuilder, SealedPosition};
 use super::readdir::GraphFsFileRead;
 
@@ -42,12 +44,16 @@ impl<'vault> ScopedRead<'vault> {
             GraphFsReference::RepoSnapshot { snapshot } => (*snapshot, None),
         };
         let selected = self.read_projected_opaque(
-            &[PointRead::id(repo)], None, |_, _| Ok::<_, Error>(true),
+            &[PointRead::id(repo)],
+            None,
+            |_, _| Ok::<_, Error>(true),
             |txn, rows| {
                 if rows.into_iter().next().flatten().is_none() {
                     return Err(Error::EntityNotFound);
                 }
-                let snapshot = self.vault().get_codebase_snapshot_in_txn(txn, &repo)?
+                let snapshot = self
+                    .vault()
+                    .get_codebase_snapshot_in_txn(txn, &repo)?
                     .ok_or(Error::EntityNotFound)?;
                 if expected.is_some_and(|hash| hash != snapshot.fork_hash) {
                     return Err(Error::EntityNotFound);
@@ -55,7 +61,8 @@ impl<'vault> ScopedRead<'vault> {
                 Ok(snapshot.fork_hash)
             },
         )?;
-        let mut resolver = self.graph_fs(options.with_mount(GraphFsMount::ForkHash(selected.value)));
+        let mut resolver =
+            self.graph_fs(options.with_mount(GraphFsMount::ForkHash(selected.value)));
         resolver.snapshot = Some((repo, selected.value));
         Ok(resolver)
     }
@@ -76,7 +83,11 @@ impl GraphFsResolver<'_, '_> {
 
     /// Binds a public continuation even when the underlying coreutil uses a
     /// byte offset or a fixed-directory name internally.
-    pub(crate) fn open_public_cursor(&self, call: &str, cursor: Option<&str>) -> Result<Option<String>> {
+    pub(crate) fn open_public_cursor(
+        &self,
+        call: &str,
+        cursor: Option<&str>,
+    ) -> Result<Option<String>> {
         self.cursor_scope(call).open(cursor)
     }
 
@@ -89,13 +100,23 @@ impl GraphFsResolver<'_, '_> {
     pub(super) fn snapshot_newer_than(&self, newer_than: u64) -> Result<bool> {
         let (repo, hash) = self.snapshot.ok_or(Error::EntityNotFound)?;
         let read = self.scoped_read.read_projected_opaque(
-            &[PointRead::id(repo)], None, |_, _| Ok::<_, Error>(true),
+            &[PointRead::id(repo)],
+            None,
+            |_, _| Ok::<_, Error>(true),
             |txn, rows| {
-                let Some(row) = rows.into_iter().next().flatten() else { return Ok(false) };
-                let Some(snapshot) = self.scoped_read.vault().get_codebase_snapshot_in_txn(txn, &repo)? else {
+                let Some(row) = rows.into_iter().next().flatten() else {
                     return Ok(false);
                 };
-                if snapshot.fork_hash != hash { return Err(Error::EntityNotFound); }
+                let Some(snapshot) = self
+                    .scoped_read
+                    .vault()
+                    .get_codebase_snapshot_in_txn(txn, &repo)?
+                else {
+                    return Ok(false);
+                };
+                if snapshot.fork_hash != hash {
+                    return Err(Error::EntityNotFound);
+                }
                 Ok(row.learned_at > newer_than)
             },
         )?;
@@ -103,14 +124,19 @@ impl GraphFsResolver<'_, '_> {
     }
 
     pub(super) fn snapshot_visible(&self, path: &str) -> Result<bool> {
-        let Some(_) = self.snapshot else { return Ok(true) };
+        let Some(_) = self.snapshot else {
+            return Ok(true);
+        };
         if path == "/" {
-            return self.snapshot_entries(path).map(|entries| !entries.is_empty());
+            return self
+                .snapshot_entries(path)
+                .map(|entries| !entries.is_empty());
         }
         if self.snapshot_file(path)?.value.is_some() {
             return Ok(true);
         }
-        self.snapshot_entries(path).map(|entries| !entries.is_empty())
+        self.snapshot_entries(path)
+            .map(|entries| !entries.is_empty())
     }
 
     pub(super) fn snapshot_readdir(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
@@ -135,66 +161,103 @@ impl GraphFsResolver<'_, '_> {
 
     fn snapshot_entries(&self, path: &str) -> Result<Vec<GraphFsEntry>> {
         let (repo, hash) = self.snapshot.ok_or(Error::EntityNotFound)?;
-        self.scoped_read.read_projected_opaque(
-            &[PointRead::id(repo)], None, |_, _| Ok::<_, Error>(true),
-            |txn, rows| {
-                if rows.into_iter().next().flatten().is_none() {
-                    return Ok(Vec::new());
-                }
-                let Some(snapshot) = self.scoped_read.vault().get_codebase_snapshot_in_txn(txn, &repo)? else {
-                    return Ok(Vec::new());
-                };
-                if snapshot.fork_hash != hash { return Err(Error::EntityNotFound); }
-                let withheld = self.scoped_read.vault().codebase_withheld_paths_in_txn(txn, &hash)?;
-                let prefix = if path == "/" { String::new() } else { format!("{}/", path.trim_start_matches('/')) };
-                let mut entries = BTreeMap::new();
-                for file in &snapshot.files {
-                    if withheld.contains(&file.path) { continue; }
-                    let Some(rest) = file.path.strip_prefix(&prefix) else { continue };
-                    let asset = snapshot_asset_entity_id(&file.content_hash)?;
-                    if !self.scoped_read.entities_readable_in_txn(txn, &[asset])?[0] {
-                        continue;
+        self.scoped_read
+            .read_projected_opaque(
+                &[PointRead::id(repo)],
+                None,
+                |_, _| Ok::<_, Error>(true),
+                |txn, rows| {
+                    if rows.into_iter().next().flatten().is_none() {
+                        return Ok(Vec::new());
                     }
-                    let (name, directory) = match rest.split_once('/') {
-                        Some((name, _)) => (name, true),
-                        None => (rest, false),
+                    let Some(snapshot) = self
+                        .scoped_read
+                        .vault()
+                        .get_codebase_snapshot_in_txn(txn, &repo)?
+                    else {
+                        return Ok(Vec::new());
                     };
-                    let entry = if directory {
-                        GraphFsEntry::directory(name)
+                    if snapshot.fork_hash != hash {
+                        return Err(Error::EntityNotFound);
+                    }
+                    let withheld = self
+                        .scoped_read
+                        .vault()
+                        .codebase_withheld_paths_in_txn(txn, &hash)?;
+                    let prefix = if path == "/" {
+                        String::new()
                     } else {
-                        GraphFsEntry::file(name, usize::try_from(file.size_bytes).ok())
+                        format!("{}/", path.trim_start_matches('/'))
                     };
-                    entries.insert(name.to_owned(), entry);
-                }
-                Ok(entries.into_values().collect())
-            },
-        ).map(|read| read.value)
+                    let mut entries = BTreeMap::new();
+                    for file in &snapshot.files {
+                        if withheld.contains(&file.path) {
+                            continue;
+                        }
+                        let Some(rest) = file.path.strip_prefix(&prefix) else {
+                            continue;
+                        };
+                        let asset = snapshot_asset_entity_id(&file.content_hash)?;
+                        if !self.scoped_read.entities_readable_in_txn(txn, &[asset])?[0] {
+                            continue;
+                        }
+                        let (name, directory) = match rest.split_once('/') {
+                            Some((name, _)) => (name, true),
+                            None => (rest, false),
+                        };
+                        let entry = if directory {
+                            GraphFsEntry::directory(name)
+                        } else {
+                            GraphFsEntry::file(name, usize::try_from(file.size_bytes).ok())
+                        };
+                        entries.insert(name.to_owned(), entry);
+                    }
+                    Ok(entries.into_values().collect())
+                },
+            )
+            .map(|read| read.value)
     }
 
     pub(super) fn snapshot_file(&self, path: &str) -> Result<GraphFsFileRead> {
         let (repo, hash) = self.snapshot.ok_or(Error::EntityNotFound)?;
         let read = self.scoped_read.read_projected_opaque(
-            &[PointRead::id(repo)], None, |_, _| Ok::<_, Error>(true),
+            &[PointRead::id(repo)],
+            None,
+            |_, _| Ok::<_, Error>(true),
             |txn, rows| {
-                if rows.into_iter().next().flatten().is_none() { return Ok(None); }
-                let Some(snapshot) = self.scoped_read.vault().get_codebase_snapshot_in_txn(txn, &repo)? else {
+                if rows.into_iter().next().flatten().is_none() {
+                    return Ok(None);
+                }
+                let Some(snapshot) = self
+                    .scoped_read
+                    .vault()
+                    .get_codebase_snapshot_in_txn(txn, &repo)?
+                else {
                     return Ok(None);
                 };
-                if snapshot.fork_hash != hash { return Err(Error::EntityNotFound); }
+                if snapshot.fork_hash != hash {
+                    return Err(Error::EntityNotFound);
+                }
                 let relative = path.trim_start_matches('/');
                 let Some(file) = snapshot.files.iter().find(|file| file.path == relative) else {
                     return Ok(None);
                 };
-                let withheld = self.scoped_read.vault().codebase_withheld_paths_in_txn(txn, &hash)?;
+                let withheld = self
+                    .scoped_read
+                    .vault()
+                    .codebase_withheld_paths_in_txn(txn, &hash)?;
                 let asset = snapshot_asset_entity_id(&file.content_hash)?;
                 if withheld.contains(relative)
-                    || !self.scoped_read.entities_readable_in_txn(txn, &[asset])?[0] {
+                    || !self.scoped_read.entities_readable_in_txn(txn, &[asset])?[0]
+                {
                     return Ok(None);
                 }
                 Ok(Some(GraphFsFile {
-                    path: path.to_owned(), mount: self.options.mount,
+                    path: path.to_owned(),
+                    mount: self.options.mount,
                     bytes: crate::secret_custody::sighted_bytes_in_txn(
-                        &self.scoped_read.vault().store, txn,
+                        &self.scoped_read.vault().store,
+                        txn,
                         read_asset_blob_in_txn(self.scoped_read.vault(), txn, &file.content_hash)?,
                         if self.scoped_read.actor_key().reads_as_vault_owner() {
                             crate::secret_custody::SecretSight::Owner
@@ -206,11 +269,18 @@ impl GraphFsResolver<'_, '_> {
             },
         )?;
         // Withheld entries and their denial counts are absent, not an oracle.
-        Ok(GraphFsFileRead { value: read.value, receipt: None })
+        Ok(GraphFsFileRead {
+            value: read.value,
+            receipt: None,
+        })
     }
 }
 
 impl SealedPosition for String {
-    fn to_bytes(&self) -> Vec<u8> { self.as_bytes().to_vec() }
-    fn from_bytes(bytes: &[u8]) -> Option<Self> { String::from_utf8(bytes.to_vec()).ok() }
+    fn to_bytes(&self) -> Vec<u8> {
+        self.as_bytes().to_vec()
+    }
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        String::from_utf8(bytes.to_vec()).ok()
+    }
 }

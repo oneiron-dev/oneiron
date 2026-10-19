@@ -73,7 +73,8 @@ impl Memory<'_> {
                 {
                     return Err(Error::InvalidConfig(
                         "reset requires a non-root shared project".into(),
-                    ).into());
+                    )
+                    .into());
                 }
                 vault.authorize_shared_vault_write_in_txn(
                     txn,
@@ -96,7 +97,8 @@ impl Memory<'_> {
                 if permitted != *record {
                     return Err(Error::InvalidConfig(
                         "reset changes only the signed access roster".into(),
-                    ).into());
+                    )
+                    .into());
                 }
             }
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;

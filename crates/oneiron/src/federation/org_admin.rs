@@ -10,7 +10,9 @@ const ORG_ADMIN_POLICY: SideTable<HexId, OrgAdminPolicy, LegacyJson> =
     SideTable::new(&side_table::ORG_ADMIN_POLICY);
 
 /// The complete administration vocabulary, fixed by the engine.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum OrgAdminPower {
     /// Enroll a member's public identity, never their private key.

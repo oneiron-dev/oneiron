@@ -2,7 +2,11 @@
 use super::*;
 
 impl crate::Vault {
-    pub(crate) fn fresh_outline_in_txn(&self, txn: &heed::RoTxn<'_>, note: EntityId) -> std::result::Result<KeptOutline, DeckCreateError> {
+    pub(crate) fn fresh_outline_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        note: EntityId,
+    ) -> std::result::Result<KeptOutline, DeckCreateError> {
         match self.deck_outline_freshness_in_txn(txn, note)? {
             OutlineFreshness::Fresh => {}
             OutlineFreshness::NotKept => return Err(invalid("the outline is not kept")),
@@ -15,14 +19,19 @@ impl crate::Vault {
                 ));
             }
         }
-        OUTLINE_KEEPS.get(&self.store, txn, &note)?
+        OUTLINE_KEEPS
+            .get(&self.store, txn, &note)?
             .ok_or_else(|| invalid("the outline is not kept"))
     }
 
     /// Set each evidence pin's `drift` from its note cursors. A pin without
     /// a cited CLAIM, or whose ids and cursors are not this engine's, keeps
     /// the caller's flag.
-    pub(super) fn map_evidence_in_txn(&self, txn: &heed::RoTxn<'_>, outline: &mut Value) -> std::result::Result<(), DeckCreateError> {
+    pub(super) fn map_evidence_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        outline: &mut Value,
+    ) -> std::result::Result<(), DeckCreateError> {
         let mut result = Ok(());
         pins_mut(outline, &mut |pin| {
             if result.is_err() {
@@ -44,7 +53,11 @@ impl crate::Vault {
         result
     }
 
-    pub(super) fn version_bytes_in_txn(&self, txn: &heed::RoTxn<'_>, at: &ArtifactVersionRef) -> Result<Vec<u8>> {
+    pub(super) fn version_bytes_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        at: &ArtifactVersionRef,
+    ) -> Result<Vec<u8>> {
         self.read_blob_artifact_version_in_txn(txn, &at.artifact, at.version)?
             .ok_or(Error::EntityNotFound)
     }
@@ -156,7 +169,9 @@ pub(crate) fn outline_pins(bytes: &[u8]) -> std::result::Result<Vec<NotePin>, De
         }
     });
     if bad {
-        return Err(invalid("outline claim pins require engine ids, frontiers and cursors"));
+        return Err(invalid(
+            "outline claim pins require engine ids, frontiers and cursors",
+        ));
     }
     Ok(found)
 }

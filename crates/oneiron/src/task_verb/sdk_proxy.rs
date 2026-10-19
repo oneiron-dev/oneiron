@@ -1,12 +1,12 @@
 //! Typed OpenAI memory-proxy requests, replies and owner admission views (OF-445).
 use std::collections::BTreeMap;
 
+use crate::connector_key::qualification::ConnectorQualificationReceipt;
+use crate::connector_key::{ConnectorGrantSlate, ConnectorKeyRecord, SlateRow, SlateToolManifest};
+use crate::vault_shape::ShapePlanReach;
+use crate::{ContentPart, EntityId, LlmMessage, LlmMessageRole, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use crate::{ContentPart, EntityId, LlmMessage, LlmMessageRole, Vault};
-use crate::connector_key::{ConnectorGrantSlate, ConnectorKeyRecord, SlateRow, SlateToolManifest};
-use crate::connector_key::qualification::ConnectorQualificationReceipt;
-use crate::vault_shape::ShapePlanReach;
 
 /// `POST /v1/chat/completions`'s body. A field the proxy cannot honour
 /// (tools, images, logprobs, a response format, ...) is refused by name,
@@ -230,8 +230,13 @@ impl ProxyConnectorRegistration {
         vault: &Vault,
         registration: crate::connector_key::ActorConnectorRegistration,
     ) -> crate::Result<Self> {
-        let connector = registration.key.catalog.as_ref()
-            .ok_or(crate::Error::InvariantViolation("proxy catalog missing"))?.name.clone();
+        let connector = registration
+            .key
+            .catalog
+            .as_ref()
+            .ok_or(crate::Error::InvariantViolation("proxy catalog missing"))?
+            .name
+            .clone();
         Ok(Self {
             connector,
             key: ConnectorKeyView::new(registration.key_ref, registration.key)?,
@@ -307,11 +312,13 @@ impl ConnectorKeyView {
             consent_required: record.consent_required,
             qualification: record.qualification_receipt,
             manifest_hash,
-            pending_manifest: record.pending_manifest.map(|pending| ConnectorPendingManifestView {
-                candidate: hex(&pending.candidate_id),
-                protocol_revision: pending.protocol_revision,
-                report_hash: pending.qualification_report_hash,
-            }),
+            pending_manifest: record
+                .pending_manifest
+                .map(|pending| ConnectorPendingManifestView {
+                    candidate: hex(&pending.candidate_id),
+                    protocol_revision: pending.protocol_revision,
+                    report_hash: pending.qualification_report_hash,
+                }),
         })
     }
 }

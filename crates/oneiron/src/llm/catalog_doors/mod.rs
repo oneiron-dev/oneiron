@@ -20,7 +20,9 @@ const PROPOSALS: SideTable<EntityId, ModelBindingProposal, Named> =
     SideTable::new(&side_table::LLM_BINDING_PROPOSAL);
 
 fn revision(vault: &Vault, txn: &heed::RoTxn<'_>, id: &str) -> Result<ModelCatalogRevision> {
-    REVISIONS.get(&vault.store, txn, &id.to_owned())?.ok_or(Error::EntityNotFound)
+    REVISIONS
+        .get(&vault.store, txn, &id.to_owned())?
+        .ok_or(Error::EntityNotFound)
 }
 
 fn current(vault: &Vault, txn: &heed::RoTxn<'_>, expected: &str) -> Result<ModelCatalogRevision> {
@@ -38,7 +40,10 @@ impl Vault {
     ) -> Result<ModelCatalogRevision> {
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        if input.revision.trim().is_empty() || input.revision.len() > 256 || input.revision.contains('\0') {
+        if input.revision.trim().is_empty()
+            || input.revision.len() > 256
+            || input.revision.contains('\0')
+        {
             return Err(invalid("invalid model catalog revision"));
         }
         let previous_revision = HEAD.get(&self.store, &txn, &())?;
@@ -48,8 +53,15 @@ impl Vault {
         if REVISIONS.get(&self.store, &txn, &input.revision)?.is_some() {
             return Err(invalid("model catalog revision is immutable"));
         }
-        let prior = previous_revision.as_deref().map(|id| revision(self, &txn, id)).transpose()?;
-        self.refresh_model_catalog_in_txn(&mut txn, &input.catalog, prior.as_ref().map(|value| &value.catalog))?;
+        let prior = previous_revision
+            .as_deref()
+            .map(|id| revision(self, &txn, id))
+            .transpose()?;
+        self.refresh_model_catalog_in_txn(
+            &mut txn,
+            &input.catalog,
+            prior.as_ref().map(|value| &value.catalog),
+        )?;
         let score_diffs = self.apply_model_score_snapshots_in_txn(&mut txn, &input.scores)?;
         let result = ModelCatalogRevision {
             revision: input.revision,
@@ -65,26 +77,56 @@ impl Vault {
         Ok(result)
     }
 
-    pub fn model_catalog_as_owner(&self, owner: &AuthenticatedOwner, input: ModelCatalogGet) -> Result<ModelCatalogRevision> {
+    pub fn model_catalog_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: ModelCatalogGet,
+    ) -> Result<ModelCatalogRevision> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        let id = input.revision.or(HEAD.get(&self.store, &txn, &())?).ok_or(Error::EntityNotFound)?;
+        let id = input
+            .revision
+            .or(HEAD.get(&self.store, &txn, &())?)
+            .ok_or(Error::EntityNotFound)?;
         revision(self, &txn, &id)
     }
 
-    pub fn diff_model_catalog_as_owner(&self, owner: &AuthenticatedOwner, input: ModelCatalogDiffRequest) -> Result<ModelCatalogDiff> {
+    pub fn diff_model_catalog_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: ModelCatalogDiffRequest,
+    ) -> Result<ModelCatalogDiff> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
         let from = revision(self, &txn, &input.from)?;
         let to = revision(self, &txn, &input.to)?;
-        let old: BTreeMap<_, _> = from.rows.into_iter().map(|row| (row.catalog.model.clone(), row)).collect();
-        let new: BTreeMap<_, _> = to.rows.into_iter().map(|row| (row.catalog.model.clone(), row)).collect();
+        let old: BTreeMap<_, _> = from
+            .rows
+            .into_iter()
+            .map(|row| (row.catalog.model.clone(), row))
+            .collect();
+        let new: BTreeMap<_, _> = to
+            .rows
+            .into_iter()
+            .map(|row| (row.catalog.model.clone(), row))
+            .collect();
         let models: BTreeSet<_> = old.keys().chain(new.keys()).cloned().collect();
-        let changes = models.into_iter().filter_map(|model| {
-            let previous = old.get(&model).cloned();
-            let current = new.get(&model).cloned();
-            (previous != current).then_some(ModelCatalogChange { model, previous, current })
-        }).collect();
-        Ok(ModelCatalogDiff { from: input.from, to: input.to, changes })
+        let changes = models
+            .into_iter()
+            .filter_map(|model| {
+                let previous = old.get(&model).cloned();
+                let current = new.get(&model).cloned();
+                (previous != current).then_some(ModelCatalogChange {
+                    model,
+                    previous,
+                    current,
+                })
+            })
+            .collect();
+        Ok(ModelCatalogDiff {
+            from: input.from,
+            to: input.to,
+            changes,
+        })
     }
 }

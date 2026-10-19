@@ -67,22 +67,42 @@ pub enum GraphFsCommand {
 }
 
 impl GraphFsCommand {
-    pub(crate) fn request(self, read: impl Fn(&str) -> anyhow::Result<Vec<u8>>) -> anyhow::Result<(&'static str, Vec<u8>)> {
+    pub(crate) fn request(
+        self,
+        read: impl Fn(&str) -> anyhow::Result<Vec<u8>>,
+    ) -> anyhow::Result<(&'static str, Vec<u8>)> {
         use oneiron::memory::graph_fs_doors::*;
-        fn typed<T: serde::de::DeserializeOwned + serde::Serialize>(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
+        fn typed<T: serde::de::DeserializeOwned + serde::Serialize>(
+            bytes: &[u8],
+        ) -> anyhow::Result<Vec<u8>> {
             let input: T = serde_json::from_slice(bytes)?;
             Ok(serde_json::to_vec(&input)?)
         }
         match self {
             Self::Mount { data } => Ok(("mount", typed::<GraphFsMountRequest>(&read(&data)?)?)),
-            Self::Readdir { data } => Ok(("graph_fs.readdir", typed::<GraphFsPathRequest>(&read(&data)?)?)),
-            Self::ReadFile { data } => Ok(("graph_fs.read_file", typed::<GraphFsPathRequest>(&read(&data)?)?)),
-            Self::ReadLink { data } => Ok(("graph_fs.read_link", typed::<GraphFsLinkRequest>(&read(&data)?)?)),
+            Self::Readdir { data } => Ok((
+                "graph_fs.readdir",
+                typed::<GraphFsPathRequest>(&read(&data)?)?,
+            )),
+            Self::ReadFile { data } => Ok((
+                "graph_fs.read_file",
+                typed::<GraphFsPathRequest>(&read(&data)?)?,
+            )),
+            Self::ReadLink { data } => Ok((
+                "graph_fs.read_link",
+                typed::<GraphFsLinkRequest>(&read(&data)?)?,
+            )),
             Self::Ls { data } => Ok(("graph_fs.ls", typed::<GraphFsLsRequest>(&read(&data)?)?)),
-            Self::Find { data } => Ok(("graph_fs.find", typed::<GraphFsFindRequest>(&read(&data)?)?)),
-            Self::Grep { data } => Ok(("graph_fs.grep", typed::<GraphFsGrepRequest>(&read(&data)?)?)),
+            Self::Find { data } => {
+                Ok(("graph_fs.find", typed::<GraphFsFindRequest>(&read(&data)?)?))
+            }
+            Self::Grep { data } => {
+                Ok(("graph_fs.grep", typed::<GraphFsGrepRequest>(&read(&data)?)?))
+            }
             Self::Cat { data } => Ok(("graph_fs.cat", typed::<GraphFsPathRequest>(&read(&data)?)?)),
-            Self::Head { data } => Ok(("graph_fs.head", typed::<GraphFsHeadRequest>(&read(&data)?)?)),
+            Self::Head { data } => {
+                Ok(("graph_fs.head", typed::<GraphFsHeadRequest>(&read(&data)?)?))
+            }
             Self::Wc { data } => Ok(("graph_fs.wc", typed::<GraphFsLinkRequest>(&read(&data)?)?)),
         }
     }

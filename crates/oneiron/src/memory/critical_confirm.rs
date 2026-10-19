@@ -105,7 +105,10 @@ impl CriticalWriteConfirmReceipt {
     fn from_state(state: &CriticalWriteConfirmState) -> Self {
         let action = &state.action;
         Self {
-            receipt_ref: format!("authority:{}", bytes_to_hex_lower(&state.authority_entry_hash)),
+            receipt_ref: format!(
+                "authority:{}",
+                bytes_to_hex_lower(&state.authority_entry_hash)
+            ),
             confirm_id: bytes_to_hex_lower(&action.confirm_id),
             pending_operation: format!("gate:{}", bytes_to_hex_lower(&action.gate_decision_id)),
             claim_ref: action.claim_id.to_hex(),
@@ -130,7 +133,12 @@ impl Memory<'_> {
         input: &CriticalWriteConfirmPendingRequest,
     ) -> MemoryResult<Option<CriticalWriteConfirmPending>> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let txn = self.vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
         self.critical_confirm_owner_in_txn(owner, &txn)?;
         let Some((binding, pending)) =
             self.critical_confirm_pending_in_txn(&txn, &lane, &input.pending_operation)?
@@ -179,63 +187,63 @@ impl Memory<'_> {
         disposition: CriticalWriteConfirmDisposition,
     ) -> MemoryResult<CriticalWriteConfirmSettlement> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let settlement = self.vault.try_with_write_txn_grouped(|txn| -> MemoryResult<_> {
-            let person = self.critical_confirm_owner_in_txn(owner, txn)?;
-            let (binding, pending) = self
-                .critical_confirm_pending_in_txn(txn, &lane, &input.pending_operation)?
-                .ok_or_else(no_pending)?;
-            let nonce = parse_hex::<16>(&input.nonce, "nonce")?;
-            let frontier = parse_hex::<32>(&input.read_frontier_hash, "read_frontier_hash")?;
-            let now = self.vault.store.clock.now_recorded_at();
-            if nonce != binding.nonce
-                || frontier != binding.read_frontier_hash
-            {
-                return Err(stale_confirmation());
-            }
-            if disposition == CriticalWriteConfirmDisposition::Clear
-                && binding.expires_at <= now
-                && !critical_confirm_has_no_deadline(&pending)
-            {
-                return Err(stale_confirmation());
-            }
-            let action = CriticalWriteConfirmAction {
-                schema_version: CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION,
-                confirm_id: binding.confirm_id,
-                gate_decision_id: binding.gate_decision_id.as_bytes(),
-                claim_id: binding.claim_id,
-                effect_digest: binding.effect_digest,
-                read_frontier_hash: binding.read_frontier_hash,
-                nonce: binding.nonce,
-                expires_at: binding.expires_at,
-                disposition,
-                // This door reauthenticates the owner's own credential; it
-                // accepts no caller claim of passphrase reentry.
-                method: CriticalWriteConfirmMethod::TokenReauth,
-            };
-            let state = self.vault.append_critical_write_confirm_as_owner_in_txn(
-                txn, owner, issuer, action, now,
-            )?;
-            let resolution = self.vault.settle_critical_write_confirm_in_txn(
-                txn,
-                binding.confirm_id,
-                now,
-                Some(person),
-            )??;
-            if (disposition == CriticalWriteConfirmDisposition::Clear
-                && resolution != CriticalWriteConfirmResolution::Cleared)
-                || self
-                    .vault
-                    .store
-                    .pending_gate_consent_in_txn(txn, &binding.claim_id)?
-                    .is_some_and(|row| row.decision_id == binding.gate_decision_id)
-            {
-                return Err(stale_confirmation());
-            }
-            Ok(CriticalWriteConfirmSettlement {
-                receipt: CriticalWriteConfirmReceipt::from_state(&state),
-                resolution,
-            })
-        })?;
+        let settlement = self
+            .vault
+            .try_with_write_txn_grouped(|txn| -> MemoryResult<_> {
+                let person = self.critical_confirm_owner_in_txn(owner, txn)?;
+                let (binding, pending) = self
+                    .critical_confirm_pending_in_txn(txn, &lane, &input.pending_operation)?
+                    .ok_or_else(no_pending)?;
+                let nonce = parse_hex::<16>(&input.nonce, "nonce")?;
+                let frontier = parse_hex::<32>(&input.read_frontier_hash, "read_frontier_hash")?;
+                let now = self.vault.store.clock.now_recorded_at();
+                if nonce != binding.nonce || frontier != binding.read_frontier_hash {
+                    return Err(stale_confirmation());
+                }
+                if disposition == CriticalWriteConfirmDisposition::Clear
+                    && binding.expires_at <= now
+                    && !critical_confirm_has_no_deadline(&pending)
+                {
+                    return Err(stale_confirmation());
+                }
+                let action = CriticalWriteConfirmAction {
+                    schema_version: CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION,
+                    confirm_id: binding.confirm_id,
+                    gate_decision_id: binding.gate_decision_id.as_bytes(),
+                    claim_id: binding.claim_id,
+                    effect_digest: binding.effect_digest,
+                    read_frontier_hash: binding.read_frontier_hash,
+                    nonce: binding.nonce,
+                    expires_at: binding.expires_at,
+                    disposition,
+                    // This door reauthenticates the owner's own credential; it
+                    // accepts no caller claim of passphrase reentry.
+                    method: CriticalWriteConfirmMethod::TokenReauth,
+                };
+                let state = self.vault.append_critical_write_confirm_as_owner_in_txn(
+                    txn, owner, issuer, action, now,
+                )?;
+                let resolution = self.vault.settle_critical_write_confirm_in_txn(
+                    txn,
+                    binding.confirm_id,
+                    now,
+                    Some(person),
+                )??;
+                if (disposition == CriticalWriteConfirmDisposition::Clear
+                    && resolution != CriticalWriteConfirmResolution::Cleared)
+                    || self
+                        .vault
+                        .store
+                        .pending_gate_consent_in_txn(txn, &binding.claim_id)?
+                        .is_some_and(|row| row.decision_id == binding.gate_decision_id)
+                {
+                    return Err(stale_confirmation());
+                }
+                Ok(CriticalWriteConfirmSettlement {
+                    receipt: CriticalWriteConfirmReceipt::from_state(&state),
+                    resolution,
+                })
+            })?;
         if let Ok(id) = EntityId::from_hex(&settlement.receipt.claim_ref) {
             self.produced_from([id]);
         }
@@ -251,13 +259,22 @@ impl Memory<'_> {
     ) -> MemoryResult<CriticalWriteConfirmReceipt> {
         let confirm_id = parse_hex::<32>(&input.confirm_id, "confirm_id")?;
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let txn = self.vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
         self.critical_confirm_owner_in_txn(owner, &txn)?;
         let fold = self.vault.authority_fold_readonly_in_txn(&txn)?;
         let state = fold
             .critical_write_confirms
             .get(&confirm_id)
-            .filter(|_| !fold.conflicted_critical_write_confirms.contains(&confirm_id))
+            .filter(|_| {
+                !fold
+                    .conflicted_critical_write_confirms
+                    .contains(&confirm_id)
+            })
             .ok_or_else(|| MemoryError::not_found("no folded critical confirmation has that id"))?;
         require_readable(&lane, &txn, state.action.claim_id)?;
         self.produced_from([state.action.claim_id]);
@@ -311,11 +328,17 @@ impl Memory<'_> {
     }
 }
 
-fn require_readable(lane: &ScopedRead<'_>, txn: &heed::RoTxn<'_>, id: EntityId) -> MemoryResult<()> {
+fn require_readable(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> MemoryResult<()> {
     if lane.entities_readable_in_txn(txn, &[id])?.first() == Some(&true) {
         return Ok(());
     }
-    Err(MemoryError::not_found("no claim this caller may read has that ref"))
+    Err(MemoryError::not_found(
+        "no claim this caller may read has that ref",
+    ))
 }
 
 fn parse_hex<const N: usize>(value: &str, field: &str) -> MemoryResult<[u8; N]> {
