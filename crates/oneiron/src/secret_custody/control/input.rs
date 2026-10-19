@@ -306,11 +306,12 @@ pub(crate) struct RelayedInput {
     pub(crate) envelope: Vec<u8>,
 }
 
-/// What an input's witness proves: the request, and the key that signed it.
+/// What an input's witness proves: the request, and the install key that
+/// signed it, when it is one.
 #[cfg(feature = "sync")]
 pub(crate) struct Witnessed {
-    key: AuthorityKey,
-    pub(crate) request: OwnerWorkRequest,
+    key: Option<[u8; 32]>,
+    request: OwnerWorkRequest,
 }
 
 #[cfg(feature = "sync")]
@@ -320,7 +321,7 @@ impl Witnessed {
     /// signed it, and the fold holds an issue for exactly this entry, other
     /// than one that waits on a parent not here yet.
     pub(crate) fn folded_invalid(&self, fold: &AuthorityFold, hash: &AuthorityEntryHash) -> bool {
-        let AuthorityKey::Ed25519(key) = &self.key else {
+        let Some(key) = &self.key else {
             return false;
         };
         fold.machine(self.request.carrier)
@@ -396,7 +397,10 @@ impl RelayedInput {
         if authority_entry_hash(&entry).ok()? != self.request {
             return None;
         }
-        let key = entry.signer_key().clone();
+        let key = match entry.signer_key() {
+            AuthorityKey::Ed25519(key) => Some(*key),
+            _ => None,
+        };
         let AuthorityOp::OwnerWorkRequest(request) = entry.op else {
             return None;
         };

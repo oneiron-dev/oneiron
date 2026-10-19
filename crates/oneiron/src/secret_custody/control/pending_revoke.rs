@@ -126,14 +126,10 @@ pub(crate) fn erase_pending_revoke_actor_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
-    let named: Vec<EntityId> = PENDING
-        .scan(&vault.store, wtxn)?
-        .into_iter()
-        .filter(|(_, pending)| pending.owner == *actor)
-        .map(|(id, _)| id)
-        .collect();
-    for id in &named {
-        PENDING.delete(&vault.store, wtxn, id)?;
+    for (id, pending) in PENDING.scan(&vault.store, wtxn)? {
+        if pending.owner == *actor {
+            PENDING.delete(&vault.store, wtxn, &id)?;
+        }
     }
     Ok(())
 }
@@ -162,17 +158,13 @@ impl Vault {
     /// The first carry that failed for a reason other than keys not loaded
     /// here; the others are still tried, and each that failed stays owed.
     fn carry_pending_revokes(&self) -> Result<usize> {
-        let owed: Vec<EntityId> = {
+        let owed = {
             let txn = self.store.env.read_txn()?;
-            PENDING
-                .scan(&self.store, &txn)?
-                .into_iter()
-                .map(|(id, _)| id)
-                .collect()
+            PENDING.scan(&self.store, &txn)?
         };
         let mut carried = 0;
         let mut failed = None;
-        for id in owed {
+        for (id, _) in owed {
             match self.with_write_txn(|txn| self.carry_pending_revoke_in_txn(txn, id)) {
                 Ok(true) => carried += 1,
                 Ok(false) => {}
