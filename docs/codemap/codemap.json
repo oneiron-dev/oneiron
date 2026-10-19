@@ -1015,7 +1015,7 @@
      "path": "src/agent_dispatch/planner_live/intent.rs",
      "purpose": "The reserved spawn intent (DOOR-111 S2, S4c-1): a planned spawn, durable under its asker's intent key",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 1
      }
     },
@@ -2434,7 +2434,7 @@
      "purpose": "The checkpoint v2 images this vault built and keeps (OF-469): each image's canonical bytes keyed by its id…",
      "surface": {
       "const": 3,
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 4
      }
@@ -2467,7 +2467,7 @@
      "purpose": "Checkpoint v2 attestations (OF-469): an eligible root attests one authority checkpoint image with two…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 18,
       "fn": 13,
       "struct": 3
      }
@@ -2498,7 +2498,7 @@
      "purpose": "The portable authority checkpoint v2 image (OF-469): the exact fold a vault builds of its covered history…",
      "surface": {
       "const": 5,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 6,
       "struct": 6
      }
@@ -2532,6 +2532,60 @@
      "surface": {
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CheckpointRootSigner",
+      "RootCheckpointAttest",
+      "RootCheckpointAuthority",
+      "RootCheckpointPickup"
+     ],
+     "path": "src/authority/checkpoint_root_attest.rs",
+     "purpose": "A root of the vault's counted policy attests another host's checkpoint image (FIX 4882)",
+     "surface": {
+      "const": 3,
+      "crate-vis": 2,
+      "enum": 3,
+      "fn": 5,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckpointAttestationIntake",
+      "RootCheckpointRetry"
+     ],
+     "path": "src/authority/checkpoint_root_intake.rs",
+     "purpose": "The host intake for one root's attestation of a checkpoint image this host keeps (FIX 4882): a root this…",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityCheckpointRootState",
+      "AuthorityCheckpointRoots",
+      "CheckpointRootDelivery",
+      "RootCheckpointMissingSigner",
+      "RootCheckpointPolicyChange"
+     ],
+     "path": "src/authority/checkpoint_root_status.rs",
+     "purpose": "Which roots this host's checkpoint head awaits (FIX 4882): for the head image under the root policy the…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 3,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -3127,7 +3181,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 27,
-      "re-export": 48
+      "re-export": 51
      }
     },
     {
@@ -24145,7 +24199,7 @@
      "path": "src/entity_doc/carried.rs",
      "purpose": "A MESSAGE's document between the owner's machines (FIX 853)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -44747,7 +44801,7 @@
      "path": "src/self_heal/audit.rs",
      "purpose": "OF-544: immutable attempt confessions, directed rechecks and random audit draws",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 7,
       "mod": 1,
@@ -50085,7 +50139,7 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 7,
       "re-export": 3,
@@ -50099,7 +50153,7 @@
      "path": "src/sync/client/residence/authority.rs",
      "purpose": "Authority history from the home for a machine that syncs what it opened (OF-469)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -50160,6 +50214,16 @@
      "purpose": "This machine's side of the home's publisher turn (FIX 3351): a publisher asks for the turn before it…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/checkpoint_roots.rs",
+     "purpose": "Checkpoint root attestations between this machine and its home (FIX 4882), on the steady pass after the…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -50388,7 +50452,7 @@
      "path": "src/sync/document_pins.rs",
      "purpose": "FIX 853 (OF-460): document quote pins on the window plane",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -51390,7 +51454,7 @@
      "path": "src/sync/room_facts.rs",
      "purpose": "FIX 1794 (OF-522): a room's side rows on the window plane",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -51401,6 +51465,16 @@
      "purpose": "The room side rows a carrier holds that name an actor this vault erased (FIX 4227, 4228): each is rewritten…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/room_facts/turn_marks.rs",
+     "purpose": "The claims, responses and participation facts a turn door or a DAG append writes for a room or thread root…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -59206,7 +59280,7 @@
      "purpose": "What one vault handle keeps for world privacy P6b, in memory only: this install's keystore, the world keys…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }
@@ -60217,7 +60291,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 167,
+     "files": 170,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61477,7 +61551,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 193,
+     "files": 195,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61675,7 +61749,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3760,
+   "source_files": 3765,
    "test_files": 902
   },
   "oneiron-android": {
@@ -77651,7 +77725,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 46
+      "crate-vis": 47
      }
     },
     {
@@ -77725,7 +77799,17 @@
      "path": "src/auth/machine_proof.rs",
      "purpose": "The machine a request names",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/auth/managed_request.rs",
+     "purpose": "The caller of one request a managed vault serves (WILL-PLAN L14 row 01, Engine ruling 10-19)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -79319,7 +79403,7 @@
      "path": "src/device_sync.rs",
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -80181,6 +80265,16 @@
      "purpose": "`residence.bundle.access` (FIX 4271): a late joiner's access to the kept sealed pad objects, one tagged call",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/livequery/residence/checkpoint_roots.rs",
+     "purpose": "`residence.authority.checkpoint.{roots,attest,countersign}` (FIX 4882): the home's half of checkpoint root…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -83311,7 +83405,7 @@
      "purpose": "HTTP query routes for web dashboard access"
     },
     "auth": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -83556,7 +83650,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 25,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -83733,7 +83827,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 802,
+   "source_files": 804,
    "test_files": 182
   },
   "oneiron-spawn": {
