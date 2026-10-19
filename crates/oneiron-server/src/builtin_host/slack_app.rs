@@ -16,13 +16,14 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use oneiron::Vault;
+use oneiron::authority::ActSurface;
 use oneiron::channel_identity_provider::{
     SlackSharedPresenceAdapter, SlackSharedPresenceAdapterConfig,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::{Error, SecretError};
 use oneiron::secret_custody::{
-    CustodyClass, CustodyTier, OwnerSecretRegistration, RequestedBinding,
+    CustodyClass, CustodyPlan, CustodyTier, OwnerSecretRegistration, RequestedBinding,
 };
 use oneiron::skill_hub::pack_catalog::{PackSetupCheck, PackSetupView};
 use rand_core::RngCore as _;
@@ -181,6 +182,10 @@ struct PendingInstall {
     /// The proof of the owner who started the install. Every write it makes
     /// revalidates it, so a slip revoked meanwhile stops the install.
     owner: AuthenticatedOwner,
+    /// Where the owner's install request reached this install, as that
+    /// request proved it: the credential writes record it, audit only, never
+    /// the OAuth callback's (FIX 4650).
+    surface: ActSurface,
     /// The setup's exact source, as the install door was asked.
     source: Option<String>,
     client_id: String,
@@ -219,10 +224,12 @@ impl SlackInstalls {
 /// Starts one install for the owner: the bot scopes are the ones the owner
 /// allowed on the setup's permission card, the client id comes out of
 /// custody, and the owner's proof waits under a fresh state for Slack's
-/// redirect.
+/// redirect, with where his request reached this install (`surface`, audit
+/// only).
 pub(crate) fn start_slack_install(
     server: &SyncServer,
     owner: AuthenticatedOwner,
+    surface: ActSurface,
     source: Option<String>,
 ) -> Result<SlackInstallLink, OwnerError> {
     let origin = public_origin(server.config.oauth_resource_indicator.as_deref()).ok_or_else(|| {
@@ -254,6 +261,7 @@ pub(crate) fn start_slack_install(
         state,
         PendingInstall {
             owner,
+            surface,
             source,
             client_id,
             redirect_url: redirect_url.clone(),
@@ -400,7 +408,13 @@ fn finish_install(
 ) -> oneiron::Result<String> {
     let vault = server.vault();
     let grant = exchange_code(vault, install, code)?;
-    store(vault, &install.owner, SLACK_BOT_TOKEN, &grant.access_token)?;
+    store(
+        vault,
+        &install.owner,
+        install.surface,
+        SLACK_BOT_TOKEN,
+        &grant.access_token,
+    )?;
     let checks = HostConnectionChecks::new(server)?;
     let view = vault.verify_pack_connection(
         &install.owner,
@@ -507,10 +521,13 @@ fn exchange_code(
 }
 
 /// Stores one credential for the Slack connector under the owner's proof:
-/// a new record for a new name, else a rotation of the live one.
+/// a new record for a new name, else a rotation of the live one, this
+/// install the holder. Each records `surface`, where the owner's install
+/// request reached this install (CALLS `FIX 4650 Slack surface`).
 fn store(
     vault: &Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     name: &str,
     value: &str,
 ) -> oneiron::Result<()> {
@@ -528,11 +545,25 @@ fn store(
         manifest: None,
         value: value.as_bytes(),
     };
-    match vault.register_secret_as_owner(owner, &registration, at) {
+    let plan = CustodyPlan::default();
+    match vault.register_secret_with_custody(owner, surface, &registration, &plan, at) {
         Ok(_) => Ok(()),
-        Err(Error::Secret(SecretError::SecretNameInUse { .. })) => vault
-            .rotate_secret_as_owner(owner, name, value.as_bytes(), at)
-            .map(|_| ()),
+        Err(Error::Secret(SecretError::SecretNameInUse { .. })) => {
+            let rotated = vault.rotate_secret_with_custody(
+                owner,
+                surface,
+                name,
+                value.as_bytes(),
+                &plan,
+                at,
+            )?;
+            match rotated.rotation {
+                Some(_) => Ok(()),
+                None => Err(Error::InvalidConfig(
+                    "the rotation is recorded for its holder, which has not done it yet".to_owned(),
+                )),
+            }
+        }
         Err(error) => Err(error),
     }
 }

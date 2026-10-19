@@ -147,7 +147,8 @@ impl Vault {
     ///
     /// Only a key found in a record's body or in a file is ruled here; one in
     /// a claim, a text field alone or a row outside the entity tables keeps
-    /// its handle.
+    /// its handle. The revoke's owner act records `surface`, where his
+    /// request reached this install: audit only (FIX 4650).
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is not the
@@ -159,6 +160,7 @@ impl Vault {
     pub fn rule_found_key_not_a_secret(
         &self,
         owner: &AuthenticatedOwner,
+        surface: crate::authority::ActSurface,
         handle: &str,
     ) -> Result<FoundKeySettled> {
         self.load_install_signing_if_minted()?;
@@ -208,14 +210,9 @@ impl Vault {
             } else {
                 restore_body_in_txn(self, txn, &found.record, &found.handle, &value)?;
             }
-            // The ruling's surface is this install's: audit only.
-            let carried = self.carry_custody_revoke_in_txn(
-                txn,
-                actor,
-                crate::authority::ActSurface::ThisInstall,
-                &rec.name,
-                at,
-            )?;
+            // The ruling's surface is where the request reached this
+            // install: audit only.
+            let carried = self.carry_custody_revoke_in_txn(txn, actor, surface, &rec.name, at)?;
             Ok((settled, carried))
         })?;
         self.mirror_custody_change(&carried);
