@@ -603,10 +603,10 @@ pub(crate) fn drop_inputs_for_in_txn(
                     .is_some_and(|request| request.act.target == *id)
             })
         })
-        .map(|(digest, _)| digest)
+        .map(|(key, _)| key)
         .collect();
-    for digest in &doomed {
-        drop_input_in_txn(vault, wtxn, digest)?;
+    for key in &doomed {
+        INPUTS.delete(&vault.store, wtxn, key)?;
     }
     Ok(doomed.len())
 }
@@ -639,15 +639,15 @@ impl Vault {
                                 .is_none_or(|request| fold.custody_revoked(&request.act.target))
                     })
                 })
-                .map(|(digest, _)| digest)
+                .map(|(key, _)| key)
                 .collect()
         };
         if done.is_empty() {
             return Ok(0);
         }
         self.with_write_txn(|txn| {
-            for digest in &done {
-                drop_input_in_txn(self, txn, digest)?;
+            for key in &done {
+                INPUTS.delete(&self.store, txn, key)?;
             }
             Ok(done.len())
         })

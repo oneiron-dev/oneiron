@@ -87,9 +87,14 @@ impl CustodyManifestCheck {
     pub fn text(&self) -> String {
         match self {
             Self::Published(published) => format!(
-                "this vault publishes {}; the holder checks a record that names one of them \
-                 against it, and registers any other without a manifest check",
-                published.join(", ")
+                "this vault publishes {}; the holder checks a record that names {} against it, \
+                 and registers any other without a manifest check",
+                published.join(", "),
+                if published.len() == 1 {
+                    "it"
+                } else {
+                    "one of them"
+                }
             ),
             Self::Judged(check) => judgment_text(check),
         }

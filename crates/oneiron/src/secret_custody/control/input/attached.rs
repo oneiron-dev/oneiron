@@ -16,9 +16,14 @@ use crate::error::Result;
 /// the manifest is the recorder's as the envelope is the surface's.
 const ATTACHED_LABEL: &[u8] = b"oneiron/custody-input-attached/v1\0";
 /// The label of a sealed register's input whose surface stated no
-/// `manifest_ref`: the envelope, then the count of manifests and every
-/// secret manifest the vault publishes, each its ref and its text, ordered
-/// by ref (CALLS CUSTODY_MANIFEST_UNSTATED_MULTI).
+/// `manifest_ref` and whose vault publishes one secret manifest: the
+/// envelope, then that manifest's ref and text (CALLS
+/// CUSTODY_MANIFEST_UNSTATED_MULTI).
+const CURRENT_LABEL: &[u8] = b"oneiron/custody-input-current/v1\0";
+/// The label of a sealed register's input whose surface stated no
+/// `manifest_ref` and whose vault publishes several secret manifests: the
+/// envelope, then their count and each one's ref and text, ordered by ref
+/// (CALLS CUSTODY_MANIFEST_UNSTATED_MULTI).
 const PUBLISHED_LABEL: &[u8] = b"oneiron/custody-input-published/v1\0";
 /// The label of a sealed register's input whose surface stated no
 /// `manifest_ref` and whose vault publishes no secret manifest: the
@@ -58,20 +63,21 @@ pub(crate) enum Attached {
 /// A sealed register's `envelope` with the manifest its recorder resolved
 /// for it attached: what the request then names the digest of.
 pub(crate) fn attach_manifest(envelope: &[u8], manifest_ref: &str, text: &str) -> Result<Vec<u8>> {
-    let mut out = frame_envelope(ATTACHED_LABEL, envelope)?;
-    put_framed(&mut out, manifest_ref.as_bytes())?;
-    out.extend_from_slice(text.as_bytes());
-    Ok(out)
+    frame_one(ATTACHED_LABEL, envelope, manifest_ref, text)
 }
 
 /// A sealed register's `envelope` whose surface stated no `manifest_ref`,
 /// with every secret manifest the vault publishes attached, each its ref and
-/// its text, in the order given (CALLS CUSTODY_MANIFEST_UNSTATED_MULTI). None
-/// is left out: an input past one row's bound travels in parts.
+/// its text, in the order given (CALLS CUSTODY_MANIFEST_UNSTATED_MULTI): one
+/// in the frame a single manifest has always had, several in a counted list.
+/// None is left out: an input past one row's bound travels in parts.
 pub(crate) fn attach_published_manifests(
     envelope: &[u8],
     published: &[(&str, &str)],
 ) -> Result<Vec<u8>> {
+    if let [(manifest_ref, text)] = published {
+        return frame_one(CURRENT_LABEL, envelope, manifest_ref, text);
+    }
     let mut out = frame_envelope(PUBLISHED_LABEL, envelope)?;
     put_len(&mut out, published.len())?;
     for (manifest_ref, text) in published {
@@ -93,6 +99,15 @@ pub(crate) fn attach_no_manifest(envelope: &[u8]) -> Result<Vec<u8>> {
 /// manifests the vault publishes.
 pub(crate) fn attach_unread(envelope: &[u8]) -> Result<Vec<u8>> {
     frame_envelope(UNREAD_LABEL, envelope)
+}
+
+/// `label`, the envelope's length and bytes, then one manifest's ref length,
+/// ref and text.
+fn frame_one(label: &[u8], envelope: &[u8], manifest_ref: &str, text: &str) -> Result<Vec<u8>> {
+    let mut out = frame_envelope(label, envelope)?;
+    put_framed(&mut out, manifest_ref.as_bytes())?;
+    out.extend_from_slice(text.as_bytes());
+    Ok(out)
 }
 
 /// `label`, then the envelope's length and bytes: every attachment's head.
@@ -132,27 +147,36 @@ fn attached_manifest(manifest_ref: &[u8], text: &[u8]) -> Option<AttachedManifes
     })
 }
 
+/// The envelope and the one manifest a [`frame_one`] frame holds after its
+/// label.
+fn split_one(rest: &[u8]) -> Option<(&[u8], AttachedManifest)> {
+    let (envelope, rest) = take_framed(rest)?;
+    let (manifest_ref, text) = take_framed(rest)?;
+    Some((envelope, attached_manifest(manifest_ref, text)?))
+}
+
 /// The envelope a kept input holds, and what its recorder attached, if
 /// anything; `None` for a malformed attachment.
 pub(crate) fn split_attached(kept: &[u8]) -> Option<(&[u8], Option<Attached>)> {
     if let Some(rest) = kept.strip_prefix(ATTACHED_LABEL) {
-        let (envelope, rest) = take_framed(rest)?;
-        let (manifest_ref, text) = take_framed(rest)?;
-        let stated = attached_manifest(manifest_ref, text)?;
+        let (envelope, stated) = split_one(rest)?;
         return Some((envelope, Some(Attached::Stated(stated))));
+    }
+    if let Some(rest) = kept.strip_prefix(CURRENT_LABEL) {
+        let (envelope, current) = split_one(rest)?;
+        return published_frame((envelope, vec![current]), &[]);
     }
     if let Some(rest) = kept.strip_prefix(PUBLISHED_LABEL) {
         let (envelope, rest) = take_framed(rest)?;
         let (count, mut rest) = rest.split_first_chunk::<4>()?;
-        let mut published = Vec::new();
+        let mut listed = Vec::new();
         for _ in 0..u32::from_be_bytes(*count) {
             let (manifest_ref, after) = take_framed(rest)?;
             let (text, after) = take_framed(after)?;
-            published.push(attached_manifest(manifest_ref, text)?);
+            listed.push(attached_manifest(manifest_ref, text)?);
             rest = after;
         }
-        return (rest.is_empty() && !published.is_empty())
-            .then_some((envelope, Some(Attached::Published(published))));
+        return published_frame((envelope, listed), rest);
     }
     for (label, attached) in [
         (NO_MANIFEST_LABEL, Attached::NoManifest),
@@ -164,4 +188,18 @@ pub(crate) fn split_attached(kept: &[u8]) -> Option<(&[u8], Option<Attached>)> {
         }
     }
     Some((kept, None))
+}
+
+/// Published manifests as their frame ends: one at least, each naming its
+/// ref, and nothing after them.
+fn published_frame<'a>(
+    (envelope, listed): (&'a [u8], Vec<AttachedManifest>),
+    rest: &[u8],
+) -> Option<(&'a [u8], Option<Attached>)> {
+    (rest.is_empty()
+        && !listed.is_empty()
+        && listed
+            .iter()
+            .all(|manifest| !manifest.manifest_ref.is_empty()))
+    .then_some((envelope, Some(Attached::Published(listed))))
 }
