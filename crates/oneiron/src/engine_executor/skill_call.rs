@@ -42,7 +42,9 @@ pub fn execute_live_skill_call_listing(
     runtime: &mut dyn JsCodeModeRuntime,
 ) -> (MemoryResult<serde_json::Value>, Option<Vec<EntityId>>) {
     let mut rows = Some(Vec::new());
-    let answer = live_skill_call(vault, binding, dispatcher, executor, input, runtime, &mut rows);
+    let answer = live_skill_call(
+        vault, binding, dispatcher, executor, input, runtime, &mut rows,
+    );
     (answer, rows)
 }
 

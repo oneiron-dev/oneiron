@@ -78,7 +78,10 @@ pub(crate) fn act_answer_maybe<T: serde::Serialize>(
     vault: &oneiron::Vault,
     destination: &ReadDestination,
     (answer, rows): (oneiron::memory::MemoryResult<T>, Option<Vec<EntityId>>),
-) -> (oneiron::memory::MemoryResult<ActAnswer<T>>, Option<Vec<EntityId>>) {
+) -> (
+    oneiron::memory::MemoryResult<ActAnswer<T>>,
+    Option<Vec<EntityId>>,
+) {
     match rows {
         Some(rows) => {
             let (answer, rows) = act_answer(vault, destination, (answer, rows));
