@@ -3,6 +3,7 @@ mod actor_dispatch;
 mod admission;
 mod board_observations;
 mod board_setup;
+mod call_meta;
 mod code_mode_verbs;
 mod device_release;
 mod envelope;
@@ -12,6 +13,7 @@ mod owner_call;
 pub(crate) mod skill_execution;
 mod stream_reads;
 mod tasks_response;
+mod tool_receipt;
 mod verb_hooks;
 mod wakes;
 

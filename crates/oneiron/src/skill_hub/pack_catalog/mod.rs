@@ -9,6 +9,7 @@ mod codec;
 mod doors;
 mod hooks;
 mod hub_install;
+mod import_notice;
 mod local;
 mod manifest;
 mod migrations;
@@ -27,6 +28,7 @@ pub use hooks::{
     HookRenderClass, HookSelector, PackHook, PackHookBinding,
 };
 pub use hub_install::hub_pin;
+pub use import_notice::PackImportPreview;
 pub use local::LOCAL_PACK_NAME;
 pub use manifest::{PackAdapter, PackKind, PackManifest};
 pub use migrations::PackMigration;

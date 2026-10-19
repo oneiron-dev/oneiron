@@ -212,8 +212,6 @@ fn merge_stored_event(
         .get_or_insert_with(|| UsageRollup::vault(owner, vault))
         .add_event(&stored.event, stored.cost.as_ref())
 }
-/// Most call keys a [`SeatUsage`] carries.
-pub const SEAT_USAGE_REFS: usize = 64;
 /// One seat's metered calls over a dated window, read from the stamped
 /// events. An unpriced call leaves the sum a floor, never the bill: unknown is
 /// never zero.
@@ -234,7 +232,7 @@ pub struct SeatUsage {
     /// The vault's first metered call of any seat: a window that starts
     /// before it was not metered throughout.
     pub metered_since: Option<u64>,
-    /// The newest calls' idempotency keys, at most [`SEAT_USAGE_REFS`].
+    /// Every call's idempotency key, newest first.
     pub refs: Vec<String>,
 }
 impl UsageLedger {
@@ -255,7 +253,7 @@ impl UsageLedger {
             complete: true,
             ..SeatUsage::default()
         };
-        let mut newest = std::collections::BinaryHeap::new();
+        let mut refs = Vec::new();
         self.vault
             .try_with_write_txn_grouped(|txn| -> Result<_, UsageError> {
                 self.vault.sync_state_visit_prefix_in_write_txn(
@@ -296,17 +294,13 @@ impl UsageLedger {
                             }
                             _ => usage.complete = false,
                         }
-                        newest.push(std::cmp::Reverse((at, stored.event.idempotency_key)));
-                        if newest.len() > SEAT_USAGE_REFS {
-                            newest.pop();
-                        }
+                        refs.push(std::cmp::Reverse((at, stored.event.idempotency_key)));
                         Ok(())
                     },
                 )
             })?;
-        let mut newest = newest.into_vec();
-        newest.sort_unstable();
-        usage.refs = newest
+        refs.sort_unstable();
+        usage.refs = refs
             .into_iter()
             .map(|std::cmp::Reverse((_, key))| key)
             .collect();

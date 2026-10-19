@@ -1,6 +1,8 @@
 //! JSON-RPC envelope types and request dispatch.
 
+use super::call_meta::MCP_INVOCATION_META;
 use super::owner_call::resolve_mcp_caller;
+use super::tool_receipt::mcp_call_receipt;
 use super::{
     ensure_mcp_actor_matches, execute_mcp_tool, mcp_actor_result, mcp_admit_scoped_call,
     mcp_error_response, mcp_params, mcp_validated_call_args,
@@ -53,34 +55,6 @@ pub(crate) struct McpToolCallParams {
     /// its verb hooks fire once for (ARCH-0080 §3).
     #[serde(default, rename = "_meta")]
     pub(super) meta: Option<serde_json::Map<String, Value>>,
-}
-
-/// The `_meta` key a `tools/call` names its invocation under: 32 hex digits.
-pub(crate) const MCP_INVOCATION_META: &str = "oneiron/invocation";
-
-impl McpToolCallParams {
-    /// The invocation the call names in `_meta`, if any.
-    fn invocation(&self) -> Result<Option<oneiron::runtime_hooks::InvocationId>, McpGatewayError> {
-        let Some(named) = self
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.get(MCP_INVOCATION_META))
-        else {
-            return Ok(None);
-        };
-        named
-            .as_str()
-            .and_then(oneiron::runtime_hooks::InvocationId::parse_hex)
-            .map(Some)
-            .ok_or_else(|| {
-                McpGatewayError::new(
-                    -32602,
-                    "tool_args_invalid",
-                    "_meta.oneiron/invocation is 32 lowercase hex digits",
-                )
-                .with_field("_meta")
-            })
-    }
 }
 
 #[derive(Debug)]
@@ -196,6 +170,11 @@ pub(crate) struct McpCallContext {
     /// The logical verb this request runs, when it named one: its verb hooks
     /// fire once for it, however many wrappers it crosses (ARCH-0080 §3).
     pub(crate) invocation: Option<oneiron::runtime_hooks::InvocationId>,
+    /// The hook pause the request resumes beside its invocation, by its ask
+    /// handle (`_meta.hook_ask`, L13 PR-D): bound to its rows' memory, so a
+    /// session-only call's pause that is gone refuses. Never inherited by a
+    /// call of its own.
+    pub(crate) hook_ask: Option<oneiron::EntityId>,
     /// The off-record session the request names, bound to its rows' memory
     /// surface: inside an anonymous one a reference refusal writes no
     /// receipt, as the call writes none (OF-063, OF-538).
@@ -446,9 +425,21 @@ async fn mcp_endpoint(
     let claim = match mcp_named_invocation(&request) {
         None => None,
         Some(invocation) => {
-            let owner = crate::auth::attested_owner(&connection, &server)
-                .map(|owner| owner.to_hex())
-                .unwrap_or_default();
+            // A held socket's owner is judged before anything is claimed or
+            // replayed, and keys the claim (FIX 5128).
+            let owner = match super::owner_call::invocation_owner(&connection, &server) {
+                Ok(owner) => owner,
+                Err(error) => {
+                    return mcp_connection_refusal(
+                        &server,
+                        &headers,
+                        &request.method,
+                        &body,
+                        id,
+                        error,
+                    );
+                }
+            };
             let call = mcp_invocation_body(
                 mode,
                 locality,
@@ -460,6 +451,17 @@ async fn mcp_endpoint(
             match facade::claim_door_invocation(&server, invocation, call).await {
                 DoorClaim::Run(claim) => Some(claim),
                 DoorClaim::Answered(outcome) => {
+                    // And again once the wait is over, before a reply is his.
+                    if let Err(error) = super::owner_call::invocation_owner(&connection, &server) {
+                        return mcp_connection_refusal(
+                            &server,
+                            &headers,
+                            &request.method,
+                            &body,
+                            id,
+                            error,
+                        );
+                    }
                     let mut reply = outcome.body;
                     if let Some(reply) = reply.as_object_mut() {
                         reply.insert("id".to_owned(), id);
@@ -548,8 +550,8 @@ fn mcp_named_invocation(request: &McpJsonRpcRequest) -> Option<InvocationId> {
 
 /// The call a claimed MCP invocation names: the endpoint, the credential
 /// headers and session the actor resolves from, the owner a managed vault's
-/// supervisor attested for it (empty for none), where the caller sits, and
-/// the call itself.
+/// supervisor attested for it or for the held socket it came on (empty for
+/// none), where the caller sits, and the call itself.
 fn mcp_invocation_body(
     mode: McpSurfaceMode,
     locality: CallerLocality,
@@ -576,72 +578,6 @@ fn mcp_invocation_body(
             raw_arguments.unwrap_or_default().as_bytes(),
         ],
     )
-}
-
-/// OF-538's one MCP door: records a `tools/call` once it has answered, in its
-/// own write transaction, and states the receipt on the reply, success or
-/// refusal alike: `structuredContent.meta.receipt_ref` on a result,
-/// `error.data.receipt_ref` on a refusal. A call inside an anonymous
-/// off-record session records nothing and states `receipt_ref: null` with
-/// `no_record: true`.
-fn mcp_call_receipt(
-    server: &SyncServer,
-    actor: &McpResolvedActor,
-    tool: String,
-    request_digest: String,
-    inputs: Option<oneiron::receipt::ActionInputs>,
-    anonymous: bool,
-    called: Result<Value, McpGatewayError>,
-) -> Result<Value, McpGatewayError> {
-    let (outcome, result_digest) = match &called {
-        // A `reveal.wait` reply is digested with its value masked (OF-560).
-        Ok(result) => (
-            oneiron::receipt::CallOutcome::Ok,
-            Some(oneiron::receipt::call_json_digest(
-                oneiron::task_verb::sdk::masked_reveal_reply(&tool, result)
-                    .as_ref()
-                    .unwrap_or(result),
-            )),
-        ),
-        Err(error) => (
-            oneiron::receipt::CallOutcome::Refused {
-                code: error.kind.to_owned(),
-            },
-            Some(oneiron::receipt::call_refusal_digest(
-                error.kind,
-                &error.message,
-            )),
-        ),
-    };
-    let stamp = crate::api::call_receipt::record(
-        server,
-        anonymous,
-        oneiron::receipt::CallReceiptInput {
-            transport: oneiron::receipt::CallTransport::Mcp,
-            verb: tool,
-            actor_ref: actor.actor_ref.to_hex(),
-            actor_class: actor.actor_class.gate_actor_class().to_owned(),
-            credential_ref: actor
-                .auth
-                .as_ref()
-                .and_then(crate::api::call_receipt::credential_ref),
-            outcome,
-            request_digest,
-            result_digest,
-            inputs,
-            served: Vec::new(),
-        },
-    );
-    match called {
-        Ok(mut result) => {
-            crate::mcp::mcp_stamp_call_receipt(&mut result, &stamp);
-            Ok(result)
-        }
-        Err(mut error) => {
-            error.call_receipt = Some(Box::new(stamp));
-            Err(error)
-        }
-    }
 }
 
 /// The stable request id a result or refusal is keyed by.
@@ -758,6 +694,7 @@ pub(crate) async fn handle_mcp_request(
                 let params: McpToolCallParams = mcp_params(request.params, "params")?;
                 let actor = McpCallContext {
                     invocation: params.invocation()?,
+                    hook_ask: params.hook_ask()?,
                     ..actor.clone()
                 };
                 let args = mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;

@@ -169,6 +169,90 @@ pub(crate) struct ManagedOwnerHolder(pub(crate) oneiron::EntityId);
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ManagedIngress;
 
+/// The reap admission a held MCP socket's work takes (FIX 5128): managed
+/// ingress hands it to every upgrade it admits, as lifecycle context, never
+/// as anyone's authority. The upgrade's own admission ends with its
+/// handshake, so the socket holds none while it idles. Each call it carries
+/// is admitted as the served request it becomes ([`Self::admit_requests`]),
+/// and each receipt it writes outside a call alone
+/// ([`Self::admit_receipt`]), on the one count of served writes in flight a
+/// reap waits for.
+#[derive(Clone)]
+pub(crate) struct ManagedCarrierContext(Arc<ManagedState>);
+
+impl ManagedCarrierContext {
+    /// `routes` behind managed ingress and the reap freeze, as the served
+    /// app is ([`with_managed_requests`]): each request through them is
+    /// admitted on its own, and its handler finishes in a task that owns
+    /// that admission.
+    pub(crate) fn admit_requests(&self, routes: Router) -> Router {
+        with_managed_requests(routes, Arc::clone(&self.0))
+    }
+
+    /// Runs `action`, one write the socket makes outside any request (a
+    /// receipt), under a served write's admission, released as it returns;
+    /// `action` does not await. While the vault is frozen for reap nothing
+    /// runs, and the pause a served write gets is returned instead.
+    pub(crate) fn admit_receipt<T>(&self, action: impl FnOnce() -> T) -> Result<T, CarrierPaused> {
+        let _admission = self.0.admit_http_mutation().map_err(CarrierPaused)?;
+        Ok(action())
+    }
+
+    /// Marks `request` as a call the socket carries, so the task its
+    /// admission finishes in runs as the socket's connection (FIX 811),
+    /// not as a fresh one.
+    pub(crate) fn carry<B>(&self, request: &mut axum::http::Request<B>) {
+        request
+            .extensions_mut()
+            .insert(CarriedConnection(crate::api::call_receipt::connection_id()));
+    }
+}
+
+/// The connection a held socket's call arrived on, as
+/// [`ManagedCarrierContext::carry`] marked it.
+#[derive(Clone, Copy)]
+struct CarriedConnection(u128);
+
+/// The reap freeze's refusal of a held socket's write
+/// ([`ManagedCarrierContext::admit_receipt`]): the pause a served write gets
+/// ([`writes_frozen_response`]), as the status and body the socket answers
+/// with.
+pub(crate) struct CarrierPaused(ManagedError);
+
+impl CarrierPaused {
+    pub(crate) fn status(&self) -> StatusCode {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
+
+    pub(crate) fn body(&self) -> serde_json::Value {
+        writes_frozen_body(&self.0)
+    }
+}
+
+/// The vault owner a held MCP socket serves (FIX 5128): the person his
+/// supervisor attested on the socket's upgrade, whom the vault recorded as
+/// its live owner then. Not [`ManagedOwnerHolder`], which attests one
+/// request and its exact body: this attests no later body. It names whose
+/// socket a call came on, and every call judges him again on the vault's
+/// live owner record.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ManagedOwnerSession(oneiron::EntityId);
+
+impl ManagedOwnerSession {
+    /// The session an upgrade's caller `auth` opens: a managed vault's
+    /// attested owner's, built for him alone
+    /// ([`CoreAuth::for_attested_owner`](crate::auth::CoreAuth::for_attested_owner)),
+    /// never a slip's or the host's.
+    pub(crate) fn opened_by(auth: &crate::auth::CoreAuth) -> Option<Self> {
+        auth.managed_owner().map(Self)
+    }
+
+    /// The owner whose socket this is.
+    pub(crate) fn holder(&self) -> oneiron::EntityId {
+        self.0
+    }
+}
+
 /// The listener a request reached: the API's, or the artifact origin's,
 /// which serves artifact reads alone.
 #[derive(Clone, Copy)]
@@ -563,8 +647,15 @@ impl ManagedState {
 /// Only managed mode builds this. [`crate::build_app`] is untouched, so an
 /// unmanaged serve carries no extra layer and behaves exactly as it did.
 pub fn build_managed_app(server: Arc<SyncServer>, state: Arc<ManagedState>) -> Router {
+    with_managed_requests(build_app(server), state)
+}
+
+/// `router` behind managed ingress and the reap freeze: the served app
+/// ([`build_managed_app`]), and the routes a held MCP socket runs each of
+/// its calls through (FIX 5128).
+fn with_managed_requests(router: Router, state: Arc<ManagedState>) -> Router {
     let freeze = middleware::from_fn_with_state(state, refuse_frozen_writes);
-    build_app(server).layer(freeze)
+    router.layer(freeze)
 }
 
 /// The managed artifact origin: this vault's `/a/`, and its names under the
@@ -748,9 +839,18 @@ async fn freeze_gate(
     };
     // A dropped response waiter must not release admission while a handler's
     // spawn_blocking write is still running. The owned task finishes the handler.
+    // A call a held socket carries finishes there as that socket's connection.
+    let carried = request
+        .extensions()
+        .get::<CarriedConnection>()
+        .map(|carried| carried.0);
     tokio::spawn(async move {
         let _admission = admission;
-        run_admitted_request(state, request, next).await
+        let run = run_admitted_request(state, request, next);
+        match carried {
+            Some(connection) => crate::api::call_receipt::on_connection(connection, run).await,
+            None => run.await,
+        }
     })
     .await
     .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
@@ -767,12 +867,21 @@ pub(super) fn owner_attestation_refused(path: &str) -> Response {
     }
 }
 
-async fn run_admitted_request(state: Arc<ManagedState>, request: Request, next: Next) -> Response {
+async fn run_admitted_request(
+    state: Arc<ManagedState>,
+    mut request: Request,
+    next: Next,
+) -> Response {
     if request.headers().contains_key(UPGRADE) {
         // Admitted, and out of sight from here on. A freeze with one of these
         // behind it is not quiescent, and `prepare_reap` is where that is
         // answered for — this gate cannot refuse a frame it never sees.
         state.admit_sync_upgrade();
+        // A held MCP socket admits each call it carries here again, and each
+        // receipt it writes outside one (FIX 5128).
+        request
+            .extensions_mut()
+            .insert(ManagedCarrierContext(Arc::clone(&state)));
     }
     // Observation does not wake the vault. Explicit lifecycle calls own their
     // transition so their completion receipt reports what they actually did.
@@ -825,7 +934,16 @@ fn is_read_only(request: &Request) -> bool {
 /// allocation while it prepares a reap, what waits, what lifts it, and that a
 /// self-hosted vault has no such limit.
 fn writes_frozen_response(error: &ManagedError) -> Response {
-    let body = serde_json::json!({
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(writes_frozen_body(error)),
+    )
+        .into_response()
+}
+
+/// [`writes_frozen_response`]'s body.
+fn writes_frozen_body(error: &ManagedError) -> serde_json::Value {
+    serde_json::json!({
         "error": WRITES_FROZEN_TAG,
         "message": error.to_string(),
         "bound": {
@@ -837,8 +955,7 @@ fn writes_frozen_response(error: &ManagedError) -> Response {
         "affected": ["effects", "non_safe_method_requests", "upgrades", "background_passes"],
         "resumes_on": ["reap_abort", "wake"],
         "self_hosted": {"supported": true, "condition": "no_service_reap_limit"},
-    });
-    (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
+    })
 }
 
 /// Seals the vault's held data key to the node's managed escrow recipient

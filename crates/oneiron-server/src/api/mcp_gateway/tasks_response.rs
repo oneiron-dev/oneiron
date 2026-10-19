@@ -662,6 +662,12 @@ impl McpRowSurface {
         .with_birth_position(self.position)
         .listing_producers(producers)
         .with_invocation(self.invocation);
+        // The hook pause the request resumes beside the invocation it named
+        // (L13 PR-D): with no invocation named, it resumes nothing.
+        let memory = match actor.hook_ask.filter(|_| actor.invocation.is_some()) {
+            Some(ask) => memory.with_hook_ask(ask),
+            None => memory,
+        };
         let memory = match &self.run {
             Some(run) => memory.with_host_origin(run.origin.clone()),
             None => memory,
@@ -1112,6 +1118,7 @@ fn mcp_agent_verb_input(
         "vault.packs.hooks.grant.get" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.hooks.qualify" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.put" => a.spec.clone().ok_or_else(invalid),
+        "vault.packs.preview" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.connector.prepare" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.connector.get" => a.spec.clone().ok_or_else(invalid),
         "vault.packs.connector.qualify" => a.spec.clone().ok_or_else(invalid),
@@ -2827,6 +2834,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.packs.put" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.packs.preview" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.packs.connector.prepare" => {
@@ -9347,6 +9357,18 @@ async fn execute_agent_verb_row(
                     .flatten(),
             );
             let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.packs.preview" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.packs.preview", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::PackPreviewRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_packs_preview(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

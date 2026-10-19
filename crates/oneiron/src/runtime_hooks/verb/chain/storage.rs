@@ -20,7 +20,10 @@ impl Chain<'_> {
     /// Commits the chain's rows. A resumed chain commits even with no run
     /// after the asking hook: its write uses the answer up. A session-only
     /// call's chain holds them for the call to keep once its read is done
-    /// ([`Self::hold_in_session`]).
+    /// ([`Self::hold_in_session`]), a resumed one after using its answer up
+    /// in the keep ([`Self::take_session_answer`], L13 PR-D); a call with no
+    /// room overlay writes its blocks and intents in the vault
+    /// ([`Self::write_consequences`]), and a room has none.
     pub(super) fn commit(&self) -> Result<()> {
         if self.runs.is_empty() && self.token.is_none() {
             return Ok(());
@@ -30,10 +33,46 @@ impl Chain<'_> {
                 .vault
                 .with_write_txn_grouped(|txn| self.write_in_txn(txn)),
             VerbHookStorage::Session(hooks) => {
+                self.take_session_answer(hooks)?;
                 self.hold_in_session(hooks);
-                Ok(())
+                self.write_consequences()
             }
         }
+    }
+
+    /// A session-only call's hook consequences with no room overlay, while
+    /// `KEPT_CALL_HOOK_CONSEQUENCES_RUN` holds (L13 PR-D, FIX 5525): its
+    /// blocks with their lineage and its intents, each written once in the
+    /// vault as [`Self::write_in_txn`] writes them. Its receipts and saved
+    /// runs stay in the keep. A room's chain, and a call whose consequences
+    /// do not run, holds none.
+    pub(super) fn consequences_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        let vault = self.vault;
+        for (id, row, chain) in &self.blocks {
+            if block::put_new_block_in_txn(vault, txn, *id, row)? {
+                lineage::put_in_txn(vault, txn, id.as_bytes(), chain)?;
+            }
+        }
+        for (key, intent, proposal) in &self.intents {
+            if store::INTENTS.get(&vault.store, txn, key)?.is_some() {
+                continue;
+            }
+            if let Some(id) = proposal {
+                lineage::put_in_txn(vault, txn, id.as_bytes(), &intent.lineage)?;
+            }
+            store::INTENTS.put(vault, txn, key, intent)?;
+        }
+        Ok(())
+    }
+
+    /// [`Self::consequences_in_txn`] in a vault write of its own, when the
+    /// chain holds any.
+    fn write_consequences(&self) -> Result<()> {
+        if self.blocks.is_empty() && self.intents.is_empty() {
+            return Ok(());
+        }
+        self.vault
+            .with_write_txn_grouped(|txn| self.consequences_in_txn(txn))
     }
 
     /// The chain's receipts, saved runs, blocks and intents. A retried call
