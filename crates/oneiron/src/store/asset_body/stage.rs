@@ -8,7 +8,7 @@ use std::io::{self, Read, Write};
 use heed::RwTxn;
 
 use super::{
-    ASSET_INLINE_BODY_BYTES, AssetBodyFacts, AssetFileKind, AssetFileManifest, pages_sealed,
+    ASSET_INLINE_BODY_BYTES, AssetBodyFacts, AssetFileKind, AssetFileManifest, keeps_bodies_inline,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -266,7 +266,7 @@ impl crate::Vault {
         let Some(spill) = spill else {
             return Ok(staged(Staged::Inline(inline)));
         };
-        if !opaque || pages_sealed(&self.store) {
+        if !opaque || keeps_bodies_inline(&self.store) {
             // Read whole, as a slice put holds it: the batch door judges it.
             let len = usize::try_from(facts.len)
                 .map_err(|_| Error::InvariantViolation("asset body past this machine's memory"))?;

@@ -205,11 +205,18 @@ fn held_occurrence(id: &EntityId, body: &BodyRef) -> Result<EntityId> {
     )
 }
 
-/// Whether this store's pages are sealed (the maximum tier). Such a vault
-/// keeps every ASSET body in its row, exactly as before, until a per-file key
-/// envelope makes a file's unlink a crypto-shred (FIX 3677, L04).
-fn pages_sealed(store: &Store) -> bool {
-    heed::Env::is_sealed(&store.env)
+/// FIX 3677: the file plane stays off until the raw ASSET readers other lanes
+/// own (sync egress, scoped reads, blob holders, taint, federation export,
+/// codebase ingest) read a manifest's file; the PR's FIX lines name each one.
+/// Off, every ASSET body stays in its row exactly as before; on is this line.
+pub(crate) const ASSET_FILE_PLANE: bool = false;
+
+/// Whether every ASSET body stays in its row: the file plane is off, or this
+/// store's pages are sealed (the maximum tier), which keeps bodies inline
+/// until a per-file key envelope makes a file's unlink a crypto-shred
+/// (FIX 3677, L04).
+fn keeps_bodies_inline(store: &Store) -> bool {
+    !ASSET_FILE_PLANE || heed::Env::is_sealed(&store.env)
 }
 
 /// Whether `body` is bytes no reader of ASSET bodies interprets: no UTF-8
@@ -341,7 +348,7 @@ pub(crate) fn file_put_body_in_txn(
 ) -> Result<Option<(Vec<u8>, AssetBodyFacts)>> {
     if entity_type != ENTITY_TYPE_ASSET
         || data.len() as u64 <= ASSET_INLINE_BODY_BYTES
-        || pages_sealed(store)
+        || keeps_bodies_inline(store)
         || !opaque_body(data)
     {
         return Ok(None);
