@@ -31,10 +31,15 @@
       if (typeof text !== "string") throw new TypeError("invalid_verb_input");
       return text;
     };
+    // A host call goes out on a later microtask, so whatever the host answers
+    // (a refusal, a parked call) settles the returned promise and never throws
+    // at the call site. The input is checked and encoded first, here, so a bad
+    // argument still throws where it is passed.
+    const later = sending => Promise.resolve().then(sending);
     // `self.fold` takes `(span, {note?})`, sent as `[from, through]` or `[[from, through], {note}]`.
     const verb = name => name === "self.fold"
-      ? (span, options) => Promise.resolve(send(name, verbInput(options === undefined ? span : [span, options]))).then(decode)
-      : (input = {}) => { const text = verbInput(input); return Promise.resolve(send(name, text)).then(decode); };
+      ? (span, options) => { const text = verbInput(options === undefined ? span : [span, options]); return later(() => send(name, text)).then(decode); }
+      : (input = {}) => { const text = verbInput(input); return later(() => send(name, text)).then(decode); };
     // A call under a root the SDK does not have (`tools.`, `self.mcp.`,
     // `memory.`) or of a verb a root does not hold is sent as written: the
     // host answers the typed WRONG_ROOT correction before any effect, and the
@@ -44,9 +49,12 @@
     const plain = new Set(["then", "toJSON", "toString", "valueOf", "constructor", "prototype"]);
     const refusal = path => new Proxy(function () {}, {
       get: (_, key) => typeof key === "string" && !plain.has(key) ? refusal(`${path}.${key}`) : undefined,
-      apply: (_, __, [input = {}]) => Promise.resolve(send(path, verbInput(input))).then(text => {
-        throw decode(text)?.error ?? new TypeError("unknown_sdk_verb");
-      }),
+      apply: (_, __, [input = {}]) => {
+        const text = verbInput(input);
+        return later(() => send(path, text)).then(reply => {
+          throw decode(reply)?.error ?? new TypeError("unknown_sdk_verb");
+        });
+      },
     });
     // `connector.<name>.<tool>(args)` is one tool of one catalogued
     // connector, sent as the one `connector.call` row ({name, tool,
@@ -96,7 +104,7 @@
       if (typeof ref !== "string") throw new TypeError("result ref must be a name, handle or card");
       return ref;
     };
-    const read = (name, input) => Promise.resolve(send(name, verbInput(input))).then(decode);
+    const read = (name, input) => { const text = verbInput(input); return later(() => send(name, text)).then(decode); };
     // Every result card the program is given carries its reads as methods
     // that are not fields, so its JSON is unchanged: `r.slice({lines: [0, 50]})`.
     const card = value => {
@@ -136,9 +144,10 @@
           if (receipt.recipe !== undefined) input.receipt.recipe = receipt.recipe;
         }
       }
-      const sent = verbInput(input);
-      sendFramed("store", text(value), true);
-      return Promise.resolve(send("store", sent)).then(decode).then(card);
+      // The value's frames and its call go out together, so two stores
+      // begun in one turn never interleave their frames.
+      const sent = verbInput(input), body = text(value);
+      return later(() => { sendFramed("store", body, true); return send("store", sent); }).then(decode).then(card);
     };
     // `summarize(r, {effort?, group?, defer?})`: the row takes its ref and
     // group as refs. A made summary answers its card; a deferred one its
