@@ -1,6 +1,7 @@
 //! A socket the server closes on a protocol rejection (FIX 3303, OF-538):
 //! a hello it refused, a frame it would not serve, a codec frame the
-//! transport would not unwrap. Each is one refused call of the connection,
+//! transport would not unwrap, a frame the WebSocket codec itself refused
+//! (FIX 5311). Each is one refused call of the connection,
 //! receipted once before its close, naming no person or credential and
 //! capturing nothing the peer sent
 //! ([`crate::api::call_receipt::record_socket_close`]). The close code is
@@ -19,6 +20,10 @@ const HELLO_VERB: &str = "ws.hello";
 
 /// The verb a refusal of a frame after the hello states.
 const FRAME_VERB: &str = "ws.frame";
+
+/// RFC 6455's close code for a protocol violation: a frame the WebSocket
+/// codec refused that no app close code names (FIX 5311).
+const WS_PROTOCOL_ERROR: u16 = 1002;
 
 /// One protocol refusal: the code the socket closes with and the reason its
 /// close frame states.
@@ -41,6 +46,8 @@ impl ProtocolRefusal {
             close_codes::DECODE_ERROR => "decode_error",
             close_codes::UNKNOWN_TAG => "unknown_tag",
             close_codes::FRAME_TOO_LARGE => "frame_too_large",
+            close_codes::TRY_AGAIN_LATER => "waited_out",
+            WS_PROTOCOL_ERROR => "websocket_protocol_error",
             _ => "protocol_refused",
         }
     }
@@ -126,5 +133,57 @@ pub(super) async fn refuse_frame(
 pub(super) async fn close_read_refusal(server: &SyncServer, transport: &mut StoppingTransport) {
     if let Some(refusal) = transport.refusal() {
         refusal.close(server, FRAME_VERB, transport).await;
+    }
+}
+
+/// After a read that failed: when the WebSocket codec refused the frame
+/// ([`codec_read_refusal`]), receipts that refusal and closes with it (FIX
+/// 5311). A read that failed any other way is the peer's link ending, and
+/// closes nothing here.
+pub(super) async fn close_read_error(
+    server: &SyncServer,
+    transport: &mut StoppingTransport,
+    error: &axum::Error,
+) {
+    if let Some(refusal) = codec_read_refusal(error) {
+        tracing::warn!(
+            code = refusal.code(),
+            "websocket frame refused by the codec — closing"
+        );
+        refusal.close(server, FRAME_VERB, transport).await;
+    }
+}
+
+/// What a read error is, by the type of the codec axum runs, never by its
+/// words: a frame the codec refused (one over the socket's frame cap, a
+/// masking, opcode, framing or UTF-8 violation) is a protocol refusal. Every
+/// other error (the peer's I/O ending, a reset without a close, a socket
+/// already closed) is a disconnect: `None`.
+fn codec_read_refusal(error: &axum::Error) -> Option<ProtocolRefusal> {
+    use production_ws_codec::tungstenite::Error as CodecError;
+    use production_ws_codec::tungstenite::error::{CapacityError, ProtocolError};
+    match std::error::Error::source(error)?.downcast_ref::<CodecError>()? {
+        CodecError::Capacity(CapacityError::MessageTooLong { .. }) => Some(ProtocolRefusal::new(
+            close_codes::FRAME_TOO_LARGE,
+            "frame too large",
+        )),
+        CodecError::Protocol(
+            ProtocolError::ReceivedAfterClosing
+            | ProtocolError::NonZeroReservedBits
+            | ProtocolError::UnmaskedFrameFromClient
+            | ProtocolError::FragmentedControlFrame
+            | ProtocolError::ControlFrameTooBig
+            | ProtocolError::UnknownControlFrameType(_)
+            | ProtocolError::UnknownDataFrameType(_)
+            | ProtocolError::UnexpectedContinueFrame
+            | ProtocolError::ExpectedFragment(_)
+            | ProtocolError::InvalidOpcode(_)
+            | ProtocolError::InvalidCloseSequence,
+        )
+        | CodecError::Utf8(_) => Some(ProtocolRefusal::new(
+            WS_PROTOCOL_ERROR,
+            "websocket protocol violation",
+        )),
+        _ => None,
     }
 }

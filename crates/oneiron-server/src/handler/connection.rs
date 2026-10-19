@@ -681,15 +681,25 @@ async fn handle_connection(
                 tracing::warn!(conn_id, "received unexpected text message");
                 continue;
             }
-            Err(_) => {
+            Err(error) => {
                 tracing::warn!(conn_id, reason = "websocket_read_failed", "WebSocket error");
+                // A frame the WebSocket codec refused is a refusal, not a
+                // disconnect: receipted, then closed (FIX 5311).
+                super::protocol_close::close_read_error(&server, &mut transport, &error).await;
                 break;
             }
         };
 
-        // Size check
+        // Size check: an oversized frame is receipted, then closed (FIX 5310).
         if data.len() > server.config.max_frame_size {
             tracing::warn!(conn_id, size = data.len(), "frame too large");
+            super::protocol_close::refuse_frame(
+                &mut transport,
+                &server,
+                close_codes::FRAME_TOO_LARGE,
+                "frame too large",
+            )
+            .await;
             break;
         }
 
@@ -785,15 +795,17 @@ async fn handle_connection(
                                 .await;
                             break;
                         }
+                        // FIX 5310: each refusal below is its connection's
+                        // receipt, then the close it always sent, or, where
+                        // it sent none, its protocol close code.
                         ProtocolError::ReplacementUnsupported => {
-                            transport
-                                .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
-                                    code: close_codes::VERSION_MISMATCH,
-                                    reason: Utf8Bytes::from_static(
-                                        "window behind its history-free floor: upgrade this device to hello v13+ (v14 for residence)",
-                                    ),
-                                })))
-                                .await;
+                            super::protocol_close::refuse_frame(
+                                &mut transport,
+                                &server,
+                                close_codes::VERSION_MISMATCH,
+                                "window behind its history-free floor: upgrade this device to hello v13+ (v14 for residence)",
+                            )
+                            .await;
                             break;
                         }
                         ProtocolError::WaitedOut => {
@@ -802,22 +814,35 @@ async fn handle_connection(
                                 reason = "waited_out",
                                 "document waited for its turn past its deadline — closing"
                             );
-                            transport
-                                .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
-                                    code: close_codes::TRY_AGAIN_LATER,
-                                    reason: Utf8Bytes::from_static(
-                                        "waited for its turn past its deadline: nothing was applied",
-                                    ),
-                                })))
-                                .await;
+                            super::protocol_close::refuse_frame(
+                                &mut transport,
+                                &server,
+                                close_codes::TRY_AGAIN_LATER,
+                                "waited for its turn past its deadline: nothing was applied",
+                            )
+                            .await;
                             break;
                         }
                         ProtocolError::InvalidPayload(msg) => {
                             tracing::warn!(conn_id, error = %msg, "invalid payload — closing");
+                            super::protocol_close::refuse_frame(
+                                &mut transport,
+                                &server,
+                                close_codes::DECODE_ERROR,
+                                "invalid payload",
+                            )
+                            .await;
                             break;
                         }
                         ProtocolError::UnknownTag(tag) => {
                             tracing::warn!(conn_id, tag, "unknown tag — closing");
+                            super::protocol_close::refuse_frame(
+                                &mut transport,
+                                &server,
+                                close_codes::UNKNOWN_TAG,
+                                "unknown tag",
+                            )
+                            .await;
                             break;
                         }
                         ProtocolError::VvDecode(_) => {
@@ -832,6 +857,13 @@ async fn handle_connection(
                         }
                         ProtocolError::FrameTooLarge { size, max } => {
                             tracing::warn!(conn_id, size, max, "frame too large — closing");
+                            super::protocol_close::refuse_frame(
+                                &mut transport,
+                                &server,
+                                close_codes::FRAME_TOO_LARGE,
+                                "frame too large",
+                            )
+                            .await;
                             break;
                         }
                         ProtocolError::LoroImport(_) => {
@@ -859,6 +891,35 @@ async fn handle_connection(
             }
             Err(ProtocolError::UnknownTag(tag)) => {
                 tracing::warn!(conn_id, tag, "unknown tag — closing");
+                super::protocol_close::refuse_frame(
+                    &mut transport,
+                    &server,
+                    close_codes::UNKNOWN_TAG,
+                    "unknown tag",
+                )
+                .await;
+                break;
+            }
+            Err(ProtocolError::InvalidPayload(reason)) => {
+                tracing::warn!(conn_id, error = %reason, "invalid payload — closing");
+                super::protocol_close::refuse_frame(
+                    &mut transport,
+                    &server,
+                    close_codes::DECODE_ERROR,
+                    "invalid payload",
+                )
+                .await;
+                break;
+            }
+            Err(ProtocolError::FrameTooLarge { size, max }) => {
+                tracing::warn!(conn_id, size, max, "frame too large — closing");
+                super::protocol_close::refuse_frame(
+                    &mut transport,
+                    &server,
+                    close_codes::FRAME_TOO_LARGE,
+                    "frame too large",
+                )
+                .await;
                 break;
             }
             Err(e) => {

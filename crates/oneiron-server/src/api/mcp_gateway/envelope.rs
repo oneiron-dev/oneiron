@@ -113,6 +113,10 @@ pub(crate) struct McpGatewayError {
     /// `error.data.receipt_ref` (and `error.data.no_record` for the anonymous
     /// exception). Boxed for size, as `effective_scope` is.
     pub(super) call_receipt: Option<Box<crate::api::call_receipt::CallStamp>>,
+    /// The call receipt an `invoke_action` call's verb-table row's reply
+    /// stated (FIX 5275), surfaced as `error.data.row_receipt`, apart from
+    /// this call's own. Boxed for size, as `call_receipt` is.
+    pub(super) row_receipt: Option<Box<crate::api::call_receipt::CallStamp>>,
     /// A verb hook's stop (ARCH-0080 §3), surfaced as `error.data.hook`; a
     /// code-mode door hands it back to the run as the typed stop.
     pub(super) hook: Option<Box<oneiron::runtime_hooks::VerbHookStop>>,
@@ -135,6 +139,7 @@ impl McpGatewayError {
             byte_bound: None,
             wrong_root: None,
             call_receipt: None,
+            row_receipt: None,
             hook: None,
             retry_after: None,
         }

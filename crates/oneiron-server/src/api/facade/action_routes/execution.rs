@@ -29,6 +29,22 @@ pub(super) async fn execute(
     credential: Option<CoreAuth>,
     call: AgentActionCall,
 ) -> Result<ActionDispatch, FacadeApiError> {
+    execute_stamped(server, headers, extensions, bound, credential, call)
+        .await
+        .0
+}
+
+/// [`execute`], and beside its dispatch what its verb-table row's reply
+/// stated of its call receipt (FIX 5275), as [`run_bound_stamped`] reads
+/// it: unrecorded when no row ran through the door's route.
+pub(super) async fn execute_stamped(
+    server: &Arc<SyncServer>,
+    headers: HeaderMap,
+    extensions: Extensions,
+    bound: ActionBound,
+    credential: Option<CoreAuth>,
+    call: AgentActionCall,
+) -> (Result<ActionDispatch, FacadeApiError>, CallStamp) {
     let ActionBound {
         actor, class, key, ..
     } = &bound;
@@ -42,9 +58,12 @@ pub(super) async fn execute(
         EdgeActorClass::Human => {
             LensPrincipalBinding::human_view(actor.to_hex(), key.clone(), vec![key.clone()])
         }
-    }
-    .map_err(engine)?;
-    run_bound(
+    };
+    let principal = match principal {
+        Ok(principal) => principal,
+        Err(error) => return (Err(engine(error)), CallStamp::Unrecorded),
+    };
+    run_bound_stamped(
         server,
         headers,
         extensions,
