@@ -875,6 +875,18 @@ export class Oneiron {
         /** Stops one reader's digest schedule under the owner's proof, keeping its saved periods. */
         clear: (input: Facade.WeaveReaderRef): Facade.WeaveScheduleCleared => this.#call(() => this.#client.vaultWeaveSchedulesClear(input) as Facade.WeaveScheduleCleared),
       },
+      setting_changes: {
+        /** Lists the Coach's proposed and applied changes to the owner's own digest rhythm and section order, newest first, under the owner's proof. */
+        list: (input: Facade.EmptyRequest = {}): Facade.WeaveDigestSettingChange[] => this.#call(() => this.#client.vaultWeaveSettingChangesList(input) as Facade.WeaveDigestSettingChange[]),
+        /** Accepts, as the owner's own act, or declines one proposed change to the owner's digest settings; a stale accept applies nothing. */
+        answer: (input: Facade.WeaveDigestSettingAnswer): Facade.WeaveDigestSettingChange => this.#call(() => this.#client.vaultWeaveSettingChangesAnswer(input) as Facade.WeaveDigestSettingChange),
+        /** Undoes one applied or accepted change to the owner's digest settings, restoring the rhythm and section order before it while the settings are unchanged since. */
+        undo: (input: Facade.WeaveDigestSettingUndo): Facade.WeaveDigestSettingChange => this.#call(() => this.#client.vaultWeaveSettingChangesUndo(input) as Facade.WeaveDigestSettingChange),
+      },
+      digest_feedback: {
+        /** Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are. */
+        put: (input: Facade.WeaveDigestFeedback): Facade.WeaveDigestFeedback => this.#call(() => this.#client.vaultWeaveDigestFeedbackPut(input) as Facade.WeaveDigestFeedback),
+      },
     },
     inbox: {
       concerns: {

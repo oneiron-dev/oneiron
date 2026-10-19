@@ -216,6 +216,10 @@ vaultWeaveEnqueue(input: unknown): unknown
 vaultWeaveSchedulesList(input: unknown): unknown
 vaultWeaveSchedulesPut(input: unknown): unknown
 vaultWeaveSchedulesClear(input: unknown): unknown
+vaultWeaveSettingChangesList(input: unknown): unknown
+vaultWeaveSettingChangesAnswer(input: unknown): unknown
+vaultWeaveSettingChangesUndo(input: unknown): unknown
+vaultWeaveDigestFeedbackPut(input: unknown): unknown
 vaultWeaveOwnerDigestRender(input: unknown): unknown
 vaultInboxConcernsReview(input: unknown): unknown
 vaultInboxLens(input: unknown): unknown

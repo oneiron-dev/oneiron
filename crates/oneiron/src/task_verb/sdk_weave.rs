@@ -1,5 +1,8 @@
 //! Typed owner setup for weave work and the inbox's real producers.
-use crate::claim::{WeaveReaderRef, WeaveScheduleView};
+use crate::claim::{
+    WeaveDigestFeedback, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
+    WeaveDigestSettingUndo, WeaveReaderRef, WeaveScheduleView,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::maintenance::agent_health::COACH_AGENT_HEALTH_FACET;
 use crate::dreamer_runner::maintenance::{MAINTENANCE_QUEUE_KIND, validate_owner_in_txn};
@@ -106,6 +109,65 @@ pub fn weave_schedule_clear(
             .vault()
             .clear_weave_digest_schedule(owner, input.reader()?)?,
     })
+}
+
+fn change_ref(value: &str) -> MemoryResult<EntityId> {
+    EntityId::from_hex(value)
+        .map_err(|_| MemoryError::bad_request("change_ref must be a 32-hex change id"))
+}
+
+/// The Coach's changes to the owner's own digest settings, newest first
+/// (FIX 5495).
+pub fn weave_setting_changes(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+) -> MemoryResult<Vec<WeaveDigestSettingChange>> {
+    owner_handle(memory, owner)?;
+    memory
+        .vault()
+        .weave_digest_setting_changes(owner)
+        .map_err(MemoryError::from)
+}
+
+/// The owner accepts, as his own act, or declines one proposed change.
+pub fn weave_setting_change_answer(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: WeaveDigestSettingAnswer,
+) -> MemoryResult<WeaveDigestSettingChange> {
+    owner_handle(memory, owner)?;
+    let change = change_ref(&input.change_ref)?;
+    memory
+        .vault()
+        .answer_weave_digest_setting_change(owner, change, input.accept)
+        .map_err(MemoryError::from)
+}
+
+/// The owner's one-tap undo of an applied or accepted change.
+pub fn weave_setting_change_undo(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: WeaveDigestSettingUndo,
+) -> MemoryResult<WeaveDigestSettingChange> {
+    owner_handle(memory, owner)?;
+    let change = change_ref(&input.change_ref)?;
+    memory
+        .vault()
+        .undo_weave_digest_setting_change(owner, change)
+        .map_err(MemoryError::from)
+}
+
+/// What the owner tells the Coach about his own digest.
+pub fn weave_digest_feedback_put(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: WeaveDigestFeedback,
+) -> MemoryResult<WeaveDigestFeedback> {
+    owner_handle(memory, owner)?;
+    memory
+        .vault()
+        .set_weave_digest_feedback(owner, &input)
+        .map_err(MemoryError::from)
 }
 
 /// Queue only the Coach's existing health review. Findings, recipients and

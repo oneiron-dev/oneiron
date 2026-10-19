@@ -1541,6 +1541,12 @@ class Oneiron:
         @property
         def schedules(self) -> "Oneiron._VaultWeaveSchedulesVerbs":
             return Oneiron._VaultWeaveSchedulesVerbs(self._client)
+        @property
+        def setting_changes(self) -> "Oneiron._VaultWeaveSettingChangesVerbs":
+            return Oneiron._VaultWeaveSettingChangesVerbs(self._client)
+        @property
+        def digest_feedback(self) -> "Oneiron._VaultWeaveDigestFeedbackVerbs":
+            return Oneiron._VaultWeaveDigestFeedbackVerbs(self._client)
     class _VaultWeaveDigestVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1607,6 +1613,24 @@ class Oneiron:
         def clear(self, spec):
             """Stops one reader's digest schedule under the owner's proof, keeping its saved periods."""
             return json.loads(_translate(lambda: self._client.vault_weave_schedules_clear(json.dumps(spec))))
+    class _VaultWeaveSettingChangesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec=None):
+            """Lists the Coach's proposed and applied changes to the owner's own digest rhythm and section order, newest first, under the owner's proof."""
+            return json.loads(_translate(lambda: self._client.vault_weave_setting_changes_list(json.dumps({} if spec is None else spec))))
+        def answer(self, spec):
+            """Accepts, as the owner's own act, or declines one proposed change to the owner's digest settings; a stale accept applies nothing."""
+            return json.loads(_translate(lambda: self._client.vault_weave_setting_changes_answer(json.dumps(spec))))
+        def undo(self, spec):
+            """Undoes one applied or accepted change to the owner's digest settings, restoring the rhythm and section order before it while the settings are unchanged since."""
+            return json.loads(_translate(lambda: self._client.vault_weave_setting_changes_undo(json.dumps(spec))))
+    class _VaultWeaveDigestFeedbackVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def put(self, spec):
+            """Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are."""
+            return json.loads(_translate(lambda: self._client.vault_weave_digest_feedback_put(json.dumps(spec))))
     class _VaultInboxVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

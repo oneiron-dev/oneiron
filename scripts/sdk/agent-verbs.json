@@ -3047,6 +3047,70 @@
       "openapi": true
     },
     {
+      "name": "vault.weave.setting_changes.list",
+      "description": "Lists the Coach's proposed and applied changes to the owner's own digest rhythm and section order, newest first, under the owner's proof.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::claim::WeaveDigestSettingChange>",
+      "call": "crate::task_verb::sdk::weave_setting_changes(memory, &memory.embedded_owner(\"vault.weave.setting_changes.list\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.weave.setting_changes.answer",
+      "description": "Accepts, as the owner's own act, or declines one proposed change to the owner's digest settings; a stale accept applies nothing.",
+      "input": "crate::claim::WeaveDigestSettingAnswer",
+      "output": "crate::claim::WeaveDigestSettingChange",
+      "call": "crate::task_verb::sdk::weave_setting_change_answer(memory, &memory.embedded_owner(\"vault.weave.setting_changes.answer\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.weave.setting_changes.undo",
+      "description": "Undoes one applied or accepted change to the owner's digest settings, restoring the rhythm and section order before it while the settings are unchanged since.",
+      "input": "crate::claim::WeaveDigestSettingUndo",
+      "output": "crate::claim::WeaveDigestSettingChange",
+      "call": "crate::task_verb::sdk::weave_setting_change_undo(memory, &memory.embedded_owner(\"vault.weave.setting_changes.undo\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.weave.digest_feedback.put",
+      "description": "Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are.",
+      "input": "crate::claim::WeaveDigestFeedback",
+      "output": "crate::claim::WeaveDigestFeedback",
+      "call": "crate::task_verb::sdk::weave_digest_feedback_put(memory, &memory.embedded_owner(\"vault.weave.digest_feedback.put\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.weave.owner.digest.render",
       "description": "Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due.",
       "input": "EmptyRequest",

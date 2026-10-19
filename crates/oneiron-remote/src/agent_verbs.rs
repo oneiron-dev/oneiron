@@ -607,6 +607,18 @@ impl OneironClient {
                 "vault.weave.schedules.clear" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WeaveScheduleCleared,
                 >(client, verb, &input),
+                "vault.weave.setting_changes.list" => remote_agent_verb_output::<
+                    Vec<oneiron::claim::WeaveDigestSettingChange>,
+                >(client, verb, &input),
+                "vault.weave.setting_changes.answer" => remote_agent_verb_output::<
+                    oneiron::claim::WeaveDigestSettingChange,
+                >(client, verb, &input),
+                "vault.weave.setting_changes.undo" => remote_agent_verb_output::<
+                    oneiron::claim::WeaveDigestSettingChange,
+                >(client, verb, &input),
+                "vault.weave.digest_feedback.put" => remote_agent_verb_output::<
+                    oneiron::claim::WeaveDigestFeedback,
+                >(client, verb, &input),
                 "vault.weave.owner.digest.render" => remote_agent_verb_output::<
                     Option<oneiron::claim::WeaveDigestRendered>,
                 >(client, verb, &input),
@@ -5645,6 +5657,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.weave.schedules.clear", value)
+    }
+    pub fn vault_weave_setting_changes_list(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::claim::WeaveDigestSettingChange>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.setting_changes.list", value)
+    }
+    pub fn vault_weave_setting_changes_answer(
+        &self,
+        input: &oneiron::claim::WeaveDigestSettingAnswer,
+    ) -> Result<oneiron::claim::WeaveDigestSettingChange, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.setting_changes.answer", value)
+    }
+    pub fn vault_weave_setting_changes_undo(
+        &self,
+        input: &oneiron::claim::WeaveDigestSettingUndo,
+    ) -> Result<oneiron::claim::WeaveDigestSettingChange, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.setting_changes.undo", value)
+    }
+    pub fn vault_weave_digest_feedback_put(
+        &self,
+        input: &oneiron::claim::WeaveDigestFeedback,
+    ) -> Result<oneiron::claim::WeaveDigestFeedback, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.digest_feedback.put", value)
     }
     pub fn vault_weave_owner_digest_render(
         &self,
