@@ -36,6 +36,7 @@ use oneiron::{
 };
 
 use super::SKILL_SEPARATOR;
+use crate::ai_host::AiHandle;
 use crate::mcp::McpCodeModeProvider;
 use crate::server::core::pattern_workflow::{
     decode_launch_spec, fault, launch_members, launch_request, launch_spec_schema, stop,
@@ -80,6 +81,8 @@ struct AgentPatternLaunchRunner {
     /// its calls are charged to.
     backend: Arc<dyn LlmBackend>,
     lease: BudgetLease,
+    /// The host's model handle, whose turn tracker sees each capture.
+    ai: AiHandle,
 }
 
 /// The runner a leased agent's run lends its planner for one entry
@@ -94,6 +97,7 @@ struct AgentPatternLaunchRunner {
 pub(super) fn agent_runner(
     vault: &Arc<Vault>,
     provider: &dyn McpCodeModeProvider,
+    ai: &AiHandle,
     status: &AgentDispatchStatus,
     actor: WriteActor,
     seat: Option<&ModelSeat>,
@@ -102,6 +106,7 @@ pub(super) fn agent_runner(
     agent_runner_for_attempt(
         vault,
         provider,
+        ai,
         &status.attempt,
         &status.input.definition,
         actor,
@@ -117,6 +122,7 @@ pub(super) fn agent_runner(
 pub(in crate::server) fn agent_runner_for_attempt(
     vault: &Arc<Vault>,
     provider: &dyn McpCodeModeProvider,
+    ai: &AiHandle,
     attempt: &AttemptRecord,
     definition: &AgentDefinition,
     actor: WriteActor,
@@ -137,6 +143,7 @@ pub(in crate::server) fn agent_runner_for_attempt(
         seat,
         backend,
         lease: provider.lease().clone(),
+        ai: ai.clone(),
     }))
 }
 
@@ -209,6 +216,9 @@ impl AgentPatternLaunchRunner {
     /// of its own, since the spawn runs inside the run's runtime, which
     /// cannot block on another.
     fn capture(&self, request: LlmRequest) -> Result<LlmResponse> {
+        // A running turn to shutdown's grace and the Dreamer's idle sample,
+        // until the capture returns on any path (FIX 4639).
+        let _turn = self.ai.enter_turn();
         std::thread::scope(|scope| {
             scope
                 .spawn(move || -> Result<LlmResponse> {
