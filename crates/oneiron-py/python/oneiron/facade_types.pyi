@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1051 facade rows, 3552 declarations.
+Census: 1051 facade rows, 3554 declarations.
 Inputs: 987 of 1051 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 941 of 1051 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
@@ -438,10 +438,14 @@ class AgentHealthPadReadRefused(TypedDict):
     code: str
 AgentHealthPadRead = AgentHealthPadReadRead | AgentHealthPadReadPendingReview | AgentHealthPadReadDeclined | AgentHealthPadReadNotCovered | AgentHealthPadReadRefused
 AgentHealthCoachRoute = Literal["skill_edit", "prompt_inject", "neither"]
+class AgentHealthSkillTarget(TypedDict):
+    skill: str
+    version: str
 class AgentHealthCoachDraft(TypedDict):
     route: AgentHealthCoachRoute
     diagnosis: str
     proposal: str
+    target: NotRequired[AgentHealthSkillTarget | None]
 class AgentHealthCoachAnswer(TypedDict):
     at: int
     pads: AgentHealthPadRead
@@ -534,6 +538,12 @@ class AgentHealthRunTree(TypedDict):
     run_id: str
     tree: RunTree
     marked: str
+class AgentHealthLoadedSkill(TypedDict):
+    skill: str
+    name: str
+    version: str
+    active: bool
+    instructions: str
 class AgentHealthPromptInject(TypedDict):
     approval: str
     successor: str
@@ -545,6 +555,7 @@ class AgentHealthCardView(TypedDict):
     card: str
     body: AgentHealthCard
     run_tree: NotRequired[AgentHealthRunTree | None]
+    skills: NotRequired[list[AgentHealthLoadedSkill]]
     prompt_inject: NotRequired[AgentHealthPromptInject | None]
 ConcernOutcome = Literal["confirmed", "dismissed", "unresolved"]
 class ConcernOutcomeRequest(TypedDict):
