@@ -137,7 +137,7 @@ impl<'a> ContextPackBuilder<'a> {
     ) -> Result<(crate::claim::ScopedReadResult<ContextPack>, PackRunStatus)> {
         let disclosure = self.disclosure.clone();
         let run = self
-            .caller_off_device(lane.off_device())
+            .for_destination(lane.actor_key().destination())
             .run_unfinalized()?;
         let mut status = PackRunStatus {
             embedding_matches: run.embedding_matches,
@@ -475,11 +475,11 @@ impl<'a> ContextPackBuilder<'a> {
             let stale_neighbor_exclusion = (!stale_worlds.is_empty()
                 && matches!(self.world_scope, WorldScope::All | WorldScope::Base))
             .then_some(&stale_worlds);
-            let device_local = if self.off_device {
-                Some(crate::settings::device_local_worlds_at(
+            let device_local = if self.destination.is_off_device() {
+                Some(crate::settings::device_local_worlds_for(
                     self.vault,
                     &rtxn,
-                    crate::claim::CallerLocality::OffDevice,
+                    &self.destination,
                 )?)
             } else {
                 None

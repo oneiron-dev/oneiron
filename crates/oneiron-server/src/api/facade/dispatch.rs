@@ -10153,6 +10153,31 @@ async fn vault_authority_handoff_alarms_acknowledge(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_roots_requests_cancel(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.roots.requests.cancel")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.roots.requests.cancel", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.roots.requests.cancel", value).await?;
+    let (output, listed) = super::host_doors::vault_roots_requests_cancel(
+        server,
+        auth,
+        call.surface(),
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_cleanup_run(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -25632,6 +25657,7 @@ pub(crate) async fn call_verb(
         "vault.authority.handoff_alarms.acknowledge" => {
             vault_authority_handoff_alarms_acknowledge(server, call, input).await
         }
+        "vault.roots.requests.cancel" => vault_roots_requests_cancel(server, call, input).await,
         "vault.cleanup.run" => vault_cleanup_run(server, call, input).await,
         "vault.entities.mention" => vault_entities_mention(server, call, input).await,
         "vault.legal_holds.place" => vault_legal_holds_place(server, call, input).await,

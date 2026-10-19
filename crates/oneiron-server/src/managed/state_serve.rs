@@ -15,7 +15,8 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use oneiron_vault_contract::ManagedWidenAction;
 use oneiron_vault_contract::{
-    CONTRACT_VERSION, CtlRequest, CtlResponse, UnixTs, now_ts, validate_wake_entries,
+    CONTRACT_VERSION, CtlRequest, CtlResponse, REAP_PAUSE_REFUSAL, UnixTs, now_ts,
+    validate_wake_entries,
 };
 use tokio::sync::{Mutex, watch};
 
@@ -35,20 +36,16 @@ use oneiron_vault_contract::host::{Host, HostLimits};
 /// [`ManagedError::WritesFrozen`] is the only thing that emits it. That is what
 /// keeps "the reap freeze refused this" distinguishable from every other way
 /// this surface can be briefly unavailable — a 503 without the tag is a
-/// different outage and means a different response from the caller.
-pub const WRITES_FROZEN_TAG: &str = "writes_frozen";
+/// different outage and means a different response from the caller. It is
+/// the wire spelling of [`REAP_PAUSE_REFUSAL`]'s kind, which a ctl refusal
+/// carries too.
+pub const WRITES_FROZEN_TAG: &str = REAP_PAUSE_REFUSAL.error.as_str();
 
 /// What a vault frozen for reap says (K18), served and logged: a temporary
 /// pause under the service's vault lifecycle allocation, what it holds back,
 /// how it lifts, and that a self-hosted vault has no such limit. It names no
 /// duration: this process knows none.
 pub(super) const WRITES_FROZEN_MESSAGE: &str = "This hosted vault is paused while the service prepares to reap it under its vault lifecycle allocation. New effects, requests other than GET, HEAD and OPTIONS (POST reads included) and connection upgrades are refused, and background passes wait, until the reap is aborted or the vault wakes again; the same request then succeeds. The same action works on a self-hosted vault, which has no such service reap limit; its storage and authorization checks still apply.";
-
-/// The bound a reap pause names: the service's capacity, as its vault
-/// lifecycle allocation, in the phase that prepares a reap.
-const REAP_PAUSE_BOUND_KIND: &str = "capacity";
-const REAP_PAUSE_RESOURCE: &str = "vault_lifecycle_allocation";
-const REAP_PAUSE_PHASE: &str = "reap_prepare";
 
 /// An alarm the supervisor pushed, as the reconciler hook saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -446,9 +443,9 @@ impl ManagedState {
                 if !self.background_waiting.swap(true, Ordering::SeqCst) {
                     tracing::info!(
                         reason = WRITES_FROZEN_TAG,
-                        bound_kind = REAP_PAUSE_BOUND_KIND,
-                        bound_resource = REAP_PAUSE_RESOURCE,
-                        bound_phase = REAP_PAUSE_PHASE,
+                        bound_kind = REAP_PAUSE_REFUSAL.bound.kind.as_str(),
+                        bound_resource = REAP_PAUSE_REFUSAL.bound.resource.as_str(),
+                        bound_phase = REAP_PAUSE_REFUSAL.bound.phase.as_str(),
                         "background passes wait: the vault is paused for reap preparation until the reap is aborted or the vault wakes again"
                     );
                 }
@@ -593,7 +590,8 @@ impl ManagedState {
     ///
     /// The freeze goes first so nothing new enters the lease table while it is
     /// being drained, and the export runs last so the entries the supervisor
-    /// gets describe the quiesced state rather than the one before it.
+    /// gets describe the quiesced state rather than the one before it. The
+    /// training setting rides the same report, read under the same revision.
     ///
     /// `quiescent` needs a third answer beyond "frozen" and "drained": the
     /// freeze refuses new requests and new upgrades, but a sync session
@@ -607,16 +605,20 @@ impl ManagedState {
         // turn a stale exported ledger into a quiescent reply.
         let http_drained = self.http_mutating_in_flight.load(Ordering::SeqCst) == 0;
         let drained = self.drain_lease_table().await;
-        let (ledger_rev, next_wake) = self.ledger.export_at_freeze(&self.server).await?;
+        let (ledger_rev, report) = self.ledger.export_at_freeze(&self.server).await?;
         // The reply carries the entries, so they are bounds-checked before
-        // they are serialized rather than after a supervisor has trusted them.
-        validate_wake_entries(&next_wake).map_err(|error| ManagedError::LedgerRefused {
-            reason: error.to_string(),
-        })?;
+        // they are serialized rather than after a supervisor has trusted them,
+        // and the training setting is shape-checked with them.
+        validate_wake_entries(&report.entries)
+            .and_then(|()| report.training.validate())
+            .map_err(|error| ManagedError::LedgerRefused {
+                reason: error.to_string(),
+            })?;
         Ok(CtlResponse::PrepareReap {
             quiescent: http_drained && drained && self.is_frozen() && !self.live_sync_writer(),
             ledger_rev,
-            next_wake,
+            next_wake: report.entries,
+            training: report.training,
         })
     }
 
@@ -932,7 +934,8 @@ fn is_read_only(request: &Request) -> bool {
 /// construction: `reap_abort` lifts it and the same request succeeds. The
 /// fields beside it name the bound (K18): the service's vault lifecycle
 /// allocation while it prepares a reap, what waits, what lifts it, and that a
-/// self-hosted vault has no such limit.
+/// self-hosted vault has no such limit. Each comes from the same
+/// [`REAP_PAUSE_REFUSAL`] a ctl refusal carries, so the two cannot drift.
 fn writes_frozen_response(error: &ManagedError) -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
@@ -943,18 +946,18 @@ fn writes_frozen_response(error: &ManagedError) -> Response {
 
 /// [`writes_frozen_response`]'s body.
 fn writes_frozen_body(error: &ManagedError) -> serde_json::Value {
+    let refusal = REAP_PAUSE_REFUSAL;
     serde_json::json!({
-        "error": WRITES_FROZEN_TAG,
+        "error": refusal.error,
         "message": error.to_string(),
-        "bound": {
-            "kind": REAP_PAUSE_BOUND_KIND,
-            "resource": REAP_PAUSE_RESOURCE,
-            "phase": REAP_PAUSE_PHASE,
-        },
-        "temporary": true,
+        "bound": refusal.bound,
+        "temporary": refusal.temporary,
         "affected": ["effects", "non_safe_method_requests", "upgrades", "background_passes"],
-        "resumes_on": ["reap_abort", "wake"],
-        "self_hosted": {"supported": true, "condition": "no_service_reap_limit"},
+        "resumes_on": refusal.resumes_on,
+        "self_hosted": {
+            "supported": refusal.self_hosted_supported,
+            "condition": "no_service_reap_limit",
+        },
     })
 }
 
@@ -1075,10 +1078,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let mut config = managed.serve_config(args);
     // The owner's settings file, refused leaf by leaf and settled once,
     // before anything reads the configuration: its `[oneironer]` arms the
-    // write-time marker in `vault_config` below.
-    super::settings::settle(&managed, args, &mut config)?;
+    // write-time marker in `vault_config` below. Tracing starts between its
+    // refusal and its settling, at the level the settled configuration runs
+    // at (argv over the file), so what settling decides is logged.
+    let settings = super::settings::prepare(&managed, args, &mut config)?;
+    init_managed_tracing(super::settings::log_level(settings.as_ref(), &config));
+    super::settings::settle(settings, &mut config)?;
     let cors = crate::commands::build_cors_layer(&config.sync_server_config())?;
-    init_managed_tracing(&config.log_level);
     tracing::info!(
         vault = %managed.vault_name,
         data_dir = %managed.data_dir.display(),
@@ -1330,12 +1336,21 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         );
     }
 
+    // Subscribed before the opening push reads the training setting, so a
+    // change between the two still reaches the report task (FIX 5575).
+    let training_changes = vault.subscribe_proactivity_changes();
     if let Err(_error) = state.ledger().push_if_changed(&sync_server).await {
         tracing::warn!(
             reason = "wake_ledger_export_failed",
             "initial wake ledger push failed"
         );
     }
+    let training_report = spawn_training_report(
+        Arc::clone(&state),
+        Arc::clone(&sync_server),
+        training_changes,
+        shutdown.triggered(),
+    );
 
     // Housekeeping passes are admitted like a served write: a vault frozen
     // for reap sweeps nothing, and a pass in flight keeps it from reading
@@ -1530,6 +1545,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     if let Some(voice) = voice {
         voice.stop().await;
     }
+    // So does every public live voice session, its journal finished, and
+    // none starts after (FIX 5324). A reap's freeze leaves them open; only
+    // this stop ends them.
+    sync_server.live_voice.stop_all().await;
     // Drain observation writes without thawing a previously quiescent process.
     let telemetry_drained = state.freeze();
     // No new durable background work from here on.
@@ -1576,10 +1595,50 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         tracing::warn!(%error, path = %path.display(), "artifact socket unlink failed");
     }
 
+    // The report task stops before the final push, which reads the setting
+    // again itself.
+    training_report.abort();
+    let _ = training_report.await;
     final_ledger_push(&state, &sync_server).await;
     result?;
     telemetry_drained?;
     Ok(())
+}
+
+/// Reports the vault's training setting to the supervisor as it changes
+/// (FIX 5575), so a status read there never wakes the vault.
+///
+/// Each notification on `changes` only says "re-read committed state": the
+/// setting is read again and pushed with the current entries when it moved
+/// from the last report the supervisor took, or when it took none, so a
+/// refused push goes out again on the next change. Notifications that land
+/// during a push are read as one, since each report replaces the last whole.
+/// It takes no write admission, so the reap freeze never holds it back, and
+/// it ends with shutdown.
+fn spawn_training_report(
+    state: Arc<ManagedState>,
+    server: Arc<SyncServer>,
+    mut changes: watch::Receiver<u64>,
+    mut stop: ShutdownSignal,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                () = &mut stop => return,
+                changed = changes.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                }
+            }
+            if let Err(_error) = state.ledger().push_training_if_changed(&server).await {
+                tracing::warn!(
+                    reason = "wake_ledger_export_failed",
+                    "training setting report failed"
+                );
+            }
+        }
+    })
 }
 
 /// The last thing the supervisor hears from this process.
@@ -1590,8 +1649,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
 /// entries that moved since the last accepted push — a job that became ready,
 /// a lease that changed — has to advance the revision, or a supervisor that
 /// drops `rev <= last_acked` drops precisely the snapshot this exit exists to
-/// deliver. Unchanged entries send nothing, because the supervisor already
-/// holds that snapshot at that revision.
+/// deliver. An unchanged report (entries and training setting) sends nothing,
+/// because the supervisor already holds that snapshot at that revision.
 ///
 /// Failure is logged and stepped over. A supervisor that has already died must
 /// not be able to hold this exit open.

@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use super::codec::{invalid_snapshot, validate_fingerprint_hex, validate_row_id_list};
-use crate::claim::{CallerLocality, ScopedReadActorKey};
+use crate::claim::ScopedReadActorKey;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -195,9 +195,9 @@ pub struct PersonaSnapshotCompileOptions {
     /// outside the audience's per-contact read scope never enter the
     /// compile (absence is the boundary, not prompt-side withholding).
     pub audience: Option<ScopedReadActorKey>,
-    /// Where the card is read from. Off this device no claim a device-local
-    /// world keeps enters the compile (DEC-0005).
-    pub locality: CallerLocality,
+    /// Where the card's rows go. Off this device no claim a world withholds
+    /// from one of its machines enters the compile (DEC-0005, mesh PR2b).
+    pub destination: crate::settings::ReadDestination,
     /// Per-card agent-takes toggle; OFF by default. When off, supplied
     /// takes are not consulted at all.
     pub include_agent_takes: bool,
@@ -216,7 +216,7 @@ impl Default for PersonaSnapshotCompileOptions {
     fn default() -> Self {
         Self {
             audience: None,
-            locality: CallerLocality::OnDevice,
+            destination: crate::settings::ReadDestination::on_device(),
             include_agent_takes: false,
             agent_takes: Vec::new(),
             max_claim_rows: DEFAULT_PERSONA_SNAPSHOT_MAX_CLAIM_ROWS,

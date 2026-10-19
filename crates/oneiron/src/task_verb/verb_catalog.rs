@@ -435,6 +435,7 @@ pub enum AgentVerb {
     VaultResearchRecordBenchmark,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
+    VaultRootsRequestsCancel,
     VaultCleanupRun,
     VaultEntitiesMention,
     VaultLegalHoldsPlace,
@@ -1514,6 +1515,7 @@ impl AgentVerb {
         Self::VaultResearchRecordBenchmark,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
+        Self::VaultRootsRequestsCancel,
         Self::VaultCleanupRun,
         Self::VaultEntitiesMention,
         Self::VaultLegalHoldsPlace,
@@ -2608,6 +2610,7 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
             }
+            Self::VaultRootsRequestsCancel => "vault.roots.requests.cancel",
             Self::VaultCleanupRun => "vault.cleanup.run",
             Self::VaultEntitiesMention => "vault.entities.mention",
             Self::VaultLegalHoldsPlace => "vault.legal_holds.place",
@@ -3703,6 +3706,7 @@ impl AgentVerb {
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
                 | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
@@ -4809,6 +4813,7 @@ impl AgentVerb {
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
                 | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
@@ -6018,6 +6023,7 @@ impl AgentVerb {
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
                 | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
@@ -6884,6 +6890,7 @@ impl AgentVerb {
                 | Self::VaultResearchReserveExploration
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultRootsRequestsCancel
                 | Self::VaultCleanupRun
                 | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
@@ -7731,6 +7738,7 @@ impl AgentVerb {
             Self::VaultResearchRecordBenchmark => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
+            Self::VaultRootsRequestsCancel => &["spec"],
             Self::VaultCleanupRun => &["spec"],
             Self::VaultEntitiesMention => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -8811,6 +8819,7 @@ impl AgentVerb {
             Self::VaultResearchRecordBenchmark => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
+            Self::VaultRootsRequestsCancel => &["spec"],
             Self::VaultCleanupRun => &["spec"],
             Self::VaultEntitiesMention => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
@@ -10731,6 +10740,9 @@ impl AgentVerb {
             }
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "The owner acknowledges one saved handoff fork alarm."
+            }
+            Self::VaultRootsRequestsCancel => {
+                "The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands."
             }
             Self::VaultCleanupRun => {
                 "The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."

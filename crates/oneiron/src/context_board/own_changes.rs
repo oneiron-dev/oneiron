@@ -37,8 +37,9 @@ impl SessionReadSet {
     /// rider, install receipts included, fits the one board row a STREAM
     /// delta joins it into. Rejections come first. The fold is read-only:
     /// what it delivers moves only on `acknowledge`. A caller at `locality`
-    /// off this device learns no outcome of a claim a device-local world
-    /// keeps (DEC-0005); it stays owed until it may leave. Each outcome and
+    /// off this device learns no outcome of a claim a world withholds from a
+    /// machine its read goes to (DEC-0005, mesh PR2b); it stays owed until it
+    /// may leave. Each outcome and
     /// connector rides only while `read`, the caller's own read, reads its
     /// row in the fold's snapshot, whatever the claim's status: a withheld
     /// outcome stays owed, and a connector whose key it cannot read is none.
@@ -56,7 +57,11 @@ impl SessionReadSet {
         let txn = vault.store.env.read_txn()?;
         let policy = lane.live_policy_manifest_in(&txn)?;
         let admits = |id: &EntityId| lane.is_ref_readable_with_policy_in(&txn, &policy, id);
-        let flagged = crate::settings::device_local_worlds_at(vault, &txn, locality)?;
+        let mut destination = crate::settings::ReadDestination::from(locality);
+        if destination.is_off_device() {
+            destination.meet(read.actor_key().destination());
+        }
+        let flagged = crate::settings::device_local_worlds_for(vault, &txn, &destination)?;
         let mut delivery = ChangedDelivery {
             generation: self.delivery_generation(),
             ..ChangedDelivery::default()

@@ -8,8 +8,8 @@ use std::time::Duration;
 use loro::{LoroValue, ValueOrContainer};
 use oneiron::sync::lease::{self, LeaseStatus, ROOT_LEASES_MAP};
 use oneiron_vault_contract::{
-    Credentials, LedgerAck, LedgerUpdate, MAX_CTL_LINE, Schedule, TokenHex, WakeEntry, now_ts,
-    validate_wake_entries,
+    Credentials, LedgerAck, LedgerUpdate, MAX_CTL_LINE, ManagedTrainingSetting, Schedule, TokenHex,
+    WakeEntry, now_ts, validate_wake_entries,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -59,20 +59,33 @@ const WAKE_ID_SYNC_DEADLINE: &str = "sync_deadline";
 
 const WAKE_ID_HOUSEKEEPING: &str = "housekeeping";
 
-/// The vault's wake ledger: what the engine wants to be woken for, and when.
+/// The vault's wake ledger: what the engine wants to be woken for, and when,
+/// reported with the vault's live training setting.
 ///
-/// Two delivery paths over the same entries. The pull path rides the
-/// `prepare_reap` reply; the push path is a `ledger_update` on the
-/// supervisor's socket, sent when the entries change. The revision persists in
-/// the vault so a restart resumes the supervisor's ordering rather than
-/// replaying it from zero.
+/// Two delivery paths over the same report ([`LedgerSnapshot`]). The pull
+/// path rides the `prepare_reap` reply; the push path is a `ledger_update` on
+/// the supervisor's socket, sent when the report changes. The revision
+/// persists in the vault so a restart resumes the supervisor's ordering rather
+/// than replaying it from zero.
 pub struct WakeLedger {
     vault: Arc<oneiron::Vault>,
     vault_name: String,
     hypnos_socket: PathBuf,
     token: TokenHex,
     rev: AtomicU64,
-    last_exported: Mutex<Option<Vec<WakeEntry>>>,
+    /// The last report the supervisor took, by push ack or by the pull. Its
+    /// lock is held from reading a report to assigning it a revision, so no
+    /// older report ever goes out under a newer revision.
+    last_exported: Mutex<Option<LedgerSnapshot>>,
+}
+
+/// One ledger report: the wake entries and the vault's live training setting
+/// (FIX 5575). Compared whole, so a move in either, the setting's revision or
+/// who set it alone included, is a new report under a new revision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedgerSnapshot {
+    pub entries: Vec<WakeEntry>,
+    pub training: ManagedTrainingSetting,
 }
 
 impl std::fmt::Debug for WakeLedger {
@@ -169,36 +182,98 @@ impl WakeLedger {
         Ok(entries)
     }
 
-    /// Export-at-freeze for the pull path: refreshes the entries and, when
-    /// they changed, advances and persists the revision so the `ledger_rev`
-    /// the supervisor sees keeps moving forward across restarts.
+    /// The vault's live training setting, as its supervisor keeps it: the
+    /// four fields of the vault's own read, never the member-facing line.
+    /// `set_by` stays null when the vault does not hold the act's row; it is
+    /// never filled with the vault's owner.
+    pub fn training(&self) -> Result<ManagedTrainingSetting, ManagedError> {
+        let view = self
+            .vault
+            .conversation_learning_status()
+            .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
+        Ok(ManagedTrainingSetting {
+            on: view.on,
+            allow_opt_out: view.allow_opt_out,
+            revision: oneiron_vault_contract::hex(&view.revision.0),
+            set_by: view.set_by.as_ref().map(oneiron::EntityId::to_hex),
+        })
+    }
+
+    /// The report as it stands: [`Self::export`]'s entries and
+    /// [`Self::training`].
+    pub fn snapshot(&self, server: &SyncServer) -> Result<LedgerSnapshot, ManagedError> {
+        Ok(LedgerSnapshot {
+            entries: self.export(server)?,
+            training: self.training()?,
+        })
+    }
+
+    /// Export-at-freeze for the pull path: refreshes the report and, when it
+    /// changed, advances and persists the revision so the `ledger_rev` the
+    /// supervisor sees keeps moving forward across restarts.
     pub async fn export_at_freeze(
         &self,
         server: &SyncServer,
-    ) -> Result<(u64, Vec<WakeEntry>), ManagedError> {
-        let entries = self.export(server)?;
+    ) -> Result<(u64, LedgerSnapshot), ManagedError> {
         let mut last = self.last_exported.lock().await;
-        if last.as_ref() != Some(&entries) {
+        let snapshot = self.snapshot(server)?;
+        if last.as_ref() != Some(&snapshot) {
             self.advance_rev()?;
-            *last = Some(entries.clone());
+            *last = Some(snapshot.clone());
         }
-        Ok((self.rev(), entries))
+        Ok((self.rev(), snapshot))
     }
 
-    /// Push-on-change: sends a `ledger_update` only when the entries actually
+    /// Push-on-change: sends a `ledger_update` only when the report actually
     /// moved, so a quiet vault costs the supervisor nothing.
     ///
     /// Returns whether a push was both needed and accepted.
     pub async fn push_if_changed(&self, server: &SyncServer) -> Result<bool, ManagedError> {
-        let entries = self.export(server)?;
         let mut last = self.last_exported.lock().await;
-        if last.as_ref() == Some(&entries) {
+        let snapshot = self.snapshot(server)?;
+        if last.as_ref() == Some(&snapshot) {
             return Ok(false);
         }
+        self.push_report(&mut last, snapshot).await
+    }
+
+    /// Push-on-change for the training setting while the vault runs: sends
+    /// the whole report, entries included, only when the setting moved from
+    /// the last report the supervisor took, or when it took none. Entries
+    /// that moved alone wait for the next push, pull or exit, as before.
+    ///
+    /// Returns whether a push was both needed and accepted.
+    pub async fn push_training_if_changed(
+        &self,
+        server: &SyncServer,
+    ) -> Result<bool, ManagedError> {
+        let mut last = self.last_exported.lock().await;
+        let training = self.training()?;
+        if last
+            .as_ref()
+            .is_some_and(|reported| reported.training == training)
+        {
+            return Ok(false);
+        }
+        let snapshot = LedgerSnapshot {
+            entries: self.export(server)?,
+            training,
+        };
+        self.push_report(&mut last, snapshot).await
+    }
+
+    /// Advances the revision and pushes `snapshot` under it, with `last`
+    /// held. A refused push leaves `last` as it was, so the same change goes
+    /// out again on the next send.
+    async fn push_report(
+        &self,
+        last: &mut Option<LedgerSnapshot>,
+        snapshot: LedgerSnapshot,
+    ) -> Result<bool, ManagedError> {
         let rev = self.advance_rev()?;
-        let accepted = self.push_with_retry(rev, &entries).await;
+        let accepted = self.push_with_retry(rev, &snapshot).await;
         if accepted {
-            *last = Some(entries);
+            *last = Some(snapshot);
         }
         Ok(accepted)
     }
@@ -215,8 +290,8 @@ impl WakeLedger {
     /// and `push_with_retry`'s "one retry, then proceed" only bounds them if an
     /// attempt is itself bounded. Timing out is a typed refusal like any other
     /// push failure, so the retry policy above is unchanged by it.
-    pub async fn push_once(&self, rev: u64, entries: &[WakeEntry]) -> Result<(), ManagedError> {
-        match tokio::time::timeout(LEDGER_PUSH_TIMEOUT, self.push_attempt(rev, entries)).await {
+    pub async fn push_once(&self, rev: u64, snapshot: &LedgerSnapshot) -> Result<(), ManagedError> {
+        match tokio::time::timeout(LEDGER_PUSH_TIMEOUT, self.push_attempt(rev, snapshot)).await {
             Ok(result) => result,
             Err(_elapsed) => Err(ManagedError::LedgerAckTimeout {
                 after: LEDGER_PUSH_TIMEOUT,
@@ -226,13 +301,14 @@ impl WakeLedger {
 
     /// The attempt itself, with no deadline of its own: [`Self::push_once`] is
     /// the only caller and it is what bounds this.
-    async fn push_attempt(&self, rev: u64, entries: &[WakeEntry]) -> Result<(), ManagedError> {
+    async fn push_attempt(&self, rev: u64, snapshot: &LedgerSnapshot) -> Result<(), ManagedError> {
         let update = LedgerUpdate {
             op: "ledger_update".to_owned(),
             vault: self.vault_name.clone(),
             token: self.token.clone(),
             rev,
-            entries: entries.to_vec(),
+            entries: snapshot.entries.clone(),
+            training: snapshot.training.clone(),
         };
         // Validate before sending, not after: an update this side would refuse
         // to receive is one this side must refuse to emit.
@@ -278,8 +354,8 @@ impl WakeLedger {
     /// Retry discipline: exactly one retry, after 200 ms, then log and
     /// proceed. Shutdown must never be held open by a supervisor that is not
     /// answering.
-    pub async fn push_with_retry(&self, rev: u64, entries: &[WakeEntry]) -> bool {
-        match self.push_once(rev, entries).await {
+    pub async fn push_with_retry(&self, rev: u64, snapshot: &LedgerSnapshot) -> bool {
+        match self.push_once(rev, snapshot).await {
             Ok(()) => return true,
             Err(_) => {
                 tracing::warn!(
@@ -289,7 +365,7 @@ impl WakeLedger {
             }
         }
         tokio::time::sleep(LEDGER_RETRY_DELAY).await;
-        match self.push_once(rev, entries).await {
+        match self.push_once(rev, snapshot).await {
             Ok(()) => true,
             Err(_) => {
                 tracing::warn!(

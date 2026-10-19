@@ -2,9 +2,12 @@
 //! for a vault our cloud hosts, in the server's own config schema.
 //!
 //! The file is the one layer a managed vault reads settings from, and it is
-//! read once, before anything uses the configuration. Before any file it
-//! names is read, it is refused leaf by leaf: a leaf the supervisor owns, a
-//! key named by an environment variable (the contract's tables in
+//! read once, before anything uses the configuration, in two steps:
+//! [`prepare`] reads and refuses it, and [`settle`] resolves and applies it,
+//! so tracing starts between them at the level the settled configuration
+//! runs at. Before any file it names is read, it is refused leaf by leaf: a
+//! leaf the supervisor owns, a key named by an environment variable (the
+//! contract's tables in
 //! [`oneiron_vault_contract::settings_policy`], which the supervisor reads
 //! too) and a key the schema does not have are refused by presence alone,
 //! and every owner path must lie in this vault's own storage. The rest is
@@ -52,9 +55,36 @@ const OWNER_PATHS: &[&str] = &[
     "models.voice.extraction_prompt_file",
 ];
 
-/// Settles the settings file `managed` names onto `config`, the
-/// configuration [`ManagedArgs::serve_config`] built from argv; nothing
-/// without one.
+/// The reason token of the notice that the owner's voice settings name no
+/// socket to listen on (FIX 5017).
+const VOICE_SOCKET_MISSING: &str = "voice_socket_missing";
+
+/// The settings file, read and refused, ready for [`settle`]: its table with
+/// the leaves argv stands over removed and the supervisor's own leaves set.
+pub(super) struct PreparedSettings {
+    path: PathBuf,
+    table: toml::Table,
+    names_runtime: bool,
+    /// The owner's `[models.voice]` is there and the supervisor named no
+    /// voice socket for it.
+    voice_socket_missing: bool,
+}
+
+/// The log level the settled configuration runs at: the settings file's,
+/// unless argv named one, else `config`'s, the one argv built.
+pub(super) fn log_level<'a>(
+    prepared: Option<&'a PreparedSettings>,
+    config: &'a ServeConfig,
+) -> &'a str {
+    prepared
+        .and_then(|prepared| prepared.table.get("log_level"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or(config.log_level.as_str())
+}
+
+/// Reads and refuses the settings file `managed` names, for [`settle`] to
+/// settle onto `config`, the configuration [`ManagedArgs::serve_config`]
+/// built from argv; `None` without one.
 ///
 /// A setting the supervisor also passed on argv keeps the supervisor's
 /// value: argv stands over the file. An explicit `[feedback]` destination
@@ -63,13 +93,13 @@ const OWNER_PATHS: &[&str] = &[
 /// so the owner's voice settings turn the loop on and the supervisor names
 /// where it listens. A direct `[linear]` mirror is given its host's response
 /// custody the same way.
-pub(super) fn settle(
+pub(super) fn prepare(
     managed: &ManagedArgs,
     args: &ServeArgs,
     config: &mut ServeConfig,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<PreparedSettings>> {
     let Some(path) = &managed.settings_file else {
-        return Ok(());
+        return Ok(None);
     };
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("read settings file {}", path.display()))?;
@@ -137,12 +167,14 @@ pub(super) fn settle(
         config.feedback.destination = None;
         config.feedback.endpoint = None;
     }
+    let voice = table
+        .get_mut("models")
+        .and_then(toml::Value::as_table_mut)
+        .and_then(|models| models.get_mut("voice"))
+        .and_then(toml::Value::as_table_mut);
+    let voice_socket_missing = voice.is_some() && managed.voice_socket.is_none();
     if let Some(socket) = &managed.voice_socket
-        && let Some(voice) = table
-            .get_mut("models")
-            .and_then(toml::Value::as_table_mut)
-            .and_then(|models| models.get_mut("voice"))
-            .and_then(toml::Value::as_table_mut)
+        && let Some(voice) = voice
     {
         let socket = socket
             .to_str()
@@ -162,9 +194,39 @@ pub(super) fn settle(
         );
     }
     let names_runtime = table.contains_key("runtime");
+    Ok(Some(PreparedSettings {
+        path: path.clone(),
+        table,
+        names_runtime,
+        voice_socket_missing,
+    }))
+}
 
+/// Settles the settings file [`prepare`] read onto `config`, through the
+/// config file's own apply and validators; nothing without one. Owner voice
+/// settings with no voice socket are logged, typed: the private voice loop
+/// stays off and live voice sessions still run.
+pub(super) fn settle(
+    prepared: Option<PreparedSettings>,
+    config: &mut ServeConfig,
+) -> anyhow::Result<()> {
+    let Some(PreparedSettings {
+        path,
+        table,
+        names_runtime,
+        voice_socket_missing,
+    }) = prepared
+    else {
+        return Ok(());
+    };
     settle_managed_settings(config, table, path.parent())
         .with_context(|| format!("settings file {}", path.display()))?;
+    if voice_socket_missing {
+        tracing::warn!(
+            reason = VOICE_SOCKET_MISSING,
+            "voice: the settings file has owner voice settings but the supervisor passed no --voice-socket; the private voice loop is off, and live voice sessions still run"
+        );
+    }
 
     // Managed mode reads no environment: a bring-your-own-key route takes
     // its key from `runtime.byo_key_secret` alone, and the default variable
