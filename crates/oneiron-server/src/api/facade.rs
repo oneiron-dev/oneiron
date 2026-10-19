@@ -122,6 +122,7 @@ mod voice_bank_doors;
 mod wave_doors;
 mod weave_doors;
 mod widen_proposal_doors;
+mod wire_health_doors;
 
 pub(crate) use asr_doors::AsrSessions;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};

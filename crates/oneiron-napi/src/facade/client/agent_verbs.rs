@@ -1456,6 +1456,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_wire_health_thresholds_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.wire_health.thresholds.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_wire_health_thresholds_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.wire_health.thresholds.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_slim_policy(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.slim.policy", input)

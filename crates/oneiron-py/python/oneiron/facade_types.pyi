@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 757 facade rows, 2666 declarations.
-Inputs: 705 of 757 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 677 of 757 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 759 facade rows, 2668 declarations.
+Inputs: 707 of 759 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 679 of 759 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -3967,6 +3967,13 @@ class SignedAuthorityHistory(TypedDict):
     entries: list[str]
 class AuthorityHistoryImported(TypedDict):
     entry_refs: list[str]
+class WireThresholds(TypedDict):
+    window_secs: int
+    per_verb: int
+    per_actor: int
+class WireThresholdsReceipt(TypedDict):
+    previous: WireThresholds
+    thresholds: WireThresholds
 class SlimIdlePolicy(TypedDict):
     long_outbound_wait_secs: int
     exits_on_idle: bool

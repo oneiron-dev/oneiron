@@ -337,6 +337,7 @@ mod sdk_support_grant;
 mod sdk_trusted_contact;
 mod sdk_voice_bank;
 mod sdk_weave;
+mod sdk_wire_health;
 mod sdk_workflows;
 mod sdk_workspace;
 pub mod verb_hook_boundary;
