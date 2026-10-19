@@ -21,6 +21,8 @@ use super::support::{
 };
 use crate::error::GateError;
 
+mod person_credential;
+
 // ---------------------------------------------------------------------------
 // Owner authentication — invariant 2
 // ---------------------------------------------------------------------------
@@ -49,6 +51,12 @@ pub struct AuthenticatedOwner {
     /// revalidation then also requires that capability to be live and the
     /// actor to be an owner of this vault.
     credential: Option<Box<crate::authority::VerifiedSlip>>,
+    /// The person's own verified capability that carried a request from
+    /// someone who need not own this vault, when a transport bound one
+    /// ([`Vault::bind_person_credential`], FIX 4707). Every person-tier
+    /// revalidation then also requires it to be live; it adds no owner
+    /// authority, so an owner-tier door still asks for a live owner.
+    person_credential: Option<Box<crate::authority::VerifiedSlip>>,
     /// The host action this owner was authenticated from, when a host
     /// authenticated a self-hosted root or the local dev mode as the owner
     /// ([`Vault::authenticate_host_action_owner`], FIX 2222). Every
@@ -189,8 +197,9 @@ impl AuthenticatedOwner {
     /// saved digest, assigned answer or private session, or a door whose own
     /// membership and named-grant check is the authorization. This proof
     /// belongs to `vault`, its person is live, and a credential it carried is
-    /// still live and still an owner's, all in the acting transaction. Every
-    /// other door takes [`Self::revalidate_in_txn`].
+    /// still live and still an owner's, or a person credential it carried is
+    /// still live, all in the acting transaction. Every other door takes
+    /// [`Self::revalidate_in_txn`].
     pub(crate) fn revalidate_person_in_txn(
         &self,
         vault: &Vault,
@@ -230,6 +239,13 @@ impl AuthenticatedOwner {
                     "authenticated actor is no longer an owner of this vault",
                 )));
             }
+        }
+        if let Some(credential) = &self.person_credential
+            && !vault.capability_slip_is_live_in_txn(txn, credential)?
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "person credential is no longer live",
+            )));
         }
         Ok(self.actor)
     }
@@ -290,24 +306,28 @@ impl AuthenticatedOwner {
     /// the support grant doors refuse such a proof outright, whatever else
     /// it would pass.
     pub(crate) fn carried_by_support_slip(&self) -> bool {
-        self.credential
-            .as_ref()
+        self.carried_slip()
             .is_some_and(|credential| credential.claims().delegation.is_some())
+    }
+
+    /// The slip a transport bound this proof to: the owner's credential, or
+    /// a person's ([`Vault::bind_person_credential`]).
+    fn carried_slip(&self) -> Option<&crate::authority::VerifiedSlip> {
+        self.credential
+            .as_deref()
+            .or(self.person_credential.as_deref())
     }
 
     /// The credential slip this proof was carried under, and that slip's
     /// parent, or the host root a host action acts under (FIX 2222). An
     /// offer refuses an answer from the lineage that opened it.
     pub(crate) fn credential_lineage(&self) -> Vec<[u8; 32]> {
-        let mut lineage = self
-            .credential
-            .as_ref()
-            .map_or_else(Vec::new, |credential| {
-                let claims = credential.claims();
-                std::iter::once(claims.slip_id)
-                    .chain(claims.parent_id)
-                    .collect()
-            });
+        let mut lineage = self.carried_slip().map_or_else(Vec::new, |credential| {
+            let claims = credential.claims();
+            std::iter::once(claims.slip_id)
+                .chain(claims.parent_id)
+                .collect()
+        });
         lineage.extend(
             self.host_action
                 .as_ref()
@@ -469,6 +489,7 @@ impl Vault {
             vault_path: self.store.env.path().to_path_buf(),
             vault_open: self.store.open_nonce,
             credential: None,
+            person_credential: None,
             host_action: None,
         })
     }
@@ -499,6 +520,7 @@ impl Vault {
             vault_path: self.store.env.path().to_path_buf(),
             vault_open: self.store.open_nonce,
             credential: None,
+            person_credential: None,
             host_action: Some(Box::new(action.guard().clone())),
         };
         self.recheck_owner(&owner)?;

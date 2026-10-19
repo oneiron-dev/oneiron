@@ -240,6 +240,44 @@ impl Vault {
         Ok(requests)
     }
 
+    /// [`Self::world_privacy_requests`] as `holder` may see them (FIX 4707),
+    /// in one snapshot that revalidates the proof first: a live vault owner
+    /// sees every request; anyone else only those on worlds whose settings
+    /// right they hold now, by the census the world-privacy doors judge.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when the proof no longer holds.
+    pub fn world_privacy_requests_for(
+        &self,
+        holder: &crate::consent::AuthenticatedOwner,
+        pending_only: bool,
+    ) -> Result<Vec<WorldPrivacyRequest>> {
+        let txn = self.store.env.read_txn()?;
+        let actor = holder.revalidate_person_in_txn(self, &txn)?;
+        let every = crate::policy_model::is_live_vault_owner_in_txn(self, &txn, &actor)?;
+        let mut held = std::collections::BTreeMap::new();
+        let mut requests = Vec::new();
+        for (_, request) in REQUESTS.scan(&self.store, &txn)? {
+            if pending_only && request.status != WorldPrivacyRequestStatus::Pending {
+                continue;
+            }
+            if !every {
+                let world = request.world_id()?;
+                if !held.contains_key(&world) {
+                    let holders = super::world_holders_in_txn(self, &txn, world)?;
+                    held.insert(world, holders.contains(&actor));
+                }
+                if held.get(&world) != Some(&true) {
+                    continue;
+                }
+            }
+            requests.push(request);
+        }
+        requests.sort_by(|left, right| right.at.cmp(&left.at));
+        Ok(requests)
+    }
+
     /// Tells each of `holders` about `about` (a settings receipt or a
     /// request) on `world`, in the caller's writer: one NOTIFICATION each,
     /// replay-safe.
