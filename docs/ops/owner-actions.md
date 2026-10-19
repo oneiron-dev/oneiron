@@ -885,10 +885,12 @@ carries its arrival number `seq`; a sweep keeps the last one it read and passes 
 A participating deployment sends its publisher two things, and nothing else: the content-free
 tier-1 failure counts, and the Coach's sealed code-fix records (an invented example verified in
 the vault, and a candidate fix's fixed or not-fixed result). No world text leaves, and a failure
-that touched a private world sends its counts only. A vault our cloud hosts participates by its
-terms; a self-hosted server participates only once you set `failure_signal_export = true`
-(`ONEIRON_FAILURE_SIGNAL_EXPORT`). Training on what leaves is a separate yes,
-`failure_signal_training` (`ONEIRON_FAILURE_SIGNAL_TRAINING`). Where it goes:
+that touched a private world sends its counts only. A vault our cloud hosts (the managed vault
+Hypnos runs) shares them by default, and you can turn that off: "Help improve Oneiron" off, or
+`failure_signal_export = false` in its settings. A server you run yourself shares nothing until you
+set `failure_signal_export = true` (`ONEIRON_FAILURE_SIGNAL_EXPORT`), whatever privacy posture it
+declares. Training on what leaves is a separate yes, `failure_signal_training`
+(`ONEIRON_FAILURE_SIGNAL_TRAINING`). Where it goes:
 
 ```toml
 [failure_signals]
@@ -1170,7 +1172,8 @@ incarnations, and an open takes the one that opens its vault; once the swap is o
 names the copy's alone. A rehearsal beside a running `serve` reads the vault with its unlocked page
 seal.
 
-A managed vault is plain unless its supervisor passes `--maximum-tier` when the vault is created.
+A managed vault is plain unless, when the vault is created, its supervisor passes `--maximum-tier`
+or its settings file says `maximum_tier = true`.
 Its pages then seal under the data key the supervisor delivers at every start, with a fresh vault
 id and incarnation, and the mirror beside the data directory is written at the first open, before
 any wrap: the next start reopens from its id and incarnation with the delivered key, which must be
