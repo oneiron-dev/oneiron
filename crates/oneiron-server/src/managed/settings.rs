@@ -68,6 +68,19 @@ pub(super) struct PreparedSettings {
     /// The owner's `[models.voice]` is there and the supervisor named no
     /// voice socket for it.
     voice_socket_missing: bool,
+    /// The owner's `[keystore]` sets `backend = "off"` itself.
+    keystore_off: bool,
+}
+
+/// What settling decided that the settled configuration does not say by
+/// itself.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Settled {
+    /// No keystore is installed for want of the supervisor's key directory
+    /// (`--keystore-dir`), where the owner's file did not turn it off
+    /// itself: the vault serves on without one, the facility named missing
+    /// in its readiness (WILL-PLAN L14 row 17).
+    pub(super) keystore_unbound: bool,
 }
 
 /// The log level the settled configuration runs at: the settings file's,
@@ -92,7 +105,8 @@ pub(super) fn log_level<'a>(
 /// socket is set on the file's `[models.voice]` after the file is refused,
 /// so the owner's voice settings turn the loop on and the supervisor names
 /// where it listens. A direct `[linear]` mirror is given its host's response
-/// custody the same way.
+/// custody the same way, and an owner's `[browser]` or `[desktop]` the
+/// container CLI the supervisor binds for its guest.
 pub(super) fn prepare(
     managed: &ManagedArgs,
     args: &ServeArgs,
@@ -105,14 +119,10 @@ pub(super) fn prepare(
         .with_context(|| format!("read settings file {}", path.display()))?;
     let mut table: toml::Table =
         toml::from_str(&raw).with_context(|| format!("parse settings file {}", path.display()))?;
-    // The training outbox is the supervisor's binding, on argv only: the
-    // schema has no key for it, so it is refused as the supervisor's before
-    // it could read as unknown (OF-420).
-    let outbox = oneiron_vault_contract::conversation_training::OUTBOX_DIR_SETTING;
-    if table.contains_key(outbox) {
-        return Err(refused(&[outbox], SettingsRefusal::SupervisorOwned).into());
-    }
-    refuse_unknown(&table)?;
+    // The supervisor's leaves are refused first: an argv-only binding the
+    // schema has no key for (the training outbox, OF-420; a guest's
+    // container CLI, the organ directory and the mesh) reads as the
+    // supervisor's, never as unknown.
     visit(&table, &mut Vec::new(), &mut |field, _| {
         if matches_any(field, SUPERVISOR_OWNED) {
             return Err(refused(field, SettingsRefusal::SupervisorOwned));
@@ -122,6 +132,7 @@ pub(super) fn prepare(
         }
         Ok(())
     })?;
+    refuse_unknown(&table)?;
     refuse_default_import_roots(&table)?;
     let roots = owner_roots(&managed.data_dir, path.parent());
     visit(&table, &mut Vec::new(), &mut |field, value| match value {
@@ -193,31 +204,58 @@ pub(super) fn prepare(
             toml::Value::String(responses.to_owned()),
         );
     }
+    // A guest's container CLI the supervisor binds stands in the section the
+    // owner wrote, set once his paths are refused, so it may lie outside the
+    // vault (the VM's root filesystem). His section turns the guest on; the
+    // flag alone turns on none (FIX 5015).
+    for (name, runtime) in [
+        ("browser", &managed.browser_runtime),
+        ("desktop", &managed.desktop_runtime),
+    ] {
+        if let Some(runtime) = runtime
+            && let Some(section) = table.get_mut(name).and_then(toml::Value::as_table_mut)
+        {
+            let runtime = runtime
+                .to_str()
+                .with_context(|| format!("--{name}-runtime must be a UTF-8 path"))?;
+            section.insert("runtime".into(), toml::Value::String(runtime.to_owned()));
+        }
+    }
     let names_runtime = table.contains_key("runtime");
+    let keystore_off = table
+        .get("keystore")
+        .and_then(toml::Value::as_table)
+        .and_then(|keystore| keystore.get("backend"))
+        .and_then(toml::Value::as_str)
+        == Some("off");
     Ok(Some(PreparedSettings {
         path: path.clone(),
         table,
         names_runtime,
         voice_socket_missing,
+        keystore_off,
     }))
 }
 
 /// Settles the settings file [`prepare`] read onto `config`, through the
 /// config file's own apply and validators; nothing without one. Owner voice
 /// settings with no voice socket are logged, typed: the private voice loop
-/// stays off and live voice sessions still run.
+/// stays off and live voice sessions still run. With or without a file, a
+/// keystore with no supervisor key directory is settled off
+/// ([`settle_keystore`]).
 pub(super) fn settle(
     prepared: Option<PreparedSettings>,
     config: &mut ServeConfig,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Settled> {
     let Some(PreparedSettings {
         path,
         table,
         names_runtime,
         voice_socket_missing,
+        keystore_off,
     }) = prepared
     else {
-        return Ok(());
+        return Ok(settle_keystore(config, false));
     };
     settle_managed_settings(config, table, path.parent())
         .with_context(|| format!("settings file {}", path.display()))?;
@@ -234,14 +272,6 @@ pub(super) fn settle(
     if names_runtime {
         config.runtime.byo_key_env = None;
     }
-    // The key directory is the supervisor's: a keystore without one would
-    // be looked for under HOME.
-    if config.keystore.backend != KeystoreBackend::Off && config.keystore.dir.is_none() {
-        return Err(ManagedError::MissingFlag {
-            flag: "keystore-dir",
-        }
-        .into());
-    }
     if let Some(embedder) = &config.embedder
         && embedder.provider == EmbedderProvider::Local
         && embedder.local.model_dir.is_none()
@@ -252,7 +282,21 @@ pub(super) fn settle(
             path.display()
         );
     }
-    Ok(())
+    Ok(settle_keystore(config, keystore_off))
+}
+
+/// The key directory is the supervisor's: a keystore without one would be
+/// looked for under HOME, so none is opened, and the vault serves on without
+/// it. Where the owner's file did not turn the keystore off itself
+/// (`keystore_off`), the facility is named missing, never a stopped start.
+fn settle_keystore(config: &mut ServeConfig, keystore_off: bool) -> Settled {
+    let unbound = config.keystore.dir.is_none();
+    if unbound {
+        config.keystore.backend = KeystoreBackend::Off;
+    }
+    Settled {
+        keystore_unbound: unbound && !keystore_off,
+    }
 }
 
 /// Refuses a top-level key, or a key of a section, that the config file's

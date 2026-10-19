@@ -51,8 +51,6 @@ pub use self::media_door::MediaDoor;
 pub(crate) use self::media_door::{MediaRefusal, admit_media};
 pub(crate) use self::media_embedding::MediaEmbedRefusal;
 pub(crate) use self::note_editors::NoteEditors;
-#[cfg(unix)]
-pub(crate) use self::organs::organ_dir;
 pub use self::oversight::OversightStartError;
 pub(crate) use self::oversight::{HEALER_OVERSIGHT_EVERY, HealerOversight};
 pub use self::policy_doors::HostedPolicyRelay;

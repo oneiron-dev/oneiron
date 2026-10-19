@@ -1,6 +1,7 @@
 //! CLI surface: `ServeArgs`, its redacting `Debug`, and argv-derived overrides.
 
 use std::fmt;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use clap::Args;
@@ -223,6 +224,42 @@ pub struct ServeArgs {
     /// runs and nothing is shared.
     #[arg(long = "publisher-training-outbox-dir")]
     pub publisher_training_outbox_dir: Option<PathBuf>,
+
+    /// Managed mode: the browser guest's container CLI, an absolute path on
+    /// the vault's own host or root filesystem, which the supervisor binds.
+    /// It stands as `[browser] runtime` when the settings file has a
+    /// `[browser]` section, and never turns the guest on by itself (FIX 5015).
+    #[arg(long = "browser-runtime", requires = "managed_by_hypnos")]
+    pub browser_runtime: Option<PathBuf>,
+
+    /// Managed mode: the desktop guest's container CLI, as
+    /// `--browser-runtime` is the browser's, for a `[desktop]` section.
+    #[arg(long = "desktop-runtime", requires = "managed_by_hypnos")]
+    pub desktop_runtime: Option<PathBuf>,
+
+    /// Managed mode: where pack organ builds are written, an absolute path on
+    /// the tenant's own storage, in place of `ONEIRON_ORGAN_DIR` and the OS
+    /// temp directory, which managed mode never uses (FIX 3565). Without it
+    /// they go to `organs` under the data directory.
+    #[arg(long = "organ-dir", requires = "managed_by_hypnos")]
+    pub organ_dir: Option<PathBuf>,
+
+    /// Managed mode: where the paired-machine mesh listener binds
+    /// (`ip:port`), in place of `ONEIRON_MESH_BIND`, which managed mode never
+    /// reads. Without it the mesh is off.
+    #[arg(long = "mesh-bind", requires = "managed_by_hypnos")]
+    pub mesh_bind: Option<SocketAddr>,
+
+    /// Managed mode: comma-separated private relay URLs for the mesh, in
+    /// place of `ONEIRON_MESH_RELAYS`. Without them the mesh takes direct
+    /// paths only.
+    #[arg(
+        long = "mesh-relays",
+        value_delimiter = ',',
+        num_args = 1..,
+        requires = "managed_by_hypnos"
+    )]
+    pub mesh_relays: Option<Vec<String>>,
 
     /// Host address to bind to.
     #[arg(long)]
@@ -495,6 +532,11 @@ impl fmt::Debug for ServeArgs {
                 "publisher_training_outbox_dir",
                 &self.publisher_training_outbox_dir,
             )
+            .field("browser_runtime", &self.browser_runtime)
+            .field("desktop_runtime", &self.desktop_runtime)
+            .field("organ_dir", &self.organ_dir)
+            .field("mesh_bind", &self.mesh_bind)
+            .field("mesh_relays", &self.mesh_relays)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)
