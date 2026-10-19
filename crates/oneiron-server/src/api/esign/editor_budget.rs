@@ -1,4 +1,8 @@
-//! Router-owned admission for public, capability-free editor computation.
+//! Router-owned admission for editor computation. A POST with no editor
+//! header is public and capability-free: it takes a slot only when one is
+//! free and meets a 60-per-minute window, or a 429. An owner's admitted
+//! editor POST (FIX 5618, `editor_auth`) never meets either: it waits its
+//! turn for one of the same two slots, with no queue length or wait bound.
 use super::*;
 use axum::extract::Request;
 use axum::middleware::Next;
@@ -29,6 +33,13 @@ impl EditorBudget {
         window.1 += 1;
         Some(Arc::new(permit))
     }
+
+    /// One of the two slots for an admitted editor POST, waited for. No
+    /// queue length, count or wait refuses it; `None` only once the
+    /// semaphore is closed, which nothing does while the router lives.
+    pub(super) async fn queue(&self) -> Option<OwnedSemaphorePermit> {
+        self.slots.clone().acquire_owned().await.ok()
+    }
 }
 
 pub(super) async fn admit(
@@ -36,6 +47,15 @@ pub(super) async fn admit(
     mut request: Request,
     next: Next,
 ) -> Response {
+    // An editor header is the owner's path: `EditorIngress` admits or
+    // refuses it from the head and queues it for a slot, so it never meets
+    // this window or its 429.
+    if request
+        .headers()
+        .contains_key(super::editor_auth::EDITOR_HEADER)
+    {
+        return next.run(request).await;
+    }
     let Some(permit) = budget.admit() else {
         return (StatusCode::TOO_MANY_REQUESTS, [(header::RETRY_AFTER, "60")]).into_response();
     };

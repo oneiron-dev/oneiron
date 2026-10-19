@@ -6,13 +6,15 @@
 //! admit, is shed with its body unread. An admitted body spools whole to an
 //! anonymous file the vault stages, under the server's one disk floor; its
 //! size is the `[limits] esign_body_bytes` row, which asks the envelope's
-//! sender past it and never refuses the body.
+//! sender past it and never refuses the body. The owner's editor POSTs
+//! (FIX 5618) share this spool under their own admission and rows.
 use super::*;
 use crate::api::transfer::{self, BodyReader};
 use crate::machine::{DiskClaim, DiskFloor};
 use axum::body::Body;
 use axum::extract::FromRequestParts;
 use oneiron::blob_artifact::esign::{EsignCapability, EsignIngress, SigningAction};
+use oneiron::limit_ask::EngineLimit;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::fs::File;
@@ -128,6 +130,59 @@ pub(super) async fn spooled<T: Send + 'static>(
     body: Body,
     read: impl FnOnce(File, u64) -> T + Send + 'static,
 ) -> Result<T, Response> {
+    let vault = Arc::clone(&server.vault);
+    spool_whole(
+        server,
+        headers,
+        body,
+        |_| {},
+        move |file, bytes| {
+            if let Err(error) = vault.measure_esign_body(&admitted, bytes) {
+                tracing::warn!(
+                    ?error,
+                    "a signing body's esign_body_bytes crossing could not be kept"
+                );
+            }
+            read(file, bytes)
+        },
+    )
+    .await
+}
+
+/// An admitted editor POST's `body` (FIX 5618), spooled whole as a ceremony
+/// body is and handed to `read` on the same worker. Its size is measured
+/// against `row` as it spools: the first piece past the row's bound asks the
+/// vault owner ([`oneiron::Vault::measure_limit`], once per request), and the
+/// body keeps spooling. No envelope stands behind the editor's computation,
+/// so no sender is asked and no document is charged.
+pub(super) async fn editor_spooled<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    row: EngineLimit,
+    headers: &HeaderMap,
+    body: Body,
+    read: impl FnOnce(File, u64) -> T + Send + 'static,
+) -> Result<T, Response> {
+    let vault = Arc::clone(&server.vault);
+    let mut asked = false;
+    let measure = move |bytes| {
+        if !asked {
+            asked = vault.measure_limit(row, bytes).is_some();
+        }
+    };
+    spool_whole(server, headers, body, measure, read).await
+}
+
+/// The spool both admissions share: `body` whole on a transfer worker,
+/// `progress` told the bytes copied after each piece, then the rewound
+/// spool and its length handed to `read` on the same worker. The body's
+/// disk claim is held until `read` returns.
+async fn spool_whole<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    headers: &HeaderMap,
+    body: Body,
+    progress: impl FnMut(u64) + Send + 'static,
+    read: impl FnOnce(File, u64) -> T + Send + 'static,
+) -> Result<T, Response> {
     let declared = headers
         .get(header::CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
@@ -144,13 +199,14 @@ pub(super) async fn spooled<T: Send + 'static>(
     let vault = Arc::clone(&server.vault);
     let (sender, receiver) = mpsc::channel(2);
     let mut worker = transfer::spawn_worker(move || -> Result<T, Unspooled> {
-        let (file, bytes) = spool(&vault, BodyReader::new(receiver), &floor, &claim, declared)?;
-        if let Err(error) = vault.measure_esign_body(&admitted, bytes) {
-            tracing::warn!(
-                ?error,
-                "a signing body's esign_body_bytes crossing could not be kept"
-            );
-        }
+        let (file, bytes) = spool(
+            &vault,
+            BodyReader::new(receiver),
+            &floor,
+            &claim,
+            declared,
+            progress,
+        )?;
         let answer = read(file, bytes);
         drop(claim);
         Ok(answer)
@@ -177,13 +233,14 @@ pub(super) async fn spooled<T: Send + 'static>(
 /// floor as it goes: each look moves the claim to what is still to be
 /// written, the spool's rest and its stored copy, so no other upload counts
 /// that room as free. At its end the spool is on the disk, and the claim is
-/// its stored copy.
+/// its stored copy. `progress` hears the bytes copied after each piece.
 fn spool(
     vault: &oneiron::Vault,
     mut body: BodyReader,
     floor: &DiskFloor,
     claim: &DiskClaim,
     declared: Option<u64>,
+    mut progress: impl FnMut(u64),
 ) -> Result<(File, u64), Unspooled> {
     let mut file = vault.archive_spool_file().map_err(|_| Unspooled::Failed)?;
     let mut piece = vec![0; SPOOL_PIECE];
@@ -208,6 +265,7 @@ fn spool(
         }
         file.write_all(&piece[..count])
             .map_err(|_| Unspooled::Failed)?;
+        progress(read);
     }
     if !floor.hold(claim, read) {
         return Err(Unspooled::Floored);
@@ -228,7 +286,7 @@ fn disk_floor() -> Response {
 }
 
 /// An admitted body that did not arrive whole.
-fn unread() -> Response {
+pub(super) fn unread() -> Response {
     (
         StatusCode::BAD_REQUEST,
         Json(serde_json::json!({"error":{"code":"signing_body_unread"}})),
@@ -237,7 +295,7 @@ fn unread() -> Response {
 }
 
 /// An admitted body that is not its door's payload.
-fn malformed() -> Response {
+pub(super) fn malformed() -> Response {
     (
         StatusCode::BAD_REQUEST,
         Json(serde_json::json!({"error":{"code":"signing_body_malformed"}})),
