@@ -85,6 +85,9 @@ pub struct CheckpointPinPolicy {
     pub quorum: u8,
     /// One attesting root must be hardware-backed.
     pub hardware: bool,
+    /// The owner selected these roots and this quorum (FIX 4883): no host
+    /// root need attest.
+    pub owner_selected: bool,
 }
 
 /// An eligible root's certificate for its checkpoint SLH-DSA key.
@@ -194,6 +197,7 @@ impl From<&CheckpointRootPolicy> for CheckpointPinPolicy {
             roots: policy.roots.iter().map(CheckpointPinRoot::from).collect(),
             quorum: policy.quorum,
             hardware: policy.hardware,
+            owner_selected: policy.owner_selected,
         }
     }
 }

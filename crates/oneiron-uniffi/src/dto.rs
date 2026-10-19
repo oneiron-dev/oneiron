@@ -44,7 +44,8 @@ pub struct OpenOptions {
 }
 
 /// What `pair` returns: the server origin, the credential `connect` takes,
-/// and the checkpoint pin the link named (OF-469).
+/// the checkpoint pin the link named (OF-469) and the credential's comm
+/// reach (FIX 5058).
 ///
 /// Store the credential as one secret; the pairing link cannot be redeemed
 /// twice. A device that will run a local replica keeps the pin beside the
@@ -58,6 +59,9 @@ pub struct Paired {
     /// The pin, already checked against the link's challenge and digest and
     /// stored nowhere; `None` when the vault has no attested checkpoint.
     pub pin: Option<crate::pairing::CheckpointPin>,
+    /// Whom the paired credential may address, as the server took it:
+    /// `parent`, `subtree`, `project` or `vault`.
+    pub comm: String,
 }
 
 // ── witness ─────────────────────────────────────────────────────────────

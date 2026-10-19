@@ -85,6 +85,10 @@ pub fn slip_mint_value(action: &SlipMintAction) -> Value {
     if let Some(comm) = claims.comm {
         entries.push((Value::from(SLIP_KEY_COMM), Value::from(comm.as_str())));
     }
+    // FIX 5481: only a renewal's mint carries the key, after the comm's.
+    if let Some(renews) = action.renews {
+        entries.push((Value::from(SLIP_KEY_RENEWS), binary_value(renews)));
+    }
     Value::Map(entries)
 }
 
@@ -135,17 +139,22 @@ fn decode_delegation(value: &Value) -> Result<SupportDelegation> {
 }
 
 pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
-    // The support delegation (OF-606) and the comm reach (FIX 3899) are the
-    // optional keys: each at most once, and every other key exactly as before.
+    // The support delegation (OF-606), the comm reach (FIX 3899) and a
+    // renewal's predecessor (FIX 5481) are the optional keys: each at most
+    // once, and every other key exactly as before.
     let delegations = optional_values(entries, SLIP_KEY_DELEGATION);
     let comms = optional_values(entries, SLIP_KEY_COMM);
-    if delegations.len() > 1 || comms.len() > 1 {
+    let renewals = optional_values(entries, SLIP_KEY_RENEWS);
+    if delegations.len() > 1 || comms.len() > 1 || renewals.len() > 1 {
         return Err(invalid_authority());
     }
     let base: Vec<(Value, Value)> = entries
         .iter()
         .filter(|(key, _)| {
-            key.as_str() != Some(SLIP_KEY_DELEGATION) && key.as_str() != Some(SLIP_KEY_COMM)
+            !matches!(
+                key.as_str(),
+                Some(SLIP_KEY_DELEGATION | SLIP_KEY_COMM | SLIP_KEY_RENEWS)
+            )
         })
         .cloned()
         .collect();
@@ -229,8 +238,12 @@ pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
             })
             .transpose()?,
     };
-    claims.validate()?;
-    Ok(AuthorityOp::SlipMint(SlipMintAction { claims }))
+    let action = SlipMintAction {
+        claims,
+        renews: renewals.first().copied().map(decode_hash).transpose()?,
+    };
+    action.validate()?;
+    Ok(AuthorityOp::SlipMint(action))
 }
 
 /// Every value `entries` keeps under the optional key `name`.
