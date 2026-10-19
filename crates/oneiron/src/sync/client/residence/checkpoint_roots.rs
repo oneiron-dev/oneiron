@@ -7,7 +7,7 @@
 //!   which roots the head awaits (`residence.authority.checkpoint.roots`),
 //!   reads the image a part at a time (`residence.authority.checkpoint`),
 //!   checks it against its own fold and signs it
-//!   ([`Vault::attest_checkpoint_image_as_root`]), then delivers the
+//!   ([`Vault::attest_home_checkpoint_as_root`]), then delivers the
 //!   attestation to the home's intake (`residence.authority.checkpoint.attest`).
 //!   A hosted node, which never dials, has its images attested this way.
 //! - A root the home holds attests this machine's head. When the home signs
