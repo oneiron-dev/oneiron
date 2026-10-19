@@ -398,6 +398,29 @@ export type MemoryPack = {
   narrowing: ReadReceipt
   /** Finalized serving-run id bytes; absent when local capture is off. */
   retrievalRunId?: number[]
+  /** What a device that syncs only what it opened says of the windows it does not hold; absent when it holds every window or runs no sync. */
+  residence?: RecallResidence
+}
+
+/** What an opened device's recall says of the windows it does not hold (FIX 2905): the home's hits are separate references the local pack does not hold, and a hit's window opens it. */
+export type RecallResidence = {
+  source: "home" | "local_only"
+  /** The home answered in full; false also marks the pack partial. */
+  complete: boolean
+  /** The home was asked for no more than the residence `search_limit`. */
+  capped: boolean
+  /** The home's references, in its order, each entity once. */
+  hits: RecallResidenceHit[]
+}
+
+/** One reference the home holds that the local pack does not. */
+export type RecallResidenceHit = {
+  /** The entity's full id, 32 lowercase hex. */
+  id: string
+  /** The home's own score, never compared with a local item's. */
+  score: number
+  /** The month window (`YYYY-MM`) that holds the hit. */
+  window: string
 }
 
 /** One governance receipt: a gate decision, or a receipt of another family. */
@@ -606,6 +629,22 @@ class RetrievalMeta(TypedDict):
     temporal_hints: NotRequired[list[TemporalHint]]
     limit_clamped: NotRequired[bool]
 
+class RecallResidenceHit(TypedDict):
+    # The entity's full id, 32 lowercase hex.
+    id: str
+    # The home's own score, never compared with a local item's.
+    score: float
+    # The month window (YYYY-MM) that holds the hit.
+    window: str
+
+class RecallResidence(TypedDict):
+    # What an opened device's recall says of the windows it does not hold:
+    # the home's hits are separate references the local pack does not hold.
+    source: Literal["home", "local_only"]
+    complete: bool
+    capped: bool
+    hits: list[RecallResidenceHit]
+
 class MemoryPack(TypedDict):
     items: list[MemoryItem]
     scope_honesty: ScopeHonesty
@@ -613,6 +652,8 @@ class MemoryPack(TypedDict):
     # Always equal to the engine's MEMORY_PACK_VERSION, and to this package's major.
     pack_version: int
     rendered: str | None
+    # Absent when this device holds every window it may read, or runs no sync.
+    residence: NotRequired[RecallResidence]
 
 class FacadeReceipt(TypedDict):
     receipt_ref: str

@@ -6329,13 +6329,14 @@ async fn execute_agent_verb_row(
                 .and_then(crate::auth::CoreAuth::verified_slip)
                 .cloned();
             let (output, listed) = server
-                .recall_off_runtime_listing(
+                .recall_home_listing(
                     actor.actor_ref,
                     actor.actor_class,
                     proof,
                     actor.locality(),
                     None,
                     input,
+                    actor.home_caller(),
                 )
                 .await;
             // Derived from these rows too, though it names none of them.

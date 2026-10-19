@@ -212,7 +212,9 @@ pub(crate) async fn vault_retrieval_replay(
 }
 
 /// The diagnostic SDK takes the whole recall request; the host still embeds,
-/// budgets, narrows and finalizes through the one existing serving door.
+/// budgets, narrows and finalizes through the one existing serving door. Its
+/// caller proved the owner, so an opened device asks its home as the owner
+/// (FIX 2905).
 pub(crate) async fn vault_retrieval_recall(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -230,13 +232,14 @@ pub(crate) async fn vault_retrieval_recall(
         Err(error) => return (Err(error), Vec::new()),
     };
     server
-        .recall_off_runtime_listing(
+        .recall_home_listing(
             actor,
             class,
             auth.verified_slip().cloned(),
             auth.locality(),
             None,
             input,
+            oneiron::memory::HomeRecallCaller::owner(),
         )
         .await
 }

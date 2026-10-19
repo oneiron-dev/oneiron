@@ -39,7 +39,12 @@ pub(crate) async fn resolve_mcp_gateway_actor(
         room.to_str().ok().and_then(|room| oneiron::EntityId::from_hex(room.trim()).ok())
             .ok_or_else(|| McpGatewayError::new(-32602, "tool_args_invalid", "invalid room turn header"))
     }).transpose()?;
-    registered_actor(server, &credential, auth, mode, request_id, session, room_turn).await
+    // A narrower caller's own holder proof, for the home an opened device
+    // asks (FIX 2905): the one this request was admitted on.
+    let forwarded = (!auth.is_owner_grade()).then(|| auth.forwarded_caller_proof(&proof_headers)).flatten();
+    let mut context = registered_actor(server, &credential, auth, mode, request_id, session, room_turn).await?;
+    context.forwarded = forwarded;
+    Ok(context)
 }
 
 /// The same connector resolution after the facade or MCP door verified the
@@ -106,7 +111,7 @@ async fn registered_actor(
     );
     Ok(McpCallContext {
         actor, mode, request_id: request_id.to_owned(), landing,
-        invocation: None, off_record_session: session_ref, room_turn, drain: None,
+        invocation: None, off_record_session: session_ref, room_turn, drain: None, forwarded: None,
     })
 }
 
