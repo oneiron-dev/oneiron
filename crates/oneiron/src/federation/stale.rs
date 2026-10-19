@@ -295,6 +295,10 @@ impl<'v> StaleSweepWatch<'v> {
             owed.store(true, Ordering::Release);
             return Err(error);
         }
+        // The publisher training outbox reconciles what it delivered with the
+        // authority this commit stored (OF-420, an L02 seam): a no-op unless
+        // the commit stored an authority row; a failure waits for its tick.
+        self.vault.reconcile_training_after_authority_ingest(noted);
         Ok(())
     }
 }

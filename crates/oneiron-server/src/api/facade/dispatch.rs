@@ -591,6 +591,7 @@ async fn self_identity_answer(
         auth,
         caller,
         Some(hooks.call().invocation),
+        call.surface(),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -2653,9 +2654,13 @@ async fn vault_cluster_propose(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.cluster.propose", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.cluster.propose", value).await?;
-    let (output, listed) =
-        super::host_doors::vault_cluster_propose(server, auth, facade_door_input(&mut hooks)?)
-            .await;
+    let (output, listed) = super::host_doors::vault_cluster_propose(
+        server,
+        auth,
+        call.surface(),
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -2674,8 +2679,13 @@ async fn vault_cluster_merge(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.cluster.merge", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.cluster.merge", value).await?;
-    let (output, listed) =
-        super::host_doors::vault_cluster_merge(server, auth, facade_door_input(&mut hooks)?).await;
+    let (output, listed) = super::host_doors::vault_cluster_merge(
+        server,
+        auth,
+        call.surface(),
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -2694,8 +2704,13 @@ async fn vault_cluster_split(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.cluster.split", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.cluster.split", value).await?;
-    let (output, listed) =
-        super::host_doors::vault_cluster_split(server, auth, facade_door_input(&mut hooks)?).await;
+    let (output, listed) = super::host_doors::vault_cluster_split(
+        server,
+        auth,
+        call.surface(),
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -2717,6 +2732,7 @@ async fn vault_cluster_resolve_proposal(
     let (output, listed) = super::host_doors::vault_cluster_resolve_proposal(
         server,
         auth,
+        call.surface(),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -21153,6 +21169,7 @@ async fn vault_consolidation_home_pick(
     let (output, listed) = super::host_doors::vault_consolidation_home_pick(
         server,
         auth,
+        call.surface(),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23287,6 +23304,7 @@ async fn vault_runs_settle(
         auth,
         caller,
         Some(hooks.call().invocation),
+        call.surface(),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23341,6 +23359,7 @@ async fn vault_revert_run(
         auth,
         caller,
         Some(hooks.call().invocation),
+        call.surface(),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23362,8 +23381,13 @@ async fn vault_identity_merge(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.identity.merge", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.identity.merge", value).await?;
-    let (output, listed) =
-        super::host_doors::vault_identity_merge(server, auth, facade_door_input(&mut hooks)?).await;
+    let (output, listed) = super::host_doors::vault_identity_merge(
+        server,
+        auth,
+        call.surface(),
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -23382,8 +23406,13 @@ async fn vault_identity_split(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.identity.split", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.identity.split", value).await?;
-    let (output, listed) =
-        super::host_doors::vault_identity_split(server, auth, facade_door_input(&mut hooks)?).await;
+    let (output, listed) = super::host_doors::vault_identity_split(
+        server,
+        auth,
+        call.surface(),
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -23402,8 +23431,13 @@ async fn vault_identity_facet(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.identity.facet", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.identity.facet", value).await?;
-    let (output, listed) =
-        super::host_doors::vault_identity_facet(server, auth, facade_door_input(&mut hooks)?).await;
+    let (output, listed) = super::host_doors::vault_identity_facet(
+        server,
+        auth,
+        call.surface(),
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -23425,6 +23459,7 @@ async fn vault_identity_assert_distinct(
     let (output, listed) = super::host_doors::vault_identity_assert_distinct(
         server,
         auth,
+        call.surface(),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23446,9 +23481,13 @@ async fn vault_identity_propose(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.identity.propose", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.identity.propose", value).await?;
-    let (output, listed) =
-        super::host_doors::vault_identity_propose(server, auth, facade_door_input(&mut hooks)?)
-            .await;
+    let (output, listed) = super::host_doors::vault_identity_propose(
+        server,
+        auth,
+        call.surface(),
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -23467,8 +23506,13 @@ async fn vault_identity_undo(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.identity.undo", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.identity.undo", value).await?;
-    let (output, listed) =
-        super::host_doors::vault_identity_undo(server, auth, facade_door_input(&mut hooks)?).await;
+    let (output, listed) = super::host_doors::vault_identity_undo(
+        server,
+        auth,
+        call.surface(),
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -23533,6 +23577,7 @@ async fn vault_identity_proposals_resolve(
     let (output, listed) = super::host_doors::vault_identity_proposals_resolve(
         server,
         auth,
+        call.surface(),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -26002,6 +26047,7 @@ pub(crate) async fn call_verb(
         | "vault.claims.put"
         | "vault.edges.put"
         | "tasks.consult.result"
+        | "self.workflows.dispatch_bound"
         | "self.leader.advice"
         | "self.leader.pattern"
         | "self.team.start"

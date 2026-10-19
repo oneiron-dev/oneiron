@@ -1,17 +1,21 @@
 //! Typed saved workflows: ordered AGENT_DEF compositions the owner keeps.
 use serde::{Deserialize, Serialize};
 
+use super::HostBinding;
+use super::highway_runner::workflow_try::{WorkflowBinder, dispatch_bound};
 use super::sdk_agents::AgentDefinitionSpec;
 use crate::agent_def::workflow::WorkflowDefinition;
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
     WorkflowDispatchStatus,
 };
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::consent::AuthenticatedOwner;
 use crate::context_projection::ContextSpec;
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{ArtifactError, Error};
 use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
+use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
 /// A new composition at a new WORKFLOW id. Each step names a live AGENT_DEF;
@@ -129,6 +133,27 @@ pub struct WorkflowDispatchRequest {
     pub task_ref: Option<EntityId>,
 }
 
+/// Starts one run of a saved workflow that realizes a TASK, from a leased
+/// agent run and as that agent (FIX 5316). The TASK is an idle standard
+/// task the agent owns, on the engine's runner lane, that no try realizes
+/// now; the run's root is its try and settles it when the run ends, and
+/// the steps stay TASK-less. The try the run's lease holds is its real
+/// parent: every step inherits that try's run, project, scope, context and
+/// depth bounds, and the run spends under its lease tree. The briefing and
+/// `context_spec` are as an owner's dispatch takes them. A retry with the
+/// same intent key and request returns the same run; another request under
+/// it is refused.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowBoundDispatchRequest {
+    pub workflow_ref: EntityId,
+    pub intent_key: String,
+    pub briefing: String,
+    #[serde(default)]
+    pub context_spec: Option<ContextSpec>,
+    pub task_ref: EntityId,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowRunRequest {
@@ -236,10 +261,19 @@ pub fn dispatch_workflow_as(
     // one the dispatch is the one it always was.
     let outcome = match input.task_ref {
         None => AgentDispatcher::new(vault).dispatch_with_context(request, spawn)?,
-        Some(task_ref) => super::highway_runner::workflow_try::dispatch_bound(
-            vault, owner, request, spawn, task_ref,
+        Some(task_ref) => dispatch_bound(
+            vault,
+            &WorkflowBinder::Owner(owner),
+            request,
+            spawn,
+            task_ref,
         )?,
     };
+    started_run(outcome)
+}
+
+/// The run a saved workflow's dispatch started or found.
+fn started_run(outcome: AgentDispatchOutcome) -> MemoryResult<WorkflowRunView> {
     match outcome {
         AgentDispatchOutcome::WorkflowDispatched(status)
         | AgentDispatchOutcome::WorkflowExisting(status) => run_view(&status),
@@ -248,6 +282,56 @@ pub fn dispatch_workflow_as(
         ))
         .into()),
     }
+}
+
+/// `self.workflows.dispatch_bound` (FIX 5316): `agent` binds one run of a
+/// saved workflow to a TASK under `lease`, the live lease its host proved on
+/// the try it runs as. That try is the run's real parent and its run is the
+/// run's; nothing of either comes from the request. The intent key is
+/// qualified by the agent, its try, the TASK and the workflow, so no other
+/// caller's or try's retry names this run. The binder rechecks the lease in
+/// the admitting writer.
+pub(crate) fn dispatch_workflow_bound_as(
+    vault: &Vault,
+    agent: WriteActor,
+    lease: &HostBinding,
+    input: WorkflowBoundDispatchRequest,
+) -> MemoryResult<WorkflowRunView> {
+    let parent = lease.parent();
+    let run_id = AttemptQueue::new(vault)
+        .get(parent)?
+        .and_then(|record| record.run_id);
+    let request = DispatchAgent {
+        target: AgentDispatchTarget::Workflow(input.workflow_ref),
+        parent_attempt: Some(parent),
+        dedupe_key: Some(format!(
+            "self.workflows.dispatch_bound:{}:{}:{}:{}:{}",
+            agent.entity_ref().to_hex(),
+            bytes_to_hex_lower(parent.as_bytes()),
+            input.task_ref.to_hex(),
+            input.workflow_ref.to_hex(),
+            input.intent_key
+        )),
+        run_id,
+        now: vault.now_recorded_at(),
+    };
+    let spawn = AgentSpawnContext::default().with_context_spec(
+        input
+            .context_spec
+            .unwrap_or_default()
+            .with_briefing(input.briefing),
+    );
+    let binder = WorkflowBinder::Agent {
+        actor: agent,
+        lease,
+    };
+    started_run(dispatch_bound(
+        vault,
+        &binder,
+        request,
+        spawn,
+        input.task_ref,
+    )?)
 }
 
 pub fn read_workflow_run_as(

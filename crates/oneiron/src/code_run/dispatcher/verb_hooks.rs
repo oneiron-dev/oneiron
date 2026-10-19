@@ -569,6 +569,7 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
         }),
         SelfCall::Team(team) => to_json(team)?,
         SelfCall::TeamSubmit(submit) => to_json(submit)?,
+        SelfCall::WorkflowDispatch(request) => to_json(request.as_ref())?,
     })
 }
 
@@ -986,10 +987,13 @@ fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         // A world-settings request is judged as the agent gave it (FIX 4480).
         // A consult's answer or abstention lands as the peer gave it
         // (DOOR-063).
+        // A TASK binding is judged as the agent gave it, on the lane its
+        // door admitted (FIX 5316).
         SelfCall::AgentVerb(_)
         | SelfCall::ConnectorAnswer(_)
         | SelfCall::WorldPrivacySet(_)
         | SelfCall::ConsultResult(_)
+        | SelfCall::WorkflowDispatch(_)
         | SelfCall::ReaderSpawn(_)
         | SelfCall::ReaderReport(_)
         | SelfCall::Summarize(_)

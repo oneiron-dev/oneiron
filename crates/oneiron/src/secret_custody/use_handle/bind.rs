@@ -112,7 +112,9 @@ impl Vault {
     /// binding is a custody rewrap this install records and, as its holder,
     /// enacts in the same commit (CALLS CUSTODY_BIND_TRAVEL); a record that
     /// stays on its device, or an install that carries no owner act, binds
-    /// here alone, and the custody receipt says which.
+    /// here alone, and the custody receipt says which. The rewrap's owner act
+    /// records `surface`, where his request reached this install: audit only
+    /// (FIX 4650).
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is no longer
@@ -125,6 +127,7 @@ impl Vault {
     pub fn bind_secret_as_owner(
         &self,
         owner: &AuthenticatedOwner,
+        surface: ActSurface,
         request: &SecretBindRequest,
         at: u64,
     ) -> Result<SecretBound> {
@@ -170,7 +173,7 @@ impl Vault {
             let recorded = self.record_custody_change_in_txn(
                 &mut wtxn,
                 actor,
-                ActSurface::ThisInstall,
+                surface,
                 ActiveChange {
                     change: CustodyChange::Rewrap,
                     id,

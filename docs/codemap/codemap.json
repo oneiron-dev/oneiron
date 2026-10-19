@@ -679,7 +679,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "WorkflowDefinition"
@@ -687,7 +687,7 @@
      "path": "src/agent_def/workflow.rs",
      "purpose": "Saved ordered agent compositions",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 9,
       "struct": 1
      }
@@ -2515,23 +2515,36 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AuthorityArchiveContent",
       "AuthorityArchiveCustodian",
       "AuthorityArchiveManifest",
-      "AuthorityCheckpointRow",
       "AuthorityCheckpointUnresolved",
       "AuthorityCheckpointV2"
      ],
-     "path": "src/authority/checkpoint_image.rs",
+     "path": "src/authority/checkpoint_image/mod.rs",
      "purpose": "The portable authority checkpoint v2 image (OF-469): the exact fold a vault builds of its covered history…",
      "surface": {
       "const": 5,
-      "crate-vis": 11,
+      "crate-vis": 8,
       "fn": 6,
-      "struct": 6
+      "re-export": 1,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthorityCheckpointRow"
+     ],
+     "path": "src/authority/checkpoint_image/row.rs",
+     "purpose": "One covered row's summary in a checkpoint v2 image: the row's scaffold and, for a row a fold or a store door…",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 1
      }
     },
     {
@@ -3067,7 +3080,7 @@
      "purpose": "A raw open's own machine profile, from the host's root secret (FIX 4730)",
      "surface": {
       "enum": 1,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -3140,7 +3153,7 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 11,
       "struct": 3
@@ -12882,6 +12895,16 @@
      "notable": [],
      "path": "src/code_run/dispatcher/wake_policy.rs",
      "purpose": "Owner-authorized Dreamer wake-policy action; off-record never writes base",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/workflow_dispatch.rs",
+     "purpose": "`self.workflows.dispatch_bound` (FIX 5316): a leased agent run binds one run of a saved workflow to a TASK…",
      "surface": {
       "crate-vis": 1
      }
@@ -25861,8 +25884,97 @@
       "const": 1,
       "enum": 4,
       "fn": 2,
+      "re-export": 4,
       "struct": 3,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IntakeReceiptKey",
+      "IntakeRecipient"
+     ],
+     "path": "src/feedback/conversation_training/crypto.rs",
+     "purpose": "The publisher training files' crypto (OF-420): the install signature on what the vault writes (C1, D6), the…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/conversation_training/custody.rs",
+     "purpose": "Local custody of publisher training offers and controls (OF-420): what this vault prepared, published and…",
+     "surface": {
+      "crate-vis": 27
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PublisherTrainingLifecycle",
+      "ReceiptCursor",
+      "ReceivedTrainingReceipt",
+      "ReleaseDecision",
+      "SealedTrainingOffer",
+      "SignedTrainingControl",
+      "TrainingControlId",
+      "TrainingQueued",
+      "TrainingReceiptPage",
+      "TrainingSubmissionId",
+      "TrainingUnavailable",
+      "TrainingWithheld"
+     ],
+     "path": "src/feedback/conversation_training/lifecycle.rs",
+     "purpose": "The publisher training lifecycle (OF-420 A2): what an outbox takes, and what the engine decides about it",
+     "surface": {
+      "enum": 3,
+      "fn": 4,
+      "struct": 8,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TrainingUpkeep"
+     ],
+     "path": "src/feedback/conversation_training/reconcile.rs",
+     "purpose": "Withdrawal by reconciliation (OF-420 A4, D2), receipts (C2, C3, C5) and the outbox's upkeep",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TrainingOfferPass"
+     ],
+     "path": "src/feedback/conversation_training/release.rs",
+     "purpose": "The offer pass and its release gate (OF-420 A2, A3; D1)",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/conversation_training/source.rs",
+     "purpose": "The source selector (OF-420 A3): one person's words in one conversation, read from the canonical rows, never…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -35355,8 +35467,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 50,
-      "fn": 34,
+      "crate-vis": 51,
+      "fn": 35,
       "struct": 2,
       "type": 1
      }
@@ -53667,7 +53779,17 @@
      "path": "src/task_verb/highway_runner/workflow_try.rs",
      "purpose": "A saved workflow's wrapper as the try that realizes a TASK (FIX 4391)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_runner/workflow_try/binder.rs",
+     "purpose": "Who binds a saved workflow's run to a TASK, as the door that took the request proved them (FIX 5316): the…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -55587,9 +55709,10 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "WorkflowBoundDispatchRequest",
       "WorkflowDispatchRequest",
       "WorkflowRequest",
       "WorkflowRunRequest",
@@ -55603,8 +55726,9 @@
      "path": "src/task_verb/sdk_workflows.rs",
      "purpose": "Typed saved workflows: ordered AGENT_DEF compositions the owner keeps",
      "surface": {
+      "crate-vis": 1,
       "fn": 5,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -60933,7 +61057,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 175,
+     "files": 176,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61108,7 +61232,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 92,
+     "files": 93,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61493,7 +61617,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 16,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -62221,7 +62345,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 190,
+     "files": 191,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62389,9 +62513,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 197,
+   "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3815,
+   "source_files": 3824,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71093,14 +71217,15 @@
      "purpose": "VaultBridge root and ActorScopedVault handle plus the facade() accessor",
      "surface": {
       "crate-vis": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "NapiHostRootProfile",
       "NapiPaired",
       "NapiWitnessTurnInput",
       "NativeClient"
@@ -71108,8 +71233,8 @@
      "path": "src/facade/client.rs",
      "purpose": "Remote-backed NativeClient SDK seam with its stamped-turn input",
      "surface": {
-      "fn": 10,
-      "struct": 3
+      "fn": 12,
+      "struct": 4
      }
     },
     {
@@ -71361,7 +71486,7 @@
      "path": "src/lib/vault.rs",
      "purpose": "Legacy buffer-oriented NapiVault binding and all its verbs",
      "surface": {
-      "fn": 29,
+      "fn": 30,
       "struct": 1
      }
     },
@@ -72268,6 +72393,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/embedded/host_root.rs",
+     "purpose": "The embedded half of [`crate::OneironClient::open_with_host_root`] (FIX 4730): the shared open, then this…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/error.rs",
      "purpose": "The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7)",
      "surface": {
@@ -72322,16 +72457,17 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "HostRootProfile",
       "OneironClient",
       "OpenOptions"
      ],
      "path": "src/lib.rs",
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
-      "fn": 17,
+      "fn": 19,
       "mod": 1,
       "re-export": 5,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -72500,10 +72636,10 @@
      "purpose": "Shared boundary caps live with the engine DTOs so HTTP ingress and SDK dispatch use the same validators"
     },
     "embedded": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The embedded backend: path resolution, the process-local vault registry, and the single-writer lease…"
     },
     "error": {
@@ -72551,7 +72687,7 @@
    },
    "over_bar": 1,
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
-   "source_files": 17,
+   "source_files": 18,
    "test_files": 8
   },
   "oneiron-retrieval": {
@@ -80139,6 +80275,46 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/conversation_training/account.rs",
+     "purpose": "C1 (CALLS-1): a self-hosted vault's binding to the publisher's intake as the person's Oneiron account…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/mod.rs",
+     "purpose": "The publisher training outbox (OF-420 A1, \"Learn from my conversations\"): the worker that writes this…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/outbox.rs",
+     "purpose": "The outbox directory as the engine's training transport: three protocol subdirectories under one lock…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/worker.rs",
+     "purpose": "The outbox's periodic tick",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/credential_resume.rs",
      "purpose": "The server's check for a credential caller's call a verb hook's ask stopped (ARCH-0080 §3 Ask, OF-580)",
      "surface": {
@@ -81473,7 +81649,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "ManagedShutdown",
@@ -84381,6 +84557,13 @@
      "layout": "file+dir",
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
+    "conversation_training": {
+     "files": 4,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "The publisher training outbox (OF-420 A1, \"Learn from my conversations\"): the worker that writes this…"
+    },
     "credential_resume": {
      "files": 1,
      "impl_vault": false,
@@ -84545,7 +84728,7 @@
     "managed": {
      "files": 21,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Managed serve mode: the vault engine as a supervised child process"
     },
@@ -84699,7 +84882,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 817,
+   "source_files": 821,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -88430,6 +88613,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "HostRootProfile"
+     ],
+     "path": "src/host_root.rs",
+     "purpose": "`Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "Oneiron"
      ],
      "path": "src/lib.rs",
@@ -88437,7 +88633,7 @@
      "surface": {
       "const": 1,
       "fn": 10,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 1
      }
     },
@@ -88513,6 +88709,13 @@
      "layout": "file",
      "purpose": "—"
     },
+    "host_root": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the…"
+    },
     "pairing": {
      "files": 1,
      "impl_vault": false,
@@ -88523,7 +88726,7 @@
    },
    "over_bar": 4,
    "purpose": "The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound",
-   "source_files": 10,
+   "source_files": 11,
    "test_files": 0
   },
   "oneiron-vault-contract": {
@@ -88555,6 +88758,40 @@
      "purpose": "Shared recurrence vocabulary for commitments and ICS poll cadences",
      "surface": {
       "enum": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TrainingChunkV1",
+      "TrainingControlBodyV1",
+      "TrainingControlChangeV1",
+      "TrainingControlV1",
+      "TrainingFileName",
+      "TrainingFilterV1",
+      "TrainingForgetSourceV1",
+      "TrainingNoHumanReadV1",
+      "TrainingOfferBodyV1",
+      "TrainingOfferV1",
+      "TrainingPayloadV1",
+      "TrainingPersonChoiceChangeV1",
+      "TrainingPersonChoiceV1",
+      "TrainingReceiptBodyV1",
+      "TrainingReceiptStatusV1",
+      "TrainingReceiptSubjectV1",
+      "TrainingReceiptV1",
+      "TrainingSignatureV1",
+      "TrainingUsedRunV1",
+      "TrainingWorldEligibilityV1"
+     ],
+     "path": "src/lib/conversation_training.rs",
+     "purpose": "The publisher training outbox (OF-420, \"Learn from my conversations\"): the files a vault hands toward…",
+     "surface": {
+      "const": 15,
+      "enum": 4,
+      "fn": 11,
+      "struct": 16
      }
     },
     {
@@ -88738,7 +88975,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 9,
+      "mod": 10,
       "re-export": 7
      }
     },
@@ -88854,7 +89091,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -88863,7 +89100,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 21,
+   "source_files": 22,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {

@@ -85,6 +85,9 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::LeaderSplit
             // A team spawns canonical children and writes a canonical receipt.
             | SelfEffect::Team
+            // A bound workflow run queues canonical attempts and takes a
+            // canonical TASK.
+            | SelfEffect::WorkflowDispatch
             | SelfEffect::TaskDelegate => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),
