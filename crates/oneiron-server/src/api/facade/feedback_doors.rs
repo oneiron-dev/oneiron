@@ -11,15 +11,16 @@
 //! returns the exact bundle, its digest and its destination, and the
 //! owner's send of that preview is the approve-once on those bytes to
 //! that destination. The bundle here is built from the issue, so a
-//! metadata send carries no vault text, and a text send carries exactly
-//! the report's quoted text — which may leave only while the issue's
-//! disclosure stands approved for its publisher.
+//! metadata send carries no vault text, and a text send carries the
+//! report's quoted text — which may leave only while the issue's disclosure
+//! stands approved for its publisher. When this server's on-device tagger
+//! can filter, that text leaves as the in-vault filter returned it (OF-420,
+//! `crate::feedback_redaction`); when it cannot, as written, as it did
+//! before the filter.
 use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::feedback::{
-    FeedbackPreview, ReportIssue, UnredactedFeedback, prepare_feedback_preview,
-};
+use oneiron::feedback::{FeedbackPreview, ReportIssue, prepare_feedback_preview};
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     self, FeedbackPreviewRequest, FeedbackSendSubjectRequest, FeedbackSubjectPreview,
@@ -31,6 +32,7 @@ use super::host_doors::{Listed, hex_rows};
 use super::legal_hold_doors::as_owner_naming;
 use crate::auth::CoreAuth;
 use crate::feedback_delivery::FeedbackHost;
+use crate::feedback_redaction::{Unfiltered, feedback_redactor};
 use crate::owner::{OwnerError, feedback as owner_feedback};
 use crate::server::SyncServer;
 
@@ -128,14 +130,17 @@ fn feedback_host(server: &SyncServer) -> MemoryResult<Arc<FeedbackHost>> {
     })
 }
 
+/// The issue's bundle as it would leave: every free text in it run through
+/// this server's in-vault filter when it runs, and as built when it cannot.
 fn bundle_preview(
+    server: &SyncServer,
     issue: &ReportIssue,
     category: oneiron::feedback::FeedbackCategory,
     include_text: bool,
 ) -> MemoryResult<FeedbackPreview> {
     prepare_feedback_preview(
         sdk::subject_feedback_bundle(issue, category, include_text),
-        &UnredactedFeedback,
+        &feedback_redactor(server).door(Unfiltered::AsBuilt),
     )
     .map_err(|error| MemoryError::bad_request(error.to_string()))
 }
@@ -149,7 +154,7 @@ fn preview_subject(
     let vault = server.vault();
     let issue = sdk::report_issue_as_owner(vault, owner, &input.issue_ref)?;
     let publisher_ref = sdk::subject_feedback_publisher(&issue)?;
-    let preview = bundle_preview(&issue, input.category, input.include_text)?;
+    let preview = bundle_preview(server, &issue, input.category, input.include_text)?;
     let view = owner_feedback::preview_view(vault, &host, owner, &preview).map_err(owner_error)?;
     Ok(FeedbackSubjectPreview {
         includes_text: input.include_text && issue.request.carries_text(),
@@ -178,7 +183,7 @@ fn send_subject(
     // Beside the bundle approval, quoted vault text crosses only while the
     // issue's own disclosure stands approved for its publisher.
     sdk::subject_feedback_send_allowed(vault, &issue, input.include_text)?;
-    let preview = bundle_preview(&issue, input.category, input.include_text)?;
+    let preview = bundle_preview(server, &issue, input.category, input.include_text)?;
     let sent = owner_feedback::send_previewed(
         vault,
         &host,

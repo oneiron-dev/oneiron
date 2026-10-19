@@ -10,10 +10,10 @@ use super::*;
 use crate::dreamer_consolidation::provenance::{KeptAsk, KeptDecision};
 use crate::dreamer_wake::WakePassDeadline;
 use crate::llm::decision::{
-    AskAct, AskRole, AskTo, DecisionAnswer, DecisionAsk, DecisionBand, DecisionBandPolicy,
-    DecisionDial, DecisionQuestion, DecisionRung, GeneratedDecisions, GeneratedRung, GeneratedStep,
-    HeldLadder, HumanAskReason, ProviderPin, Reversibility, RoleRank, TypedDecision, cut_text,
-    fit_state,
+    AnswerActor, AskAct, AskRole, AskTo, DecisionAnswer, DecisionAsk, DecisionBand,
+    DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, GeneratedDecisions,
+    GeneratedRung, GeneratedStep, HeldLadder, HumanAskReason, ProviderPin, Reversibility, RoleRank,
+    TypedDecision, cut_text, fit_state,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 
@@ -154,7 +154,7 @@ impl ConsolidationExecutor<'_> {
             .filter(|leader| *leader != self.actor.entity_ref())
         {
             Some(actor) => AskRole::Responsible {
-                actor,
+                actor: AnswerActor::Actor(actor),
                 project: Some(project),
             },
             None => AskRole::Board { project },
@@ -284,11 +284,7 @@ impl ConsolidationExecutor<'_> {
             };
             kept.push(KeptDecision {
                 decision,
-                ask: ask.map(|ask| KeptAsk {
-                    seq: ask.seq,
-                    to: ask.to,
-                    answer: ask.answer,
-                }),
+                ask: ask.as_ref().map(KeptAsk::of),
             });
         }
         Ok(Some(kept))

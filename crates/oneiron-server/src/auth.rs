@@ -33,7 +33,8 @@ pub(crate) use machine_proof::{
     MachineClaim, owned_machine, owned_machine_stands, required_machine_proof,
 };
 pub(crate) use managed_request::{
-    caller_slip_too_narrow, carries_caller_slip, forward_caller_credentials,
+    attested_owner, caller_slip_too_narrow, carries_caller_slip, forward_caller_credentials,
+    request_path,
 };
 pub(crate) use slips::{BindingProof, INVITEE_DOORS, parse_signature, parse_slip_id};
 
