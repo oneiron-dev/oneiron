@@ -14,6 +14,11 @@
 //! one is a conflict, never a silent overwrite. Existing pins never change:
 //! a device paired on an older policy pairs again with a link from the
 //! owner.
+//!
+//! `GET .../roots` answers which roots this host's checkpoint head awaits
+//! under the policy in force (FIX 5108): each root accepted, signed but not
+//! counted, or pending, with the quorum, the hardware rule and what the
+//! accepted roots still lack.
 
 use std::sync::Arc;
 
@@ -24,8 +29,9 @@ use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{
-    ActAuthority, AuthorityKey, AuthoritySignatureSuite, CheckpointPolicyHead,
-    CheckpointPolicyView, CheckpointPosture, CheckpointRootChoice, CheckpointRootPolicy,
+    ActAuthority, AuthorityCheckpointRoots, AuthorityKey, AuthoritySignatureSuite,
+    CheckpointPolicyHead, CheckpointPolicyView, CheckpointPosture, CheckpointRootChoice,
+    CheckpointRootDelivery, CheckpointRootPolicy,
 };
 use oneiron::error::RecordError;
 use serde::{Deserialize, Serialize};
@@ -41,6 +47,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/checkpoint-policy", get(view).post(select))
         .route("/checkpoint-policy/clear", post(clear))
+        .route("/checkpoint-policy/roots", get(roots))
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,6 +127,45 @@ struct PolicyViewReply {
     conflict: Vec<HeadReply>,
 }
 
+#[derive(Debug, Serialize)]
+struct RootStateReply {
+    key: String,
+    tier: &'static str,
+    /// The managed host root.
+    host: bool,
+    /// `accepted` (counts toward the quorum), `signed_not_counted` (made
+    /// with another key binding than the one kept now) or `pending` (no
+    /// install delivered it here).
+    delivery: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct HeadRootsReply {
+    /// The head image's id, as 64 hex.
+    image: String,
+    /// The digest of the root policy the vault counts now, as 64 hex.
+    policy: String,
+    /// Whether the head was built under that policy.
+    current: bool,
+    quorum: u8,
+    /// Whether one attesting root must be hardware-backed.
+    hardware: bool,
+    /// Every root of the policy, ascending by key.
+    roots: Vec<RootStateReply>,
+    /// The roots the head still awaits, each `<suite>:<hex key>`.
+    awaited: Vec<String>,
+    /// What the accepted roots lack of the policy, named; null once the head
+    /// reached it.
+    shortfall: Option<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+struct RootsReply {
+    /// This host's checkpoint head and where each root stands on it; null
+    /// when no head is kept here.
+    head: Option<HeadRootsReply>,
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -174,6 +220,36 @@ fn policy_reply(policy: &CheckpointRootPolicy) -> PolicyReply {
         quorum: policy.quorum,
         hardware: policy.hardware,
         owner_selected: policy.owner_selected,
+    }
+}
+
+fn delivery_name(delivery: CheckpointRootDelivery) -> &'static str {
+    match delivery {
+        CheckpointRootDelivery::Accepted => "accepted",
+        CheckpointRootDelivery::SignedNotCounted => "signed_not_counted",
+        CheckpointRootDelivery::Pending => "pending",
+    }
+}
+
+fn roots_reply(head: &AuthorityCheckpointRoots) -> HeadRootsReply {
+    HeadRootsReply {
+        image: hex(&head.image),
+        policy: hex(&head.policy),
+        current: head.current,
+        quorum: head.quorum,
+        hardware: head.hardware,
+        roots: head
+            .roots
+            .iter()
+            .map(|root| RootStateReply {
+                key: key_text(&root.key),
+                tier: root.tier.as_str(),
+                host: root.host,
+                delivery: delivery_name(root.delivery),
+            })
+            .collect(),
+        awaited: head.awaited().map(key_text).collect(),
+        shortfall: head.shortfall,
     }
 }
 
@@ -296,6 +372,24 @@ async fn clear(
             .set_checkpoint_policy_as(&authority, None, seen)
             .map_err(refusal)?;
         Ok(view_reply(&view))
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `GET /v1/owner/checkpoint-policy/roots`: which roots this host's
+/// checkpoint head awaits under the policy in force, and what it lacks. A
+/// policy the roster cannot fix is a refusal naming its rule.
+async fn roots(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<RootsReply> {
+    owner(&auth, &server)?;
+    let reply = blocking(move || -> OwnerResult<RootsReply> {
+        let head = server
+            .vault()
+            .authority_checkpoint_roots()
+            .map_err(refusal)?;
+        Ok(RootsReply {
+            head: head.as_ref().map(roots_reply),
+        })
     })
     .await?;
     Ok(Json(reply))

@@ -108,7 +108,8 @@ pub(in crate::sync) fn reverse_rematerialize_with(
 /// The reverse pass over the window's learned range, or over the rows of
 /// `committed` (each kept when its learned time falls in the window's month),
 /// whose edited rows replace the carriers they differ from. A `sealing` pass
-/// packs no key pad.
+/// packs no key pad, nor does the open of a window for its first promotion
+/// (FIX 3789).
 fn reverse_rematerialize_scan(
     vault: &Vault,
     doc: &LoroDoc,
@@ -121,6 +122,7 @@ fn reverse_rematerialize_scan(
     sealing: bool,
 ) -> Result<u32> {
     let only = committed.map(|(rows, _)| rows);
+    let no_pads = sealing || crate::sync::ingest::first_promotion_open(vault);
     let is_edited = |id: &EntityId| committed.is_some_and(|(_, edited)| edited.contains(id));
     let start_ts = window_key
         .start_timestamp()
@@ -153,7 +155,7 @@ fn reverse_rematerialize_scan(
             {
                 continue;
             }
-            if sealing && crate::world_keys::pad_body_world(&raw).is_some() {
+            if no_pads && crate::world_keys::pad_body_world(&raw).is_some() {
                 continue;
             }
             let belongs = super::types::entity_belongs_to_window(&raw, window_key);
