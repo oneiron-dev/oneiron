@@ -587,6 +587,7 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
         ),
         AuthorityOp::Genesis { .. } => (Other, "genesis", OpFields::default()),
         AuthorityOp::EnrollDevice { .. } => (Other, "enroll_device", OpFields::default()),
+        AuthorityOp::OwnerKeyEnroll(_) => (Other, "owner_key_enroll", OpFields::default()),
         AuthorityOp::RevokeDevice { .. } => (Other, "revoke_device", OpFields::default()),
         AuthorityOp::RotateKey { .. } => (Other, "rotate_key", OpFields::default()),
         AuthorityOp::ReRoot { .. } => (Other, "re_root", OpFields::default()),

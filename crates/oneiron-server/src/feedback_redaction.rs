@@ -20,7 +20,7 @@
 //! [`UnredactedFeedback`] and never labelled filtered: filtering adds to a
 //! report the person sends, it does not take one away. Sharing conversation
 //! text toward training never falls back; a filter error withholds it
-//! (`oneiron::feedback::share_for_publisher_training`).
+//! (`oneiron::Vault::offer_conversation_training`).
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;

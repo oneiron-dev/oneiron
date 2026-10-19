@@ -58,6 +58,8 @@ pub use self::ctl::{
     CtlBound, CtlBoundKind, CtlBoundPhase, CtlBoundResource, CtlRefusal, CtlRefusalKind,
     CtlRequest, CtlResponse, CtlResumeOn, FacilityNotice, FacilityReason, ManagedFacility,
     ManagedReadiness, REAP_PAUSE_REFUSAL, ShedBlockerWire, ShedCause, ShedStatus,
+    TRAINING_PURGE_RECEIPT_PENDING, TRAINING_PURGE_REJECTED, TRAINING_PURGE_UNSENT,
+    TrainingPurgeState, TrainingPurgeStateWire,
 };
 pub use self::ledger::{LedgerAck, LedgerUpdate, ManagedTrainingSetting};
 pub use self::limits::{
