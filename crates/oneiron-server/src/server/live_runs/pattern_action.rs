@@ -47,6 +47,8 @@ struct ActionPatternRunner {
     actor: WriteActor,
     seat: ModelSeat,
     spend: Option<SpendScopeId>,
+    /// The host's model handle, whose turn tracker sees each capture.
+    ai: crate::ai_host::AiHandle,
 }
 
 /// The runner an action on `entry`'s run lends its planner, on `server`'s
@@ -77,6 +79,7 @@ pub(super) fn runner(
         actor: entry.actor,
         seat,
         spend: entry.spend_scope.clone(),
+        ai: server.ai.clone(),
     }))
 }
 
@@ -146,6 +149,7 @@ impl ActionPatternRunner {
         agent_runner_for_attempt(
             &self.vault,
             self.provider.as_ref(),
+            &self.ai,
             &self.leased,
             &self.definition,
             self.actor,
