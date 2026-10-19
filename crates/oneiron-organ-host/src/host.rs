@@ -25,6 +25,11 @@ use crate::regions::RegionCache;
 use crate::slot::{OrganStatus, Slot};
 use crate::spec::{HostConfig, LentInput, OrganCall, OrganInput, OrganSpec};
 
+mod sized;
+
+pub use sized::{CallMeasure, CallSize};
+use sized::{OneCall, Run};
+
 const MAX_DETAIL_BYTES: usize = 512;
 const MAX_NAME_BYTES: usize = 256;
 
@@ -295,7 +300,7 @@ impl OrganHost {
         lent: Vec<LentInput>,
         asks: &AskHandlers<'_>,
     ) -> Result<OrganOutcome, HostError> {
-        self.run(vault, call, unvouched(lent), asks, false)
+        self.run(vault, call, unvouched(lent), asks, Run::Warm)
     }
 
     /// [`Self::call_with`], in a process started for this call alone: it
@@ -313,7 +318,7 @@ impl OrganHost {
         lent: Vec<LentInput>,
         asks: &AskHandlers<'_>,
     ) -> Result<OrganOutcome, HostError> {
-        self.run(vault, call, unvouched(lent), asks, true)
+        self.run(vault, call, unvouched(lent), asks, Run::Fresh)
     }
 
     /// A call another of the owner's nodes sent over the mesh. That node
@@ -328,7 +333,7 @@ impl OrganHost {
         inputs: Vec<(Option<OrganInput>, LentInput)>,
         asks: &AskHandlers<'_>,
     ) -> Result<OrganOutcome, HostError> {
-        self.run(vault, call, inputs, asks, false)
+        self.run(vault, call, inputs, asks, Run::Warm)
     }
 
     fn run(
@@ -337,7 +342,7 @@ impl OrganHost {
         call: OrganCall,
         lent: Vec<(Option<OrganInput>, LentInput)>,
         asks: &AskHandlers<'_>,
-        fresh: bool,
+        mut how: Run<'_>,
     ) -> Result<OrganOutcome, HostError> {
         if in_handler() {
             return Err(HostError::Reentrant);
@@ -364,9 +369,8 @@ impl OrganHost {
         if call.inputs.len() + lent.len() > MAX_FDS_PER_FRAME {
             return Err(HostError::TooManyInputs);
         }
-        let mut permit = self
-            .budget
-            .admit(call.class, 1, slot.spec.call_memory_bytes, deadline)?;
+        let booking = how.booking(&slot.spec);
+        let mut permit = self.budget.admit(call.class, 1, booking, deadline)?;
         let mut inputs = call
             .inputs
             .iter()
@@ -375,12 +379,13 @@ impl OrganHost {
         for (of, input) in lent {
             inputs.push(self.lend(&slot.spec, input, of)?);
         }
-        let process = if fresh {
-            slot.fresh_process(&self.config, Some(deadline))?
+        let process = if how.fresh() {
+            let memory = how.process_memory(&slot.spec);
+            slot.fresh_process(&self.config, Some(deadline), memory)?
         } else {
             slot.process(&self.config, Some(deadline))?
         };
-        let _one_call = fresh.then(|| OneCall {
+        let _one_call = how.fresh().then(|| OneCall {
             slot: slot.as_ref(),
             process: Arc::clone(&process),
         });
@@ -403,7 +408,9 @@ impl OrganHost {
             deadline,
             inline_max,
         );
-        let (reply, fds) = self.exchange(&slot, &process, &call, &inputs, &mut asked, deadline)?;
+        let exchanged = self.exchange(&slot, &process, &call, &inputs, &mut asked, deadline);
+        how.measured(&process);
+        let (reply, fds) = exchanged?;
         let lent = asked.lent_bytes();
         // The lines also reach `asks` when `asked` drops, on every path.
         let asks = asked.receipts.clone();
@@ -425,10 +432,7 @@ impl OrganHost {
             sent_at,
             deadline,
             // Answers and outputs draw on the one booking.
-            max_output_bytes: slot
-                .spec
-                .max_output_bytes
-                .min(slot.spec.call_memory_bytes.saturating_sub(lent)),
+            max_output_bytes: slot.spec.max_output_bytes.min(booking.saturating_sub(lent)),
             asks,
         };
         finish(&call, &process, &inputs, reply, &mut permit)
@@ -594,28 +598,6 @@ impl OrganHost {
 /// Bytes a local caller lent: no vault version stands behind them.
 fn unvouched(lent: Vec<LentInput>) -> Vec<(Option<OrganInput>, LentInput)> {
     lent.into_iter().map(|input| (None, input)).collect()
-}
-
-/// Stops a one-call process when its call ends.
-struct OneCall<'a> {
-    slot: &'a Slot,
-    process: Arc<OrganProcess>,
-}
-
-impl Drop for OneCall<'_> {
-    /// A process that ended on its own before its call let it go crashed,
-    /// as a warm process found dead does, even when the reader has not yet
-    /// seen its socket close; one the host stopped did not.
-    fn drop(&mut self) {
-        let ended = !self.process.is_alive() || self.process.exited();
-        if ended && !self.process.stopped_by_host() {
-            self.slot.crashed(&self.process);
-        } else {
-            self.slot.stopped(&self.process);
-        }
-        self.process.stop();
-        self.slot.prune();
-    }
 }
 
 fn wire_inputs(inputs: &[Resolved]) -> (Vec<Input>, Vec<BorrowedFd<'_>>) {

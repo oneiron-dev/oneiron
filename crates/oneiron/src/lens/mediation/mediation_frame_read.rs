@@ -50,6 +50,20 @@ impl LensRenderFrame {
         &self.backing_refs
     }
 
+    /// This frame as `scoped_read`'s own actor authors an event on it (FIX
+    /// 3267): the same render, backing refs and world scope, bound to the
+    /// reading principal instead of the one that rendered it. A card id
+    /// locates the host-held manifest and never lends its renderer's
+    /// authority: every backing ref an event or a selection uses is proved
+    /// again under this read, and the validated action's emitter is this
+    /// reader. Host custody (close, retirement) stays with the renderer.
+    pub fn for_event_author(&self, scoped_read: &ScopedRead<'_>) -> Result<Self> {
+        Ok(Self {
+            principal: LensPrincipalBinding::of_read_key(scoped_read.actor_key().clone())?,
+            ..self.clone()
+        })
+    }
+
     pub fn mint_backing_ref(
         &mut self,
         scoped_read: &ScopedRead<'_>,

@@ -3,7 +3,8 @@
 use lopdf::{Document, LoadOptions};
 
 use crate::api::{
-    Modifications, SealConfig, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode, VerifyReport,
+    Counter, Modifications, STREAM_DECODE_BYTES, SealConfig, VerifyCheckKind, VerifyCheckStatus,
+    VerifyFindingCode, VerifyReport,
 };
 use crate::error::{InputInvalidCode, SealError};
 
@@ -211,7 +212,10 @@ fn classify_missing_material_root(
     }
 }
 
-/// Full document verification and profile classification (§7.7).
+/// Full document verification and profile classification (§7.7). On size
+/// it refuses only past the format bounds (lopdf's u32 offsets, the ISO
+/// object count) and one stream decoding past the per-stream codec bound;
+/// what it counts goes to the invocation's observations (Rule 5).
 pub(crate) fn verify_document(
     bytes: &[u8],
     ctx: &VerifyCtx<'_>,
@@ -235,11 +239,12 @@ pub(crate) fn verify_document(
     }
     let options = LoadOptions {
         strict: true,
-        max_decompressed_size: Some(limits.max_input_bytes),
+        max_decompressed_size: Some(STREAM_DECODE_BYTES),
         ..LoadOptions::default()
     };
     let doc = Document::load_mem_with_options(bytes, options).map_err(|_| malformed_input())?;
-    // Byte/decompress limits ride the loader; the object-count cap does
+    limits.observed.note(Counter::PdfObjects, doc.objects.len());
+    // Byte/decompress limits ride the loader; the ISO object bound does
     // not — enforce it here exactly as the seal side does.
     if doc.objects.len() > limits.max_pdf_objects {
         return Err(SealError::InputInvalid {
@@ -299,14 +304,15 @@ pub(crate) fn verify_document(
                 .filter_map(|cert| EmbeddedCert::from_der(&cert.der)),
         );
     }
-    verify_dss(
+    let decoded = verify_dss(
         &doc,
         &anchor_certs,
         &covered,
         material_validation_time(&envelopes, dss_end, ctx.clock_ms / 1000),
-        limits.max_input_bytes,
+        STREAM_DECODE_BYTES,
         &mut checks,
     );
+    limits.observed.note(Counter::DssDecodeBytes, decoded);
     let trust_pending = envelopes.iter().flat_map(|e| e.checks.iter()).any(|c| {
         c.kind == VerifyCheckKind::TimestampCertificatePath && c.status == VerifyCheckStatus::NotRun
     });
@@ -317,7 +323,7 @@ pub(crate) fn verify_document(
             &doc,
             &covered,
             provisional_material_time(&envelopes, dss_end, None, ctx.clock_ms / 1000),
-            limits.max_input_bytes,
+            STREAM_DECODE_BYTES,
             &mut checks,
         );
         checks
@@ -365,16 +371,17 @@ pub(crate) fn verify_document(
             );
         }
         let mut material_checks = Checks::new();
-        verify_dss(
+        let decoded = verify_dss(
             &doc,
             &anchor_certs,
             &material,
             archival
                 .as_ref()
                 .map_or(ctx.clock_ms / 1000, |proof| proof.at),
-            limits.max_input_bytes,
+            STREAM_DECODE_BYTES,
             &mut material_checks,
         );
+        limits.observed.note(Counter::DssDecodeBytes, decoded);
         if envelopes[index].checks.iter().any(|c| {
             c.kind == VerifyCheckKind::TimestampCertificatePath
                 && c.status == VerifyCheckStatus::NotRun
@@ -389,7 +396,7 @@ pub(crate) fn verify_document(
                     Some(&envelopes[index]),
                     ctx.clock_ms / 1000,
                 ),
-                limits.max_input_bytes,
+                STREAM_DECODE_BYTES,
                 &mut material_checks,
             );
             material_checks
