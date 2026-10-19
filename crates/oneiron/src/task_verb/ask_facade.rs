@@ -3,6 +3,7 @@ use super::ask_effect::AskEffect;
 use super::ask_record::{self, AskGroup, AskMember};
 use super::ask_types::*;
 use super::create_validation::{ValidatedTaskCreate, consult_refusal, validate_task_create_in};
+use super::task_actor::TaskActor;
 use super::{ConsultPayload, TaskAssignee, TaskCreateSpec, TaskKind, TaskTtl};
 use crate::agent_dispatch::{AgentDispatcher, FanoutCaller, FanoutWork};
 use crate::code_run::peer_result_wait;
@@ -1082,21 +1083,21 @@ impl Memory<'_> {
             self.vault(),
             self.actor(),
             handle.group_ref,
-            self.locality(),
+            self.destination(),
         )?)
     }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct WaitRow {
+pub(super) struct WaitRow {
     trap_ref: Option<EntityId>,
     step_hash: [u8; 32],
-    actor: EntityId,
-    consumed: bool,
+    pub(super) actor: TaskActor,
+    pub(super) consumed: bool,
 }
 
 /// Registered external ask wait: `(group id, step hash) -> WaitRow`.
-const TASK_ASK_WAITS: SideTable<(EntityId, [u8; 32]), WaitRow, Named> =
+pub(super) const TASK_ASK_WAITS: SideTable<(EntityId, [u8; 32]), WaitRow, Named> =
     SideTable::new(&side_table::TASK_ASK_WAIT);
 
 pub(super) fn signal_waiters(
@@ -1181,11 +1182,11 @@ impl Memory<'_> {
             WaitRow {
                 trap_ref,
                 step_hash,
-                actor: self.actor(),
+                actor: TaskActor::Actor(self.actor()),
                 consumed: false,
             }
         };
-        if row.actor != self.actor() || row.step_hash != step_hash {
+        if !row.actor.is(self.actor()) || row.step_hash != step_hash {
             return Err(MemoryError::bad_request("wait binding changed"));
         }
         let outcome = match status {

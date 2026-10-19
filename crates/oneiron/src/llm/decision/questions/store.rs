@@ -167,12 +167,22 @@ pub fn read_question(
     version: Option<u32>,
 ) -> Result<Option<QuestionRecord>> {
     let txn = vault.store.env.read_txn()?;
-    let Some(head) = QUESTION_HEAD.get(&vault.store, &txn, &HeadKey(id))? else {
+    read_question_in_txn(vault, &txn, principal, id, version)
+}
+
+pub(crate) fn read_question_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    id: EntityId,
+    version: Option<u32>,
+) -> Result<Option<QuestionRecord>> {
+    let Some(head) = QUESTION_HEAD.get(&vault.store, txn, &HeadKey(id))? else {
         return Ok(None);
     };
     let record: Option<QuestionRecord> = QUESTION_VERSION.get(
         &vault.store,
-        &txn,
+        txn,
         &VersionKey {
             id,
             version: version.unwrap_or(head.version),
@@ -185,6 +195,36 @@ pub fn read_question(
         record.definition.validate()?;
     }
     Ok(record.filter(|r| r.principal == principal))
+}
+
+/// The caller's standing question's scheduling head; none when no such
+/// question is the caller's, as [`read_question`] reads none.
+pub fn read_question_schedule(
+    vault: &Vault,
+    principal: EntityId,
+    id: EntityId,
+) -> Result<Option<QuestionScheduleHead>> {
+    let txn = vault.store.env.read_txn()?;
+    let Some(head) = QUESTION_HEAD.get(&vault.store, &txn, &HeadKey(id))? else {
+        return Ok(None);
+    };
+    let record: Option<QuestionRecord> = QUESTION_VERSION.get(
+        &vault.store,
+        &txn,
+        &VersionKey {
+            id,
+            version: head.version,
+        },
+    )?;
+    Ok(record
+        .filter(|r| r.principal == principal)
+        .map(|_| QuestionScheduleHead {
+            id,
+            version: head.version,
+            paused: head.paused,
+            last_refresh: head.last_refresh,
+            retry_at: head.retry_at,
+        }))
 }
 
 pub fn edit_question(

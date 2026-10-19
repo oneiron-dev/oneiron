@@ -24,6 +24,10 @@ pub enum SelfCall {
     /// The agent's own refusal of the run's bound TASK, through her refusal
     /// dial (OF-533). The TASK comes from the host binding.
     TasksRefuse(SelfTaskRefuseCall),
+    /// `tasks.consult.result` (DOOR-063): the addressed peer's run lands its
+    /// answer or abstention on one consult TASK. The actor comes from the
+    /// host binding's live lease.
+    ConsultResult(crate::task_verb::run_doors::ConsultLandRequest),
     /// `self.skills.call` (OF-353): one agent-callable skill, run as a step
     /// of its own under the running attempt's lease, with the caller's host
     /// as its bridge. The lease, executor and runtime are the host's.
@@ -76,6 +80,9 @@ pub enum SelfCall {
     /// connector asked mid-call, sent through the bound door under the
     /// original call's grant and principal.
     ConnectorAnswer(crate::task_verb::sdk::ConnectorAnswerRequest),
+    /// `vault.worlds.privacy.set` (FIX 4480): the run's agent asks to change
+    /// a world's settings, within the owner's rules.
+    WorldPrivacySet(crate::policy_model::WorldPrivacySetInput),
     /// `self.fold`, `self.compact`, `self.unfold`, `self.folds` and
     /// `describe({fold})`: the run's own log (ARCH-0067 §2.2).
     Fold(crate::compaction::SelfFoldCall),
@@ -116,6 +123,7 @@ impl SelfCall {
             Self::TasksAsk(_) => SelfEffect::TasksAsk,
             Self::TasksWait(_) => SelfEffect::TasksWait,
             Self::TasksRefuse(_) => SelfEffect::TasksRefuse,
+            Self::ConsultResult(_) => SelfEffect::ConsultResult,
             Self::SkillsCall(_) => SelfEffect::SkillsCall,
             Self::MemorySearch(_) => SelfEffect::MemorySearch,
             Self::MemoryWriteFixture(_) => SelfEffect::MemoryWriteFixture,
@@ -135,6 +143,7 @@ impl SelfCall {
             Self::WakePolicyWrite(_) => SelfEffect::WakePolicyWrite,
             Self::AgentVerb(_) => SelfEffect::AgentVerb,
             Self::ConnectorAnswer(_) => SelfEffect::ConnectorAnswer,
+            Self::WorldPrivacySet(_) => SelfEffect::WorldPrivacySet,
             Self::Fold(_) => SelfEffect::Fold,
             Self::ReaderSpawn(_) => SelfEffect::ReaderSpawn,
             Self::ReaderReport(_) => SelfEffect::ReaderReport,
@@ -179,6 +188,9 @@ pub enum SelfEffect {
     TasksWait,
     /// The agent's own refusal of its bound TASK (OF-533).
     TasksRefuse,
+    /// An addressed peer's run landing its consult answer or abstention
+    /// (DOOR-063).
+    ConsultResult,
     /// An agent-callable skill run on the caller's lease (OF-353).
     SkillsCall,
     MemorySearch,
@@ -212,6 +224,9 @@ pub enum SelfEffect {
     /// An answer to a connector's mid-call questions, sent by the host's
     /// bound verb door (ONE-2510).
     ConnectorAnswer,
+    /// A world-settings request of the run's agent, answered by the vault's
+    /// world-privacy door (FIX 4480).
+    WorldPrivacySet,
     /// A fold verb on the run's own log, answered by its fold ledger.
     Fold,
     /// A reader child queued over one of the run's results.
@@ -241,6 +256,7 @@ impl SelfEffect {
             Self::TasksAsk => "tasks.ask",
             Self::TasksWait => "tasks.wait",
             Self::TasksRefuse => "tasks.refuse",
+            Self::ConsultResult => "tasks.consult.result",
             Self::SkillsCall => "self.skills.call",
             Self::MemorySearch => "self.memory.search",
             Self::MemoryWriteFixture => "self.memory.write_fixture",
@@ -261,6 +277,7 @@ impl SelfEffect {
             Self::WakePolicyWrite => "dreamer.wake_policy.set",
             Self::AgentVerb => "self.verbs.call",
             Self::ConnectorAnswer => "connector.answer",
+            Self::WorldPrivacySet => "vault.worlds.privacy.set",
             Self::Fold => "self.fold",
             Self::ReaderSpawn => "self.spawn",
             Self::ReaderReport => "tasks.update",
@@ -289,6 +306,7 @@ impl SelfEffect {
             | Self::TasksAsk
             | Self::TasksWait
             | Self::TasksRefuse
+            | Self::ConsultResult
             | Self::SkillsCall
             | Self::MemorySearch
             | Self::MemoryWriteFixture
@@ -303,7 +321,11 @@ impl SelfEffect {
             | Self::ReportBlocked
             | Self::InferenceDefaultsRead
             | Self::InferenceDefaultsReplace => None,
-            Self::WakePolicyWrite | Self::AgentVerb | Self::ConnectorAnswer | Self::Fold => None,
+            Self::WakePolicyWrite
+            | Self::AgentVerb
+            | Self::ConnectorAnswer
+            | Self::WorldPrivacySet
+            | Self::Fold => None,
             Self::ReaderSpawn | Self::ReaderReport | Self::TasksWaitSet | Self::Summarize => None,
             Self::Leader | Self::LeaderSplit => None,
             Self::Team => None,

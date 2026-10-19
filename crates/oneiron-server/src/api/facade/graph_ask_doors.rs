@@ -20,17 +20,23 @@
 use std::sync::Arc;
 
 use oneiron::llm::decision::questions::{
-    AnswerRecord, QuestionRecord, ScheduledBackfill, answer_records, artifact_ask_records,
-    create_question, edit_question, pause_question, question_call_budget, read_question,
-    refresh_question_with, run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type,
-    standing_ask_route,
+    AnswerRecord, GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext,
+    QuestionRecord, QuestionScheduleHead, ScheduledBackfill, answer_records,
+    artifact_ask_records, calibration_pairs, create_question, edit_question, outcome_labels,
+    pause_question, project_bound_outcomes, question_call_budget, read_question,
+    read_question_schedule, refresh_question_with, run_graph_ask_receipted, schedule_backfill,
+    select_graph_units_by_type, standing_ask_route,
 };
-use oneiron::llm::decision::{DecisionDial, DecisionRung, TypedDecision};
+use oneiron::llm::decision::{
+    DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion, DecisionRung, TypedDecision,
+};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::receipt::{
-    GraphAskOutcome, GraphAskRequest, QuestionAnswer, QuestionAnswersRequest,
-    QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest,
-    QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
+    GraphAdmitRequest, GraphAskOutcome, GraphAskRequest, QuestionAnswer, QuestionAnswersRequest,
+    QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest, QuestionOutcomes,
+    QuestionOutcomesProjectRequest, QuestionOutcomesProjected, QuestionOutcomesRequest,
+    QuestionPauseRequest, QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
+    QuestionScheduleRequest,
 };
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
@@ -97,6 +103,91 @@ async fn vault_graph_ask_answer(
     })
     .await
     .map_err(|_| internal(VERB))?
+}
+
+/// `vault.graph.admit`: the caller's own provider measurement for one
+/// graph unit, admitted in place of the host ladder's. The unit and its
+/// neighbours are read under the caller's own lane exactly as
+/// `vault.graph.ask` reads them, and the engine's graph-ask validation
+/// judges the whole submitted decision — receipt question, version and
+/// principal (the caller), contract, probability, providers and their
+/// provider-bound paired/person readings — before its write transaction
+/// re-reads every source and lands the answer as a proposed claim
+/// private to the caller. An invalid measurement is refused and mints
+/// nothing; a unit the caller cannot read is passed over, as in an ask.
+/// Beside it, the rows its outcome names ([`outcome_rows`]).
+pub(crate) async fn vault_graph_admit(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: GraphAdmitRequest,
+) -> Listed<GraphAskOutcome> {
+    naming(
+        vault_graph_admit_answer(server, auth, input).await,
+        outcome_rows,
+    )
+}
+
+async fn vault_graph_admit_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: GraphAdmitRequest,
+) -> MemoryResult<GraphAskOutcome> {
+    const VERB: &str = "vault.graph.admit";
+    let asker = asker(auth, server, VERB)?;
+    input.validate()?;
+    let server = Arc::clone(server);
+    let auth = auth.clone();
+    tokio::task::spawn_blocking(move || -> MemoryResult<GraphAskOutcome> {
+        let lane = asker_lane(server.vault(), &auth, asker.entity_ref(), VERB)?;
+        let mut answerer = AdmittedAnswerer {
+            decision: Some(input.decision),
+        };
+        match run_graph_ask_receipted(
+            &lane,
+            asker,
+            input.question,
+            &[input.unit],
+            &mut answerer,
+            oneiron_vault_contract::now_ts(),
+        ) {
+            Ok(receipts) => Ok(GraphAskOutcome::from(receipts)),
+            Err(failure) => GraphAskOutcome::from_failure(failure),
+        }
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// The answerer an admission runs under: the caller's submitted
+/// measurement, taken once. It measures nothing itself and reads no
+/// image or clip; the engine validates the decision it hands back.
+struct AdmittedAnswerer {
+    decision: Option<TypedDecision>,
+}
+
+impl GraphAnswerer for AdmittedAnswerer {
+    fn answer(
+        &mut self,
+        _question: &DecisionQuestion,
+        _context: &GraphUnitContext,
+    ) -> oneiron::Result<Option<GraphPrediction>> {
+        Ok(None)
+    }
+
+    fn decide(
+        &mut self,
+        _question: &DecisionQuestion,
+        _context: &GraphUnitContext,
+        _images: &[DecisionImage],
+        _audio: &[DecisionAudio],
+    ) -> oneiron::Result<Option<GraphDecision>> {
+        match self.decision.take() {
+            Some(decision) => Ok(Some(GraphDecision::Decision(Box::new(decision)))),
+            None => Err(oneiron::Error::InvalidConfig(
+                "a graph admission names one decision".into(),
+            )),
+        }
+    }
 }
 
 /// `vault.questions.create`: a standing question for the caller, at version
@@ -365,6 +456,123 @@ async fn vault_questions_refresh_answer(
                 .with_posture(record.definition.posture))
             },
         )?)
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// `vault.questions.outcomes`: the caller's standing question's stored
+/// outcome labels and the calibration pairs the current facts still support,
+/// each pairing an answer's prediction and probability with its label, read
+/// at the caller's locality. Another principal's question is not found.
+/// Beside it, the rows each label and pair names: a label's answer and fact,
+/// and every row a pair was derived from.
+pub(crate) async fn vault_questions_outcomes(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionOutcomesRequest,
+) -> Listed<QuestionOutcomes> {
+    naming(
+        vault_questions_outcomes_answer(server, auth, input).await,
+        |outcomes| {
+            outcomes
+                .labels
+                .iter()
+                .flat_map(|label| [label.answer, label.fact])
+                .chain(
+                    outcomes
+                        .calibration
+                        .iter()
+                        .flat_map(|pair| pair.derived_from.iter().copied()),
+                )
+                .collect()
+        },
+    )
+}
+
+async fn vault_questions_outcomes_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionOutcomesRequest,
+) -> MemoryResult<QuestionOutcomes> {
+    const VERB: &str = "vault.questions.outcomes";
+    let principal = asker(auth, server, VERB)?.entity_ref();
+    // The feed goes to the requester's machine, as its connection proved it
+    // (mesh PR2b).
+    let destination = auth.destination();
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionOutcomes> {
+        let vault = server.vault();
+        Ok(QuestionOutcomes {
+            labels: outcome_labels(vault, principal, input.id, &destination)?,
+            calibration: calibration_pairs(vault, principal, input.id, &destination)?,
+        })
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// `vault.questions.outcomes.project`: projects the caller's standing
+/// question's bound outcomes over the vault's current facts, binding each
+/// admissible fact in an answer's horizon to that answer as a label. The
+/// projection is idempotent over a fact's identity: replaying it binds none
+/// again. Another principal's question binds none. Beside it, no row: the
+/// labels live in a side table.
+pub(crate) async fn vault_questions_outcomes_project(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionOutcomesProjectRequest,
+) -> Listed<QuestionOutcomesProjected> {
+    naming(
+        vault_questions_outcomes_project_answer(server, auth, input).await,
+        |_| Vec::new(),
+    )
+}
+
+async fn vault_questions_outcomes_project_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionOutcomesProjectRequest,
+) -> MemoryResult<QuestionOutcomesProjected> {
+    const VERB: &str = "vault.questions.outcomes.project";
+    let principal = asker(auth, server, VERB)?.entity_ref();
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionOutcomesProjected> {
+        Ok(QuestionOutcomesProjected {
+            id: input.id,
+            projected: project_bound_outcomes(server.vault(), principal, input.id)?,
+        })
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// `vault.questions.schedule`: the caller's standing question's scheduling
+/// head — its current version, whether its schedule is paused, when it last
+/// refreshed and the hold a failed refresh left — or none when no such
+/// question is the caller's. Beside it, no row: the head lives in a side
+/// table.
+pub(crate) async fn vault_questions_schedule(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionScheduleRequest,
+) -> Listed<Option<QuestionScheduleHead>> {
+    naming(
+        vault_questions_schedule_answer(server, auth, input).await,
+        |_| Vec::new(),
+    )
+}
+
+async fn vault_questions_schedule_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionScheduleRequest,
+) -> MemoryResult<Option<QuestionScheduleHead>> {
+    const VERB: &str = "vault.questions.schedule";
+    let principal = asker(auth, server, VERB)?.entity_ref();
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || -> MemoryResult<Option<QuestionScheduleHead>> {
+        Ok(read_question_schedule(server.vault(), principal, input.id)?)
     })
     .await
     .map_err(|_| internal(VERB))?

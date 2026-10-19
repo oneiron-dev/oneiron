@@ -258,7 +258,19 @@ const fn default_receipt_query_limit() -> usize {
 }
 
 /// Receipt family discriminator pinned by OF-367 RS1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ReceiptKind {
@@ -524,7 +536,7 @@ impl ReceiptQuery {
 }
 
 /// One projected receipt-family row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReceiptRecord {
     pub receipt_id: String,
     pub receipt_kind: ReceiptKind,
@@ -631,7 +643,7 @@ impl ReceiptScan {
 }
 
 /// Minimal OF-367/RCPT-3 seam for consumers that render receipts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReceiptView {
     pub component: String,
     pub receipt: ReceiptRecord,

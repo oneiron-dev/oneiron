@@ -13,9 +13,12 @@ mod device_scan;
 mod model;
 mod paging;
 mod readdir;
+mod scoped_files;
+mod snapshot;
 mod walk;
 
 pub use self::readdir::GraphFsFileRead;
+pub use self::snapshot::GraphFsReference;
 
 pub use self::model::{
     GRAPH_FS_COREUTILS_DEFAULT_RESULT_CAP, GRAPH_FS_COREUTILS_MAX_RESULT_CAP,

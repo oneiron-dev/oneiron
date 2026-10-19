@@ -603,6 +603,37 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
+        AuthorityOp::CheckpointPolicySet(set) => (
+            Other,
+            "checkpoint_policy_set",
+            OpFields {
+                detail: Some(set.choice.as_ref().map_or_else(
+                    || "clear".to_owned(),
+                    |choice| {
+                        let hardware = if choice.hardware { ", hardware" } else { "" };
+                        format!(
+                            "quorum {} of {} roots{hardware}",
+                            choice.quorum,
+                            choice.roots.len()
+                        )
+                    },
+                )),
+                subject_ref: Some(set.machine.to_hex()),
+                ..OpFields::default()
+            },
+        ),
+        AuthorityOp::HomeNodePick(pick) => (
+            Other,
+            "home_node_pick",
+            OpFields {
+                detail: Some(
+                    pick.node_id
+                        .map_or_else(|| "clear".to_owned(), |node| format!("node {node}")),
+                ),
+                subject_ref: Some(pick.machine.to_hex()),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::OwnerWorkRequest(request) => (
             Other,
             "owner_work_request",

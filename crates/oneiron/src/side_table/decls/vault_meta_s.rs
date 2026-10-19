@@ -69,7 +69,8 @@ side_tables! {
     SECRET_KNOWN_VALUE: VaultMeta b"secret_known:value:v1:" Named Custody;
     /// T1/T2 secret-materialization lease row (escalation ladder to local registration). Key:
     /// hex32(lease id).
-    SECRET_LEASE: VaultMeta b"secret_lease:v1:" Raw;
+    SECRET_LEASE: VaultMeta b"secret_lease:v1:" Raw
+        => crate::secret_lease::erase_lease_actor_in_txn;
     /// A value-free grant a secret lease's holder redeems (FIX 4313): the custody record, the
     /// value generation it pins, the holder principal and run, the effector, the target and the
     /// expiry, and for a T1/T2 grant the lease it rides. Key: id16 (grant id).
@@ -77,7 +78,8 @@ side_tables! {
         => crate::secret_lease::erase_secret_grant_actor_in_txn;
     /// Durable receipt written before a secret value is returned from materialization. Key:
     /// hex32(receipt id).
-    SECRET_MATERIALIZATION_RECEIPT: VaultMeta b"secret_lease_receipt:v1:" Raw;
+    SECRET_MATERIALIZATION_RECEIPT: VaultMeta b"secret_lease_receipt:v1:" Raw
+        => crate::secret_lease::erase_receipt_actor_in_txn;
     /// A carrier row the historical lift sweep marked (OF-067): the bytes it marked, by their
     /// hash, the detector's reason and the parts its readers withhold. The carrier keeps its
     /// bytes. Holds no value. Key: the carrier table's name, a colon, then its row key.
@@ -469,9 +471,13 @@ side_tables! {
     /// The vault owner's one answer to a training offer, with any switch or train intent. Key:
     /// id16 (offer).
     SKILL_OPTIMIZE_OFFER_ANSWER: VaultMeta b"skill_optimize:offer_answer:v1:" Named;
+    /// An immutable owner-nominated seat/candidate pin for a Coach offer. Key: id16.
+    SKILL_OPTIMIZE_OFFER_CANDIDATE: VaultMeta b"skill_optimize:offer_candidate:v1:" Named;
     /// One check of a training offer's promise against later receipts. Key: id16 (offer) + id16
     /// (check).
     SKILL_OPTIMIZE_OFFER_CHECK: VaultMeta b"skill_optimize:offer_check:v1:" Named;
+    /// A counted own-seat pilot and its immutable measured sufficiency card. Key: id16.
+    SKILL_OPTIMIZE_OFFER_PILOT: VaultMeta b"skill_optimize:offer_pilot:v1:" Named;
     /// The stock switch an offer's approval bound: the replaced and new role bindings, and any
     /// undo. Key: id16 (offer).
     SKILL_OPTIMIZE_OFFER_SWITCH: VaultMeta b"skill_optimize:offer_switch:v1:" Named

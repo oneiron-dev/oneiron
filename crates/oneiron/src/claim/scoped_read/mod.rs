@@ -51,6 +51,7 @@ pub(crate) use weave_lens::{
 };
 mod weave_report;
 mod weave_serve;
+mod weave_trigger;
 pub(crate) use claim_admission::ClaimReadStatus;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
@@ -64,6 +65,7 @@ pub use weave_serve::{
     WeaveScheduleView, WeaveSectionInput, WeaveSectionView, WeaveWrongItemRequest,
     WeaveWrongLinkRequest,
 };
+pub use weave_trigger::WeaveDigestRendered;
 
 mod access_gate;
 pub(crate) use access_gate::{RelationshipRead, claim_access_axes, relationship_read};
@@ -71,6 +73,8 @@ mod actor_key;
 pub use actor_key::{CallerLocality, ScopedReadActorKey};
 #[cfg(feature = "sync")]
 mod residence;
+#[cfg(feature = "sync")]
+mod selected_search;
 pub(crate) use actor_key::{RoomTerms, RoomTurnCeiling, TurnTerms, meet_clearance};
 #[cfg(feature = "sync")]
 pub use residence::ResidenceReadContext;

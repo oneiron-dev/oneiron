@@ -115,3 +115,87 @@ pub(crate) async fn vault_code_oplog(
     })
     .await
 }
+
+pub(crate) async fn vault_code_conflict_record(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeConflictRecordRequest,
+) -> Listed<CodeConflictView> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.conflict_record",
+        move |memory, owner| memory.code_conflict_record_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_conflict_view(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeConflictViewRequest,
+) -> Listed<CodeConflictHistory> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.conflict_view",
+        move |memory, owner| memory.code_conflict_history_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_proposal_resolve(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeProposalResolveRequest,
+) -> Listed<CodeProposalSubmitted> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.proposal_resolve",
+        move |memory, owner| memory.code_proposal_resolve_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_proposal_review(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeProposalReviewRequest,
+) -> Listed<CodeProposalSettlementView> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.proposal_review",
+        move |memory, owner| memory.code_proposal_review_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_proposal_settle(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeProposalSettleRequest,
+) -> Listed<CodeProposalSettlementView> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.proposal_settle",
+        move |memory, owner| memory.code_proposal_settle_as(owner, input),
+    )
+    .await
+}
+
+pub(crate) async fn vault_code_proposal_settlement(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CodeProposalSettlementRequest,
+) -> Listed<CodeProposalSettlementView> {
+    as_owner(
+        server,
+        auth,
+        "vault.code.proposal_settlement",
+        move |memory, owner| memory.code_proposal_settlement_as(owner, input),
+    )
+    .await
+}

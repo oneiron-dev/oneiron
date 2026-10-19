@@ -345,6 +345,11 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         | SelfEffect::InferenceDefaultsRead
         | SelfEffect::InferenceDefaultsReplace => false,
         SelfEffect::WakePolicyWrite | SelfEffect::AgentVerb | SelfEffect::Fold => false,
+        // A world's settings are the vault's own metadata (FIX 4480).
+        SelfEffect::WorldPrivacySet => false,
+        // A consult's answer or abstention settles the vault's own TASK, by
+        // refs to its own rows (DOOR-063).
+        SelfEffect::ConsultResult => false,
         // A reader child reads its parent's own result and answers inside
         // the run's route: nothing of it leaves the vault.
         SelfEffect::ReaderSpawn | SelfEffect::ReaderReport | SelfEffect::TasksWaitSet => false,

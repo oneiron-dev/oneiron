@@ -8298,6 +8298,7 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation",
  "oneiron",
+ "oneiron-server",
  "oneiron-spawn",
  "rmpv",
  "serde",
@@ -8305,6 +8306,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tempfile",
+ "tracing",
 ]
 
 [[package]]
@@ -8349,6 +8351,7 @@ dependencies = [
  "napi-derive",
  "oneiron",
  "oneiron-remote",
+ "oneiron-server",
  "serde_json",
 ]
 
@@ -8402,6 +8405,7 @@ version = "1.0.0"
 dependencies = [
  "oneiron",
  "oneiron-remote",
+ "oneiron-server",
  "pyo3",
  "pyo3-build-config",
  "serde",
@@ -8534,6 +8538,7 @@ dependencies = [
  "oneiron-remote",
  "oneiron-spawn",
  "oneiron-vault-contract",
+ "quick-xml 0.42.0",
  "rand_core 0.6.4",
  "rayon",
  "reqwest 0.12.28",

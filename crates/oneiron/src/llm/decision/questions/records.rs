@@ -403,12 +403,14 @@ pub struct AnswerProposal {
     pub paired: Vec<PairedReading>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AnswerRecord {
     #[serde(with = "super::super::codec::entity")]
+    #[schemars(with = "String")]
     pub claim: EntityId,
     #[serde(with = "super::super::codec::entity")]
+    #[schemars(with = "String")]
     pub unit: EntityId,
     pub decision: TypedDecision,
     /// Engine-computed hash of the live source row and its document frontier.
@@ -417,12 +419,14 @@ pub struct AnswerRecord {
     pub answered_at: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OutcomeLabel {
     #[serde(with = "super::super::codec::entity")]
+    #[schemars(with = "String")]
     pub answer: EntityId,
     #[serde(with = "super::super::codec::entity")]
+    #[schemars(with = "String")]
     pub fact: EntityId,
     /// Pins the measured outcome value; mutable facts cannot silently relabel history.
     pub fact_value_hash: [u8; 32],
@@ -470,7 +474,7 @@ pub struct ScheduledBackfill {
     pub due_at: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CalibrationPair {
     pub prediction: DecisionAnswer,
@@ -489,5 +493,20 @@ pub(super) struct QuestionHead {
     pub paused: bool,
     pub last_refresh: Option<u64>,
     /// A failed refresh holds the question's work until then.
+    pub retry_at: Option<u64>,
+}
+
+/// A standing question's scheduling head, as its principal reads it: the
+/// current version, whether its schedule is paused, when it last refreshed
+/// and the hold a failed refresh left, if any.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionScheduleHead {
+    #[serde(with = "super::super::codec::entity")]
+    #[schemars(with = "String")]
+    pub id: EntityId,
+    pub version: u32,
+    pub paused: bool,
+    pub last_refresh: Option<u64>,
     pub retry_at: Option<u64>,
 }

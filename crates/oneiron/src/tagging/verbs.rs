@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use super::history::TaggingTraceRecord;
 use super::marker::MarkerPayload;
-use super::tags::{DerivationEnvelope, MentionHit, MentionLink, MentionReference, TaggedMention, TurnTags};
+use super::tags::{
+    DerivationEnvelope, MentionHit, MentionLink, MentionReference, TaggedMention, TurnTags,
+};
 use super::trace::{HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace};
 use super::{OutputRefusal, TaggingMode};
 use crate::attempt_queue::{AttemptRecord, AttemptState};
@@ -457,9 +459,7 @@ fn marker_view(record: &AttemptRecord) -> TaggingMarkerView {
         checkpoint: payload.as_ref().map(|payload| payload.checkpoint.clone()),
         stack: payload.and_then(|payload| payload.stack),
         attempt_count: record.attempt_count,
-        retry_of: record
-            .retry_of
-            .map(|id| bytes_to_hex_lower(id.as_bytes())),
+        retry_of: record.retry_of.map(|id| bytes_to_hex_lower(id.as_bytes())),
         scheduled_at: record.scheduled_at.or(record.backoff_until),
         last_error: record.last_error.clone(),
         created_at: record.created_at,
@@ -467,7 +467,7 @@ fn marker_view(record: &AttemptRecord) -> TaggingMarkerView {
     }
 }
 
-fn mention_view(index: usize, mention: &TaggedMention) -> TaggedMentionView {
+pub(crate) fn mention_view(index: usize, mention: &TaggedMention) -> TaggedMentionView {
     TaggedMentionView {
         index,
         message_ref: mention.message.to_hex(),
@@ -501,7 +501,7 @@ fn mention_view(index: usize, mention: &TaggedMention) -> TaggedMentionView {
     }
 }
 
-fn envelope_view(envelope: &DerivationEnvelope) -> DerivationEnvelopeView {
+pub(crate) fn envelope_view(envelope: &DerivationEnvelope) -> DerivationEnvelopeView {
     DerivationEnvelopeView {
         content_hash: envelope.content_hash.clone(),
         model_id: envelope.model_id.clone(),

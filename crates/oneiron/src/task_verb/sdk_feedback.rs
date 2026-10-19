@@ -201,8 +201,9 @@ pub fn report_outbound_as_owner(
 ) -> MemoryResult<ReportOutboundView> {
     owner.revalidate(vault)?;
     let id = parse_issue_ref(&input.issue_ref)?;
-    let payload = vault.report_routed_payload(&id)?.map(|payload| {
-        ReportPayloadView {
+    let payload = vault
+        .report_routed_payload(&id)?
+        .map(|payload| ReportPayloadView {
             route: payload.route,
             signature: ReportSignatureView {
                 issue_ref: payload.signature.issue_ref,
@@ -211,8 +212,7 @@ pub fn report_outbound_as_owner(
                 kind: payload.signature.kind,
             },
             disclosed: payload.disclosed,
-        }
-    });
+        });
     Ok(ReportOutboundView {
         issue_ref: input.issue_ref,
         payload,
@@ -260,14 +260,11 @@ pub fn subject_feedback_bundle(
     )
     .with_healer_diagnosis(diagnosis);
     if include_text {
-        let note = [
-            issue.request.note.as_deref(),
-            issue.request.why.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join("\n");
+        let note = [issue.request.note.as_deref(), issue.request.why.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n");
         if !note.is_empty() {
             bundle = bundle.with_user_note(note);
         }

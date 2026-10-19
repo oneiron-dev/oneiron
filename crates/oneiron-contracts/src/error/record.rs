@@ -31,6 +31,11 @@ impl std::fmt::Display for RoomLiveSpeakersHold {
     }
 }
 
+/// A 32-byte revision as a surface shows it: 64 lower-case hex.
+fn revision_hex(revision: &[u8; 32]) -> String {
+    revision.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 /// Record-domain error.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -140,6 +145,41 @@ pub enum RecordError {
     InvalidFederationGrantBody(&'static str),
     #[error("invalid authority log body: {0}")]
     InvalidAuthorityLogBody(&'static str),
+    /// An authority door refused a well-formed request, and names which of
+    /// its rules refused (mesh PR2-reasons): a forwarded caller's branch, a
+    /// renewal's, an agent's Grant that does not name the act, or a carrier
+    /// the one carrier rule does not admit. The reason is content-free: it
+    /// never echoes a token, key or hidden id. Nothing was written.
+    #[error("{0}")]
+    AuthorityRefused(&'static str),
+    /// The vault's checkpoint root policy cannot be fixed, or the owner's
+    /// choice of it cannot stand, and the reason names which rule refused
+    /// (mesh PR2c, K06): no eligible root, a quorum the roots cannot meet or
+    /// below the canon floor, roots or quorum out of canonical form, a key
+    /// that is not an eligible root, or a hardware requirement no chosen
+    /// root meets. Content-free. Nothing was written.
+    #[error("{0}")]
+    CheckpointPolicyRefused(&'static str),
+    /// The owner chose on a checkpoint policy revision that is no longer the
+    /// vault's: a conflict, never a silent overwrite. `current` is the
+    /// revision a surface shows now. Nothing was written.
+    #[error(
+        "the checkpoint root policy changed since it was read; its revision is now {}",
+        revision_hex(current)
+    )]
+    CheckpointPolicyRevisionStale { current: [u8; 32] },
+    /// The owner's world recipient choice keeps a world's rows from this
+    /// destination (mesh PR2b, L11-B (B)): the reason names his choice (one
+    /// named machine, or machines marked mine) and why this destination is
+    /// not one it admits. Content-free: it never names the world. Nothing
+    /// was released.
+    #[error("{0}")]
+    WorldRecipientLimit(&'static str),
+    /// A row's world placement, the rows a result was derived from, or the
+    /// vault root cannot be verified, so nothing is released: an integrity
+    /// hold, never the owner's choice (mesh PR2-reasons). Content-free.
+    #[error("{0}")]
+    WorldPlacementUnverifiable(&'static str),
     /// A pairing link's scope the vault refuses: a facet limit on the vault
     /// owner, or a write facet outside the link's facets.
     #[error("invalid pairing scope: {0}")]
@@ -349,6 +389,11 @@ impl RecordError {
             Self::CounterpartyContactAlreadyExists => ErrorKind::CounterpartyContactAlreadyExists,
             Self::InvalidFederationGrantBody(_) => ErrorKind::InvalidFederationGrantBody,
             Self::InvalidAuthorityLogBody(_) => ErrorKind::InvalidAuthorityLogBody,
+            Self::AuthorityRefused(_) => ErrorKind::AuthorityRefused,
+            Self::CheckpointPolicyRefused(_) => ErrorKind::CheckpointPolicyRefused,
+            Self::CheckpointPolicyRevisionStale { .. } => ErrorKind::CheckpointPolicyRevisionStale,
+            Self::WorldRecipientLimit(_) => ErrorKind::WorldRecipientLimit,
+            Self::WorldPlacementUnverifiable(_) => ErrorKind::WorldPlacementUnverifiable,
             Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,
             Self::InvalidOutboundGrantBody(_) => ErrorKind::InvalidOutboundGrantBody,
             Self::InvalidConnectorKeyBody(_) => ErrorKind::InvalidConnectorKeyBody,

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct CredentialAttenuationRequest {
     pub holder_seed: [u8; 32],
-    pub caveat: crate::authority::SlipCaveat,
+    pub caveat: CredentialCaveat,
     #[serde(default)]
     pub next_binding_key: Option<[u8; 32]>,
 }
@@ -38,5 +38,46 @@ impl std::fmt::Debug for CredentialAttenuated {
         f.debug_struct("CredentialAttenuated")
             .field("binding_key", &self.binding_key)
             .finish_non_exhaustive()
+    }
+}
+
+/// Holder-authored restrictions. Scope is explicitly a ceiling on this door,
+/// so a record position cannot be supplied in its place.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct CredentialCaveat {
+    pub scope: Option<crate::memory::CredentialCeiling>,
+    pub expires_at: Option<u64>,
+    pub ttl_secs: Option<u64>,
+    pub single_use: bool,
+    pub records: Option<std::collections::BTreeSet<String>>,
+    pub channels: Option<std::collections::BTreeSet<String>>,
+    pub pact: Option<CredentialPactCeiling>,
+}
+
+/// A pact-bound attenuation, retaining the grant the credential already holds.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CredentialPactCeiling {
+    pub grant_ref: crate::federation::ScopeId,
+    pub ceiling: crate::federation::FederationDirectionScope,
+}
+
+impl CredentialCaveat {
+    /// Lifts the public role-tagged ceiling onto the existing slip primitive.
+    /// That primitive verifies every narrowing, including the live pact.
+    pub fn into_engine(self) -> crate::authority::SlipCaveat {
+        crate::authority::SlipCaveat {
+            scope: self
+                .scope
+                .map(|crate::memory::CredentialCeiling::Ceiling(scope)| scope),
+            expires_at: self.expires_at,
+            ttl_secs: self.ttl_secs,
+            single_use: self.single_use,
+            records: self.records,
+            channels: self.channels,
+            pact: self.pact.map(|pact| (pact.grant_ref.0, pact.ceiling)),
+            comm: None,
+        }
     }
 }

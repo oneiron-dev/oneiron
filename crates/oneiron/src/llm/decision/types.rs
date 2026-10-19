@@ -99,7 +99,7 @@ impl AnswerContract {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     content = "value",
@@ -121,7 +121,7 @@ pub enum DecisionAnswer {
 /// A box in an image, as fractions from its top-left corner: `left` and `right` of its
 /// width, `top` and `bottom` of its height. Fractions hold at any size the image is
 /// drawn, so a box read on a downscaled copy places the target on the original.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ImageBox {
     pub top: f64,
@@ -158,7 +158,7 @@ impl ImageBox {
 
 /// A point in an image, as fractions from its top-left corner: `x` of its width, `y` of
 /// its height. Like a box, it holds at any size the image is drawn.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ImagePoint {
     pub x: f64,
@@ -200,7 +200,7 @@ impl DecisionQuestion {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderPin {
     pub rung: DecisionRung,
@@ -265,13 +265,15 @@ impl DecisionDial {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionReceipt {
     #[serde(with = "super::codec::entity")]
+    #[schemars(with = "String")]
     pub question: EntityId,
     pub question_version: u32,
     #[serde(with = "super::codec::entity")]
+    #[schemars(with = "String")]
     pub principal: EntityId,
     pub providers: Vec<ProviderPin>,
     pub band: DecisionBand,
@@ -317,7 +319,7 @@ pub struct DecisionReceipt {
 /// the image they are of, and the size the provider was sent after it fit them to its
 /// long edge. A box or point it answers is in fractions of what it was sent, which are
 /// the same fractions of the pixels handed in.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ImagePin {
     pub provider: ProviderPin,
@@ -339,7 +341,7 @@ pub struct ImagePin {
 }
 
 /// What the decision deadline left on a receipt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionTime {
     pub budget_ms: u64,
@@ -350,7 +352,7 @@ pub struct DecisionTime {
     pub reasoning: Reasoning,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StopCause {
     Done,
@@ -361,7 +363,7 @@ pub enum StopCause {
 
 /// Whether more thinking (a stronger rung, or a required second measurement) ran,
 /// and why.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", content = "cause", rename_all = "snake_case")]
 pub enum Reasoning {
     /// A clear answer stopped there.
@@ -374,7 +376,7 @@ pub enum Reasoning {
     Cut(ReasoningCause),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningCause {
     /// The paired "does this need more thinking?" reading reached its row.
@@ -387,11 +389,12 @@ pub enum ReasoningCause {
 
 /// A yes/no reading taken with the answer ("does this need more thinking?" or "ask a
 /// person?"), bound by the engine to the provider that measured it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PairedReading {
     pub provider: ProviderPin,
     #[serde(with = "super::codec::entity")]
+    #[schemars(with = "String")]
     pub question: EntityId,
     pub question_version: u32,
     /// P(yes).
@@ -448,20 +451,22 @@ pub(crate) fn paired_valid(
         && (0.0..=1.0).contains(&probability)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceVersion {
     #[serde(with = "super::codec::entity")]
+    #[schemars(with = "String")]
     pub id: EntityId,
     pub body_hash: [u8; 32],
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TypedDecision {
     pub answer: DecisionAnswer,
     pub probability: Option<f64>,
     #[serde(with = "super::codec::entities")]
+    #[schemars(with = "Vec<String>")]
     pub evidence: Vec<EntityId>,
     pub in_band: bool,
     pub receipt: DecisionReceipt,
@@ -492,7 +497,7 @@ pub struct PersonChangedAnswer {
     pub queue_pin: ProviderPin,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HumanAskReason {
     Disagreement,

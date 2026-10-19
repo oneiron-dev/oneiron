@@ -4,7 +4,7 @@ use super::{
     records::*,
     store::{
         HeadKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_LABEL, QUESTION_VERSION, VersionKey,
-        family_prefix,
+        family_prefix, owned_head,
     },
 };
 use crate::llm::decision::{DecisionAnswer, PersonChangedAnswer};
@@ -40,26 +40,64 @@ pub fn project_bound_outcomes(
     })
 }
 
+/// The stored outcome labels of the caller's standing question, in label
+/// order. Another principal's question is not found, as its answers are
+/// not. A caller toward `destination` gets no label naming a row a world
+/// withheld from its machine keeps (mesh PR2b), as [`calibration_pairs`]
+/// pairs none.
+pub fn outcome_labels(
+    vault: &Vault,
+    principal: EntityId,
+    question: EntityId,
+    destination: impl Into<crate::settings::ReadDestination>,
+) -> Result<Vec<OutcomeLabel>> {
+    let txn = vault.store.env.read_txn()?;
+    owned_head(vault, &txn, principal, question)?;
+    let kept = crate::settings::device_local_worlds_for(vault, &txn, &destination.into())?;
+    let mut labels = Vec::new();
+    for (_, label) in
+        QUESTION_LABEL.scan_from(&vault.store, &txn, &family_prefix(question, b"label"))?
+    {
+        if !kept.is_empty() && kept_any(vault, &txn, &kept, &[question, label.answer, label.fact])?
+        {
+            continue;
+        }
+        labels.push(label);
+    }
+    Ok(labels)
+}
+
 /// Labels are observations of immutable answer receipts. Current facts and
 /// authority are checked again within one read snapshot before returning them.
 /// A window that closed in silence pairs its answer with the binding's
 /// silence label; such a pair names the answer as its own fact.
-/// A caller at `locality` gets no pair derived from a row a device-local
-/// world keeps from it, and each pair names the rows it was derived from.
+/// A caller toward `destination` gets no pair derived from a row a world
+/// withheld from its machine keeps, and each pair names the rows it was
+/// derived from.
 pub fn calibration_pairs(
     vault: &Vault,
     principal: EntityId,
     question: EntityId,
-    locality: crate::claim::CallerLocality,
+    destination: impl Into<crate::settings::ReadDestination>,
 ) -> Result<Vec<CalibrationPair>> {
     let txn = vault.store.env.read_txn()?;
-    let kept = crate::settings::device_local_worlds_at(vault, &txn, locality)?;
-    let Some(head) = QUESTION_HEAD.get(&vault.store, &txn, &HeadKey(question))? else {
+    calibration_pairs_in_txn(vault, &txn, principal, question, destination)
+}
+
+pub(crate) fn calibration_pairs_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    question: EntityId,
+    destination: impl Into<crate::settings::ReadDestination>,
+) -> Result<Vec<CalibrationPair>> {
+    let kept = crate::settings::device_local_worlds_for(vault, txn, &destination.into())?;
+    let Some(head) = QUESTION_HEAD.get(&vault.store, txn, &HeadKey(question))? else {
         return Ok(Vec::new());
     };
     let Some(current) = QUESTION_VERSION.get(
         &vault.store,
-        &txn,
+        txn,
         &VersionKey {
             id: question,
             version: head.version,
@@ -72,16 +110,16 @@ pub fn calibration_pairs(
         return Ok(Vec::new());
     }
     let answers: Vec<AnswerRecord> = QUESTION_ANSWER
-        .scan_from(&vault.store, &txn, &family_prefix(question, b"answer"))?
+        .scan_from(&vault.store, txn, &family_prefix(question, b"answer"))?
         .into_iter()
         .map(|(_, answer)| answer)
         .collect();
     let labels: Vec<OutcomeLabel> = QUESTION_LABEL
-        .scan_from(&vault.store, &txn, &family_prefix(question, b"label"))?
+        .scan_from(&vault.store, txn, &family_prefix(question, b"label"))?
         .into_iter()
         .map(|(_, label)| label)
         .collect();
-    let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     let mut pairs = Vec::new();
     for outcome in labels {
         let Some(answer) = answers.iter().find(|a| a.claim == outcome.answer) else {
@@ -89,7 +127,7 @@ pub fn calibration_pairs(
         };
         let Some(record) = QUESTION_VERSION.get(
             &vault.store,
-            &txn,
+            txn,
             &VersionKey {
                 id: question,
                 version: answer.decision.receipt.question_version,
@@ -102,7 +140,7 @@ pub fn calibration_pairs(
             continue;
         }
         let Some(raw) =
-            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &outcome.fact)?
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &outcome.fact)?
         else {
             continue;
         };
@@ -119,7 +157,7 @@ pub fn calibration_pairs(
         )?;
         let mut derived_from = derived_rows(question, answer, outcome.fact, &body);
         derived_from.extend(crate::reaction::outcome_sources(&body)?);
-        if !kept.is_empty() && kept_any(vault, &txn, &kept, &derived_from)? {
+        if !kept.is_empty() && kept_any(vault, txn, &kept, &derived_from)? {
             continue;
         }
         let fact = super::arrival::Fact {
@@ -127,7 +165,7 @@ pub fn calibration_pairs(
             body: &body,
             occurred_at: header.occurred_start,
         };
-        if super::arrival::evaluate_fact(&vault.store, &txn, &policy, &record, answer, &fact)?
+        if super::arrival::evaluate_fact(&vault.store, txn, &policy, &record, answer, &fact)?
             .as_ref()
             != Some(&outcome)
         {
@@ -147,7 +185,7 @@ pub fn calibration_pairs(
     // silence label, unless a fact in the window has labelled it since.
     for (_, close) in super::windows::QUESTION_WINDOW.scan_from(
         &vault.store,
-        &txn,
+        txn,
         &family_prefix(question, b"window"),
     )? {
         let WindowOutcome::Silence(label) = close.outcome else {
@@ -158,7 +196,7 @@ pub fn calibration_pairs(
         };
         let Some(record) = QUESTION_VERSION.get(
             &vault.store,
-            &txn,
+            txn,
             &VersionKey {
                 id: question,
                 version: close.question_version,
@@ -175,9 +213,9 @@ pub fn calibration_pairs(
         };
         let derived_from = vec![question, answer.claim, answer.unit];
         if record.principal != principal
-            || (!kept.is_empty() && kept_any(vault, &txn, &kept, &derived_from)?)
-            || !super::windows::silence_stands(&vault.store, &txn, &policy, &record, answer)?
-            || super::windows::fact_labelled(&vault.store, &txn, &policy, &record, answer)?
+            || (!kept.is_empty() && kept_any(vault, txn, &kept, &derived_from)?)
+            || !super::windows::silence_stands(&vault.store, txn, &policy, &record, answer)?
+            || super::windows::fact_labelled(&vault.store, txn, &policy, &record, answer)?
         {
             continue;
         }
@@ -204,15 +242,16 @@ pub fn calibration_pairs(
 /// yes/no question the label is the person's answer, as a fact's mapped value
 /// is; for any other the label says the prior held, which a changed answer
 /// never does. A record without a prior probability pairs nothing. A caller
-/// at `locality` gets no pair from a row a device-local world keeps from it.
+/// toward `destination` gets no pair from a row a world withheld from its
+/// machine keeps.
 pub fn person_changed_pairs(
     vault: &Vault,
     principal: EntityId,
     question: EntityId,
-    locality: crate::claim::CallerLocality,
+    destination: impl Into<crate::settings::ReadDestination>,
 ) -> Result<Vec<CalibrationPair>> {
     let txn = vault.store.env.read_txn()?;
-    let kept = crate::settings::device_local_worlds_at(vault, &txn, locality)?;
+    let kept = crate::settings::device_local_worlds_for(vault, &txn, &destination.into())?;
     let mut pairs = Vec::new();
     for (source, record) in PERSON_CHANGED.scan(&vault.store, &txn)? {
         if record.question != question || record.principal != principal {

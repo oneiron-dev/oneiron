@@ -245,9 +245,11 @@ side_tables! {
     /// Key: bytes (channel-identity envelope ref).
     OUTBOUND_GRANT_CHANNEL_IDENTITY_USAGE: VaultMeta b"outbound_grant:channel_identity_usage:v1:" Raw;
     /// An own actor's latest advisory rate crossing per kind. Key: id16 + kind token.
-    OWN_RATE_CHECK: VaultMeta b"own_rate.check.v1\0" Named;
+    OWN_RATE_CHECK: VaultMeta b"own_rate.check.v1\0" Named
+        => crate::own_rate::erase_check_actor_in_txn;
     /// An own actor's act count in its current window per kind. Key: id16 + kind token.
-    OWN_RATE_WINDOW: VaultMeta b"own_rate.window.v1\0" Named;
+    OWN_RATE_WINDOW: VaultMeta b"own_rate.window.v1\0" Named
+        => crate::own_rate::erase_window_actor_in_txn;
     /// Owner policy-row change event. Key: event id.
     OWNER_POLICY_CHANGE_EVENT: VaultMeta b"owner_policy:change:event:v1:" Raw;
     /// Pending owner policy-row change proposal. Key: proposal id.
@@ -278,6 +280,15 @@ side_tables! {
     /// Receipt of one owner change to a world's privacy settings on this machine, in revision
     /// order. Key: u64be revision.
     OWNER_POLICY_WORLD_PRIVACY_RECEIPT: VaultMeta b"owner_policy:world_privacy:receipt:v1:" Named;
+    /// An agent's world-privacy proposal or a widen ask, frozen, with its settlement (FIX 4480).
+    /// Key: request id.
+    OWNER_POLICY_WORLD_PRIVACY_REQUEST: VaultMeta b"owner_policy:world_privacy:request:v1:" Named;
+    /// The "widen needs every owner" row: the vault's setting and per-world overrides (FIX 4480).
+    /// Key: ().
+    OWNER_POLICY_WORLD_PRIVACY_UNANIMITY: VaultMeta b"owner_policy:world_privacy:unanimity:v1" Named;
+    /// A "widen needs every owner" change that turns it off while on, waiting for every live
+    /// Owner's yes, with its settlement (FIX 4480). Key: request id.
+    OWNER_POLICY_WORLD_PRIVACY_UNANIMITY_OFF: VaultMeta b"owner_policy:world_privacy:unanimity_off:v1:" Named;
     /// Marker (engine version string) that the built-in connector packs have been seeded. Key: ().
     SKILL_HUB_PACK_BUILTIN_SEED: VaultMeta b"pack.builtin.seeded.v1" Raw;
     /// Candidate knowledge-pack receipt. Key: lowercase hex content hash.
@@ -304,6 +315,8 @@ side_tables! {
     /// One person's PEOPLE `about` lines, one per sensitivity band, and the fact digests they stand
     /// on. Key: id16 (PERSON).
     PEOPLE_ABOUT: VaultMeta b"people:about:v1:" Named;
+    /// Accepted persona copy and curation for an immutable mode-A export. Key: id16(export).
+    PERSONA_SNAPSHOT_COPY: VaultMeta b"persona_snapshot:copy:v1:" Named Authored;
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3
     /// hash of caller/row/content-hash/frontier-hash).
     POLICY_HOLD_QUEUE: VaultMeta b"policy-hold:v1:" LegacyJson;
@@ -394,7 +407,8 @@ side_tables! {
         => crate::workspace_roster::erase_pending_actor_in_txn;
     /// The project question's yes, or its ask of a person, on one source message, with its
     /// decision receipt. Key: id16 (source message).
-    PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named;
+    PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named
+        => crate::Vault::erase_project_verdict_actor_in_txn;
     /// A held revision waiting for its slip's mint. Key: slip id32 + id16 (project) + hash32
     /// (revision).
     PROJECT_REVISION_AWAITING_MINT: VaultMeta b"project.revision_awaiting_mint.v1/" Raw;
@@ -416,11 +430,14 @@ side_tables! {
     /// A cross-project widen ask a project raised on another board. Key: id16 (ask id).
     PROJECT_WIDEN_ASK: VaultMeta b"project.widen_ask.v1/" Raw;
     /// Number and first threshold-crossing for one actor. Key: id16.
-    PROPOSAL_ACTOR_COUNT: VaultMeta b"proposal:actor_count:v1:" Named;
+    PROPOSAL_ACTOR_COUNT: VaultMeta b"proposal:actor_count:v1:" Named
+        => crate::gate::proposal_observation::erase_count_actor_in_txn;
     /// Immutable receipt for one actor and monotonically increasing submission count. Key: id16 ":" u64be.
-    PROPOSAL_RECEIPT_HISTORY: VaultMeta b"proposal:receipt:v1:" Named;
+    PROPOSAL_RECEIPT_HISTORY: VaultMeta b"proposal:receipt:v1:" Named
+        => crate::gate::proposal_observation::erase_history_actor_in_txn;
     /// Latest receipt keyed by actor id16 ":" proposal identity string.
-    PROPOSAL_SUBMISSION: VaultMeta b"proposal:submission:v1:" Named;
+    PROPOSAL_SUBMISSION: VaultMeta b"proposal:submission:v1:" Named
+        => crate::gate::proposal_observation::erase_submission_actor_in_txn;
     /// Born-from index over row births (Rule A trigger). Key: id16 (trigger ref) + id16 (born row).
     PROVENANCE_BIRTH_BY_TRIGGER: VaultMeta b"provenance:birth_by_trigger:v1:" Raw;
     /// Body descriptor: owner, occurrence, complete/incomplete state. Key: id16 (owner) + id16
@@ -521,6 +538,8 @@ side_tables! {
     /// strict-msgpack decode does not run; `RawValue` delegates to the
     /// module's own `encode_retrieval_outcome`/`decode_retrieval_outcome`.
     RETRIEVAL_OUTCOME: VaultMeta b"retr_out:v0:" Raw;
+    /// Owner-pinned retrieval blend weights no learned update may move. Key: ().
+    RETRIEVAL_POLICY_PINS: VaultMeta b"retr_policy_pins:v1:" Named;
     /// Account-local contextual retrieval posterior, updated by the Coach at sleep. Key: ().
     RETRIEVAL_POLICY_POSTERIOR: VaultMeta b"retr_policy_posterior:v1:" Named;
     /// Retrieval run telemetry record. Key: id16.
@@ -582,7 +601,8 @@ side_tables! {
     /// when, written once and never rewritten. Key: id16 (room) + 16 bytes (thread, all zero for the
     /// room itself) + u8 (subject kind) + id16 (subject) + u8 (cause kind) + 16 bytes (the cause's turn
     /// or task id, or an offer id's digest).
-    ROOMS_PARTICIPATION: VaultMeta b"rooms.participation.v1/" LegacyJson;
+    ROOMS_PARTICIPATION: VaultMeta b"rooms.participation.v1/" LegacyJson
+        => crate::Vault::erase_participation_actor_in_txn;
     /// Maps a host-configured platform handle to the one present actor it addresses within a room.
     /// Key: id16 (room id) + bytes (platform handle).
     ROOMS_HANDLE: VaultMeta b"rooms.platform_handle.v1/" Raw;
@@ -600,4 +620,6 @@ side_tables! {
     ROOMS_TURN: VaultMeta b"rooms.turn.v1/" LegacyJson;
     /// Durable wait binding for a run-branch ask. Key: attempt id16 + handle hash32 + step hash32.
     RUN_TREE_ASK_WAIT: VaultMeta b"run.ask.wait.v1/" Named;
+    /// One explicitly reviewed run's settlement and compensating-operation handles. Key: job id.
+    RUN_REVIEW_SETTLEMENT: VaultMeta b"run_review:settlement:v1:" Named;
 }

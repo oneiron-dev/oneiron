@@ -93,7 +93,7 @@ pub struct OffRecordSessionRecord {
 }
 
 /// What a person did with the talk, as the room hears of it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OffRecordNoticeAct {
     /// Saved the whole talk so far into their own vault.
@@ -156,7 +156,7 @@ pub struct OffRecordTalkTurn {
 
 /// One visible message of a talk copy. Hidden messages (an agent's own
 /// reasoning) stay out of every copy.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OffRecordTalkMessage {
     /// `user`, `companion` or `system`.
     pub author: String,

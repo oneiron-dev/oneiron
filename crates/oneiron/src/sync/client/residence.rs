@@ -545,6 +545,14 @@ impl SyncClient {
                     window.as_str().as_bytes(),
                 )?;
                 crate::sync::residence::record_item_touch_in_txn(&self.vault, txn, item, now)?;
+                // FIX 4385: a machine history the cached row needs is owed.
+                crate::sync::machine_history::owe_touched_in_txn(
+                    &self.vault,
+                    txn,
+                    window.as_str(),
+                    item,
+                    &blob,
+                )?;
                 Ok(())
             })
             .map_err(|e| TransportError::Storage(e.to_string()))?;
@@ -888,7 +896,7 @@ impl SyncClient {
         query: &str,
         limit: usize,
     ) -> Result<ResidenceSearch, TransportError> {
-        search_resident(&self.vault, &self.config, query, limit, None).await
+        search_resident(&self.vault, &self.config, query, limit, None, None).await
     }
 }
 
@@ -953,11 +961,17 @@ fn read_thin_item(
 /// over it and the request, and the home answers within the caller's reach
 /// and this device's selector. A forwarded search never falls back to this
 /// device's own scan: no home is no hits.
+///
+/// With `scope`, the search is a recall's (FIX 2905): the home narrows it by
+/// the scope the device's recall resolved before its candidate cut, and a
+/// forwarded caller's proof binds the scope too. A scoped search never
+/// falls back to this device's own scan either: its recall already read it.
 pub(crate) async fn search_resident(
     vault: &crate::Vault,
     config: &SyncClientConfig,
     query: &str,
     limit: usize,
+    scope: Option<&crate::sync::residence::ResolvedRecallSelection>,
     caller: Option<&crate::authority::ForwardedCallerProof>,
 ) -> Result<ResidenceSearch, TransportError> {
     if config.residence_mode != SyncResidenceMode::Opened {
@@ -978,11 +992,15 @@ pub(crate) async fn search_resident(
         "limit": limit,
         "selector": base64::engine::general_purpose::STANDARD.encode(&selector_wire),
     });
+    if let Some(scope) = scope {
+        params["scope"] = serde_json::to_value(scope).map_err(|_| refused())?;
+    }
     if let Some(caller) = caller {
         let machine = crate::sync::residence::with_forwarded_search(
             query,
             limit,
             &selector_wire,
+            scope,
             |request| vault.forwarding_machine_proof(request, caller),
         )
         .map_err(|e| TransportError::Storage(e.to_string()))?
@@ -1017,7 +1035,7 @@ pub(crate) async fn search_resident(
                 complete: true,
             })
         }
-        None if caller.is_some() => Err(refused()),
+        None if caller.is_some() || scope.is_some() => Err(refused()),
         None => {
             let opened: HashSet<_> = vault
                 .sync_state_keys_with_prefix("ro:e:")

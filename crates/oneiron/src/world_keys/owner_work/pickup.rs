@@ -4,9 +4,10 @@
 use super::record::eligible_readers;
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, EffectiveRead, OwnerWorkBody, OwnerWorkOutcome,
-    OwnerWorkRefusal, OwnerWorkRequest,
+    OwnerWorkRefusal, OwnerWorkRequest, WorldKeyMode,
 };
 use crate::error::{Error, Result};
+use crate::world_keys::reassert::{ReassertIncomplete, WORLD_KEY_REASSERT_INCOMPLETE};
 use crate::world_keys::{MachineSecret, recipients};
 use crate::{EntityId, Vault};
 
@@ -30,6 +31,14 @@ pub struct OwnerWorkDrain {
     pub failed: usize,
 }
 
+/// Whether a request's pickup reads this install's hybrid secret: a world's
+/// key work and a root change open keys with it, and a bundle publication
+/// waits for it as it always has. A custody change reads none: a revoke
+/// needs no byte, and an active change's holder opens its own input.
+fn reads_machine_secret(work: &OwnerWorkBody) -> bool {
+    !matches!(work, OwnerWorkBody::Custody { .. })
+}
+
 /// What one request's transaction did.
 enum Ran {
     Answered(OwnerWorkOutcome),
@@ -43,9 +52,12 @@ impl Vault {
     /// have no result yet, in entry-hash order, each in a writer transaction
     /// of its own, checking `keep_running` before each (CALLS
     /// OWNER_WORK_PICKUP: after an authority catch-up and on the served
-    /// lifecycle tick, never on a timer of its own). The machine secret is
-    /// read first, outside every transaction: with no keystore, slot or
-    /// secret here every request stays pending, and nothing is taken over.
+    /// lifecycle tick, never on a timer of its own). First every admitted
+    /// custody revoke is settled here, byte-free (`settle_revoked_custody`
+    /// in `crate::secret_custody`). The machine secret is read outside every
+    /// transaction, and only when a request's kind reads it: with no
+    /// keystore, slot or secret here each such request stays pending, and
+    /// nothing is taken over. A custody request reads none.
     ///
     /// Each request is read again and rechecked in its transaction: its
     /// world is live, its owner still a live vault owner, its target's
@@ -59,29 +71,49 @@ impl Vault {
         keep_running: impl Fn() -> bool,
     ) -> Result<OwnerWorkDrain> {
         let mut drain = OwnerWorkDrain::default();
-        let pending: Vec<AuthorityEntryHash> = {
+        if let Err(error) = self.settle_revoked_custody() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "admitted custody revokes were not settled on this install"
+            );
+        }
+        let (machine, pending): (EntityId, Vec<(AuthorityEntryHash, bool)>) = {
             let txn = self.store.env.read_txn()?;
             let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
                 return Ok(drain);
             };
-            self.authority_view_readonly_in_txn(&txn)?
+            let pending = self
+                .authority_view_readonly_in_txn(&txn)?
                 .pending_owner_work_for(machine)
-                .map(|(hash, _)| hash)
-                .collect()
+                .map(|(hash, request)| (hash, reads_machine_secret(&request.work)))
+                .collect();
+            (machine, pending)
         };
         if pending.is_empty() {
             return Ok(drain);
         }
-        let Ok(secret) = self.machine_secret_outside_txn() else {
-            drain.pending = pending.len();
-            return Ok(drain);
+        // The keys load before any transaction opens: the install key every
+        // result is signed with, and the hybrid secret only for the kinds
+        // that read it.
+        let _ = self.load_install_signing_if_minted();
+        let secret = if pending.iter().any(|(_, reads)| *reads) {
+            self.machine_secret_outside_txn().ok()
+        } else {
+            None
         };
-        for (index, request) in pending.iter().enumerate() {
+        for (index, (request, reads)) in pending.iter().enumerate() {
             if !keep_running() {
                 drain.pending += pending.len() - index;
                 break;
             }
-            match self.with_write_txn(|txn| self.run_owner_work_in_txn(txn, *request, &secret)) {
+            let secret = secret.as_ref();
+            if *reads && secret.is_none() {
+                drain.pending += 1;
+                continue;
+            }
+            let ran = self
+                .with_write_txn(|txn| self.run_owner_work_in_txn(txn, *request, machine, secret));
+            match ran {
                 Ok(Ran::Answered(OwnerWorkOutcome::Enacted)) => drain.enacted += 1,
                 Ok(Ran::Answered(OwnerWorkOutcome::Refused { .. })) => drain.refused += 1,
                 Ok(Ran::Pending) => drain.pending += 1,
@@ -98,47 +130,91 @@ impl Vault {
         Ok(drain)
     }
 
-    /// One request, read again in the caller's write transaction.
+    /// One request, read again in the caller's write transaction, by
+    /// `machine`, this install, with its hybrid `secret` when the request's
+    /// kind reads one (the drain passes it then).
     fn run_owner_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         hash: AuthorityEntryHash,
-        secret: &MachineSecret,
+        machine: EntityId,
+        secret: Option<&MachineSecret>,
     ) -> Result<Ran> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let Some(request) = fold
-            .pending_owner_work_for(secret.machine)
-            .find_map(|(pending, request)| (pending == hash).then_some(*request))
+            .pending_owner_work_for(machine)
+            .find_map(|(pending, request)| (pending == hash).then_some(request))
         else {
             return Ok(Ran::Gone);
         };
-        let outcome = match request.work {
-            OwnerWorkBody::WorldKey => self.world_key_work_in_txn(txn, &fold, &request, secret)?,
+        let outcome = match (&request.work, secret) {
+            (OwnerWorkBody::WorldKey { mode }, Some(secret)) => {
+                self.world_key_work_in_txn(txn, &fold, hash, request, *mode, secret)?
+            }
+            (OwnerWorkBody::Root { change }, Some(secret)) => {
+                self.root_work_in_txn(txn, &fold, request, *change, secret)?
+            }
+            (OwnerWorkBody::PublishBundle { home }, Some(_)) => {
+                self.publish_bundle_work_in_txn(txn, &fold, request, *home, machine)?
+            }
+            (OwnerWorkBody::Custody { change, .. }, _) => {
+                self.custody_work_in_txn(txn, &fold, request, *change)?
+            }
+            (
+                OwnerWorkBody::WorldKey { .. }
+                | OwnerWorkBody::Root { .. }
+                | OwnerWorkBody::PublishBundle { .. },
+                None,
+            ) => None,
         };
         let Some(outcome) = outcome else {
             return Ok(Ran::Pending);
         };
-        self.append_owner_work_result_in_txn(txn, hash, secret.machine, outcome)?;
+        self.append_owner_work_result_in_txn(txn, hash, machine, outcome)?;
         Ok(Ran::Answered(outcome))
     }
 
-    /// A world's key work: mint its first key, or wrap its current key to
-    /// every reader the settings allow, as the act's owner. `None` leaves it
-    /// pending: this install holds no wrap, pad or secret it needs, or a
-    /// reader is still unwrapped.
+    /// A world's key work, as the act's owner, each record naming the
+    /// request signed as entry `hash`. In Ensure mode: mint the world's
+    /// first key, or wrap its current key to every reader the settings
+    /// allow. In Reassert mode: first wrap again each key this install
+    /// wrapped itself, from its own records and keeping each id, then the
+    /// same (CALLS WORLD_KEY_REASSERT_MODE). `None` leaves it pending: this
+    /// install holds no wrap, pad, record or secret it needs, the world's
+    /// edits outgrow one record, or a reader is still unwrapped (CALLS
+    /// WORLD_KEY_REASSERT_INCOMPLETE).
     fn world_key_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
+        hash: AuthorityEntryHash,
         request: &OwnerWorkRequest,
+        mode: WorldKeyMode,
         secret: &MachineSecret,
     ) -> Result<Option<OwnerWorkOutcome>> {
         let world = request.act.target;
         if let Some(reason) = self.world_key_refusal(txn, fold, request, secret.machine)? {
             return Ok(Some(OwnerWorkOutcome::Refused { reason }));
         }
-        match self.ensure_world_key_in_txn(txn, request.act.owner, world, secret) {
-            Ok(_) => {}
+        if mode == WorldKeyMode::Reassert
+            && !self
+                .reassert_held_world_keys_in_txn(txn, world, secret, Some(hash))?
+                .ensures()
+        {
+            return Ok(match WORLD_KEY_REASSERT_INCOMPLETE {
+                ReassertIncomplete::Pending => None,
+            });
+        }
+        match self.ensure_world_key_or_wide_in_txn(
+            txn,
+            request.act.owner,
+            world,
+            secret,
+            Some(hash),
+        ) {
+            Ok(Ok(_)) => {}
+            // A frontier too wide for one record waits for a merge.
+            Ok(Err(_wide)) => return Ok(None),
             // Key possession: every refusal comes before the first write.
             Err(Error::Secret(_)) => return Ok(None),
             Err(error) => return Err(error),

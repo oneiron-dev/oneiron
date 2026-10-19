@@ -10,18 +10,21 @@
 //! `oneiron::authority` surface is unchanged. Nothing here folds authority, mints a verified
 //! witness or applies an op to fold state.
 
+mod checkpoint_policy;
+mod comm_reach;
 mod confirm;
 mod constants;
 mod crypto;
 mod device;
 mod federation_pact;
 mod grant_travel;
+mod home_pick;
 mod log_entry_op;
 mod machine_profile;
 mod owner_act;
 mod owner_handover;
-mod owner_work;
 mod owner_root;
+mod owner_work;
 mod recovery_ceremony;
 mod residence;
 mod slip_claims;
@@ -32,18 +35,21 @@ mod wire_encode;
 mod world_key_wraps;
 mod world_privacy;
 
+pub use checkpoint_policy::*;
+pub use comm_reach::*;
 pub use confirm::*;
 pub use constants::*;
 pub use crypto::*;
 pub use device::*;
 pub use federation_pact::*;
 pub use grant_travel::*;
+pub use home_pick::*;
 pub use log_entry_op::*;
 pub use machine_profile::*;
 pub use owner_act::*;
 pub use owner_handover::*;
-pub use owner_work::*;
 pub use owner_root::*;
+pub use owner_work::*;
 pub use recovery_ceremony::*;
 pub use residence::*;
 pub use slip_claims::*;

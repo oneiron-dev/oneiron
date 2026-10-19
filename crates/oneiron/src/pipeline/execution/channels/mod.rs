@@ -514,6 +514,7 @@ impl PipelineBuilder<'_> {
                 confidence: self.apply_confidence,
                 gravity: self.apply_gravity,
                 access_factor_overrides: self.access_factor_overrides,
+                claim_aging_profiles: self.claim_aging_profiles,
                 access_factor_application: AccessFactorApplication::Apply,
                 affect: self.affect_policy,
             };
@@ -868,6 +869,35 @@ impl PipelineBuilder<'_> {
                     }
                     Ok(None) | Err(crate::Error::EntityNotFound) => {}
                     Err(error) => return Err(error),
+                }
+            }
+            // Text-index evidence is read in the same snapshot as its score;
+            // media evidence above already names its own space and stored kind.
+            let floors = self.no_match_floors();
+            let space = self.vault.evidence_space();
+            for hit in &scores {
+                let kind = metadata_cache
+                    .get(&self.read, rtxn, &hit.id)?
+                    .map(|row| row.entity_type);
+                let pair = floors.resolve(space, kind);
+                for component in acc.signal_components.get(&hit.id).into_iter().flatten() {
+                    if matches!(
+                        component.signal,
+                        RetrievalSignal::Vector | RetrievalSignal::Hyde
+                    ) {
+                        acc.media_evidence.matches.entry(hit.id).or_default().push(
+                            crate::embed::EmbeddingMatchEvidence {
+                                space: space.to_owned(),
+                                embedding_kind: crate::embed::InputKind::Text,
+                                query_kind: crate::embed::InputKind::Text,
+                                score: component.score,
+                                floor: pair.floor,
+                                strong: pair.strong,
+                                matched: component.score.is_finite()
+                                    && component.score >= pair.floor,
+                            },
+                        );
+                    }
                 }
             }
             Ok(RetrievalTxnOutput {

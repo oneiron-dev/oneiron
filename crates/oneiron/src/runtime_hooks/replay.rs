@@ -207,7 +207,7 @@ impl Vault {
 
     /// [`Self::hooks_replay_binding`], listing as
     /// [`Self::hooks_replay_listing`] does.
-    fn hooks_replay_binding_listing(
+    pub(crate) fn hooks_replay_binding_listing(
         &self,
         runtime: &dyn HookBodyRuntime,
         verdict: Option<&dyn HookVerdict>,

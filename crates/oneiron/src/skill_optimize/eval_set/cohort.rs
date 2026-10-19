@@ -33,7 +33,7 @@ const MAX_REF_BYTES: usize = 256;
 pub(super) const MAX_REASON_BYTES: usize = 512;
 
 /// One date-cut cohort of sealed families for a seat.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalCohort {
     pub id: EntityId,
@@ -61,7 +61,7 @@ pub struct EvalCohort {
 /// The eval-authoring skill's decision to retire one cohort: its bounded
 /// reason, the skill revision and attempt that made it, and the exposure it
 /// read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CohortRetirement {
     pub reason: String,
@@ -73,7 +73,7 @@ pub struct CohortRetirement {
 
 /// What a serving of a sealed cohort was for. There is no search, authoring
 /// or rubric-fit kind: those never read sealed rows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EvalExposureKind {
     /// One candidate scored against the cohort.
@@ -85,7 +85,7 @@ pub enum EvalExposureKind {
 }
 
 /// One counted serving of a cohort.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalExposure {
     pub id: EntityId,
@@ -99,13 +99,15 @@ pub struct EvalExposure {
 }
 
 /// The release of a cohort's membership, after its serving was counted.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EvalRelease {
     pub exposure: EvalExposure,
     pub cases: Vec<EvalCase>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct EvalExposureCounts {
     pub candidates: u64,
     pub queries: u64,
@@ -162,7 +164,11 @@ pub(super) fn retired_families_in_txn(
         .collect())
 }
 
-fn cohort_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<EvalCohort> {
+pub(in crate::skill_optimize) fn cohort_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<EvalCohort> {
     let raw = vault
         .store
         .vault_meta

@@ -19,6 +19,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::serialize::{DocumentTail, DocumentWriter};
+use crate::settings::ReadDestination;
 use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
 
@@ -136,12 +137,20 @@ impl Vault {
 
     pub(crate) fn export_okf_with_admission<W: Write + Seek, E: From<Error>>(
         &self,
-        locality: CallerLocality,
+        destination: impl Into<ReadDestination>,
         reader: WriteActor,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
         sink: W,
     ) -> std::result::Result<(W, WholeVaultExportReceipt), E> {
-        self.export_archive_snapshot(locality, None, ExportCut::Okf, false, reader, admit, sink)
+        self.export_archive_snapshot(
+            destination,
+            None,
+            ExportCut::Okf,
+            false,
+            reader,
+            admit,
+            sink,
+        )
     }
 
     /// The actor facade supplies an owner admission evaluated in the SAME
@@ -149,18 +158,20 @@ impl Vault {
     /// direct door; transport callers must use the admitted memory facade.
     /// For a caller off this device the snapshot holds no row a device-local
     /// world keeps here (DEC-0005), so no edge, package or receipt of one
-    /// follows; one whose world cannot be read stays too.
+    /// follows; one whose world cannot be read stays too. A caller whose
+    /// connection proved its machine is judged by that machine's own world
+    /// read settings (mesh PR2b).
     /// `reader` is whose diary reads the export makes (OF-490).
     pub(crate) fn export_whole_vault_with_admission<W: Write + Seek, E: From<Error>>(
         &self,
-        locality: CallerLocality,
+        destination: impl Into<ReadDestination>,
         include_secrets: bool,
         reader: WriteActor,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
         sink: W,
     ) -> std::result::Result<(W, WholeVaultExportReceipt), E> {
         self.export_archive_snapshot(
-            locality,
+            destination,
             None,
             ExportCut::Archive,
             include_secrets,
@@ -191,7 +202,7 @@ impl Vault {
     #[allow(clippy::too_many_arguments)]
     fn export_archive_snapshot<W: Write + Seek, E: From<Error>>(
         &self,
-        locality: CallerLocality,
+        destination: impl Into<ReadDestination>,
         only: Option<&BTreeSet<EntityId>>,
         cut: ExportCut,
         include_secrets: bool,
@@ -199,6 +210,8 @@ impl Vault {
         admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
         sink: W,
     ) -> std::result::Result<(W, WholeVaultExportReceipt), E> {
+        let destination: ReadDestination = destination.into();
+        let locality = destination.locality();
         let artifact = self.whole_vault_export_manifest_artifact(
             ExportSecretsNulledManifest::from_redacted(false),
         )?;
@@ -241,7 +254,7 @@ impl Vault {
         if locality == CallerLocality::OnDevice && only.is_none() && cut == ExportCut::Archive {
             sources.extend(self.export_run_results_in_txn(&rtxn, &mut writer)?);
         }
-        let device_only = crate::settings::device_local_worlds_at(self, &rtxn, locality)?;
+        let device_only = crate::settings::device_local_worlds_for(self, &rtxn, &destination)?;
         let mut included = BTreeSet::new();
         let mut agent_fork_hashes = BTreeMap::new();
         let mut diaries = ExportDiaryLedger::new(reader)?;

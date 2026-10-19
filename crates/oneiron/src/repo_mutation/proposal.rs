@@ -31,6 +31,11 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 pub(super) mod actor_erase;
+mod guards;
+mod review;
+pub mod settlement;
+pub(super) use guards::require_repo_artifact_in_txn;
+use guards::validate_conflict_in_txn;
 
 /// Durable per-operation code proposal. Key: id16.
 pub(super) const PROPOSAL: SideTable<EntityId, RepoProposal, crate::side_table::Named> =
@@ -76,12 +81,13 @@ fn op_key(repo: &RepoRef, seq: u64) -> OpKey {
     OpKey { repo_key_hash, seq }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum RepoProposalStatus {
     Proposed,
     Approved,
     Applied,
     Failed,
+    Rejected,
 }
 
 /// A bounded, immutable file change plus all the critic evidence that judged it.
@@ -107,6 +113,7 @@ pub struct RepoProposal {
     pub catalog: LensCatalog,
     pub critiques: Vec<CritiqueArtifact>,
     pub status: RepoProposalStatus,
+    pub settlement: Option<settlement::RepoProposalSettlement>,
     pub operation_seq: Option<u64>,
     pub created_at: u64,
 }
@@ -209,9 +216,9 @@ impl RepoProposal {
             RepoProposalStatus::Applied | RepoProposalStatus::Approved => {
                 ClaimApprovalStatus::Approved
             }
-            RepoProposalStatus::Proposed | RepoProposalStatus::Failed => {
-                ClaimApprovalStatus::Proposed
-            }
+            RepoProposalStatus::Proposed
+            | RepoProposalStatus::Failed
+            | RepoProposalStatus::Rejected => ClaimApprovalStatus::Proposed,
         }
     }
     pub(super) fn eligible(&self) -> Result<bool> {
@@ -240,6 +247,55 @@ impl Vault {
         &self,
         request: RepoMutationRequest,
         catalog: LensCatalog,
+    ) -> Result<RepoProposal> {
+        self.propose_repo_mutation_checked(request, catalog, |_| Ok(()))
+    }
+
+    /// Owner doors revalidate their proof in the proposal's writer, not in a
+    /// separate preflight transaction. Engine admission stays shared.
+    pub(crate) fn propose_repo_mutation_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        repository: EntityId,
+        request: RepoMutationRequest,
+        catalog: LensCatalog,
+    ) -> Result<RepoProposal> {
+        let actor = request.actor_id;
+        let repository_ref = request.repo_ref.clone();
+        let session = request.session_id;
+        let sources = [
+            request.op_provenance.turn,
+            request.op_provenance.activity,
+            request.op_provenance.intent,
+            request.op_provenance.substrate_ref,
+        ];
+        self.propose_repo_mutation_checked(request, catalog, |txn| {
+            guards::require_repo_artifact_in_txn(self, txn, repository, &repository_ref)?;
+            if let Some(session) = session {
+                guards::require_entity_kind(
+                    self,
+                    txn,
+                    session,
+                    crate::registry::ENTITY_TYPE_SESSION,
+                )?;
+            }
+            for id in sources.into_iter().flatten() {
+                if !crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &id)? {
+                    return Err(Error::EntityNotFound);
+                }
+            }
+            if Some(owner.revalidate_in_txn(self, txn)?) != actor {
+                return Err(invalid("proposal actor is not the authenticated owner"));
+            }
+            Ok(())
+        })
+    }
+
+    fn propose_repo_mutation_checked(
+        &self,
+        request: RepoMutationRequest,
+        catalog: LensCatalog,
+        check: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<RepoProposal> {
         validate_operation(&request.operation)?;
         super::trailer::validate_repo_provenance_request(self, &request)?;
@@ -316,6 +372,7 @@ impl Vault {
             catalog,
             critiques: Vec::new(),
             status: RepoProposalStatus::Proposed,
+            settlement: None,
             operation_seq: None,
             created_at: now_millis() / 1000,
         };
@@ -390,6 +447,9 @@ impl Vault {
         )]));
         session_claim.evidence = body.evidence.clone();
         let mut txn = self.store.env.write_txn()?;
+        check(&txn)?;
+        super::trailer::validate_repo_provenance_request_in_txn(self, &txn, &row.request()?)?;
+        validate_conflict_in_txn(self, &txn, &row)?;
         if !crate::ports::EntityStoreRead::port_entity_present(
             &self.store,
             &txn,
@@ -422,46 +482,6 @@ impl Vault {
     pub fn repo_proposal(&self, id: EntityId) -> Result<Option<RepoProposal>> {
         let txn = self.store.env.read_txn()?;
         PROPOSAL.get(&self.store, &txn, &id)
-    }
-    /// Records one authenticated host critic identity. A critic cannot rewrite its vote.
-    pub fn review_repo_proposal(
-        &self,
-        id: EntityId,
-        critic: EntityId,
-        critique: CritiqueArtifact,
-    ) -> Result<RepoProposal> {
-        let mut txn = self.store.env.write_txn()?;
-        let mut row = PROPOSAL
-            .get(&self.store, &txn, &id)?
-            .ok_or(Error::EntityNotFound)?;
-        if row.status != RepoProposalStatus::Proposed
-            || row.actor.is(critic)
-            || critique.provenance.critic_ref != critic.to_hex()
-            || critique.candidate_ref != id.to_hex()
-            || critique.out_of_scope
-            || row.critiques.len() >= 64
-            || !crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &critic)?
-        {
-            return Err(invalid(
-                "critic is unbound, self-reviewing, or proposal is closed",
-            ));
-        }
-        if let Some(existing) = row.critiques.iter().find(|c| {
-            c.provenance.critic_ref == critique.provenance.critic_ref
-                && c.lens_id == critique.lens_id
-                && c.domain == critique.domain
-        }) {
-            return if existing == &critique {
-                Ok(row)
-            } else {
-                Err(invalid("critic vote is immutable"))
-            };
-        }
-        row.critiques.push(critique);
-        row.triage()?;
-        store(self, &mut txn, &row)?;
-        txn.commit()?;
-        Ok(row)
     }
     /// Unanimous multi-critic approval is the only attributed commit door.
     /// A split verdict leaves the proposal and its recovery snapshot intact.
@@ -710,29 +730,17 @@ pub(super) fn validate_conflict(
     proposal: &RepoProposal,
     root: &std::path::Path,
 ) -> Result<()> {
-    let RepoProposalOperation::ResolveConflictFile {
-        branch_subject,
-        open_conflict_claim_id,
-        branch_name,
-    } = &proposal.operation
-    else {
+    let RepoProposalOperation::ResolveConflictFile { branch_name, .. } = &proposal.operation else {
         return Ok(());
     };
-    let repo = RepoRef::parse(&proposal.repo)?;
-    let matches = vault
-        .repo_conflict_claims(branch_subject)?
-        .into_iter()
-        .any(|claim| {
-            claim.claim_id == *open_conflict_claim_id
-                && super::oplog::same_repository(&claim.repo_ref, &repo)
-                && claim.branch == *branch_name
-                && claim.conflicted_paths.contains(&proposal.path)
-        });
+    let txn = vault.store.env.read_txn()?;
+    validate_conflict_in_txn(vault, &txn, proposal)?;
+    drop(txn);
     let branch = super::support::utf8_trimmed(
         super::git::run_git(root, &["branch".into(), "--show-current".into()])?,
         "branch must be UTF-8",
     )?;
-    if !matches || branch != *branch_name {
+    if branch != *branch_name {
         return Err(invalid(
             "reviewed resolution requires its active conflict and branch",
         ));

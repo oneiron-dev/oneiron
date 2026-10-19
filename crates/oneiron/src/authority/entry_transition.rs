@@ -130,6 +130,8 @@ pub(super) fn fold_entry_state(
             refused_world_edits: BTreeSet::new(),
             grant_travel: BTreeMap::new(),
             refused_grant_travel: BTreeSet::new(),
+            checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState::default(),
+            home_pick: super::home_pick::HomePickChoiceState::default(),
             owner_work: super::owner_work::OwnerWorkState::default(),
             world_keys: BTreeMap::new(),
             refused_world_keys: BTreeSet::new(),
@@ -189,6 +191,37 @@ pub(super) fn fold_entry_state(
             &mut state,
             entry,
             set,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // The owner's checkpoint root policy choice is signed the same way, and
+    // stands on the signing chain alone (mesh PR2c).
+    if let AuthorityOp::CheckpointPolicySet(set) = &entry.op {
+        if let Err(issue) = super::checkpoint_choice::apply_checkpoint_policy(
+            &mut state,
+            entry,
+            set,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // So is the owner's home pick, on the same register (DOOR-101 PR2a).
+    if let AuthorityOp::HomeNodePick(pick) = &entry.op {
+        if let Err(issue) = super::home_pick::apply_home_pick(
+            &mut state,
+            entry,
+            pick,
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
@@ -412,14 +445,16 @@ fn residence_result_stands(
 }
 
 /// A row a sequence floor refuses only to restriction (Astra #1430): a world
-/// edit, a grant travel choice, or a machine revision. The roster rule reads
-/// each as a replica with no floor does; this install never counts what it
-/// grants.
+/// edit, a grant travel choice, a checkpoint policy choice, a home pick, or a
+/// machine revision. The roster rule reads each as a replica with no floor
+/// does; this install never counts what it grants.
 pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
     matches!(
         op,
         AuthorityOp::WorldPrivacy(_)
             | AuthorityOp::GrantTravelSet(_)
+            | AuthorityOp::CheckpointPolicySet(_)
+            | AuthorityOp::HomeNodePick(_)
             | AuthorityOp::MachineProfile(_)
     )
 }
@@ -521,6 +556,8 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::ResidenceDirective(_)
         | AuthorityOp::ResidenceResult(_)
         | AuthorityOp::GrantTravelSet(_)
+        | AuthorityOp::CheckpointPolicySet(_)
+        | AuthorityOp::HomeNodePick(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_) => false,
     }
@@ -528,8 +565,9 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
 
 fn entry_requires_peer_cosign(entry: &AuthorityLogEntry) -> bool {
     // A machine profile is the owner's answer landed through the host, as a
-    // slip is, and so is a residence directive; its own transition requires
-    // an owner consent key. A Disconnect or a Dissolve only ends a pact, and
+    // slip is, and so is a residence directive. A critical confirm likewise
+    // keeps its dedicated owner-consent signer check above, but asks no
+    // second device to cosign the owner's answer. A Disconnect or a Dissolve only ends a pact, and
     // the owner lands it through the host alone, as a slip revoke (FIX 1634;
     // ARCH-0043: exit is unilateral): the multi-device quorum and a quorum
     // revoke died with OF-452 D10.
@@ -539,6 +577,7 @@ fn entry_requires_peer_cosign(entry: &AuthorityLogEntry) -> bool {
             | AuthorityOp::SlipMint(_)
             | AuthorityOp::SlipRevoke { .. }
             | AuthorityOp::SlipConsume { .. }
+            | AuthorityOp::CriticalWriteConfirm(_)
             | AuthorityOp::MachineProfile(_)
             | AuthorityOp::OwnerRoot(_)
             | AuthorityOp::ResidenceDirective(_)

@@ -17,6 +17,7 @@ mod action_inputs;
 // a verb hook's rewrite of it as the guest's own.
 mod agent_authoring;
 mod codec;
+mod compaction_fork;
 mod compaction_home;
 mod consent_wait;
 mod contribution;
@@ -45,6 +46,10 @@ pub use self::codec::{
     CODE_RUN_ABI_LAYOUT_CHECK_KEYS, CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS,
     CODE_RUN_OUTPUT_PREVIEW_KEYS, CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS,
     CODE_RUN_STEP_CHECKPOINT_KEYS, decode_code_run_replay_record, encode_code_run_replay_record,
+};
+pub use self::compaction_fork::{
+    AdmittedLiveFork, CACHE_BOUNDARIES_KEY, CacheBoundary, HOST_PROVIDER_OPTIONS,
+    LiveCompactionFork, LiveForkRung, cache_boundaries, mark_cache_boundary,
 };
 pub use self::compaction_home::{
     CompactionHome, CompactionHostBinding, CompactionIdentity, RenderedHome,
@@ -164,12 +169,13 @@ pub use self::types::{
 pub use run_verbs::{
     AgentSpawnInput, JS_SAFE_INTEGER, LeaderAdviceInput, LeaderPatternInput, LeaderSplitInput,
     MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput, MemoryTimeRange,
-    ReaderSpawnInput, SkillCallInput, SpawnCare, SpawnKnob, SpawnPattern, SummarizeInput,
-    SummarizeInputEffort, TaskRefuseDomain, TaskRefuseInput, TaskWaitSetRequest,
+    ReaderSpawnInput, ReportBlockedInput, SkillCallInput, SpawnCare, SpawnKnob, SpawnPattern,
+    SummarizeInput, SummarizeInputEffort, TaskRefuseDomain, TaskRefuseInput, TaskWaitSetRequest,
 };
 pub use run_verbs::{
     AgentSpawnKind, AgentSpawnOutput, LeaderPatternFile, LeaderPatternOutput, LeaderSplitOutput,
-    MemoryEdgeOutput, MemorySearchHit, MemorySearchOutput, MemoryWriteOutput, TaskRefuseOutput,
+    MemoryEdgeOutput, MemorySearchHit, MemorySearchOutput, MemoryWriteOutput, ReportBlockedOutput,
+    TaskRefuseOutput,
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,

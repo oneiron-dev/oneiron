@@ -94,7 +94,12 @@ pub use proposal_doors::{
     NoteProposalForkRef, NoteProposalOpenRequest, NoteProposalRequest, NoteProposalView,
     NoteVersionTree,
 };
+mod carrier_erase;
 mod proposals;
+mod run_review;
+pub(crate) use run_review::{
+    RunNoteUndo, revert_run_note_in_txn, run_note_review_in_txn, settle_run_note_in_txn,
+};
 mod tombstone_review;
 mod verbs;
 mod write_gate;
@@ -118,6 +123,7 @@ pub use proposals::{
 pub(crate) use proposals::{
     erase_fork_actor_in_txn, erase_proposal_actor_in_txn, erase_receipt_actor_in_txn,
 };
+pub use sync_rows::{ACTOR_ERASE_NOTE_REQUEST_RECEIPT, NoteRequestReceiptErase};
 pub use tombstone_review::NoteTombstoneProposal;
 pub(crate) use tombstone_review::{
     decline_tombstone, open_tombstone_proposals_in_txn, review_note_tombstones, tombstone_accepted,
@@ -460,6 +466,8 @@ pub(crate) use citation_scrub::scrub_pending_citations;
 mod erasure_tests;
 mod live_body;
 pub(crate) use live_body::live_body_in_txn;
+mod brief_doors;
+pub use brief_doors::{AuthorBriefRequest, BriefClaimCitation, BriefKindStamp};
 mod kind_contract;
 #[cfg(all(test, feature = "sync"))]
 mod live_body_tests;
@@ -512,6 +520,8 @@ pub(crate) fn note_side_text_in_txn(
 }
 
 mod document_store;
+pub(crate) use document_store::deck_outline_document_in_txn;
+pub(crate) use document_store::resolve_deck_pin_in_txn;
 mod folder_source;
 pub(crate) use folder_source::erase_folder_source_actor_in_txn;
 pub use folder_source::{

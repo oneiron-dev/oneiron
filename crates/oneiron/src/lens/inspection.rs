@@ -31,7 +31,7 @@ pub const INSPECTION_HANDLE_LEN: usize = INSPECTION_HANDLE_VERSION.len() + 1 + 3
 
 /// What an inspector shows: one entity or one claim, by id. Locator data
 /// only; it proves nothing about who may read it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InspectionState {
     pub target_ref: EntityId,
@@ -58,7 +58,7 @@ impl InspectionState {
 /// The link token for one [`InspectionState`]: `i1`, `e` (entity) or `c`
 /// (claim), then the target's 32-hex id. Opaque to callers; only
 /// [`decode_inspection_handle`] reads it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(try_from = "String", into = "String")]
 pub struct InspectionHandle(String);
 
@@ -145,7 +145,7 @@ pub struct InspectionResolveRequest {
 /// the caller may read it now, the item. `None` is a target that is missing,
 /// unreadable to this caller, or not of the handle's kind; the receipt does
 /// not say which.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InspectionResolved {
     pub state: InspectionState,
     pub handle: InspectionHandle,

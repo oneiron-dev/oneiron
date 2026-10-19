@@ -10,6 +10,11 @@
 //! recipient twice, and each envelope's header matching the record before
 //! any key derivation could run. Who may sign a record, and which records
 //! count, is the fold's judgement.
+//!
+//! A record states its provenance under its signature: the owner work
+//! request it does (`request`, one of its parents), or none when an eligible
+//! reader wraps on its own; and the recipients its signer permits
+//! (`permitted`), sorted, exactly the ones it seals to.
 
 use oneiron_crypto::{Envelope, Purpose, SuiteId, TAG_LEN, WrapParams, WrapType};
 use rmpv::Value;
@@ -33,7 +38,7 @@ pub const WORLD_KEY_ENVELOPE_MAX_BYTES: usize = 4 * 1024;
 pub const WORLD_KEY_PAYLOAD_LABEL: &[u8] = b"oneiron/world-key/v1\0";
 pub const WORLD_KEY_PAYLOAD_LEN: usize = WORLD_KEY_PAYLOAD_LABEL.len() + 16 + 32 + 32;
 const POLICY_REVISION_CONTEXT: &[u8] = b"oneiron/world-policy-revision/v1";
-const WORLD_KEY_WRAPS_KEYS: [&str; 9] = [
+const WORLD_KEY_WRAPS_KEYS: [&str; 11] = [
     OP_KEY_KIND,
     "world",
     "generation",
@@ -43,6 +48,8 @@ const WORLD_KEY_WRAPS_KEYS: [&str; 9] = [
     "policy",
     "machine",
     "wraps",
+    "request",
+    "permitted",
 ];
 
 /// One world key: the world, its generation, and the random id of the mint
@@ -151,6 +158,13 @@ pub struct WorldKeyWrapsRecord {
     pub machine: EntityId,
     /// One sealed envelope per recipient.
     pub wraps: Vec<(WrapRecipient, Vec<u8>)>,
+    /// The owner work request this record does, one of its entry's parents:
+    /// the executor the request names wraps for the owner's act. `None`: an
+    /// eligible reader wraps on its own.
+    pub request: Option<AuthorityEntryHash>,
+    /// The recipients the signer permits, ascending: exactly those `wraps`
+    /// seals to.
+    pub permitted: Vec<WrapRecipient>,
 }
 
 impl WorldKeyWrapsRecord {
@@ -169,20 +183,39 @@ impl WorldKeyWrapsRecord {
         let mut recipients: Vec<_> = self.wraps.iter().map(|(to, _)| to).collect();
         recipients.sort_unstable();
         recipients.dedup();
-        if recipients.len() != self.wraps.len() {
+        if recipients.len() != self.wraps.len()
+            || !self.permits_exactly_its_wraps()
+            || self.request == Some([0; 32])
+        {
             return Err(invalid_authority());
         }
         Ok(())
     }
 
-    /// The entry the record rides: one Ed25519 signer and no cosign, and
-    /// every envelope's header made for exactly this record, its vault and
-    /// its list entry. No key derivation runs here.
+    /// `permitted` is ascending and names exactly the recipients `wraps`
+    /// seals to, each once.
+    #[must_use]
+    pub fn permits_exactly_its_wraps(&self) -> bool {
+        let mut sealed: Vec<_> = self.wraps.iter().map(|(to, _)| *to).collect();
+        sealed.sort_unstable();
+        sealed.dedup();
+        sealed.len() == self.wraps.len() && sealed == self.permitted
+    }
+
+    /// The entry the record rides: one Ed25519 signer and no cosign, the
+    /// request it does among its parents, and every envelope's header made
+    /// for exactly this record, its vault and its list entry. No key
+    /// derivation runs here.
     pub(super) fn validate_entry(&self, entry: &AuthorityLogEntry) -> Result<()> {
         let Some(vault_id) = entry.vault_id else {
             return Err(invalid_authority());
         };
-        if entry.signer.suite != AuthoritySignatureSuite::Ed25519 || !entry.cosigns.is_empty() {
+        if entry.signer.suite != AuthoritySignatureSuite::Ed25519
+            || !entry.cosigns.is_empty()
+            || self
+                .request
+                .is_some_and(|request| !entry.parent_hashes.contains(&request))
+        {
             return Err(invalid_authority());
         }
         let key_id = self.key.envelope_key_id();
@@ -210,6 +243,8 @@ impl WorldKeyWrapsRecord {
     }
 }
 
+/// Canonical field order: kind, world, generation, mint, commitment, owner,
+/// policy, machine, wraps, request (nil for none), permitted.
 pub(super) fn world_key_wraps_value(record: &WorldKeyWrapsRecord) -> Value {
     let wraps = record
         .wraps
@@ -237,6 +272,20 @@ pub(super) fn world_key_wraps_value(record: &WorldKeyWrapsRecord) -> Value {
         (Value::from("policy"), binary_value(record.policy.0)),
         (Value::from("machine"), Value::from(record.machine.to_hex())),
         (Value::from("wraps"), Value::Array(wraps)),
+        (
+            Value::from("request"),
+            record.request.map_or(Value::Nil, binary_value),
+        ),
+        (
+            Value::from("permitted"),
+            Value::Array(
+                record
+                    .permitted
+                    .iter()
+                    .map(|recipient| Value::Binary(recipient.envelope_recipient()))
+                    .collect(),
+            ),
+        ),
     ])
 }
 
@@ -266,6 +315,23 @@ pub(super) fn decode_world_key_wraps(entries: &[(Value, Value)]) -> Result<Autho
             _ => Err(invalid_authority()),
         })
         .collect::<Result<_>>()?;
+    let request = match required(entries, "request")? {
+        Value::Nil => None,
+        value => Some(decode_hash(value)?),
+    };
+    let Value::Array(permitted) = required(entries, "permitted")? else {
+        return Err(invalid_authority());
+    };
+    if permitted.len() > WORLD_KEY_WRAPS_MAX {
+        return Err(invalid_authority());
+    }
+    let permitted = permitted
+        .iter()
+        .map(|recipient| match recipient {
+            Value::Binary(recipient) => WrapRecipient::decode(recipient),
+            _ => Err(invalid_authority()),
+        })
+        .collect::<Result<_>>()?;
     Ok(AuthorityOp::WorldKeyWraps(WorldKeyWrapsRecord {
         key: WorldKeyId {
             world: super::machine_profile::decode_canonical_id(required(entries, "world")?)?,
@@ -279,5 +345,7 @@ pub(super) fn decode_world_key_wraps(entries: &[(Value, Value)]) -> Result<Autho
         policy: PolicyRevision(decode_hash(required(entries, "policy")?)?),
         machine: super::machine_profile::decode_canonical_id(required(entries, "machine")?)?,
         wraps,
+        request,
+        permitted,
     }))
 }

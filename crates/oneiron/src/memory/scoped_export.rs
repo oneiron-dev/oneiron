@@ -15,7 +15,8 @@ pub enum RecordPosition {
     Position(Scope),
 }
 
-/// This value is projected only from the authenticated credential.
+/// A permission limit, never a record position. Reading this value projects
+/// the authenticated credential; supplying it to attenuation can only narrow it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
@@ -25,6 +26,13 @@ pub enum RecordPosition {
 )]
 pub enum CredentialCeiling {
     Ceiling(Scope),
+}
+
+/// Reads the stored position of a record the caller may read.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecordPositionRequest {
+    pub record_ref: String,
 }
 
 /// Requested read axes: empty lists add no narrowing, unlike an empty grant axis.
@@ -135,6 +143,36 @@ pub struct ScopedExport {
 }
 
 impl Memory<'_> {
+    /// Reads a positive position through the credential's ordinary read lane.
+    /// The position and its read admission share one snapshot; no stamp is inferred.
+    pub fn scope_position(
+        &self,
+        input: &RecordPositionRequest,
+    ) -> MemoryResult<crate::claim::ScopedReadResult<Option<RecordPosition>>> {
+        self.credential_ceiling()?;
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        let id = self.resolve_ref_in_lane(&lane, &input.record_ref)?;
+        lane.read_projected(&[crate::claim::PointRead::id(id)], None, |txn, rows| {
+            let Some(row) = rows.into_iter().next().flatten() else {
+                return Ok::<_, MemoryError>(None);
+            };
+            let Some(body) = row.body else {
+                return Ok(None);
+            };
+            self.produced_from([row.id]);
+            Ok(
+                crate::federation::record_scope::disclosure_scope_for_stored_row(
+                    &self.vault.store,
+                    txn,
+                    row.id,
+                    row.entity_type,
+                    &body,
+                )?
+                .map(RecordPosition::Position),
+            )
+        })
+    }
+
     fn export_selector(&self, input: &RecordSelector) -> MemoryResult<Scope> {
         use crate::federation::{ScopeAxis, ScopeId};
         let mut scope = Scope::top();
@@ -242,9 +280,14 @@ impl Memory<'_> {
         }
         let selector = self.export_selector(&input.selector)?;
         let channel = self.export_channel_scope(&input.channel.scope)?;
-        let rows = self
-            .vault
-            .export_records_in_scope(&selector, proof.scope(), &channel)?;
+        // The export goes where this surface's rows go: the machine its
+        // connection proved, else a recipient nobody proved (mesh PR2b).
+        let rows = self.vault.export_records_in_scope_for(
+            &selector,
+            proof.scope(),
+            &channel,
+            &self.destination,
+        )?;
         let ids: Vec<_> = rows.iter().map(|row| row.id).collect();
         // The export evaluator does not replace relationship grants, NOTE privacy,
         // device locality or record caveats; the credential's own read lane also binds.

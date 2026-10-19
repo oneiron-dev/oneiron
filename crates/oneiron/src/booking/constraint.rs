@@ -187,7 +187,9 @@ mod opt_time_range_serde {
 // -------------------------------------------------------------------------
 
 /// Weekday axis of a normalized constraint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ConstraintWeekday {
     Monday,
@@ -200,7 +202,9 @@ pub enum ConstraintWeekday {
 }
 
 /// Half-open local-minute-of-day window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct LocalMinuteWindow {
     /// Inclusive, `0..1440`.
     pub start_minute: u16,
@@ -331,7 +335,7 @@ pub struct SolveRequest {
 
 /// One slot the oracle chose. UTC times are the oracle's; no caller rewrites,
 /// rounds, or invents them.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, schemars::JsonSchema)]
 pub struct RankedSlot {
     pub start_utc: u64,
     pub end_utc: u64,

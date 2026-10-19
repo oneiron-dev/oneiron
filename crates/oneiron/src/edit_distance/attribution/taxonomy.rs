@@ -361,6 +361,42 @@ pub(super) fn classify_amendment_traced(
     }
 }
 
+/// Validates a caller-supplied percentage vector before any judgment is
+/// persisted: every share finite in `0..=1`, no class named twice, and the
+/// shares summing to one. A malformed vector is refused outright — it is
+/// never renormalized into a charge nobody stated.
+///
+/// # Errors
+///
+/// [`crate::error::Error::InvalidClaimBody`] on any violation.
+pub fn validate_share_vector(shares: &[(AmendmentClass, f32)]) -> Result<()> {
+    if shares.is_empty() {
+        return Err(crate::error::Error::InvalidClaimBody(
+            "an attribution share vector names at least one class",
+        ));
+    }
+    let mut total = 0.0_f64;
+    for (class, share) in shares {
+        if !share.is_finite() || !(0.0..=1.0).contains(share) {
+            return Err(crate::error::Error::InvalidClaimBody(
+                "an attribution share is a finite fraction in 0..=1",
+            ));
+        }
+        if shares.iter().filter(|(other, _)| other == class).count() > 1 {
+            return Err(crate::error::Error::InvalidClaimBody(
+                "an attribution share vector names each class once",
+            ));
+        }
+        total += f64::from(*share);
+    }
+    if (total - 1.0).abs() > 0.001 {
+        return Err(crate::error::Error::InvalidClaimBody(
+            "attribution shares must sum to one; a malformed split is never renormalized",
+        ));
+    }
+    Ok(())
+}
+
 /// The entity a class charges, or `None` when it charges nobody.
 pub(super) fn class_subject(
     class: AmendmentClass,

@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::llm::decision::questions::{
-    AnswerRecord, ArtifactAskRecord, GraphAskFailure, GraphAskReceipts, QuestionCriteria,
-    QuestionDefinition,
+    AnswerRecord, ArtifactAskRecord, CalibrationPair, GraphAskFailure, GraphAskReceipts,
+    OutcomeLabel, QuestionCriteria, QuestionDefinition,
 };
 use crate::llm::decision::{DecisionQuestion, DecisionRung, TypedDecision};
 use crate::memory::{MemoryError, MemoryResult};
@@ -165,9 +165,62 @@ impl GraphAskRequest {
     }
 }
 
+/// `vault.graph.admit`'s input: one graph unit and the provider
+/// measurement the caller already holds for it, admitted in place of the
+/// host ladder's. `decision` is the engine's `TypedDecision`: its receipt
+/// must name `question` at its version, the caller as its principal and
+/// only the providers that measured it. The engine validates the whole
+/// decision — its provider-bound paired and person readings included —
+/// against the unit's sources again in the write that lands it, so a
+/// measurement no listed provider took, a duplicate provider, a reading
+/// of the answered question itself, a zero version or an out-of-range
+/// probability is refused before any claim is minted. The receipt's
+/// evidence and evidence versions are the engine's own pins of the
+/// sources it re-reads; a missing paired reading stays missing, never a
+/// fabricated zero.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GraphAdmitRequest {
+    /// The typed question, as `vault.graph.ask` takes it.
+    pub question: DecisionQuestion,
+    /// The one graph unit the measurement answers, read under the
+    /// caller's own scoped read; a unit it cannot read is passed over as
+    /// a missing one is, as in `vault.graph.ask`.
+    pub unit: EntityId,
+    /// The provider measurement to admit for `unit`.
+    pub decision: TypedDecision,
+}
+
+impl GraphAdmitRequest {
+    /// The admission's own bounds, checked before the unit is read: the
+    /// question itself, and a decision that names it at its version. The
+    /// rest of the decision — principal, contract, probability, providers
+    /// and their bound readings — is the engine's graph-ask validation,
+    /// run by the door over the caller's principal.
+    pub fn validate(&self) -> MemoryResult<()> {
+        self.question.validate().map_err(|_| {
+            MemoryError::bad_request_with(
+                "the question is not a valid typed question",
+                &[
+                    "Give it a version of 1 or more, 1 to 16384 bytes of text, a class other than provenance and a valid contract.",
+                ],
+            )
+        })?;
+        if self.decision.receipt.question != self.question.id
+            || self.decision.receipt.question_version != self.question.version
+        {
+            return Err(MemoryError::bad_request_with(
+                "the admitted decision does not name the question at its version",
+                &["Name the question and its version on the decision receipt."],
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// A unit whose answerer declined through a full decision, with that
 /// decision: its providers, clock and owner-ask reason.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GraphAskDeclined {
     pub unit: EntityId,
     pub decision: TypedDecision,
@@ -175,7 +228,7 @@ pub struct GraphAskDeclined {
 
 /// `vault.graph.ask`'s answer. Each answer is a proposed, receipt-bearing
 /// claim private to the asker, waiting for Keep; none is kept on its own.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum GraphAskOutcome {
     /// Every readable unit ran.
@@ -331,6 +384,50 @@ pub struct QuestionAnswersRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionRefreshRequest {
+    pub id: EntityId,
+}
+
+/// `vault.questions.outcomes`'s input: the caller's standing question whose
+/// bound outcome labels and calibration pairs to read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionOutcomesRequest {
+    pub id: EntityId,
+}
+
+/// `vault.questions.outcomes`'s answer: every stored outcome label of the
+/// question, each naming its answer and fact with the mapped label, noise
+/// weight, fact-value hash and time, and each calibration pair the current
+/// facts still support, pairing the answer's prediction and probability
+/// with its label. A silent closed window appears only as a pair.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct QuestionOutcomes {
+    pub labels: Vec<OutcomeLabel>,
+    pub calibration: Vec<CalibrationPair>,
+}
+
+/// `vault.questions.outcomes.project`'s input: the caller's standing
+/// question whose bound outcomes to project over the vault's current facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionOutcomesProjectRequest {
+    pub id: EntityId,
+}
+
+/// `vault.questions.outcomes.project`'s answer: the question and how many
+/// labels this projection newly bound. The projection is idempotent over a
+/// fact's identity, so replaying it binds none again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct QuestionOutcomesProjected {
+    pub id: EntityId,
+    pub projected: usize,
+}
+
+/// `vault.questions.schedule`'s input: the caller's standing question whose
+/// scheduling head to read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionScheduleRequest {
     pub id: EntityId,
 }
 

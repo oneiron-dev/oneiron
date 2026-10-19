@@ -43,9 +43,12 @@ mod causal_write;
 mod checkpoint;
 mod checkpoint_adopt;
 mod checkpoint_attest;
+mod checkpoint_choice;
 mod checkpoint_image;
 mod checkpoint_policy;
+mod checkpoint_policy_choice;
 mod claim_write;
+mod critical_confirm_door;
 mod engine_machine;
 mod entry_transition;
 mod first_seen_clock;
@@ -63,6 +66,7 @@ mod history_coverage;
 mod history_fetch;
 mod history_repair;
 mod history_transfer;
+mod home_pick;
 mod host_action;
 mod host_actor;
 mod host_re_root;
@@ -72,6 +76,7 @@ mod install_fold;
 mod invitee_slip;
 mod invocation_slip;
 mod left_notices;
+mod local_open;
 mod log_budget;
 mod log_structure;
 mod machine_answers;
@@ -85,9 +90,10 @@ mod mesh_machine;
 mod observation_policy;
 mod op_apply;
 mod owner_act;
+mod owner_choice;
 mod owner_project_slip;
-mod owner_work;
 mod owner_roots;
+mod owner_work;
 mod pinned_root;
 mod readonly_fold;
 mod recover_many;
@@ -129,28 +135,32 @@ pub use oneiron_authority::authority::{
     ActSurface, AuthorityAttestation, AuthorityConfirmAction, AuthorityConfirmKind,
     AuthorityEntryHash, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
     AuthoritySignatureSuite, AuthorityTier, AuthorityVaultId, CRITICAL_WRITE_CONFIRM_DOMAIN,
-    CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION, CriticalWriteConfirmAction,
-    CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState,
-    DeviceAuthority, FEDERATION_PACT_DOMAIN, FEDERATION_SCOPE_COMMIT_DOMAIN,
-    FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind,
-    FederationLifecycleRejection, FederationPactGesture, FederationPactState, FederationPactStatus,
-    FoldedDevice, GENESIS_FRAGILE_FLAG, GenesisRecoveryStep, GrantTravelSet,
-    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MACHINE_SEEN_WORLD_EDITS_MAX,
-    MAX_PACT_SCOPE_BYTES, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
-    MachineProfile, MachineRole, ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind,
-    OwnerHandover, OwnerHandoverCause, OwnerRootRecord, OwnerWorkBody, OwnerWorkKind,
-    OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest, OwnerWorkResult, RESIDENCE_REASON_MAX,
+    CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION, CheckpointPolicySet, CheckpointRootChoice, CommReach,
+    CriticalWriteConfirmAction, CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod,
+    CriticalWriteConfirmState, DeviceAuthority, FEDERATION_PACT_DOMAIN,
+    FEDERATION_SCOPE_COMMIT_DOMAIN, FederationGrantActivation, FederationLifecycleAction,
+    FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture,
+    FederationPactState, FederationPactStatus, FoldedDevice, GENESIS_FRAGILE_FLAG,
+    GenesisRecoveryStep, GrantTravelSet, MACHINE_ENCRYPTION_KEY_LEN,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MACHINE_SEEN_WORLD_EDITS_MAX, MAX_PACT_SCOPE_BYTES,
+    MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole,
+    ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
+    OwnerRootRecord, OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal,
+    OwnerWorkRequest, OwnerWorkResult, PrivacyDirection, RESIDENCE_REASON_MAX,
     RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
     ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
-    ResidenceResultStatus, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
+    ResidenceResultStatus, RootChange, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
     SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, WORLD_MODEL_ROUTE_MAX_BYTES,
-    WORLD_MODEL_ROUTES_MAX, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
+    WORLD_MODEL_ROUTES_MAX, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
     authority_entry_hash, authority_log_entity_id, authority_log_entity_id_from_hash,
-    authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
-    federation_pact_transcript, federation_scope_digest, genesis_vault_id,
-    machine_profile_proof_transcript, sign_federation_pact_gesture,
-    validate_authority_log_entry_body_bytes, verify_authority_signature,
+    authority_transcript, decode_authority_log_entry_body, effective_slip_comm,
+    encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
+    genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
+    sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
+    verify_authority_signature,
 };
+// The custody work body's own types (WILL L04 row 04).
+pub use oneiron_authority::authority::{CustodyChange, CustodyRecipientPermit};
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
 
@@ -169,8 +179,10 @@ pub use checkpoint_adopt::{
     AuthorityCheckpointBundle, AuthorityCheckpointExpectation, VerifiedAuthorityCheckpoint,
 };
 pub use checkpoint_attest::*;
+pub use checkpoint_choice::CheckpointPolicyHead;
 pub use checkpoint_image::*;
 pub use checkpoint_policy::*;
+pub use checkpoint_policy_choice::CheckpointPolicyView;
 pub use fold_engine::*;
 pub use fold_state::*;
 pub use forwarded_caller::{
@@ -190,10 +202,14 @@ pub use history_fetch::{
 };
 pub use history_repair::AuthorityRepairOutcome;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
+pub(crate) use home_pick::{
+    HomePickHead, HomePickState, election_home_pick_in_txn, home_pick_in_txn,
+};
 pub use host_action::HostActionAuthority;
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
+pub use local_open::LocalOpenProfile;
 pub use log_budget::{AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER};
 pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine, RequestCode,
@@ -203,10 +219,17 @@ pub use machine_profile::{
     FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine,
 };
 pub use machine_write::machine_claim_transcript;
-pub use mesh_machine::{MeshMachineAddress, MeshMachineAddressEnvelope};
+pub use mesh_machine::{
+    MeshAlpnGrant, MeshBindingIdentity, MeshMachineAddress, MeshMachineAddressEnvelope,
+    MeshMachineBinding,
+};
 pub use observation_policy::*;
-pub use owner_act::KeyWork;
-pub(crate) use owner_act::owner_act_signer_admits;
+pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
+pub(crate) use owner_act::{
+    GrantStanding, authority_refusal_as, authority_refused, grant_standing_in_txn,
+    owner_act_signer_admits, owner_live_in_fold,
+};
+pub use owner_choice::OwnerChoiceHead;
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub use recover_many::{
@@ -258,7 +281,7 @@ pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
 use readonly_fold::authority_view_readonly_for_store_in_txn;
 pub(crate) use readonly_fold::{
-    AuthorityCachedFold, advance_authority_cache_generation,
+    AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
 };
 pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
@@ -291,5 +314,6 @@ pub use world_privacy::{
     Destination, EffectiveModelOrder, EffectiveRead, EffectiveWorldPrivacy, FoldedWorld,
     WorldEditStanding,
 };
+pub(crate) use world_privacy_door::WorldEditAuthor;
 pub use world_privacy_door::{EditOrigin, WorldPrivacyView, world_readable_on_machine_in};
 use world_strength::{WorldFrontier, apply_world_privacy, merge_world_frontiers};

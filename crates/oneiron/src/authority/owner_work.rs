@@ -22,6 +22,12 @@
 //! requests its parents carry. A replaced request with no result is still
 //! its executor's to answer.
 //!
+//! A root request's `seen` is [`AuthorityFold::root_work_revision`]: the
+//! owner roots and the target's standing, as the deciding surface saw them.
+//! A custody request's is its secret's live custody requests, compared here
+//! before it joins them, and an admitted revoke is terminal for its secret
+//! (`custody`).
+//!
 //! As for every act kind, an owner the request's parents hold removed carries
 //! no say-so ([`super::owner_act::owner_live_at`], mesh contract §4), and the
 //! writer and the executor each check the owner live in their own
@@ -29,6 +35,8 @@
 //! root work is owner-only until a Grant line names it. Neither op rides a
 //! side branch ([`super::world_privacy::side_world`] is `None`), so every
 //! proven linked machine folds both.
+
+mod custody;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -78,6 +86,8 @@ pub(super) struct OwnerWorkState {
     heads: BTreeMap<(OwnerWorkKind, EntityId), WorkHeads>,
     /// Well-signed requests and results without effect.
     refused: BTreeSet<AuthorityEntryHash>,
+    /// Each secret an admitted custody revoke names: terminal for it.
+    revoked: BTreeSet<EntityId>,
 }
 
 /// One admitted request as this install reads it.
@@ -88,6 +98,21 @@ struct FoldedWorkRequest {
     counts: bool,
 }
 
+/// The heads a root request's revision is over (CALLS ROOT_WORK_REVISION).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RootRevisionHeads {
+    /// Every valid owner root, each by its id (two entries of one root carry
+    /// the same keys, so the id stands for its record on every replica), and
+    /// the target's roster revision, its accepted roster revision and the
+    /// head of each anchor's chain of it. The root the change binds, and its
+    /// anchor's chain of the target, are left out: their arrival is what a
+    /// pin waits for and what a restore or an anchoring writes, never a
+    /// change the owner did not see. The pin is local, so it is never a head.
+    RootsAndTargetStanding,
+}
+
+const ROOT_WORK_REVISION: RootRevisionHeads = RootRevisionHeads::RootsAndTargetStanding;
+
 /// Every owner work request and result, as this install folds them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct FoldedOwnerWork {
@@ -96,6 +121,8 @@ pub(crate) struct FoldedOwnerWork {
     /// Each (kind, target)'s live requests.
     heads: BTreeMap<(OwnerWorkKind, EntityId), BTreeSet<AuthorityEntryHash>>,
     refused: BTreeSet<AuthorityEntryHash>,
+    /// Each secret an admitted custody revoke names.
+    revoked: BTreeSet<EntityId>,
 }
 
 impl AuthorityFold {
@@ -107,6 +134,20 @@ impl AuthorityFold {
         self.owner_work
             .requests
             .get(hash)
+            .map(|folded| &folded.request)
+    }
+
+    /// The admitted request signed as entry `hash` when it counts here,
+    /// answered or not: what a bundle published for it proves (CALLS
+    /// BUNDLE_PUBLISH_PROOF).
+    pub(crate) fn counted_owner_work_request(
+        &self,
+        hash: &AuthorityEntryHash,
+    ) -> Option<&OwnerWorkRequest> {
+        self.owner_work
+            .requests
+            .get(hash)
+            .filter(|folded| folded.counts)
             .map(|folded| &folded.request)
     }
 
@@ -138,6 +179,46 @@ impl AuthorityFold {
     /// Owner work requests and results that are valid without effect.
     pub(crate) fn refused_owner_work(&self) -> &BTreeSet<AuthorityEntryHash> {
         &self.owner_work.refused
+    }
+
+    /// The revision a root request's `change` on `target` is for (CALLS
+    /// ROOT_WORK_REVISION): [`act_revision`] under
+    /// [`ROOT_WORK_REVISION_CONTEXT`] over the fold's live entries the change
+    /// depends on. The recorder states it as the act's `seen`, and the target
+    /// computes it again in its own writer transaction: a different value is
+    /// a change the owner did not see. The request itself is never a head,
+    /// so no request makes itself stale.
+    pub(crate) fn root_work_revision(&self, target: EntityId, change: RootChange) -> [u8; 32] {
+        match ROOT_WORK_REVISION {
+            RootRevisionHeads::RootsAndTargetStanding => {
+                let bound = change.root().and_then(|root| {
+                    self.root_anchors
+                        .iter()
+                        .find(|(_, roots)| roots.contains(&root))
+                        .map(|(anchor, _)| *anchor)
+                });
+                let roots = self
+                    .root_anchors
+                    .iter()
+                    .filter(|(anchor, _)| Some(**anchor) != bound)
+                    .flat_map(|(_, roots)| roots.iter().map(|root| root.0));
+                let standing = self.machine(target).into_iter().flat_map(move |machine| {
+                    machine
+                        .roster
+                        .iter()
+                        .chain(&machine.roster_trusted)
+                        .chain(
+                            machine
+                                .anchored
+                                .iter()
+                                .filter(move |(anchor, _)| Some(**anchor) != bound)
+                                .map(|(_, revision)| revision),
+                        )
+                        .map(|revision| revision.entry)
+                });
+                act_revision(ROOT_WORK_REVISION_CONTEXT, roots.chain(standing))
+            }
+        }
     }
 
     /// The parents a new request names: the main-log heads, the rows the
@@ -249,10 +330,11 @@ fn apply_request(
     drop(standing);
     // A carrier the one rule does not admit, or an owner the request's
     // parents hold removed (mesh contract §4), records a valid request
-    // without effect.
+    // without effect; so does a custody change on a revision it did not see,
+    // or an active one after its secret's revoke.
     let live = admitted && super::owner_act::owner_live_at(state, request.act.owner);
     let work = &mut state.owner_work;
-    if !live {
+    if !live || !custody::custody_request_lands(work, request) {
         work.refused.insert(hash);
         return Ok(());
     }
@@ -263,10 +345,11 @@ fn apply_request(
     let replaced = std::mem::take(&mut heads.live);
     heads.superseded.extend(replaced);
     heads.live.insert(hash);
+    custody::note_custody_revoke(work, request);
     work.requests.insert(
         hash,
         Arc::new(WorkRequest {
-            request: *request,
+            request: request.clone(),
             key,
             marks,
             narrow_only,
@@ -318,10 +401,10 @@ fn apply_result(
     Ok(())
 }
 
-/// Joins two states: requests and refusals by union, a request superseded
-/// on either side is superseded, and of two different results of one
-/// request the lesser entry hash stands, the other is without effect. Two
-/// copies of one request that disagree never count here.
+/// Joins two states: requests, refusals and revoked secrets by union, a
+/// request superseded on either side is superseded, and of two different
+/// results of one request the lesser entry hash stands, the other is without
+/// effect. Two copies of one request that disagree never count here.
 pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkState) {
     for (hash, request) in &right.requests {
         merged
@@ -337,6 +420,7 @@ pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkSta
             .or_insert_with(|| Arc::clone(request));
     }
     merged.refused.extend(right.refused.iter().copied());
+    merged.revoked.extend(right.revoked.iter().copied());
     for (request, answer) in &right.results {
         match merged.results.get(request).copied() {
             Some(held) if held.entry == answer.entry => {}
@@ -388,7 +472,7 @@ pub(super) fn folded_owner_work(
                 (
                     *hash,
                     FoldedWorkRequest {
-                        request: folded.request,
+                        request: folded.request.clone(),
                         counts,
                     },
                 )
@@ -401,7 +485,29 @@ pub(super) fn folded_owner_work(
             .map(|(at, heads)| (*at, heads.live.clone()))
             .collect(),
         refused: work.refused.clone(),
+        revoked: work.revoked.clone(),
     }
+}
+
+/// The request signed as entry `hash`, when `standing`'s state admits it and
+/// it counts there as this install reads it: not narrowed here at its
+/// parents, and its carrier's removal race passes
+/// ([`Standing::owner_act_race`]). What a key record naming it among its
+/// parents may do on the owner's behalf (CALLS WORLD_KEY_WRAP_AUTH).
+pub(super) fn counted_request<'s>(
+    standing: &Standing<'s>,
+    hash: &AuthorityEntryHash,
+) -> Option<&'s OwnerWorkRequest> {
+    let folded = standing.state().owner_work.requests.get(hash)?;
+    let counts = !folded.narrow_only
+        && standing.owner_act_race(
+            folded.request.carrier,
+            hash,
+            &folded.key,
+            &folded.marks,
+            StandingView::Install,
+        );
+    counts.then_some(&folded.request)
 }
 
 /// The requests `machine` carried that have no result yet, for its next

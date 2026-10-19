@@ -11,7 +11,7 @@ use super::git::{validate_git_object_hash, validate_git_ref_label, validate_rela
 use crate::error::CodeError;
 
 pub const REPO_CONFLICT_CLAIM_VALUE_SCHEMA_VERSION: u8 = 1;
-pub const REPO_CONFLICT_OPEN_VALUE_KEYS: [&str; 8] = [
+pub const REPO_CONFLICT_OPEN_VALUE_KEYS: [&str; 9] = [
     "schema_version",
     "kind",
     "repo_ref",
@@ -20,6 +20,7 @@ pub const REPO_CONFLICT_OPEN_VALUE_KEYS: [&str; 8] = [
     "ours_tree",
     "theirs_tree",
     "conflicted_paths",
+    "proposals",
 ];
 pub const REPO_CONFLICT_RESOLUTION_VALUE_KEYS: [&str; 7] = [
     "schema_version",
@@ -42,6 +43,7 @@ pub(super) struct RepoConflictOpenValue {
     pub(super) ours_tree: String,
     pub(super) theirs_tree: String,
     pub(super) conflicted_paths: Vec<String>,
+    pub(super) proposals: Vec<EntityId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +71,16 @@ pub(super) fn normalize_repo_conflict_paths(paths: Vec<String>) -> Result<Vec<St
 
 pub(super) fn encode_repo_conflict_open_value(value: &RepoConflictOpenValue) -> Value {
     Value::Map(vec![
+        (
+            Value::from("proposals"),
+            Value::Array(
+                value
+                    .proposals
+                    .iter()
+                    .map(|id| Value::Binary(id.as_bytes().to_vec()))
+                    .collect(),
+            ),
+        ),
         (
             Value::from(REPO_CONFLICT_OPEN_VALUE_KEYS[0]),
             Value::from(u64::from(REPO_CONFLICT_CLAIM_VALUE_SCHEMA_VERSION)),
@@ -183,7 +195,32 @@ pub(super) fn decode_repo_conflict_open_value(value: &Value) -> Result<RepoConfl
             "repo conflict claim requires at least one conflicted path",
         ));
     }
+    let proposals = match map.get("proposals") {
+        Some(Value::Array(ids)) if ids.is_empty() || ids.len() == 2 => ids
+            .iter()
+            .map(|value| {
+                let Value::Binary(bytes) = value else {
+                    return Err(Error::InvalidClaimBody(
+                        "conflict proposal id must be binary",
+                    ));
+                };
+                let raw: [u8; 16] = bytes.as_slice().try_into().map_err(|_| {
+                    Error::InvalidClaimBody("conflict proposal id must be 16 bytes")
+                })?;
+                EntityId::from_bytes(raw)
+            })
+            .collect::<Result<Vec<_>>>()?,
+        _ => {
+            return Err(Error::InvalidClaimBody(
+                "conflict requires zero or two proposal refs",
+            ));
+        }
+    };
+    if proposals.len() == 2 && proposals[0] == proposals[1] {
+        return Err(Error::InvalidClaimBody("conflict proposals must differ"));
+    }
     Ok(RepoConflictOpenValue {
+        proposals,
         repo_ref,
         branch,
         base_tree,

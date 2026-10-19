@@ -216,6 +216,16 @@ pub(super) fn project_once(
         refused_grant_travel: merged
             .as_ref()
             .map_or_else(BTreeSet::new, |state| state.refused_grant_travel.clone()),
+        checkpoint_policy: merged.as_ref().map_or_else(Default::default, |state| {
+            super::checkpoint_choice::folded_checkpoint_policy(
+                state,
+                context.pin,
+                context.machine_standing,
+            )
+        }),
+        home_pick: merged.as_ref().map_or_else(Default::default, |state| {
+            super::home_pick::folded_home_pick(state, context.pin, context.machine_standing)
+        }),
         owner_work: merged.as_ref().map_or_else(Default::default, |state| {
             super::owner_work::folded_owner_work(state, context.pin, context.machine_standing)
         }),

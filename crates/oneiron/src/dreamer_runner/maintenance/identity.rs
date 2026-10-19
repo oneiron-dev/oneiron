@@ -34,6 +34,12 @@
 //! Someone new confirms the mention's provisional entity as a real, synced
 //! person and asserts it distinct from each real candidate (ARCH-0055 §6), so
 //! no merge of the two is proposed again.
+mod evidence;
+pub use evidence::{
+    IdentityAnswerEvidenceRequest, IdentityMentionState, IdentityMentionView, IdentityResolutionView,
+};
+pub(crate) use evidence::{clear_mention_resolutions_in_txn, erase_mention_resolutions_in_txn};
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
@@ -42,10 +48,13 @@ use serde_json::json;
 
 use super::MAINTENANCE_QUEUE_KIND;
 use super::applied::{MaintenanceInverse, MaintenanceRevert, MaintenanceTarget};
+use crate::authority::{ActAuthority, ActSurface};
 use crate::claim::ClaimSource;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore};
-use crate::identity_topology::{AssertDistinctOp, IdentityOpWrite, IdentityTopologyOp};
+use crate::identity_topology::{
+    AssertDistinctOp, EngineCause, IdentityOpWrite, IdentityTopologyOp, TopologySeal,
+};
 use crate::lens::{
     ButtonControl, GeneratedLens, GeneratedUiActionDeclaration, GeneratedUiActionTier,
     GeneratedUiCard, GeneratedUiStateSnapshot, LensAtom, LensAtomId, LensNode, LensRenderId,
@@ -93,6 +102,13 @@ const MAX_NAME_BYTES: usize = 256;
 const RETRY_SECS: u64 = 3_600;
 /// The rationale on a someone-new answer's `assert_distinct` event.
 const SOMEONE_NEW_RATIONALE: &str = "identity ask: someone new";
+/// The context of the id an owner's answer binds its topology decision to
+/// (its act's `answer`, mesh PR2-topology): the ask, by its key.
+const ASK_ANSWER_CONTEXT: &[u8] = b"oneiron/identity-ask/answer/v1";
+/// The surface the facade identity answer records for the owner's act: audit
+/// only, and the engine surface is not told where the request came from
+/// (FIX-LIST: the host knows it).
+const FACADE_ANSWER_SURFACE: ActSurface = ActSurface::ThisInstall;
 /// Words too common to tell two people apart.
 const STOP_WORDS: &[&str] = &[
     "about", "after", "again", "also", "been", "before", "being", "could", "does", "doing", "done",
@@ -281,7 +297,7 @@ pub struct IdentityActNowRequest {
 }
 
 /// Where a name an agent must act on stands.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum IdentityActNow {
     /// The name settles to this entity: act on it.
@@ -690,16 +706,27 @@ fn parse_choice(ask: &IdentityAsk, choice: &str) -> Option<Answer> {
         .map(|id| Answer::Is(*id))
 }
 
+/// The id an owner's answer to ask `key` binds its topology decision to.
+fn ask_answer_id(key: &[u8; 32]) -> Result<EntityId> {
+    EntityId::derive(ASK_ANSWER_CONTEXT, &[key])
+}
+
+/// The Dreamer's own topology decision: no owner answer, no Grant line.
+fn dreamer_seal() -> TopologySeal {
+    TopologySeal::engine(EngineCause::DreamerInference)
+}
+
 /// Asserts the new person `fresh` distinct from each real person the ask
 /// offered, as each resolves now (ARCH-0055 §6: "different things" mints
-/// `assert_distinct`), with `source` as the claim's. Nothing when `fresh` is
-/// no stored entity: no readable text named it any more.
+/// `assert_distinct`), with `source` as the claim's and `seal` as who
+/// decided. Nothing when `fresh` is no stored entity: no readable text named
+/// it any more.
 fn assert_distinct_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     ask: &IdentityAsk,
     fresh: EntityId,
-    source: ClaimSource,
+    (source, seal): (ClaimSource, &TopologySeal),
     now: u64,
 ) -> Result<()> {
     if !entity_of_kind_in_txn(vault, txn, &fresh, ask.kind)? {
@@ -719,7 +746,7 @@ fn assert_distinct_in_txn(
     }
     let write = IdentityOpWrite::auto(source);
     for head in real {
-        vault.apply_identity_topology_op_in_txn(
+        vault.apply_identity_topology_op_as_in_txn(
             txn,
             &IdentityTopologyOp::AssertDistinct(AssertDistinctOp {
                 a: fresh,
@@ -727,6 +754,7 @@ fn assert_distinct_in_txn(
                 reason: SOMEONE_NEW_RATIONALE.to_owned(),
             }),
             &write,
+            seal,
             now,
         )?;
     }
@@ -737,15 +765,17 @@ fn assert_distinct_in_txn(
 /// candidate takes the span (and absorbs the mention's own provisional
 /// entity, everywhere it is named); someone new keeps that provisional
 /// entity, or mints one for the span, confirms it as a real person and
-/// asserts it distinct from the real candidates, said by `source`.
+/// asserts it distinct from the real candidates, said by `source` and
+/// decided by `seal`.
 fn apply_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     ask: &IdentityAsk,
     answer: Answer,
-    source: ClaimSource,
+    (source, seal): (ClaimSource, &TopologySeal),
     now: u64,
 ) -> Result<EntityId> {
+    let original = evidence::snapshot_in_txn(vault, txn, ask)?;
     let span = (&ask.message, ask.start, ask.end);
     let entity = match answer {
         Answer::Is(chosen) => {
@@ -769,11 +799,12 @@ fn apply_in_txn(
             };
             crate::tagging::settle_mention_in_txn(vault, txn, &ask.turn, span, fresh)?;
             crate::tagging::confirm_provisional_in_txn(vault, txn, &fresh)?;
-            assert_distinct_in_txn(vault, txn, ask, fresh, source, now)?;
+            assert_distinct_in_txn(vault, txn, ask, fresh, (source, seal), now)?;
             fresh
         }
     };
     put_hint_in_txn(vault, txn, ask, entity, now)?;
+    evidence::record_in_txn(vault, txn, ask, entity, source, now, original)?;
     Ok(entity)
 }
 
@@ -784,10 +815,10 @@ fn settle_ask_in_txn(
     key: &[u8; 32],
     ask: &IdentityAsk,
     answer: Answer,
-    source: ClaimSource,
+    said: (ClaimSource, &TopologySeal),
     now: u64,
 ) -> Result<EntityId> {
-    let entity = apply_in_txn(vault, txn, ask, answer, source, now)?;
+    let entity = apply_in_txn(vault, txn, ask, answer, said, now)?;
     ASKS.delete(&vault.store, txn, key)?;
     Ok(entity)
 }
@@ -1138,7 +1169,7 @@ fn recheck_turn_in_txn(
                 txn,
                 &ask,
                 Answer::Is(entity),
-                ClaimSource::Inferred,
+                (ClaimSource::Inferred, &dreamer_seal()),
                 now,
             )?;
             continue;
@@ -1374,7 +1405,7 @@ impl Vault {
                     &key,
                     &current,
                     answer,
-                    ClaimSource::Inferred,
+                    (ClaimSource::Inferred, &dreamer_seal()),
                     now,
                 )?)),
                 None if current.reason == IdentityAskReason::Unsettled => {
@@ -1429,7 +1460,8 @@ impl Vault {
         Ok(sent)
     }
 
-    /// The owner's answer to one open ask, from the needs-you strip.
+    /// The owner's answer to one open ask, from the needs-you strip, as
+    /// [`Self::answer_identity_ask_as`] on this install's own surface.
     pub fn answer_identity_ask(
         &self,
         owner: &AuthenticatedOwner,
@@ -1437,7 +1469,24 @@ impl Vault {
         choice: &str,
         now: u64,
     ) -> Result<IdentitySettled> {
+        self.answer_identity_ask_as(owner, ActSurface::ThisInstall, ask, choice, now)
+    }
+
+    /// The owner's answer to one open ask, from the needs-you strip, which
+    /// reached this install from `surface` (audit only). A someone-new
+    /// answer's distinct assertions are his decision, bound to the ask (mesh
+    /// PR2-topology): their seals carry his act and hold on every replica.
+    pub fn answer_identity_ask_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        ask: &str,
+        choice: &str,
+        now: u64,
+    ) -> Result<IdentitySettled> {
         let key = parse_key(ask).ok_or_else(|| invalid("the ask is 64 hex"))?;
+        let seal = TopologySeal::decision(ActAuthority::Owner(owner.clone(), surface))
+            .answering(ask_answer_id(&key)?);
         self.with_write_txn_grouped(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
             let held = ASKS
@@ -1445,8 +1494,16 @@ impl Vault {
                 .ok_or_else(|| invalid("no such open ask"))?;
             let answer = parse_choice(&held, choice)
                 .ok_or_else(|| invalid("not one of the ask's options"))?;
-            let entity =
-                settle_ask_in_txn(self, txn, &key, &held, answer, ClaimSource::UserStated, now)?;
+            let entity = settle_ask_in_txn(
+                self,
+                txn,
+                &key,
+                &held,
+                answer,
+                (ClaimSource::UserStated, &seal),
+                now,
+            )?;
+            evidence::prove_owner_in_txn(self, txn, owner, &held, &[])?;
             Ok(IdentitySettled {
                 ask: key_hex(&key),
                 entity: entity.to_hex(),
@@ -1457,12 +1514,44 @@ impl Vault {
 
 impl Memory<'_> {
     /// `self.identity.answer`: an owner's tap on a choice card. Only a vault
-    /// owner answers who the people in their conversations are.
+    /// owner answers who the people in their conversations are. The topology
+    /// decision is his, bound to the ask, only when the request bound his own
+    /// proof (`owner_authorship`); otherwise it is an engine seal under
+    /// [`EngineCause::OwnerAnswerUnproven`]. The actor or its class alone
+    /// never authenticates an owner.
     pub fn identity_answer(&self, input: &IdentityAnswerRequest) -> MemoryResult<IdentitySettled> {
+        self.identity_answer_guarded(input, self.owner_authorship(), &[])
+    }
+
+    fn identity_answer_guarded(
+        &self,
+        input: &IdentityAnswerRequest,
+        owner: Option<&AuthenticatedOwner>,
+        owner_evidence: &[EntityId],
+    ) -> MemoryResult<IdentitySettled> {
         let key = parse_key(&input.ask)
             .ok_or_else(|| MemoryError::bad_request("ask is 64 hex: an open identity ask"))?;
         let now = self.vault().now_recorded_at();
+        let seal = match owner {
+            Some(owner) => {
+                TopologySeal::decision(ActAuthority::Owner(owner.clone(), FACADE_ANSWER_SURFACE))
+                    .answering(ask_answer_id(&key)?)
+            }
+            None => TopologySeal::engine(EngineCause::OwnerAnswerUnproven),
+        };
         self.with_verified_actor_write_txn(|txn| {
+            if let Some(owner) = owner {
+                if owner.revalidate_in_txn(self.vault(), txn)? != self.actor() {
+                    return Err(MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
+                        "identity answer proof does not name the caller",
+                        &["Answer from the owner's own session."],
+                    ));
+                }
+                crate::memory::identity_doors::require_identity_evidence_in_txn(
+                    self.vault(), txn, owner_evidence,
+                )?;
+            }
             if !crate::policy_model::owners_in_txn(self.vault(), txn)?.contains(&self.actor()) {
                 return Err(MemoryError::new(
                     MEMORY_CODE_FORBIDDEN,
@@ -1482,9 +1571,14 @@ impl Memory<'_> {
                 &key,
                 &held,
                 answer,
-                ClaimSource::UserStated,
+                (ClaimSource::UserStated, &seal),
                 now,
             )?;
+            if let Some(owner) = owner {
+                evidence::prove_owner_in_txn(self.vault(), txn, owner, &held, owner_evidence)?;
+            }
+            self.produced_from(std::iter::once(held.turn).chain([held.message, entity])
+                .chain(owner_evidence.iter().copied()));
             Ok(IdentitySettled {
                 ask: key_hex(&key),
                 entity: entity.to_hex(),
@@ -1597,7 +1691,7 @@ impl Memory<'_> {
                     txn,
                     &ask,
                     Answer::Is(entity),
-                    ClaimSource::Inferred,
+                    (ClaimSource::Inferred, &dreamer_seal()),
                     now,
                 )?;
                 return Ok(IdentityActNow::Settled {

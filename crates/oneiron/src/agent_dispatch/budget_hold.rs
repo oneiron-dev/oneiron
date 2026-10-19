@@ -29,7 +29,7 @@ use super::spend_record::{SpendRead, SpendScopeId, SpendSignal};
 use super::widen_record::invalid;
 
 /// Where a run's budget hold stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BudgetHoldState {
     /// The wrap-up warning went out; nothing is parked yet.
@@ -41,14 +41,14 @@ pub enum BudgetHoldState {
 }
 
 /// One attempt the hold parked, with the checkpoint it resumes from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HeldAttempt {
     pub attempt: AttemptId,
     pub resume_point: AttemptResumePoint,
 }
 
 /// The owner's notice of a held run, and whether the host delivered it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BudgetHoldNotice {
     pub text: String,
     /// Unix seconds the host delivered it; `None` while it is still owed.
@@ -61,7 +61,7 @@ pub struct BudgetHoldNotice {
 /// saved, the plan it ran, the owner's notice and whether the run can
 /// resume. The hold is what a resume reads; the attempts themselves sit in
 /// the queue's paused state, never killed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PartialResultHold {
     /// The spawn (root) attempt this hold belongs to.
     pub root_attempt: AttemptId,

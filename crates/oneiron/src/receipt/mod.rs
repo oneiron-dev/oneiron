@@ -1,10 +1,11 @@
 //! Unified receipt-family query surface over existing receipt emitters.
 //!
 //! RS1 is intentionally a projection over existing event substrates. This
-//! module does not mint a new receipt store and does not change emitter schema.
-//! The one store it keeps is the call receipt table: the lasting receipt
-//! every wire reply carries (OF-538), which no other substrate records.
+//! family projection does not change emitter schema. The call receipt table
+//! keeps the lasting receipt every wire reply carries (OF-538). Admission
+//! observations keep named calls visible before their wire settlement.
 
+pub mod admission;
 mod authority_audit;
 mod brief_share;
 mod call;
@@ -20,6 +21,7 @@ mod identity_kind;
 mod kernel;
 mod ledgers;
 mod lens;
+mod off_device;
 mod pack_attribution;
 mod projection;
 mod questions;
@@ -85,10 +87,12 @@ pub use self::projection::{
     project_receipts_by_counterparty, project_receipts_by_grant,
 };
 pub use self::questions::{
-    GRAPH_ASK_MAX_UNITS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAskDeclined, GraphAskOutcome,
-    GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersRequest,
-    QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest,
-    QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
+    GRAPH_ASK_MAX_UNITS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined,
+    GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersRequest,
+    QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest, QuestionOutcomes,
+    QuestionOutcomesProjectRequest, QuestionOutcomesProjected, QuestionOutcomesRequest,
+    QuestionPauseRequest, QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
+    QuestionScheduleRequest,
 };
 pub(crate) use self::reference_refusal::{
     ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals, receipt_refusal,

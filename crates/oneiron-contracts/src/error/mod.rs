@@ -73,6 +73,16 @@ pub enum ErrorKind {
     InvalidKey,
     InvalidFederationGrantBody,
     InvalidAuthorityLogBody,
+    /// An authority door refused a well-formed request and named its rule.
+    AuthorityRefused,
+    /// The checkpoint root policy cannot be fixed or chosen as asked.
+    CheckpointPolicyRefused,
+    /// The owner's checkpoint policy choice named a stale revision.
+    CheckpointPolicyRevisionStale,
+    /// The owner's world recipient choice keeps rows from this destination.
+    WorldRecipientLimit,
+    /// A world's placement or a result's producing rows cannot be verified.
+    WorldPlacementUnverifiable,
     InvalidAccessGrantBody,
     InvalidOutboundGrantBody,
     InvalidConnectorKeyBody,

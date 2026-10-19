@@ -5,23 +5,27 @@ use oneiron::WriteActor;
 use oneiron::code_run::live_run::LiveRunCredential;
 use oneiron::code_run::{
     AgentSpawnInput, AgentSpawnOutput, HostSelfDispatcher, LeaderSplitInput, LeaderSplitOutput,
-    TaskRefuseInput, TaskRefuseOutput,
+    ReportBlockedInput, ReportBlockedOutput, TaskRefuseInput, TaskRefuseOutput,
 };
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::LiveRunRequest;
 
-use super::host_doors::internal;
+use super::host_doors::{Listed, internal};
 use super::{FacadeApiError, facade_actor};
 use crate::auth::CoreAuth;
 use crate::server::{LiveRunCaller, LiveRunRefusal, SyncServer, seated_planner};
 
+/// `tasks.refuse` (`host_door_lists`): the reply is the TASK id, the dial's
+/// level and outcome and the replay bit. The TASK, the agent's dial and the
+/// reason ref are read to admit and land the refusal, not served, so the
+/// list is complete and empty.
 pub(crate) async fn tasks_refuse(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
     input: LiveRunRequest<TaskRefuseInput>,
-) -> MemoryResult<TaskRefuseOutput> {
-    on_live_run(
+) -> Listed<TaskRefuseOutput> {
+    let answer = on_live_run(
         server,
         auth,
         session,
@@ -29,16 +33,41 @@ pub(crate) async fn tasks_refuse(
         "tasks.refuse",
         move |dispatcher| dispatcher.refuse_task_from_host(input.spec),
     )
-    .await
+    .await;
+    (answer, Vec::new())
 }
 
+/// `self.report_blocked` (`host_door_lists`): the reply is the witnessed
+/// receipt's id alone, so the list is complete and empty.
+pub(crate) async fn self_report_blocked(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    input: LiveRunRequest<ReportBlockedInput>,
+) -> Listed<ReportBlockedOutput> {
+    let answer = on_live_run(
+        server,
+        auth,
+        session,
+        input.live_run,
+        "self.report_blocked",
+        move |dispatcher| dispatcher.report_blocked_from_host(input.spec),
+    )
+    .await;
+    (answer, Vec::new())
+}
+
+/// `self.agents.spawn` (`host_door_lists`): the reply is the queued
+/// attempt and its launch statement, or the widening it proposed; the
+/// parent, plan and child admission it reads are not served and the child's
+/// result is its own, so the list is complete and empty.
 pub(crate) async fn self_agents_spawn(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
     input: LiveRunRequest<AgentSpawnInput>,
-) -> MemoryResult<AgentSpawnOutput> {
-    on_live_run(
+) -> Listed<AgentSpawnOutput> {
+    let answer = on_live_run(
         server,
         auth,
         session,
@@ -46,16 +75,20 @@ pub(crate) async fn self_agents_spawn(
         "self.agents.spawn",
         move |dispatcher| dispatcher.spawn_agent_from_host(input.spec),
     )
-    .await
+    .await;
+    (answer, Vec::new())
 }
 
+/// `self.leader.split` (`host_door_lists`): the reply is the project,
+/// TASK, parent and leader ids and the depth left, so the list is complete
+/// and empty.
 pub(crate) async fn self_leader_split(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
     input: LiveRunRequest<LeaderSplitInput>,
-) -> MemoryResult<LeaderSplitOutput> {
-    on_live_run(
+) -> Listed<LeaderSplitOutput> {
+    let answer = on_live_run(
         server,
         auth,
         session,
@@ -63,16 +96,20 @@ pub(crate) async fn self_leader_split(
         "self.leader.split",
         move |dispatcher| dispatcher.split_leader_from_host(input.spec),
     )
-    .await
+    .await;
+    (answer, Vec::new())
 }
 
+/// `vault.claims.supersede` (`host_door_lists`): the reply is the new
+/// claim's id; both claims are read by the write gates, not served, so the
+/// list is complete and empty.
 pub(crate) async fn vault_claims_supersede(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
     input: LiveRunRequest<oneiron::code_run::MemorySupersedeInput>,
-) -> MemoryResult<oneiron::code_run::MemoryWriteOutput> {
-    on_live_run(
+) -> Listed<oneiron::code_run::MemoryWriteOutput> {
+    let answer = on_live_run(
         server,
         auth,
         session,
@@ -80,7 +117,8 @@ pub(crate) async fn vault_claims_supersede(
         "vault.claims.supersede",
         move |dispatcher| dispatcher.supersede_claim_from_host(input.spec),
     )
-    .await
+    .await;
+    (answer, Vec::new())
 }
 
 /// Batched child admission through the same attachment guard as single spawn.
@@ -150,7 +188,7 @@ where
         let mut dispatcher = HostSelfDispatcher::for_live_run(server.vault(), writer, &binding)?;
         let (settings, model) = run.planner();
         if let Some(settings) = settings {
-            if let Some(planner) = seated_planner(
+            if let Some(mut planner) = seated_planner(
                 server.vault(),
                 settings,
                 model,
@@ -158,6 +196,9 @@ where
             )
             .map_err(MemoryError::bad_request)?
             {
+                // DOOR-111 S4c-4: its planned team's start is written on the
+                // run's own seat and line, as its entries' are.
+                planner.pattern_runner = run.pattern_runner(&server);
                 dispatcher = dispatcher.with_planner(planner);
             }
         }
@@ -187,7 +228,11 @@ pub(super) async fn hold_live_run(
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
     handle: &str,
-) -> MemoryResult<(WriteActor, crate::server::ResolvedLiveRun, crate::server::HeldLiveRun)> {
+) -> MemoryResult<(
+    WriteActor,
+    crate::server::ResolvedLiveRun,
+    crate::server::HeldLiveRun,
+)> {
     if session.is_some() {
         return Err(MemoryError::new(
             oneiron::memory::MEMORY_CODE_OFF_RECORD_SESSION_DOOR,

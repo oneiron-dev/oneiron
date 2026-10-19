@@ -249,6 +249,10 @@ pub fn op_value(op: &AuthorityOp) -> Value {
             super::owner_work::owner_work_request_value(request)
         }
         AuthorityOp::OwnerWorkResult(result) => super::owner_work::owner_work_result_value(result),
+        AuthorityOp::CheckpointPolicySet(set) => {
+            super::checkpoint_policy::checkpoint_policy_value(set)
+        }
+        AuthorityOp::HomeNodePick(pick) => super::home_pick::home_node_pick_value(pick),
     }
 }
 

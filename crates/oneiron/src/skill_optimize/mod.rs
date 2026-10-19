@@ -143,6 +143,8 @@ mod job;
 mod judge_swap;
 mod labels;
 mod offer;
+pub mod offer_doors;
+pub mod offer_pilot;
 mod offer_switch;
 mod offer_training;
 pub(crate) mod policy;
@@ -165,6 +167,7 @@ pub use self::dials::{
     DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, SKILL_OPTIMIZE_MIN_OUTCOMES_KEY,
     set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,
 };
+pub use self::eval_set::doors as eval_doors;
 pub use self::eval_set::{
     AuditCase, AuditCoverage, AuditMethodPin, CandidateLabel, CaseDecision, CohortRetirement,
     CohortSummary, CoverageGap, CutDecision, DerivationKind, EvalAuthoringInventory,
@@ -273,7 +276,7 @@ pub(crate) use self::job::{
 };
 
 use self::dials::invalid;
-use self::tier::tier_verdict_in_txn;
+pub(crate) use self::tier::tier_verdict_in_txn;
 
 #[cfg(test)]
 mod tests;
@@ -303,4 +306,8 @@ use crate::temporal::TimeRange;
 #[cfg(test)]
 use rmpv::Value;
 
-pub(crate) use gate::skill_edit_goal_in_txn;
+pub(crate) use gate::{
+    measure_skill_edit_goal_axes_as_owner, preflight_skill_edit_offline_floors_as_owner,
+    score_gate_skill_edit_as_owner, skill_edit_goal_in_txn,
+};
+pub(crate) use job::propose_skill_edit_as_owner;

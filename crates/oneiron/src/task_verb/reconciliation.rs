@@ -24,7 +24,15 @@ impl Vault {
     /// never a second task store.
     pub fn repo_reconciliation_task(&self, conflict: EntityId) -> Result<Option<EntityId>> {
         let txn = self.store.env.read_txn()?;
-        RECONCILIATION_TASKS.get(&self.store, &txn, &conflict)
+        self.repo_reconciliation_task_in_txn(&txn, conflict)
+    }
+
+    pub(crate) fn repo_reconciliation_task_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        conflict: EntityId,
+    ) -> Result<Option<EntityId>> {
+        RECONCILIATION_TASKS.get(&self.store, txn, &conflict)
     }
     /// Called only after the conflict claim has been written in this transaction.
     /// The local owner is bootstrapped outside the transaction by the admin queue.
@@ -61,6 +69,16 @@ impl Vault {
             TaskCreateRateLimit::default(),
         )?;
         let spec = Value::Map(vec![
+            (
+                Value::from("proposals"),
+                Value::Array(
+                    conflict
+                        .proposals
+                        .iter()
+                        .map(|id| Value::from(id.to_hex()))
+                        .collect(),
+                ),
+            ),
             (
                 Value::from("open_conflict_claim_id"),
                 Value::from(conflict.claim_id.to_hex()),

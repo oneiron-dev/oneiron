@@ -39,6 +39,7 @@ impl PipelineBuilder<'_> {
             .is_some_and(|filter| filter.deny_all)
         {
             return Ok(PipelineOutput {
+                embedding_matches: HashMap::new(),
                 vector_completed: false,
                 revisions: HashMap::new(),
                 words_bound: Default::default(),
@@ -62,6 +63,8 @@ impl PipelineBuilder<'_> {
                 temporal_report: None,
             });
         }
+        self.claim_aging_profiles =
+            crate::gate::policy_manifest_doors::claim_aging_profiles_for_run(self.vault)?;
         if let Some(weights) =
             crate::gate::policy_manifest_doors::retrieval_weights_for_run(self.vault)?
         {
@@ -178,11 +181,7 @@ impl PipelineBuilder<'_> {
             None => None,
             Some(_) if self.deadline_reached() => None,
             Some((expander, grounding, options)) => {
-                if options.channel_limit == 0 {
-                    return Err(Error::InvalidConfig(
-                        "hyde channel_limit must be greater than zero".to_owned(),
-                    ));
-                }
+                options.validate()?;
                 let Some((template, _)) = self.text_search.as_ref() else {
                     return Err(Error::InvalidConfig(
                         "hyde requires search_text query".to_owned(),
@@ -193,23 +192,7 @@ impl PipelineBuilder<'_> {
                     query,
                     max_subqueries: crate::query_expansion::HYDE_MAX_SUBQUERIES,
                 })?;
-                if expansion.embedding.is_empty() {
-                    return Err(Error::InvalidConfig(
-                        "hyde embedding must not be empty".to_owned(),
-                    ));
-                }
-                if expansion.embedding.len() != self.vault.config.dimensions
-                    && self.vault.config.fast_dims.map(usize::from)
-                        != Some(expansion.embedding.len())
-                {
-                    return Err(Error::DimensionMismatch {
-                        expected: self.vault.config.dimensions,
-                        got: expansion.embedding.len(),
-                    });
-                }
-                if let Some(error) = Error::invalid_vector_component(&expansion.embedding) {
-                    return Err(error);
-                }
+                crate::query_expansion::validate_hyde_expansion(self.vault, &expansion)?;
                 Some(expansion)
             }
         };
@@ -251,6 +234,7 @@ impl PipelineBuilder<'_> {
         // Preserve the pre-HyDE no-channel fast path: it returns no run row.
         if self.hyde.is_none() && attempt.early_empty_no_telemetry {
             return Ok(PipelineOutput {
+                embedding_matches: HashMap::new(),
                 vector_completed: dense_completed(&attempt.diagnostics),
                 revisions: HashMap::new(),
                 words_bound: Default::default(),
@@ -567,7 +551,10 @@ impl PipelineBuilder<'_> {
             }
         };
 
+        let mut embedding_matches = media_evidence.matches;
+        embedding_matches.retain(|id, _| scores.iter().any(|hit| hit.id == *id));
         Ok(PipelineOutput {
+            embedding_matches,
             vector_completed: dense_completed(&diagnostics),
             revisions,
             words_bound,

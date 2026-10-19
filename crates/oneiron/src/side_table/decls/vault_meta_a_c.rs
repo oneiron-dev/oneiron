@@ -11,6 +11,9 @@ side_tables! {
     /// Rotation cursor (last session id served) for the bounded session-end distill drain pump, so
     /// one budget-limited pass cannot starve later jobs. Key: ().
     ACTOR_CLAIMS_DISTILL_RUNNER_CURSOR: VaultMeta b"actor_claims:distill_runner_cursor:v1" Raw;
+    /// Named typed calls' durable queued/held status and terminal outcome, keyed by
+    /// hash32(actor, class, invocation); never execution authority.
+    ADMISSION_INTENT: VaultMeta b"admission:intent:v1:" Named Engine;
     /// Per-agent, per-unit launch spend calibration folded from settled launches. Key: string.
     AGENT_DISPATCH_SPEND_CALIBRATION: VaultMeta b"agent.dispatch.calibration.v1\0" LegacyJson;
     /// FIX 1380: one running child's comm widening, its per-reach asks to its parent and the
@@ -260,10 +263,18 @@ side_tables! {
     BUILD_CACHE_RUNNING_RESERVATION: VaultMeta b"build_cache:running:v2:" Raw;
     /// Calendar connector write-outbox rows and remote object cursors. Key: `row:` or `obj:` +
     /// bytes32.
+    /// Owner-installed CalDAV seats, cursors and kill switches. Key: seat name.
+    CALENDAR_CONNECTOR_SEAT: VaultMeta b"calendar.connector-seat.v1:" Named;
     CALENDAR_CONNECTOR_WRITE: VaultMeta b"calendar.connector-write.v1:" LegacyJson Authored;
+    /// Owner-installed ICS feed configuration and last public completion. Key: system name.
+    CALENDAR_ICS_FEED_CONFIG: VaultMeta b"calendar.ics-feed-config.v1:" Named;
     /// Per-feed poll cursor. Key: bytes32.
     CALENDAR_ICS_FEED_CURSOR: VaultMeta b"calendar.ics-feed.v1:" LegacyJson Authored;
     /// UID-to-EVENT lookup cache. Key: bytes32.
+    /// Host-installed iMIP submission endpoint and custody name. Key: ().
+    CALENDAR_IMIP_TRANSPORT: VaultMeta b"calendar.imip-transport.v1" Named;
+    /// Owner-configured post-meeting outcome grace. Key: ().
+    CALENDAR_OUTCOME_POLICY: VaultMeta b"calendar.outcome-policy.v1" Named;
     CALENDAR_PASSPORT_UID_INDEX: VaultMeta b"calendar.passport.v1:" Raw;
     /// Marker that a derived EVENT's source was erased. Key: id16.
     CALENDAR_INVALIDATED_EVENT: VaultMeta b"calendar_invalid:v1:" Raw;
@@ -281,6 +292,8 @@ side_tables! {
     CAMPAIGN_COMPLIANCE_NOTICE: VaultMeta b"campaign:compliance:notice:v1:" Raw;
     /// One staged compliance-pack amendment proposal awaiting an owner stamp. Key: ().
     CAMPAIGN_COMPLIANCE_PENDING: VaultMeta b"campaign:compliance:pending:v1" Named;
+    /// Caller-bound compliance amendment, owner decision or verification receipt. Key: id16.
+    CAMPAIGN_COMPLIANCE_RECEIPT: VaultMeta b"campaign:compliance:receipt:v1:" Named;
     /// Per-saved-query baseline (definition version + scope digest) a campaign enrollment detection
     /// re-derives against. Key: id16.
     CAMPAIGN_ENROLLMENT_BASELINE: VaultMeta b"campaign:enrollment_baseline:v1:" LegacyJson;

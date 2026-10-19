@@ -70,6 +70,24 @@ impl crate::Vault {
         consent: &PersonaSnapshotExportConsent,
         owner: Option<&AuthenticatedOwner>,
     ) -> Result<PersonaSnapshotArtifact> {
+        let mut txn = self.store.env.write_txn()?;
+        let artifact =
+            self.export_persona_snapshot_in_txn(&mut txn, compile, strikes, consent, owner)?;
+        txn.commit()?;
+        Ok(artifact)
+    }
+
+    pub(super) fn export_persona_snapshot_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        compile: &PersonaSnapshotCompile,
+        strikes: &PersonaSnapshotStrikeList,
+        consent: &PersonaSnapshotExportConsent,
+        owner: Option<&AuthenticatedOwner>,
+    ) -> Result<PersonaSnapshotArtifact> {
+        if let Some(owner) = owner {
+            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        }
         if consent.granted_by.trim().is_empty() {
             return Err(invalid_snapshot(
                 "export consent granted_by must be non-empty",
@@ -148,7 +166,7 @@ impl crate::Vault {
             artifact_fingerprint,
         };
         let export_id = self.store.clock.entity_id()?;
-        self.put_persona_snapshot_export_bound(&export_id, &record, owner)?;
+        self.put_persona_snapshot_export_in_txn(txn, &export_id, &record)?;
 
         Ok(PersonaSnapshotArtifact {
             export_id,
@@ -182,17 +200,28 @@ impl crate::Vault {
         record: &PersonaSnapshotExportRecord,
         owner: Option<&AuthenticatedOwner>,
     ) -> Result<()> {
-        let data = encode_persona_snapshot_export_body(record)?;
-        let learned_at = record.exported_at_secs;
         let mut wtxn = self.store.env.write_txn()?;
         if let Some(owner) = owner {
-            owner.revalidate_in_txn(self, &wtxn)?;
+            owner.revalidate_as_vault_owner_in_txn(self, &wtxn)?;
         }
+        self.put_persona_snapshot_export_in_txn(&mut wtxn, id, record)?;
+        wtxn.commit()?;
+        Ok(())
+    }
+
+    fn put_persona_snapshot_export_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        record: &PersonaSnapshotExportRecord,
+    ) -> Result<()> {
+        let data = encode_persona_snapshot_export_body(record)?;
+        let learned_at = record.exported_at_secs;
         apply_ops(
             &self.store,
             &self.config,
             &self.analyzer,
-            &mut wtxn,
+            txn,
             vec![BatchOp::Put {
                 id: *id,
                 entity_type: ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
@@ -210,7 +239,6 @@ impl crate::Vault {
             false,
             true,
         )?;
-        wtxn.commit()?;
         Ok(())
     }
 
