@@ -1,9 +1,14 @@
 //! Stateless field editor and capability-scoped ceremony presentation adapters.
+use super::editor_auth::{EditorDesk, EditorIngress};
 use super::*;
+use axum::extract::{FromRequest, Request};
 use oneiron::blob_artifact::esign::render::{self, PageGeometry};
 use oneiron::blob_artifact::esign::{EsignField, FieldValue};
+use oneiron::limit_ask::EngineLimit;
 use serde::Deserialize;
 use std::collections::BTreeMap;
+use std::io::BufReader;
+use tokio::sync::OwnedSemaphorePermit;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -12,9 +17,10 @@ pub(super) struct LayoutRequest {
     values: BTreeMap<String, FieldValue>,
     pages: Vec<PageGeometry>,
 }
-/// Pure editor layout. Caller data only; this door reads/writes no vault rows.
-/// Every field of every page is laid out, however many (Rule 5).
-pub(super) async fn layout(Json(request): Json<LayoutRequest>) -> Response {
+/// Pure editor layout over caller data: it reads and writes no vault rows.
+/// Every field of every page is laid out, however many (Rule 5). The
+/// ceremony's preview calls it directly, never the editor's HTTP door.
+fn laid_out(request: LayoutRequest) -> Response {
     let layouts: Result<Vec<_>, _> = request
         .fields
         .iter()
@@ -32,6 +38,43 @@ pub(super) async fn layout(Json(request): Json<LayoutRequest>) -> Response {
         }
         Err(_) => refused(),
     }
+}
+
+/// `POST /sign/layout`. With no editor header it is the door it was: JSON
+/// under the router's 3 MiB body limit and `EditorBudget`'s window. An
+/// admitted editor's body (FIX 5618) spools whole and parses on the worker
+/// that holds its slot; its size is the `[limits] esign_body_bytes` row,
+/// which asks the vault owner past it and never refuses the body.
+pub(super) async fn layout(
+    State(server): State<Arc<SyncServer>>,
+    ingress: EditorIngress,
+    request: Request,
+) -> Response {
+    let slot = match ingress {
+        EditorIngress::Anonymous => {
+            return match Json::<LayoutRequest>::from_request(request, &server).await {
+                Ok(Json(request)) => laid_out(request),
+                Err(rejection) => rejection.into_response(),
+            };
+        }
+        EditorIngress::Admitted(slot) => slot,
+    };
+    let (parts, body) = request.into_parts();
+    super::ingress::editor_spooled(
+        &server,
+        EngineLimit::EsignBodyBytes,
+        &parts.headers,
+        body,
+        move |file, _| {
+            let _slot = slot;
+            match serde_json::from_reader::<_, LayoutRequest>(BufReader::new(file)) {
+                Ok(request) => laid_out(request),
+                Err(_) => super::ingress::malformed(),
+            }
+        },
+    )
+    .await
+    .unwrap_or_else(|refusal| refusal)
 }
 
 pub(super) async fn preview(
@@ -63,7 +106,7 @@ pub(super) async fn preview(
     let Ok(pages) = render::inspect_pdf_pages(&bytes) else {
         return refused();
     };
-    layout(Json(LayoutRequest {
+    laid_out(LayoutRequest {
         fields: page
             .fields
             .into_iter()
@@ -71,18 +114,25 @@ pub(super) async fn preview(
             .collect(),
         values: page.values.into_iter().map(|(k, v)| (k, v.value)).collect(),
         pages,
-    }))
-    .await
+    })
 }
 
-/// The owner's editor shell is not a public signing capability. Public
-/// geometry adapters only inspect caller-owned bytes and remain separately
-/// bounded; loading the owner editor itself needs a top-scope logged slip.
-pub(super) async fn editor(auth: crate::auth::CoreAuth) -> Response {
+/// The owner's editor shell is not a public signing capability: loading it
+/// needs an owner-grade caller, as before. It mints that caller an
+/// editor-computation token (FIX 5618, `editor_auth`) into the no-store
+/// page; the page's script reads it, removes it from the document and sends
+/// it only in the `x-oneiron-esign-editor` header of its computation POSTs.
+pub(super) async fn editor(
+    auth: crate::auth::CoreAuth,
+    axum::Extension(desk): axum::Extension<Arc<EditorDesk>>,
+) -> Response {
     if !auth.is_owner_grade() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let html = "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><title>Field geography editor</title><main><h1>Field geography editor</h1><p>Load a PDF and a field geography pack. Positions are percentages of the visible page after rotation.</p><label>PDF <input id=pdf-file type=file accept=application/pdf></label><label>Pack JSON <input id=pack-file type=file accept=application/json></label><label>Item <input id=current-item type=number min=0 value=0></label><label>Recipient reference <input id=recipient></label><label>Field type <select id=field-kind><option>signature</option><option>initials</option><option>name</option><option>email</option><option>date</option><option>text</option><option>checkbox</option><option>select</option></select></label><label>Select options (one per line)<textarea id=select-options></textarea></label><button id=add>Add field</button><section id=fields></section><section id=preview></section><button id=save>Export geography pack</button><p id=status></p></main><script src=/sign/field-renderer.js></script><script src=/sign/editor.js></script></html>";
+    let token = desk.mint(auth);
+    let html = format!(
+        "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><meta id=editor-capability name=oneiron-esign-editor content=\"{token}\"><title>Field geography editor</title><main><h1>Field geography editor</h1><p>Load a PDF and a field geography pack. Positions are percentages of the visible page after rotation.</p><label>PDF <input id=pdf-file type=file accept=application/pdf></label><label>Pack JSON <input id=pack-file type=file accept=application/json></label><label>Item <input id=current-item type=number min=0 value=0></label><label>Recipient reference <input id=recipient></label><label>Field type <select id=field-kind><option>signature</option><option>initials</option><option>name</option><option>email</option><option>date</option><option>text</option><option>checkbox</option><option>select</option></select></label><label>Select options (one per line)<textarea id=select-options></textarea></label><button id=add>Add field</button><section id=fields></section><section id=preview></section><button id=save>Export geography pack</button><p id=status></p></main><script src=/sign/field-renderer.js></script><script src=/sign/editor.js></script></html>"
+    );
     ([ (header::CONTENT_SECURITY_POLICY,"default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'unsafe-inline'; img-src blob:; base-uri 'none'; frame-ancestors 'none'"), (header::CACHE_CONTROL,"no-store") ],axum::response::Html(html)).into_response()
 }
 pub(super) async fn field_script() -> Response {
@@ -99,20 +149,59 @@ pub(super) async fn editor_script() -> Response {
     )
         .into_response()
 }
+/// `POST /sign/geometry`: byte-only inspection, no template parse, blob
+/// write, or outbound effects. With no editor header it is the door it was:
+/// the PDF under the route's 16 MiB body limit and `EditorBudget`'s window.
+/// An admitted editor's PDF (FIX 5618) spools whole and is inspected on the
+/// worker that holds its slot; its size is the `[limits]
+/// esign_geometry_body_bytes` row, which asks the vault owner past it and
+/// never refuses the PDF.
 pub(super) async fn upload_geometry(
-    axum::Extension(permit): axum::Extension<Arc<tokio::sync::OwnedSemaphorePermit>>,
-    body: axum::body::Bytes,
+    State(server): State<Arc<SyncServer>>,
+    ingress: EditorIngress,
+    request: Request,
 ) -> Response {
-    // Byte-only inspection, no template parse, blob write, or outbound effects.
-    match tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        render::inspect_pdf_pages(&body)
-    })
+    let slot = match ingress {
+        EditorIngress::Anonymous => {
+            let permit = request
+                .extensions()
+                .get::<Arc<OwnedSemaphorePermit>>()
+                .cloned();
+            let body = match axum::body::Bytes::from_request(request, &server).await {
+                Ok(body) => body,
+                Err(rejection) => return rejection.into_response(),
+            };
+            return match tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                render::inspect_pdf_pages(&body)
+            })
+            .await
+            {
+                Ok(Ok(pages)) => Json(serde_json::json!({"pages":pages})).into_response(),
+                _ => refused(),
+            };
+        }
+        EditorIngress::Admitted(slot) => slot,
+    };
+    let (parts, body) = request.into_parts();
+    super::ingress::editor_spooled(
+        &server,
+        EngineLimit::EsignGeometryBodyBytes,
+        &parts.headers,
+        body,
+        move |file, bytes| {
+            let _slot = slot;
+            let Some(pdf) = super::ingress::whole_body(file, bytes) else {
+                return super::ingress::unread();
+            };
+            match render::inspect_pdf_pages(&pdf) {
+                Ok(pages) => Json(serde_json::json!({"pages":pages})).into_response(),
+                Err(_) => refused(),
+            }
+        },
+    )
     .await
-    {
-        Ok(Ok(pages)) => Json(serde_json::json!({"pages":pages})).into_response(),
-        _ => refused(),
-    }
+    .unwrap_or_else(|refusal| refusal)
 }
 
 pub(super) async fn signature(
