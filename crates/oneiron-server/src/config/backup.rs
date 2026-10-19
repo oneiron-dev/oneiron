@@ -27,6 +27,14 @@ pub struct BackupConfig {
     pub every_hours: u64,
     /// Newest backups kept; older ones are deleted after each new backup.
     pub keep: usize,
+    /// CALLS CUSTODY_ANCHOR_ROOT (KS-4, Engine 10-20): the owner-selected
+    /// directory holding this vault's custody anchor, outside the vault and
+    /// its key custody, on storage that outlives this host (`ONEIRON_CUSTODY_
+    /// ANCHOR_ROOT`). Unset by default: custody heads still publish beside
+    /// the backups, the anchor step stays pending by name on the owner's
+    /// status read, and a restore on a new host uses the head it finds and
+    /// says rollback is not proven. Never a backup or save refusal.
+    pub custody_anchor_root: Option<PathBuf>,
 }
 
 impl Default for BackupConfig {
@@ -36,6 +44,7 @@ impl Default for BackupConfig {
             dir: None,
             every_hours: DEFAULT_EVERY_HOURS,
             keep: DEFAULT_KEEP,
+            custody_anchor_root: None,
         }
     }
 }
@@ -60,6 +69,9 @@ impl BackupConfig {
         }
         if let Some(value) = over.keep {
             self.keep = value;
+        }
+        if let Some(value) = over.custody_anchor_root {
+            self.custody_anchor_root = Some(super::lookup::expand_home(value));
         }
     }
 
@@ -93,6 +105,7 @@ pub struct BackupConfigOverride {
     pub dir: Option<PathBuf>,
     pub every_hours: Option<u64>,
     pub keep: Option<usize>,
+    pub custody_anchor_root: Option<PathBuf>,
 }
 
 pub(super) fn lookup_backup_override(
@@ -103,6 +116,7 @@ pub(super) fn lookup_backup_override(
         dir: lookup_path(lookup, "ONEIRON_BACKUP_DIR"),
         every_hours: lookup_parse(lookup, "ONEIRON_BACKUP_EVERY_HOURS")?,
         keep: lookup_parse(lookup, "ONEIRON_BACKUP_KEEP")?,
+        custody_anchor_root: lookup_path(lookup, "ONEIRON_CUSTODY_ANCHOR_ROOT"),
     };
     Ok((over != BackupConfigOverride::default()).then_some(over))
 }

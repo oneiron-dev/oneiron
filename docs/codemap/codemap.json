@@ -198,13 +198,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "CraftNote"
+     ],
      "path": "src/actor_claims/craft_read.rs",
      "purpose": "A resident's own craft as its runs read it (OF-490): the lessons and failure modes the system learned about…",
      "surface": {
-      "fn": 1
+      "const": 1,
+      "fn": 10,
+      "struct": 1
      }
     },
     {
@@ -11887,7 +11891,7 @@
      "purpose": "The Coach's changes to an owner's digest settings (FIX 5495; DEC-0005 policy residence)",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4
      }
     },
@@ -11915,7 +11919,7 @@
      "path": "src/claim/scoped_read/weave_digest/settings.rs",
      "purpose": "The owner's own digest settings record (FIX 5495): the generation every change to his Owner schedule bumps…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 1,
       "struct": 5
      }
@@ -22298,7 +22302,7 @@
      "path": "src/dreamer_runner/program/arm.rs",
      "purpose": "DOOR-141 setup: an actor arms a pinned callable SKILL entry for its own future turns",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -22341,7 +22345,7 @@
      "path": "src/dreamer_runner/program/run.rs",
      "purpose": "Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -42904,7 +42908,7 @@
      "path": "src/receipt/context_emit.rs",
      "purpose": "Frozen context on text emits, retained on the existing outbound receipt spine",
      "surface": {
-      "fn": 2,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -43335,7 +43339,7 @@
      "path": "src/recovery/checkpoint/artifact.rs",
      "purpose": "Sealed checkpoint artifacts (OF-570 (c))",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 7,
       "struct": 2
@@ -43391,6 +43395,23 @@
       "crate-vis": 17,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CustodyAnchorRoot",
+      "CustodyRecovery",
+      "CustodyStatus"
+     ],
+     "path": "src/recovery/checkpoint/custody_head.rs",
+     "purpose": "Custody heads at the vault's surface (KS-4A1, FIX 5685): publishing a vault's exterior key custody beside…",
+     "surface": {
+      "const": 5,
+      "crate-vis": 1,
+      "fn": 9,
+      "struct": 3
      }
     },
     {
@@ -43641,7 +43662,7 @@
      "surface": {
       "enum": 1,
       "fn": 19,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 3
      }
     },
@@ -43719,6 +43740,16 @@
      "notable": [],
      "path": "src/recovery/checkpoint/restore_class/vault_meta_s_z.rs",
      "purpose": "The restore class of every canonical `vault_meta`, `s` to `z` family, in declaration order",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/snapshot.rs",
+     "purpose": "Taking one sealed checkpoint image: the snapshot behind [`Vault::snapshot_checkpoint`] and…",
      "surface": {
       "crate-vis": 1
      }
@@ -49785,6 +49816,19 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/offer.rs",
+     "purpose": "The Coach's training offer (OF-577): a cheaper stock model or a custom one for a seat, which the owner…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "fn": 9,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "ComputeDestination",
       "OfferAnswer",
@@ -49801,13 +49845,12 @@
       "TrainingOffer",
       "TrainingOfferDraft"
      ],
-     "path": "src/skill_optimize/offer.rs",
-     "purpose": "The Coach's training offer (OF-577): a cheaper stock model or a custom one for a seat, which the owner…",
+     "path": "src/skill_optimize/offer/snapshot.rs",
+     "purpose": "The training offer's snapshot shapes (OF-577): what the Coach drafts, the immutable offer the owner is…",
      "surface": {
-      "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 7,
       "enum": 4,
-      "fn": 9,
+      "fn": 1,
       "struct": 10
      }
     },
@@ -49827,7 +49870,7 @@
      "path": "src/skill_optimize/offer_doors.rs",
      "purpose": "Typed owner doors for the production Coach offer pass and its evidence",
      "surface": {
-      "fn": 6,
+      "fn": 8,
       "struct": 8
      }
     },
@@ -50421,7 +50464,7 @@
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 29
      }
     },
     {
@@ -50602,13 +50645,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/anchor.rs",
+     "purpose": "The custody anchor (KS-4, FIX 5685): one lineage's current position, kept where neither the vault's image…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/key_custody/files.rs",
      "purpose": "The local exterior backend: one owner-only directory tree beside the vault root, never inside it, so…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 25
      }
     },
     {
@@ -50618,7 +50671,17 @@
      "path": "src/store/key_custody/fork.rs",
      "purpose": "Restore planning and the fork a copy served beside its source takes (ARCH-0038 #erasure-completeness, \"Key…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/head.rs",
+     "purpose": "The sealed custody head (KS-4, FIX 5685): the latest live entries of one lineage and every retirement fact…",
+     "surface": {
+      "crate-vis": 14
      }
     },
     {
@@ -50628,7 +50691,17 @@
      "path": "src/store/key_custody/identity.rs",
      "purpose": "Typed custody identities and their codecs: who a custody entry belongs to (vault, kind, item, generation)…",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 41
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/log.rs",
+     "purpose": "The keyless custody log (KS-4, FIX 5685) and the local journal it is kept in, beside the vault and outside…",
+     "surface": {
+      "crate-vis": 32
      }
     },
     {
@@ -50638,7 +50711,27 @@
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 27
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/publish.rs",
+     "purpose": "Publishing one lineage's custody (KS-4, FIX 5685): its keyless log, then its latest sealed head, to a…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/recovery.rs",
+     "purpose": "Recovering a lineage's custody from its published head (KS-4, FIX 5685): the requirement a sealed image…",
+     "surface": {
+      "crate-vis": 16
      }
     },
     {
@@ -50648,7 +50741,7 @@
      "path": "src/store/key_custody/retirement.rs",
      "purpose": "Durable retirement intents and the one finisher that carries them out",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -50729,7 +50822,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 1,
       "re-export": 13
      }
@@ -63360,7 +63453,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 62,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -63570,7 +63663,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63605,7 +63698,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 86,
+     "files": 91,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63831,7 +63924,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3932,
+   "source_files": 3940,
    "test_files": 902
   },
   "oneiron-android": {
@@ -75562,7 +75655,7 @@
      "path": "src/ai_host/dreamer.rs",
      "purpose": "The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -75675,7 +75768,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "fn": 22,
       "re-export": 1,
       "struct": 2
@@ -75697,6 +75790,26 @@
      "notable": [],
      "path": "src/ai_host/policy.rs",
      "purpose": "The Dreamer's extraction route: what vault policy must already allow before a pass may send a transcript to…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/question_timer.rs",
+     "purpose": "The hand-off of a bound Dreamer's timer work (OF-506, FIX 1149)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/resident_craft.rs",
+     "purpose": "A resident's craft on the surfaces it speaks on besides its pumped runs (OF-490): a workflow leaf and a wave…",
      "surface": {
       "crate-vis": 5
      }
@@ -75853,6 +75966,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/training_offer/sources.rs",
+     "purpose": "The rows a Coach brief or check is gathered from (FIX 5482), ids only",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/training_pack.rs",
      "purpose": "An owner-authorized training run on the host (OF-577, OF-552)",
      "surface": {
@@ -75946,7 +76069,7 @@
      "path": "src/api/ai/chat/compaction.rs",
      "purpose": "A self agent's chat turn on its own live fork (FIX 4465 D)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -79031,6 +79154,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/openapi/left_slip_paths.rs",
+     "purpose": "A removed device's own routes in the OpenAPI document (OF-150, OF-158, FIX 1300), moved whole out of…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/openapi/mod.rs",
      "purpose": "OpenAPI document assembly for the HTTP API",
      "surface": {
@@ -79054,7 +79187,7 @@
      "path": "src/api/openapi/owner_paths.rs",
      "purpose": "The owner surface in the OpenAPI document (FIX 1755): every `/v1/owner` route, with the SDK row whose input…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -80737,6 +80870,7 @@
       "HostVmArgs",
       "InitArgs",
       "McpArgs",
+      "McpAuthMode",
       "McpSurface",
       "McpTransport",
       "ProvenanceArgs",
@@ -80757,7 +80891,7 @@
      "path": "src/cli.rs",
      "purpose": "—",
      "surface": {
-      "enum": 11,
+      "enum": 12,
       "fn": 3,
       "re-export": 11,
       "struct": 23
@@ -81201,6 +81335,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/mcp_bridge/bridge_auth.rs",
+     "purpose": "Whom `oneiron mcp`'s requests run as (FIX 5540): a paired slip, or the vault's owner himself by the sign-in…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -81256,8 +81400,18 @@
      "path": "src/commands/owner/recovery_kit.rs",
      "purpose": "`oneiron recovery-kit`: the world kit's ceremony on a stopped vault (OF-173), and the kit unlock `oneiron…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/recovery_kit/custody.rs",
+     "purpose": "The kit's side of a custody head (KS-4A1, FIX 5685)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -81285,8 +81439,18 @@
      "path": "src/commands/owner/vault_key.rs",
      "purpose": "The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 12,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/vault_key/fresh_restore.rs",
+     "purpose": "`oneiron restore` where no vault is yet: the restore on a clean host, its key unlocked the way the owner…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -84579,13 +84743,43 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/custody.rs",
+     "purpose": "Custody heads beside the backups (KS-4A1, FIX 5685)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/rehearse.rs",
+     "purpose": "Rehearsals of one vault's backups: restored into a scratch copy beside the live vault, opened, checked and…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/restore.rs",
+     "purpose": "Restores of one vault's backups: over the stopped vault, where no vault is yet, and the activation of the…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -86338,14 +86532,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 54,
+     "files": 57,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 465,
+     "files": 466,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -86415,7 +86609,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 39,
+     "files": 42,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -86674,9 +86868,9 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 27,
+     "files": 30,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`"
     },
@@ -86793,9 +86987,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 56,
+   "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 853,
+   "source_files": 863,
    "test_files": 182
   },
   "oneiron-spawn": {

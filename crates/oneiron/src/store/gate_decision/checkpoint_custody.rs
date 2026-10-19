@@ -340,6 +340,9 @@ pub(crate) struct CheckpointCustody {
     /// retirements it and its live source committed.
     plan: CustodyPlan,
     erased: Vec<(GateDecisionId, [u8; 16])>,
+    /// Rows a new-host restore drops because their keys stayed on the old
+    /// host ([`preflight_absent_custody_rows`]).
+    lost: Vec<(GateDecisionId, [u8; 16])>,
 }
 
 impl CheckpointCustody {
@@ -348,6 +351,63 @@ impl CheckpointCustody {
     pub(crate) fn erased(&self) -> &[(GateDecisionId, [u8; 16])] {
         &self.erased
     }
+
+    /// The rows a new-host restore drops because their keys stayed on the
+    /// old host: its report names them.
+    pub(crate) fn lost(&self) -> &[(GateDecisionId, [u8; 16])] {
+        &self.lost
+    }
+
+    /// Every row the restore drops, erased or lost.
+    pub(crate) fn dropped(&self) -> Vec<(GateDecisionId, [u8; 16])> {
+        self.erased.iter().chain(&self.lost).copied().collect()
+    }
+}
+
+/// CALLS CUSTODY_NO_HEAD_GATE_ROWS (Engine 10-20 04:0x): a new-host restore
+/// of an image that names no custody head, whose custody is not on this
+/// host, drops the claim-bound rows whose keys stayed on the old host and
+/// names them in its report; `false` refuses it as before.
+pub(crate) const CUSTODY_NO_HEAD_GATE_ROWS: bool = true;
+
+/// [`preflight_checkpoint_rows`] for exactly one case: a restore that keeps
+/// the image's custody, of an image that names no custody head (taken
+/// before KS-4), whose custody is not on this host. A row whose key is
+/// missing there is lost, dropped and named, not refused
+/// ([`CUSTODY_NO_HEAD_GATE_ROWS`]); one a committed retirement covers is
+/// erased as before. A missing key anywhere else still refuses.
+pub(crate) fn preflight_absent_custody_rows(
+    rows: &[(Vec<u8>, Vec<u8>)],
+) -> Result<CheckpointCustody> {
+    let bound = key_custody::binding_in_rows(rows)?;
+    let mut plan = CustodyPlan::new(bound.clone(), checkpoint_retirements(rows)?);
+    let mut erased = Vec::new();
+    let mut lost = Vec::new();
+    for (key, value) in rows {
+        if key.starts_with(GATE_DECISION_KEY_PREFIX) && orcb::is_orcb(value) {
+            let id = key
+                .strip_prefix(GATE_DECISION_KEY_PREFIX)
+                .and_then(GateDecisionId::decode_key)
+                .ok_or(Error::CorruptedIndex("gate decision ledger key"))?;
+            let (claim, generation) = orcb::raw_claim_generation(value).ok_or_else(corrupt)?;
+            let custody = LocalCustody::at(bound.as_ref().ok_or_else(corrupt)?);
+            let needed = orcb::claim_subject(custody, &claim)?.at(generation);
+            match plan.require(&needed) {
+                Ok(Requirement::Retired) => erased.push((id, claim)),
+                Ok(Requirement::Live) => {
+                    orcb::decode_hot(custody, id, value)?;
+                }
+                Err(_)
+                    if CUSTODY_NO_HEAD_GATE_ROWS
+                        && custody.state(&needed)? == key_custody::EntryState::Missing =>
+                {
+                    lost.push((id, claim));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    Ok(CheckpointCustody { plan, erased, lost })
 }
 
 /// Authenticate encrypted canonical rows against CURRENT exterior keys before
@@ -395,7 +455,11 @@ pub(crate) fn preflight_checkpoint_rows(
             }
         }
     }
-    Ok(CheckpointCustody { plan, erased })
+    Ok(CheckpointCustody {
+        plan,
+        erased,
+        lost: Vec::new(),
+    })
 }
 
 /// A side restore forks custody into a directory of its own beside

@@ -27,6 +27,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
+use oneiron::attempt_queue::ManifestEntry;
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::conversation::{OutputMark, TurnActionAttempt};
 use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
@@ -472,6 +473,16 @@ fn start_turn(
         .into_iter()
         .map(|text| text_message(LlmMessageRole::System, text))
         .collect();
+    // OF-490: the answering agent is shown its own craft after its
+    // instructions, read on one snapshot; the reply's receipt keeps the
+    // exact pack once the reply is saved. A turn runs on no attempt.
+    let craft = crate::server::blocking(|| {
+        crate::ai_host::resident_craft::snapshot_craft(&vault, &agent, vault.now_recorded_at())
+    })
+    .map(|craft| {
+        crate::ai_host::resident_craft::join_craft(&mut messages, craft.message);
+        craft.entries
+    });
     // FIX 4465 D: a self agent on its live fork reads its log from the
     // retained ledger, as the caller reads it where it sits; every other
     // turn takes the caller's lines as before.
@@ -607,6 +618,8 @@ fn start_turn(
     // A turn in an anonymous off-record session opens and bumps no durable
     // sitting; its witness and stream still bind the key (FIX 5564).
     let signals = sitting::signals_sitting(&vault, &hooked());
+    // A turn that keeps no durable record keeps no craft receipt either.
+    let craft = craft.filter(|_| !verb_hook_boundary::keeps_no_record(&hooked()));
     if signals {
         server.ai.session_hint(session_key, SessionHint::AppOpen);
     }
@@ -682,6 +695,7 @@ fn start_turn(
             breakpoint: self_chat
                 .map(|chat| chat.breakpoint(WriteActor::new(actor, class), locality)),
             today: None,
+            craft,
         },
     )
     .map_err(|refusal| match refusal {
@@ -1070,6 +1084,11 @@ pub(crate) struct Answer {
     /// its reused prefix: sent instead if the captured rung fails before it
     /// speaks.
     pub(crate) today: Option<RoleCall>,
+    /// The craft `admitted` shows with no attempt to stamp it on (OF-490),
+    /// in its order: kept on the reply's receipt once it is saved. `None`
+    /// for a call shown none, a turn that keeps no record, and a turn
+    /// action, whose attempt's manifest names its craft.
+    pub(crate) craft: Option<Vec<ManifestEntry>>,
 }
 
 /// Where a reply is written.
@@ -1111,6 +1130,9 @@ pub(crate) struct AnswerOutcome {
     pub(crate) saved: Option<MessageStreamReceipt>,
     /// The text the stream accepted, which is what was saved.
     pub(crate) text: String,
+    /// Whether a reused prefix's captured rung gave way to the call a turn
+    /// action would always have sent (`today`), which answered instead.
+    pub(crate) fell_back: bool,
 }
 
 /// Opens the reply's stream, admits its run and starts the model call, then
@@ -1132,7 +1154,13 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
         mark,
         breakpoint,
         today,
+        craft,
     } = answer;
+    // The exact request the reply's craft rides in, read before it is sent.
+    let craft = craft.and_then(|entries| {
+        let digest = admitted.request.canonical_hash_hex().ok()?;
+        Some((entries, digest))
+    });
     // Past the vault's message-stream row the stream waits its turn (rule 5),
     // so it waits off the runtime's workers.
     let begun = crate::server::blocking(|| {
@@ -1256,13 +1284,34 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
             },
         );
         let saved = saved.lock().ok().and_then(|mut slot| slot.take());
+        let fell_back = pending
+            .as_ref()
+            .is_some_and(|pending| !pending.answered_live());
         compaction::keep(&landed.0, pending, saved.as_ref());
+        let text = streamed
+            .lock()
+            .map_or_else(|_| String::new(), |text| text.clone());
+        if let (Some((entries, request_digest)), Some(receipt), Some(conversation)) =
+            (craft, saved.as_ref(), container)
+        {
+            keep_reply_craft(
+                &landed.0,
+                ReplyCraft {
+                    agent: landed.1,
+                    session_key,
+                    conversation,
+                    message: receipt.message_id,
+                    entries,
+                    request_digest,
+                    result_digest: oneiron::receipt::call_bytes_digest(text.as_bytes()),
+                },
+            );
+        }
         let _ = finished.send(AnswerOutcome {
             result,
             saved,
-            text: streamed
-                .lock()
-                .map_or_else(|_| String::new(), |text| text.clone()),
+            text,
+            fell_back,
         });
     });
     Ok(Answering {
@@ -1289,6 +1338,35 @@ fn answer_container(vault: &Vault, open: &AnswerOpen) -> Option<EntityId> {
         )
         .ok()
         .flatten()
+}
+
+/// What a saved reply's craft receipt names (OF-490).
+struct ReplyCraft {
+    agent: EntityId,
+    session_key: Option<SessionKey>,
+    conversation: EntityId,
+    message: EntityId,
+    entries: Vec<ManifestEntry>,
+    request_digest: String,
+    result_digest: String,
+}
+
+/// Keeps the craft a saved reply was shown on the receipt spine, as its
+/// answering agent. A receipt that is not kept leaves the reply as saved,
+/// logged.
+fn keep_reply_craft(vault: &Vault, craft: ReplyCraft) {
+    let kept = crate::server::blocking(|| {
+        answer_memory(vault, craft.agent, craft.session_key).record_craft_reply(
+            craft.conversation,
+            craft.message,
+            &craft.entries,
+            craft.request_digest,
+            craft.result_digest,
+        )
+    });
+    if let Err(error) = kept {
+        tracing::warn!(code = %error.code, "a chat reply's craft receipt was not kept");
+    }
 }
 
 pub(crate) fn chat_request(seat: &Seat, messages: Vec<LlmMessage>) -> LlmRequest {

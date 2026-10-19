@@ -2,13 +2,16 @@
 //! future turns. Arming never starts a run: only a turn that lands after it
 //! wakes the program, and disarming it stops every wake not yet admitted.
 
+use std::collections::BTreeSet;
+
 use crate::error::{ArtifactError, ClaimError, Error, Result};
 use crate::registry::ENTITY_TYPE_CONVERSATION;
+use crate::side_table::SideKey;
 use crate::skill::{SkillCallContract, SkillLifecycle, SkillRole};
 use crate::{EntityId, Vault};
 
 use super::authority::TurnProgramAuthority;
-use super::run::scrub_actor_step_bodies_in_txn;
+use super::run::{scrub_actor_step_bodies_in_txn, undecodable_actor_steps_in_txn};
 use super::types::{ArmTurnProgram, ProgramRecipePin, TurnProgramArming, TurnProgramRegistration};
 use super::{ARM, WAKE};
 
@@ -84,24 +87,88 @@ pub(crate) fn disarm_turn_program_in_txn(
 /// An erased actor arms nothing and is owed nothing (FIX 3520): its armings
 /// and the wakes its turns left go in the erase's own writer, and so do the
 /// bodies its programs' steps keep (FIX 5710). Admission receipts, attempt
-/// stamps and each step's evidence stay, as every runner stamp does.
+/// stamps and each step's evidence stay, as every runner stamp does. An
+/// owner's erase never fails on a row that does not decode (FIX 5736): an
+/// arming under the actor's key, a wake keyed to one of its armings and a
+/// step under one of its code runs go whole by key when their rows do not
+/// decode, and the erase's receipt names how many
+/// ([`turn_program_erase_details`]). A row its key does not tie to the
+/// actor stays as it is.
 pub(crate) fn erase_turn_program_actor_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
+    let scope = actor_scope_in_txn(vault, txn, actor)?;
     ARM.delete_from(vault, txn, actor.as_bytes())?;
-    let mut owed = Vec::new();
-    for row in WAKE.iter_from(vault, &*txn, &[])? {
-        let (key, wake) = row?;
-        if wake.authority.actor() == *actor {
-            owed.push(key);
+    for key in &scope.wakes {
+        WAKE.delete(vault, txn, key)?;
+    }
+    scrub_actor_step_bodies_in_txn(vault, txn, actor).map(drop)
+}
+
+/// What an erase of `actor` takes from the arm and wake tables, read on
+/// `txn`: the wakes it owes, and how many of its arming and wake rows do
+/// not decode. A wake is its own by its authority; one that does not decode
+/// is its own when its key names one of its armings.
+struct ActorScope {
+    wakes: Vec<(EntityId, EntityId)>,
+    undecodable: usize,
+}
+
+fn actor_scope_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> Result<ActorScope> {
+    let mut registrations = BTreeSet::new();
+    let mut undecodable = 0;
+    for row in ARM.iter_raw_from(vault, txn, actor.as_bytes())? {
+        let (key, bytes) = row?;
+        let key = <(EntityId, EntityId) as SideKey>::decode_key(&key);
+        if let Some((_, registration)) = key {
+            registrations.insert(registration);
+        }
+        // Every row under its key goes; one that does not decode is counted.
+        if key.is_none() || ARM.decode_value(&bytes).is_err() {
+            undecodable += 1;
         }
     }
-    for key in owed {
-        WAKE.delete(vault, txn, &key)?;
+    let mut wakes = Vec::new();
+    for row in WAKE.iter_raw_from(vault, txn, &[])? {
+        let (key, bytes) = row?;
+        let Some(key) = <(EntityId, EntityId) as SideKey>::decode_key(&key) else {
+            continue;
+        };
+        match WAKE.decode_value(&bytes) {
+            Ok(wake) if wake.authority.actor() == *actor => wakes.push(key),
+            Ok(_) => {}
+            Err(_) if registrations.contains(&key.1) => {
+                undecodable += 1;
+                wakes.push(key);
+            }
+            Err(_) => {}
+        }
     }
-    scrub_actor_step_bodies_in_txn(vault, txn, actor)
+    Ok(ActorScope { wakes, undecodable })
+}
+
+/// The detail an erase of `actor` names on its receipt (FIX 5736): how many
+/// of its turn-program rows do not decode, which its purge removes whole.
+/// None when every row decodes, so a clean erase's receipt is as it was.
+///
+/// # Errors
+///
+/// Storage errors, and a stamp whose admission names no code run.
+pub(crate) fn turn_program_erase_details(vault: &Vault, actor: &EntityId) -> Result<Vec<String>> {
+    let txn = vault.store.env.read_txn()?;
+    let removed = actor_scope_in_txn(vault, &txn, actor)?.undecodable
+        + undecodable_actor_steps_in_txn(vault, &txn, actor)?;
+    Ok(if removed == 0 {
+        Vec::new()
+    } else {
+        vec![format!("turn_program.undecodable_rows_removed:{removed}")]
+    })
 }
 
 /// Whether the SKILL `pin` names still is the program pinned: the same

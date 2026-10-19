@@ -5,6 +5,7 @@ mod booking_schemas;
 mod descriptions;
 mod endpoints_merge;
 mod facade_paths;
+mod left_slip_paths;
 mod openai_proxy_paths;
 mod owner_paths;
 mod security;

@@ -10,9 +10,10 @@
 
 use super::coach::{CoachInput, CoachStep, PeriodRecord, weave_digest_coach_step};
 use super::settings::{
-    CHANGES, OWNER_TAG, SCHEDULES, SETTINGS, SettingsEdit, StoredFeedback, WeaveDigestFeedback,
-    WeaveDigestSettingChange, WeaveDigestSettingChangeStatus as Status, WeaveDigestSettings,
-    owner_changes_in_txn, owner_periods_in_txn, owner_wire_in_txn,
+    CHANGES, OWNER_TAG, SCHEDULES, SETTINGS, SettingsEdit, SettingsRow, StoredFeedback,
+    WeaveDigestFeedback, WeaveDigestSettingChange, WeaveDigestSettingChangeStatus as Status,
+    WeaveDigestSettings, owner_changes_in_txn, owner_periods_in_txn, owner_wire_in_txn,
+    settings_row_in_txn,
 };
 use super::{WEAVE_DIGEST_NOTIFICATION_PRODUCER, WireSchedule, invalid};
 use crate::consent::AuthenticatedOwner;
@@ -119,6 +120,66 @@ fn evaluation_due(last_evaluated_at: Option<u64>, now: u64) -> bool {
     last_evaluated_at.is_none_or(|at| now >= at.saturating_add(WEAVE_DIGEST_COACH_EVERY_SECS))
 }
 
+/// Retires the part of the owner's feedback `change` answered, once it
+/// settled applied, accepted or declined (FIX 5632): the rhythm it set, or
+/// the section it led with, when he asked for it before the change was
+/// made. Feedback that then asks for nothing is retired whole; the rest
+/// stays for the Coach's next proposal. `true` when anything was retired.
+fn retire_answered_feedback(row: &mut SettingsRow, change: &WeaveDigestSettingChange) -> bool {
+    let Some(feedback) = row.feedback.as_mut() else {
+        return false;
+    };
+    if feedback.given_at > change.created_at {
+        return false;
+    }
+    match step_of(change) {
+        Some(CoachStep::Cadence(cadence)) if feedback.preferred_cadence == Some(cadence) => {
+            feedback.preferred_cadence = None;
+        }
+        Some(CoachStep::Lead(kind)) if feedback.lead_section == Some(kind) => {
+            feedback.lead_section = None;
+        }
+        _ => return false,
+    }
+    if feedback.preferred_cadence.is_none()
+        && feedback.lead_section.is_none()
+        && !feedback.keep_current
+    {
+        row.feedback = None;
+    }
+    true
+}
+
+/// The owner's notice about `change`: an ask while it is pending, else a
+/// settings-changed notice whose one tap is its undo. Its id derives from
+/// its producer and event, so the same event finds the same row.
+fn setting_change_event(
+    owner: EntityId,
+    change: &WeaveDigestSettingChange,
+    kind: NotificationKind,
+    now: u64,
+) -> NotificationEvent {
+    let what = if kind == NotificationKind::Ask {
+        "proposed"
+    } else {
+        "changed"
+    };
+    NotificationEvent {
+        kind,
+        source: NotificationSource {
+            producer: WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER.to_owned(),
+            event: format!("{}:{what}", change.change_ref),
+            result: Some(change.change_ref.clone()),
+            detail: Some(change.reason.clone()),
+            ..NotificationSource::default()
+        },
+        subject_refs: Vec::new(),
+        recipient: Some(owner),
+        created_at: now,
+        origin_conversation: None,
+    }
+}
+
 impl Vault {
     /// The Coach's pass over every Owner schedule, from the digest timer on
     /// the home node after it served (FIX 5495). Each owner is evaluated in
@@ -172,13 +233,14 @@ impl Vault {
     fn coach_owner_weave_digest(&self, owner: EntityId, now: u64) -> Result<bool> {
         {
             let txn = self.store.env.read_txn()?;
-            let settings = SETTINGS.get(&self.store, &txn, &owner)?.unwrap_or_default();
+            let settings = settings_row_in_txn(&self.store, &txn, owner)?;
             if !evaluation_due(settings.last_evaluated_at, now) {
                 return Ok(false);
             }
         }
         self.with_write_txn_grouped(|txn| {
-            let mut settings = SETTINGS.get(&self.store, txn, &owner)?.unwrap_or_default();
+            // A row that no longer decodes is rebuilt here (FIX 5633).
+            let mut settings = settings_row_in_txn(&self.store, txn, owner)?;
             if !evaluation_due(settings.last_evaluated_at, now) {
                 return Ok(false);
             }
@@ -257,6 +319,7 @@ impl Vault {
             change.after_generation = Some(generation);
             change.settled_at = Some(now);
             CHANGES.put(&self.store, txn, &(owner, id), &change)?;
+            self.retire_answered_feedback_in_txn(txn, owner, &change)?;
             self.notify_setting_change_in_txn(
                 txn,
                 owner,
@@ -320,10 +383,77 @@ impl Vault {
         };
         let key = owner.to_hex();
         let period = scheduled_for.to_string();
-        Ok(body.source.producer == WEAVE_DIGEST_NOTIFICATION_PRODUCER
-            && body.recipient.as_deref() == Some(key.as_str())
-            && body.source.result.as_deref() == Some(period.as_str())
-            && body.acked_by.get(&key) == Some(&true))
+        if body.source.producer != WEAVE_DIGEST_NOTIFICATION_PRODUCER
+            || body.recipient.as_deref() != Some(key.as_str())
+            || body.source.result.as_deref() != Some(period.as_str())
+        {
+            return Ok(false);
+        }
+        Ok(self
+            .owner_ack_keys_in_txn(txn, owner)?
+            .iter()
+            .any(|key| body.acked_by.get(key) == Some(&true)))
+    }
+
+    /// The actor keys the owner acknowledges his own notices under (FIX
+    /// 5630): his own key, and on a personal vault, of which the embedded
+    /// owner is the one owner, the host's own-device lane he reads through.
+    fn owner_ack_keys_in_txn(&self, txn: &heed::RoTxn<'_>, owner: EntityId) -> Result<Vec<String>> {
+        let mut keys = vec![owner.to_hex()];
+        let embedded = crate::vault::embedded_owner_actor_id()?;
+        if embedded != owner && crate::policy_model::owners_in_txn(self, txn)? == [embedded] {
+            keys.push(embedded.to_hex());
+        }
+        Ok(keys)
+    }
+
+    /// Settles the owner's ask about `change` once it left pending (FIX
+    /// 5631): seen and acked for him, it stays in his inbox as answered,
+    /// never as one still waiting on him. An ask already acked, or deleted,
+    /// stays as it is.
+    pub(super) fn settle_weave_setting_ask_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: EntityId,
+        change: &WeaveDigestSettingChange,
+    ) -> Result<()> {
+        // Its own event finds its row untouched, as a replay does.
+        let ask = self.record_notification_in_txn(
+            txn,
+            &setting_change_event(owner, change, NotificationKind::Ask, change.created_at),
+        )?;
+        let crate::vault::LiveEntityRow::Live { entity_type, body } =
+            crate::vault::live_entity_row_in_txn(&self.store, &*txn, &ask)?
+        else {
+            return Ok(());
+        };
+        if entity_type != crate::registry::ENTITY_TYPE_NOTIFICATION {
+            return Ok(());
+        }
+        let mut body = crate::inbox::decode_notification_body(&body)?;
+        let key = owner.to_hex();
+        if body.acked_by.get(&key) == Some(&true) {
+            return Ok(());
+        }
+        body.seen_by.insert(key.clone(), true);
+        body.acked_by.insert(key, true);
+        self.put_notification_in_txn(txn, &ask, &body)?;
+        Ok(())
+    }
+
+    /// [`retire_answered_feedback`] on the owner's settings row, in the
+    /// settling write.
+    fn retire_answered_feedback_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: EntityId,
+        change: &WeaveDigestSettingChange,
+    ) -> Result<()> {
+        let mut row = settings_row_in_txn(&self.store, txn, owner)?;
+        if retire_answered_feedback(&mut row, change) {
+            SETTINGS.put(&self.store, txn, &owner, &row)?;
+        }
+        Ok(())
     }
 
     /// The owner's notice about `change`: an ask while it is pending, else a
@@ -336,29 +466,8 @@ impl Vault {
         kind: NotificationKind,
         now: u64,
     ) -> Result<()> {
-        let what = if kind == NotificationKind::Ask {
-            "proposed"
-        } else {
-            "changed"
-        };
-        self.record_notification_in_txn(
-            txn,
-            &NotificationEvent {
-                kind,
-                source: NotificationSource {
-                    producer: WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER.to_owned(),
-                    event: format!("{}:{what}", change.change_ref),
-                    result: Some(change.change_ref.clone()),
-                    detail: Some(change.reason.clone()),
-                    ..NotificationSource::default()
-                },
-                subject_refs: Vec::new(),
-                recipient: Some(owner),
-                created_at: now,
-                origin_conversation: None,
-            },
-        )
-        .map(drop)
+        self.record_notification_in_txn(txn, &setting_change_event(owner, change, kind, now))
+            .map(drop)
     }
 
     /// The owner's own digest settings changes, newest first (FIX 5495).
@@ -410,12 +519,11 @@ impl Vault {
                     stored.status = Status::Declined;
                     stored.settled_at = Some(now);
                     CHANGES.put(&self.store, txn, &key, &stored)?;
+                    self.settle_weave_setting_ask_in_txn(txn, actor, &stored)?;
+                    self.retire_answered_feedback_in_txn(txn, actor, &stored)?;
                     return Ok((Ok(stored), false));
                 }
-                let generation = SETTINGS
-                    .get(&self.store, txn, &actor)?
-                    .unwrap_or_default()
-                    .generation;
+                let generation = settings_row_in_txn(&self.store, txn, actor)?.generation;
                 let current = owner_wire_in_txn(&self.store, txn, actor)?.filter(|wire| {
                     generation == stored.base_generation && settings_of(wire) == stored.before
                 });
@@ -424,6 +532,7 @@ impl Vault {
                     stored.status = Status::Superseded;
                     stored.settled_at = Some(now);
                     CHANGES.put(&self.store, txn, &key, &stored)?;
+                    self.settle_weave_setting_ask_in_txn(txn, actor, &stored)?;
                     return Ok((Err(STALE_ACCEPT), false));
                 };
                 if !take_step(&mut wire, step) {
@@ -441,6 +550,8 @@ impl Vault {
                 stored.after_generation = Some(after);
                 stored.settled_at = Some(now);
                 CHANGES.put(&self.store, txn, &key, &stored)?;
+                self.settle_weave_setting_ask_in_txn(txn, actor, &stored)?;
+                self.retire_answered_feedback_in_txn(txn, actor, &stored)?;
                 self.notify_setting_change_in_txn(
                     txn,
                     actor,
@@ -485,10 +596,7 @@ impl Vault {
                     return Err(Error::InvalidConfig(NOT_UNDOABLE.to_owned()));
                 }
             }
-            let generation = SETTINGS
-                .get(&self.store, txn, &actor)?
-                .unwrap_or_default()
-                .generation;
+            let generation = settings_row_in_txn(&self.store, txn, actor)?.generation;
             let Some(mut wire) = owner_wire_in_txn(&self.store, txn, actor)?.filter(|wire| {
                 stored.after_generation == Some(generation) && settings_of(wire) == stored.after
             }) else {
@@ -537,7 +645,7 @@ impl Vault {
             {
                 return Err(Error::InvalidConfig(LEAD_NOT_IN_RECIPE.to_owned()));
             }
-            let mut settings = SETTINGS.get(&self.store, txn, &actor)?.unwrap_or_default();
+            let mut settings = settings_row_in_txn(&self.store, txn, actor)?;
             settings.feedback = Some(StoredFeedback {
                 preferred_cadence: feedback.preferred_cadence,
                 lead_section: feedback.lead_section,
