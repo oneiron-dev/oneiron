@@ -133,10 +133,16 @@ fn transport_memory<'a>(
     if let Some(instrument) = auth.and_then(verb_ask_instrument) {
         memory = memory.with_credential_instrument(instrument);
     }
-    if auth.is_some() {
+    if let Some(auth) = auth {
         // Only this host verifies the credential again, so a verb hook's
         // settlement never runs this caller's call without it.
         memory = memory.for_credential();
+        // The machine the request's connection proved rides beside the
+        // locality a door reads at, so an off-device read is judged for that
+        // machine, not an unknown one (mesh PR2b). It names nothing on this
+        // device, and nothing when no proof stood.
+        let proved = oneiron::settings::ReadDestination::proved(auth.peer());
+        memory = memory.for_destination(&proved);
     }
     if let Some(auth) = auth
         && let Some(session) = auth.off_record_session()

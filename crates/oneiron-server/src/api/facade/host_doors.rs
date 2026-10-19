@@ -50,6 +50,7 @@ use crate::server::{MediaRefusal, SyncServer};
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::artifact_hosting_doors::*;
 pub(crate) use super::authority_history_doors::*;
+pub(crate) use super::deck_creation_doors::*;
 // The run-bound board STREAM doors (DOOR-121), likewise.
 pub(crate) use super::board_stream_doors::*;
 pub(crate) use super::booking_doors::*;
@@ -81,12 +82,13 @@ pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
-pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_catalog_doors::*;
+pub(crate) use super::model_step_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 pub(crate) use super::run_review_doors::*;
 pub(crate) use super::sieve_observation_doors::*;
+pub(crate) use super::skill_attribution_doors::*;
 pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -140,6 +142,7 @@ pub(crate) use super::secret_lift_doors::*;
 pub(crate) use super::wave_doors::*;
 // The owner's context-widen proposal doors (OF-568), likewise.
 pub(crate) use super::widen_proposal_doors::*;
+pub(crate) use super::wire_health_doors::*;
 // The owner's craft-candidate review doors (OF-490), likewise.
 pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
@@ -191,6 +194,7 @@ pub(crate) use super::project_card_doors::*;
 pub(crate) use super::claim_settle_doors::*;
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;
+pub(crate) use super::critical_confirm_doors::*;
 // The owner's sieve interest-queue, policy and lease doors (DOOR-130), likewise.
 pub(crate) use super::sieve_doors::*;
 // The owner's standing-block and dreaming-choice doors (DOOR-134), likewise.
@@ -1232,6 +1236,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.pack_receipt"
         | "vault.skills.outcomes.project"
         | "vault.skills.outcomes.get"
+        | "vault.skills.attribution.settle"
+        | "vault.skills.attribution.read"
+        | "vault.skills.attribution.evidence.record"
+        | "vault.skills.attribution.project"
+        | "vault.skills.attribution.judgments"
+        | "vault.skills.attribution.proposals"
+        | "vault.skills.attribution.positive.retire"
         | "vault.packs.hooks.bind"
         | "vault.packs.hooks.list"
         | "vault.packs.hooks.grant.set"
@@ -1288,6 +1299,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.hyde.configure"
         | "vault.retrieval.hyde.get"
         | "vault.affect.claims.consolidate"
+        | "vault.wire_health.thresholds.get"
+        | "vault.wire_health.thresholds.set"
         | "vault.affect.coping.record"
         | "vault.affect.coping.update"
         | "vault.affect.coping.aggregate"
@@ -1310,6 +1323,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.trace"
         | "vault.retrieval.export"
         | "vault.retrieval.replay"
+        | "vault.retrieval.policy.get"
+        | "vault.retrieval.policy.pin"
+        | "vault.retrieval.policy.train"
+        | "vault.retrieval.policy.evaluate"
+        | "vault.retrieval.policy.admit"
+        | "vault.retrieval.policy.update"
         | "vault.learning.read"
         | "vault.learning.projection"
         | "vault.seal.confess"
@@ -1333,6 +1352,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.reports.disclosure"
         | "vault.reports.route"
         | "vault.reports.outbound"
+        | "vault.writes.critical_confirm.pending"
+        | "vault.writes.critical_confirm.clear"
+        | "vault.writes.critical_confirm.decline"
+        | "vault.writes.critical_confirm.receipt"
         | "vault.claims.review"
         | "vault.claims.settle"
         | "vault.claims.vet"
@@ -1396,6 +1419,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.consent.create_standing_grant"
         | "vault.consent.registry"
         | "vault.consent.revoke"
+        | "vault.consent.bypass_grant_warning"
+        | "vault.consent.create_bypass_grant"
+        | "vault.consent.active_bypass_grants"
+        | "vault.consent.bypassed_effect_receipts"
         | "vault.consent.graduation.policy"
         | "vault.consent.graduation.policy.set"
         | "vault.consent.graduation.policy.clear"
@@ -1520,6 +1547,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
         | "vault.code.checkout.bind"
+        | "vault.artifacts.keep_outline"
+        | "vault.artifacts.decline_outline"
         | "vault.artifacts.publish_approval"
         | "vault.artifacts.publish"
         | "vault.artifacts.repoint"
