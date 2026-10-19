@@ -146,6 +146,56 @@ A raw curl call with a bearer alone is not equivalent: it lacks the fresh
 holder proof. The script is the complete HTTP client example; no crypto SDK
 or hand-written signature code is required.
 
+## Owner mode: MCP as the vault's owner
+
+Everything above connects an agent with its own delegated credential, the
+paired slip `token agent` mints for that agent's grant. That remains the way
+to connect an agent. `oneiron mcp` also has a separate owner mode, for the
+vault's owner himself, when a surface he has signed in on issues his sign-in
+for that vault:
+
+```sh
+oneiron mcp --url https://<vault-host> --auth-mode owner \
+  --owner-upgrade-headers-file /absolute/path/to/owner-upgrade-headers.json
+```
+
+- **The file** holds one JSON object of header names to text values, exactly
+  as the issuing surface wrote it: `{"<header name>": "<value>", ...}`. For a
+  managed vault it is the human sign-in the vault's proxy already honours;
+  the proxy then attests the owner to his vault itself. The bridge sends
+  these headers on the socket's upgrade in place of a slip and holder proof,
+  and its calls carry no holder proof.
+- **Owner-only:** only its owner may be able to read the file (mode `0600`,
+  no ACL entry). The bridge checks this at spawn and again before every new
+  socket, and refuses a group- or world-readable file, saying so.
+- **Refresh:** the file is read again for every new socket, so the issuer can
+  replace an expired sign-in in place (write a new file, then rename it over
+  the old one). An open socket keeps the identity it opened with.
+- **Refused headers:** the file may not name `Host`, the upgrade's framing and
+  hop-by-hop headers (`Connection`, `Upgrade`, any `Sec-WebSocket-*`,
+  `Content-Length`, `Transfer-Encoding`, `TE`, `Trailer`, `Keep-Alive`,
+  `Proxy-Connection`, `Proxy-Authenticate`, `Proxy-Authorization`), a slip's
+  holder proof `x-oneiron-binding`, an MCP connector credential
+  `x-oneiron-mcp-credential`, or the supervisor attestations
+  `x-oneiron-managed-owner-action` and `x-oneiron-managed-widen-action`, which
+  only the vault's proxy makes after checking his sign-in. Nor may any value
+  carry a slip (`v2.slip.` or `v2.cred.`). Such a file is refused whole, by
+  the header's name; no value is ever printed.
+- **No slip beside it:** `--credential-file`, or a value in the variables
+  `--secret-env` and `--binding-key-env` name (`ONEIRON_SECRET` and
+  `ONEIRON_BINDING_KEY` by default), is refused in owner mode. Unset them, or
+  set them empty, for the bridge's process.
+- **Socket only:** owner mode rides the server's socket alone; `--transport
+  http` is refused and nothing falls back to HTTP. A refused or unreadable
+  sign-in is `mcp_auth_required`: sign in again on the issuing surface so it
+  rewrites the file. A server that offers no MCP socket is
+  `mcp_socket_unavailable`.
+- **Issuer required:** Oneiron itself does not mint or refresh this file.
+  Something the owner signs in on (a console, or the identity tooling in
+  front of his vault) must write it and replace it before the sign-in
+  expires. Without such an issuer, owner mode has nothing to send; connect
+  with an agent credential as above.
+
 ## Stop, restart, and repair
 
 - **Stop:** run the printed `kill <pid>` command. Vault data remains in the
@@ -170,7 +220,9 @@ or hand-written signature code is required.
   the same vault. `auth_secret` is an issuer key, **not** a bearer token.
   For an expired/revoked slip, stop this vault, run `token agent` with the same
   name/tier/config and a new `--out` file, restart, and update the client path.
-  The latest mint for a name revokes that name's previous slips.
+  The latest mint for a name revokes that name's previous slips. In owner
+  mode, minting a slip does not help: sign in again on the surface that
+  wrote `--owner-upgrade-headers-file`.
 - **`proof_clock_ahead`:** follow the clock-specific recovery instructions in
   [owner actions](ops/owner-actions.md#agents-refused-after-the-host-clock-ran-ahead),
   rather than repeatedly replacing credentials.

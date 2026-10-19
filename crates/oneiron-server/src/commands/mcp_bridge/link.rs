@@ -17,8 +17,14 @@
 //! its own deadline, idle limit and byte limit, whatever else the connection
 //! carries. A revoked slip is refused on its next request, and the server
 //! drops a socket whose slip it finds revoked.
+//!
+//! In owner mode (FIX 5540) the socket is the only carrier: each upgrade
+//! carries the owner's sign-in, read afresh from its file, in place of the
+//! slip and its proof; his calls name no proof; and a request the socket
+//! cannot take gets a typed auth or unavailable error, never HTTP.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -32,6 +38,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::{self, Message};
 
+use super::bridge_auth::UpgradeHeaders;
 use crate::cli::{McpSurface, McpTransport};
 
 /// How long opening the socket may take, inside the request's own deadline.
@@ -62,6 +69,7 @@ pub(super) struct Exchange {
 }
 
 /// Why a request ended without a whole answer.
+#[derive(Clone)]
 pub(super) enum Cut {
     /// No answer at all: the server could not be reached, or the exchange broke.
     Failed(String),
@@ -73,6 +81,12 @@ pub(super) enum Cut {
     TooLarge,
     /// The server closed the socket because the credential was revoked.
     Revoked(String),
+    /// The owner's sign-in was not taken: the server refused his upgrade
+    /// (HTTP 401 or 403), or his headers file was not admitted.
+    Unauthorized(String),
+    /// The server offers the owner no MCP socket, and owner mode has no
+    /// other carrier.
+    Unavailable(String),
 }
 
 /// The bounds on one request.
@@ -85,11 +99,17 @@ pub(super) struct Bounds {
     pub(super) max_reply_bytes: usize,
 }
 
-/// The credential every request carries: the slip, and a signer that makes a
-/// fresh holder proof for one request each time it is called.
-pub(super) struct Credential<'a> {
-    pub(super) bearer: &'a str,
-    pub(super) sign: &'a dyn Fn() -> Result<String, String>,
+/// The credential every request carries.
+pub(super) enum Credential<'a> {
+    /// The slip, and a signer that makes a fresh holder proof for one request
+    /// each time it is called.
+    Slip {
+        bearer: &'a str,
+        sign: &'a dyn Fn() -> Result<String, String>,
+    },
+    /// The owner's sign-in: the file of upgrade headers it is read from for
+    /// each new socket. His calls name no holder proof.
+    Owner { headers_file: &'a Path },
 }
 
 /// The bridge's connection: the socket while the server offers it, else one
@@ -136,14 +156,16 @@ impl Link {
                 Err(Carried::Unsent) => {}
             }
         }
-        let binding = (credential.sign)().map_err(Cut::Failed)?;
-        self.http.post(
-            &self.endpoint(surface),
-            credential.bearer,
-            &binding,
-            body,
-            bounds,
-        )
+        // The owner's sign-in is attested for a socket upgrade alone: owner
+        // mode never posts over HTTP.
+        let Credential::Slip { bearer, sign } = credential else {
+            return Err(Cut::Unavailable(
+                "owner mode carries MCP over the server's socket alone".to_owned(),
+            ));
+        };
+        let binding = sign().map_err(Cut::Failed)?;
+        self.http
+            .post(&self.endpoint(surface), bearer, &binding, body, bounds)
     }
 }
 
@@ -254,9 +276,32 @@ struct SocketState {
     opening: bool,
     /// The server has no MCP carrier: every request goes over HTTP.
     declined: bool,
-    /// How many opens have failed in a row, and when the next may start.
+    /// How many opens have failed in a row, when the next may start, and
+    /// what the last one ended with.
     failures: u32,
     retry_at: Option<Instant>,
+    last_failure: Option<Cut>,
+}
+
+impl SocketState {
+    /// Notes an open that ended with `cut`, starting its backoff, and hands
+    /// `cut` back.
+    fn failed(&mut self, cut: Cut) -> Cut {
+        let backoff = SOCKET_REOPEN_BACKOFF
+            .saturating_mul(2_u32.saturating_pow(self.failures.min(16)))
+            .min(SOCKET_REOPEN_BACKOFF_CAP);
+        self.failures = self.failures.saturating_add(1);
+        self.retry_at = Some(Instant::now() + backoff);
+        self.last_failure = Some(cut.clone());
+        cut
+    }
+
+    /// What the last failed open ended with.
+    fn last_cut(&self) -> Cut {
+        self.last_failure
+            .clone()
+            .unwrap_or_else(|| Cut::Failed("the MCP socket could not be opened".to_owned()))
+    }
 }
 
 /// One open socket: requests reach its driver through here.
@@ -290,9 +335,15 @@ enum Opened {
     Session(Arc<Session>),
     /// The server has no MCP carrier.
     Declined(String),
+    /// The owner's sign-in was not taken (owner mode only).
+    Refused(String),
     /// It could not be opened this time.
-    Failed,
+    Failed(String),
 }
+
+/// Why a request handed to the socket never reached the server.
+const SOCKET_ENDED_UNSENT: &str =
+    "the MCP socket ended before this request was written to it; it did not run";
 
 /// Speaks the own-link codec frame (ARCH-0081 §7): the server's hello gate
 /// reads the codec list the hello below carries.
@@ -323,22 +374,34 @@ impl SocketLink {
         body: &[u8],
         bounds: &Bounds,
     ) -> Result<Exchange, Carried> {
+        // The owner has no other carrier: what a slip sends over HTTP fails.
+        let owner = matches!(credential, Credential::Owner { .. });
+        let unsent = move |cut: Cut| {
+            if owner {
+                Carried::Cut(cut)
+            } else {
+                Carried::Unsent
+            }
+        };
         let Ok(body) = std::str::from_utf8(body) else {
-            return Err(Carried::Unsent);
+            return Err(unsent(Cut::Failed("the message is not UTF-8".to_owned())));
         };
-        let Some(session) = self.session(credential, bounds.until) else {
-            return Err(Carried::Unsent);
+        let session = self.session(credential, bounds.until).map_err(unsent)?;
+        let binding = match credential {
+            Credential::Slip { sign, .. } => {
+                Some(sign().map_err(|error| Carried::Cut(Cut::Failed(error)))?)
+            }
+            Credential::Owner { .. } => None,
         };
-        let binding = (credential.sign)().map_err(|error| Carried::Cut(Cut::Failed(error)))?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let frame = request_frame(id, surface, &binding, body).map_err(Carried::Cut)?;
+        let frame = request_frame(id, surface, binding.as_deref(), body).map_err(Carried::Cut)?;
         let (chunks, mut answer) = mpsc::unbounded_channel();
         if session
             .outbound
             .send(Outbound { id, frame, chunks })
             .is_err()
         {
-            return Err(Carried::Unsent);
+            return Err(unsent(Cut::Failed(SOCKET_ENDED_UNSENT.to_owned())));
         }
         self.runtime.block_on(async move {
             let deadline = tokio::time::Instant::from_std(bounds.until);
@@ -351,7 +414,9 @@ impl SocketLink {
                         return Err(Carried::Cut(Cut::Idle));
                     }
                     Err(_) => return Err(Carried::Cut(Cut::Deadline)),
-                    Ok(Some(Inbound::Unsent)) => return Err(Carried::Unsent),
+                    Ok(Some(Inbound::Unsent)) => {
+                        return Err(unsent(Cut::Failed(SOCKET_ENDED_UNSENT.to_owned())));
+                    }
                     Ok(Some(Inbound::Closed(why))) => return Err(Carried::Cut(Cut::Failed(why))),
                     Ok(Some(Inbound::Revoked(why))) => return Err(Carried::Cut(Cut::Revoked(why))),
                     Ok(None) => {
@@ -387,39 +452,42 @@ impl SocketLink {
         })
     }
 
-    /// The open socket, opening one when there is none. `None` sends this
-    /// request over HTTP: the server has no MCP carrier, the socket could not
-    /// be opened by `until`, or a failed open's backoff is still running.
-    /// Requests that arrive during an open wait for it, each no longer than
-    /// its own deadline, and share its outcome.
-    fn session(&self, credential: &Credential<'_>, until: Instant) -> Option<Arc<Session>> {
+    /// The open socket, opening one when there is none. An error sends a
+    /// slip's request over HTTP, and is an owner's request's own: the server
+    /// has no MCP carrier, the socket could not be opened by `until`, or a
+    /// failed open's backoff is still running (that open's error). Requests
+    /// that arrive during an open wait for it, each no longer than its own
+    /// deadline, and share its outcome.
+    fn session(&self, credential: &Credential<'_>, until: Instant) -> Result<Arc<Session>, Cut> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let joined = state.failures;
         loop {
             if state.declined {
-                return None;
+                return Err(Cut::Unavailable(
+                    "the server's socket carries no MCP".to_owned(),
+                ));
             }
             if let Some(session) = &state.session
                 && !session.outbound.is_closed()
             {
-                return Some(Arc::clone(session));
+                return Ok(Arc::clone(session));
             }
-            // An open this request waited on failed: it goes over HTTP.
+            // An open this request waited on failed: it shares that failure.
             if state.failures != joined {
-                return None;
+                return Err(state.last_cut());
             }
             if !state.opening {
                 if state
                     .retry_at
                     .is_some_and(|retry_at| Instant::now() < retry_at)
                 {
-                    return None;
+                    return Err(state.last_cut());
                 }
                 break;
             }
             let left = until.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                return None;
+                return Err(Cut::Deadline);
             }
             state = self
                 .opened
@@ -439,48 +507,59 @@ impl SocketLink {
                 state.session = Some(Arc::clone(&session));
                 state.failures = 0;
                 state.retry_at = None;
-                Some(session)
+                state.last_failure = None;
+                Ok(session)
             }
-            Opened::Declined(why) => {
+            Opened::Declined(why) if matches!(credential, Credential::Slip { .. }) => {
                 state.declined = true;
                 eprintln!("oneiron mcp: {why}; holding one pooled HTTP connection instead");
-                None
+                Err(Cut::Unavailable(why))
             }
-            Opened::Failed => {
-                let backoff = SOCKET_REOPEN_BACKOFF
-                    .saturating_mul(2_u32.saturating_pow(state.failures.min(16)))
-                    .min(SOCKET_REOPEN_BACKOFF_CAP);
-                state.failures = state.failures.saturating_add(1);
-                state.retry_at = Some(Instant::now() + backoff);
-                None
-            }
+            // The owner has no other carrier: a decline is this request's
+            // error, and a later request asks again after the backoff.
+            Opened::Declined(why) => Err(state.failed(Cut::Unavailable(why))),
+            Opened::Refused(why) => Err(state.failed(Cut::Unauthorized(why))),
+            Opened::Failed(why) => Err(state.failed(Cut::Failed(why))),
         };
         self.opened.notify_all();
         session
     }
 
-    /// One upgrade, signed with its own fresh proof, then the protocol hello.
+    /// One upgrade, carrying the slip with its own fresh proof or the
+    /// owner's sign-in as its file holds it now, then the protocol hello.
     fn open(&self, credential: &Credential<'_>, until: Instant) -> Opened {
-        let Ok(binding) = (credential.sign)() else {
-            return Opened::Failed;
-        };
+        let owner = matches!(credential, Credential::Owner { .. });
         let Ok(mut request) = self.url.as_str().into_client_request() else {
-            return Opened::Failed;
+            return Opened::Failed("the socket URL is not one a client can open".to_owned());
         };
         let headers = request.headers_mut();
-        for (name, value) in [
-            ("authorization", format!("Bearer {}", credential.bearer)),
-            ("x-oneiron-binding", binding),
-            (
-                "sec-websocket-protocol",
-                crate::handler::MCP_SUBPROTOCOL.to_owned(),
-            ),
-        ] {
-            let Ok(value) = value.parse() else {
-                return Opened::Failed;
-            };
-            headers.insert(name, value);
+        match credential {
+            Credential::Slip { bearer, sign } => {
+                let Ok(binding) = sign() else {
+                    return Opened::Failed("the upgrade's holder proof was not signed".to_owned());
+                };
+                for (name, value) in [
+                    ("authorization", format!("Bearer {bearer}")),
+                    ("x-oneiron-binding", binding),
+                ] {
+                    let Ok(value) = value.parse() else {
+                        return Opened::Failed("the slip is not a header value".to_owned());
+                    };
+                    headers.insert(name, value);
+                }
+            }
+            // Read for this upgrade alone, so the surface that wrote it can
+            // replace an expired sign-in; nothing here makes one.
+            Credential::Owner { headers_file } => match UpgradeHeaders::read(headers_file) {
+                Ok(upgrade) => upgrade.apply(headers),
+                Err(refused) => return Opened::Refused(refused.to_string()),
+            },
         }
+        // Set after the owner's headers, which may not name it either.
+        let Ok(protocol) = crate::handler::MCP_SUBPROTOCOL.parse() else {
+            return Opened::Failed("the MCP subprotocol is not a header value".to_owned());
+        };
+        headers.insert("sec-websocket-protocol", protocol);
         let config = WebSocketConfig::default()
             .max_frame_size(Some(SOCKET_MAX_INBOUND_FRAME))
             .max_message_size(Some(SOCKET_MAX_INBOUND_FRAME));
@@ -494,6 +573,16 @@ impl SocketLink {
                     socket,
                     SOCKET_MAX_INBOUND_FRAME,
                 ),
+                // A refused owner sign-in is his auth error, not a decline.
+                Ok(Err(tungstenite::Error::Http(response)))
+                    if owner && matches!(response.status().as_u16(), 401 | 403) =>
+                {
+                    return Opened::Refused(format!(
+                        "the server refused the owner's sign-in on the MCP socket's upgrade \
+                         (HTTP {})",
+                        response.status().as_u16()
+                    ));
+                }
                 Ok(Err(tungstenite::Error::Http(response)))
                     if response.status().is_client_error()
                         && !matches!(response.status().as_u16(), 408 | 429) =>
@@ -508,11 +597,14 @@ impl SocketLink {
                 ))) => {
                     return Opened::Declined("the server's socket carries no MCP".to_owned());
                 }
-                Ok(Err(_)) | Err(_) => return Opened::Failed,
+                Ok(Err(error)) => {
+                    return Opened::Failed(format!("the MCP socket did not open: {error}"));
+                }
+                Err(_) => return Opened::Failed("the MCP socket did not open in time".to_owned()),
             };
             let hello = oneiron::sync::transport::encode_protocol_hello();
-            if socket.send(Message::Binary(hello.into())).await.is_err() {
-                return Opened::Failed;
+            if let Err(error) = socket.send(Message::Binary(hello.into())).await {
+                return Opened::Failed(format!("the MCP socket broke at its hello: {error}"));
             }
             let (outbound, requests) = mpsc::unbounded_channel();
             runtime.spawn(drive(socket, requests));
@@ -645,8 +737,14 @@ fn route(
 }
 
 /// One request as an app RPC frame: the server's `mcp` method, carrying the
-/// message as the client wrote it and this request's own proof.
-fn request_frame(id: u64, surface: McpSurface, binding: &str, body: &str) -> Result<Vec<u8>, Cut> {
+/// message as the client wrote it and, for a slip, this request's own proof.
+/// The owner's socket takes no `binding` field at all, not even an empty one.
+fn request_frame(
+    id: u64,
+    surface: McpSurface,
+    binding: Option<&str>,
+    body: &str,
+) -> Result<Vec<u8>, Cut> {
     #[derive(Serialize)]
     struct Request<'a> {
         #[serde(rename = "type")]
@@ -664,7 +762,8 @@ fn request_frame(id: u64, surface: McpSurface, binding: &str, body: &str) -> Res
     #[derive(Serialize)]
     struct Call<'a> {
         surface: &'static str,
-        binding: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        binding: Option<&'a str>,
         body: &'a str,
     }
     let request = Request {

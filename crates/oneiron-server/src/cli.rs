@@ -171,7 +171,8 @@ pub enum Command {
     Api(ApiArgs),
     /// Serve MCP on stdio for an agent that spawns a command (Claude Code,
     /// Codex), forwarding each message to a running server with a paired
-    /// credential and a fresh holder proof.
+    /// credential and a fresh holder proof, or as the vault's owner by the
+    /// sign-in an authenticated surface issued (`--auth-mode owner`).
     Mcp(McpArgs),
     /// Run one agent-harness hook: read the host's event on stdin, bind a
     /// vault (a pin, a running local vault, else start one), recall for the
@@ -757,9 +758,27 @@ pub struct McpArgs {
     /// The one connection the bridge holds. `socket` opens the server's
     /// app-tier socket and sends every message over it, falling back to one
     /// pooled HTTP client when the server offers no MCP carrier; `http` holds
-    /// that HTTP client from the start.
+    /// that HTTP client from the start. Owner mode takes `socket` alone.
     #[arg(long, value_enum, default_value_t = McpTransport::Socket)]
     pub transport: McpTransport,
+
+    /// Whom every request runs as. `slip`, the default, is a paired
+    /// credential from `--credential-file` or the two environment variables
+    /// below, with a holder proof signed for each request. `owner` is the
+    /// vault's owner himself, by the sign-in an authenticated surface wrote
+    /// to `--owner-upgrade-headers-file`: it takes no slip, and rides the
+    /// server's socket alone, with no HTTP fallback.
+    #[arg(long, value_enum, default_value_t = McpAuthMode::Slip)]
+    pub auth_mode: McpAuthMode,
+
+    /// Owner mode's sign-in: a file holding one JSON object of header names
+    /// to text values, which each socket upgrade carries in place of a slip,
+    /// as the surface the owner signed in on wrote it. Only its owner may be
+    /// able to read it. It is read again for every new socket, so that
+    /// surface can refresh it; an open socket keeps the identity it opened
+    /// with.
+    #[arg(long, value_name = "FILE")]
+    pub owner_upgrade_headers_file: Option<PathBuf>,
 
     /// File holding the paired credential, as `token agent --out` writes it.
     /// Only its owner may be able to read it. Without this flag the slip and
@@ -800,6 +819,16 @@ pub enum McpTransport {
     Socket,
     /// One pooled HTTP client.
     Http,
+}
+
+/// Whom `oneiron mcp`'s requests run as.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub enum McpAuthMode {
+    /// A paired slip, with a holder proof signed for each request.
+    Slip,
+    /// The vault's owner, by an authenticated surface's sign-in, over the
+    /// server's socket alone.
+    Owner,
 }
 
 /// The two MCP endpoints a server registers.
