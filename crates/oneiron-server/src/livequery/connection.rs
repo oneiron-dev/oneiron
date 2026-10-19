@@ -674,14 +674,21 @@ impl Connection {
         if !last {
             self.refused.insert(routed.id);
         }
-        // The refusal that replaces the result states the same call receipt.
+        // The refusal that replaces the result is the call's final delivery:
+        // its own receipt row beside the call's, whose ref it states (FIX 814).
+        let error = AppError::result_changed();
         let stamp = envelope.map_or(
             crate::api::call_receipt::CallStamp::Unrecorded,
-            |envelope| envelope.call_stamp(),
+            |envelope| {
+                crate::api::call_receipt::record_delivery_refusal(
+                    self.hub.server.upgrade().as_deref(),
+                    &envelope.call_stamp(),
+                    error.code(),
+                    error.message(),
+                )
+            },
         );
-        super::rpc_error(routed.id, AppError::result_changed(), &stamp)
-            .ok()?
-            .pop()
+        super::rpc_error(routed.id, error, &stamp).ok()?.pop()
     }
 
     /// Whether a queued body stays on this device: see [`Self::release`].
