@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 988 facade rows, 3381 declarations.
-Inputs: 931 of 988 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 890 of 988 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 995 facade rows, 3403 declarations.
+Inputs: 938 of 995 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 897 of 995 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -4771,6 +4771,103 @@ class ConnectorPackGrantsPutRequest(TypedDict):
     rows: list[ConnectorPackGrantRow]
 class PackRemoveRequest(TypedDict):
     pack: str
+SectionId = str
+class SectionManifestProvenance(TypedDict):
+    pack_id: str
+    skill_id: str
+    skill_version: str
+    content_hash_hex: str
+class SectionManifest(TypedDict):
+    section_id: SectionId
+    name: str
+    state_family: StateFamilyRef
+    verbs: list[SectionVerbRef]
+    authority_lane: AuthorityLaneRef
+    budget_policy: BudgetPolicyRef
+    provenance: SectionManifestProvenance
+class SectionManifestEnvelope(TypedDict):
+    schema_version: int
+    manifest: SectionManifest
+class PluginSectionTargetInputExistingSkill(TypedDict):
+    kind: Literal["existing_skill"]
+    skill_ref: EntityId
+class PluginSectionTargetInputHubPackage(TypedDict):
+    kind: Literal["hub_package"]
+    hub_ref: HubRef
+    target_skill_ref: EntityId
+PluginSectionTargetInput = PluginSectionTargetInputExistingSkill | PluginSectionTargetInputHubPackage
+class PluginSectionProposeRequest(TypedDict):
+    manifest: SectionManifestEnvelope
+    target: PluginSectionTargetInput
+    turn_ref: str
+class PluginSectionProposal(TypedDict):
+    claim_ref: str
+    pending_ref: str
+    manifest_digest: str
+    section_id: str
+    manifest: SectionManifestEnvelope
+class PluginSectionListRequest(TypedDict):
+    limit: NotRequired[int | None]
+class PluginSectionPendingRow(TypedDict):
+    claim_ref: str
+    pack_id: str
+    section_id: str
+    label: str
+    origin: str
+    awaiting_owner_consent: bool
+class PluginSectionAdmittedRow(TypedDict):
+    claim_ref: str
+    section_id: str
+    manifest: SectionManifestEnvelope
+class PluginSectionPackRow(TypedDict):
+    section_id: str
+    pack_name: str
+    source_id: str
+    content_hash: str
+    section: PackSection
+class PluginSectionsView(TypedDict):
+    pending: list[PluginSectionPendingRow]
+    admitted: list[PluginSectionAdmittedRow]
+    pack_sections: list[PluginSectionPackRow]
+    rendered_pack_sections: list[str]
+class PluginSectionGrantRequest(TypedDict):
+    claim_ref: str
+    review_id: NotRequired[str | None]
+PluginSectionGrantState = Literal["admitted", "pending_activation"]
+class PluginSectionGrant(TypedDict):
+    claim_ref: str
+    state: PluginSectionGrantState
+    section_id: NotRequired[str | None]
+    skill_ref: str
+    settlement_receipt_ref: NotRequired[str | None]
+    manifest: SectionManifestEnvelope
+class PluginSectionRevokeRequest(TypedDict):
+    claim_ref: NotRequired[str | None]
+    section_id: NotRequired[str | None]
+class PluginSectionRevoked(TypedDict):
+    section_id: NotRequired[str | None]
+    claim_refs: list[str]
+    revoked: int
+class PluginSectionSuggestRequest(TypedDict):
+    hub_ref: HubRef
+    run_id: str
+    digest_window: str
+    pattern_key: str
+    summary: str
+    evidence_refs: list[EntityId]
+    observed_at: int
+PluginSectionSuggestionState = Literal["disabled", "no_match", "suppressed_duplicate", "proposed"]
+class PluginSectionSuggestion(TypedDict):
+    state: PluginSectionSuggestionState
+    suggestion_key: NotRequired[str | None]
+    claim_ref: NotRequired[str | None]
+    pack_id: NotRequired[str | None]
+    section_id: NotRequired[str | None]
+    label: NotRequired[str | None]
+class PluginSuggestionsView(TypedDict):
+    enabled: bool
+class PluginSuggestionsSetRequest(TypedDict):
+    enabled: bool
 ChatRole = Literal["system", "developer", "user", "assistant"]
 class ChatPart(TypedDict):
     type: Literal["text"]

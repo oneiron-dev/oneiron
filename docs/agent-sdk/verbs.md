@@ -237,6 +237,13 @@ both bindings and their export-census tests in one change.
 - `vault.packs.connector.grants.get`
 - `vault.packs.connector.grants.put`
 - `vault.packs.remove`
+- `vault.packs.sections.propose`
+- `vault.packs.sections.list`
+- `vault.packs.sections.grant`
+- `vault.packs.sections.revoke`
+- `vault.packs.sections.suggest`
+- `vault.packs.sections.suggestions.get`
+- `vault.packs.sections.suggestions.set`
 - `ai.chat.completions`
 - `vault.connectors.proxy.admit`
 - `vault.connectors.proxy.revoke_write`
