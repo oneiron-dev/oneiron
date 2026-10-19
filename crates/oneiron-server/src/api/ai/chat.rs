@@ -41,6 +41,7 @@ use oneiron::runtime_hooks::verb::InvocationClaim;
 use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop};
 use oneiron::session_lifecycle::SessionKey;
 use oneiron::skill_hub::pack_catalog::HookActorClass;
+use oneiron::task_verb::verb_hook_boundary;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EdgeActorClass,
     EntityId, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmStream, LlmStreamEvent,
@@ -564,6 +565,18 @@ fn start_turn(
     };
     let reader =
         VerbCall::reader_of(&hooked(), HOST_TURN_GENERATE).map_err(|error| engine(&error))?;
+    // A turn in an anonymous off-record session its principal is verified
+    // in keeps its hooks' records and pauses in that session only, as a row
+    // does (FIX 5380): judged on the caller's own surface, never a header.
+    let hooked_call = || match invocation {
+        Some(id) => hooked().with_invocation(id),
+        None => hooked(),
+    };
+    let generate_session =
+        verb_hook_boundary::hook_session(Some(&hooked_call()), HOST_TURN_GENERATE)
+            .map_err(|error| engine(&error))?;
+    let witness_session = verb_hook_boundary::hook_session(Some(&hooked_call()), WITNESS_ROW)
+        .map_err(|error| engine(&error))?;
     // Chat resolves no room before the user's turn is witnessed, so its
     // call names none.
     let generating = turn_generate_pre(
@@ -573,6 +586,7 @@ fn start_turn(
         reader,
         &request.conversation_ref,
         None,
+        generate_session.as_ref(),
     )
     .map_err(|error| engine(&error))?
     .map_err(|stop| hook_stopped(&stop))?;
@@ -601,7 +615,13 @@ fn start_turn(
             Some(id) => (memory.with_invocation(id), hooked().with_invocation(id)),
             None => (memory, hooked()),
         };
-        witness_through_row(&vault, &memory, &hooked, &user_turn)
+        witness_through_row(
+            &vault,
+            &memory,
+            &hooked,
+            &user_turn,
+            witness_session.as_ref(),
+        )
     })
     .map_err(|error| engine(&error))?
     .map_err(|stop| hook_stopped(&stop))?;
@@ -724,10 +744,11 @@ fn turn_generate_call(
 /// Runs `host.turn.generate`'s pre chain for `actor`'s reply in `room`,
 /// its hooks reading under `reader`, the caller's key, when there is one.
 /// `resolved` is the room entity the host already read `room` as, if any:
-/// a hook scoped to it, or to its world, facet or project, fires.
-/// `Err(stop)` when a hook skipped the turn or asked first: the turn ends
-/// there, with the stop's reason. Hooks write and run their sandbox, so they
-/// run off the runtime's workers.
+/// a hook scoped to it, or to its world, facet or project, fires. A turn
+/// that keeps no record runs them on `session`, its records and pauses kept
+/// there only (FIX 5380). `Err(stop)` when a hook skipped the turn or asked
+/// first: the turn ends there, with the stop's reason. Hooks write and run
+/// their sandbox, so they run off the runtime's workers.
 pub(crate) fn turn_generate_pre(
     vault: &Vault,
     actor: EntityId,
@@ -735,6 +756,7 @@ pub(crate) fn turn_generate_pre(
     reader: Option<ScopedReadActorKey>,
     room: &str,
     resolved: Option<EntityId>,
+    session: Option<&verb_hook_boundary::HookSession>,
 ) -> oneiron::Result<Result<VerbHookPre, VerbHookStop>> {
     let args = json!({
         "room": room,
@@ -742,10 +764,13 @@ pub(crate) fn turn_generate_pre(
         "board_epoch": Value::Null,
     });
     crate::server::blocking(|| {
-        vault.pre_verb_hooks(
+        verb_hook_boundary::hooks_pre(
+            vault,
             turn_generate_call(actor, invocation, reader, resolved),
             args.clone(),
             &|rewritten: &Value| host_args_kept(&args, rewritten),
+            session,
+            None,
         )
     })
 }
@@ -761,16 +786,20 @@ fn host_args_kept(args: &Value, rewritten: &Value) -> Result<(), String> {
 
 /// Lands the user's turn through the `vault.witness` row's boundary, so the
 /// row's verb hooks fire on it (ARCH-0080 §3), reading under `hooked`'s key.
-/// The answer is the caller's view of the row's receipt.
+/// A turn that keeps no record runs them on `session` (FIX 5380). The answer
+/// is the caller's view of the row's receipt.
 fn witness_through_row(
     vault: &Vault,
     memory: &Memory<'_>,
     hooked: &Memory<'_>,
     turn: &WitnessTurn,
+    session: Option<&verb_hook_boundary::HookSession>,
 ) -> Result<Result<Value, VerbHookStop>, MemoryError> {
     let args = serde_json::to_value(turn)
         .map_err(|_| MemoryError::bad_request("witness turn does not encode"))?;
-    vault.verb_hooks(
+    verb_hook_boundary::verb_hooks_in(
+        vault,
+        session,
         VerbCall::for_memory(hooked, WITNESS_ROW, VerbDomain::Write)?,
         args,
         &|args: &Value| {
@@ -836,7 +865,10 @@ pub(crate) fn after_turn(
             "complete": ended.saved.as_ref().is_some_and(MessageStreamReceipt::complete),
             "finish_reason": ended.saved.as_ref().and_then(|receipt| receipt.finish_reason.clone()),
         });
-        let posted = crate::server::blocking(|| vault.post_verb_hooks(generating, result));
+        // Where its pre chain ran: a turn that keeps no record keeps its
+        // post hooks' records in its session only (FIX 5380).
+        let posted =
+            crate::server::blocking(|| verb_hook_boundary::hooks_post(&vault, generating, result));
         if let Err(error) = posted {
             tracing::warn!(
                 ?error,
