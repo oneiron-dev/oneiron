@@ -3550,10 +3550,10 @@ declare namespace Sdk {
   type MemorySearchInput = { query: string; limit?: number | null };
   type MemorySearchHit = { id: EntityId; score: number };
   type SessionHookPhase = "pre" | "post";
-  type SessionHookState = { kind: "applied"; outcome: string } | { kind: "refused"; outcome: string; reason?: string | null; fail_safe?: string | null } | { kind: "unavailable"; reason: string; consequence: string };
+  type SessionHookState = { kind: "applied"; outcome: string } | { kind: "refused"; outcome: string; reason?: string | null; fail_safe?: string | null } | { kind: "unavailable"; reason: string; consequence: string } | { kind: "unread"; reason: string };
   type SessionHookNotKept = "budget_full" | "custody" | "no_retention" | "withheld_from_base";
-  type SessionHookReceipt = { kind: "kept"; id: string } | { kind: "not_kept"; why: SessionHookNotKept };
-  type SessionHookDisposition = { hook: string; phase: SessionHookPhase; state: SessionHookState; receipt: SessionHookReceipt };
+  type SessionHookReceipt = { kind: "kept"; id: string } | { kind: "not_kept"; why: SessionHookNotKept } | { kind: "no_run" };
+  type SessionHookDisposition = { hook?: string | null; phase: SessionHookPhase; state: SessionHookState; receipt: SessionHookReceipt };
   type MemorySearchOutput = { results: MemorySearchHit[]; hooks?: SessionHookDisposition[] };
   type MemoryTimeRange = { start: number; end: number };
   type MemoryClaimInput = { id: string; predicate: string; subject: string; value: unknown; confidence?: number | null; occurred?: MemoryTimeRange | null; learnedAt?: number | null };

@@ -44,6 +44,7 @@ use crate::code_run::{
 use crate::error::{Error, GateError, OffRecordError};
 use crate::off_record::{OffRecordSession, SessionWriteRoute};
 use crate::receipt::ReceiptRecord;
+use crate::runtime_hooks::runner::bounded;
 use crate::runtime_hooks::store::{self, RunKey};
 use crate::session_overlay::{SessionOverlay, TxnSegmentGuard};
 use crate::side_table::{RoutedDbs, SideTableDbs};
@@ -74,7 +75,14 @@ pub(crate) enum VerbHookStorage<'s> {
 /// once kept.
 pub(crate) struct SessionHooks<'s> {
     target: HooksTarget<'s>,
+    /// Whether the call answers when its hooks cannot be read
+    /// ([`Self::answering_unread`]).
+    answers_unread: bool,
+    /// Why its hooks could not be read, once a read failed.
+    unread: RefCell<Option<String>>,
     held: RefCell<Vec<HeldRun>>,
+    /// Dispositions no receipt goes with: a phase whose hooks went unread.
+    notes: RefCell<Vec<SessionHookDisposition>>,
     dispositions: RefCell<Vec<SessionHookDisposition>>,
 }
 
@@ -95,12 +103,14 @@ enum HooksTarget<'s> {
 }
 
 /// What a session-only call's pre chain hands its post chain inside the
-/// [`VerbHookPre`]: the runs it holds, and the in-memory keep's key when it
-/// ran on one, so a post on another thread finds the same store.
+/// [`VerbHookPre`]: the runs it holds, what it notes beside them, and the
+/// in-memory keep's key when it ran on one, so a post on another thread
+/// finds the same store.
 #[derive(Debug)]
 pub(crate) struct SessionCarry {
     key: Option<SessionHookKey>,
     runs: Vec<HeldRun>,
+    notes: Vec<SessionHookDisposition>,
 }
 
 /// One run as a session keeps it: its receipt and its saved copy under its
@@ -262,9 +272,44 @@ impl<'s> SessionHooks<'s> {
     fn on(target: HooksTarget<'s>) -> Self {
         Self {
             target,
+            answers_unread: false,
+            unread: RefCell::new(None),
             held: RefCell::new(Vec::new()),
+            notes: RefCell::new(Vec::new()),
             dispositions: RefCell::new(Vec::new()),
         }
+    }
+
+    /// These hooks, for a call that answers when they cannot be read (the
+    /// run's search with no key, Engine 10-19 17:1x): a failed read of the
+    /// bindings, a binding's scope or its grant runs none of the phase's
+    /// hooks, refuses nothing, and leaves a [`SessionHookState::Unread`]
+    /// disposition naming it. Every other error is the call's, as before.
+    #[must_use]
+    pub(crate) fn answering_unread(mut self) -> Self {
+        self.answers_unread = true;
+        self
+    }
+
+    /// Notes `error`, the failed read of the hooks' `what`, on hooks that
+    /// answer with them unread; the first failure names the phase.
+    pub(super) fn note_unread(&self, what: &str, error: &Error) {
+        if self.answers_unread {
+            self.unread
+                .borrow_mut()
+                .get_or_insert_with(|| bounded(&format!("the hook {what} did not read: {error}")));
+        }
+    }
+
+    /// The disposition of `phase` when a read of its hooks failed on hooks
+    /// that answer with them unread; `None` otherwise.
+    fn unread_in(&self, phase: SessionHookPhase) -> Option<SessionHookDisposition> {
+        self.unread.take().map(|reason| SessionHookDisposition {
+            hook: None,
+            phase,
+            state: SessionHookState::Unread { reason },
+            receipt: SessionHookReceipt::NoRun,
+        })
     }
 
     /// What each hook kept here did, in the order they ran.
@@ -294,21 +339,26 @@ impl<'s> SessionHooks<'s> {
                 HooksTarget::Room { .. } => None,
             },
             runs: self.held.take(),
+            notes: self.notes.take(),
         }
     }
 
-    /// Holds the runs `pre`'s chain held, ahead of this chain's own.
+    /// Holds the runs `pre`'s chain held, and what it noted, ahead of this
+    /// chain's own.
     fn resume(&self, pre: &mut VerbHookPre) {
         if let Some(carry) = pre.session.take() {
             self.hold(carry.runs);
+            self.notes.borrow_mut().extend(carry.notes);
         }
     }
 
     /// Keeps every run held, in one segment of their own, and records what
-    /// each hook did. A store that keeps none fails nothing.
+    /// each hook did, then what the call noted. A store that keeps none
+    /// fails nothing.
     fn keep(&self) -> Result<()> {
         let runs = self.held.take();
         if runs.is_empty() {
+            self.dispositions.borrow_mut().extend(self.notes.take());
             return Ok(());
         }
         let rows = |txn: &mut heed::RwTxn<'_>, read: RoutedDbs<'_>, write: RoutedDbs<'_>| {
@@ -324,7 +374,7 @@ impl<'s> SessionHooks<'s> {
         self.dispositions
             .borrow_mut()
             .extend(runs.into_iter().map(|run| SessionHookDisposition {
-                hook: run.hook,
+                hook: Some(run.hook),
                 phase: run.phase,
                 state: run.state,
                 receipt: match &kept {
@@ -334,6 +384,7 @@ impl<'s> SessionHooks<'s> {
                     HookRecordsKept::NotKept(why) => SessionHookReceipt::NotKept { why: *why },
                 },
             }));
+        self.dispositions.borrow_mut().extend(self.notes.take());
         Ok(())
     }
 }
@@ -368,7 +419,9 @@ impl Vault {
     /// the task-work turn the calling operation holds, if any. A session's
     /// call saves no resume target and opens no ask, so the turn is only
     /// carried. A session-only call's records ride the pre to its post
-    /// chain; one its pre chain stops keeps them at once.
+    /// chain; one its pre chain stops keeps them at once. On hooks that
+    /// answer with them unread, a failed read of the hooks passes the call
+    /// through with its own args, noting why ([`SessionHooks::answering_unread`]).
     ///
     /// # Errors
     ///
@@ -382,9 +435,27 @@ impl Vault {
         check: VerbArgsCheck<'_>,
         turn: Option<Arc<TaskWorkTurn>>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
-        let ended = chain::pre(self, storage, call, args, check, None, turn)?;
         let VerbHookStorage::Session(hooks) = storage else {
-            return Ok(ended);
+            return chain::pre(self, storage, call, args, check, None, turn);
+        };
+        let own = hooks.answers_unread.then(|| (call.clone(), args.clone()));
+        let ended = match chain::pre(self, storage, call, args, check, None, turn) {
+            Ok(ended) => ended,
+            Err(error) => {
+                let (Some((call, args)), Some(note)) =
+                    (own, hooks.unread_in(SessionHookPhase::Pre))
+                else {
+                    return Err(error);
+                };
+                hooks.notes.borrow_mut().push(note);
+                return Ok(Ok(VerbHookPre {
+                    call,
+                    args,
+                    carry: None,
+                    landing: None,
+                    session: Some(hooks.carry()),
+                }));
+            }
         };
         match ended {
             Ok(mut pre) => {
@@ -400,7 +471,8 @@ impl Vault {
 
     /// [`Self::post_verb_hooks`] reading and keeping on `storage`, the one
     /// its pre chain ran on: the call's records, its pre chain's first, are
-    /// kept once it ends.
+    /// kept once it ends. On hooks that answer with them unread, a failed
+    /// read of the hooks leaves `result` as it is, noting why.
     ///
     /// # Errors
     ///
@@ -415,7 +487,18 @@ impl Vault {
             return chain::post(self, storage, pre, result);
         };
         hooks.resume(&mut pre);
-        let ended = chain::post(self, storage, pre, result)?;
+        let own = hooks.answers_unread.then(|| result.clone());
+        let ended = match chain::post(self, storage, pre, result) {
+            Ok(ended) => ended,
+            Err(error) => {
+                let (Some(result), Some(note)) = (own, hooks.unread_in(SessionHookPhase::Post))
+                else {
+                    return Err(error);
+                };
+                hooks.notes.borrow_mut().push(note);
+                Ok(result)
+            }
+        };
         hooks.keep()?;
         Ok(ended)
     }

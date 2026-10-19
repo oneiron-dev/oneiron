@@ -126,7 +126,11 @@ pub(super) fn pre(
     let bindings = if state.suppressed() {
         None
     } else {
-        Some(state.bindings(vault)?)
+        Some(session::hook_read(
+            storage,
+            "bindings",
+            state.bindings(vault),
+        )?)
     };
     let Some(bindings) = bindings.filter(|bindings| bindings.enabled) else {
         return match resumed {
@@ -134,13 +138,22 @@ pub(super) fn pre(
             None => through(call, args),
         };
     };
-    let hooks = matching(vault, &bindings.verb, HookPhase::Pre, &call)?;
+    let hooks = session::hook_read(
+        storage,
+        "scopes",
+        matching(vault, &bindings.verb, HookPhase::Pre, &call),
+    )?;
     let runtime = state.runtime();
     let (start, args, token) = match resumed {
         None => {
             if runtime.is_none()
                 || (hooks.is_empty()
-                    && matching(vault, &bindings.verb, HookPhase::Post, &call)?.is_empty())
+                    && session::hook_read(
+                        storage,
+                        "scopes",
+                        matching(vault, &bindings.verb, HookPhase::Post, &call),
+                    )?
+                    .is_empty())
             {
                 return through(call, args);
             }
@@ -214,8 +227,12 @@ pub(super) fn post(
     if state.suppressed() || depth() > 0 {
         return Ok(Ok(result));
     }
-    let bindings = state.bindings(vault)?;
-    let hooks = matching(vault, &bindings.verb, HookPhase::Post, &call)?;
+    let bindings = session::hook_read(storage, "bindings", state.bindings(vault))?;
+    let hooks = session::hook_read(
+        storage,
+        "scopes",
+        matching(vault, &bindings.verb, HookPhase::Post, &call),
+    )?;
     if hooks.is_empty() {
         return Ok(Ok(result));
     }
@@ -587,7 +604,11 @@ impl<'c> Chain<'c> {
         // when that is someone else, and its predicates and worlds. A caller
         // whose door carried its key reads under it; a host's own call reads
         // as its actor. In a room both read the room's view.
-        let grant = grant::effective_grant(self.vault, id, binding)?;
+        let grant = session::hook_read(
+            self.storage,
+            "grant",
+            grant::effective_grant(self.vault, id, binding),
+        )?;
         let view = self.view()?;
         let (lane, cap) = self.lanes(&grant, view.as_ref());
         let mut pins = Vec::new();

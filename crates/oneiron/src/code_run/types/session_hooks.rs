@@ -6,7 +6,9 @@
 //! stages in the room's own store, and its outcome applies whether the room
 //! keeps that receipt or not: the read answers either way, and the answer
 //! names each hook's disposition, so a hook the room could not keep a record
-//! for is never silent. Outside a room the list is empty.
+//! for is never silent. The run's search with no key also answers when the
+//! hooks bound to it could not be read, and says so (Engine 10-19 17:1x).
+//! Outside a room the list is empty.
 
 use serde::{Deserialize, Serialize};
 
@@ -14,8 +16,9 @@ use serde::{Deserialize, Serialize};
 /// of it and where its receipt is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionHookDisposition {
-    /// The hook, as `pack/hook`.
-    pub hook: String,
+    /// The hook, as `pack/hook`; none for [`SessionHookState::Unread`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hook: Option<String>,
     pub phase: SessionHookPhase,
     pub state: SessionHookState,
     pub receipt: SessionHookReceipt,
@@ -52,6 +55,11 @@ pub enum SessionHookState {
     /// `add_block`, `propose`, `enqueue`, `effect`). Nothing of it ran; the
     /// read answered.
     Unavailable { reason: String, consequence: String },
+    /// The hooks bound to the run's search with no key could not be read
+    /// (the bindings, a binding's scope or its grant), and `reason` names
+    /// the read that failed: none of them ran in this phase, and the search
+    /// answered as it does with no hook bound.
+    Unread { reason: String },
 }
 
 /// The room's receipt of one hook's run.
@@ -62,6 +70,8 @@ pub enum SessionHookReceipt {
     Kept { id: String },
     /// The room keeps none, and why; the hook's outcome applied all the same.
     NotKept { why: SessionHookNotKept },
+    /// No hook ran, so there is no receipt ([`SessionHookState::Unread`]).
+    NoRun,
 }
 
 /// Why a session keeps no receipt of a hook's run (CALLS-2

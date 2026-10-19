@@ -90,9 +90,11 @@ impl OffRecordSession<'_> {
     /// content and this store for records. A room saves no resume target
     /// and opens no ask. The pre carries its records to the call's post
     /// chain, or to [`Self::keep_verb_hooks_in_room`]; one that stops the
-    /// call keeps them now. The chain's entry points for a room live here,
-    /// beside its store, since the vault a chain runs on never leaves this
-    /// module's handle.
+    /// call keeps them now. With `answers_unread`, a failed read of the
+    /// hooks passes the call through and notes why
+    /// (`SessionHooks::answering_unread`). The chain's entry points for a
+    /// room live here, beside its store, since the vault a chain runs on
+    /// never leaves this module's handle.
     ///
     /// # Errors
     ///
@@ -103,8 +105,9 @@ impl OffRecordSession<'_> {
         call: VerbCall,
         args: Value,
         check: VerbArgsCheck<'_>,
+        answers_unread: bool,
     ) -> Result<InRoom<VerbHookPre>> {
-        let hooks = SessionHooks::new(self, route);
+        let hooks = room_hooks(self, route, answers_unread);
         let ended = self.vault.pre_verb_hooks_in(
             VerbHookStorage::Session(&hooks),
             call,
@@ -117,7 +120,8 @@ impl OffRecordSession<'_> {
 
     /// The post chain over the verb's `result` in this room, for a call
     /// whose pre chain ran here on `route`: it keeps the call's records,
-    /// the pre chain's first, once it ends.
+    /// the pre chain's first, once it ends. `answers_unread` as for its pre
+    /// chain.
     ///
     /// # Errors
     ///
@@ -127,8 +131,9 @@ impl OffRecordSession<'_> {
         route: &SessionWriteRoute,
         pre: VerbHookPre,
         result: Value,
+        answers_unread: bool,
     ) -> Result<InRoom<Value>> {
-        let hooks = SessionHooks::new(self, route);
+        let hooks = room_hooks(self, route, answers_unread);
         let ended = self
             .vault
             .post_verb_hooks_in(VerbHookStorage::Session(&hooks), pre, result)?;
@@ -151,5 +156,20 @@ impl OffRecordSession<'_> {
         self.vault
             .keep_verb_hooks_in(VerbHookStorage::Session(&hooks), pre)?;
         Ok(hooks.into_dispositions())
+    }
+}
+
+/// The hooks of a call in `session`'s room on `route`; with
+/// `answers_unread`, a call that answers when they cannot be read.
+fn room_hooks<'s>(
+    session: &'s OffRecordSession<'s>,
+    route: &'s SessionWriteRoute,
+    answers_unread: bool,
+) -> SessionHooks<'s> {
+    let hooks = SessionHooks::new(session, route);
+    if answers_unread {
+        hooks.answering_unread()
+    } else {
+        hooks
     }
 }

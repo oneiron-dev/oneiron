@@ -68,16 +68,18 @@ fn note_unkept(verb: &str, hooks: &[SessionHookDisposition]) {
     for hook in hooks {
         let consequence = match &hook.state {
             SessionHookState::Unavailable { consequence, .. } => Some(consequence.as_str()),
-            SessionHookState::Applied { .. } | SessionHookState::Refused { .. } => None,
+            SessionHookState::Applied { .. }
+            | SessionHookState::Refused { .. }
+            | SessionHookState::Unread { .. } => None,
         };
         let not_kept = match &hook.receipt {
             SessionHookReceipt::NotKept { why } => Some(*why),
-            SessionHookReceipt::Kept { .. } => None,
+            SessionHookReceipt::Kept { .. } | SessionHookReceipt::NoRun => None,
         };
         if consequence.is_some() || not_kept.is_some() {
             tracing::info!(
                 verb,
-                hook = %hook.hook,
+                hook = hook.hook.as_deref().unwrap_or_default(),
                 ?consequence,
                 ?not_kept,
                 "a verb hook on a read in a room left its consequence or its receipt undone"

@@ -121,6 +121,17 @@ impl<'c> Chain<'c> {
     }
 }
 
+/// `read`, the vault's read of a call's hook `what` (its bindings, a
+/// binding's scopes or its grant): its error noted on hooks that answer with
+/// them unread ([`SessionHooks::answering_unread`]; Engine 10-19 17:1x), and
+/// returned all the same.
+pub(super) fn hook_read<T>(storage: VerbHookStorage<'_>, what: &str, read: Result<T>) -> Result<T> {
+    if let (VerbHookStorage::Session(hooks), Err(error)) = (storage, &read) {
+        hooks.note_unread(what, error);
+    }
+    read
+}
+
 /// What came of `run`, as the call's answer tells it (CALLS-9
 /// `session_hook_meta_shape`).
 fn state(run: &RunRecord<'_>) -> SessionHookState {

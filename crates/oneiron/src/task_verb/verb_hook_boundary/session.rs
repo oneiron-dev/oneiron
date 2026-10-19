@@ -59,7 +59,9 @@ pub(crate) fn session_row_call(
 /// [`super::row_pre`] for `call` over its JSON `args` in `session`'s room,
 /// on `route`, the route its run captured: a rewrite must pass the row's own
 /// input check. A restrictive call's args that fail it give way to the
-/// caller's own ([`revoke_lands::settle`]).
+/// caller's own ([`revoke_lands::settle`]). A failed read of the hooks
+/// refuses the read, as before 2c, when these reads refused while a hook was
+/// bound.
 ///
 /// # Errors
 ///
@@ -73,7 +75,7 @@ pub(crate) fn session_row_pre(
 ) -> Result<InRoom<VerbHookPre>> {
     let verb = call.verb.clone();
     let check = |args: &Value| validate_input(&verb, args).map_err(|error| error.to_string());
-    let (mut ended, hooks) = session.pre_verb_hooks_in_room(route, call, args, &check)?;
+    let (mut ended, hooks) = session.pre_verb_hooks_in_room(route, call, args, &check, false)?;
     if let Ok(pre) = &mut ended {
         revoke_lands::settle(pre, &|args| validate_input(&verb, args).is_ok());
     }
@@ -93,5 +95,5 @@ pub(crate) fn session_row_post(
     pre: VerbHookPre,
     result: Value,
 ) -> Result<InRoom<Value>> {
-    session.post_verb_hooks_in_room(route, pre, result)
+    session.post_verb_hooks_in_room(route, pre, result, false)
 }
