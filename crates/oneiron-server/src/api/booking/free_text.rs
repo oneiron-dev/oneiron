@@ -168,8 +168,9 @@ pub(super) fn on_parse_seat<T>(
 /// Who pays an anonymous visitor's parse (FIX 4372, Engine ruling A 10-19):
 /// the vault that published the page, as its embedded owner, on every
 /// substrate. It is the one hook a payer chosen at publication would
-/// replace. An authenticated caller, a managed vault's attested owner
-/// included, pays as itself (`transport.rs`).
+/// replace. An authenticated caller, a managed vault's live attested owner
+/// included, pays as itself (`transport.rs`); an attested holder the vault
+/// does not record as its live owner pays here, as an anonymous visitor.
 fn anonymous_payer(vault: &oneiron::Vault) -> Result<WriteActor, oneiron::MemoryError> {
     let owner = vault.ensure_embedded_owner_actor()?;
     Ok(WriteActor::new(owner, EdgeActorClass::Human))
