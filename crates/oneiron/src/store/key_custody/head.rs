@@ -208,7 +208,7 @@ pub(super) mod serde_bytes_vec {
         input: D,
     ) -> Result<Vec<u8>, D::Error> {
         struct Visitor;
-        impl<'de> serde::de::Visitor<'de> for Visitor {
+        impl serde::de::Visitor<'_> for Visitor {
             type Value = Vec<u8>;
             fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.write_str("bytes")
