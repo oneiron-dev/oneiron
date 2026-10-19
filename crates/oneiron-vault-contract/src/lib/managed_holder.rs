@@ -1,5 +1,5 @@
-//! Host-attested account actions: one managed widen request, and one facade
-//! request the vault owner makes in person ([`ManagedOwnerAction`]).
+//! Host-attested account actions: one managed widen request, and one request
+//! the vault owner makes in person ([`ManagedOwnerAction`]).
 //!
 //! Only the supervisor, after account authentication and its power check,
 //! signs these. The vault child has the per-spawn secret but never infers
@@ -56,7 +56,7 @@ impl ManagedWidenAction {
     }
 }
 
-const OWNER_DOMAIN: &str = "oneiron/managed-account-owner/v1";
+const OWNER_DOMAIN: &str = "oneiron/managed-account-owner/v2";
 
 /// The header a supervisor sends a [`ManagedOwnerAction`] in.
 pub const MANAGED_OWNER_ACTION_HEADER: &str = "x-oneiron-managed-owner-action";
@@ -70,13 +70,16 @@ pub const MANAGED_OWNER_BOUND_HEADERS: [&str; 3] = [
     "x-oneiron-session",
 ];
 
-/// The one facade request a [`ManagedOwnerAction`] covers.
+/// The one request a [`ManagedOwnerAction`] covers.
 #[derive(Debug, Clone, Copy)]
 pub struct ManagedOwnerRequest<'a> {
     /// The HTTP method, as sent (`POST`).
     pub method: &'a str,
     /// The request path, without its query.
     pub path: &'a str,
+    /// The request's query, its exact bytes as sent, without the `?`; empty
+    /// when absent. Signed raw: never parsed, reordered or re-encoded.
+    pub query: &'a str,
     /// The values of [`MANAGED_OWNER_BOUND_HEADERS`], in order; empty when
     /// absent.
     pub headers: [&'a str; 3],
@@ -105,14 +108,15 @@ impl<'a> ManagedOwnerRequest<'a> {
         Self {
             method: MANAGED_VOICE_METHOD,
             path: MANAGED_VOICE_PATH,
+            query: "",
             headers: [room, roster, ""],
             body: issued_at,
         }
     }
 }
 
-/// A host assertion that one facade request is the vault owner's own: tied
-/// to one vault, the authenticated holder, the method and path, the headers
+/// A host assertion that one request is the vault owner's own: tied to one
+/// vault, the authenticated holder, the method, path and query, the headers
 /// that place the call, and the exact body. The vault names the holder as
 /// the request's person only on this assertion, and as its owner only while
 /// the holder is the vault's live recorded owner.
@@ -180,6 +184,7 @@ fn sign_owner(
         holder.as_bytes(),
         request.method.as_bytes(),
         request.path.as_bytes(),
+        request.query.as_bytes(),
         room_turn.as_bytes(),
         invocation.as_bytes(),
         session.as_bytes(),
