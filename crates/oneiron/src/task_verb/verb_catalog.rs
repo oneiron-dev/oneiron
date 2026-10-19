@@ -169,6 +169,12 @@ pub enum AgentVerb {
     VaultCampaignProgramRead,
     VaultCampaignProgramUpdate,
     VaultCampaignProgramArchive,
+    SelfSavedQueryCreate,
+    SelfSavedQueryRead,
+    SelfSavedQueryUpdate,
+    SelfSavedQueryArchive,
+    SelfSavedQueryMembers,
+    SelfSavedQueryEvaluate,
     VaultWeaveReport,
     VaultWeaveDigest,
     VaultWeaveLens,
@@ -502,6 +508,11 @@ pub enum AgentVerb {
     VaultLensesResultSetAction,
     VaultLensesDefault,
     VaultDisclosureOffer,
+    VaultDisclosureCeilingGet,
+    VaultDisclosureCeilingSet,
+    VaultDisclosureCeilingClear,
+    VaultDisclosureReveals,
+    VaultDisclosureRevealsAnswer,
     Reveal,
     RevealWait,
     RevealDescribe,
@@ -711,6 +722,12 @@ pub enum AgentVerb {
     VaultSkillsAttributionPositiveRetire,
     AiStepsSubmit,
     AiStepsReceipt,
+    AiStreamsOpen,
+    AiStreamsSubscribe,
+    AiStreamsEvents,
+    AiStreamsDetach,
+    AiStreamsAbort,
+    AiStreamsTerminal,
     AiReply,
     VaultReceiptsContext,
     AiVoiceAsrOpen,
@@ -903,6 +920,7 @@ pub enum AgentVerb {
     VaultRunsStep,
     VaultRunsCheckpoint,
     VaultConsolidationHomeGet,
+    VaultConsolidationHomePick,
     VaultConsolidationLineage,
     VaultConsolidationPromote,
     VaultConsolidationPin,
@@ -1203,6 +1221,12 @@ impl AgentVerb {
         Self::VaultCampaignProgramRead,
         Self::VaultCampaignProgramUpdate,
         Self::VaultCampaignProgramArchive,
+        Self::SelfSavedQueryCreate,
+        Self::SelfSavedQueryRead,
+        Self::SelfSavedQueryUpdate,
+        Self::SelfSavedQueryArchive,
+        Self::SelfSavedQueryMembers,
+        Self::SelfSavedQueryEvaluate,
         Self::VaultWeaveReport,
         Self::VaultWeaveDigest,
         Self::VaultWeaveLens,
@@ -1536,6 +1560,11 @@ impl AgentVerb {
         Self::VaultLensesResultSetAction,
         Self::VaultLensesDefault,
         Self::VaultDisclosureOffer,
+        Self::VaultDisclosureCeilingGet,
+        Self::VaultDisclosureCeilingSet,
+        Self::VaultDisclosureCeilingClear,
+        Self::VaultDisclosureReveals,
+        Self::VaultDisclosureRevealsAnswer,
         Self::Reveal,
         Self::RevealWait,
         Self::RevealDescribe,
@@ -1745,6 +1774,12 @@ impl AgentVerb {
         Self::VaultSkillsAttributionPositiveRetire,
         Self::AiStepsSubmit,
         Self::AiStepsReceipt,
+        Self::AiStreamsOpen,
+        Self::AiStreamsSubscribe,
+        Self::AiStreamsEvents,
+        Self::AiStreamsDetach,
+        Self::AiStreamsAbort,
+        Self::AiStreamsTerminal,
         Self::AiReply,
         Self::VaultReceiptsContext,
         Self::AiVoiceAsrOpen,
@@ -1937,6 +1972,7 @@ impl AgentVerb {
         Self::VaultRunsStep,
         Self::VaultRunsCheckpoint,
         Self::VaultConsolidationHomeGet,
+        Self::VaultConsolidationHomePick,
         Self::VaultConsolidationLineage,
         Self::VaultConsolidationPromote,
         Self::VaultConsolidationPin,
@@ -2240,6 +2276,12 @@ impl AgentVerb {
             Self::VaultCampaignProgramRead => "vault.campaign.program.read",
             Self::VaultCampaignProgramUpdate => "vault.campaign.program.update",
             Self::VaultCampaignProgramArchive => "vault.campaign.program.archive",
+            Self::SelfSavedQueryCreate => "self.saved_query.create",
+            Self::SelfSavedQueryRead => "self.saved_query.read",
+            Self::SelfSavedQueryUpdate => "self.saved_query.update",
+            Self::SelfSavedQueryArchive => "self.saved_query.archive",
+            Self::SelfSavedQueryMembers => "self.saved_query.members",
+            Self::SelfSavedQueryEvaluate => "self.saved_query.evaluate",
             Self::VaultWeaveReport => "vault.weave.report",
             Self::VaultWeaveDigest => "vault.weave.digest",
             Self::VaultWeaveLens => "vault.weave.lens",
@@ -2587,6 +2629,11 @@ impl AgentVerb {
             Self::VaultLensesResultSetAction => "vault.lenses.result_set.action",
             Self::VaultLensesDefault => "vault.lenses.default",
             Self::VaultDisclosureOffer => "vault.disclosure.offer",
+            Self::VaultDisclosureCeilingGet => "vault.disclosure.ceiling.get",
+            Self::VaultDisclosureCeilingSet => "vault.disclosure.ceiling.set",
+            Self::VaultDisclosureCeilingClear => "vault.disclosure.ceiling.clear",
+            Self::VaultDisclosureReveals => "vault.disclosure.reveals",
+            Self::VaultDisclosureRevealsAnswer => "vault.disclosure.reveals.answer",
             Self::Reveal => "reveal",
             Self::RevealWait => "reveal.wait",
             Self::RevealDescribe => "reveal.describe",
@@ -2804,6 +2851,12 @@ impl AgentVerb {
             }
             Self::AiStepsSubmit => "ai.steps.submit",
             Self::AiStepsReceipt => "ai.steps.receipt",
+            Self::AiStreamsOpen => "ai.streams.open",
+            Self::AiStreamsSubscribe => "ai.streams.subscribe",
+            Self::AiStreamsEvents => "ai.streams.events",
+            Self::AiStreamsDetach => "ai.streams.detach",
+            Self::AiStreamsAbort => "ai.streams.abort",
+            Self::AiStreamsTerminal => "ai.streams.terminal",
             Self::AiReply => "ai.reply",
             Self::VaultReceiptsContext => "vault.receipts.context",
             Self::AiVoiceAsrOpen => "ai.voice.asr.open",
@@ -2996,6 +3049,7 @@ impl AgentVerb {
             Self::VaultRunsStep => "vault.runs.step",
             Self::VaultRunsCheckpoint => "vault.runs.checkpoint",
             Self::VaultConsolidationHomeGet => "vault.consolidation.home.get",
+            Self::VaultConsolidationHomePick => "vault.consolidation.home.pick",
             Self::VaultConsolidationLineage => "vault.consolidation.lineage",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
             Self::VaultConsolidationPin => "vault.consolidation.pin",
@@ -3302,6 +3356,12 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::SelfSavedQueryCreate
+                | Self::SelfSavedQueryRead
+                | Self::SelfSavedQueryUpdate
+                | Self::SelfSavedQueryArchive
+                | Self::SelfSavedQueryMembers
+                | Self::SelfSavedQueryEvaluate
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
@@ -3635,6 +3695,11 @@ impl AgentVerb {
                 | Self::VaultLensesResultSetAction
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
+                | Self::VaultDisclosureCeilingGet
+                | Self::VaultDisclosureCeilingSet
+                | Self::VaultDisclosureCeilingClear
+                | Self::VaultDisclosureReveals
+                | Self::VaultDisclosureRevealsAnswer
                 | Self::Reveal
                 | Self::RevealWait
                 | Self::RevealDescribe
@@ -3844,6 +3909,12 @@ impl AgentVerb {
                 | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
+                | Self::AiStreamsOpen
+                | Self::AiStreamsSubscribe
+                | Self::AiStreamsEvents
+                | Self::AiStreamsDetach
+                | Self::AiStreamsAbort
+                | Self::AiStreamsTerminal
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::AiVoiceAsrOpen
@@ -4016,6 +4087,7 @@ impl AgentVerb {
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationHomeGet
+                | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
@@ -4363,6 +4435,12 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::SelfSavedQueryCreate
+                | Self::SelfSavedQueryRead
+                | Self::SelfSavedQueryUpdate
+                | Self::SelfSavedQueryArchive
+                | Self::SelfSavedQueryMembers
+                | Self::SelfSavedQueryEvaluate
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
@@ -4696,6 +4774,11 @@ impl AgentVerb {
                 | Self::VaultLensesResultSetAction
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
+                | Self::VaultDisclosureCeilingGet
+                | Self::VaultDisclosureCeilingSet
+                | Self::VaultDisclosureCeilingClear
+                | Self::VaultDisclosureReveals
+                | Self::VaultDisclosureRevealsAnswer
                 | Self::Reveal
                 | Self::RevealWait
                 | Self::RevealDescribe
@@ -4905,6 +4988,12 @@ impl AgentVerb {
                 | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
+                | Self::AiStreamsOpen
+                | Self::AiStreamsSubscribe
+                | Self::AiStreamsEvents
+                | Self::AiStreamsDetach
+                | Self::AiStreamsAbort
+                | Self::AiStreamsTerminal
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::AiVoiceAsrOpen
@@ -5077,6 +5166,7 @@ impl AgentVerb {
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationHomeGet
+                | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
@@ -5276,6 +5366,7 @@ impl AgentVerb {
                 | Self::VaultConsentGraduationOffers
                 | Self::VaultConsentGraduationTrustTable
                 | Self::VaultSealPending
+                | Self::VaultDisclosureReveals
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultArtifactsThreadsList
@@ -5526,6 +5617,12 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::SelfSavedQueryCreate
+                | Self::SelfSavedQueryRead
+                | Self::SelfSavedQueryUpdate
+                | Self::SelfSavedQueryArchive
+                | Self::SelfSavedQueryMembers
+                | Self::SelfSavedQueryEvaluate
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
@@ -5857,6 +5954,11 @@ impl AgentVerb {
                 | Self::VaultLensesResultSetAction
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
+                | Self::VaultDisclosureCeilingGet
+                | Self::VaultDisclosureCeilingSet
+                | Self::VaultDisclosureCeilingClear
+                | Self::VaultDisclosureReveals
+                | Self::VaultDisclosureRevealsAnswer
                 | Self::Reveal
                 | Self::RevealWait
                 | Self::RevealDescribe
@@ -6055,6 +6157,12 @@ impl AgentVerb {
                 | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
+                | Self::AiStreamsOpen
+                | Self::AiStreamsSubscribe
+                | Self::AiStreamsEvents
+                | Self::AiStreamsDetach
+                | Self::AiStreamsAbort
+                | Self::AiStreamsTerminal
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::AiVoiceAsrOpen
@@ -6224,6 +6332,7 @@ impl AgentVerb {
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationHomeGet
+                | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationLineage
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
@@ -6437,6 +6546,10 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::SelfSavedQueryCreate
+                | Self::SelfSavedQueryUpdate
+                | Self::SelfSavedQueryArchive
+                | Self::SelfSavedQueryEvaluate
                 | Self::VaultWeaveLinkWrong
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
@@ -6656,6 +6769,9 @@ impl AgentVerb {
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesResultSetAction
                 | Self::VaultDisclosureOffer
+                | Self::VaultDisclosureCeilingSet
+                | Self::VaultDisclosureCeilingClear
+                | Self::VaultDisclosureRevealsAnswer
                 | Self::Reveal
                 | Self::SelfUse
                 | Self::SelfSecretsMaterialize
@@ -6772,6 +6888,8 @@ impl AgentVerb {
                 | Self::VaultSkillsAttributionProject
                 | Self::VaultSkillsAttributionPositiveRetire
                 | Self::AiStepsSubmit
+                | Self::AiStreamsOpen
+                | Self::AiStreamsAbort
                 | Self::AiReply
                 | Self::AiVoiceStart
                 | Self::AiVoiceAudio
@@ -6876,6 +6994,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
+                | Self::VaultConsolidationHomePick
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationPin
                 | Self::VaultConsolidationFrontier
@@ -7164,6 +7283,12 @@ impl AgentVerb {
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
             Self::VaultCampaignProgramArchive => &["spec"],
+            Self::SelfSavedQueryCreate => &["spec"],
+            Self::SelfSavedQueryRead => &["spec"],
+            Self::SelfSavedQueryUpdate => &["spec"],
+            Self::SelfSavedQueryArchive => &["spec"],
+            Self::SelfSavedQueryMembers => &["spec"],
+            Self::SelfSavedQueryEvaluate => &["spec"],
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultWeaveLens => &["spec"],
@@ -7497,6 +7622,11 @@ impl AgentVerb {
             Self::VaultLensesResultSetAction => &["spec"],
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
+            Self::VaultDisclosureCeilingGet => &["spec"],
+            Self::VaultDisclosureCeilingSet => &["spec"],
+            Self::VaultDisclosureCeilingClear => &["spec"],
+            Self::VaultDisclosureReveals => &["spec"],
+            Self::VaultDisclosureRevealsAnswer => &["spec"],
             Self::Reveal => &["spec"],
             Self::RevealWait => &["spec"],
             Self::RevealDescribe => &["spec"],
@@ -7706,6 +7836,12 @@ impl AgentVerb {
             Self::VaultSkillsAttributionPositiveRetire => &["spec"],
             Self::AiStepsSubmit => &["spec"],
             Self::AiStepsReceipt => &["spec"],
+            Self::AiStreamsOpen => &["spec"],
+            Self::AiStreamsSubscribe => &["spec"],
+            Self::AiStreamsEvents => &["spec"],
+            Self::AiStreamsDetach => &["spec"],
+            Self::AiStreamsAbort => &["spec"],
+            Self::AiStreamsTerminal => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
             Self::AiVoiceAsrOpen => &["spec"],
@@ -7898,6 +8034,7 @@ impl AgentVerb {
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
+            Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationPin => &["spec"],
@@ -8199,6 +8336,12 @@ impl AgentVerb {
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
             Self::VaultCampaignProgramArchive => &["spec"],
+            Self::SelfSavedQueryCreate => &["spec"],
+            Self::SelfSavedQueryRead => &["spec"],
+            Self::SelfSavedQueryUpdate => &["spec"],
+            Self::SelfSavedQueryArchive => &["spec"],
+            Self::SelfSavedQueryMembers => &["spec"],
+            Self::SelfSavedQueryEvaluate => &["spec"],
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultWeaveLens => &["spec"],
@@ -8532,6 +8675,11 @@ impl AgentVerb {
             Self::VaultLensesResultSetAction => &["spec"],
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
+            Self::VaultDisclosureCeilingGet => &["spec"],
+            Self::VaultDisclosureCeilingSet => &["spec"],
+            Self::VaultDisclosureCeilingClear => &["spec"],
+            Self::VaultDisclosureReveals => &["spec"],
+            Self::VaultDisclosureRevealsAnswer => &["spec"],
             Self::Reveal => &["spec"],
             Self::RevealWait => &["spec"],
             Self::RevealDescribe => &["spec"],
@@ -8741,6 +8889,12 @@ impl AgentVerb {
             Self::VaultSkillsAttributionPositiveRetire => &["spec"],
             Self::AiStepsSubmit => &["spec"],
             Self::AiStepsReceipt => &["spec"],
+            Self::AiStreamsOpen => &["spec"],
+            Self::AiStreamsSubscribe => &["spec"],
+            Self::AiStreamsEvents => &["spec"],
+            Self::AiStreamsDetach => &["spec"],
+            Self::AiStreamsAbort => &["spec"],
+            Self::AiStreamsTerminal => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
             Self::AiVoiceAsrOpen => &["spec"],
@@ -8933,6 +9087,7 @@ impl AgentVerb {
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
+            Self::VaultConsolidationHomePick => &["spec"],
             Self::VaultConsolidationLineage => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationPin => &["spec"],
@@ -9558,6 +9713,24 @@ impl AgentVerb {
             }
             Self::VaultCampaignProgramArchive => {
                 "Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops."
+            }
+            Self::SelfSavedQueryCreate => {
+                "Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller."
+            }
+            Self::SelfSavedQueryRead => {
+                "One saved query the caller owns; a query absent or not the caller's reads as not found."
+            }
+            Self::SelfSavedQueryUpdate => {
+                "Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check."
+            }
+            Self::SelfSavedQueryArchive => {
+                "Archives a saved query under a definition-version check: it stays readable and is never evaluated again."
+            }
+            Self::SelfSavedQueryMembers => {
+                "One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved."
+            }
+            Self::SelfSavedQueryEvaluate => {
+                "Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity."
             }
             Self::VaultWeaveReport => {
                 "The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."
@@ -10536,14 +10709,29 @@ impl AgentVerb {
             Self::VaultDisclosureOffer => {
                 "An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."
             }
+            Self::VaultDisclosureCeilingGet => {
+                "Reads the owner registry dial for one model connection, optionally one data class."
+            }
+            Self::VaultDisclosureCeilingSet => {
+                "The owner sets one connection or class disclosure ceiling; no read authority changes."
+            }
+            Self::VaultDisclosureCeilingClear => {
+                "The owner clears one dial, restoring connection or actor-class inference."
+            }
+            Self::VaultDisclosureReveals => {
+                "The owner reads model-disclosure asks and receipts, including PERSON handles, without values."
+            }
+            Self::VaultDisclosureRevealsAnswer => {
+                "The owner approves once, approves standing, or denies the exact frozen reveal ask."
+            }
             Self::Reveal => {
-                "Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."
+                "Asks for a custody or PERSON handle's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."
             }
             Self::RevealWait => {
                 "Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."
             }
             Self::RevealDescribe => {
-                "What a secret handle names, where it was found and what a reveal of it would do now; never the value."
+                "What a custody or PERSON handle names, where it was found and what a reveal of it would do now; never the value."
             }
             Self::SelfUse => {
                 "Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."
@@ -11145,6 +11333,24 @@ impl AgentVerb {
             Self::AiStepsReceipt => {
                 "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."
             }
+            Self::AiStreamsOpen => {
+                "Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one."
+            }
+            Self::AiStreamsSubscribe => {
+                "Attach before or after open to the caller's shared model stream, without starting a producer; replay every typed part event from the first under an independently detachable handle."
+            }
+            Self::AiStreamsEvents => {
+                "Drain one subscription's queued typed LlmStreamEvents (part-correlated text, reasoning, tool and image deltas, then Done) without blocking; closed once the producer ended and the queue is empty."
+            }
+            Self::AiStreamsDetach => {
+                "Detach only this subscription from the shared model stream; the producer and every other subscriber continue."
+            }
+            Self::AiStreamsAbort => {
+                "Abort the caller's shared model stream with actual usage: subscribers receive the cancelled Done of the parts completed so far, recorded as the one durable terminal."
+            }
+            Self::AiStreamsTerminal => {
+                "Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model."
+            }
             Self::AiReply => {
                 "Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."
             }
@@ -11676,6 +11882,9 @@ impl AgentVerb {
             }
             Self::VaultConsolidationHomeGet => {
                 "The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything."
+            }
+            Self::VaultConsolidationHomePick => {
+                "The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget."
             }
             Self::VaultConsolidationLineage => {
                 "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."
