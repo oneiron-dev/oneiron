@@ -33568,7 +33568,7 @@
      "surface": {
       "crate-vis": 16,
       "mod": 23,
-      "re-export": 51
+      "re-export": 52
      }
     },
     {
@@ -33824,6 +33824,27 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HomeRecallAsk",
+      "HomeRecallCaller",
+      "HomeRecallMergeOrder",
+      "RecallResidence",
+      "RecallResidenceHit",
+      "RecallResidenceSource"
+     ],
+     "path": "src/memory/recall/home.rs",
+     "purpose": "What an opened device's recall says of its home (FIX 2905, OF-534)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 6,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -33863,7 +33884,7 @@
       "crate-vis": 4,
       "enum": 1,
       "fn": 11,
-      "re-export": 3,
+      "re-export": 5,
       "struct": 7
      }
     },
@@ -49654,13 +49675,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DeviceResidence",
       "HomeSearch"
      ],
      "path": "src/sync/connection/home_search.rs",
      "purpose": "The home search this device's query doors reach through its own sync connection (OF-534): a search an opened…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 3,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -49675,6 +49698,7 @@
      "path": "src/sync/connection/mod.rs",
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
+      "crate-vis": 1,
       "fn": 16,
       "re-export": 3,
       "struct": 3
@@ -60216,7 +60240,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 212,
+     "files": 213,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60897,7 +60921,7 @@
    },
    "over_bar": 201,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3709,
+   "source_files": 3710,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69609,6 +69633,8 @@
       "NapiReadReceipt",
       "NapiReadScope",
       "NapiRecallMedia",
+      "NapiRecallResidence",
+      "NapiRecallResidenceHit",
       "NapiRecallScope",
       "NapiRecordRef",
       "NapiRecordRefusal",
@@ -69625,7 +69651,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 61
+      "struct": 63
      }
     },
     {
@@ -73687,7 +73713,7 @@
      "path": "src/api/facade/call_context.rs",
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -75119,7 +75145,7 @@
      "path": "src/api/mcp_gateway/envelope.rs",
      "purpose": "JSON-RPC envelope types and request dispatch",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -81401,7 +81427,7 @@
      "path": "src/server/recall.rs",
      "purpose": "The recall verb as every server transport runs it",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -82837,6 +82863,9 @@
       "ReadReceipt",
       "ReadScope",
       "RecallMedia",
+      "RecallResidence",
+      "RecallResidenceHit",
+      "RecallResidenceSource",
       "RecallScope",
       "RecordRefusal",
       "RefusalReason",
@@ -82860,8 +82889,8 @@
      "path": "src/dto.rs",
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
-      "enum": 9,
-      "struct": 52
+      "enum": 10,
+      "struct": 54
      }
     },
     {
