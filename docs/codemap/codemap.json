@@ -5021,7 +5021,7 @@
      "path": "src/batch/builder/puts.rs",
      "purpose": "Entity-put builder doors: the public put, the typed crate doors, and the sync/test replicated door",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 2
      }
     },
@@ -7088,6 +7088,16 @@
      "purpose": "Strict MessagePack framing for blob version records",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/version_rows.rs",
+     "purpose": "The rows one stored version is (FIX 5455): its version CLAIM and the ASSET its bytes are, read beside those…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -12809,7 +12819,7 @@
      "path": "src/code_run/consent_wait/settle.rs",
      "purpose": "The answer and the settlement (DOOR-079 1a)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 3
      }
     },
@@ -13189,7 +13199,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 6,
       "re-export": 20
      }
@@ -13606,8 +13616,8 @@
      "path": "src/code_run/storage/wait_delivery.rs",
      "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
      "surface": {
-      "crate-vis": 11,
-      "fn": 9,
+      "crate-vis": 12,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -13932,6 +13942,16 @@
      "purpose": "Request-shape validation and short-reference parsing, run before any dispatch",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/wait_rows.rs",
+     "purpose": "The rows a parked call's delivered reply was derived from (FIX 5455)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -15927,7 +15947,7 @@
      "purpose": "Read lenses: HISTORY/EXECUTION/DISCOVERY views over the catalog plus key lookups",
      "surface": {
       "crate-vis": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -22242,7 +22262,7 @@
      "surface": {
       "crate-vis": 2,
       "mod": 4,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -22335,7 +22355,48 @@
      "purpose": "Turn-woken programs (DOOR-141, FIX 4382)",
      "surface": {
       "crate-vis": 5,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/read.rs",
+     "purpose": "A turn program's reads (DOOR-141 PR3a, FIX 4382): what admitting a landed turn's wakes decided, where one…",
+     "surface": {
+      "fn": 3,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProgramAdmissionOutcomeView",
+      "ProgramFrontierView",
+      "ProgramHeldView",
+      "ProgramQueueView",
+      "ProgramResultAvailability",
+      "ProgramRunLifecycle",
+      "ProgramRunRequest",
+      "ProgramRunStateView",
+      "ProgramRunView",
+      "ProgramStepIssueView",
+      "ProgramStepState",
+      "ProgramStepView",
+      "ProgramTryView",
+      "SettledProgramStepRequest",
+      "SettledProgramStepView",
+      "TurnProgramAdmissionItem",
+      "TurnProgramAdmissionRequest",
+      "TurnProgramAdmissionView"
+     ],
+     "path": "src/dreamer_runner/program/read/views.rs",
+     "purpose": "The wire shapes of a turn program's reads (DOOR-141 PR3a)",
+     "surface": {
+      "enum": 5,
+      "struct": 13
      }
     },
     {
@@ -22345,7 +22406,7 @@
      "path": "src/dreamer_runner/program/run.rs",
      "purpose": "Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 23
      }
     },
     {
@@ -33569,7 +33630,7 @@
      "path": "src/llm/step/settled.rs",
      "purpose": "Settled-step point read (DOOR-141 A): one committed model step of a Dreamer attempt, as its terminal…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 2
      }
@@ -34893,6 +34954,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "RecordEraseCustody",
       "RecordEraseSweep",
       "RecordEraseSweepRequest"
      ],
@@ -34900,7 +34962,7 @@
      "purpose": "Owner-bound historical erasure timing from the immutable redaction receipt",
      "surface": {
       "fn": 1,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -39423,9 +39485,9 @@
      "purpose": "The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare…",
      "surface": {
       "const": 1,
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 2,
-      "fn": 7,
+      "fn": 9,
       "struct": 8,
       "trait": 1
      }
@@ -43402,16 +43464,34 @@
      "kind": "src",
      "notable": [
       "CustodyAnchorRoot",
-      "CustodyRecovery",
-      "CustodyStatus"
+      "CustodyRecovery"
      ],
      "path": "src/recovery/checkpoint/custody_head.rs",
-     "purpose": "Custody heads at the vault's surface (KS-4A1, FIX 5685): publishing a vault's exterior key custody beside…",
+     "purpose": "Custody heads at the vault's surface (KS-4A1/KS-4A2, FIX 5685): publishing a vault's exterior key custody to…",
      "surface": {
-      "const": 5,
-      "crate-vis": 1,
-      "fn": 9,
-      "struct": 3
+      "crate-vis": 3,
+      "fn": 14,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CustodyPendingStep",
+      "CustodyRetirement",
+      "CustodyStatus",
+      "CustodyTargetState",
+      "DeclaredTarget"
+     ],
+     "path": "src/recovery/checkpoint/custody_head/status.rs",
+     "purpose": "The status names of a vault's custody (KS-4A1/KS-4A2, FIX 5685), on the owner's status read (`doctor`, `GET…",
+     "surface": {
+      "const": 7,
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 5
      }
     },
     {
@@ -43662,7 +43742,7 @@
      "surface": {
       "enum": 1,
       "fn": 19,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 3
      }
     },
@@ -46134,7 +46214,7 @@
      "purpose": "T0/T1/T2 Vault doors: inject, materialize, register, revoke, expire",
      "surface": {
       "crate-vis": 5,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -50336,7 +50416,7 @@
      "path": "src/store/asset_body/mod.rs",
      "purpose": "ASSET bodies on the file plane (FIX 3677; Engine rule (b), 10-18)",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 23
      }
     },
     {
@@ -50350,13 +50430,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/asset_body/spool.rs",
+     "purpose": "The receive spool of an ASSET body a peer sends by reference (FIX 5489): its frames go, in order, to one…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/asset_body/stage.rs",
      "purpose": "Staging an ASSET body from a reader before the transaction that puts it (FIX 3677): the body streams into…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -50665,7 +50755,7 @@
      "path": "src/store/key_custody/anchor.rs",
      "purpose": "The custody anchor (KS-4, FIX 5685): one lineage's current position, kept where neither the vault's image…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 7
      }
     },
     {
@@ -50676,6 +50766,16 @@
      "purpose": "The local exterior backend: one owner-only directory tree beside the vault root, never inside it, so…",
      "surface": {
       "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/folder.rs",
+     "purpose": "The folder target (KS-4A1; acknowledgements KS-4A2, FIX 5685): `<folder>/oneiron-custody/<namespace…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -50699,23 +50799,43 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/store/key_custody/identity.rs",
-     "purpose": "Typed custody identities and their codecs: who a custody entry belongs to (vault, kind, item, generation)…",
+     "path": "src/store/key_custody/home.rs",
+     "purpose": "The residence home's side of the residence target (KS-4A2, FIX 5685)",
      "surface": {
-      "crate-vis": 41
+      "crate-vis": 4
      }
     },
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "CustodyNamespace",
+      "CustodyVaultId"
+     ],
+     "path": "src/store/key_custody/identity.rs",
+     "purpose": "Typed custody identities and their codecs: who a custody entry belongs to (vault, kind, item, generation)…",
+     "surface": {
+      "crate-vis": 36,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CustodyEpoch",
+      "CustodyPosition"
+     ],
      "path": "src/store/key_custody/log.rs",
      "purpose": "The keyless custody log (KS-4, FIX 5685) and the local journal it is kept in, beside the vault and outside…",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 28,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -50725,7 +50845,45 @@
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 29,
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AckOperation",
+      "AckPosition",
+      "AckRecord",
+      "AnchorAdvance",
+      "AnchorStore",
+      "CustodyBatch",
+      "CustodySource",
+      "CustodyTarget",
+      "DeletionEvidence",
+      "EvidenceKind",
+      "HostedKind",
+      "Lineage",
+      "PendingCode",
+      "ResidenceCommit",
+      "TargetId",
+      "TargetKind",
+      "TargetPending",
+      "TargetPublication",
+      "TargetScope",
+      "TargetSpec"
+     ],
+     "path": "src/store/key_custody/protocol.rs",
+     "purpose": "The KS-4 custody protocol (FIX 5685), public so the holders of a vault's custody outside this crate keep one…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 7,
+      "enum": 8,
+      "fn": 22,
+      "re-export": 2,
+      "struct": 9,
+      "trait": 3
      }
     },
     {
@@ -50733,9 +50891,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/store/key_custody/publish.rs",
-     "purpose": "Publishing one lineage's custody (KS-4, FIX 5685): its keyless log, then its latest sealed head, to a…",
+     "purpose": "Publishing one lineage's custody (KS-4, FIX 5685): its keyless log, then its latest sealed head, to every…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -50755,7 +50913,17 @@
      "path": "src/store/key_custody/retirement.rs",
      "purpose": "Durable retirement intents and the one finisher that carries them out",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/targets.rs",
+     "purpose": "The all-target acknowledgement journal (KS-4A2, FIX 5685), kept beside the keyless log in…",
+     "surface": {
+      "crate-vis": 19
      }
     },
     {
@@ -50836,9 +51004,9 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 1,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -51641,7 +51809,17 @@
      "path": "src/sync/asset_body.rs",
      "purpose": "File-plane ASSET rows at sync (FIX 5393 cut 1): no export ships a manifest without its bytes",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/asset_body/references.rs",
+     "purpose": "The reference a by-reference ASSET body travels under (FIX 5489)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -51975,7 +52153,7 @@
      "path": "src/sync/client/mod.rs",
      "purpose": "Client-side sync over WebSocket",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 5
      }
     },
@@ -52002,7 +52180,7 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 7,
       "re-export": 3,
@@ -52095,6 +52273,16 @@
      "notable": [],
      "path": "src/sync/client/residence/checkpoint_roots.rs",
      "purpose": "Checkpoint root attestations between this machine and its home (FIX 4882), on the steady pass after the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/custody.rs",
+     "purpose": "This machine's key custody to its residence home (KS-4A2, FIX 5685): the residence member of the required…",
      "surface": {
       "crate-vis": 1
      }
@@ -53095,7 +53283,7 @@
       "const": 2,
       "crate-vis": 12,
       "fn": 14,
-      "re-export": 16,
+      "re-export": 17,
       "struct": 2
      }
     },
@@ -53240,6 +53428,16 @@
      "surface": {
       "crate-vis": 3,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/custody.rs",
+     "purpose": "The residence home's door for the key custody of the owner's machines (KS-4A2, FIX 5685): the residence target",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -53418,7 +53616,7 @@
      "path": "src/sync/schema.rs",
      "purpose": "CRDT Doc schema creation for the sync layer",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 6
      }
     },
@@ -53660,8 +53858,26 @@
       "enum": 1,
       "fn": 27,
       "mod": 1,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AssetBodyAddress",
+      "AssetBodyData",
+      "AssetBodyEnd",
+      "AssetBodyReceipt",
+      "AssetBodyWant"
+     ],
+     "path": "src/sync/transport/asset_bodies.rs",
+     "purpose": "By-reference ASSET body frames (FIX 5489)",
+     "surface": {
+      "const": 6,
+      "fn": 9,
+      "struct": 5
      }
     },
     {
@@ -55943,7 +56159,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1097
+      "fn": 1100
      }
     },
     {
@@ -62501,7 +62717,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62655,7 +62871,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 100,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62921,7 +63137,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 90,
+     "files": 92,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63467,7 +63683,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 64,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -63712,7 +63928,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 91,
+     "files": 96,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63740,7 +63956,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 200,
+     "files": 204,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63938,7 +64154,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3941,
+   "source_files": 3955,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72904,7 +73120,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1068
+      "fn": 1071
      }
     },
     {
@@ -74043,7 +74259,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1069
+      "fn": 1072
      }
     },
     {
@@ -77461,7 +77677,7 @@
      "path": "src/api/facade/connector_call_doors.rs",
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -77831,7 +78047,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 173
+      "crate-vis": 174
      }
     },
     {
@@ -78090,6 +78306,16 @@
      "notable": [],
      "path": "src/api/facade/policy_doors.rs",
      "purpose": "The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/program_read_doors.rs",
+     "purpose": "A turn program's reads (DOOR-141 PR3a): what a landed turn's wakes admitted, where one program's run stands…",
      "surface": {
       "crate-vis": 3
      }
@@ -81123,7 +81349,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 12,
       "re-export": 21,
       "struct": 1
@@ -83319,6 +83545,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/livequery/residence/custody.rs",
+     "purpose": "`residence.custody.status`, `.frames`, `.put` and `.commit`: this home as the residence target of its…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/livequery/residence/machine_history.rs",
      "purpose": "`residence.machine-history` (FIX 3820): a target's machine-claim history, a page at a time, for a machine…",
      "surface": {
@@ -83523,7 +83759,7 @@
      "path": "src/managed/isolation.rs",
      "purpose": "Fail-closed Linux fscrypt and root-owned UID allocation probes",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -84773,27 +85009,37 @@
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/custody.rs",
+     "purpose": "Custody heads beside the backups (KS-4A1/KS-4A2, FIX 5685)",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/owner/backup/custody.rs",
-     "purpose": "Custody heads beside the backups (KS-4A1, FIX 5685)",
+     "path": "src/owner/backup/custody/anchor_client.rs",
+     "purpose": "The HTTP custody anchor (FIX 5788, CALLS CUSTODY_ANCHOR_URL): a host whose own disks would roll back with…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/backup/rehearse.rs",
      "purpose": "Rehearsals of one vault's backups: restored into a scratch copy beside the live vault, opened, checked and…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -84804,6 +85050,16 @@
      "purpose": "Restores of one vault's backups: over the stopped vault, where no vault is yet, and the activation of the…",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/scratch.rs",
+     "purpose": "The mark a rehearsal's scratch copy carries when it is deleted afterwards, and the start-up sweep of those a…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -85031,7 +85287,7 @@
      "path": "src/owner/schedule.rs",
      "purpose": "Scheduled backups for a running `serve`",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -85095,7 +85351,7 @@
      "path": "src/protocol.rs",
      "purpose": "Custom Oneiron sync protocol — server-side extensions",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 32
      }
     },
     {
@@ -86563,7 +86819,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 467,
+     "files": 468,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -86836,7 +87092,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 27,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -86892,7 +87148,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 30,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -87013,7 +87269,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 864,
+   "source_files": 868,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -87215,9 +87471,12 @@
       "AccessFactorPolicy",
       "AccessRequestStatus",
       "AccessStatus",
+      "ActAnswerArtifactAskOutcome",
+      "ActAnswerConnectorCallReply",
       "ActAnswerFanoutLaunchView",
       "ActAnswerRecordEraseOutcome",
       "ActAnswerSharedActExecuted",
+      "ActAnswerSlideReviewOutcome",
       "ActExecution",
       "ActionBoundRequest",
       "ActionEnvelopeRequest",
@@ -89585,7 +89844,20 @@
       "ProductivityRole",
       "ProductivityTree",
       "ProductivityTreeRequest",
+      "ProgramAdmissionOutcomeView",
+      "ProgramFrontierView",
+      "ProgramHeldView",
+      "ProgramQueueView",
       "ProgramRecipePin",
+      "ProgramResultAvailability",
+      "ProgramRunLifecycle",
+      "ProgramRunRequest",
+      "ProgramRunStateView",
+      "ProgramRunView",
+      "ProgramStepIssueView",
+      "ProgramStepState",
+      "ProgramStepView",
+      "ProgramTryView",
       "ProjectBudgetShare",
       "ProjectCardConfirmRequest",
       "ProjectCardDismissal",
@@ -89699,6 +89971,7 @@
       "RecipientRole",
       "RecipientState",
       "RecordEraseConfirmRequest",
+      "RecordEraseCustody",
       "RecordEraseOutcome",
       "RecordErasePreview",
       "RecordEraseRequest",
@@ -90170,6 +90443,8 @@
       "SettleVerb",
       "SettleVerdict",
       "SettledHunkView",
+      "SettledProgramStepRequest",
+      "SettledProgramStepView",
       "SettledStepRequest",
       "SettledStepView",
       "ShapeApplyItem",
@@ -90638,6 +90913,9 @@
       "TurnAction",
       "TurnActionReceipt",
       "TurnActionRequest",
+      "TurnProgramAdmissionItem",
+      "TurnProgramAdmissionRequest",
+      "TurnProgramAdmissionView",
       "TurnProgramRegistration",
       "TurnTagsView",
       "TwoClocksAtom",
@@ -90830,8 +91108,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 864,
-      "struct": 2752
+      "enum": 872,
+      "struct": 2766
      }
     },
     {

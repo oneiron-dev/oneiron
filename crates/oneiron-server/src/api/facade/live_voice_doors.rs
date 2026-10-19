@@ -127,9 +127,10 @@ pub(crate) async fn ai_voice_tool(
     if let Err(error) = session.require_tool_context() {
         return (Err(error), Vec::new());
     }
-    let (reply, rows) =
-        super::connector_call_doors::connector_call(server, auth, caller, invocation, input.call)
-            .await;
+    let (reply, rows) = super::connector_call_doors::connector_call_reply(
+        server, auth, caller, invocation, input.call,
+    )
+    .await;
     let result = match reply {
         Ok(reply) => {
             let processed = match &reply {

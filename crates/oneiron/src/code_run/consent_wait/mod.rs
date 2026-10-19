@@ -40,7 +40,7 @@ pub(crate) use self::replay::{
 pub(crate) use self::settle::{
     CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, code_consent_admission_in_txn, offered_choices,
     original_authority_holds_in_txn, refuse_code_consent_wait_in_txn,
-    settle_code_consent_wait_in_txn,
+    settle_code_consent_wait_listing_in_txn,
 };
 pub use self::types::{
     CodeConsentAnswerInput, CodeConsentChoice, CodeConsentSavedCredential,

@@ -14,11 +14,16 @@
 //! binds each attempt to its live authority and its code run (`run`), runs
 //! the pinned entry there, and settles each effect into its step. A run cut
 //! before it settled parks; its resume lands with PR3.
+//!
+//! PR3a reads it (`read`): what a turn's wakes admitted, where a program's
+//! run stands and a settled step's exact result, each for the program's
+//! waking actor or the verified owner, on the caller's own read lane.
 
 mod admit;
 mod arm;
 mod authority;
 mod lease;
+mod read;
 mod run;
 mod types;
 mod wake;
@@ -34,6 +39,14 @@ pub(crate) use self::arm::{
 pub(crate) use self::authority::{
     TurnProgramAuthority, TurnProgramBinding, TurnProgramBound, apply_program_started_in_txn,
     program_milestone_envelope, require_program_actor_in_txn, stamp_program_attempt,
+};
+pub use self::read::{
+    ProgramAdmissionOutcomeView, ProgramFrontierView, ProgramHeldView, ProgramQueueView,
+    ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView,
+    ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
+    SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
+    TurnProgramAdmissionRequest, TurnProgramAdmissionView, program_run, settled_program_step,
+    turn_program_admission,
 };
 pub(crate) use self::run::{
     ProgramWrite, TurnProgramEntered, bind_program_write_in_txn, join_program_checkpoint_in_txn,

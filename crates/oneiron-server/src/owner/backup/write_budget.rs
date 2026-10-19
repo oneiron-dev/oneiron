@@ -22,7 +22,8 @@
 //! is made under the vault's own directory unless the host names another, so
 //! by default the floor measures the disk the copy fills. A scratch directory
 //! on another disk claims there too, at the same reserve, beside the claim on
-//! the vault's floor.
+//! the vault's floor. A backup's artifact claims the same way on the disk of
+//! the `[backup] dir` it lands in (FIX 5675).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -38,10 +39,10 @@ use crate::owner::schedule::OwnerHost;
 /// disk's floor, or by a full disk.
 pub(crate) const CAPACITY_STATE: &str = "disk_capacity";
 
-/// What a backup or a rehearsal stopped at the disk's floor says.
-pub(crate) const CAPACITY_REFUSAL: &str = "the vault's disk has no room for this past the \
-     free-space reserve uploads keep (limits.disk_reserve_bytes): it stopped there, and nothing \
-     it wrote was kept";
+/// What a backup or a rehearsal stopped at a disk's floor says.
+pub(crate) const CAPACITY_REFUSAL: &str = "a disk this operation writes to has no room for this \
+     past the free-space reserve uploads keep (limits.disk_reserve_bytes): it stopped there, and \
+     nothing it wrote was kept";
 
 /// What a backup or a rehearsal a full disk stopped says (FIX 5615). A disk
 /// can fill after a backup's file is in place, so it promises nothing about
@@ -130,19 +131,8 @@ pub(crate) struct WriteClaim {
 }
 
 impl WriteClaim {
-    /// A claim on `floor`, holding no room yet. With no floor it claims
-    /// nothing and refuses nothing.
-    pub(crate) fn on(floor: Option<&DiskFloor>) -> Self {
-        Self {
-            held: floor
-                .map(|floor| (floor.clone(), floor.claim()))
-                .into_iter()
-                .collect(),
-        }
-    }
-
     /// A claim on each of `floors`, holding no room yet: every one must have
-    /// the room.
+    /// the room. With no floors it claims nothing and refuses nothing.
     pub(crate) fn on_each(floors: &[DiskFloor]) -> Self {
         Self {
             held: floors
@@ -197,17 +187,18 @@ pub(crate) fn rehearse_claiming(
     super::rehearse_in_with(temp, backup, config, None, source, None, &floors)
 }
 
-/// The floors a copy made under `temp` claims on: the vault's, as its host
-/// lent it, and, when `temp` lies on another disk, that disk's at the same
-/// reserve. None without a lent floor.
-fn landing_floors(floor: Option<&DiskFloor>, temp: &Path) -> Vec<DiskFloor> {
+/// The floors a write landing in `dir`, a rehearsal's scratch or a backup's
+/// directory, claims on: the vault's, as its host lent it, and, when `dir`
+/// lies on another disk, that disk's at the same reserve. None without a lent
+/// floor.
+pub(super) fn landing_floors(floor: Option<&DiskFloor>, dir: &Path) -> Vec<DiskFloor> {
     let Some(floor) = floor else {
         return Vec::new();
     };
-    if floor.measures(temp) {
+    if floor.measures(dir) {
         vec![floor.clone()]
     } else {
-        vec![floor.clone(), floor.on_disk_of(temp.to_path_buf())]
+        vec![floor.clone(), floor.on_disk_of(dir.to_path_buf())]
     }
 }
 

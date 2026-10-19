@@ -101,7 +101,7 @@ pub(super) async fn handle_selector_fetch(
     .map_err(map_selector_filter_err)?;
     let delta = filtered
         .export(ExportMode::all_updates())
-        .map_err(|e| ProtocolError::LoroImport(e.to_string()))?;
+        .map_err(|e| ProtocolError::ExportFailed(e.to_string()))?;
     send(direct_tx, key, window_sub_tags::UPDATE, &delta)?;
     prepared
         .complete(server.vault.as_ref())

@@ -160,28 +160,45 @@ pub(crate) fn retirements_in_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Result<Vec<Ret
 }
 
 /// Clears an intent whose generations are all retired here, in the
-/// finisher's own write transaction.
+/// finisher's own write transaction: the retirement handoff (KS-4, FIX
+/// 5685).
 ///
-/// KS-4 (custody head, FIX 5685) waits HERE. KS-4A1: the retirement is
-/// handed to the exterior journal first, a keyless log frame synced before
-/// the intent clears, so the next head excludes the retired entries and its
-/// publication deletes every superseded head that held them; a publication
-/// that lags stays pending by name and never holds the intent. KS-4A2 adds
-/// the wait for every target's durable acknowledgement. The claim finisher
-/// stays warning-only.
+/// The retirement is handed to the exterior journal first: one keyless
+/// Retire frame, synced, then its obligation (KS-4A2), synced, naming that
+/// frame's position. Only then does the intent clear. A frame an
+/// interrupted handoff journaled is found by the journal's reconcile walk,
+/// never journaled again. The obligation, not the intent, waits on every
+/// required target's durable acknowledgement and the anchor: the local
+/// retirement is effective at once, nothing refuses for a lagging target,
+/// and the completion status names each one still pending (Engine 10-20).
+/// The claim finisher stays warning-only.
 fn clear_finished_intent_in_txn(
     store: &Store,
     custody: LocalCustody<'_>,
     wtxn: &mut RwTxn<'_>,
     intent: &RetirementIntent,
 ) -> Result<()> {
-    custody.journal_entry(&LogEntry::Retire {
-        subject: intent.subject.clone(),
-        through: intent.through,
-        cause: intent.cause,
-    })?;
+    let journal = custody.journal()?;
+    journal.reconcile()?;
+    if journal.obligation(intent)?.is_none() {
+        let at = custody.journal_entry(&LogEntry::Retire {
+            subject: intent.subject.clone(),
+            through: intent.through,
+            cause: intent.cause,
+        })?;
+        journal.record_obligation(intent, &at)?;
+    }
     RETIRE_PENDING.delete(store, wtxn, &intent.subject)?;
     Ok(())
+}
+
+/// How many intents stand in `txn`, whatever their kind: retirements whose
+/// local destruction has not been handed off yet.
+pub(crate) fn standing_retirements_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+) -> Result<usize> {
+    Ok(RETIRE_PENDING.scan(dbs, txn)?.len())
 }
 
 #[cfg(test)]

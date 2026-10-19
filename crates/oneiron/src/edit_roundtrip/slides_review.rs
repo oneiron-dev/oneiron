@@ -286,6 +286,10 @@ pub struct SlideReviewRun {
     pub proposal: Option<EditProposal>,
     pub abstained: Vec<SlideAbstention>,
     pub refused: Vec<SlideUnitRefusal>,
+    /// The rows the vault's own reads picked for the run (FIX 5455): the
+    /// head version it reviews, as its version CLAIM and ASSET. A review of
+    /// bytes its caller holds lists none.
+    pub read_rows: Vec<EntityId>,
 }
 
 /// A unit the ladder left unanswered. The decision carries its typed reason and
@@ -653,6 +657,7 @@ pub fn review_slides(
             proposal: None,
             abstained,
             refused,
+            read_rows: Vec::new(),
         });
     }
     let mut proposal = run_comment_roundtrip(base.bytes, &patches, run_ref)?;
@@ -663,6 +668,7 @@ pub fn review_slides(
         proposal: Some(proposal),
         abstained,
         refused,
+        read_rows: Vec::new(),
     })
 }
 
@@ -1117,10 +1123,11 @@ impl Vault {
         if super::OfficeFormat::from_media_type(&body.media_type)? != super::OfficeFormat::Pptx {
             return Err(PptxError::InvalidPatch.into());
         }
-        let bytes = self
-            .read_blob_artifact_version(artifact, head.version)?
+        let (bytes, read_rows) = self
+            .read_blob_artifact_version_listing(artifact, head.version)?
             .ok_or(Error::EntityNotFound)?;
-        self.review_blob_artifact_slides_at(artifact, head.version, &bytes, request)
+        let run = self.review_blob_artifact_slides_at(artifact, head.version, &bytes, request)?;
+        Ok(SlideReviewRun { read_rows, ..run })
     }
 
     /// [`Self::review_blob_artifact_slides`] over one version's `bytes`, which

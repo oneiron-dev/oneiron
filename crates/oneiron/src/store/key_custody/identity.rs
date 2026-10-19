@@ -20,15 +20,15 @@ pub(crate) fn custody_corrupt() -> Error {
 /// keeps it; a side restore or an activation forks into a new one, so from
 /// then on neither vault's erase reaches the other's entries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct CustodyNamespace([u8; 16]);
+pub struct CustodyNamespace([u8; 16]);
 
 impl CustodyNamespace {
     /// The namespace a custody head, log frame or anchor record names.
-    pub(super) fn from_bytes(bytes: [u8; 16]) -> Self {
+    pub fn from_bytes(bytes: [u8; 16]) -> Self {
         Self(bytes)
     }
 
-    pub(super) fn as_bytes(&self) -> &[u8; 16] {
+    pub fn as_bytes(&self) -> &[u8; 16] {
         &self.0
     }
 }
@@ -38,15 +38,15 @@ impl CustodyNamespace {
 /// bytes. Never a path hash. A fork keeps it: the entries it copies are still
 /// that vault's subjects, in another namespace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct CustodyVaultId([u8; 32]);
+pub struct CustodyVaultId([u8; 32]);
 
 impl CustodyVaultId {
     /// The vault a custody head, log frame or anchor record names.
-    pub(super) fn from_bytes(bytes: [u8; 32]) -> Self {
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 
-    pub(super) fn as_bytes(&self) -> &[u8; 32] {
+    pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
 }
@@ -366,7 +366,7 @@ pub(in crate::store) fn decode_native_path(raw: &[u8]) -> Option<PathBuf> {
 }
 
 /// Lowercase hex only, so one item has one name.
-fn hex_decode(text: &str) -> Option<Vec<u8>> {
+pub(super) fn hex_decode(text: &str) -> Option<Vec<u8>> {
     if !text.len().is_multiple_of(2) {
         return None;
     }

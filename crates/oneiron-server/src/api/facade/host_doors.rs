@@ -25,7 +25,7 @@ use oneiron::memory::{
 };
 use oneiron::runtime_hooks::HookVerdict;
 use oneiron::task_verb::sdk::{
-    AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiVerdict, AiVerdictRequest,
+    ActAnswer, AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiVerdict, AiVerdictRequest,
     AiVideoCancelled, AiVideoJob, AiVideoJobRequest, AiVideoTicket, AiVoice, HookReplayRow,
     HooksReplayRequest, PackPutReceipt, PackPutRequest,
 };
@@ -93,6 +93,8 @@ pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
+// A turn program's reads (DOOR-141 PR3a), on the caller's own lane.
+pub(crate) use super::program_read_doors::*;
 pub(crate) use super::run_review_doors::*;
 pub(crate) use super::sieve_observation_doors::*;
 pub(crate) use super::skill_attribution_doors::*;
@@ -404,13 +406,15 @@ pub(crate) async fn vault_connectors_subscriptions_revoke(
 /// and bands, and holds the proposal for Keep or Discard. A unit with no
 /// image is rendered by the host's LibreOffice renderer when it has one. The
 /// ladder and the render run on a blocking thread, one call per unit.
-/// Beside it, the rows its reads listed, the head it renders from and every
-/// stored image a unit names.
+/// Beside it, the rows its reads listed, the head version it reviews and
+/// renders from (FIX 5455) and every stored image a unit names. A caller off
+/// this device whose reply names or lists a row that stays here hears only
+/// that the review ran ([`crate::device_local::act_answer`]).
 pub(crate) async fn vault_artifacts_review_slides(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::blob_artifact::SlideReviewSubmit,
-) -> Listed<oneiron::blob_artifact::SlideReviewOutcome> {
+) -> Listed<ActAnswer<oneiron::blob_artifact::SlideReviewOutcome>> {
     const VERB: &str = "vault.artifacts.review_slides";
     let caller = match slide_reviewer(server, auth) {
         Ok(caller) => caller,
@@ -439,7 +443,7 @@ pub(crate) async fn vault_artifacts_review_slides(
         })
         .await;
     listed.extend(beside);
-    (answer, listed)
+    crate::device_local::act_answer(server.vault(), &auth.destination(), (answer, listed))
 }
 
 /// The principal a slide review binds its proposal to.
@@ -461,12 +465,15 @@ fn slide_reviewer(
 /// ladder as the bound actor, from the host's starting dial and bands, and
 /// holds the answers as one proposal for Keep or Discard. The ladder runs on
 /// a blocking thread, one call per unit, as `vault.artifacts.review_slides`.
-/// Beside it, the rows its reads listed and the artifact it asks over.
+/// Beside it, the rows its reads listed, the artifact it asks over and each
+/// version its reads picked (FIX 5455): the artifact's head and every folder
+/// file's. A caller off this device whose reply names or lists a row that
+/// stays here hears only that the ask ran ([`crate::device_local::act_answer`]).
 pub(crate) async fn vault_artifacts_ask(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::blob_artifact::ArtifactAskSubmit,
-) -> Listed<oneiron::blob_artifact::ArtifactAskOutcome> {
+) -> Listed<ActAnswer<oneiron::blob_artifact::ArtifactAskOutcome>> {
     const VERB: &str = "vault.artifacts.ask";
     let caller = match artifact_asker(server, auth) {
         Ok(caller) => caller,
@@ -485,7 +492,7 @@ pub(crate) async fn vault_artifacts_ask(
         })
         .await;
     listed.extend(beside);
-    (answer, listed)
+    crate::device_local::act_answer(server.vault(), &auth.destination(), (answer, listed))
 }
 
 /// The principal an artifact ask binds its proposal to.
@@ -539,7 +546,8 @@ pub(crate) async fn vault_artifacts_admit(
 /// `vault.artifacts.body.deck.preview`: the asked slides of a deck's head,
 /// drawn by this host's review renderer on a blocking thread, for a
 /// credential that reads the artifact. Beside it, the rows its reads listed
-/// and the head it draws from.
+/// (the package version it projects over and each live-born picture's
+/// asset, a held drawing's too, FIX 5455) and the head it draws from.
 pub(crate) async fn vault_artifacts_body_deck_preview(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

@@ -783,7 +783,13 @@ impl CodeRunReplayRecord {
                 && call.started_at_ms == kept.started_at_ms
                 && call.finished_at_ms == kept.finished_at_ms
             {
+                // A parked call keeps the rows its delivered reply listed
+                // (FIX 5455), which the held copy has not kept yet.
+                let delivered = super::wait_rows::wait_rows(&call.outcome);
                 call.clone_from(kept);
+                if let Some(rows) = delivered {
+                    super::wait_rows::keep_wait_rows(&mut call.outcome, &rows);
+                }
             }
         }
         Cow::Owned(record)
@@ -818,6 +824,13 @@ pub(crate) fn agent_verb_rows_of(calls: &[CodeRunBridgeCall]) -> Option<Vec<Enti
         {
             rows.extend(answer.rows?);
         }
+        // A parked call's delivered reply's rows, once the run resumed from
+        // it (FIX 5455).
+        rows.extend(
+            super::wait_rows::wait_rows(&call.outcome)
+                .into_iter()
+                .flatten(),
+        );
     }
     Some(rows)
 }

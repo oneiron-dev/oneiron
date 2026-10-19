@@ -236,6 +236,10 @@ pub struct ArtifactAskRun {
     pub proposal: Option<super::EditProposal>,
     pub abstained: Vec<UnitAbstention>,
     pub refused: Vec<UnitRefusal>,
+    /// The rows the ask's own reads picked (FIX 5455): each version it read,
+    /// as its version CLAIM and ASSET, the asked artifact's head and every
+    /// folder file's head alike. Ids only.
+    pub read_rows: Vec<EntityId>,
 }
 
 /// The cell a decided answer writes: a yes/no as a boolean, a pick as its
@@ -269,13 +273,14 @@ pub(crate) fn invalid(message: &str) -> Error {
 }
 
 impl crate::Vault {
-    /// An office artifact's head version and bytes; refused unless the
+    /// An office artifact's head version and bytes, and the rows that
+    /// version is (its version CLAIM and ASSET, FIX 5455); refused unless the
     /// artifact is a `format` file.
     pub(crate) fn office_head(
         &self,
         artifact: &EntityId,
         format: super::OfficeFormat,
-    ) -> Result<(u64, Vec<u8>)> {
+    ) -> Result<(u64, Vec<u8>, Vec<EntityId>)> {
         let head = self
             .blob_artifact_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
@@ -285,9 +290,9 @@ impl crate::Vault {
         if super::OfficeFormat::from_media_type(&body.media_type)? != format {
             return Err(invalid("the artifact is not a file of the asked format"));
         }
-        let bytes = self
-            .read_blob_artifact_version(artifact, head.version)?
+        let (bytes, rows) = self
+            .read_blob_artifact_version_listing(artifact, head.version)?
             .ok_or(Error::EntityNotFound)?;
-        Ok((head.version, bytes))
+        Ok((head.version, bytes, rows))
     }
 }

@@ -22,11 +22,11 @@ pub(crate) const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_se
 const LAUNCHD_SOCKET: &str = "Listeners";
 const KEYCHAIN_SERVICE: &str = "com.oneiron.server";
 
-/// `config_file` is the file `config` was read from, which the server's
-/// runtime file names for a client that queues imports to it.
+/// `files` are the files `config` was read from, which the server's runtime
+/// file names for a client that queues imports to it.
 pub(super) async fn serve_with_config(
     mut config: ServeConfig,
-    config_file: Option<std::path::PathBuf>,
+    files: Option<super::ConfigFiles>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         config.privacy_posture != oneiron::HostingPrivacyPosture::Relay,
@@ -162,9 +162,9 @@ pub(super) async fn serve_with_config(
     // when this returns, a clean stop or a late startup error alike.
     #[cfg(unix)]
     let _registered =
-        super::local_servers::register(vault_id, bound, &config.vault_path, config_file.as_deref());
+        super::local_servers::register(vault_id, bound, &config.vault_path, files.as_ref());
     #[cfg(not(unix))]
-    let _ = config_file;
+    let _ = files;
     let stop = |mut stopped: tokio::sync::watch::Receiver<bool>| async move {
         let _ = stopped.wait_for(|stop| *stop).await;
     };
@@ -204,6 +204,9 @@ pub(super) async fn serve_with_config(
     if let Some(mesh) = mesh {
         mesh.stop().await;
     }
+    // Every public live voice session ends through its own teardown, its
+    // journal finished, and none starts after, as managed serve ends them.
+    mesh_server.live_voice.stop_all().await;
     workers.shutdown(|| host.on_stop()).await?;
 
     Ok(())
@@ -272,6 +275,8 @@ pub fn open_served_vault<H: oneiron_vault_contract::host::Host>(
     if let Err(error) = vault.collect_result_bodies(4096) {
         tracing::warn!(%error, "result body collection at start failed");
     }
+    // Rehearsal scratch a stopped serve left goes before any rehearsal starts (FIX 5677).
+    owner_host.sweep_rehearsals(&vault);
     Ok(OpenedServedVault {
         vault: Arc::new(vault),
         owner_host,
