@@ -387,7 +387,7 @@ pub(crate) enum CustodyRoute {
     Local,
     /// The image names a head, and its custody is not on this host: the
     /// head was admitted and landed beside the destination.
-    Landed(CustodyLanding),
+    Landed(Box<CustodyLanding>),
     /// The image names no head (or needs no live key and none is beside
     /// it), and its custody is not on this host: its claim-bound rows whose
     /// keys stayed there are dropped and named (CALLS
@@ -503,11 +503,11 @@ pub(crate) fn route_custody(
     }
     let binding = bound.rebind_to(root);
     let landed = land_recovery(&admitted, &binding)?;
-    let landing = CustodyLanding {
+    let landing = Box::new(CustodyLanding {
         landed: Some(landed),
         admitted,
         anchor_root: source.anchor_root.map(std::path::Path::to_path_buf),
-    };
+    });
     let raw = crate::side_table::RawValue::to_raw(&binding)
         .map_err(|_| super::identity::custody_corrupt())?;
     for (key, value) in rows.iter_mut() {

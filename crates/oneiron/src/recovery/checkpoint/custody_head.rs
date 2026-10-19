@@ -177,7 +177,7 @@ impl Vault {
                 .map(|name| name.to_string_lossy())
                 .unwrap_or_default()
         ));
-        if root.starts_with(home) || root.starts_with(&custody) {
+        if root.starts_with(home) || root.starts_with(custody) {
             return Err(crate::Error::InvalidConfig(
                 "the custody anchor root must lie outside the vault and its key custody".into(),
             ));

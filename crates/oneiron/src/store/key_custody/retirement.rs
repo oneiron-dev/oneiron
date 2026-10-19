@@ -132,12 +132,7 @@ pub(crate) fn retirements_in_txn(
 
 /// Clears every standing intent in `wtxn`, whatever its kind.
 pub(super) fn clear_all_in_txn(dbs: &impl SideTableDbs, wtxn: &mut RwTxn<'_>) -> Result<()> {
-    let subjects: Vec<CustodySubject> = RETIRE_PENDING
-        .scan(dbs, &*wtxn)?
-        .into_iter()
-        .map(|(subject, _)| subject)
-        .collect();
-    for subject in subjects {
+    for (subject, _) in RETIRE_PENDING.scan(dbs, &*wtxn)? {
         RETIRE_PENDING.delete(dbs, wtxn, &subject)?;
     }
     Ok(())
