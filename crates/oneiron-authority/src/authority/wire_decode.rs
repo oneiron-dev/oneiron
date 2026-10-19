@@ -220,6 +220,9 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_OWNER_WORK_RESULT => super::owner_work::decode_owner_work_result(entries),
         OP_KIND_CHECKPOINT_POLICY => super::checkpoint_policy::decode_checkpoint_policy(entries),
         OP_KIND_HOME_NODE_PICK => super::home_pick::decode_home_node_pick(entries),
+        OP_KIND_CONVERSATION_TRAINING => {
+            super::conversation_training::decode_conversation_training(entries)
+        }
         _ => Err(invalid_authority()),
     }
 }

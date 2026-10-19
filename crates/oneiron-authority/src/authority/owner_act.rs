@@ -98,6 +98,12 @@ pub enum OwnerActKind {
     /// The owner's pick of the vault's home node (`HomeNodePick`; DOOR-101
     /// PR2a). Its `seen` is over the vault's live picks.
     HomeNodePick,
+    /// A person's own "Learn from my conversations" choice
+    /// (`ConversationTrainingSet`; FIX 4489, Engine 10-19 12:1x). Not an
+    /// owner act: `owner` is the acting PERSON, owner of the vault or not
+    /// (the holder meaning of `by: Owner`), and `target` is that same
+    /// person. Its `seen` is over that person's live choices.
+    ConversationTraining,
 }
 
 impl OwnerActKind {
@@ -118,6 +124,7 @@ impl OwnerActKind {
             Self::PolicySetting => "policy_setting",
             Self::Export => "export",
             Self::HomeNodePick => "home_node_pick",
+            Self::ConversationTraining => "conversation_training",
         }
     }
 
@@ -138,6 +145,7 @@ impl OwnerActKind {
             "policy_setting" => Self::PolicySetting,
             "export" => Self::Export,
             "home_node_pick" => Self::HomeNodePick,
+            "conversation_training" => Self::ConversationTraining,
             _ => return None,
         })
     }

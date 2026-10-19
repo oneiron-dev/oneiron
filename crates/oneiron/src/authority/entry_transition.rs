@@ -132,6 +132,8 @@ pub(super) fn fold_entry_state(
             refused_grant_travel: BTreeSet::new(),
             checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState::default(),
             home_pick: super::home_pick::HomePickChoiceState::default(),
+            conversation_training:
+                super::conversation_training::ConversationTrainingChoiceState::default(),
             owner_work: super::owner_work::OwnerWorkState::default(),
             world_keys: BTreeMap::new(),
             refused_world_keys: BTreeSet::new(),
@@ -222,6 +224,22 @@ pub(super) fn fold_entry_state(
             &mut state,
             entry,
             pick,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // So is a person's own conversation training choice, on the same
+    // register, one frontier per PERSON (FIX 4489).
+    if let AuthorityOp::ConversationTrainingSet(set) = &entry.op {
+        if let Err(issue) = super::conversation_training::apply_conversation_training(
+            &mut state,
+            entry,
+            set,
             hash,
             (context.pin, context.machine_standing),
             restriction_only,
@@ -445,8 +463,8 @@ fn residence_result_stands(
 }
 
 /// A row a sequence floor refuses only to restriction (Astra #1430): a world
-/// edit, a grant travel choice, a checkpoint policy choice, a home pick, or a
-/// machine revision. The roster rule reads each as a replica with no floor
+/// edit, a grant travel choice, a checkpoint policy choice, a home pick, a
+/// person's conversation training choice, or a machine revision. The roster rule reads each as a replica with no floor
 /// does; this install never counts what it grants.
 pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
     matches!(
@@ -455,6 +473,7 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
             | AuthorityOp::GrantTravelSet(_)
             | AuthorityOp::CheckpointPolicySet(_)
             | AuthorityOp::HomeNodePick(_)
+            | AuthorityOp::ConversationTrainingSet(_)
             | AuthorityOp::MachineProfile(_)
     )
 }
@@ -558,6 +577,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::GrantTravelSet(_)
         | AuthorityOp::CheckpointPolicySet(_)
         | AuthorityOp::HomeNodePick(_)
+        | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_) => false,
     }

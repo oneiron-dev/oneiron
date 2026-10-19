@@ -427,6 +427,8 @@ pub(super) fn fold_authority_log_once(
             refused_grant_travel: BTreeSet::new(),
             checkpoint_policy: super::checkpoint_choice::FoldedCheckpointPolicy::default(),
             home_pick: super::home_pick::FoldedHomePick::default(),
+            conversation_training:
+                super::conversation_training::FoldedConversationTraining::default(),
             owner_work: super::owner_work::FoldedOwnerWork::default(),
             install: InstallBound::default(),
             counted_ancestor_pairs,

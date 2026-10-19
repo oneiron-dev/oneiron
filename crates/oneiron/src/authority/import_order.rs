@@ -89,6 +89,9 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
         AuthorityOp::HomeNodePick(pick) => {
             vec![Grant::InstallKey(pick.machine, entry.signer_key().clone())]
         }
+        AuthorityOp::ConversationTrainingSet(set) => {
+            vec![Grant::InstallKey(set.machine, entry.signer_key().clone())]
+        }
         AuthorityOp::OwnerWorkRequest(request) => {
             vec![Grant::InstallKey(
                 request.carrier,

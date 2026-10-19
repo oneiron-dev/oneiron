@@ -92,6 +92,7 @@ pub(super) fn apply_op(
         | AuthorityOp::GrantTravelSet(_)
         | AuthorityOp::CheckpointPolicySet(_)
         | AuthorityOp::HomeNodePick(_)
+        | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::WorldKeyWraps(_) => {}

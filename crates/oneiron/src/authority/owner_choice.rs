@@ -1,7 +1,10 @@
 //! The register every vault-wide single-value owner choice keeps: the
 //! checkpoint root policy (mesh PR2c, [`super::checkpoint_choice`]) and each
 //! later kind. Each kind keeps its own register, its own wire kind, target
-//! and revision domain; one algorithm judges them all.
+//! and revision domain; one algorithm judges them all. A kind keyed by many
+//! targets (a person's own choice, [`super::conversation_training`], keyed
+//! by PERSON) keeps one frontier per target in the same register and reads
+//! each through [`folded_owner_choices`].
 //!
 //! The choices keep the world-privacy register over the authority DAG
 //! ([`super::world_strength`]): a choice supersedes exactly the live choices
@@ -52,7 +55,8 @@ impl<P> Default for SignedOwnerChoice<P> {
 type ChoiceFrontier<P> = WorldFrontier<SignedOwnerChoice<P>>;
 
 /// One kind's choices in one fold state: the frontier of each target (only
-/// the vault's own, which the record's shape check pins), and every
+/// the vault's own for a vault-wide kind, which the record's shape check
+/// pins; each acting PERSON's own for a person's kind), and every
 /// well-signed choice whose carrier the one rule did not admit.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct OwnerChoiceState<P> {
@@ -416,7 +420,51 @@ pub(super) fn folded_owner_choice<P: Clone + PartialEq>(
         return folded;
     };
     let standing = Standing::new(state, pin, counted);
-    let (act, conflict) = in_force(&standing, frontier);
+    fold_frontier(&standing, frontier, &mut folded);
+    folded
+}
+
+/// The fold's view of each target's choices, for a kind keyed by many
+/// targets, under this install's pin and holds: every target judged as
+/// [`folded_owner_choice`] judges the one. Each view's `refused` is empty: a
+/// refused choice names no frontier, and the register's own set
+/// ([`refused_owner_choices`]) keeps it.
+pub(super) fn folded_owner_choices<P: Clone + PartialEq>(
+    state: &FoldState,
+    register: &OwnerChoiceState<P>,
+    pin: Option<&PinnedRoot>,
+    counted: InstallCounted<'_>,
+) -> BTreeMap<EntityId, FoldedOwnerChoice<P>> {
+    if register.frontiers.is_empty() {
+        return BTreeMap::new();
+    }
+    let standing = Standing::new(state, pin, counted);
+    register
+        .frontiers
+        .iter()
+        .map(|(target, frontier)| {
+            let mut folded = FoldedOwnerChoice::default();
+            fold_frontier(&standing, frontier, &mut folded);
+            (*target, folded)
+        })
+        .collect()
+}
+
+/// Every well-signed choice of the kind whose carrier the one rule did not
+/// admit, or whose owner was not live, at its parents.
+pub(super) fn refused_owner_choices<P>(
+    register: &OwnerChoiceState<P>,
+) -> &BTreeSet<AuthorityEntryHash> {
+    &register.refused
+}
+
+/// One frontier's live choices, the choice in force and the conflict.
+fn fold_frontier<P: Clone + PartialEq>(
+    standing: &Standing<'_>,
+    frontier: &ChoiceFrontier<P>,
+    folded: &mut FoldedOwnerChoice<P>,
+) {
+    let (act, conflict) = in_force(standing, frontier);
     folded.live = frontier
         .live
         .keys()
@@ -427,7 +475,6 @@ pub(super) fn folded_owner_choice<P: Clone + PartialEq>(
         .iter()
         .filter_map(|hash| head_of(frontier, hash))
         .collect();
-    folded
 }
 
 /// The choices that never count at full strength on this install: each one

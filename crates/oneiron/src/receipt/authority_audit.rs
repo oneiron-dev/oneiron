@@ -95,9 +95,11 @@ pub struct AuthorityAuditQuery {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AuthorityAuditEventKind {
-    /// A capability mint, or a federation connect.
+    /// A capability mint, a federation connect, or a person's yes to
+    /// training on their conversations.
     Grant,
-    /// A capability revoke, or a federation disconnect or dissolve.
+    /// A capability revoke, a federation disconnect or dissolve, or a
+    /// person turning training on their conversations off.
     Revoke,
     /// A federation confirm (its `detail` keeps accept, rescope, a2a connect
     /// or revoke) or a critical-write confirm (clear or decline).
@@ -631,6 +633,23 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                         .map_or_else(|| "clear".to_owned(), |node| format!("node {node}")),
                 ),
                 subject_ref: Some(pick.machine.to_hex()),
+                ..OpFields::default()
+            },
+        ),
+        // The person's own choice: its subject is the PERSON, and its detail
+        // names world ids only, never a conversation's text (FIX 4489).
+        AuthorityOp::ConversationTrainingSet(set) => (
+            if set.worlds.is_some() { Grant } else { Revoke },
+            "conversation_training",
+            OpFields {
+                detail: Some(set.worlds.as_ref().map_or_else(
+                    || "off".to_owned(),
+                    |worlds| {
+                        let ids: Vec<_> = worlds.iter().map(|world| world.to_hex()).collect();
+                        format!("worlds {}", ids.join(","))
+                    },
+                )),
+                subject_ref: Some(set.act.owner.to_hex()),
                 ..OpFields::default()
             },
         ),
