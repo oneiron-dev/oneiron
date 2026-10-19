@@ -387,7 +387,8 @@ pub(crate) fn stage_asset_body_in_txn(
                 ));
             }
             // The bytes are durable before any row names them.
-            if store.body_dir()?.open_body(&facts.blake3, facts.len)?.is_none() {
+            let dir = store.body_dir()?;
+            if dir.open_body(&facts.blake3, facts.len)?.is_none() {
                 return Err(Error::InvariantViolation(
                     "an asset body file is published before its row",
                 ));

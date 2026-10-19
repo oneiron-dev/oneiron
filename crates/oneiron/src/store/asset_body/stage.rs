@@ -270,7 +270,8 @@ impl crate::Vault {
             // Read whole, as a slice put holds it: the batch door judges it.
             let len = usize::try_from(facts.len)
                 .map_err(|_| Error::InvariantViolation("asset body past this machine's memory"))?;
-            return Ok(staged(Staged::Inline(read_body_range(&spill.file, 0, len)?)));
+            let bytes = read_body_range(&spill.file, 0, len)?;
+            return Ok(staged(Staged::Inline(bytes)));
         }
         // Pinned before the name exists, so a collector unlinking a released
         // file of the same digest leaves this one alone.
