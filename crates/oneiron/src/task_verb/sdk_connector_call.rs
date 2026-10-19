@@ -452,6 +452,13 @@ pub fn connector_call_status_read(
         return Err(not_found());
     }
     let settled = crate::code_run::WaitDeliveries::canonical(vault).settled(call_ref)?;
+    // The rows the call's passes picked (FIX 5455): kept beside its settled
+    // reply once a settler answered its wait, else on its held row. A set
+    // not known lists nothing more than before.
+    let rows = settled
+        .as_ref()
+        .map_or(state.source_rows, |settled| settled.source_rows.clone());
+    memory.produced_from(rows.into_iter().flatten());
     let call_ref = input.call_ref;
     let (name, tool) = (state.name, state.tool);
     if let Some(settled) = settled {
