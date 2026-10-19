@@ -2551,6 +2551,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/critical_confirm_door.rs",
+     "purpose": "Signed critical-claim answers, under the existing host-root owner ceremony",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/engine_machine.rs",
      "purpose": "Host-provisioned software identities for the engine's own MACHINE writers",
      "surface": {
@@ -25239,7 +25249,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "crate-vis": 17,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 2,
       "struct": 1
@@ -32940,6 +32950,26 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CriticalWriteConfirmAnswer",
+      "CriticalWriteConfirmPending",
+      "CriticalWriteConfirmPendingRequest",
+      "CriticalWriteConfirmReceipt",
+      "CriticalWriteConfirmReceiptRequest",
+      "CriticalWriteConfirmRequest",
+      "CriticalWriteConfirmSettlement"
+     ],
+     "path": "src/memory/critical_confirm.rs",
+     "purpose": "The owner's nonce/frontier-bound critical-claim confirmation ceremony",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "BlockedReportView",
       "CoachInspectRequest",
       "CoachInspectionView",
@@ -33410,7 +33440,7 @@
      "surface": {
       "crate-vis": 16,
       "mod": 23,
-      "re-export": 50
+      "re-export": 51
      }
     },
     {
@@ -52936,7 +52966,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 988
+      "fn": 992
      }
     },
     {
@@ -59182,7 +59212,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 162,
+     "files": 163,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59959,7 +59989,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 211,
+     "files": 212,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60640,7 +60670,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3698,
+   "source_files": 3700,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69272,7 +69302,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 959
+      "fn": 963
      }
     },
     {
@@ -70366,7 +70396,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 960
+      "fn": 964
      }
     },
     {
@@ -73697,6 +73727,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/critical_confirm_doors.rs",
+     "purpose": "Typed critical-claim confirmations under the same owner proof as claim settlement",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/decision_ask_doors.rs",
      "purpose": "OF-493's role-holder doors (Q3 by role) as SDK verbs: a person or a bound agent that holds the role a…",
      "surface": {
@@ -73890,7 +73930,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 155
+      "crate-vis": 156
      }
     },
     {
@@ -81968,7 +82008,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 420,
+     "files": 421,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82397,7 +82437,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 776,
+   "source_files": 777,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -83427,6 +83467,14 @@
       "CriticPrediction",
       "CriticReviewOutcome",
       "CriticReviewSubmit",
+      "CriticalWriteConfirmAnswer",
+      "CriticalWriteConfirmPending",
+      "CriticalWriteConfirmPendingRequest",
+      "CriticalWriteConfirmReceipt",
+      "CriticalWriteConfirmReceiptRequest",
+      "CriticalWriteConfirmRequest",
+      "CriticalWriteConfirmResolution",
+      "CriticalWriteConfirmSettlement",
       "CritiqueArtifact",
       "CritiqueProvenance",
       "CritiqueSeverity",
@@ -85822,8 +85870,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 783,
-      "struct": 2444
+      "enum": 785,
+      "struct": 2450
      }
     },
     {
