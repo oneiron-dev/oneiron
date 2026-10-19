@@ -1875,7 +1875,7 @@ fn operation(route: &OwnerRoute, path: &str) -> Value {
 const LEFT_SLIP_ROUTES: &[(&str, &str)] = &[
     (
         "/v1/shared/left-notices",
-        "The removed person's own loss-of-access notices, each signed by this host's root key. Optional application/json body: `authority_heads` (array of 64-hex authority-entry hashes; omitted or empty requests the full handoff chain). The JSON answer has `notices` (signed shared-act outcomes) and `handoff` (array of hex-encoded signed ReRoot rows, parents first, from those heads to this host's signing root; empty when already folded).",
+        "The removed person's own loss-of-access notices, each signed by this host's root key. Optional application/json body: `authority_heads` (array of 64-hex authority-entry hashes; omitted or empty requests the full handoff chain). The JSON answer has `notices` (signed shared-act outcomes) and `handoff` (array of hex-encoded signed authority rows, parents first: the ReRoot and host-root RotateKey rows that hand the root on from those heads to this host's signing root, and every row they stand on that those heads do not cover; empty when already folded).",
     ),
     (
         "/v1/shared/removal-export",
@@ -1909,7 +1909,7 @@ fn left_slip_shapes(path: &str) -> (Option<Value>, Value) {
         "required": ["notices", "handoff"],
         "properties": {
             "notices": {"type": "array", "items": {"type": "object"}, "description": "The person's signed shared-act outcomes."},
-            "handoff": {"type": "array", "items": {"type": "string"}, "description": "The signed ReRoot rows, hex, parents first, from those heads to the key that signed `notices`; empty when already folded."}
+            "handoff": {"type": "array", "items": {"type": "string"}, "description": "The signed authority rows, hex, parents first: the ReRoot and host-root RotateKey rows that hand the root on from those heads to the key that signed `notices`, and every row they stand on that those heads do not cover; empty when already folded."}
         }
     });
     (Some(body), answer)

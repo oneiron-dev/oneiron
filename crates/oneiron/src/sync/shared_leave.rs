@@ -68,12 +68,17 @@ pub struct VerifiedLeaveNotice {
 
 impl VerifiedLeaveNotice {
     /// Verifies `signed` in `vault`, the env that holds shared vault
-    /// `vault_id`, as `member`'s own notice. `handoff` is the signed ReRoot
-    /// chain the home sent beside it: a home that re-rooted since this env
-    /// last folded signs with a key only that chain names. It extends this
-    /// env's folded roster in memory, never replaces it, and a handoff that
-    /// does not chain from that roster verifies nothing. `None` when the
-    /// notice does not verify: such a notice changes nothing.
+    /// `vault_id`, as `member`'s own notice. `handoff` is what the home sent
+    /// beside it: the signed rows that hand its root on, a ReRoot or the host
+    /// root's own rotation, and the rows they stand on that this env did not
+    /// fold, parents first. A home that re-rooted since this env last folded
+    /// signs with a key only those rows name. They fold with this env's rows
+    /// in memory as its own log folds, never written (FIX 3797), and only a
+    /// live Owner of that fold signs a notice that verifies; below an image
+    /// this env adopted and has not hydrated, the ReRoot chain alone extends
+    /// its folded roster. No rows the home sends prove that it holds back no
+    /// sibling handoff. `None` when the notice does not verify: such a notice
+    /// changes nothing.
     ///
     /// # Errors
     ///

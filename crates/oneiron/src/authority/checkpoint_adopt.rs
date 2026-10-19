@@ -41,6 +41,20 @@ fn adopt_refused(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidAuthorityLogBody(reason))
 }
 
+/// Which owner-root pin a kit restore's adoption stands under.
+enum RecoveryPin {
+    /// The kit's own root, pinned first on an install that holds no pin and
+    /// no Genesis yet: the restore's root door pins it after the import the
+    /// image must precede, and an image's fold stands only under the pin it
+    /// was built under. Any other pin stays, and an image built under another
+    /// is refused as at pairing.
+    KitRootFirst,
+}
+
+/// The pin a recovered image is adopted under (FIX 3583, CALLS:
+/// RECOVERY_CHECKPOINT_PIN; canon is silent on the order).
+const RECOVERY_CHECKPOINT_PIN: RecoveryPin = RecoveryPin::KitRootFirst;
+
 /// A checkpoint image verified against an externally fixed pin. The only
 /// constructor is [`VerifiedAuthorityCheckpoint::verify`].
 #[derive(Debug, Clone)]
@@ -295,6 +309,48 @@ impl Vault {
         let verified = VerifiedAuthorityCheckpoint::verify(pin, bytes, attestations)?;
         let mut wtxn = self.store.env.write_txn()?;
         let expected = self.authority_checkpoint_expectation_in_txn(&wtxn)?;
+        let id = self.adopt_authority_checkpoint_in_txn(&mut wtxn, &verified, &expected)?;
+        wtxn.commit()?;
+        self.store.notify_proactivity_changes();
+        Ok(id)
+    }
+
+    /// Adopts, for a kit restore from the sealed cloud bundle (FIX 3583), the
+    /// image the bundle's base carries, before the restore imports the tail
+    /// that stands on it; returns its id. `bytes` and `attestations` verify
+    /// against `pin`, whose digest must be `fixed`: the one the owner carried
+    /// from one of their machines or confirmed (CALLS:
+    /// RECOVERY_CHECKPOINT_TRUST), never the pin riding beside the image. The
+    /// pairing door's checks all stand
+    /// ([`Self::adopt_authority_checkpoint_in_txn`]), in one write
+    /// transaction. On an install that holds no pin and no Genesis yet,
+    /// `kit_root`, the root the restore pins, is pinned first when the image
+    /// was built under it ([`RECOVERY_CHECKPOINT_PIN`]).
+    pub fn adopt_recovered_authority_checkpoint(
+        &self,
+        pin: &AuthorityCheckpointPin,
+        bytes: &[u8],
+        attestations: &[AuthorityCheckpointAttestation],
+        fixed: [u8; 32],
+        kit_root: PinnedRoot,
+    ) -> Result<[u8; 32]> {
+        if pin.digest()? != fixed {
+            return Err(adopt_refused(
+                "the checkpoint pin is not the one the owner fixed",
+            ));
+        }
+        let verified = VerifiedAuthorityCheckpoint::verify(pin, bytes, attestations)?;
+        let store = &self.store;
+        let mut wtxn = store.env.write_txn()?;
+        let RecoveryPin::KitRootFirst = RECOVERY_CHECKPOINT_PIN;
+        if verified.image().building_pin == Some(kit_root)
+            && super::pinned_root::read_pinned_root_in_txn(store, &wtxn)?.is_none()
+            && super::machine_identity::resident_genesis_vault_id_in_txn(store, &wtxn)?.is_none()
+        {
+            super::pinned_root::write_pinned_root_in_txn(store, &mut wtxn, kit_root, None)?;
+        }
+        // Read after the pin, which moves the generation.
+        let expected = expectation_in_txn(store, &wtxn)?;
         let id = self.adopt_authority_checkpoint_in_txn(&mut wtxn, &verified, &expected)?;
         wtxn.commit()?;
         self.store.notify_proactivity_changes();
