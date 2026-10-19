@@ -127,6 +127,8 @@ impl Memory<'_> {
         input: &LensSelectRequest,
     ) -> MemoryResult<LensReadHandle> {
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        // The selector's own read proves the reach (FIX 3267).
+        let frame = &frame.for_event_author(&read)?;
         match &input.span {
             None => Ok(frame.select_atom(
                 &read,
@@ -178,6 +180,7 @@ impl Memory<'_> {
         selected: &LensReadHandle,
     ) -> MemoryResult<InspectionResolved> {
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let frame = &frame.for_event_author(&read)?;
         let state = frame.inspection_state(&read, render, selected)?;
         self.inspection_resolve_state(&read, state)
     }
@@ -191,6 +194,8 @@ impl Memory<'_> {
         selected: &[LensReadHandle],
     ) -> MemoryResult<GeneratedUiValidatedAction> {
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        // The clicker authors the action, on its own read (FIX 3267).
+        let frame = &frame.for_event_author(&read)?;
         let plan = frame.validate_result_set_action_with_state(&read, render, state, event)?;
         let expected = match plan.scope() {
             GeneratedUiResultSetScope::Explicit { selected, .. } => selected.as_slice(),
