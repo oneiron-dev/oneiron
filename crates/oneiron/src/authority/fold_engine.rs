@@ -12,8 +12,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
+mod causal;
 mod entry_points;
 
+pub(super) use causal::{CausalPast, ParentSummaries, named_beneath};
 pub use entry_points::*;
 
 #[derive(Clone, Copy)]
@@ -26,6 +28,11 @@ pub(super) struct FoldContext<'a> {
     pub(super) install_held: Option<&'a BTreeSet<AuthorityEntryHash>>,
     pub(super) entry_ancestors:
         Option<&'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>>,
+    /// Where a fold with no `entry_ancestors` walks a row's past: a resumed
+    /// fold's or an adopted image's row summaries ([`causal`], FIX 5464). It
+    /// shows only whether a hash is beneath a row's parents, never what any
+    /// row may do. None on a fold that holds the whole log.
+    pub(super) causal_past: Option<&'a CausalPast<'a>>,
     /// Consent roots of every ADMITTED PEER roster, keyed by peer vault id.
     ///
     /// EVIDENCE for FED-01 gesture acceptance, never a local consent

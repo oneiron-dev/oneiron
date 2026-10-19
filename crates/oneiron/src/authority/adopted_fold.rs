@@ -430,6 +430,7 @@ fn settle_tail(
         floor_vouched: (!log.observations.unvouched).then_some(&log.observations.vouched),
         install_held: None,
         entry_ancestors: None,
+        causal_past: None,
         peer_consent_roots: log.peer_consent_roots,
         consent_arm,
         hosted: log.posture == crate::HostingPrivacyPosture::Hosted,
