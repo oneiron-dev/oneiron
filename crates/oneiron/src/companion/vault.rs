@@ -1,7 +1,7 @@
 //! Vault access-grant query for a companion PERSON profile.
 
 use crate::Vault;
-use crate::access_grant::decode_access_grant_body;
+use crate::access_grant::decode_live_access_grant_body;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::error::Result;
@@ -66,7 +66,9 @@ impl Vault {
                     return Err(Error::CorruptedIndex("access grant entity type"));
                 }
             };
-            let grant = decode_access_grant_body(&body)?;
+            let Some(grant) = decode_live_access_grant_body(&body)? else {
+                continue;
+            };
             if let Some((grant_person, facet)) = grant.scope.companion_profile_refs()
                 && grant_person == *person_ref
                 && grant.allows_companion_profile_read(
