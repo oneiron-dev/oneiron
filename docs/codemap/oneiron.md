@@ -223,7 +223,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/claim_write.rs` | src | s | 1 fn · 3 crate-vis | — | Claim write-window admission and read-time quarantine share one causal predicate |
 | `src/authority/conversation_training.rs` | src | s | 1 re-export · 11 crate-vis | — | Folds each person's signed "Learn from my conversations" opt-out (FIX 4489, FIX 5502 owner rulings, OF-420) |
 | `src/authority/conversation_training/door.rs` | src | s | 1 struct · 2 fn | ConversationTrainingView | The person's own "Learn from my conversations" opt-out door (FIX 4489, FIX 5502 owner rulings, OF-420)… |
-| `src/authority/conversation_training_vault.rs` | src | m | 1 struct · 2 fn · 13 crate-vis | ConversationLearningView | Folds the vault's signed "Learn from my conversations" setting (FIX 5502 owner rulings, OF-420), and the… |
+| `src/authority/conversation_training_vault.rs` | src | m | 1 struct · 3 fn · 13 crate-vis | ConversationLearningView | Folds the vault's signed "Learn from my conversations" setting (FIX 5502 owner rulings, OF-420), and the… |
 | `src/authority/critical_confirm_door.rs` | src | s | 1 crate-vis | — | Signed critical-claim answers, under the existing host-root owner ceremony |
 | `src/authority/engine_machine.rs` | src | s | 3 fn · 2 crate-vis | — | Host-provisioned software identities for the engine's own MACHINE writers |
 | `src/authority/entry_transition.rs` | src | m | 8 crate-vis | — | Per-entry state transition and the consent / quorum predicates |
