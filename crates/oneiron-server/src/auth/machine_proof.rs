@@ -11,9 +11,12 @@ use serde::Deserialize;
 use super::{BindingProof, bearer_token, parse_signature};
 use crate::error::ApiError;
 
+/// A machine claim: the machine, and its install key's signature over the
+/// slip token, timestamp and nonce of the holder proof it rides beside.
+/// `x-oneiron-machine` carries one, and so does a managed voice hello.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct MachineClaim {
+pub(crate) struct MachineClaim {
     machine: String,
     signature: String,
 }
@@ -35,6 +38,48 @@ pub(super) fn peer_machine(
     else {
         return PeerMachine::Unknown;
     };
+    claimed_machine(&claim, token, proof, vault)
+}
+
+/// The owner's own enrolled machine a managed voice hello names (FIX 1949 =
+/// B): `claim` proves its machine over the hello's slip `token` and the
+/// timestamp and nonce of its holder `proof`, as `x-oneiron-machine` proves
+/// one over a request's, and that machine stands here as the owner's own
+/// ([`owned_machine_stands`]). `None` otherwise: a claim alone, or a machine
+/// that only proves itself, is no device of his.
+pub(crate) fn owned_machine(
+    claim: &MachineClaim,
+    token: &str,
+    proof: &BindingProof,
+    vault: &oneiron::Vault,
+) -> Option<PeerMachine> {
+    let peer = claimed_machine(claim, token, proof, vault);
+    owned_machine_stands(vault, peer).then_some(peer)
+}
+
+/// Whether `peer`, a machine a connection proved, stands here now as one of
+/// the owner's own: live, `Owned(Yours)` and trusted under this install's
+/// pin, on the very key it proved. A machine removed, gone stale, answered
+/// otherwise or trusted under other keys since does not, nor does one the
+/// fold cannot be read for.
+pub(crate) fn owned_machine_stands(vault: &oneiron::Vault, peer: PeerMachine) -> bool {
+    let PeerMachine::Proven { machine, key } = peer else {
+        return false;
+    };
+    vault.authority_fold().is_ok_and(|fold| {
+        fold.trusted_machine(machine)
+            .is_some_and(|trusted| trusted.profile.machine_key == key)
+    })
+}
+
+/// The machine `claim` proves over `token` and `proof`'s timestamp and
+/// nonce, or `Unknown`.
+fn claimed_machine(
+    claim: &MachineClaim,
+    token: &str,
+    proof: &BindingProof,
+    vault: &oneiron::Vault,
+) -> PeerMachine {
     let (Ok(machine), Some(signature)) = (
         oneiron::EntityId::from_hex(&claim.machine),
         parse_signature(&claim.signature)

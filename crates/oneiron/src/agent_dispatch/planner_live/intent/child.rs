@@ -18,7 +18,8 @@
 //! it here (S4c-5): its dispatch dedupe key names the intent, and a retry
 //! or continuation of it, which carries the same key, leads the same team.
 //! Its run reads the pattern from the snapshot, never from the skill's
-//! current head, and records the pack on its own lease, once.
+//! current head, and records the pack on its own lease, once, and where its
+//! task holds it under its own run id, which a retry never overwrites.
 
 use std::collections::HashSet;
 
@@ -196,8 +197,8 @@ impl AgentDispatcher<'_> {
 
     /// The planned team `leader` leads, as its launch froze it (DOOR-111
     /// S4c-5): the team, its members in launch order, the start the pattern
-    /// runner wrote and the exact pack that start ran on, with where the
-    /// leader's last fresh run put that pack's SKILL.md in its task. The
+    /// runner wrote and the exact pack that start ran on, with where each of
+    /// the leader's runs put that pack's SKILL.md in its task. The
     /// leader's dispatch dedupe key names the intent, and a retry or
     /// continuation of the leader, which carries the same key, leads it too.
     /// `None` for an attempt that leads no planned team: a planned solo, a
@@ -225,7 +226,8 @@ impl AgentDispatcher<'_> {
     /// revision already on the attempt stands for it, since a manifest
     /// append keeps every row), the executor that runs it when the attempt
     /// names none yet, and `exposure`, where the run put the pack's SKILL.md
-    /// in its task, which a continuation of the run reuses.
+    /// in its task, under the run's own id, which a continuation of the run
+    /// reuses. Another run's exposure stays as it was.
     ///
     /// # Errors
     ///
@@ -243,6 +245,8 @@ impl AgentDispatcher<'_> {
             .lease_owner
             .as_deref()
             .ok_or_else(|| invalid(LEASE_UNHELD))?;
+        // The executor run is the attempt's own: a retry is a fresh one.
+        let run = EntityId::from_bytes(*leased.id.as_bytes())?;
         let mut txn = self.vault.store.env.write_txn()?;
         let (key, launch) = self
             .planned_leader_in_txn(&txn, leased.id)?
@@ -260,7 +264,7 @@ impl AgentDispatcher<'_> {
         let mut row = INTENTS
             .get(&self.vault.store, &txn, &key)?
             .ok_or_else(|| invalid(LEADER_DAMAGED))?;
-        row.leader_exposure = Some(exposure.clone());
+        row.leader_exposures.insert(run, exposure.clone());
         row.updated_at = at;
         INTENTS.put(&self.vault.store, &mut txn, &key, &row)?;
         txn.commit()?;
@@ -310,7 +314,7 @@ impl AgentDispatcher<'_> {
             members: row.member_attempts,
             start,
             pack,
-            exposure: row.leader_exposure,
+            exposures: row.leader_exposures,
         };
         Ok(Some((key, launch)))
     }
