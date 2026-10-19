@@ -163,9 +163,14 @@ impl BigModel {
         usage: Arc<std::sync::Mutex<Vec<oneiron::LlmUsage>>>,
     ) -> anyhow::Result<Self> {
         let mut exact = self.for_model(&backend.model)?;
-        let (_, ladder) = self.models.router().and_then(|router| router.served(&backend.model))
+        let (_, ladder) = self
+            .models
+            .router()
+            .and_then(|router| router.served(&backend.model))
             .ok_or_else(|| anyhow::anyhow!("the trial model is not served"))?;
-        if ladder.first_provider() != Some(backend.backend.as_str()) || ladder.exact_prompt().is_none() {
+        if ladder.first_provider() != Some(backend.backend.as_str())
+            || ladder.exact_prompt().is_none()
+        {
             anyhow::bail!("the configured offer is not the trial's exact backend");
         }
         exact.pin.version = backend.model.revision().to_owned();
@@ -491,7 +496,10 @@ impl DecisionModel for BigModel {
             })
             .map_err(|error| failed(format!("the seat failed: {error}")))?;
         if let Some(usage) = &self.trial_usage {
-            usage.lock().map_err(|_| failed("model trial usage lock"))?.push(response.usage.clone());
+            usage
+                .lock()
+                .map_err(|_| failed("model trial usage lock"))?
+                .push(response.usage.clone());
         }
         let served = served.map(|model| ProviderPin {
             rung: self.pin.rung,

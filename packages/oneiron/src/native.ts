@@ -93,6 +93,7 @@ vaultBudgetsLeaseTopUp(input: unknown): unknown
 vaultBudgetsHold(input: unknown): unknown
 vaultBudgetsHoldResume(input: unknown): unknown
 vaultBudgetsLocal(input: unknown): unknown
+vaultBudgetsReservations(input: unknown): unknown
 vaultBudgetsSettlements(input: unknown): unknown
 vaultBudgetsRsiConfigure(input: unknown): unknown
 vaultBudgetsRsi(input: unknown): unknown
@@ -152,6 +153,12 @@ vaultRetrievalOutcomesEnd(input: unknown): unknown
 vaultRetrievalTrace(input: unknown): unknown
 vaultRetrievalExport(input: unknown): unknown
 vaultRetrievalReplay(input: unknown): unknown
+vaultRetrievalPolicyGet(input: unknown): unknown
+vaultRetrievalPolicyPin(input: unknown): unknown
+vaultRetrievalPolicyTrain(input: unknown): unknown
+vaultRetrievalPolicyEvaluate(input: unknown): unknown
+vaultRetrievalPolicyAdmit(input: unknown): unknown
+vaultRetrievalPolicyUpdate(input: unknown): unknown
 vaultExport(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
 vaultScopePosition(input: unknown): unknown
@@ -267,6 +274,8 @@ vaultPacksSetupVerify(input: unknown): unknown
 vaultAuthorityAudit(input: unknown): unknown
 vaultAuthorityHistoryExport(input: unknown): unknown
 vaultAuthorityHistoryImport(input: unknown): unknown
+vaultWireHealthThresholdsGet(input: unknown): unknown
+vaultWireHealthThresholdsSet(input: unknown): unknown
 vaultSlimPolicy(input: unknown): unknown
 vaultSlimState(input: unknown): unknown
 vaultSlimResumeStep(input: unknown): unknown
@@ -450,6 +459,10 @@ vaultConsentDeny(input: unknown): unknown
 vaultConsentCreateStandingGrant(input: unknown): unknown
 vaultConsentRegistry(input: unknown): unknown
 vaultConsentRevoke(input: unknown): unknown
+vaultConsentBypassGrantWarning(input: unknown): unknown
+vaultConsentCreateBypassGrant(input: unknown): unknown
+vaultConsentActiveBypassGrants(input: unknown): unknown
+vaultConsentBypassedEffectReceipts(input: unknown): unknown
 vaultConsentGraduationPolicy(input: unknown): unknown
 vaultConsentGraduationPolicySet(input: unknown): unknown
 vaultConsentGraduationPolicyClear(input: unknown): unknown
@@ -634,6 +647,12 @@ vaultArtifactsReleaseWait(requestJson: string): string
 vaultArtifactsReviewSlides(requestJson: string): string
 vaultArtifactsAsk(input: unknown): unknown
 vaultCriticReview(input: unknown): unknown
+vaultArtifactsProposeOutline(input: unknown): unknown
+vaultArtifactsOutline(input: unknown): unknown
+vaultArtifactsKeepOutline(input: unknown): unknown
+vaultArtifactsDeclineOutline(input: unknown): unknown
+vaultArtifactsDesignDeck(input: unknown): unknown
+vaultArtifactsCreateDeck(input: unknown): unknown
 vaultArtifactsInspectDeck(input: unknown): unknown
 vaultArtifactsProposeDeck(requestJson: string): string
 vaultArtifactsProposeOutput(requestJson: string): string
@@ -799,6 +818,10 @@ vaultClaimsListFiltered(input: unknown): unknown
 vaultClaimsReadFiltered(input: unknown): unknown
 vaultClaimsHistory(input: unknown): unknown
 vaultDelete(input: unknown): unknown
+vaultWritesCriticalConfirmPending(input: unknown): unknown
+vaultWritesCriticalConfirmClear(input: unknown): unknown
+vaultWritesCriticalConfirmDecline(input: unknown): unknown
+vaultWritesCriticalConfirmReceipt(input: unknown): unknown
 vaultWritesPending(input: unknown): unknown
 vaultHydrate(input: unknown): unknown
 vaultGet(input: unknown): unknown
@@ -858,6 +881,8 @@ vaultConsolidationEnqueue(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
 vaultRunsStep(input: unknown): unknown
 vaultRunsCheckpoint(input: unknown): unknown
+vaultConsolidationHomeGet(input: unknown): unknown
+vaultConsolidationLineage(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
 vaultConsolidationEvidence(input: unknown): unknown
 vaultSieveEvidence(input: unknown): unknown
