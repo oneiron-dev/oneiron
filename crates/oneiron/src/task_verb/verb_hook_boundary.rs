@@ -15,6 +15,8 @@
 //! stands: the owner still a live owner, or the same Grants under the same
 //! ceiling.
 
+mod session;
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -25,6 +27,8 @@ use crate::runtime_hooks::{VerbCall, VerbDomain, VerbHookPre, VerbHookStop, Verb
 use crate::task_verb::revoke_lands;
 use crate::task_verb::sdk::{AgentVerb, masked_reveal_reply, revealed_hook_view, validate_input};
 use crate::{EntityId, Vault};
+
+pub(crate) use session::{session_row_call, session_row_post, session_row_pre};
 
 /// A row's domain: a blocking hook that fails hides a read row's result and
 /// sends any other row to an ask.
