@@ -3,12 +3,12 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::{HandleReveal, RevealAsker, RevealRow, covering_grant, disclosure_bound};
+use crate::Vault;
 use crate::claim::{ClaimBody, ScopedReadActorKey, claim_surfaceable};
 use crate::disclosure::{DisclosureBand, DisclosureDataClass};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
-use crate::Vault;
 
 /// The exact claim revision the owner is asked to disclose. A changed value
 /// needs a new ask; a grant never authorizes an unrelated successor value.
@@ -43,7 +43,8 @@ fn admitted_claim_in(
     {
         return Err(Error::EntityNotFound);
     }
-    vault.get_claim_in_txn(txn, &claim)?
+    vault
+        .get_claim_in_txn(txn, &claim)?
         .filter(|body| {
             body.subject == crate::claim::ClaimSubject::Entity(person)
                 && crate::disclosure::claim_data_class(body) == Some(DisclosureDataClass::Names)
@@ -59,7 +60,10 @@ pub(super) fn resolve_person_in(
     handle: &str,
 ) -> Result<(String, EntityId, PersonRevealTarget)> {
     let (handle, person) = super::resolve_typed_handle_in_txn(
-        &vault.store, txn, handle, crate::registry::ENTITY_TYPE_PERSON,
+        &vault.store,
+        txn,
+        handle,
+        crate::registry::ENTITY_TYPE_PERSON,
     )?;
     let reader = asker.reader.as_ref().ok_or(Error::EntityNotFound)?;
     let lane = vault.scoped_read(reader.clone());
@@ -108,15 +112,26 @@ impl Vault {
     ) -> Result<PersonHandleCard> {
         let txn = self.store.env.read_txn()?;
         let (handle, _, target) = resolve_person_in(self, &txn, asker, handle)?;
-        let body = self.get_claim_in_txn(&txn, &target.claim)?.ok_or(Error::EntityNotFound)?;
+        let body = self
+            .get_claim_in_txn(&txn, &target.claim)?
+            .ok_or(Error::EntityNotFound)?;
         let bound = disclosure_bound(&asker.connection(), "names", asker.project.as_ref())?;
         let grants = crate::consent::load_active_standing_grants(&self.store, &txn)?;
         let reveal = covering_grant(&bound, asker.project, &grants)?
-            .map_or(HandleReveal::Asks, |grant_ref| HandleReveal::Hydrates { grant_ref });
-        let learned_at = self.store.port_entity_record(&txn, &target.claim)?
-            .map(|row| row.learned_at).unwrap_or_default();
+            .map_or(HandleReveal::Asks, |grant_ref| HandleReveal::Hydrates {
+                grant_ref,
+            });
+        let learned_at = self
+            .store
+            .port_entity_record(&txn, &target.claim)?
+            .map(|row| row.learned_at)
+            .unwrap_or_default();
         Ok(PersonHandleCard {
-            handle, band: DisclosureBand::of_claim(&body), claim: target.claim, learned_at, reveal,
+            handle,
+            band: DisclosureBand::of_claim(&body),
+            claim: target.claim,
+            learned_at,
+            reveal,
         })
     }
 }

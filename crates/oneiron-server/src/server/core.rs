@@ -185,7 +185,8 @@ pub struct SyncServer {
     pub(crate) hook_runtime: std::sync::OnceLock<Arc<dyn oneiron::runtime_hooks::HookBodyRuntime>>,
     /// The explicitly enabled mesh endpoint, shared by public admission dials.
     #[cfg(feature = "mesh")]
-    pub(crate) mesh_transport: std::sync::OnceLock<Arc<oneiron_mesh_transport::iroh_transport::IrohTransport>>,
+    pub(crate) mesh_transport:
+        std::sync::OnceLock<Arc<oneiron_mesh_transport::iroh_transport::IrohTransport>>,
     /// The checked built-in channels this host serves (OF-519), kept by
     /// `builtin_host::spawn` and read by their provider webhooks.
     pub(crate) builtin_handles: Arc<crate::builtin_host::BuiltinHandles>,

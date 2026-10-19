@@ -4,10 +4,9 @@ use std::sync::Arc;
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{
     self, AttributionEvidenceReceipt, AttributionEvidenceRequest, AttributionJudgmentsView,
-    AttributionListRequest, AttributionProjection, AttributionProjectRequest,
-    AttributionProposalsView, PositiveRetireReceipt, PositiveRetireRequest,
-    ProposalDeltaRead, ProposalDeltaReadRequest, ProposalDeltaSettlement,
-    ProposalDeltaSettleRequest,
+    AttributionListRequest, AttributionProjectRequest, AttributionProjection,
+    AttributionProposalsView, PositiveRetireReceipt, PositiveRetireRequest, ProposalDeltaRead,
+    ProposalDeltaReadRequest, ProposalDeltaSettleRequest, ProposalDeltaSettlement,
 };
 
 use super::host_doors::{internal, owner_proof};
