@@ -56,8 +56,8 @@ mod tests;
 
 pub use self::ctl::{
     CtlBound, CtlBoundKind, CtlBoundPhase, CtlBoundResource, CtlRefusal, CtlRefusalKind,
-    CtlRequest, CtlResponse, CtlResumeOn, REAP_PAUSE_REFUSAL, ShedBlockerWire, ShedCause,
-    ShedStatus,
+    CtlRequest, CtlResponse, CtlResumeOn, FacilityNotice, FacilityReason, ManagedFacility,
+    ManagedReadiness, REAP_PAUSE_REFUSAL, ShedBlockerWire, ShedCause, ShedStatus,
 };
 pub use self::ledger::{LedgerAck, LedgerUpdate, ManagedTrainingSetting};
 pub use self::limits::{
