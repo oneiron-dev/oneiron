@@ -74,11 +74,24 @@ impl Source {
     /// facet, project and world, its sensitivity and, for a claim, its body.
     /// A Scope with no single position bounds no answer.
     pub(super) fn of_row(kind: u8, raw: &[u8], scope: &crate::federation::Scope) -> Result<Self> {
-        let position = (
-            singleton(&scope.facets)?,
-            singleton(&scope.audience)?,
-            singleton(&scope.worlds)?,
-        );
+        Self::fitted(kind, raw, scope)?.map_err(SourceConflict::error)
+    }
+
+    /// [`Self::of_row`], with a Scope no answer can rest on as its conflict
+    /// rather than a refusal. A body that does not decode is still an error.
+    pub(super) fn fitted(
+        kind: u8,
+        raw: &[u8],
+        scope: &crate::federation::Scope,
+    ) -> Result<std::result::Result<Self, SourceConflict>> {
+        let (Some(facet), Some(project), Some(world)) = (
+            singleton(&scope.facets),
+            singleton(&scope.audience),
+            singleton(&scope.worlds),
+        ) else {
+            return Ok(Err(SourceConflict::Unrepresentable));
+        };
+        let position = (facet, project, world);
         let sensitivity = match scope.sensitivity {
             crate::federation::SensitivityCeiling::AtMost(level) => match level {
                 crate::federation::Sensitivity::Public => 0,
@@ -87,7 +100,7 @@ impl Source {
                 crate::federation::Sensitivity::Restricted => 3,
             },
             crate::federation::SensitivityCeiling::Bottom => {
-                return Err(invalid("unrepresentable evidence sensitivity"));
+                return Ok(Err(SourceConflict::Unrepresentable));
             }
         };
         let claim = if kind == crate::registry::ENTITY_TYPE_CLAIM {
@@ -98,23 +111,23 @@ impl Source {
         } else {
             None
         };
-        Ok(Self {
+        Ok(Ok(Self {
             kind,
             claim,
             position,
             sensitivity,
-        })
+        }))
     }
 }
 
-fn singleton(axis: &crate::federation::ScopeAxis<crate::federation::ScopeId>) -> Result<EntityId> {
+fn singleton(axis: &crate::federation::ScopeAxis<crate::federation::ScopeId>) -> Option<EntityId> {
     let crate::federation::ScopeAxis::Some(ids) = axis else {
-        return Err(invalid("unrepresentable evidence scope"));
+        return None;
     };
     if ids.len() != 1 {
-        return Err(invalid("unrepresentable evidence scope"));
+        return None;
     }
-    Ok(ids.iter().next().expect("one scope member").0)
+    ids.iter().next().map(|id| id.0)
 }
 
 fn standing_record(
@@ -370,6 +383,7 @@ pub(super) fn prepare_graph_answer(
         super::GraphUnitContext {
             unit: input.unit,
             sources,
+            omitted: Vec::new(),
         },
         frontier,
     ))
@@ -621,6 +635,7 @@ fn backfill_answer(
             frontier,
             source_kind: sources[0].kind,
             answered_at: now,
+            omitted: Vec::new(),
         };
         match &measurement {
             Measured::Bare => {}
@@ -718,46 +733,86 @@ pub(super) fn constrain_sources(
     sources: &[Source],
     principal: EntityId,
 ) -> Result<ClaimSource> {
-    let mut taint = ClaimSource::UserStated;
-    let mut facet = None;
-    let mut project = None;
-    let mut world = None;
-    let mut rel = None;
-    let mut scope: Vec<(Value, Value)> = Vec::new();
-    let mut sensitivity = 0_u8;
-    let principal_hex = principal.to_hex();
+    let mut fold = ScopeFold::new(principal);
     for source in sources {
-        sensitivity = sensitivity.max(source.sensitivity);
-        for (slot, id) in [
-            (&mut facet, source.position.0),
-            (&mut project, source.position.1),
-            (&mut world, source.position.2),
-        ] {
-            if slot.is_some_and(|existing| existing != id) {
-                return Err(invalid("incompatible evidence scope"));
-            }
-            *slot = Some(id);
+        fold.fold(source).map_err(SourceConflict::error)?;
+    }
+    Ok(fold.bound(candidate))
+}
+
+/// The one law an answer's sources share ([`constrain_sources`]), source by
+/// source: what the sources folded so far put on the answer. A graph ask's
+/// gather judges each neighbour with it before any model runs.
+#[derive(Clone)]
+pub(super) struct ScopeFold {
+    principal: String,
+    taint: ClaimSource,
+    position: Option<(EntityId, EntityId, EntityId)>,
+    rel: Option<EntityId>,
+    scope: Vec<(Value, Value)>,
+    sensitivity: u8,
+}
+
+impl ScopeFold {
+    pub(super) fn new(principal: EntityId) -> Self {
+        Self {
+            principal: principal.to_hex(),
+            taint: ClaimSource::UserStated,
+            position: None,
+            rel: None,
+            scope: Vec::new(),
+            sensitivity: 0,
         }
+    }
+
+    /// Fold `source` in, or name the term it conflicts on and leave the
+    /// fold as it was.
+    pub(super) fn admit(&mut self, source: &Source) -> Option<SourceConflict> {
+        let mut next = self.clone();
+        let conflict = next.fold(source).err();
+        if conflict.is_none() {
+            *self = next;
+        }
+        conflict
+    }
+
+    /// Fold `source` in; on a conflict the fold is left part-way.
+    fn fold(&mut self, source: &Source) -> std::result::Result<(), SourceConflict> {
+        self.sensitivity = self.sensitivity.max(source.sensitivity);
+        if let Some((facet, project, world)) = self.position {
+            let (f, p, w) = source.position;
+            if facet != f {
+                return Err(SourceConflict::Facet);
+            }
+            if project != p {
+                return Err(SourceConflict::Project);
+            }
+            if world != w {
+                return Err(SourceConflict::World);
+            }
+        }
+        self.position = Some(source.position);
         let Some(body) = &source.claim else {
-            taint = crate::dreamer_consolidation::source_meet(taint, ClaimSource::Imported);
-            continue;
+            self.taint =
+                crate::dreamer_consolidation::source_meet(self.taint, ClaimSource::Imported);
+            return Ok(());
         };
-        taint = crate::dreamer_consolidation::source_meet(
-            taint,
+        self.taint = crate::dreamer_consolidation::source_meet(
+            self.taint,
             body.source.unwrap_or(ClaimSource::Imported),
         );
         if let Some(inherited) = crate::claim::claim_evidence_taint(body) {
-            taint = crate::dreamer_consolidation::source_meet(taint, inherited);
+            self.taint = crate::dreamer_consolidation::source_meet(self.taint, inherited);
         }
         if let Some(id) = body.rel {
-            if rel.is_some_and(|existing| existing != id) {
-                return Err(invalid("incompatible evidence scope"));
+            if self.rel.is_some_and(|existing| existing != id) {
+                return Err(SourceConflict::Relationship);
             }
-            rel = Some(id);
+            self.rel = Some(id);
         }
         if let Some(value) = &body.scope {
             let Value::Map(entries) = value else {
-                return Err(invalid("unrepresentable evidence scope"));
+                return Err(SourceConflict::Unrepresentable);
             };
             for (key, value) in entries {
                 match key.as_str() {
@@ -766,47 +821,54 @@ pub(super) fn constrain_sources(
                         | "sensitivity",
                     ) => continue,
                     Some("typed_question_principal")
-                        if value.as_str() == Some(principal_hex.as_str()) =>
+                        if value.as_str() == Some(self.principal.as_str()) =>
                     {
                         continue;
                     }
                     Some("typed_question_principal") => {
-                        return Err(invalid("incompatible evidence principal"));
+                        return Err(SourceConflict::Principal);
                     }
                     _ => {}
                 }
-                if let Some((_, existing)) = scope.iter().find(|(name, _)| name == key) {
+                if let Some((_, existing)) = self.scope.iter().find(|(name, _)| name == key) {
                     if existing != value {
-                        return Err(invalid("incompatible evidence scope"));
+                        return Err(SourceConflict::ScopeTerm);
                     }
                 } else {
-                    scope.push((key.clone(), value.clone()));
+                    self.scope.push((key.clone(), value.clone()));
                 }
             }
         }
+        Ok(())
     }
-    if sensitivity != 2 {
-        scope.push((Value::from("sensitivity"), Value::from(sensitivity)));
+
+    /// Bounds `candidate` by every source folded in; returns their met taint.
+    fn bound(self, candidate: &mut ClaimCandidate) -> ClaimSource {
+        let mut scope = self.scope;
+        if self.sensitivity != 2 {
+            scope.push((Value::from("sensitivity"), Value::from(self.sensitivity)));
+        }
+        if let Some((facet, project, world)) = self.position {
+            scope.push((
+                Value::from("facet"),
+                Value::Binary(facet.as_bytes().to_vec()),
+            ));
+            scope.push((
+                Value::from("scopeProjectId"),
+                Value::Binary(project.as_bytes().to_vec()),
+            ));
+            if world != crate::claim::base_world_id() {
+                *candidate = candidate.clone().with_world(world);
+            }
+        }
+        if let Some(id) = self.rel {
+            *candidate = candidate.clone().with_relationship(id);
+        }
+        if !scope.is_empty() {
+            *candidate = candidate.clone().with_scope(Value::Map(scope));
+        }
+        self.taint
     }
-    if let Some(id) = facet {
-        scope.push((Value::from("facet"), Value::Binary(id.as_bytes().to_vec())));
-    }
-    if let Some(id) = project {
-        scope.push((
-            Value::from("scopeProjectId"),
-            Value::Binary(id.as_bytes().to_vec()),
-        ));
-    }
-    if let Some(id) = world.filter(|id| *id != crate::claim::base_world_id()) {
-        *candidate = candidate.clone().with_world(id);
-    }
-    if let Some(id) = rel {
-        *candidate = candidate.clone().with_relationship(id);
-    }
-    if !scope.is_empty() {
-        *candidate = candidate.clone().with_scope(Value::Map(scope));
-    }
-    Ok(taint)
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

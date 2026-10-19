@@ -53,6 +53,8 @@ impl Memory<'_> {
                     at: row.applied_at,
                 }),
                 MaintenanceTarget::IdentityAsk(_) => None,
+                // Nor has a project tree fork; the maintenance door lists it.
+                MaintenanceTarget::ProjectTreeFork { .. } => None,
             })
             .take(limit)
             .collect();
