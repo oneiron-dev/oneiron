@@ -14,7 +14,7 @@ use super::{
     ACTOR_ERASE_PENDING_PROJECT, CONVERSATION_CARDS, ProjectCardRecord, ProjectCardState,
     ProjectDetectionAnswer, ProjectDetectionVerdict, refused,
 };
-use crate::genui::ProjectGoalDraft;
+use crate::genui::{ProjectGoalDraft, ProjectProposalCard};
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -180,6 +180,39 @@ impl CardHistory {
         Ok(history)
     }
 
+    /// This history as a conversation's listing shows it (FIX 4229): marked
+    /// history, each erased ref reading as no one. Erased board members show
+    /// as one entry, so the card still reads as a card.
+    fn listed(self) -> ProjectCardRecord {
+        let card = self.card;
+        let mut board_human_refs = Vec::new();
+        for human in card.board_human_refs {
+            if human != ERASED_CALL_IDENTITY || !board_human_refs.contains(&human) {
+                board_human_refs.push(human);
+            }
+        }
+        ProjectCardRecord {
+            card: ProjectProposalCard {
+                card_id: card.card_id,
+                principal_ref: card.principal_ref,
+                source_message_ref: card.source_message_ref,
+                source_room_ref: card.source_room_ref,
+                source_thread_ref: card.source_thread_ref,
+                goal: card.goal,
+                leader_agent_def_ref: card.leader_agent_def_ref,
+                board_human_refs,
+                budget_share_bps: card.budget_share_bps,
+                starting_skill_refs: card.starting_skill_refs,
+            },
+            conversation: self.conversation,
+            detection: self.detection,
+            drafted_by: self.drafted_by,
+            state: self.state,
+            at: self.at,
+            history: true,
+        }
+    }
+
     /// Takes `actor` out of every ref and id this history names. Whether it
     /// named the actor.
     fn forget(&mut self, actor: EntityId) -> bool {
@@ -251,7 +284,8 @@ pub(super) fn live_card(
 }
 
 /// [`live_card`] for a walk over a conversation's cards: a card that turned
-/// history is not shown, and reads as none.
+/// history is shown in erased form, marked history (FIX 4229), so the room
+/// keeps its record and the erase reaches only the actor.
 pub(super) fn shown_card(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -259,7 +293,8 @@ pub(super) fn shown_card(
 ) -> Result<Option<ProjectCardRecord>> {
     Ok(match CARD_ROWS.get(store, txn, key)? {
         Some(CardRow::Live(record)) => Some(record),
-        Some(CardRow::History { .. }) | None => None,
+        Some(CardRow::History { erased_history }) => Some(erased_history.listed()),
+        None => None,
     })
 }
 

@@ -121,6 +121,11 @@ pub struct ProjectCardRecord {
     pub drafted_by: RosterActor,
     pub state: ProjectCardState,
     pub at: u64,
+    /// Set on a listed card that named an actor that was erased (FIX 4229):
+    /// it is history, in erased form, and nothing confirms, dismisses or
+    /// replays it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub history: bool,
 }
 
 /// What the drafting agent proposes on one source message. The principal and
@@ -618,6 +623,7 @@ impl Memory<'_> {
                     drafted_by: RosterActor::Actor(drafter),
                     state: ProjectCardState::Proposed,
                     at,
+                    history: false,
                 },
             )?;
             CONVERSATION_CARDS.put(&vault.store, txn, &(source.conversation, key), &message)?;
@@ -628,6 +634,8 @@ impl Memory<'_> {
     /// The cards shown in a conversation, each with its state: to the person
     /// each is for, the agent that drafted it, and the members of the room it
     /// sits in. No client surface draws them yet; this is the read they use.
+    /// A card that named an erased actor is listed in erased form, marked
+    /// history (FIX 4229).
     pub fn projects_proposals(
         &self,
         conversation: EntityId,
