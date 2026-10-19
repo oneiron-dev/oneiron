@@ -16598,6 +16598,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EngineSectionBindings",
+      "VaultPluginInstallExecutor",
+      "VaultPluginInstallSource"
+     ],
+     "path": "src/context_board/plugin/doors.rs",
+     "purpose": "Production bindings for the plugin-section doors: the engine's own section-binding resolver and the…",
+     "surface": {
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "PluginSectionError"
      ],
      "path": "src/context_board/plugin/errors.rs",
@@ -16656,7 +16670,7 @@
      "path": "src/context_board/plugin/mod.rs",
      "purpose": "Plugin-section seam — the typed section manifest, its gated admission, the live registry projection, and the…",
      "surface": {
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -33568,7 +33582,7 @@
      "surface": {
       "crate-vis": 16,
       "mod": 23,
-      "re-export": 52
+      "re-export": 53
      }
     },
     {
@@ -33753,6 +33767,37 @@
       "enum": 1,
       "fn": 4,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PluginSectionAdmittedRow",
+      "PluginSectionGrant",
+      "PluginSectionGrantRequest",
+      "PluginSectionGrantState",
+      "PluginSectionListRequest",
+      "PluginSectionPackRow",
+      "PluginSectionPendingRow",
+      "PluginSectionProposal",
+      "PluginSectionProposeRequest",
+      "PluginSectionRevokeRequest",
+      "PluginSectionRevoked",
+      "PluginSectionSuggestRequest",
+      "PluginSectionSuggestion",
+      "PluginSectionSuggestionState",
+      "PluginSectionTargetInput",
+      "PluginSectionsView",
+      "PluginSuggestionsSetRequest",
+      "PluginSuggestionsView"
+     ],
+     "path": "src/memory/plugin_sections.rs",
+     "purpose": "Plugin Context Board sections (DOOR-112, e2e BOARD-07): the typed `vault.packs.sections.*` doors over the…",
+     "surface": {
+      "enum": 3,
+      "fn": 7,
+      "struct": 15
      }
     },
     {
@@ -46303,7 +46348,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "mod": 2,
       "re-export": 19
      }
@@ -53146,7 +53191,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1017
+      "fn": 1024
      }
     },
     {
@@ -59764,7 +59809,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -60240,7 +60285,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 213,
+     "files": 214,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60921,7 +60966,7 @@
    },
    "over_bar": 201,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3710,
+   "source_files": 3712,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69553,7 +69598,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 988
+      "fn": 995
      }
     },
     {
@@ -70649,7 +70694,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 989
+      "fn": 996
      }
     },
     {
@@ -74203,7 +74248,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 159
+      "crate-vis": 160
      }
     },
     {
@@ -74394,6 +74439,16 @@
      "purpose": "Profile request answers and mode-A copy edits under the owner's own proof",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/plugin_section_doors.rs",
+     "purpose": "The host doors of the plugin Context Board sections (DOOR-112)…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -82311,7 +82366,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 425,
+     "files": 426,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82740,7 +82795,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 782,
+   "source_files": 783,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -85046,6 +85101,24 @@
       "PlannedSpawnObservation",
       "PlannedSpawnRead",
       "PlannerRung",
+      "PluginSectionAdmittedRow",
+      "PluginSectionGrant",
+      "PluginSectionGrantRequest",
+      "PluginSectionGrantState",
+      "PluginSectionListRequest",
+      "PluginSectionPackRow",
+      "PluginSectionPendingRow",
+      "PluginSectionProposal",
+      "PluginSectionProposeRequest",
+      "PluginSectionRevokeRequest",
+      "PluginSectionRevoked",
+      "PluginSectionSuggestRequest",
+      "PluginSectionSuggestion",
+      "PluginSectionSuggestionState",
+      "PluginSectionTargetInput",
+      "PluginSectionsView",
+      "PluginSuggestionsSetRequest",
+      "PluginSuggestionsView",
       "PointInput",
       "PolicyActionOutcome",
       "PolicyAxes",
@@ -85630,6 +85703,9 @@
       "SecretUseRequest",
       "SecretUseStatus",
       "SectionAtom",
+      "SectionManifest",
+      "SectionManifestEnvelope",
+      "SectionManifestProvenance",
       "SegmentedControl",
       "SelectControl",
       "SelectInput",
@@ -86296,8 +86372,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 811,
-      "struct": 2544
+      "enum": 814,
+      "struct": 2562
      }
     },
     {
