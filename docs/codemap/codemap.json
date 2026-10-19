@@ -51330,7 +51330,7 @@
       "const": 3,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "re-export": 1,
       "struct": 1
      }
@@ -65808,13 +65808,33 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/driver.rs",
      "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 24
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/handles.rs",
+     "purpose": "Live handles (AB-001): every row the driver reads is minted here, once, as the outline becomes rows",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/pages.rs",
+     "purpose": "The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last…",
+     "surface": {
+      "crate-vis": 18
      }
     },
     {
@@ -65877,10 +65897,10 @@
      "path": "src/lib.rs",
      "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
      "surface": {
-      "const": 11,
+      "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 41,
       "trait": 2
      }
@@ -65925,6 +65945,24 @@
      "purpose": "MCP over a guest's stdio, as `cua-driver mcp` serves it: JSON-RPC 2.0, one message per line, on one reader…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HandleInfo",
+      "ObservationBase",
+      "Rebound",
+      "RowSplice",
+      "StepRebound"
+     ],
+     "path": "src/observation.rs",
+     "purpose": "The observation contract both drivers answer (AB-001, AB-002)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 5
      }
     },
     {
@@ -65983,10 +66021,10 @@
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…"
     },
     "driver": {
-     "files": 1,
+     "files": 3,
      "impl_vault": false,
-     "largest_src_bucket": "XL",
-     "layout": "file",
+     "largest_src_bucket": "L",
+     "layout": "file+dir",
      "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref"
     },
     "library": {
@@ -66002,6 +66040,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "MCP over a guest's stdio, as `cua-driver mcp` serves it: JSON-RPC 2.0, one message per line, on one reader…"
+    },
+    "observation": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The observation contract both drivers answer (AB-001, AB-002)"
     },
     "outline": {
      "files": 1,
@@ -66027,7 +66072,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 9,
+   "source_files": 12,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -71188,14 +71233,15 @@
      "notable": [
       "LlmNodes",
       "MeshLlmTransport",
+      "MeshPeerProof",
       "MeshPeerTransport",
       "VaultLlmNodes"
      ],
      "path": "src/mesh/client.rs",
      "purpose": "The asking side: the first of the owner's nodes that takes the call runs it; with none, the call waits and…",
      "surface": {
-      "fn": 4,
-      "struct": 3,
+      "fn": 6,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -75890,7 +75936,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/context_board/reply.rs",
@@ -81449,7 +81495,7 @@
      "path": "src/device_local.rs",
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -83465,12 +83511,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "OfferEndpoint",
       "ServedOffer"
      ],
      "path": "src/models/offer.rs",
      "purpose": "What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -88218,6 +88267,7 @@
       "ObjectiveFinding",
       "Observation",
       "Observation2",
+      "ObservationBase",
       "ObservationIssue",
       "ObservationPage",
       "ObserveInput",
@@ -88661,6 +88711,7 @@
       "Reasoning",
       "ReasoningCause",
       "ReasoningEffort",
+      "Rebound",
       "RecallEffort",
       "RecallRequest",
       "RecallTelemetry",
@@ -88922,6 +88973,7 @@
       "RoutineOutcome",
       "Row",
       "RowBirth",
+      "RowSplice",
       "RsiBudgetConfig",
       "RsiBudgetRead",
       "RsiBudgetShare",
@@ -89399,6 +89451,7 @@
       "StepOutcome",
       "StepPreset",
       "StepProgression",
+      "StepRebound",
       "StepSequence",
       "StepTarget",
       "StepXfrm",
@@ -89799,7 +89852,7 @@
      "purpose": "—",
      "surface": {
       "enum": 854,
-      "struct": 2705
+      "struct": 2709
      }
     },
     {

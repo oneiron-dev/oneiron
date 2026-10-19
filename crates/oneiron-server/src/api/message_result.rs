@@ -79,11 +79,14 @@ pub(crate) async fn read_core_message_result(
     let request = super::json_payload(payload)?;
     let (actor, class) = reader(&auth)?;
     let proof = auth.verified_slip().cloned();
-    let locality = auth.locality();
+    let destination = auth.destination();
     // A search or a table query scans up to its bound from disk, so it runs
     // off the reactor.
     let read = tokio::task::spawn_blocking(move || -> Result<Value, MemoryError> {
-        let memory = server.vault.memory(actor, class).at(locality);
+        let memory = server
+            .vault
+            .memory(actor, class)
+            .for_destination(&destination);
         let memory = match &proof {
             Some(proof) => memory.with_read_proof(proof),
             None => memory,
@@ -92,8 +95,13 @@ pub(crate) async fn read_core_message_result(
         // A row the answer names that a device-local world keeps from the
         // caller withholds it, as it does a run's answer.
         let named = reply.to_string();
-        if crate::device_local::withholds_retained(&server.vault, locality, &[], named.as_bytes())
-            .map_err(MemoryError::from)?
+        if crate::device_local::withholds_retained(
+            &server.vault,
+            &destination,
+            &[],
+            named.as_bytes(),
+        )
+        .map_err(MemoryError::from)?
         {
             return Ok(json!({"denied": "result_withheld", "reasonCodes": ["result_withheld"]}));
         }

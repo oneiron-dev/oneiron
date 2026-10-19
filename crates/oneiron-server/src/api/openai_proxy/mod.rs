@@ -28,11 +28,11 @@ use oneiron::claim::CallerLocality;
 use oneiron::connector_key::PROXY_CONNECTOR;
 use oneiron::federation::{ScopeAxis, ScopeId};
 use oneiron::memory::RecallEffort;
+use oneiron::settings::ReadDestination;
 use oneiron::task_verb::sdk::RecallRequest;
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ClaimInput, ContentPart, EntityId, LlmMessage,
-    LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
-    TierPrecedence,
+    LlmMessageRole, LlmRequest, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
 };
 use serde_json::json;
 
@@ -157,16 +157,10 @@ async fn complete_as(
     let (ladder, run) =
         super::llm::admit_proxied(server, &mut request).map_err(|refused| *refused)?;
     // The recalled rows go to the model and its answer back to the caller:
-    // they are read as the farther of the two, on this device only when both
-    // are.
-    let reads_at = if actor.locality() == CallerLocality::OnDevice
-        && request.envelope.locality == ModelLocality::OnDevice
-    {
-        CallerLocality::OnDevice
-    } else {
-        CallerLocality::OffDevice
-    };
-    let recalled = recall(server, &actor, reads_at, query.clone(), listed).await?;
+    // they are read for both, on this device only when both are.
+    let reads_for =
+        crate::device_local::prompt_destination(actor.destination(), request.envelope.locality);
+    let recalled = recall(server, &actor, &reads_for, query.clone(), listed).await?;
     let injected = recalled.is_some();
     if let Some(memory) = recalled {
         // Just before the message it was recalled for.
@@ -335,12 +329,12 @@ fn model_request(
     })
 }
 
-/// The connector's recall for `query`, read at `reads_at`, as one user-role
-/// data block; `None` when nothing came back.
+/// The connector's recall for `query`, read for `reads_for`, as one
+/// user-role data block; `None` when nothing came back.
 async fn recall(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
-    reads_at: CallerLocality,
+    reads_for: &ReadDestination,
     query: String,
     served: &mut Vec<EntityId>,
 ) -> Result<Option<LlmMessage>, Response> {
@@ -366,7 +360,7 @@ async fn recall(
             actor.actor_ref,
             actor.actor_class,
             proof,
-            reads_at,
+            reads_for,
             None,
             input,
         )
@@ -385,9 +379,9 @@ async fn recall(
         _ => return Ok(None),
     };
     let text = format!("{MEMORY_PREAMBLE}\n\n{rendered}");
-    // A backstop past the read itself: no row a device-local world keeps
-    // leaves in the prompt.
-    if crate::device_local::withholds_retained(&server.vault, reads_at, &listed, text.as_bytes())
+    // A backstop past the read itself: no row a world withheld from where
+    // the prompt goes leaves in it.
+    if crate::device_local::withholds_retained(&server.vault, reads_for, &listed, text.as_bytes())
         .unwrap_or(true)
     {
         return Err(forbidden(
