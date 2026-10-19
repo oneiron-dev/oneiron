@@ -1,7 +1,7 @@
 //! Claim-before-speaking guard inside the existing witness transaction.
 use super::audience::{
     ThreadBinding, names_actor_in, record_thread_admits_in, thread_audience_allows_in,
-    thread_audience_in, thread_binding, thread_root_readable_in, validate_private_audience_in,
+    thread_audience_now_in, thread_binding, thread_root_readable_in, validate_private_audience_in,
 };
 use super::participation::{
     addressable_agent_in_txn, admit_speech_in, agent_standing_in_txn, participant_in_txn,
@@ -396,12 +396,12 @@ pub(crate) fn admit_witness(
         None,
         now,
     )?;
-    // A private thread names only its audience now, a stored root's edits
-    // folded in (FIX 5545): a mention hands the named agent the turn. A pen
-    // is named there through its PERSON (FIX 3123).
+    // A private thread names only its audience now (CURRENT), a stored
+    // root's edits folded in (FIX 5545): a mention hands the named agent the
+    // turn. A pen is named there through its PERSON (FIX 3123).
     let private = match &thread {
         Some(binding) if binding.root == turn_id && stored.is_none() => binding.audience.clone(),
-        Some(binding) => thread_audience_in(vault, txn, room, binding.root)?,
+        Some(binding) => thread_audience_now_in(vault, txn, room, binding.root)?,
         None => None,
     };
     if let Some(audience) = &private {
