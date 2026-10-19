@@ -76562,10 +76562,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/api/esign/editor_budget.rs",
-     "purpose": "Router-owned admission for public, capability-free editor computation",
+     "path": "src/api/esign/editor_auth.rs",
+     "purpose": "The owner's editor capability (FIX 5618)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/esign/editor_budget.rs",
+     "purpose": "Router-owned admission for editor computation",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -76579,13 +76589,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/esign/ingress.rs",
      "purpose": "Token-first ingress at the public signing doors (FIX 3808, Engine rulings 10-18 and 10-19)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -78679,13 +78689,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/openapi/signing_paths.rs",
      "purpose": "The public signing ceremony routes (`/sign/*`, DOOR-117): their payload and answer schemas are the verb…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -85934,7 +85944,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 459,
+     "files": 460,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -86384,7 +86394,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 846,
+   "source_files": 847,
    "test_files": 182
   },
   "oneiron-spawn": {
