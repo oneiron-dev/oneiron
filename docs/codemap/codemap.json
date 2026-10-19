@@ -1209,7 +1209,7 @@
      "purpose": "The live task-type tree (ARCH-0079 #task-type, OF-541): data inside the team-shape skill, so it forks and…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -18608,9 +18608,9 @@
      "purpose": "Multi-critic review node primitives",
      "surface": {
       "const": 3,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 2,
-      "fn": 14,
+      "fn": 15,
       "mod": 1,
       "re-export": 3,
       "struct": 7
@@ -19849,6 +19849,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "KeptAnswer",
+      "KeptAsk",
+      "KeptRole",
+      "KeptRoute"
+     ],
+     "path": "src/dreamer_consolidation/kept_ask.rs",
+     "purpose": "The ask a kept decision went up as, kept actor-free (FIX 4591)",
+     "surface": {
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
@@ -19968,7 +19984,6 @@
       "ConsolidationProvenanceHop",
       "ConsolidationProvenanceHopKind",
       "ConsolidationSink",
-      "KeptAsk",
       "KeptDecision",
       "PeerAnswerLineage",
       "PeerTrustDigestLine",
@@ -19981,7 +19996,8 @@
       "crate-vis": 9,
       "enum": 1,
       "fn": 10,
-      "struct": 7,
+      "re-export": 1,
+      "struct": 6,
       "trait": 2
      }
     },
@@ -31157,7 +31173,7 @@
      "path": "src/llm/decision/answer_actor.rs",
      "purpose": "Who an answer names, and the erase that forgets it (FIX 3520): an ask's answerer, and the owner whose reason…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 2
      }
@@ -31801,6 +31817,7 @@
      "path": "src/llm/inference_admission.rs",
      "purpose": "One snapshot and one admission for policy-managed inference calls",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 13,
       "struct": 4
@@ -31905,7 +31922,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 11,
       "re-export": 14
      }
@@ -43036,10 +43053,10 @@
       "ProposalActor"
      ],
      "path": "src/repo_mutation/proposal/actor_erase.rs",
-     "purpose": "Whose act a repo proposal records, and the erase that forgets it (FIX 3520)",
+     "purpose": "Whose act a repo proposal records, and the erase that forgets it (FIX 3520): its proposer, the critics whose…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 3
      }
@@ -43098,7 +43115,7 @@
      "path": "src/repo_mutation/reviewed_stack.rs",
      "purpose": "Atomic critic admission and exact-prefix replay for a tested proposal stack",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -47794,7 +47811,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SharedSkillDelta",
@@ -47803,7 +47820,7 @@
      "path": "src/skill_hub/shared_delta.rs",
      "purpose": "Submitted-byte federation merge-back and company PR staging",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -60989,7 +61006,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62034,7 +62051,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3785,
+   "source_files": 3786,
    "test_files": 902
   },
   "oneiron-android": {
