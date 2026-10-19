@@ -2995,6 +2995,17 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/home_candidacy.rs",
+     "purpose": "Folds each machine's signed MACRO home candidacy (FIX 4898; Engine 10-19 rulings on ARCH-0026: \"Election…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -3322,7 +3333,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "re-export": 55
      }
     },
@@ -21118,13 +21129,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/home.rs",
-     "purpose": "The single MACRO home-node election (ARCH-0026; DOOR-101 PR2a): which node of the vault runs its MACRO…",
+     "purpose": "The single MACRO home-node election (ARCH-0026; DOOR-101 PR2a; FIX 4898): which node of the vault runs its…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "fn": 4
      }
     },
@@ -61737,7 +61748,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 180,
+     "files": 181,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63195,7 +63206,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3881,
+   "source_files": 3882,
    "test_files": 902
   },
   "oneiron-android": {
@@ -63417,6 +63428,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "HomeCandidacy"
+     ],
+     "path": "src/authority/home_candidacy.rs",
+     "purpose": "A machine's own declaration of itself as a MACRO home candidate (FIX 4898; ARCH-0026: \"Election order is…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "HomeNodePick"
      ],
      "path": "src/authority/home_pick.rs",
@@ -63470,7 +63496,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 26
+      "re-export": 27
      }
     },
     {
@@ -63846,7 +63872,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 29,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -63876,7 +63902,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 38,
+   "source_files": 39,
    "test_files": 1
   },
   "oneiron-bench": {
@@ -73022,6 +73048,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/host_root.rs",
+     "purpose": "`NativeClient.open_with_host_root` (FIX 5342, the Python half of FIX 4730): `open`, then this install's own…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
@@ -73048,6 +73084,13 @@
      "layout": "file",
      "purpose": "The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron…"
     },
+    "host_root": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`NativeClient.open_with_host_root` (FIX 5342, the Python half of FIX 4730): `open`, then this install's own…"
+    },
     "pairing": {
      "files": 1,
      "impl_vault": false,
@@ -73058,7 +73101,7 @@
    },
    "over_bar": 1,
    "purpose": "`oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1)",
-   "source_files": 4,
+   "source_files": 5,
    "test_files": 0
   },
   "oneiron-remote": {
@@ -74807,7 +74850,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "fn": 22,
       "re-export": 1,
       "struct": 2
@@ -81201,9 +81244,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/device_sync.rs",
-     "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…",
+     "purpose": "The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -81785,7 +81828,7 @@
      "path": "src/handler/protocol_close.rs",
      "purpose": "A socket the server closes on a protocol rejection (FIX 3303, OF-538): a hello it refused, a frame it would…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -81842,6 +81885,16 @@
      "purpose": "WindowSync sub-tag dispatcher with selector and VV paths",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/home_candidacy.rs",
+     "purpose": "This host's MACRO home candidacy (FIX 4898; ARCH-0026: \"Election order is cloud node when attached, then an…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -85483,7 +85536,7 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
-     "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…"
+     "purpose": "The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in…"
     },
     "embedded": {
      "files": 6,
@@ -85526,6 +85579,13 @@
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "WebSocket upgrade handler and connection lifecycle"
+    },
+    "home_candidacy": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "This host's MACRO home candidacy (FIX 4898; ARCH-0026: \"Election order is cloud node when attached, then an…"
     },
     "hook_verdict": {
      "files": 1,
@@ -85754,7 +85814,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 836,
+   "source_files": 837,
    "test_files": 182
   },
   "oneiron-spawn": {
