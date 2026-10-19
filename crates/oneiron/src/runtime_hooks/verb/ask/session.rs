@@ -12,7 +12,10 @@
 //! its chain's commit uses the answer up in the keep, once, before the verb
 //! runs. The pause goes with its session: a resume that names a pause the
 //! keep no longer holds refuses ([`SESSION_PAUSE_GONE`]), never running as a
-//! new call.
+//! new call. A hook in an off-record room asks the same way (FIX 5524): its
+//! pause waits under the room's stretch, with the route its run captured,
+//! and a resume runs only once that route, the route the call runs on now
+//! and the run's place on the room's roster all hold again.
 
 use std::sync::Arc;
 
@@ -27,7 +30,7 @@ use crate::task_verb::{
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Error, MemoryError, Result, Vault};
 
-use super::super::storage::{SessionHookKey, SessionHooks, SessionVerbAsk};
+use super::super::storage::{PausedRoute, SessionHookKey, SessionHooks, SessionVerbAsk};
 use super::super::{InvocationId, VerbCall, VerbHookStop};
 use super::{
     AskToken, HOLD, PROCEED, Retry, USED, VERB_HOOK_INTENT, author_memory, cut, pending, proceeds,
@@ -60,8 +63,9 @@ fn gone(hook: &str) -> VerbHookStop {
 /// answer up in the keep ([`take`]); declined or expired, Skipped. A call
 /// that names the pause it resumes (`hooks`' resume) and finds no such pause
 /// refuses with [`SESSION_PAUSE_GONE`]; one that names none and finds none is
-/// a new call. The ask is read on `turn`, the calling operation's task-work
-/// turn.
+/// a new call. A pause another call under `key` took is that call's: one
+/// that names it takes its own path, as if it named none. The ask is read
+/// on `turn`, the calling operation's task-work turn.
 pub(in crate::runtime_hooks::verb) fn retry(
     vault: &Vault,
     hooks: &SessionHooks<'_>,
@@ -70,10 +74,13 @@ pub(in crate::runtime_hooks::verb) fn retry(
     turn: Option<&Arc<TaskWorkTurn>>,
 ) -> Result<Retry> {
     let invocation = call.invocation.0;
-    let row = match (
-        vault.verb_hook_state.session.ask(key, invocation),
-        hooks.resumed_ask(),
-    ) {
+    let keep = &vault.verb_hook_state.session;
+    // A pause another call of the same request took is that call's to
+    // resume (FIX 5526): this one takes its own path.
+    let named = hooks
+        .resumed_ask()
+        .filter(|ask| !keep.paused_elsewhere(key, invocation, *ask));
+    let row = match (keep.ask(key, invocation), named) {
         (Some(row), Some(ask)) if row.ask != ask => return Ok(Retry::Stop(gone(&row.hook))),
         (Some(row), _) => row,
         (None, Some(_)) => return Ok(Retry::Stop(gone(""))),
@@ -111,6 +118,8 @@ pub(in crate::runtime_hooks::verb) fn retry(
             }
         });
     }
+    // A room's call resumes only where its pause was taken (FIX 5524).
+    hooks.readmit(row.route.as_ref())?;
     Ok(Retry::Resume {
         binding: row.binding,
         position: row.position,
@@ -131,11 +140,12 @@ pub(in crate::runtime_hooks::verb) fn retry(
 /// invocation's hidden id (`SessionHookKeep::hidden_invocation`), so
 /// settlement finds no saved call and runs nothing, and the vault keeps no
 /// way to run the call again. A session that ended meanwhile opens no ask.
+/// A room's pause keeps `route`, the route its run captured (FIX 5524).
 /// The ask's group, or `Err(reason)` when the ask door refused or the
 /// session ended: nothing was kept.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the call, its key, the hook, its place, the args, the label, the call's turn and the chain's write"
+    reason = "the call, its key, the hook, its place, the args, the label, the call's turn, a room's route and the chain's write"
 )]
 pub(in crate::runtime_hooks::verb) fn open(
     vault: &Vault,
@@ -146,6 +156,7 @@ pub(in crate::runtime_hooks::verb) fn open(
     args: &Value,
     label: &str,
     turn: Option<&Arc<TaskWorkTurn>>,
+    route: Option<PausedRoute>,
     write: &dyn Fn(&mut heed::RwTxn<'_>) -> Result<()>,
 ) -> Result<std::result::Result<EntityId, String>> {
     let (binding_id, binding) = hook;
@@ -184,6 +195,7 @@ pub(in crate::runtime_hooks::verb) fn open(
                 author_class: binding.author_class(),
                 ask,
                 used: false,
+                route: route.clone(),
             },
         )
     };

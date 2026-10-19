@@ -19,7 +19,8 @@ impl HostSelfDispatcher<'_> {
     /// effect boundary leaves a forwarded call alone. Each hook reads under
     /// `key`, the key the door admitted, over the room's view, and a rewrite
     /// is read on that same key. A hook's stop is the answer, as
-    /// `Error::VerbHook`; a read refused runs no post chain, and keeps its
+    /// `Error::VerbHook`, a hook's ask pausing the read in the room until
+    /// the run makes it again (FIX 5524); a read refused runs no post chain, and keeps its
     /// pre chain's records. The hooks' records are kept once the read is
     /// done, never before it. The answer is the caller's view, as base's row
     /// boundary hands its door.
@@ -41,9 +42,13 @@ impl HostSelfDispatcher<'_> {
         if !session.verb_hooks_may_run(verb) {
             return Ok(context.answer(read, self.actor, &call.input));
         }
-        let invocation = self.verb_invocation(&SelfCall::AgentVerb(call.clone()), site)?;
+        let parked = SelfCall::AgentVerb(call.clone());
+        let invocation = self.verb_invocation(&parked, site)?;
+        // The same call a hook's ask parked names that pause, and resumes
+        // it in the room (FIX 5524).
+        let resume = self.parked_ask(&parked, site)?;
         let hook_call = session_row_call(self.actor, key, verb, invocation);
-        let (pre, hooks) = session_row_pre(session, route, hook_call, call.input.clone())?;
+        let (pre, hooks) = session_row_pre(session, route, hook_call, call.input.clone(), resume)?;
         note_unkept(verb, &hooks);
         let pre = pre.map_err(Error::from)?;
         let (output, rows) = match context.answer(read, self.actor, &pre.args) {

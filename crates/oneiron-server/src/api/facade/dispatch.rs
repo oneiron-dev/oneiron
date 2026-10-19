@@ -334,18 +334,29 @@ async fn report(
     let (actor, class) = facade_actor(server, auth)?;
     let hooks = facade_hooks_pre(server, call, "report", value).await?;
     let value = hooks.args.clone();
-    let (output, listed) = server
-        .report_off_runtime_listing(
-            actor,
-            class,
-            auth.verified_slip().cloned(),
-            auth.locality(),
-            call.room_turn()?,
-            facade_input(value)?,
-        )
-        .await;
-    let output = facade_output(output?)?;
-    let rows = Some(listed);
+    let ran = async {
+        let (output, listed) = server
+            .report_off_runtime_listing(
+                actor,
+                class,
+                auth.verified_slip().cloned(),
+                auth.locality(),
+                call.room_turn()?,
+                facade_input(value)?,
+            )
+            .await;
+        let output = facade_output(output?)?;
+        let rows = Some(listed);
+        Ok::<_, FacadeApiError>((output, rows))
+    }
+    .await;
+    let (output, rows) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows,
@@ -1483,38 +1494,46 @@ async fn describe(
     facade_outside_room_turn(call, "describe")?;
     let hooks = facade_hooks_pre(server, call, "describe", value).await?;
     let value = hooks.args.clone();
-    oneiron::task_verb::sdk::validate_input("describe", &value)?;
-    if value.get("self").and_then(serde_json::Value::as_bool) == Some(true) {
-        let (output, rows) =
-            crate::api::context_board::describe_self_for_auth(server, auth, &value).await?;
-        return Ok(FacadeCallOutput {
-            value: facade_hooks_post(server, hooks, output).await?,
-            rows: Some(rows),
-        });
-    }
-    let (actor, class) = facade_actor(server, auth)?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
-    let turn = if oneiron::task_verb::sdk::describe_takes_task_work_turn(&value) {
-        Some(Arc::new(server.admit_task_work(actor).await))
-    } else {
-        None
-    };
-    let producers = oneiron::memory::ProducerRows::default();
-    let output = {
-        let memory = credential_memory(&server.vault, Some(auth), actor, class)
-            .at(auth.locality())
-            .listing_producers(&producers);
-        let memory = match turn {
-            Some(turn) => memory.with_task_work_turn(turn),
-            None => memory,
+    let ran = async {
+        oneiron::task_verb::sdk::validate_input("describe", &value)?;
+        if value.get("self").and_then(serde_json::Value::as_bool) == Some(true) {
+            let (output, rows) =
+                crate::api::context_board::describe_self_for_auth(server, auth, &value).await?;
+            return Ok((output, Some(rows)));
+        }
+        let (actor, class) = facade_actor(server, auth)?;
+        facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
+        let turn = if oneiron::task_verb::sdk::describe_takes_task_work_turn(&value) {
+            Some(Arc::new(server.admit_task_work(actor).await))
+        } else {
+            None
         };
-        facade_readable_task_rows(
-            &server.vault,
-            auth,
-            oneiron::task_verb::sdk::describe(&memory, facade_input(value)?)?,
-        )?
+        let producers = oneiron::memory::ProducerRows::default();
+        let output = {
+            let memory = credential_memory(&server.vault, Some(auth), actor, class)
+                .at(auth.locality())
+                .listing_producers(&producers);
+            let memory = match turn {
+                Some(turn) => memory.with_task_work_turn(turn),
+                None => memory,
+            };
+            facade_readable_task_rows(
+                &server.vault,
+                auth,
+                oneiron::task_verb::sdk::describe(&memory, facade_input(value)?)?,
+            )?
+        };
+        let rows = Some(producers.take());
+        Ok::<_, FacadeApiError>((output, rows))
+    }
+    .await;
+    let (output, rows) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
     };
-    let rows = Some(producers.take());
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows,
@@ -2540,19 +2559,30 @@ async fn vault_recall(
     let (actor, class) = facade_actor(server, auth)?;
     let hooks = facade_hooks_pre(server, call, "vault.recall", value).await?;
     let value = hooks.args.clone();
-    let (output, listed) = server
-        .recall_home_listing(
-            actor,
-            class,
-            auth.verified_slip().cloned(),
-            auth.destination(),
-            call.room_turn()?,
-            facade_input(value)?,
-            call.home_caller(),
-        )
-        .await;
-    let output = facade_output(output?)?;
-    let rows = Some(listed);
+    let ran = async {
+        let (output, listed) = server
+            .recall_home_listing(
+                actor,
+                class,
+                auth.verified_slip().cloned(),
+                auth.destination(),
+                call.room_turn()?,
+                facade_input(value)?,
+                call.home_caller(),
+            )
+            .await;
+        let output = facade_output(output?)?;
+        let rows = Some(listed);
+        Ok::<_, FacadeApiError>((output, rows))
+    }
+    .await;
+    let (output, rows) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows,
@@ -3989,59 +4019,79 @@ async fn vault_export(
         ));
     }
     let hooks = facade_hooks_pre(server, call, "vault.export", value).await?;
-    let input: oneiron::memory::ExportOptions = facade_input(hooks.args.clone())?;
-    // Beside the archive, the rows its snapshot read past where
-    // the caller's rows go (its locality, with the machine its
-    // connection proved; FIX 4937): every owner path lists them.
-    // A slip keeps its own path; a host action with no slip (the
-    // dev mode) takes the engine's host-action export; the
-    // attested owner takes the engine's request-proof export,
-    // toward its own destination. Each arm's receipt records the
-    // owner's act, with where he spoke from as this request proved
-    // it (audit only; FIX 4625, 4626).
-    let surface = call.surface();
-    let (output, rows) = match (proof, action, owner) {
-        (Some(proof), _, _) if proof.claims().holder_ref == "host" => server
-            .vault
-            .export_with_verified_host_owner_listing(&input, proof, surface, auth.destination())?,
-        (Some(proof), _, _) => {
-            let (actor, class) = facade_actor(server, auth)?;
-            let producers = oneiron::memory::ProducerRows::default();
-            let output = server
-                .vault
-                .memory(actor, class)
-                .for_destination(&auth.destination())
-                .listing_producers(&producers)
-                .export_with_verified_owner(&input, proof, surface)?;
-            (output, producers.take())
-        }
-        (None, Some(action), _) => server.vault.export_with_host_action_listing(
-            &input,
-            &action,
-            surface,
-            auth.destination(),
-        )?,
-        (None, None, Some(owner)) => server.vault.export_with_authenticated_owner_listing(
-            &input,
-            &owner,
-            surface,
-            auth.destination(),
-        )?,
-        (None, None, None) => {
-            return Err(FacadeApiError::forbidden(
-                "full-vault export requires verified owner authority",
-                ["Present a verified owner credential."],
-            ));
+    // An export that fails after its pre chain ran keeps a
+    // session-only call's pre hook records and runs no post chain
+    // (FIX 5651), as a host door does (FIX 5527).
+    let args = hooks.args.clone();
+    let ran = async {
+        let input: oneiron::memory::ExportOptions = facade_input(args)?;
+        // Beside the archive, the rows its snapshot read past where
+        // the caller's rows go (its locality, with the machine its
+        // connection proved; FIX 4937): every owner path lists them.
+        // A slip keeps its own path; a host action with no slip (the
+        // dev mode) takes the engine's host-action export; the
+        // attested owner takes the engine's request-proof export,
+        // toward its own destination. Each arm's receipt records the
+        // owner's act, with where he spoke from as this request proved
+        // it (audit only; FIX 4625, 4626).
+        let surface = call.surface();
+        let (output, rows) = match (proof, action, owner) {
+            (Some(proof), _, _) if proof.claims().holder_ref == "host" => {
+                server.vault.export_with_verified_host_owner_listing(
+                    &input,
+                    proof,
+                    surface,
+                    auth.destination(),
+                )?
+            }
+            (Some(proof), _, _) => {
+                let (actor, class) = facade_actor(server, auth)?;
+                let producers = oneiron::memory::ProducerRows::default();
+                let output = server
+                    .vault
+                    .memory(actor, class)
+                    .for_destination(&auth.destination())
+                    .listing_producers(&producers)
+                    .export_with_verified_owner(&input, proof, surface)?;
+                (output, producers.take())
+            }
+            (None, Some(action), _) => server.vault.export_with_host_action_listing(
+                &input,
+                &action,
+                surface,
+                auth.destination(),
+            )?,
+            (None, None, Some(owner)) => server.vault.export_with_authenticated_owner_listing(
+                &input,
+                &owner,
+                surface,
+                auth.destination(),
+            )?,
+            (None, None, None) => {
+                return Err(FacadeApiError::forbidden(
+                    "full-vault export requires verified owner authority",
+                    ["Present a verified owner credential."],
+                ));
+            }
+        };
+        let output = serde_json::to_value(output).map_err(|_| {
+            FacadeApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                MEMORY_CODE_INTERNAL,
+                "export result encoding failed",
+                ["Report this SDK response mismatch."],
+            )
+        })?;
+        Ok::<_, FacadeApiError>((output, rows))
+    }
+    .await;
+    let (output, rows) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
         }
     };
-    let output = serde_json::to_value(output).map_err(|_| {
-        FacadeApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            MEMORY_CODE_INTERNAL,
-            "export result encoding failed",
-            ["Report this SDK response mismatch."],
-        )
-    })?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: Some(rows),
@@ -27111,16 +27161,27 @@ async fn vault_search_bm25(
     let (actor, class) = facade_actor(server, auth)?;
     let hooks = facade_hooks_pre(server, call, "vault.search.bm25", value).await?;
     let value = hooks.args.clone();
-    let (output, listed) = super::search_home_doors::vault_search_bm25(
-        server,
-        call,
-        actor,
-        class,
-        facade_input(value)?,
-    )
+    let ran = async {
+        let (output, listed) = super::search_home_doors::vault_search_bm25(
+            server,
+            call,
+            actor,
+            class,
+            facade_input(value)?,
+        )
+        .await;
+        let output = facade_output(output?)?;
+        let rows = Some(listed);
+        Ok::<_, FacadeApiError>((output, rows))
+    }
     .await;
-    let output = facade_output(output?)?;
-    let rows = Some(listed);
+    let (output, rows) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows,

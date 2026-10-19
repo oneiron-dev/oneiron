@@ -106,16 +106,13 @@ pub(super) fn pre(
     // on its caller's own args (and, for a polymorphic row, what the vault
     // holds of them, FIX 5137-5139), keeps them to fall back to.
     let mut landing = Landing::of(vault, &call.verb, &args);
-    // A room keeps no ask, so no call there resumes one. A session-only
-    // call with no room overlay resumes from the in-memory keep (L13 PR-D).
+    // A session-only call resumes from the in-memory keep (L13 PR-D), a
+    // room's call under its stretch (FIX 5524).
     let saved = match storage {
-        VerbHookStorage::Session(hooks) => match hooks.kept_key() {
-            Some(key) => {
-                let _depth = HookDepth::enter();
-                ask::session::retry(vault, hooks, key, &call, turn.as_ref())?
-            }
-            None => ask::Retry::Fresh,
-        },
+        VerbHookStorage::Session(hooks) => {
+            let _depth = HookDepth::enter();
+            ask::session::retry(vault, hooks, hooks.pause_key(), &call, turn.as_ref())?
+        }
         VerbHookStorage::Canonical => {
             let _depth = HookDepth::enter();
             ask::retry(vault, &call, resume, turn.as_ref())?
@@ -827,13 +824,8 @@ impl<'c> Chain<'c> {
         label: &str,
         resume: Option<&VerbResume>,
     ) -> Result<std::result::Result<VerbHookStop, String>> {
-        if let Some(refusal) = self.room_ask_refusal() {
-            return Ok(Err(refusal));
-        }
-        if let VerbHookStorage::Session(hooks) = self.storage
-            && let Some(key) = hooks.kept_key()
-        {
-            return self.ask_in_session(hooks, key, index, hook, args, label);
+        if let VerbHookStorage::Session(hooks) = self.storage {
+            return self.ask_in_session(hooks, hooks.pause_key(), index, hook, args, label);
         }
         let opened = ask::open(
             self.vault,
