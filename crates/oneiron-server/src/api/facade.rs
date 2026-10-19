@@ -777,14 +777,14 @@ async fn facade_hooks_pre(
     value: serde_json::Value,
 ) -> Result<VerbHookPre, FacadeApiError> {
     let auth = call.auth();
+    // A hosted operator's root acts as nobody (FIX 2222): no hook runs for
+    // it, and its typed refusal comes before any row door's own (FIX 4371).
+    super::host_action::facade_host_action(server, auth)?;
     if verb == "vault.export" {
         export_admits(server, auth)?;
     } else {
         host_doors::door_admits(server, auth, verb)?;
     }
-    // A hosted operator's root acts as nobody, so no hook runs for it as the
-    // host either (FIX 2222).
-    super::host_action::facade_host_action(server, auth)?;
     let bound = facade_actor(server, auth).ok();
     let (actor, class) = match bound {
         Some(actor) => actor,
@@ -968,6 +968,11 @@ pub(super) fn owner_authorship(
 /// proof rather than only the owner's (OF-417).
 const PERSON_PROOF_VERB: &str = "vault.workspace.work_companion.set";
 
+/// The delete whose direct owner request also binds the host's own slip
+/// issuer: deleting a Connect guest's PERSON withdraws its grants and
+/// disconnects their pacts first (FIX 3875).
+const GUEST_REVOKING_DELETE_VERB: &str = "vault.delete";
+
 /// The proof a direct request (outside any room turn) binds onto its
 /// caller's surface for `verb`. `vault.workspace.work_companion.set` takes
 /// the person's own proof ([`shared_act_doors::person`]): the owner's, or a
@@ -1051,7 +1056,19 @@ fn facade_invoke_in_turn(
                     Some(owner) => memory.with_owner_authorship(&owner),
                     None => memory,
                 };
-                oneiron::task_verb::sdk::invoke(&memory, verb, value)?
+                if verb == GUEST_REVOKING_DELETE_VERB {
+                    // With no host key the delete runs as before (FIX 3875).
+                    super::pairing::with_host_issuer(server, |issuer| match issuer {
+                        Some(issuer) => oneiron::task_verb::sdk::invoke(
+                            &memory.with_host_slip_issuer(issuer),
+                            verb,
+                            value,
+                        ),
+                        None => oneiron::task_verb::sdk::invoke(&memory, verb, value),
+                    })?
+                } else {
+                    oneiron::task_verb::sdk::invoke(&memory, verb, value)?
+                }
             }
         })
     })

@@ -38,6 +38,7 @@
 mod doors;
 mod execute;
 pub(super) mod input;
+mod manifest;
 pub(super) mod permits;
 mod revoked;
 #[cfg(feature = "sync")]
@@ -48,6 +49,7 @@ use zeroize::Zeroizing;
 pub use self::doors::{CustodyCandidate, SealedCustodyChange, SecretCustodyView};
 pub(crate) use self::execute::Material;
 use self::input::{InputBinding, RelayedInput, input_digest, keep_input_in_txn};
+pub use self::manifest::CustodyManifestCheck;
 pub(crate) use self::revoked::{
     custody_revoked_in_txn, drop_revoked_copies_in_txn, refuse_revoked_use_in_txn,
     settle_revoked_in_txn,
@@ -60,7 +62,7 @@ use crate::authority::{
 };
 use crate::error::{Error, Result, SecretError};
 use crate::secret_rotation::RotationReceipt;
-use crate::world_keys::{MachineSecret, OwnerWorkReceipt, OwnerWorkUnassigned};
+use crate::world_keys::{MachineSecret, OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned};
 use crate::{EntityId, Vault};
 
 /// Which install a custody request names to do its work (CALLS
@@ -220,6 +222,11 @@ pub struct SecretCustodyWork {
     /// Why the change stays on this install; `None` once recorded.
     pub kept_here: Option<CustodyKeptHere>,
     pub delivery: CustodyDelivery,
+    /// For a register the owner's surface sealed without stating a
+    /// `manifest_ref`, what its holder checked the record against when this
+    /// install is the holder, else what this install attached for it (CALLS
+    /// CUSTODY_MANIFEST_UNSTATED); `None` for any other change.
+    pub manifest: Option<CustodyManifestCheck>,
 }
 
 impl SecretCustodyWork {
@@ -228,6 +235,7 @@ impl SecretCustodyWork {
             work: None,
             kept_here: Some(why),
             delivery: CustodyDelivery::NotSent,
+            manifest: None,
         }
     }
 
@@ -243,6 +251,7 @@ impl SecretCustodyWork {
             work: Some(receipt),
             kept_here: None,
             delivery,
+            manifest: None,
         }
     }
 
@@ -251,11 +260,30 @@ impl SecretCustodyWork {
     #[must_use]
     pub fn text(&self) -> &'static str {
         match (&self.work, self.kept_here) {
-            (Some(receipt), _) => receipt
-                .unassigned
-                .map_or_else(|| receipt.status.text(), OwnerWorkUnassigned::text),
+            (Some(receipt), _) => receipt.unassigned.map_or_else(
+                || self.status_text(receipt.status),
+                OwnerWorkUnassigned::text,
+            ),
             (None, Some(why)) => why.text(),
             (None, None) => "not recorded",
+        }
+    }
+
+    /// A recorded request's words: a register taken, or to be taken,
+    /// without a manifest check says so (CALLS CUSTODY_MANIFEST_UNSTATED).
+    fn status_text(&self, status: OwnerWorkStatus) -> &'static str {
+        let unchecked = self
+            .manifest
+            .as_ref()
+            .is_some_and(CustodyManifestCheck::unchecked);
+        match (status, unchecked) {
+            (OwnerWorkStatus::RecordedAwaitingHolder, true) => {
+                "recorded, awaiting a holder; to be registered without a manifest check"
+            }
+            (OwnerWorkStatus::Enacted, true) => {
+                "enacted by its holder; registered without a manifest check"
+            }
+            (status, _) => status.text(),
         }
     }
 }
@@ -431,6 +459,7 @@ impl Vault {
             });
         };
         let mut rotation = None;
+        let mut manifest = None;
         if let (Some(envelope), true) = (envelope, holder != machine || change.sealed.is_some()) {
             keep_input_in_txn(
                 self,
@@ -459,11 +488,15 @@ impl Vault {
                 }
                 self.append_owner_work_result_in_txn(txn, hash, machine, done.outcome)?;
                 rotation = done.rotation;
+                manifest = done.manifest;
             }
         }
         let after = self.authority_view_readonly_in_txn(txn)?;
         Ok(Recorded {
-            custody: SecretCustodyWork::recorded(receipt.refreshed(&after)),
+            custody: SecretCustodyWork {
+                manifest,
+                ..SecretCustodyWork::recorded(receipt.refreshed(&after))
+            },
             rotation,
         })
     }

@@ -11,7 +11,9 @@ use super::gate::GatedDeletion;
 // Publication-time authority re-verification only exists where there is a
 // publication; the no-feature arm publishes nothing.
 #[cfg(feature = "sync")]
-use super::gate::{claim_in_txn, reverify_deletion_authority_before_publication};
+use super::gate::{
+    claim_in_txn, reverify_deletion_authority_before_publication, revoke_guest_grants_in_txn,
+};
 // Both cfg arms of this shim require the `sync` feature, and its only call
 // site below is sync-gated with it; the import carries the same gate so a
 // no-feature build does not resolve a name that does not exist.
@@ -519,6 +521,9 @@ impl Vault {
             wtxn.commit()?;
             return Err(refusal);
         }
+        // A Connect guest's PERSON leaves its pacts before its delete
+        // publishes (FIX 3875).
+        revoke_guest_grants_in_txn(self, gate, &mut wtxn, id)?;
         reserve_topology_delete_in_txn(
             &self.store,
             &mut wtxn,

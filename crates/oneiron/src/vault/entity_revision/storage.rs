@@ -318,7 +318,6 @@ pub(crate) fn capture_entity_revision(
 
 /// Registers common document frontiers in the existing revision/index ledger.
 /// No second text document or editable record copy is created.
-#[cfg(feature = "sync")]
 pub(crate) fn capture_entity_document(
     store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,

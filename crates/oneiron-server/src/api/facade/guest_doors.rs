@@ -17,7 +17,7 @@
 //! and the withdrawal and the slips it tombstoned live in side tables.
 use std::sync::Arc;
 
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::memory::MemoryResult;
 use oneiron::receipt::GuestRevokeResponse;
 use oneiron::task_verb::sdk::{self, GuestRevokeRequest};
 
@@ -35,15 +35,9 @@ pub(crate) async fn vault_guests_revoke(
     input: GuestRevokeRequest,
 ) -> Listed<GuestRevokeResponse> {
     const VERB: &str = "vault.guests.revoke";
-    let owner = match crate::api::owner_routes::owner(auth, server) {
+    let owner = match super::owner_binding::facade_owner(server, auth, VERB) {
         Ok(owner) => owner,
-        Err(_) => {
-            return refused(MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                format!("{VERB} is the vault owner's"),
-                &["Present the owner's own verified, unattenuated credential."],
-            ));
-        }
+        Err(refusal) => return refused(refusal),
     };
     let server = Arc::clone(server);
     let answer = tokio::task::spawn_blocking(move || -> MemoryResult<GuestRevokeResponse> {

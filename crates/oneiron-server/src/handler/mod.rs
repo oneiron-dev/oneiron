@@ -21,6 +21,7 @@ mod mcp_socket;
 pub(crate) mod mesh;
 #[cfg(test)]
 mod note_socket_tests;
+mod protocol_close;
 #[cfg(test)]
 mod residence_socket_tests;
 mod socket_stop;

@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use oneiron::EntityId;
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError};
+use oneiron::memory::MemoryError;
 use oneiron::policy_model::{SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner};
 
 use super::host_doors::{Listed, internal, refused};
@@ -27,15 +27,9 @@ pub(crate) async fn vault_secrets_lift_history(
     auth: &CoreAuth,
     input: SecretLiftRequest,
 ) -> Listed<SecretLiftStatus> {
-    let owner = match crate::api::owner_routes::owner(auth, server) {
+    let owner = match super::owner_binding::facade_owner(server, auth, VERB) {
         Ok(owner) => owner,
-        Err(_) => {
-            return refused(MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                format!("{VERB} is the vault owner's"),
-                &["Present the owner's own verified, unattenuated credential."],
-            ));
-        }
+        Err(refusal) => return refused(refusal),
     };
     let server = Arc::clone(server);
     let answer = tokio::task::spawn_blocking(move || {

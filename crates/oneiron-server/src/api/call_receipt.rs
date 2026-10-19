@@ -19,7 +19,8 @@
 //! recorded for the connection it arrived on ([`connection_call`]): the
 //! connection's id, no person, no credential, and the normal row life. A
 //! door records its own; [`connection_receipt`], outside the binding door,
-//! records what reached no door.
+//! records what reached no door. A socket the server closes on a protocol
+//! rejection is one such refused call too ([`record_socket_close`], FIX 3303).
 
 use std::future::Future;
 use std::sync::Arc;
@@ -111,6 +112,29 @@ pub(crate) fn record_socket_reply(
             request_digest,
             result_digest,
         ),
+    )
+}
+
+/// Records a socket the server closed on a protocol rejection (FIX 3303):
+/// one refused call of the connection, written before the close, at `verb`
+/// (`ws.hello` or `ws.frame`) with the refusal's closed name as its `code`.
+/// It names no person or credential and captures nothing the peer sent: the
+/// request digest is of no bytes, the result digest is of the refusal the
+/// close frame states. Best effort, as [`record`] is.
+pub(crate) fn record_socket_close(
+    server: &SyncServer,
+    verb: &str,
+    code: &str,
+    reason: &str,
+) -> CallStamp {
+    record_socket_reply(
+        server,
+        verb.to_owned(),
+        CallOutcome::Refused {
+            code: code.to_owned(),
+        },
+        oneiron::receipt::call_bytes_digest(&[]),
+        Some(oneiron::receipt::call_refusal_digest(code, reason)),
     )
 }
 
