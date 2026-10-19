@@ -5,16 +5,17 @@
 //! kept, in a directory beside the vault, and nothing leaves the machine. It
 //! stays off by default until erasure reaches backup files (ARCH-0038 orders
 //! the exterior erasure ledger before snapshot storage). `oneiron backup`
-//! works either way.
+//! works either way. A running server follows the owner's backup setting in
+//! the vault over this section's `enabled`, `every_hours` and `keep` (FIX
+//! 5621); this section decides while he has stored none, and `dir` is this
+//! section's alone.
 
 use std::path::{Path, PathBuf};
 
+use oneiron::settings::backup::BackupPolicy;
 use serde::Deserialize;
 
 use super::lookup::{lookup_bool, lookup_parse, lookup_path};
-
-const DEFAULT_EVERY_HOURS: u64 = 24;
-const DEFAULT_KEEP: usize = 7;
 
 /// Resolved backup settings.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,11 +40,12 @@ pub struct BackupConfig {
 
 impl Default for BackupConfig {
     fn default() -> Self {
+        let policy = BackupPolicy::default();
         Self {
-            enabled: false,
+            enabled: policy.enabled,
             dir: None,
-            every_hours: DEFAULT_EVERY_HOURS,
-            keep: DEFAULT_KEEP,
+            every_hours: policy.every_hours,
+            keep: policy.keep,
             custody_anchor_root: None,
         }
     }
@@ -55,6 +57,16 @@ impl BackupConfig {
         self.dir
             .clone()
             .unwrap_or_else(|| default_backup_dir(vault_path))
+    }
+
+    /// This section's schedule as one policy: what a running server follows
+    /// while the owner has stored no backup setting (FIX 5621).
+    pub fn policy(&self) -> BackupPolicy {
+        BackupPolicy {
+            enabled: self.enabled,
+            every_hours: self.every_hours,
+            keep: self.keep,
+        }
     }
 
     pub(super) fn apply_override(&mut self, over: BackupConfigOverride) {
@@ -75,16 +87,12 @@ impl BackupConfig {
         }
     }
 
+    /// The rules the owner's setting is held to as well (FIX 5621).
     pub(super) fn validate(&self) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            self.every_hours > 0,
-            "backup.every_hours must be greater than zero"
-        );
-        anyhow::ensure!(
-            self.keep > 0,
-            "backup.keep must be greater than zero; set backup.enabled = false to stop scheduled backups"
-        );
-        Ok(())
+        match self.policy().problem() {
+            Some(problem) => anyhow::bail!("backup.{problem}"),
+            None => Ok(()),
+        }
     }
 }
 

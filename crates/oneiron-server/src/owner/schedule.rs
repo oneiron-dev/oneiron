@@ -4,12 +4,20 @@
 //! If so it takes one and prunes beyond `keep`. The newest file on disk is the
 //! schedule's only state, so a restart, a manual backup or a deleted file all
 //! do the right thing without a ledger.
+//!
+//! Whether the schedule runs, its interval and `keep` are the policy in force
+//! when a backup holds the lock: the owner's backup setting in the vault, else
+//! the deployment's `[backup]` section (FIX 5621). A setting stored while a
+//! backup is being written applies from the next one.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use oneiron::settings::backup::BackupPolicy;
+
 use super::backup::{self, BackupOutcome, BackupPlan, BackupRecord, Rehearsal, write_budget};
+use super::location::{self, Location};
 use super::stamp::now_unix_ms;
 use super::{OwnerError, OwnerResult};
 use crate::server::{HousekeepingAdmission, SyncServer, admit_every_pass};
@@ -21,9 +29,12 @@ pub(crate) const SCHEDULE_TICK: Duration = Duration::from_secs(60);
 pub(crate) struct OwnerHost {
     pub(crate) vault_path: PathBuf,
     pub(crate) vault_config: oneiron::VaultConfig,
+    /// Where backups go and how they are written. Each backup takes a copy
+    /// carrying the `keep` in force (`effective_plan`).
     pub(crate) backups: BackupPlan,
-    /// Interval between scheduled backups; `None` turns the schedule off.
-    pub(crate) every: Option<Duration>,
+    /// The deployment's `[backup]` schedule, which decides while the owner
+    /// has stored no backup setting (FIX 5621).
+    pub(crate) fallback: BackupPolicy,
     /// One backup at a time, whether the schedule or the owner asked.
     pub(crate) backup_lock: Mutex<()>,
     /// Where rehearsals make their scratch copy: a managed vault's private
@@ -48,10 +59,9 @@ impl OwnerHost {
                 backup.dir_for(&config.vault_path),
                 backup.keep,
             ),
-            // The owner's `[backup]` policy decides, on every posture.
-            every: backup
-                .enabled
-                .then(|| Duration::from_secs(backup.every_hours.saturating_mul(3_600))),
+            // The deployment's `[backup]` policy, on every posture, while the
+            // owner's own setting is unset.
+            fallback: backup.policy(),
             backup_lock: Mutex::new(()),
             rehearse_temp: None,
         }
@@ -70,18 +80,50 @@ impl OwnerHost {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// The policy in force over the owner's `stored` setting: it whole, else
+    /// this host's `[backup]` schedule. An explicit off is a stored choice.
+    pub(crate) fn effective(&self, stored: Option<BackupPolicy>) -> BackupPolicy {
+        stored.unwrap_or(self.fallback)
+    }
+
+    /// The policy in force now, read from the vault, and this host's plan
+    /// with its `keep`; the plan keeps its floor and custody anchor.
+    fn effective_plan(
+        &self,
+        vault: &oneiron::Vault,
+    ) -> oneiron::Result<(BackupPlan, BackupPolicy)> {
+        let policy = self.effective(vault.backup_policy()?);
+        let mut plan = self.backups.clone();
+        plan.keep = policy.keep;
+        Ok((plan, policy))
+    }
+
+    /// The data-location section of the owner's status: the backups as the
+    /// policy in force has them, their hours `None` while the schedule is off.
+    pub(crate) fn locate(&self, vault: &oneiron::Vault) -> anyhow::Result<Location> {
+        let (plan, policy) = self.effective_plan(vault)?;
+        location::locate(
+            &self.vault_path,
+            Some(vault),
+            &plan,
+            policy.enabled.then_some(policy.every_hours),
+        )
+    }
+
     /// Takes a backup now, serialized with every other backup of this vault.
     /// On an owner's request, `owner` is rechecked once the lock is held, in
     /// the snapshot itself: a request queued behind a revocation or an
     /// ownership change takes and prunes nothing. A backup stopped at the
-    /// disk's floor is logged and answered as capacity (FIX 5479).
+    /// disk's floor is logged and answered as capacity (FIX 5479). It prunes
+    /// to the `keep` in force, and is taken whether the schedule is on or not.
     pub(crate) fn take(
         &self,
         vault: &oneiron::Vault,
         owner: Option<&oneiron::consent::AuthenticatedOwner>,
     ) -> OwnerResult<BackupOutcome> {
         let _one_at_a_time = self.one_at_a_time();
-        backup::take_as(vault, &self.backups, owner).map_err(|error| {
+        let (plan, _) = self.effective_plan(vault)?;
+        backup::take_as(vault, &plan, owner).map_err(|error| {
             if let Some(capacity) = write_budget::Capacity::of_host(&error) {
                 tracing::warn!(
                     reason = "capacity",
@@ -157,28 +199,37 @@ impl OwnerHost {
         rehearse(&chosen)
     }
 
-    /// Takes a backup when the newest one is older than the interval.
+    /// Takes a backup when the policy in force has the schedule on and the
+    /// newest backup is older than its interval. The policy is read once the
+    /// lock is held, so a backup already being written finishes under the
+    /// one it began with.
     pub(crate) fn take_if_due(
         &self,
         vault: &oneiron::Vault,
     ) -> anyhow::Result<Option<BackupOutcome>> {
-        let Some(every) = self.every else {
-            return Ok(None);
-        };
         let _one_at_a_time = self.one_at_a_time();
-        let every_ms = u64::try_from(every.as_millis()).unwrap_or(u64::MAX);
-        let due = backup::list(&self.backups)?
+        let (plan, policy) = self.effective_plan(vault)?;
+        if !policy.enabled {
+            return Ok(None);
+        }
+        let every_ms = policy
+            .every_hours
+            .saturating_mul(3_600)
+            .saturating_mul(1_000);
+        let due = backup::list(&plan)?
             .last()
             .is_none_or(|newest| now_unix_ms().saturating_sub(newest.taken_ms) >= every_ms);
         if !due {
             return Ok(None);
         }
-        backup::take(vault, &self.backups).map(Some)
+        backup::take(vault, &plan).map(Some)
     }
 }
 
 impl SyncServer {
-    /// Starts the backup schedule when this server has one.
+    /// Starts the backup schedule when this server has its vault's backup
+    /// storage. It ticks while the policy in force is off too, so a setting
+    /// that turns it on is served from the next tick, with no restart.
     pub(crate) fn spawn_backup_schedule(
         self: &Arc<Self>,
         tick: Duration,
@@ -196,8 +247,6 @@ impl SyncServer {
         admit: HousekeepingAdmission,
     ) -> Option<tokio::task::JoinHandle<()>> {
         let host = Arc::clone(self.owner_host.as_ref()?);
-        // No interval, no schedule.
-        host.every?;
         let server = Arc::clone(self);
         Some(tokio::spawn(async move {
             let mut interval = tokio::time::interval(tick);
