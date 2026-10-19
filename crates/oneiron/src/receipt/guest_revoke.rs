@@ -195,6 +195,11 @@ pub struct GuestRevokeResponse {
     /// The ended pacts the owner may send a courtesy delete for.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub courtesy_targets: Vec<GuestRevokeCourtesyTargetView>,
+    /// Why no courtesy-delete ask went to the named peer at all, when the
+    /// server skipped them after the revoke committed: a hook-rewritten
+    /// `peer` that fails the origin check (FIX 4186). The revoke stands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub courtesy_skipped: Option<String>,
 }
 
 /// The response for what a guest revoke did.
@@ -224,5 +229,6 @@ pub fn project_guest_revoke(outcome: GuestRevokeOutcome) -> GuestRevokeResponse 
                 error: None,
             })
             .collect(),
+        courtesy_skipped: None,
     }
 }
