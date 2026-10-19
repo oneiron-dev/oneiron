@@ -31251,6 +31251,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/graph_ask/fit.rs",
+     "purpose": "FIX 1711: which of a graph unit's readable neighbours one answer can rest on beside it, judged by the scope…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -31318,6 +31328,7 @@
       "AnswerRecord",
       "ArtifactUnits",
       "CalibrationPair",
+      "OmittedNeighbor",
       "OutcomeBinding",
       "OutcomeLabel",
       "OutcomeSource",
@@ -31332,16 +31343,17 @@
       "RefreshPolicy",
       "RefreshTrigger",
       "ScheduledBackfill",
+      "SourceConflict",
       "WindowOutcome"
      ],
      "path": "src/llm/decision/questions/records.rs",
      "purpose": "Immutable definitions and typed outcome bindings",
      "surface": {
       "const": 4,
-      "crate-vis": 1,
-      "enum": 5,
+      "crate-vis": 2,
+      "enum": 6,
       "fn": 11,
-      "struct": 14
+      "struct": 15
      }
     },
     {
@@ -31376,7 +31388,7 @@
      "path": "src/llm/decision/questions/standing.rs",
      "purpose": "Explicit graph-unit backfill with same-snapshot authority and source pins",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 10,
       "fn": 2,
       "struct": 1
      }
@@ -61123,7 +61135,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 110,
+     "files": 111,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61825,7 +61837,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3771,
+   "source_files": 3772,
    "test_files": 902
   },
   "oneiron-android": {
@@ -86241,6 +86253,7 @@
       "OfficeBodyView",
       "OfficeFormat",
       "OmittedKnowledge",
+      "OmittedNeighbor",
       "OnlineAxisMeasurement",
       "OnlineAxisOutcome",
       "OpaqueChange",
@@ -87235,6 +87248,7 @@
       "SlimStateSnapshot",
       "SlimStateView",
       "SmartArtNode",
+      "SourceConflict",
       "SourceFamily",
       "SourceTrust",
       "SourceTrustRow",
@@ -87675,8 +87689,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 835,
-      "struct": 2671
+      "enum": 836,
+      "struct": 2672
      }
     },
     {
