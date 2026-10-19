@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1096 code-mode rows (1071 host rows, 25 run rows), 3636 declarations.
+// Census: 1096 code-mode rows (1071 host rows, 25 run rows), 3641 declarations.
 // Replies: 979 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
@@ -3176,8 +3176,13 @@ declare namespace Sdk {
   type ChartSource = "workbook" | "literal" | "cached";
   type ConnectorPreset = "straight" | "elbow" | "curved";
   type ConnectorEnd = { node: NodeId; site: number };
-  type SmartArtNode = { text: string; level: number };
-  type NodePayload = { picture: { image: AssetRef } } | { held_picture: { media: HeldMedia } } | { table: { header: string[]; rows: (string | null)[][] } } | { chart: { family: ChartKind; categories: string[]; series: ChartSeries[]; source?: ChartSource } } | { connector: { preset?: ConnectorPreset | null; start?: ConnectorEnd | null; end?: ConnectorEnd | null } } | { smart_art: { nodes: SmartArtNode[] } } | { ole: { prog_id?: string | null; preview?: HeldMedia | null } } | { custom_geometry: { paths: number } };
+  type SmartArtNode = { text: string; level: number; id?: string | null };
+  type PathFill = "none" | "norm" | "lighten" | "lighten_less" | "darken" | "darken_less";
+  type Coord = number | string;
+  type PathPoint = { x: Coord; y: Coord };
+  type PathCommand = { move_to: { to: PathPoint } } | { line_to: { to: PathPoint } } | { arc_to: { w_r: Coord; h_r: Coord; st_ang: Coord; sw_ang: Coord } } | { quad_bez_to: { control: PathPoint; to: PathPoint } } | { cubic_bez_to: { control1: PathPoint; control2: PathPoint; to: PathPoint } } | "close";
+  type GeomPath = { w?: number | null; h?: number | null; fill?: PathFill | null; stroke?: boolean | null; extrusion_ok?: boolean | null; commands: PathCommand[] };
+  type NodePayload = { picture: { image: AssetRef } } | { held_picture: { media: HeldMedia } } | { table: { header: string[]; rows: (string | null)[][] } } | { chart: { family: ChartKind; categories: string[]; series: ChartSeries[]; source?: ChartSource } } | { connector: { preset?: ConnectorPreset | null; start?: ConnectorEnd | null; end?: ConnectorEnd | null } } | { smart_art: { nodes: SmartArtNode[] } } | { ole: { prog_id?: string | null; preview?: HeldMedia | null } } | { custom_geometry: { paths: GeomPath[] } };
   type Run = { text: string; bold?: boolean | null; italic?: boolean | null; size?: number | null; latin?: string | null };
   type Paragraph = { id: NodeId; level: number; runs: Run[] };
   type TextBody = { paragraphs: Paragraph[] };

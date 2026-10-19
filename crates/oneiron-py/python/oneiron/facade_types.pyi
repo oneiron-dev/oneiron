@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1061 facade rows, 3586 declarations.
+Census: 1061 facade rows, 3591 declarations.
 Inputs: 996 of 1061 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 951 of 1061 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
@@ -15565,6 +15565,46 @@ class ConnectorEnd(TypedDict):
 class SmartArtNode(TypedDict):
     text: str
     level: int
+    id: NotRequired[str | None]
+PathFill = Literal["none", "norm", "lighten", "lighten_less", "darken", "darken_less"]
+Coord = int | str
+class PathPoint(TypedDict):
+    x: Coord
+    y: Coord
+class PathCommandMoveToBody(TypedDict):
+    to: PathPoint
+class PathCommandMoveTo(TypedDict):
+    move_to: PathCommandMoveToBody
+class PathCommandLineToBody(TypedDict):
+    to: PathPoint
+class PathCommandLineTo(TypedDict):
+    line_to: PathCommandLineToBody
+class PathCommandArcToBody(TypedDict):
+    w_r: Coord
+    h_r: Coord
+    st_ang: Coord
+    sw_ang: Coord
+class PathCommandArcTo(TypedDict):
+    arc_to: PathCommandArcToBody
+class PathCommandQuadBezToBody(TypedDict):
+    control: PathPoint
+    to: PathPoint
+class PathCommandQuadBezTo(TypedDict):
+    quad_bez_to: PathCommandQuadBezToBody
+class PathCommandCubicBezToBody(TypedDict):
+    control1: PathPoint
+    control2: PathPoint
+    to: PathPoint
+class PathCommandCubicBezTo(TypedDict):
+    cubic_bez_to: PathCommandCubicBezToBody
+PathCommand = Literal["close"] | PathCommandMoveTo | PathCommandLineTo | PathCommandArcTo | PathCommandQuadBezTo | PathCommandCubicBezTo
+class GeomPath(TypedDict):
+    w: NotRequired[int | None]
+    h: NotRequired[int | None]
+    fill: NotRequired[PathFill | None]
+    stroke: NotRequired[bool | None]
+    extrusion_ok: NotRequired[bool | None]
+    commands: list[PathCommand]
 class NodePayloadPictureBody(TypedDict):
     image: AssetRef
 class NodePayloadPicture(TypedDict):
@@ -15601,7 +15641,7 @@ class NodePayloadOleBody(TypedDict):
 class NodePayloadOle(TypedDict):
     ole: NodePayloadOleBody
 class NodePayloadCustomGeometryBody(TypedDict):
-    paths: int
+    paths: list[GeomPath]
 class NodePayloadCustomGeometry(TypedDict):
     custom_geometry: NodePayloadCustomGeometryBody
 NodePayload = NodePayloadPicture | NodePayloadHeldPicture | NodePayloadTable | NodePayloadChart | NodePayloadConnector | NodePayloadSmartArt | NodePayloadOle | NodePayloadCustomGeometry
