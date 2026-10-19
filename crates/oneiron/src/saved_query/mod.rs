@@ -61,6 +61,7 @@ mod lifecycle;
 mod membership;
 mod memory_watch;
 mod pack_drift;
+mod receipts;
 mod storage;
 mod support;
 mod sweep;
@@ -100,6 +101,7 @@ pub use self::membership::{
     next_membership_epoch,
 };
 pub use self::memory_watch::{MemoryWatch, memory_watch, memory_watches, set_memory_watch};
+pub use self::receipts::{SavedQueryEvaluation, SavedQueryGenerationReceipt, SavedQueryJudgeReceipt};
 pub use self::pack_drift::{
     PackDrift, PackDriftRepair, PackDriftResolution, PackMigrationMap, PackPredicateRewrite,
     pack_drift_repairs, put_pack_migration_map, repair_pack_drift,

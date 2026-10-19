@@ -184,8 +184,9 @@ impl Memory<'_> {
                 next_cursor: None,
             });
         }
-        Ok(crate::campaign::surface::read_saved_query_members(
-            self.vault, request,
+        let read = self.read_key()?;
+        Ok(crate::campaign::surface::read_saved_query_members_scoped(
+            self.vault, request, &read,
         )?)
     }
 

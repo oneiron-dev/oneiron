@@ -492,7 +492,7 @@ pub struct SavedQueryMemoReceipt {
 }
 
 /// One entity's manual-evaluation receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SavedQueryEntityReceipt {
     /// The entity evaluated.
@@ -510,11 +510,14 @@ pub struct SavedQueryEntityReceipt {
     /// The persisted memo under this evidence, when the verdict wrote or
     /// read one; an authority refusal is never memoized and carries none.
     pub memo: Option<SavedQueryMemoReceipt>,
+    /// Newly measured judgment, with model pins and reported usage/cost.
+    /// None for a hard matcher, an authority refusal or a memo hit.
+    pub judge: Option<crate::saved_query::SavedQueryJudgeReceipt>,
 }
 
 /// `self.saved_query.evaluate`'s output: one bounded manual evaluation's
 /// receipts, under the query owner's own read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SavedQueryEvaluationReceipt {
     /// The saved query.

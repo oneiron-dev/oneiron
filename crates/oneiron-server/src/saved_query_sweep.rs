@@ -17,9 +17,9 @@ use std::time::Duration;
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::saved_query::{
-    EvaluationOutcome, EvaluationRequest, MatcherSpec, MembershipCause, QueryScope,
+    EvaluationRequest, MatcherSpec, MembershipCause, QueryScope, SavedQueryEvaluation,
     SWEEP_CANDIDATE_TYPE, SavedQueryEvaluator, SavedQueryJudgeBinding, SavedQueryRecord,
-    WakeEvaluationReport, WakeVisit, reactive_saved_queries, saved_query_change_head,
+    WakeEvaluationReport, reactive_saved_queries, saved_query_change_head,
     saved_query_changes_after, sweep_owner_read, sweep_saved_queries,
 };
 use oneiron::{
@@ -278,18 +278,18 @@ fn evaluate(
     })
 }
 
-/// One manual evaluation of `record` over `candidates` under `read`
-/// (`self.saved_query.evaluate`): verdicts and memos only, one visit per
-/// candidate, bounded by the definition's own per-wake caps exactly as a
-/// wake batch is. The second element is the last candidate visited when a
-/// bound stopped the call early; `None` means the set was exhausted.
+/// One bounded manual evaluation of `record`, using the sweep's own judge
+/// and owner read. Only unvisited candidates produce a continuation cursor.
 pub(crate) fn manual_evaluation(
     server: &SyncServer,
     record: &SavedQueryRecord,
     read: &ScopedReadActorKey,
     candidates: &[EntityId],
     now: u64,
-) -> oneiron::Result<(Vec<(EntityId, EvaluationOutcome, WakeVisit)>, Option<EntityId>)> {
+) -> oneiron::Result<(Vec<(EntityId, SavedQueryEvaluation)>, Option<EntityId>)> {
+    if !record.definition.lifecycle.is_evaluable() {
+        return Err(oneiron::Error::InvalidConfig("saved query is not active".into()));
+    }
     with_evaluator(server, record, read, now, |evaluator| {
         block_on(async {
             let mut visits = Vec::new();
@@ -298,12 +298,13 @@ pub(crate) fn manual_evaluation(
             for entity_ref in candidates {
                 if u32::try_from(visits.len()).unwrap_or(u32::MAX)
                     >= record.definition.eval.max_entities_per_wake
+                    || judges_run >= record.definition.eval.max_judges_per_wake
                 {
-                    resume_after = visits.last().map(|(visited, _, _)| *visited);
+                    resume_after = visits.last().map(|(visited, _)| *visited);
                     break;
                 }
-                let (outcome, visit) = evaluator
-                    .evaluate_entity_visit(&EvaluationRequest {
+                let evaluated = evaluator
+                    .evaluate_entity_receipt(&EvaluationRequest {
                         query_ref: record.query_ref,
                         campaign_ref: record.query_ref,
                         entity_ref: *entity_ref,
@@ -313,16 +314,10 @@ pub(crate) fn manual_evaluation(
                         detected_at: now,
                     })
                     .await?;
-                if visit.judge_ran {
+                if evaluated.visit.judge_ran {
                     judges_run = judges_run.saturating_add(1);
                 }
-                let stop = visit.judge_ran
-                    && judges_run >= record.definition.eval.max_judges_per_wake;
-                visits.push((*entity_ref, outcome, visit));
-                if stop {
-                    resume_after = Some(*entity_ref);
-                    break;
-                }
+                visits.push((*entity_ref, evaluated));
             }
             Ok((visits, resume_after))
         })

@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 712 facade rows, 2521 generated types.
+// UniFFI census: 712 facade rows, 2523 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 668.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -7685,6 +7685,77 @@ pub struct SavedQueryMemoReceipt {
     pub evaluated_at: u64,
 }
 
+/// `oneiron::llm::decision::types::ProviderPin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderPin {
+    #[serde(rename = "rung")]
+    pub rung: DecisionRung,
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "version")]
+    pub version: String,
+}
+
+/// `oneiron_model::llm::protocol::LlmInputUsage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LlmInputUsage {
+    #[serde(rename = "total")]
+    pub total: u64,
+    #[serde(rename = "cache_read")]
+    pub cache_read: u64,
+    #[serde(rename = "cache_write")]
+    pub cache_write: u64,
+}
+
+/// `oneiron_model::llm::protocol::LlmOutputUsage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LlmOutputUsage {
+    #[serde(rename = "total")]
+    pub total: u64,
+    #[serde(rename = "text")]
+    pub text: u64,
+    #[serde(rename = "reasoning")]
+    pub reasoning: u64,
+}
+
+/// `oneiron_model::llm::protocol::LlmUsage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LlmUsage {
+    #[serde(rename = "input")]
+    pub input: LlmInputUsage,
+    #[serde(rename = "output")]
+    pub output: LlmOutputUsage,
+    #[serde(rename = "raw_provider")]
+    pub raw_provider: crate::WireJson,
+}
+
+/// `oneiron::saved_query::receipts::SavedQueryGenerationReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SavedQueryGenerationReceipt {
+    #[serde(rename = "request_hash")]
+    pub request_hash: String,
+    #[serde(rename = "usage")]
+    pub usage: LlmUsage,
+}
+
+/// `oneiron::saved_query::receipts::SavedQueryJudgeReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SavedQueryJudgeReceipt {
+    #[serde(rename = "providers")]
+    pub providers: Vec<ProviderPin>,
+    #[serde(
+        rename = "cost_per_thousand",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cost_per_thousand: Option<f64>,
+    #[serde(rename = "generations")]
+    pub generations: Vec<SavedQueryGenerationReceipt>,
+}
+
 /// `oneiron::campaign::surface::saved_query::SavedQueryEntityReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -7703,6 +7774,8 @@ pub struct SavedQueryEntityReceipt {
     pub judge_ran: bool,
     #[serde(rename = "memo", default, skip_serializing_if = "Option::is_none")]
     pub memo: Option<SavedQueryMemoReceipt>,
+    #[serde(rename = "judge", default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<SavedQueryJudgeReceipt>,
 }
 
 /// `oneiron::campaign::surface::saved_query::SavedQueryEvaluationReceipt`.
@@ -17785,18 +17858,6 @@ pub enum DecisionAnswer {
     Point(Option<ImagePoint>),
     #[serde(rename = "abstain")]
     Abstain,
-}
-
-/// `oneiron::llm::decision::types::ProviderPin`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ProviderPin {
-    #[serde(rename = "rung")]
-    pub rung: DecisionRung,
-    #[serde(rename = "model")]
-    pub model: String,
-    #[serde(rename = "version")]
-    pub version: String,
 }
 
 /// `oneiron::llm::decision::types::DecisionBand`.
@@ -29337,39 +29398,6 @@ pub struct ModelStepSubmit {
     pub request: LlmRequest,
     #[serde(rename = "retry", default, skip_serializing_if = "Option::is_none")]
     pub retry: Option<ModelStepRetryPolicy>,
-}
-
-/// `oneiron_model::llm::protocol::LlmInputUsage`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct LlmInputUsage {
-    #[serde(rename = "total")]
-    pub total: u64,
-    #[serde(rename = "cache_read")]
-    pub cache_read: u64,
-    #[serde(rename = "cache_write")]
-    pub cache_write: u64,
-}
-
-/// `oneiron_model::llm::protocol::LlmOutputUsage`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct LlmOutputUsage {
-    #[serde(rename = "total")]
-    pub total: u64,
-    #[serde(rename = "text")]
-    pub text: u64,
-    #[serde(rename = "reasoning")]
-    pub reasoning: u64,
-}
-
-/// `oneiron_model::llm::protocol::LlmUsage`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct LlmUsage {
-    #[serde(rename = "input")]
-    pub input: LlmInputUsage,
-    #[serde(rename = "output")]
-    pub output: LlmOutputUsage,
-    #[serde(rename = "raw_provider")]
-    pub raw_provider: crate::WireJson,
 }
 
 /// `oneiron_model::llm::protocol::FinishReason`.

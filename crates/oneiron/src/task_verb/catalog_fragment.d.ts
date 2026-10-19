@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 752 code-mode rows (731 host rows, 21 run rows), 2618 declarations.
-// Replies: 664 fully typed, 84 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 752 code-mode rows (731 host rows, 21 run rows), 2620 declarations.
+// Replies: 663 fully typed, 85 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 99; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -533,7 +533,13 @@ declare namespace Sdk {
   type SavedQueryEvaluateRequest = { query_ref: EntityId; candidates?: EntityId[]; after?: EntityId | null };
   type MatchVerdict = "match" | "no_match";
   type SavedQueryMemoReceipt = { definition_version: number; verdict: MatchVerdict; why: string; content_hash: string; model_id: string; version: string; params_hash: string; evaluated_at: number };
-  type SavedQueryEntityReceipt = { entity_ref: EntityId; verdict: MatchVerdict; why: string; evidence_hash: string; memo_hit: boolean; judge_ran: boolean; memo?: SavedQueryMemoReceipt | null };
+  type ProviderPin = { rung: DecisionRung; model: string; version: string };
+  type LlmInputUsage = { total: number; cache_read: number; cache_write: number };
+  type LlmOutputUsage = { total: number; text: number; reasoning: number };
+  type LlmUsage = { input: LlmInputUsage; output: LlmOutputUsage; raw_provider: unknown };
+  type SavedQueryGenerationReceipt = { request_hash: string; usage: LlmUsage };
+  type SavedQueryJudgeReceipt = { providers: ProviderPin[]; cost_per_thousand?: number | null; generations: SavedQueryGenerationReceipt[] };
+  type SavedQueryEntityReceipt = { entity_ref: EntityId; verdict: MatchVerdict; why: string; evidence_hash: string; memo_hit: boolean; judge_ran: boolean; memo?: SavedQueryMemoReceipt | null; judge?: SavedQueryJudgeReceipt | null };
   type SavedQueryEvaluationReceipt = { query_ref: EntityId; owner_actor: EntityId; definition_version: number; evaluated: number; memo_hits: number; judges_run: number; resume_after?: EntityId | null; outcomes: SavedQueryEntityReceipt[] };
   type WeaveSectionKind = "changes" | "projects" | "open_asks" | "links" | "conflicts" | "exceptions" | "admissions" | "budgets" | "sieve_score" | "digest";
   type WeaveSectionInput = { kind: WeaveSectionKind; predicates?: string[]; edge_kinds?: string[] };
@@ -1198,7 +1204,6 @@ declare namespace Sdk {
   type ImageBox = { top: number; bottom: number; left: number; right: number };
   type ImagePoint = { x: number; y: number };
   type DecisionAnswer = { kind: "noul"; value: boolean } | { kind: "choice"; value: string } | { kind: "score"; value: number } | { kind: "box"; value: ImageBox | null } | { kind: "point"; value: ImagePoint | null } | { kind: "abstain" };
-  type ProviderPin = { rung: DecisionRung; model: string; version: string };
   type DecisionBand = { low: number; high: number };
   type EvidenceVersion = { id: string; body_hash: number[] };
   type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number };
@@ -1908,9 +1913,6 @@ declare namespace Sdk {
   type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
   type ModelStepRetryPolicy = { max_attempts: number };
   type ModelStepSubmit = { step_key: string; request: LlmRequest; retry?: ModelStepRetryPolicy };
-  type LlmInputUsage = { total: number; cache_read: number; cache_write: number };
-  type LlmOutputUsage = { total: number; text: number; reasoning: number };
-  type LlmUsage = { input: LlmInputUsage; output: LlmOutputUsage; raw_provider: unknown };
   type FinishReason = "stop" | "length" | "tool_calls" | "content_filtered" | "cancelled" | { other: { name: string } };
   type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason };
   type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input";

@@ -1424,6 +1424,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "self.off_record.execute" => {
             super::off_record_doors::off_record_admits(server, auth, verb)
         }
+        "self.saved_query.evaluate" => super::saved_query_doors::admits(server, auth),
         "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
         "vault.artifacts.ask" => artifact_asker(server, auth).map(drop),

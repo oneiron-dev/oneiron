@@ -55,6 +55,7 @@ pub use self::membership::{
     MEMBERSHIP_PAGE_DEFAULT_LIMIT, MEMBERSHIP_PAGE_MAX_LIMIT, MembershipPage,
     MembershipReadRequest, MembershipRow, read_campaign_members, read_saved_query_members,
 };
+pub(crate) use self::membership::read_saved_query_members_scoped;
 pub use self::program::{
     ArchiveCampaignProgramRequest, CampaignProgramAudienceSpec, CampaignProgramDefinitionView,
     CampaignProgramLifecycle, CampaignProgramOutboundSpec, CampaignProgramReadRequest,

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 712 facade rows, 2566 declarations.
+Census: 712 facade rows, 2568 declarations.
 Inputs: 658 of 712 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 633 of 712 fully typed, 79 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 632 of 712 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 97; unread shapes: 0.
 """
 
@@ -2608,6 +2608,29 @@ class SavedQueryMemoReceipt(TypedDict):
     version: str
     params_hash: str
     evaluated_at: int
+class ProviderPin(TypedDict):
+    rung: DecisionRung
+    model: str
+    version: str
+class LlmInputUsage(TypedDict):
+    total: int
+    cache_read: int
+    cache_write: int
+class LlmOutputUsage(TypedDict):
+    total: int
+    text: int
+    reasoning: int
+class LlmUsage(TypedDict):
+    input: LlmInputUsage
+    output: LlmOutputUsage
+    raw_provider: Any
+class SavedQueryGenerationReceipt(TypedDict):
+    request_hash: str
+    usage: LlmUsage
+class SavedQueryJudgeReceipt(TypedDict):
+    providers: list[ProviderPin]
+    cost_per_thousand: NotRequired[float | None]
+    generations: list[SavedQueryGenerationReceipt]
 class SavedQueryEntityReceipt(TypedDict):
     entity_ref: EntityId
     verdict: MatchVerdict
@@ -2616,6 +2639,7 @@ class SavedQueryEntityReceipt(TypedDict):
     memo_hit: bool
     judge_ran: bool
     memo: NotRequired[SavedQueryMemoReceipt | None]
+    judge: NotRequired[SavedQueryJudgeReceipt | None]
 class SavedQueryEvaluationReceipt(TypedDict):
     query_ref: EntityId
     owner_actor: EntityId
@@ -5930,10 +5954,6 @@ class DecisionAnswerPoint(TypedDict):
 class DecisionAnswerAbstain(TypedDict):
     kind: Literal["abstain"]
 DecisionAnswer = DecisionAnswerNoul | DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerBox | DecisionAnswerPoint | DecisionAnswerAbstain
-class ProviderPin(TypedDict):
-    rung: DecisionRung
-    model: str
-    version: str
 class DecisionBand(TypedDict):
     low: float
     high: float
@@ -9556,18 +9576,6 @@ class ModelStepSubmit(TypedDict):
     step_key: str
     request: LlmRequest
     retry: NotRequired[ModelStepRetryPolicy]
-class LlmInputUsage(TypedDict):
-    total: int
-    cache_read: int
-    cache_write: int
-class LlmOutputUsage(TypedDict):
-    total: int
-    text: int
-    reasoning: int
-class LlmUsage(TypedDict):
-    input: LlmInputUsage
-    output: LlmOutputUsage
-    raw_provider: Any
 class FinishReasonOtherBody(TypedDict):
     name: str
 class FinishReasonOther(TypedDict):
