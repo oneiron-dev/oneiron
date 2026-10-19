@@ -585,6 +585,17 @@ impl EngineNativeExecutor<'_> {
         if wait.effect == SelfEffect::Summarize {
             reply = self.storage.delivered_summary_reply(reply)?;
         }
+        // The rows the reply was derived from, as its settler listed them,
+        // join the parked call's own (FIX 5455).
+        if let Some(rows) = &delivery.source_rows
+            && let Some(call) = record
+                .bridge_calls
+                .iter_mut()
+                .rev()
+                .find(|call| crate::code_run::parks_on(&call.outcome, wait.wait_id))
+        {
+            crate::code_run::keep_wait_rows(&mut call.outcome, rows);
+        }
         let mut resumed = json!({
             "schema_version": REPLAY_METADATA_SCHEMA_VERSION,
             "wait_id": wait.wait_id.to_hex(),

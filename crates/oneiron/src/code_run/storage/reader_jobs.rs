@@ -565,7 +565,7 @@ impl ExecutorStorage<'_> {
                         })
                 })?;
                 for (wait, reply, now_ms) in settled {
-                    self.deliver_wait(wait, &reply, now_ms)?;
+                    self.deliver_wait(wait, &reply, None, now_ms)?;
                 }
                 Ok(answer)
             }

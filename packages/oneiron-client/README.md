@@ -161,11 +161,14 @@ trip.
 One artifact serves three consumers. `facadeTree` takes the one thing that
 differs between them, an injected invocation transport
 (`FacadeTransport<K, O>`: a verb, its typed input, the transport's own
-options and the call's invocation id), and every consumer gets the same
+options, the call's invocation id and, on a retry, the ask it stopped on,
+which the transport sends beside the id: `x-oneiron-hook-ask` over HTTP),
+and every consumer gets the same
 typed tree and the same `FACADE_CATALOG`. `K` says what a call answers: `"response"` (the original
 `Response`), `"result"` (a promise of the typed result) or `"sync"` (the typed
 result itself). Each kind may answer a `FacadePending` instead, for a call a
-verb hook stopped on an ask; `facadeRetry` resends it under its invocation.
+verb hook stopped on an ask; `facadeRetry` resends it under its invocation,
+naming that ask.
 
 1. **npm-capable external agent (BYOA)** — `npm i @oneiron/client`, then
    `new HttpBaseClient(...)`: its `facade` is
