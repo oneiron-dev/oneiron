@@ -10,7 +10,7 @@ const ORG_ADMIN_POLICY: SideTable<HexId, OrgAdminPolicy, LegacyJson> =
     SideTable::new(&side_table::ORG_ADMIN_POLICY);
 
 /// The complete administration vocabulary, fixed by the engine.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OrgAdminPower {
     /// Enroll a member's public identity, never their private key.
@@ -45,7 +45,7 @@ impl OrgAdminPower {
 }
 
 /// Immutable setup policy. Contains actor references, never member key material.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OrgAdminPolicy {
     org_ref: ScopeId,
@@ -112,18 +112,40 @@ impl Vault {
     /// Stores an immutable organization setup. Host callers must hold the owner credential.
     /// No member private key or decryption authority is accepted by this door.
     pub fn configure_org_admin(&self, policy: &OrgAdminPolicy) -> Result<(), OrgAdminError> {
+        let mut txn = self.store.env.write_txn()?;
+        self.configure_org_admin_in_txn(&mut txn, policy)?;
+        txn.commit().map_err(crate::Error::from)?;
+        Ok(())
+    }
+
+    /// The public setup door revalidates the owner's own credential in the writer.
+    pub fn configure_org_admin_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        policy: &OrgAdminPolicy,
+    ) -> Result<(), OrgAdminError> {
+        let mut txn = self.store.env.write_txn()?;
+        owner.owner_authored_write_in_txn(self, &txn)?;
+        self.configure_org_admin_in_txn(&mut txn, policy)?;
+        txn.commit().map_err(crate::Error::from)?;
+        Ok(())
+    }
+
+    fn configure_org_admin_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        policy: &OrgAdminPolicy,
+    ) -> Result<(), OrgAdminError> {
         OrgAdminPolicy::new(
             policy.org_ref.0,
             policy.admin_refs.iter().map(|id| id.0).collect(),
             policy.powers.clone(),
         )?;
         let key = HexId(policy.org_ref.0);
-        let mut txn = self.store.env.write_txn()?;
-        if ORG_ADMIN_POLICY.contains(&self.store, &txn, &key)? {
+        if ORG_ADMIN_POLICY.contains(&self.store, txn, &key)? {
             return Err(OrgAdminError::AlreadyConfigured);
         }
-        ORG_ADMIN_POLICY.put(&self.store, &mut txn, &key, policy)?;
-        txn.commit().map_err(crate::Error::from)?;
+        ORG_ADMIN_POLICY.put(&self.store, txn, &key, policy)?;
         Ok(())
     }
     /// Reads the fixed power set; absence refuses, rather than granting a default.

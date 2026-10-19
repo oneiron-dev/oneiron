@@ -124,6 +124,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_focus_wakes(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.focus.wakes", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_focus_scratchpad_recall(
         &self,
         input: serde_json::Value,
@@ -2167,6 +2173,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_org_admin_configure(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.org_admin.configure", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_org_admin_powers(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.org_admin.powers", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_members_reset_project_access(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.reset_project_access", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_members_delegate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.delegate", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_members_projection(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.members.projection", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_members_add(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.members.add", js_json(input))
@@ -2734,6 +2785,87 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.off_record.execute", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.status", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_start(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.start", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_witness(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.witness", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_save(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.save", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_save_from_here(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.save_from_here", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_export(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.export", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_suggest_save(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.suggest_save", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_confirm_save(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.confirm_save", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_decline_save(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.decline_save", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -8417,6 +8549,30 @@ impl NativeClient {
     pub fn self_skills_call(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.skills.call", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_focus_refresh(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.focus.refresh", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_focus_subscribe(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.focus.subscribe", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_focus_unsubscribe(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.focus.unsubscribe", js_json(input))
             .map_err(facade_error)
     }
 }
