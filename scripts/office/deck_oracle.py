@@ -364,9 +364,20 @@ def run_script(source: Path, action: str, target: Path | None, observer: str,
     return classification, out.strip()
 
 
+# Seconds PowerPoint has to answer the custody query.
+CUSTODY_QUERY_SECONDS = 8
+
+
+class CustodyTimeout(subprocess.TimeoutExpired):
+    """PowerPoint left the custody query unanswered: the environment, not the deck."""
+
+
 def presentations() -> list[str]:
     """PowerPoint document inventory, independent of visible windows/dialogs."""
-    text = command(['osascript', str(ROOT / 'powerpoint.applescript'), 'custody'], 8)
+    try:
+        text = command(['osascript', str(ROOT / 'powerpoint.applescript'), 'custody'], CUSTODY_QUERY_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        raise CustodyTimeout(exc.cmd, exc.timeout, exc.output, exc.stderr) from exc
     return text.splitlines() if text else []
 
 
@@ -582,6 +593,9 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
         receipt.update(status='timed_out' if isinstance(exc, subprocess.TimeoutExpired) else 'unsupported',
                        detail=f'oracle control failure: {exc}')
+        if isinstance(exc, CustodyTimeout):
+            # The batch runner counts these; a run of them is an environment stop.
+            receipt['custody_timeout'] = True
     finally:
         if opened:
             warning = None
@@ -618,10 +632,12 @@ def classify_manifest(manifest: Path, results: Path) -> dict:
         binding = inputs.get('sha256') if isinstance(inputs, dict) else None
         snapshot = receipt.get('staged_input_sha256') if isinstance(receipt, dict) else None
         # A clean or classified open requires proof of the bytes actually staged.
-        # Preflight refusals can be unsupported before any staging took place.
+        # Preflight refusals can be unsupported, and custody or environment
+        # timeouts timed out, before any staging took place: inconclusive,
+        # never a binding failure.
         snapshot_error = (receipt is not None and
                           (snapshot is not None and snapshot != binding or
-                           snapshot is None and actual != 'unsupported'))
+                           snapshot is None and actual not in ('unsupported', 'timed_out')))
         environment_error = (environment_mismatch(receipt.get('environment'))
                              if isinstance(receipt, dict) else None)
         if receipt is not None and (binding not in pinned or snapshot_error):

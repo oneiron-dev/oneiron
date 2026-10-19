@@ -11,183 +11,37 @@
 //! writes what the deck once held read only: an imported picture shown
 //! with media the deck holds ([`show_held_media`]), a SmartArt's node text
 //! ([`smart_art_text`]), and a chart's data embedded in a workbook of its
-//! own ([`embed_workbook`]).
+//! own ([`embed_workbook`]), the former workbook pruned once nothing reads
+//! it and its data-label ranges unlinked into the labels' own text.
 
 use super::LiveError;
+use super::chart_labels;
+use super::conversion::Conversion;
 use super::held::{self, C, DGM, children};
 use super::pptx::{
     ChartKind, ChartSeries, ChartSource, HeldMedia, NodePayload, SmartArtNode, WRITTEN_FRAME,
 };
 use super::reshape::{self, frame_of};
 use crate::design_plan::Cell;
+use crate::edit::Digest;
 use crate::edit::xml::{self, A, P, R, next_part};
-use crate::edit::{Digest, Effect};
+use crate::native_patch::insert_frame;
 use crate::ooxml::{XmlTree, escape_text};
 use crate::retained_opc::Package;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// The drawing part namespace of a SmartArt's cached shapes.
-const DSP: &str = "http://schemas.microsoft.com/office/drawing/2008/diagram";
+pub(super) const DSP: &str = "http://schemas.microsoft.com/office/drawing/2008/diagram";
 const XLSX_TYPE: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-/// A SmartArt edit writes its nodes' text in place. Adding, removing or
-/// moving a node is not built: PowerPoint lays the diagram's shapes out
-/// again from its layout definition, which the deck does not run.
+/// A SmartArt's text write names the nodes it reads, at their levels; a
+/// node added, removed or moved rewrites the diagram (`diagram::write`).
 pub(crate) const SMART_ART_NODES: &str =
-    "a SmartArt edit writes its nodes' text: adding, removing or moving a node is not built";
+    "a SmartArt's text write names the nodes it reads, at their levels";
 /// A held picture shows an image part the retained package holds, by its
 /// hash; anything else would point a picture at bytes that are not there.
 pub(crate) const HELD_MEDIA: &str =
     "a held picture names an image part the deck holds, with its hash";
-
-/// What a deck edit did PowerPoint's way, named on its receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Conversion {
-    /// A plot changed family, as Change Chart Type does. Between a category
-    /// and a scatter family the categories became x values or the x values
-    /// categories, and the x axis turned with them.
-    ChartTypeChanged { from: ChartKind, to: ChartKind },
-    /// A series is drawn in a family the chart had no plot for, so a new
-    /// plot draws it, as Change Series Chart Type makes one.
-    PlotAdded { family: ChartKind },
-    /// A plot no series is drawn in any more went.
-    PlotDropped { family: ChartKind },
-    /// The series are listed plot by plot, as a chart lists them.
-    SeriesRegrouped,
-    /// The categories became the scatter series' x values, numbered 1 to n
-    /// when they are text (`numbered`).
-    CategoriesBecameX { numbered: bool },
-    /// The first category series' x values became the categories.
-    XBecameCategories,
-    /// These category series carried x values a category plot does not
-    /// draw; they were dropped.
-    XDropped { series: Vec<String> },
-    /// A chart of scatter plots only takes no categories.
-    CategoriesDropped,
-    /// The categories were padded with empty labels to `count`, the longest
-    /// category series.
-    CategoriesPadded { count: usize },
-    /// The chart's link to external data was dropped, and its data embedded
-    /// in a workbook of its own, as PowerPoint's Edit Data does.
-    ExternalDataEmbedded,
-    /// The chart read a workbook another chart shares, or cells outside its
-    /// series; its data now lives in a workbook of its own.
-    WorkbookUnshared,
-    /// Literal chart data was embedded in a workbook.
-    LiteralDataEmbedded,
-    /// A new chart's data lives in its own workbook, as PowerPoint writes
-    /// every chart it inserts.
-    NewChartEmbedded,
-    /// The chart keeps where its data lives: an edit makes no `asked` data.
-    SourceKept {
-        kept: ChartSource,
-        asked: ChartSource,
-    },
-    /// A title or label linked to a cell keeps its text, unlinked.
-    TitleLinkDropped,
-    /// This many SmartArt nodes' text was written into the data part and
-    /// the shapes its drawing draws for them.
-    SmartArtTextWritten { nodes: u32 },
-    /// An imported picture shows this media part the deck holds.
-    HeldMediaShown { part: String },
-    /// A reshaped table's frame took its grid's size.
-    TableFrameFitted { extent: (i64, i64) },
-}
-
-fn family_name(kind: ChartKind) -> &'static str {
-    match kind {
-        ChartKind::Bar => "bar",
-        ChartKind::Line => "line",
-        ChartKind::Pie => "pie",
-        ChartKind::Area => "area",
-        ChartKind::Scatter => "scatter",
-        ChartKind::Doughnut => "doughnut",
-        ChartKind::Radar => "radar",
-    }
-}
-
-fn source_name(source: ChartSource) -> &'static str {
-    match source {
-        ChartSource::Workbook => "embedded workbook",
-        ChartSource::Literal => "literal",
-        ChartSource::Cached => "linked",
-    }
-}
-
-impl Conversion {
-    /// The receipt's sentence for it.
-    pub fn describe(&self) -> String {
-        match self {
-            Self::ChartTypeChanged { from, to } => format!(
-                "chart type changed from {} to {}",
-                family_name(*from),
-                family_name(*to)
-            ),
-            Self::PlotAdded { family } => {
-                format!("a {} plot added for its series", family_name(*family))
-            }
-            Self::PlotDropped { family } => format!(
-                "the {} plot dropped: no series is drawn in it",
-                family_name(*family)
-            ),
-            Self::SeriesRegrouped => "series listed plot by plot".to_owned(),
-            Self::CategoriesBecameX { numbered: false } => "categories became x values".to_owned(),
-            Self::CategoriesBecameX { numbered: true } => {
-                "text categories became x values 1 to n".to_owned()
-            }
-            Self::XBecameCategories => "x values became categories".to_owned(),
-            Self::XDropped { series } => {
-                format!(
-                    "x values dropped from category series {}",
-                    series.join(", ")
-                )
-            }
-            Self::CategoriesDropped => {
-                "categories dropped: a scatter chart plots x values".to_owned()
-            }
-            Self::CategoriesPadded { count } => {
-                format!("categories padded with empty labels to {count}")
-            }
-            Self::ExternalDataEmbedded => "link to external data dropped; data embedded".to_owned(),
-            Self::WorkbookUnshared => "chart data moved to a workbook of its own".to_owned(),
-            Self::LiteralDataEmbedded => "literal chart data embedded in a workbook".to_owned(),
-            Self::NewChartEmbedded => {
-                "the new chart's data embedded in its own workbook".to_owned()
-            }
-            Self::SourceKept { kept, asked } => format!(
-                "chart data stays {}: an edit makes no {} data",
-                source_name(*kept),
-                source_name(*asked)
-            ),
-            Self::TitleLinkDropped => {
-                "a title linked to a cell keeps its text, unlinked".to_owned()
-            }
-            Self::SmartArtTextWritten { nodes } => {
-                format!("SmartArt text written for {nodes} node(s)")
-            }
-            Self::HeldMediaShown { part } => format!("picture shows held media {part}"),
-            Self::TableFrameFitted { extent: (cx, cy) } => {
-                format!("table frame fitted to its grid: {cx} x {cy} EMU")
-            }
-        }
-    }
-}
-
-/// An edit's or an export's effect as its receipt names it.
-pub fn effect_receipt(effect: &Effect) -> String {
-    match effect {
-        Effect::Converted { node, conversion } => {
-            format!("node {}: {}", node.0, conversion.describe())
-        }
-        Effect::CustomGeometryReplaced => "custom geometry replaced by a preset".to_owned(),
-        Effect::InheritedGeometryOwned => {
-            "inherited geometry replaced by the shape's own preset".to_owned()
-        }
-        other => serde_json::to_string(other).unwrap_or_default(),
-    }
-}
 
 /// A chart payload's plots as the reader lists them: its series' families
 /// in runs, after an empty first plot when the chart's family is not its
@@ -433,7 +287,7 @@ pub(super) fn image_part(name: &str) -> bool {
 }
 
 /// The slide element `p:<local>` with this native id.
-fn element_of(tree: &XmlTree, native: u32, local: &str) -> Option<usize> {
+pub(super) fn element_of(tree: &XmlTree, native: u32, local: &str) -> Option<usize> {
     let id = native.to_string();
     (0..tree.nodes.len()).find(|&at| {
         tree.nodes[at].is(P, local)
@@ -494,10 +348,50 @@ pub(super) fn show_held_media(
     Ok(true)
 }
 
+/// Write a live-born picture showing the held media `media` names as the
+/// new `p:pic` `id` named `name` on `slide`, at `offset` and `extent`,
+/// through the slide's image relationship to that part (a new one when it
+/// has none).
+pub(super) fn born_held_picture(
+    package: &mut Package,
+    slide: &str,
+    (id, name): (u32, &str),
+    (x, y): (i64, i64),
+    (cx, cy): (i64, i64),
+    media: &HeldMedia,
+) -> Result<(), LiveError> {
+    if !image_part(&media.part)
+        || package
+            .part(&media.part)?
+            .is_none_or(|bytes| Digest::of(&bytes) != media.hash)
+    {
+        return Err(LiveError::Invalid(HELD_MEDIA));
+    }
+    let kind = format!("{R}/image");
+    let rel = match package
+        .relationships(slide)?
+        .into_iter()
+        .find(|rel| !rel.external && rel.kind == kind && rel.target == media.part)
+    {
+        Some(rel) => rel.id,
+        None => package.relate(slide, &kind, &media.part)?,
+    };
+    let picture = format!(
+        r#"<p:pic xmlns:p="{P}" xmlns:a="{A}" xmlns:r="{R}"><p:nvPicPr><p:cNvPr id="{id}" name="{}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="{rel}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>"#,
+        xml::escape_attribute(name)
+    );
+    insert_frame(package, slide, id, &picture)?;
+    Ok(())
+}
+
 /// Paragraphs holding `text`, one per line: each in `p_pr`, its run in
 /// `r_pr`, ending in `end`, under the DrawingML `prefix` (declared on each
 /// paragraph when the body names none).
-fn paragraphs(text: &str, prefix: Option<&str>, [p_pr, r_pr, end]: [&[u8]; 3]) -> Vec<u8> {
+pub(super) fn paragraphs(
+    text: &str,
+    prefix: Option<&str>,
+    [p_pr, r_pr, end]: [&[u8]; 3],
+) -> Vec<u8> {
     let q = |name: &str| xml::qualify(prefix.unwrap_or("a"), name);
     let declare = if prefix.is_none() {
         format!(r#" xmlns:a="{A}""#)
@@ -530,7 +424,7 @@ fn paragraphs(text: &str, prefix: Option<&str>, [p_pr, r_pr, end]: [&[u8]; 3]) -
 /// A text body (`dgm:t`, `dsp:txBody`) written to hold `text`: its open
 /// tag, body and list properties kept, then a paragraph per line in its
 /// first paragraph's properties, with one run in its first run's.
-fn text_body(bytes: &[u8], tree: &XmlTree, body: usize, text: &str) -> Vec<u8> {
+pub(super) fn text_body(bytes: &[u8], tree: &XmlTree, body: usize, text: &str) -> Vec<u8> {
     let node = &tree.nodes[body];
     let part = |at: Option<usize>| at.map_or(&[][..], |at| &bytes[tree.nodes[at].span.clone()]);
     let body_pr = xml::child(tree, body, A, "bodyPr");
@@ -781,9 +675,23 @@ pub(super) fn embed_workbook(
     if unlinked {
         done.push(Conversion::TitleLinkDropped);
     }
+    let labels = chart_labels::unlink_ranges(&bytes, &tree, &mut edits);
+    if labels > 0 {
+        done.push(Conversion::LabelRangesUnlinked { labels });
+    }
     package.replace_xml_part(chart, xml::splice(&bytes, edits)?)?;
     if let Some(rel) = former {
         package.unrelate(chart, &rel.id)?;
+        // The former workbook goes once no part reads it, as PowerPoint's
+        // save drops an embedding nothing references; one another chart
+        // still reads stays.
+        if !rel.external
+            && package.part(&rel.target)?.is_some()
+            && !package.reachable("")?.contains(&rel.target)
+        {
+            package.remove_part(&rel.target)?;
+            done.push(Conversion::WorkbookPruned { part: rel.target });
+        }
     }
     Ok((book, done))
 }

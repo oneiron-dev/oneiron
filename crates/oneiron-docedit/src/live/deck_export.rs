@@ -21,31 +21,34 @@
 //! The outcome carries every node's binding in the exported package; once
 //! the export lands, [`LiveDeck::rebind`] adopts them so the next export
 //! projects over the new retained bytes. A live-born node is written from
-//! what it carries: a shape from its preset, a picture over a new media part
-//! from the asset its payload names (the caller's [`Assets`] supply the
-//! bytes, which must hash to the reference), a table through the native
-//! writer, a chart of any family through the native writer and the chart
-//! rewrite, and a connector glued to the nodes its ends name once they are
-//! bound on its slide. A bound node whose preset or payload the live model
-//! changed is written over its retained element: its preset, its glue, new
-//! media or held media shown again, a table's changed cells or grid (its
-//! frame fitted to the grid), a chart's changed series sequences or its
-//! rewritten plots, axes and workbook (a new one when its data lived
-//! elsewhere), and a SmartArt's node text. What it did PowerPoint's way
-//! where the deck once refused rides in the outcome's effects.
+//! what it carries: a shape from its preset or its points, a picture over a
+//! new media part from the asset its payload names (the caller's [`Assets`]
+//! supply the bytes, which must hash to the reference) or over an image the
+//! deck holds, a table through the native writer, a chart of any family
+//! through the native writer and the chart rewrite, a SmartArt as the
+//! engine's outline list, and a connector glued to the nodes its ends name
+//! once they are bound on its slide. A bound node whose preset or payload
+//! the live model changed is written over its retained element: its preset
+//! or points, its glue, new media or held media shown again, a table's
+//! changed cells or grid (its frame fitted to the grid), a chart's changed
+//! series sequences or its rewritten plots, axes and workbook (a new one
+//! when its data lived elsewhere), and a SmartArt's node text or its nodes
+//! added, removed and moved. What it did PowerPoint's way where the deck
+//! once refused rides in the outcome's effects.
 //! Until [`Gate::is_open`], blob versions remain authoritative and exports
 //! are proposal artifacts. An export that changes anything recounts the app
 //! properties' words and paragraphs over the text it wrote last.
 
 use super::LiveError;
-use super::convert::{self, Conversion};
-use super::held;
+use super::conversion::Conversion;
+use super::convert;
 use super::pptx::{
     ChartKind, ConnectorEnd, DeckNode, LiveDeck, NodeBinding, NodeId, NodeKind, NodePayload,
     PreflightReport, RelationshipChange, RenderPair, RenderSide, SlideRender, TextBody,
     WRITTEN_FRAME, geometry_of, slide_of, text_body,
 };
 use super::reshape;
+use super::{diagram, held, points};
 use crate::deck::{DeckView, ShapeView};
 use crate::design_plan::{AssetKind, Cell, Column, ColumnKind, Dataset, Rect};
 use crate::edit::geometry::{glue_of, preset_of};
@@ -66,7 +69,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 /// Bump on any projector change; part of every memo key.
-pub const PROJECTOR_VERSION: &str = "live-deck-projector/7";
+pub const PROJECTOR_VERSION: &str = "live-deck-projector/8";
 
 /// A live-born shape (or a free connector) with no own extent: one inch
 /// square.
@@ -79,6 +82,8 @@ const PICTURE_BOX: (i64, i64) = (2_743_200, 2_743_200);
 const TABLE_CELL: (i64, i64) = (1_828_800, 365_760);
 /// A live-born chart with no own extent: six inches by four.
 const CHART_EXTENT: (i64, i64) = (5_486_400, 3_657_600);
+/// A live-born SmartArt with no own extent: a chart's six inches by four.
+const SMART_ART_EXTENT: (i64, i64) = CHART_EXTENT;
 /// The one sheet of a live-born chart's embedded workbook.
 const CHART_SHEET: &str = "Sheet1";
 
@@ -865,7 +870,26 @@ fn born(
                 },
             })?
         }
-        (NodeKind::GraphicFrame, Some(payload)) => return native_frame(work, node, part, payload),
+        (NodeKind::Picture, Some(NodePayload::HeldPicture { media })) => {
+            // An image the deck holds: the node's own extent, else that of a
+            // bound picture showing the same part, else the picture box.
+            let id = work
+                .shape_mark(part)
+                .checked_add(1)
+                .ok_or(EditRefusal::IdSpaceExhausted)?;
+            let extent = node
+                .geometry
+                .extent
+                .or_else(|| shown_extent(deck, &media.part))
+                .unwrap_or(PICTURE_BOX);
+            let name = named("Picture");
+            convert::born_held_picture(work.next_mut(), part, (id, &name), offset, extent, media)?;
+            work.changed.insert(part.to_owned());
+            return Ok(id);
+        }
+        (NodeKind::GraphicFrame, Some(payload)) => {
+            return native_frame(work, id, node, part, payload);
+        }
         (NodeKind::Connector, payload) => {
             let (preset, start, end) = match payload {
                 Some(NodePayload::Connector { preset, start, end }) => {
@@ -913,7 +937,7 @@ fn born(
         }
         (NodeKind::GraphicFrame, None) => {
             return Err(LiveError::Invalid(
-                "a live-born graphic frame carries no table or chart",
+                "a live-born graphic frame carries no table, chart or SmartArt",
             ));
         }
         (NodeKind::Picture, Some(_)) | (NodeKind::Root | NodeKind::Slide, _) => {
@@ -922,13 +946,34 @@ fn born(
             ));
         }
     };
-    effects
+    let added = effects
         .iter()
         .find_map(|effect| match effect {
             Effect::ShapeAdded { id, .. } => Some(*id),
             _ => None,
         })
-        .ok_or(LiveError::Invalid("the shape verb added no shape"))
+        .ok_or(LiveError::Invalid("the shape verb added no shape"))?;
+    // A live-born freeform: the preset the shape verb drew, then its points.
+    if let (NodeKind::Shape, Some(NodePayload::CustomGeometry { paths })) =
+        (node.kind, &node.payload)
+    {
+        points::write(work.next_mut(), part, added, paths)?;
+        work.changed.insert(part.to_owned());
+    }
+    Ok(added)
+}
+
+/// The extent of a bound picture showing the held media part `part`, the
+/// first in model-identity order that has one.
+fn shown_extent(deck: &LiveDeck, part: &str) -> Option<(i64, i64)> {
+    deck.nodes.values().find_map(|node| match &node.payload {
+        Some(NodePayload::HeldPicture { media })
+            if node.binding.is_some() && media.part == part =>
+        {
+            node.geometry.extent
+        }
+        _ => None,
+    })
 }
 
 /// The asset a picture payload names, resolved through `assets`; its bytes
@@ -1153,13 +1198,18 @@ fn project_payload(
             }
         }
         Some(NodePayload::SmartArt { nodes }) => {
-            let (changed, written) = convert::smart_art_text(work.next_mut(), part, native, nodes)?;
-            if written > 0 {
-                work.changed.extend(changed);
-                work.converted(id, [Conversion::SmartArtTextWritten { nodes: written }]);
+            let (changed, done) = diagram::write(work.next_mut(), part, native, nodes)?;
+            work.changed.extend(changed);
+            work.converted(id, done);
+        }
+        Some(NodePayload::CustomGeometry { paths }) => {
+            if held::custom_paths(&tree, at).as_deref() != Some(paths.as_slice()) {
+                let done = points::write(work.next_mut(), part, native, paths)?;
+                work.changed.insert(part.to_owned());
+                work.converted(id, done);
             }
         }
-        Some(NodePayload::Ole { .. } | NodePayload::CustomGeometry { .. }) | None => {}
+        Some(NodePayload::Ole { .. }) | None => {}
     }
     Ok(())
 }
@@ -1185,10 +1235,12 @@ fn span(
     Some(((x0.min(x1), y0.min(y1)), extent, (x1 < x0, y1 < y0)))
 }
 
-/// Write a live-born table or chart through the native writer, topmost in
-/// `part`'s shape tree under the next id above the slide's mark; its id.
+/// Write a live-born table or chart through the native writer, or a
+/// SmartArt as the engine's outline list, topmost in `part`'s shape tree
+/// under the next id above the slide's mark; its id.
 fn native_frame(
     work: &mut Work,
+    live: NodeId,
     node: &DeckNode,
     part: &str,
     payload: &NodePayload,
@@ -1335,18 +1387,31 @@ fn native_frame(
             }
             return Ok(id);
         }
+        NodePayload::SmartArt { nodes } => {
+            let (cx, cy) = node.geometry.extent.unwrap_or(SMART_ART_EXTENT);
+            let name = node.name.clone().unwrap_or_else(|| "Diagram".to_owned());
+            let changed =
+                diagram::born(work.next_mut(), part, (id, &name), (x, y), (cx, cy), nodes)?;
+            work.changed.extend(changed);
+            work.converted(
+                live,
+                [Conversion::SmartArtBorn {
+                    nodes: u32::try_from(nodes.len()).unwrap_or(u32::MAX),
+                }],
+            );
+            return Ok(id);
+        }
         NodePayload::Picture { .. }
+        | NodePayload::HeldPicture { .. }
         | NodePayload::Connector { .. }
         | NodePayload::CustomGeometry { .. } => {
             return Err(LiveError::Invalid(
                 "the payload does not belong to the node kind",
             ));
         }
-        NodePayload::HeldPicture { .. }
-        | NodePayload::SmartArt { .. }
-        | NodePayload::Ole { .. } => {
+        NodePayload::Ole { .. } => {
             return Err(LiveError::Invalid(
-                "a live-born graphic frame carries a table or chart",
+                "a live-born graphic frame carries a table, chart or SmartArt",
             ));
         }
     };
