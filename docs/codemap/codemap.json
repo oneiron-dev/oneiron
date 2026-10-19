@@ -71392,7 +71392,23 @@
      "surface": {
       "crate-vis": 1,
       "fn": 15,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallMeasure",
+      "CallSize"
+     ],
+     "path": "src/host/sized.rs",
+     "purpose": "A call its caller sizes from what it lends (Rule 5): a booking and a process grant that grow with the input…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -71485,7 +71501,7 @@
      "path": "src/process.rs",
      "purpose": "One live organ process: spawn, handshake, a reader thread, calls",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -71557,7 +71573,6 @@
       "SealIdentity",
       "SealKeyError",
       "SealKeys",
-      "SealLimits",
       "SealSettings",
       "SealTsa"
      ],
@@ -71568,7 +71583,7 @@
       "enum": 1,
       "fn": 5,
       "re-export": 1,
-      "struct": 6,
+      "struct": 5,
       "trait": 1
      }
     },
@@ -71593,6 +71608,16 @@
      "surface": {
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/seal/observe.rs",
+     "purpose": "What one seal or verification call measured, against the engine's `[limits]` rows (OF-520, Rule 5)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -71720,10 +71745,10 @@
      "purpose": "The handlers a caller supplies for an organ's asks (protocol 1.1)"
     },
     "host": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The organ host: install, call, unload, revoke"
     },
     "landing": {
@@ -71790,7 +71815,7 @@
      "purpose": "What the host does to an organ process between fork and exec"
     },
     "seal": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -71820,7 +71845,7 @@
    },
    "over_bar": 1,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 25,
+   "source_files": 27,
    "test_files": 4
   },
   "oneiron-organ-protocol": {
@@ -71835,7 +71860,7 @@
      "purpose": "Framing: `len: u32 LE | MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries…",
      "surface": {
       "enum": 1,
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -72868,6 +72893,8 @@
       "SealClock",
       "SealConfig",
       "SealFetcher",
+      "SealObservations",
+      "SealObserved",
       "SealRequest",
       "SealResourceLimits",
       "SealWarning",
@@ -72881,12 +72908,13 @@
      "path": "src/api.rs",
      "purpose": "Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5)",
      "surface": {
-      "const": 2,
+      "const": 5,
+      "crate-vis": 3,
       "enum": 11,
-      "fn": 1,
+      "fn": 2,
       "mod": 1,
       "re-export": 2,
-      "struct": 13,
+      "struct": 15,
       "trait": 4,
       "type": 1
      }
@@ -73080,7 +73108,7 @@
      "path": "src/native/pdf/lex.rs",
      "purpose": "Bounded PDF structural tokens",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -73118,7 +73146,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/native/pdf/revision_chain.rs",
-     "purpose": "Shared, bounded PDF revision discovery from the actual xref /Prev chain",
+     "purpose": "Shared PDF revision discovery from the actual xref /Prev chain",
      "surface": {
       "crate-vis": 6
      }
@@ -73128,7 +73156,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/native/pdf/revision_facts.rs",
-     "purpose": "One bounded structural account of PDF revisions, definitions and xref roles",
+     "purpose": "One structural account of PDF revisions, definitions and xref roles",
      "surface": {
       "crate-vis": 8
      }

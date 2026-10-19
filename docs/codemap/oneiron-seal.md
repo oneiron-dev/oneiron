@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/api.rs` | src | m | 13 struct · 11 enum · 4 trait · 1 fn · 1 type · 2 const · 1 mod · 2 re-export | BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchError, FetchMethod, FetchPolicy, FetchPurpose +20 | Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5) |
+| `src/api.rs` | src | m | 15 struct · 11 enum · 4 trait · 2 fn · 1 type · 5 const · 1 mod · 2 re-export · 3 crate-vis | BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchError, FetchMethod, FetchPolicy, FetchPurpose +22 | Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5) |
 | `src/api/report.rs` | src | m | 6 struct · 10 enum · 7 fn | Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications, RevisionKind, RevisionReport, SignatureKind +8 | Evidence-oriented verification report |
 | `src/bin/oneiron-seal-organ.rs` | src | s | — | — | The seal organ's process: serves the host on the socket it passes |
 | `src/error.rs` | src | s | 5 enum · 1 fn | FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage | Stable seal error classes and codes (ONE-1837 §6) |
@@ -27,12 +27,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/fetch.rs` | src | m | 1 struct · 1 fn · 1 re-export · 3 crate-vis | SsrfGuardedHttpFetcher | SSRF-guarded fetcher (§5) |
 | `src/native/mod.rs` | src | s | 2 re-export · 6 crate-vis | — | Native implementation modules (feature `native`) |
 | `src/native/pdf/incremental.rs` | src | s | 5 crate-vis | — | Byte-exact incremental append: xref table/stream emitters, EOF glue, ByteRange/Contents patch, hash and… |
-| `src/native/pdf/lex.rs` | src | m | 11 crate-vis | — | Bounded PDF structural tokens |
+| `src/native/pdf/lex.rs` | src | m | 12 crate-vis | — | Bounded PDF structural tokens |
 | `src/native/pdf/mod.rs` | src | s | 6 crate-vis | — | Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2) |
 | `src/native/pdf/objects.rs` | src | m | 6 crate-vis | — | Revision object graphs (§7.2): PDF value serializers, sig-dict placeholders, AcroForm/page updates, checked… |
 | `src/native/pdf/parse.rs` | src | m | 15 crate-vis | — | Prepared-input validation (§7.1): object/catalog scans, strict load, xref consistency, and RevisionState… |
-| `src/native/pdf/revision_chain.rs` | src | s | 6 crate-vis | — | Shared, bounded PDF revision discovery from the actual xref /Prev chain |
-| `src/native/pdf/revision_facts.rs` | src | m | 8 crate-vis | — | One bounded structural account of PDF revisions, definitions and xref roles |
+| `src/native/pdf/revision_chain.rs` | src | s | 6 crate-vis | — | Shared PDF revision discovery from the actual xref /Prev chain |
+| `src/native/pdf/revision_facts.rs` | src | m | 8 crate-vis | — | One structural account of PDF revisions, definitions and xref roles |
 | `src/native/pdf/tests.rs` | test | m | — | — | Inline test mod: fixture loaders, doc builders, validation and writer round-trip tests |
 | `src/native/profile/assembly.rs` | src | m | 6 crate-vis | — | B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings |
 | `src/native/profile/dss.rs` | src | s | 3 crate-vis | — | DSS serialization: stream objects, global Certs/OCSPs/CRLs arrays, DSS revision append |
