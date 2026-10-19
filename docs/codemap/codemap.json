@@ -6744,6 +6744,7 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "ArtifactAdmitSubmit",
       "ArtifactAskOutcome",
       "ArtifactAskSubmit",
       "ArtifactAskUnits",
@@ -6770,8 +6771,8 @@
      "purpose": "The artifact family's agent verbs (`vault.artifacts.*`, OF-511): one typed door per contract verb for every…",
      "surface": {
       "enum": 1,
-      "fn": 15,
-      "struct": 20
+      "fn": 17,
+      "struct": 21
      }
     },
     {
@@ -30908,9 +30909,9 @@
      "path": "src/llm/decision/questions/graph_ask.rs",
      "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 14,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 7,
       "trait": 1
      }
@@ -30945,8 +30946,8 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 9,
-      "re-export": 12
+      "crate-vis": 8,
+      "re-export": 13
      }
     },
     {
@@ -41392,6 +41393,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "GraphAdmitRequest",
       "GraphAskDeclined",
       "GraphAskOutcome",
       "GraphAskRequest",
@@ -41416,8 +41418,8 @@
      "surface": {
       "const": 2,
       "enum": 2,
-      "fn": 3,
-      "struct": 16
+      "fn": 4,
+      "struct": 17
      }
     },
     {
@@ -53285,7 +53287,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1035
+      "fn": 1037
      }
     },
     {
@@ -69708,7 +69710,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1006
+      "fn": 1008
      }
     },
     {
@@ -70804,7 +70806,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1007
+      "fn": 1009
      }
     },
     {
@@ -74318,7 +74320,7 @@
      "path": "src/api/facade/graph_ask_doors.rs",
      "purpose": "OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -74358,7 +74360,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 162
+      "crate-vis": 163
      }
     },
     {
@@ -83247,6 +83249,7 @@
       "ArchiveOutputRef",
       "ArchiveOutputScore",
       "ArchiveQualityMetric",
+      "ArtifactAdmitSubmit",
       "ArtifactAskOutcome",
       "ArtifactAskRecord",
       "ArtifactAskStanding",
@@ -84428,6 +84431,7 @@
       "GrantAskReceipt",
       "GrantAskRequest",
       "GrantAskScope",
+      "GraphAdmitRequest",
       "GraphAskDeclined",
       "GraphAskOutcome",
       "GraphAskRequest",
@@ -86536,7 +86540,7 @@
      "purpose": "—",
      "surface": {
       "enum": 816,
-      "struct": 2593
+      "struct": 2595
      }
     },
     {
