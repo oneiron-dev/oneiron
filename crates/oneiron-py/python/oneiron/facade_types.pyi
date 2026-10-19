@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 737 facade rows, 2614 declarations.
-Inputs: 685 of 737 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 662 of 737 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 744 facade rows, 2647 declarations.
+Inputs: 692 of 744 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 669 of 744 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -9619,6 +9619,178 @@ class SkillPackOutcomeProjection(TypedDict):
     persisted: bool
 class SkillPackCreditRequest(TypedDict):
     receipt_id: str
+class ProposalReplacement(TypedDict):
+    before: str
+    after: str
+ProposalAmendmentCause = Literal["proposal_wrong", "external_change", "decider_preference"]
+AttributionLabel = Literal["skill_defect", "execution_lapse", "discovery", "environment", "preference_shift", "unclear"]
+class ProposalHunkVerdict(TypedDict):
+    verdict: AttributionLabel
+    confidence: NotRequired[float]
+    note: NotRequired[str | None]
+ProposalShareClaim = TypedDict("ProposalShareClaim", {"class": AttributionLabel, "share": float})
+class ProposalDeltaSettleRequest(TypedDict):
+    proposed_text: str
+    replacements: list[ProposalReplacement]
+    actor: EntityId
+    skill: NotRequired[EntityId | None]
+    attempt_receipt: NotRequired[str | None]
+    source_turn_ref: NotRequired[EntityId | None]
+    scope: str
+    cause: NotRequired[ProposalAmendmentCause | None]
+    followed_skill: NotRequired[bool | None]
+    skill_covered_step: NotRequired[bool | None]
+    at: int
+    hunk_verdicts: NotRequired[list[ProposalHunkVerdict] | None]
+    shares: NotRequired[list[ProposalShareClaim] | None]
+OpsSummaryView = TypedDict("OpsSummaryView", {"ins": int, "del": int, "kept": int, "moved": int, "approx": bool})
+class AmendmentDeltaView(TypedDict):
+    proposed_ref: str
+    final_ref: str
+    source: str
+    d_norm: float
+    ops_summary: OpsSummaryView
+    engine_ver: str
+class SettledHunkView(TypedDict):
+    before: str
+    after: str
+    edit_mass: float
+    actor: NotRequired[EntityId | None]
+    trust: NotRequired[str | None]
+AmendmentShareView = TypedDict("AmendmentShareView", {"class": AttributionLabel, "share": float, "subject": NotRequired[EntityId | None]})
+class AmendmentJudgmentView(TypedDict):
+    receipt_id: str
+    split: list[AmendmentShareView]
+    scope: str
+    evidence_receipts: list[str]
+    d_norm: float
+    at: int
+class ProposalDeltaSettlement(TypedDict):
+    receipt_id: str
+    artifact_ref: EntityId
+    proposed_text: str
+    final_text: str
+    delta: AmendmentDeltaView
+    hunks: list[SettledHunkView]
+    judgment: NotRequired[AmendmentJudgmentView | None]
+    edit_cost_claims: list[EntityId]
+    reliability_heads: list[EntityId]
+    lessons: list[EntityId]
+class ProposalDeltaReadRequest(TypedDict):
+    receipt_id: str
+    artifact_ref: NotRequired[EntityId | None]
+class ProposalOpSpanView(TypedDict):
+    actor: NotRequired[EntityId | None]
+    trust: str
+    before_text: str
+    after_text: str
+    lamport: int
+    timestamp: int
+class ProposalArtifactView(TypedDict):
+    artifact_ref: EntityId
+    proposed_text: str
+    final_text: str
+    source_turn_ref: NotRequired[EntityId | None]
+    spans: list[ProposalOpSpanView]
+class AmendmentEvidenceView(TypedDict):
+    receipt_id: str
+    actor: EntityId
+    skill: NotRequired[EntityId | None]
+    attempt_receipt: NotRequired[str | None]
+    scope: str
+    cause: NotRequired[ProposalAmendmentCause | None]
+    followed_skill: NotRequired[bool | None]
+    skill_covered_step: NotRequired[bool | None]
+    at: int
+class PreferenceProposalView(TypedDict):
+    receipt_id: str
+    scope: str
+    evidence_receipts: list[str]
+    share: float
+    at: int
+class UnclearNoteView(TypedDict):
+    reason: str
+    leaning: NotRequired[AttributionLabel | None]
+    confidence: float
+    share: float
+    note: NotRequired[str | None]
+class UnclearAttributionView(TypedDict):
+    lane: str
+    reference: str
+    evidence_receipts: list[str]
+    notes: list[UnclearNoteView]
+    at: int
+class ProposalDeltaRead(TypedDict):
+    receipt_id: str
+    delta: NotRequired[AmendmentDeltaView | None]
+    artifact: NotRequired[ProposalArtifactView | None]
+    evidence: NotRequired[AmendmentEvidenceView | None]
+    judgment: NotRequired[AmendmentJudgmentView | None]
+    preference_proposals: list[PreferenceProposalView]
+    unclear: list[UnclearAttributionView]
+class FollowedStateInputFollowed(TypedDict):
+    kind: Literal["followed"]
+class FollowedStateInputPartly(TypedDict):
+    kind: Literal["partly"]
+class FollowedStateInputIgnored(TypedDict):
+    kind: Literal["ignored"]
+class FollowedStateInputDeviatedWithReason(TypedDict):
+    kind: Literal["deviated_with_reason"]
+    reason: str
+    cause: NotRequired[str | None]
+FollowedStateInput = FollowedStateInputFollowed | FollowedStateInputPartly | FollowedStateInputIgnored | FollowedStateInputDeviatedWithReason
+class AttributionEvidenceRequest(TypedDict):
+    receipt_ref: str
+    actor: EntityId
+    skill: NotRequired[EntityId | None]
+    outcome: str
+    followed_skill: NotRequired[bool | None]
+    followed_state: NotRequired[FollowedStateInput | None]
+    skill_covered_step: NotRequired[bool | None]
+    at: int
+class AttributionEvidenceReceipt(TypedDict):
+    sequence: int
+class AttributionProjectRequest(TypedDict):
+    since_cursor: NotRequired[int | None]
+class AttemptJudgmentView(TypedDict):
+    sequence: int
+    verdict: AttributionLabel
+    subject: EntityId
+    evidence_receipts: list[str]
+    at: int
+class PositiveProposalView(TypedDict):
+    evidence_sequence: int
+    skill: EntityId
+    actor: EntityId
+    finding: str
+    reason: NotRequired[str | None]
+    evidence_receipts: list[str]
+    at: int
+class SkillEditProposalView(TypedDict):
+    judgment_sequence: int
+    skill: EntityId
+    evidence_receipts: list[str]
+    at: int
+class AttributionProjection(TypedDict):
+    cursor: int
+    judgments: list[AttemptJudgmentView]
+    positive_proposals: list[PositiveProposalView]
+    pending_edit_proposals: list[SkillEditProposalView]
+class AttributionListRequest(TypedDict):
+    ...
+class AttributionJudgmentsView(TypedDict):
+    cursor: int
+    attempt_judgments: list[AttemptJudgmentView]
+    amendment_judgments: list[AmendmentJudgmentView]
+    unclear: list[UnclearAttributionView]
+class AttributionProposalsView(TypedDict):
+    edit_proposals: list[SkillEditProposalView]
+    preference_proposals: list[PreferenceProposalView]
+    positive_proposals: list[PositiveProposalView]
+class PositiveRetireRequest(TypedDict):
+    evidence_sequence: int
+class PositiveRetireReceipt(TypedDict):
+    retired: bool
 class CallPurposeOtherBody(TypedDict):
     name: str
 class CallPurposeOther(TypedDict):

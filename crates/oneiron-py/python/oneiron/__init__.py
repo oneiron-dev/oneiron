@@ -1315,6 +1315,9 @@ class Oneiron:
         @property
         def outcomes(self) -> "Oneiron._VaultSkillsOutcomesVerbs":
             return Oneiron._VaultSkillsOutcomesVerbs(self._client)
+        @property
+        def attribution(self) -> "Oneiron._VaultSkillsAttributionVerbs":
+            return Oneiron._VaultSkillsAttributionVerbs(self._client)
     class _VaultSkillsRulesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1360,6 +1363,42 @@ class Oneiron:
         def get(self, spec):
             """Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."""
             return json.loads(_translate(lambda: self._client.vault_skills_outcomes_get(json.dumps(spec))))
+    class _VaultSkillsAttributionVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def settle(self, spec):
+            """The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer."""
+            return json.loads(_translate(lambda: self._client.vault_skills_attribution_settle(json.dumps(spec))))
+        def read(self, spec):
+            """The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows."""
+            return json.loads(_translate(lambda: self._client.vault_skills_attribution_read(json.dumps(spec))))
+        @property
+        def evidence(self) -> "Oneiron._VaultSkillsAttributionEvidenceVerbs":
+            return Oneiron._VaultSkillsAttributionEvidenceVerbs(self._client)
+        def project(self, spec):
+            """The owner runs one attribution pass over recorded evidence, plus the positive lane, returning the judgments and positive proposals it minted."""
+            return json.loads(_translate(lambda: self._client.vault_skills_attribution_project(json.dumps(spec))))
+        def judgments(self, spec):
+            """The owner reads every persisted attribution judgment in both lanes, the projector cursor and the unclear ledger."""
+            return json.loads(_translate(lambda: self._client.vault_skills_attribution_judgments(json.dumps(spec))))
+        def proposals(self, spec):
+            """The owner reads the pending skill edit proposals, preference proposals and positive skill proposals attribution has minted."""
+            return json.loads(_translate(lambda: self._client.vault_skills_attribution_proposals(json.dumps(spec))))
+        @property
+        def positive(self) -> "Oneiron._VaultSkillsAttributionPositiveVerbs":
+            return Oneiron._VaultSkillsAttributionPositiveVerbs(self._client)
+    class _VaultSkillsAttributionEvidenceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def record(self, spec):
+            """The owner records one attempt outcome as attribution evidence, grounded against its stamped pack receipt; recording never classifies it."""
+            return json.loads(_translate(lambda: self._client.vault_skills_attribution_evidence_record(json.dumps(spec))))
+    class _VaultSkillsAttributionPositiveVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def retire(self, spec):
+            """The owner retires one positive skill proposal once the optimizer has drafted from it or declined it."""
+            return json.loads(_translate(lambda: self._client.vault_skills_attribution_positive_retire(json.dumps(spec))))
     class _VaultConnectorsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

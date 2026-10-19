@@ -4547,6 +4547,69 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skills_attribution_settle(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.attribution.settle", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_attribution_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.attribution.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_attribution_evidence_record(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.attribution.evidence.record", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_attribution_project(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.attribution.project", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_attribution_judgments(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.attribution.judgments", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_attribution_proposals(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.attribution.proposals", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_attribution_positive_retire(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.attribution.positive.retire", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_steps_submit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.steps.submit", input)

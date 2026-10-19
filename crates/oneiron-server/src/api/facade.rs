@@ -107,6 +107,7 @@ mod shared_act_doors;
 mod shared_member_doors;
 mod shared_policy_doors;
 mod skill_doors;
+mod skill_attribution_doors;
 mod skill_execution_doors;
 mod slim_doors;
 mod standing_doors;

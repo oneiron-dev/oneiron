@@ -330,6 +330,7 @@ mod sdk_share;
 mod sdk_shared;
 mod sdk_shared_members;
 mod sdk_shared_policy;
+mod sdk_skill_attribution;
 mod sdk_skill_execution;
 mod sdk_skills;
 mod sdk_standing;

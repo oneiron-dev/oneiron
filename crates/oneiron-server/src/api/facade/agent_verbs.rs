@@ -542,6 +542,19 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.skills.pack_receipt", post(facade_route))
         .route("/vault.skills.outcomes.project", post(facade_route))
         .route("/vault.skills.outcomes.get", post(facade_route))
+        .route("/vault.skills.attribution.settle", post(facade_route))
+        .route("/vault.skills.attribution.read", post(facade_route))
+        .route(
+            "/vault.skills.attribution.evidence.record",
+            post(facade_route),
+        )
+        .route("/vault.skills.attribution.project", post(facade_route))
+        .route("/vault.skills.attribution.judgments", post(facade_route))
+        .route("/vault.skills.attribution.proposals", post(facade_route))
+        .route(
+            "/vault.skills.attribution.positive.retire",
+            post(facade_route),
+        )
         .route("/ai.steps.submit", post(facade_route))
         .route("/ai.steps.receipt", post(facade_route))
         .route("/ai.reply", post(facade_route))

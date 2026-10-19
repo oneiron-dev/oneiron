@@ -80,6 +80,7 @@ pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
+pub(crate) use super::skill_attribution_doors::*;
 pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -1142,6 +1143,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.pack_receipt"
         | "vault.skills.outcomes.project"
         | "vault.skills.outcomes.get"
+        | "vault.skills.attribution.settle"
+        | "vault.skills.attribution.read"
+        | "vault.skills.attribution.evidence.record"
+        | "vault.skills.attribution.project"
+        | "vault.skills.attribution.judgments"
+        | "vault.skills.attribution.proposals"
+        | "vault.skills.attribution.positive.retire"
         | "vault.packs.hooks.bind"
         | "vault.packs.hooks.list"
         | "vault.packs.hooks.qualify"

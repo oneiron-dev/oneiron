@@ -664,6 +664,26 @@ export class Oneiron {
         /** Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner. */
         get: (input: Facade.SkillPackCreditRequest): Facade.LateCreditReceipt | null => this.#call(() => this.#client.vaultSkillsOutcomesGet(input) as Facade.LateCreditReceipt | null),
       },
+      attribution: {
+        /** The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer. */
+        settle: (input: Facade.ProposalDeltaSettleRequest): Facade.ProposalDeltaSettlement => this.#call(() => this.#client.vaultSkillsAttributionSettle(input) as Facade.ProposalDeltaSettlement),
+        /** The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows. */
+        read: (input: Facade.ProposalDeltaReadRequest): Facade.ProposalDeltaRead => this.#call(() => this.#client.vaultSkillsAttributionRead(input) as Facade.ProposalDeltaRead),
+        evidence: {
+          /** The owner records one attempt outcome as attribution evidence, grounded against its stamped pack receipt; recording never classifies it. */
+          record: (input: Facade.AttributionEvidenceRequest): Facade.AttributionEvidenceReceipt => this.#call(() => this.#client.vaultSkillsAttributionEvidenceRecord(input) as Facade.AttributionEvidenceReceipt),
+        },
+        /** The owner runs one attribution pass over recorded evidence, plus the positive lane, returning the judgments and positive proposals it minted. */
+        project: (input: Facade.AttributionProjectRequest): Facade.AttributionProjection => this.#call(() => this.#client.vaultSkillsAttributionProject(input) as Facade.AttributionProjection),
+        /** The owner reads every persisted attribution judgment in both lanes, the projector cursor and the unclear ledger. */
+        judgments: (input: Facade.AttributionListRequest): Facade.AttributionJudgmentsView => this.#call(() => this.#client.vaultSkillsAttributionJudgments(input) as Facade.AttributionJudgmentsView),
+        /** The owner reads the pending skill edit proposals, preference proposals and positive skill proposals attribution has minted. */
+        proposals: (input: Facade.AttributionListRequest): Facade.AttributionProposalsView => this.#call(() => this.#client.vaultSkillsAttributionProposals(input) as Facade.AttributionProposalsView),
+        positive: {
+          /** The owner retires one positive skill proposal once the optimizer has drafted from it or declined it. */
+          retire: (input: Facade.PositiveRetireRequest): Facade.PositiveRetireReceipt => this.#call(() => this.#client.vaultSkillsAttributionPositiveRetire(input) as Facade.PositiveRetireReceipt),
+        },
+      },
     },
     connectors: {
       subscriptions: {
