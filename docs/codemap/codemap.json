@@ -12954,6 +12954,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/world_privacy_wait.rs",
+     "purpose": "`tasks.wait({request, step_key})` (FIX 4706): a code run's wait on one world-privacy request its actor…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "FoldCompactRequest",
       "FoldHistoryRequest",
@@ -13241,16 +13251,19 @@
       "TaskRefuseDomain",
       "TaskRefuseInput",
       "TaskRefuseOutput",
-      "TaskWaitSetRequest"
+      "TaskWaitInput",
+      "TaskWaitOutput",
+      "TaskWaitSetRequest",
+      "TaskWaitWorldRequest"
      ],
      "path": "src/code_run/run_verbs.rs",
      "purpose": "The inputs and outputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
       "crate-vis": 3,
-      "enum": 7,
+      "enum": 9,
       "fn": 1,
-      "struct": 24
+      "struct": 25
      }
     },
     {
@@ -31693,6 +31706,16 @@
       "crate-vis": 6,
       "fn": 26,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/asks/signal.rs",
+     "purpose": "The vault's one decision-answer signal (FIX 4706)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -53490,7 +53513,7 @@
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 7
      }
     },
@@ -54293,7 +54316,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 40,
       "fn": 1,
       "mod": 4,
       "re-export": 26
@@ -56510,6 +56533,16 @@
      "purpose": "Write side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/world_privacy_wait.rs",
+     "purpose": "Waiting on a world-privacy request (FIX 4706)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -61670,7 +61703,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 97,
+     "files": 98,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62251,7 +62284,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 112,
+     "files": 113,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62783,7 +62816,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 194,
+     "files": 195,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62953,7 +62986,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3863,
+   "source_files": 3866,
    "test_files": 902
   },
   "oneiron-android": {
@@ -87499,6 +87532,7 @@
       "ModelLocality",
       "ModelManifest",
       "ModelManifestReplace",
+      "ModelOrder",
       "ModelRegistryRow",
       "ModelRole",
       "ModelRoleInput",
@@ -88032,6 +88066,7 @@
       "QuoteStripStatus",
       "RankedSlot",
       "ReadFilterInput",
+      "ReadLocation",
       "Reasoning",
       "ReasoningCause",
       "ReasoningEffort",
@@ -88454,6 +88489,7 @@
       "SealReceiptView",
       "SealRunReceipt",
       "SealedAttemptReceipt",
+      "SealedCopies",
       "SearchAxis",
       "SearchEvidence",
       "SeatInventory",
@@ -89129,6 +89165,10 @@
       "WorkspaceRosterPreset",
       "WorkspaceRosterRequest",
       "WorkspaceRosterRole",
+      "WorldPrivacy",
+      "WorldPrivacyRequest",
+      "WorldPrivacyRequestKind",
+      "WorldPrivacyRequestStatus",
       "XlsxAlignment",
       "XlsxArea",
       "XlsxBodyOp",
@@ -89157,8 +89197,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 843,
-      "struct": 2686
+      "enum": 848,
+      "struct": 2688
      }
     },
     {
