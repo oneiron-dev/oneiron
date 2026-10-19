@@ -7091,6 +7091,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/version_rows.rs",
+     "purpose": "The rows one stored version is (FIX 5455): its version CLAIM and the ASSET its bytes are, read beside those…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -12809,7 +12819,7 @@
      "path": "src/code_run/consent_wait/settle.rs",
      "purpose": "The answer and the settlement (DOOR-079 1a)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 3
      }
     },
@@ -13189,7 +13199,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 6,
       "re-export": 20
      }
@@ -13606,8 +13616,8 @@
      "path": "src/code_run/storage/wait_delivery.rs",
      "purpose": "Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it",
      "surface": {
-      "crate-vis": 11,
-      "fn": 9,
+      "crate-vis": 12,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -13932,6 +13942,16 @@
      "purpose": "Request-shape validation and short-reference parsing, run before any dispatch",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/wait_rows.rs",
+     "purpose": "The rows a parked call's delivered reply was derived from (FIX 5455)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -15927,7 +15947,7 @@
      "purpose": "Read lenses: HISTORY/EXECUTION/DISCOVERY views over the catalog plus key lookups",
      "surface": {
       "crate-vis": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -39423,9 +39443,9 @@
      "purpose": "The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare…",
      "surface": {
       "const": 1,
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 2,
-      "fn": 7,
+      "fn": 9,
       "struct": 8,
       "trait": 1
      }
@@ -46134,7 +46154,7 @@
      "purpose": "T0/T1/T2 Vault doors: inject, materialize, register, revoke, expire",
      "surface": {
       "crate-vis": 5,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -62501,7 +62521,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62655,7 +62675,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 100,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63938,7 +63958,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3941,
+   "source_files": 3943,
    "test_files": 902
   },
   "oneiron-android": {
@@ -77461,7 +77481,7 @@
      "path": "src/api/facade/connector_call_doors.rs",
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -87215,9 +87235,12 @@
       "AccessFactorPolicy",
       "AccessRequestStatus",
       "AccessStatus",
+      "ActAnswerArtifactAskOutcome",
+      "ActAnswerConnectorCallReply",
       "ActAnswerFanoutLaunchView",
       "ActAnswerRecordEraseOutcome",
       "ActAnswerSharedActExecuted",
+      "ActAnswerSlideReviewOutcome",
       "ActExecution",
       "ActionBoundRequest",
       "ActionEnvelopeRequest",
@@ -90830,7 +90853,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 864,
+      "enum": 867,
       "struct": 2752
      }
     },

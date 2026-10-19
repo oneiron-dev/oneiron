@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3941 | 902 | 193 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3943 | 902 | 193 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 41 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
@@ -73,7 +73,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `authority` | dir | 185 | L | yes | AUTHORITY_LOG record substrate |
 | `autoreason_campaign` | file+dir | 20 | L | — | Engine-side AR-3 campaign reports and read-only experiment selection |
 | `batch` | dir | 129 | L | yes | — |
-| `blob_artifact` | dir | 60 | L | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
+| `blob_artifact` | dir | 61 | L | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
 | `bm25` | dir | 9 | m | — | Analyzer-driven fielded inverted index + BM25F scorer |
 | `board_verb` | file | 1 | s | — | — |
 | `booking` | dir | 78 | L | — | Engine-generic booking module |
@@ -95,7 +95,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `code_document` | dir | 11 | m | yes | Base-mode live code files: stamped Loro operations, receipts naming their actors, and verified tested… |
 | `code_memory` | file+dir | 7 | m | — | — |
 | `code_revision` | dir | 13 | m | yes | — |
-| `code_run` | dir | 100 | L | yes | Host-side skeleton for first-party `self.*` code-mode calls |
+| `code_run` | dir | 101 | L | yes | Host-side skeleton for first-party `self.*` code-mode calls |
 | `code_sandbox` | dir | 44 | L | yes | Sandbox boundary contract for code-mode execution |
 | `code_symbol` | dir | 12 | m | yes | — |
 | `code_view` | dir | 3 | m | — | Per-agent file views over codebase blobs, with one owned shared service set |
