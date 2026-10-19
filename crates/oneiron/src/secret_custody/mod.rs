@@ -122,7 +122,7 @@ pub(crate) use self::found_keys::{
     settle_found_key_in_txn,
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
-pub(crate) use self::known_values::{KnownSweep, KnownValues};
+pub(crate) use self::known_values::{KnownSweep, KnownValues, reindex_restored_known_value_in_txn};
 pub use self::masked_files::SecretSight;
 pub(crate) use self::masked_files::{
     KeyPlaces, KeySpan, MASKED_FILE_BAND, MaskedFile, MemberKeys, MemberStep, filled,
@@ -144,6 +144,8 @@ pub(crate) use self::reveal::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::transition::holds_custody_carrier_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use self::transition::moves_custody_floor;
 pub(crate) use self::transition::{
     CustodyApplied, CustodyTransition, apply_custody_transition_in_txn, custody_portable,
     custody_transitions, remember_custody_transition_in_txn,
