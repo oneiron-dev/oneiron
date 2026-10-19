@@ -1,6 +1,6 @@
 //! Error enum, literal refusal reasons, result alias, and the invalid() constructor.
 
-use super::seat::SeatSpent;
+use super::seat::{HostedSeatBound, SeatSpent};
 use crate::code_sandbox::SandboxCredentialHandle;
 use crate::error::{ArtifactError, Error};
 // ---------------------------------------------------------------------------
@@ -117,10 +117,10 @@ pub(super) const ERR_PKCE_VERIFIER: &str = "pkce verifier must be 43-128 unreser
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ByoaError {
-    /// A vendor login asked to run on a hosted node its vendor's terms keep
-    /// on the person's own runtime ([`super::login_placement`]).
-    #[error("this vendor login runs only on the person's own runtime, not a hosted node")]
-    CloudLoginRefused,
+    /// A vendor login asked to run on a hosted node a hosted-only bound keeps
+    /// it off ([`super::hosted_seat_bound`]). The same act works self-hosted.
+    #[error("{bound}")]
+    CloudLoginRefused { bound: HostedSeatBound },
     #[error("duplicate Dreamer provider adapter: {0}")]
     DuplicateProvider(String),
     #[error("unknown Dreamer provider adapter: {0}")]

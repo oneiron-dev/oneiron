@@ -46,8 +46,9 @@ use super::official_seats::{
 };
 use super::provider::ProviderAdapterRegistry;
 use super::seat::{
-    LoginPlacement, OnSeatSpent, RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeatPolicy, RunnerWork,
-    SeatRoute, SeatSpent, login_placement, runner_task, spent_seat_in,
+    HostedSeatBound, OnSeatSpent, RUNNER_SEAT_DEDUPE_PREFIX, RunnerSeatPolicy, RunnerWork,
+    SeatIdentity, SeatRoute, SeatSpent, SkippedRunnerSeat, hosted_seat_bound, runner_task,
+    spent_seat_in,
 };
 use super::validate::{
     encode_execution_transcript, encoded_json_len, validate_cli_sandbox, validate_connector,
@@ -381,7 +382,9 @@ where
     /// NextSeat dispatches the next seat this runtime may run, as a child of
     /// the spent attempt, and parks when none is left — or when the spent
     /// attempt carries no CLI runner task to hand on (an endpoint or MCP
-    /// seat), so its capture still stands. InternalModels hands the work
+    /// seat), so its capture still stands. A seat a hosted-only bound keeps
+    /// off this runtime is passed over and named in the receipt's
+    /// `skipped_seats`. InternalModels hands the work
     /// back to the Dreamer's own model roles. A replay finds the same
     /// capture and the same child.
     ///
@@ -412,7 +415,7 @@ where
         }
         let now = capture.now;
         self.vault.try_with_write_txn_grouped(|wtxn| {
-            let receipt = self.capture_terminal_exhaust_in_txn(wtxn, capture)?;
+            let mut receipt = self.capture_terminal_exhaust_in_txn(wtxn, capture)?;
             let Some(spent) = spent else {
                 return Ok(SeatRoute::Settled(receipt));
             };
@@ -443,7 +446,12 @@ where
                     for (index, next) in policy.seats.iter().enumerate().skip(seat + 1) {
                         let connector =
                             next.connector(registry, task.to_owned(), ran.checkout_id)?;
-                        if !self.login_admitted(next.logs_in(), &connector) {
+                        if let Some(bound) = self.login_bound(next.logs_in(), &connector) {
+                            receipt.skipped_seats.push(SkippedRunnerSeat {
+                                seat: index,
+                                runner: next.runner.clone(),
+                                bound,
+                            });
                             continue;
                         }
                         let outcome = self.enqueue_in_txn(
@@ -486,13 +494,20 @@ where
         self.endpoint_factory.resolve_backend(spec)
     }
 
-    /// Whether this runtime may run a login behind `connector`: anywhere for
-    /// a login its vendor lets run on a hosted node, else only off one. A
-    /// connector without a login runs anywhere.
-    fn login_admitted(&self, user_login: bool, connector: &ByoaConnectorSpec) -> bool {
-        !user_login
-            || self.vault.config.privacy.posture != crate::config::HostingPrivacyPosture::Hosted
-            || login_placement(connector) == LoginPlacement::AnyRuntime
+    /// The hosted-only bound that keeps a login behind `connector` off this
+    /// runtime, if any ([`hosted_seat_bound`]). A connector without a login
+    /// has none.
+    fn login_bound(
+        &self,
+        user_login: bool,
+        connector: &ByoaConnectorSpec,
+    ) -> Option<HostedSeatBound> {
+        hosted_seat_bound(
+            SeatIdentity::of(connector),
+            user_login,
+            self.vault.config.privacy.posture,
+            None,
+        )
     }
 
     fn check_login_placement(
@@ -500,16 +515,16 @@ where
         user_login: bool,
         connector: &ByoaConnectorSpec,
     ) -> ByoaResult<()> {
-        if !self.login_admitted(user_login, connector) {
-            return Err(ByoaError::CloudLoginRefused);
+        if let Some(bound) = self.login_bound(user_login, connector) {
+            return Err(ByoaError::CloudLoginRefused { bound });
         }
         Ok(())
     }
 
     /// Execution-time placement, re-checked from the durable row. A stamped
     /// official seat is judged by its vendor's terms (the same table its
-    /// dispatch passed); an unstamped row keeps the generic
-    /// [`login_placement`] rule.
+    /// dispatch passed); an unstamped row by the connector it carries. Both
+    /// re-resolve [`hosted_seat_bound`] here; no verdict is stored.
     fn check_payload_placement(&self, payload: &ByoaAttemptPayload) -> ByoaResult<()> {
         match payload.official_seat {
             Some(stamp) => check_seat_placement(
@@ -840,6 +855,7 @@ where
                 artifact_id,
                 artifact_version: version,
                 result_ref,
+                skipped_seats: Vec::new(),
             });
         }
         // An unattached artifact can never be a partial successful capture:
@@ -951,6 +967,7 @@ where
             artifact_id,
             artifact_version: version.version,
             result_ref,
+            skipped_seats: Vec::new(),
         })
     }
 }

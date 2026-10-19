@@ -18,7 +18,8 @@ pub enum SealCheck {
     /// the result.
     Checked(SealCheckOutcome),
     /// A judge was asked and its answer did not examine each objective; the
-    /// request stays pending and counts against the pass.
+    /// request stays pending, counts against the pass and goes behind the
+    /// requests not asked since.
     Inconclusive,
     /// Nothing to ask now: no independent judge, or no readable result. The
     /// request stays pending and costs the pass nothing.
@@ -52,9 +53,11 @@ pub struct SealCheckReport {
 
 impl Vault {
     /// The seal's checks as the Coach, under a leased `coach.seal_checks`
-    /// attempt: pending requests oldest first, until `limit` of them reached
-    /// a judge. Each is checked by `checker` outside any vault transaction
-    /// and admitted on its own.
+    /// attempt: pending requests never asked first, then the longest since a
+    /// pass last asked them, then oldest, until `limit` of them reached a
+    /// judge. `limit` is a pace: each request a judge saw goes behind the
+    /// rest, so a later pass reaches every one. Each is checked by `checker`
+    /// outside any vault transaction, marked asked and admitted on its own.
     pub fn run_coach_seal_checks(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -63,11 +66,17 @@ impl Vault {
         now: u64,
     ) -> Result<SealCheckReport> {
         self.require_coach_attempt(attempt, COACH_SEAL_CHECKS_FACET)?;
-        let mut requests = self.pending_seal_checks()?;
-        requests.sort_by_key(|request| (request.created_at, request.reference.clone()));
+        let mut pending = self.pending_seal_check_receipts()?;
+        pending.sort_by_key(|check| {
+            (
+                check.last_asked_at,
+                check.request.created_at,
+                check.request.reference.clone(),
+            )
+        });
         let mut report = SealCheckReport::default();
         let mut asked = 0_usize;
-        for request in requests {
+        for request in pending.into_iter().map(|check| check.request) {
             if asked >= limit {
                 break;
             }
@@ -79,6 +88,7 @@ impl Vault {
                 SealCheck::Inconclusive => {
                     asked += 1;
                     report.inconclusive += 1;
+                    self.record_seal_check_asked(request.attempt, request.kind, now)?;
                     continue;
                 }
                 SealCheck::Unavailable => {
@@ -87,6 +97,7 @@ impl Vault {
                 }
             };
             asked += 1;
+            self.record_seal_check_asked(request.attempt, request.kind, now)?;
             match self.record_seal_check_outcome(request.attempt, request.kind, &outcome, now) {
                 Ok(_) => report.checked += 1,
                 Err(Error::InvalidClaimBody(reason)) => {

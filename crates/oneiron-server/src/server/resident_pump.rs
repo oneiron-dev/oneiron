@@ -29,6 +29,7 @@
 //! A leased run's planned team writes its start on the run's own seat and
 //! line, and a planned team's leader runs with the exact pattern pack its
 //! launch froze (DOOR-111 S4c, `pattern_launch`).
+mod craft;
 pub(super) mod pattern_launch;
 
 use std::collections::{BTreeMap, HashSet};
@@ -582,6 +583,8 @@ fn run_bound(
     let leader =
         pattern_launch::leader_exposure(vault, &status.attempt, &mut config, continues, unix_now())
             .map_err(text)?;
+    craft::append_resident_craft(vault, &status.attempt, actor, &mut config, continues)
+        .map_err(text)?;
     // A project conversation run runs with its skill's SKILL.md (OF-501); a
     // run whose skill does not load is refused, never run unskilled. The
     // body is tagged where it went, so the run's first step is captured with
@@ -691,6 +694,7 @@ fn run_bound(
             issuer,
             &server.live_runs,
             &exposures,
+            &server.ai,
         );
         // The first step's capsule takes the rung that answered it, on the
         // thread the entry ran its calls on.
@@ -813,6 +817,7 @@ fn enter_run(
     issuer: Option<&oneiron::authority::HostSlipIssuer>,
     live_runs: &super::LiveRuns,
     exposures: &[TaskExposure],
+    ai: &crate::ai_host::AiHandle,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let mut bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
         .map_err(text)?
@@ -832,8 +837,15 @@ fn enter_run(
     };
     let planner = decisions.host_planner_decisions(actor.entity_ref());
     if let Some(mut planner) = planner_binding(vault, provider, config, planner)? {
-        planner.pattern_runner =
-            pattern_launch::agent_runner(vault, provider, status, actor, model_seat, line.clone());
+        planner.pattern_runner = pattern_launch::agent_runner(
+            vault,
+            provider,
+            ai,
+            status,
+            actor,
+            model_seat,
+            line.clone(),
+        );
         bound = bound.with_planner(planner);
     }
     if let Some(issuer) = issuer {

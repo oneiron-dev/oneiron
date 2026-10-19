@@ -683,6 +683,10 @@ side_tables! {
     /// connection id, pseudonymous recipient id, status and timestamps only (OF-273). Key:
     /// bytes16(nonce) + bytes32(recipient pseudonym).
     COOPERATIVE_DELETION_NOTICE: VaultMeta b"cooperative_deletion:notice:v1:" Named;
+    /// One signed ReRoot row of a pact's former peer, kept because it extends the walk from the
+    /// key the pact pinned to the root that peer's courtesy asks and answers now carry (FIX 3014).
+    /// Key: bytes32(pact) + hash32(authority entry).
+    COOPERATIVE_DELETION_SUCCESSION: VaultMeta b"cooperative_deletion:succession:v1:" Named;
     /// Deduplicated set of contact refs reachable for a (party, channel class) pair. Key:
     /// hash32(sha256).
     COUNTERPARTY_CONTACT_PARTY_CHANNEL_INDEX: VaultMeta b"counterparty.contact.party_channel.v1:" Raw;

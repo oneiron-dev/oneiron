@@ -26,9 +26,10 @@ use oneiron::dispatch_byoa::{
     DrySeatDecision, DrySeatFallback, OfficialDreamerSeat, OfficialSeatAdapter,
     OfficialSeatDispatchOutcome, OfficialSeatRegistry, OfficialSeatRoute, OfficialSeatSpec,
     OnSeatSpent, OpenCodeRunner, ProviderAdapterRegistry, RunnerSeat, RunnerSeatPolicy, RunnerWork,
-    SeatAuth, SeatPlacementApproval, SeatPlanWindow, SeatRoute, SeatSpent, SiwcAuthorizeRequest,
-    check_seat_placement, decide_dry_seat, pkce_s256_challenge,
-    register_official_dreamer_providers, seat_login_plan, validate_official_seat,
+    SeatAuth, SeatIdentity, SeatPlacementApproval, SeatPlanWindow, SeatRoute, SeatSpent,
+    SiwcAuthorizeRequest, check_seat_placement, decide_dry_seat, hosted_seat_bound,
+    pkce_s256_challenge, register_official_dreamer_providers, seat_login_plan, skipped_seats_note,
+    validate_official_seat,
 };
 use oneiron::origin::smart_http::SpillFloor;
 use oneiron::{
@@ -279,9 +280,9 @@ const SEAT_ENV_REMOVED: [&str; 5] = [
 /// wall-clock budget and captures its output whole, but it is NOT a sandbox: guest
 /// network reaches are not routed through `authorize`, because a local
 /// process cannot be mediated that way. A hosted deployment must run the
-/// seat behind the microVM executor instead; placement rules already keep
-/// every login but the hosted-permitted Claude binary off hosted nodes, and
-/// this executor must not be the one serving that case.
+/// seat behind the microVM executor instead; placement rules keep only the
+/// logins a provider's terms bar off hosted nodes, and this executor must not
+/// be the one serving a hosted login.
 #[derive(Clone)]
 pub struct OfficialCliSeatExecutor {
     /// Directory the host resolved the live checkout into.
@@ -730,7 +731,11 @@ pub struct RunnerProviderRow {
     pub hosted: String,
 }
 
-fn login_placement_label(route: Option<OfficialSeatRoute>, hosted: bool) -> String {
+fn login_placement_label(
+    program: Option<&str>,
+    route: Option<OfficialSeatRoute>,
+    hosted: bool,
+) -> String {
     let posture = if hosted {
         HostingPrivacyPosture::Hosted
     } else {
@@ -744,13 +749,9 @@ fn login_placement_label(route: Option<OfficialSeatRoute>, hosted: bool) -> Stri
             }
         }
         // No official route (OpenCode): the generic login rule. A login
-        // runs on the person's own runtime; only the unmodified Claude
-        // Code binary runs hosted.
-        None if hosted => {
-            "refused: this vendor login runs only on the person's own runtime, not a hosted node"
-                .to_owned()
-        }
-        None => "allowed".to_owned(),
+        // runs hosted unless a provider's terms keep its program off one.
+        None => hosted_seat_bound(program.map(SeatIdentity::CliProgram), true, posture, None)
+            .map_or_else(|| "allowed".to_owned(), |bound| format!("refused: {bound}")),
     }
 }
 
@@ -764,8 +765,8 @@ fn runner_provider_row(
         program: program.map(str::to_owned),
         official_route: route.map(|route| route.as_str().to_owned()),
         login_argv: route.map_or_else(Vec::new, OfficialSeatRoute::login_argv),
-        own_runtime: login_placement_label(route, false),
-        hosted: login_placement_label(route, true),
+        own_runtime: login_placement_label(program, route, false),
+        hosted: login_placement_label(program, route, true),
     }
 }
 
@@ -925,16 +926,17 @@ where
             Ok(SeatRoute::Settled(_)) => {
                 Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
             }
-            Ok(SeatRoute::Park { until, .. }) => Ok(DreamerAttemptExecution::Park {
+            Ok(SeatRoute::Park { receipt, until, .. }) => Ok(DreamerAttemptExecution::Park {
                 reason: match until {
                     Some(until) => format!("runner seat spent; work parked until {until}"),
                     None => "runner seat spent; work parked for the owner".to_owned(),
-                },
+                } + &skipped_seats_note(&receipt.skipped_seats),
                 cause: DreamerParkCause::Signal,
             }),
-            Ok(SeatRoute::NextSeat { seat, .. }) => Ok(DreamerAttemptExecution::Park {
+            Ok(SeatRoute::NextSeat { receipt, seat, .. }) => Ok(DreamerAttemptExecution::Park {
                 reason: format!(
-                    "runner seat spent; seat {seat} took the work, awaiting its exhaust"
+                    "runner seat spent; seat {seat} took the work, awaiting its exhaust{}",
+                    skipped_seats_note(&receipt.skipped_seats)
                 ),
                 cause: DreamerParkCause::Signal,
             }),
