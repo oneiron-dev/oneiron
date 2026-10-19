@@ -78,6 +78,7 @@ pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
+pub(crate) use super::mesh_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 pub(crate) use super::skill_execution_doors::*;
@@ -1153,6 +1154,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.authority.history.export"
         | "vault.authority.history.import"
         | "vault.mesh.path_receipts"
+        | "vault.mesh.identity"
+        | "vault.mesh.bind_machine"
+        | "vault.mesh.set_alpn_grant"
+        | "vault.mesh.revoke_machine"
+        | "vault.mesh.dial"
         | "vault.hooks.replay"
         | "vault.hooks.regen.due"
         | "vault.hooks.regen.get"

@@ -204,6 +204,11 @@ vaultSlimResumeStep(input: unknown): unknown
 vaultSlimDropHeavy(input: unknown): unknown
 vaultSlimResume(input: unknown): unknown
 vaultMeshPathReceipts(input: unknown): unknown
+vaultMeshIdentity(input: unknown): unknown
+vaultMeshBindMachine(input: unknown): unknown
+vaultMeshSetAlpnGrant(input: unknown): unknown
+vaultMeshRevokeMachine(input: unknown): unknown
+vaultMeshDial(input: unknown): unknown
 vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
 vaultSharedProposeTransfer(input: unknown): unknown

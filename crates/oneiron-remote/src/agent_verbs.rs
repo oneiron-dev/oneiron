@@ -579,6 +579,21 @@ impl OneironClient {
                 "vault.mesh.path_receipts" => remote_agent_verb_output::<
                     Vec<oneiron::sync::mesh_path::MeshPathReceipt>,
                 >(client, verb, &input),
+                "vault.mesh.identity" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::MeshBindingIdentity,
+                >(client, verb, &input),
+                "vault.mesh.bind_machine" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::MeshMachineBound,
+                >(client, verb, &input),
+                "vault.mesh.set_alpn_grant" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::MeshAlpnGrant,
+                >(client, verb, &input),
+                "vault.mesh.revoke_machine" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::MeshMachineRevoked,
+                >(client, verb, &input),
+                "vault.mesh.dial" => remote_agent_verb_output::<
+                    oneiron::sync::mesh_path::MeshPathReceipt,
+                >(client, verb, &input),
                 "vault.inspection.resolve" => remote_agent_verb_output::<
                     oneiron::lens::InspectionResolved,
                 >(client, verb, &input),
@@ -4582,6 +4597,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.mesh.path_receipts", value)
+    }
+    pub fn vault_mesh_identity(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::task_verb::sdk::MeshBindingIdentity, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mesh.identity", value)
+    }
+    pub fn vault_mesh_bind_machine(
+        &self,
+        input: &oneiron::task_verb::sdk::MeshMachineBinding,
+    ) -> Result<oneiron::task_verb::sdk::MeshMachineBound, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mesh.bind_machine", value)
+    }
+    pub fn vault_mesh_set_alpn_grant(
+        &self,
+        input: &oneiron::task_verb::sdk::MeshAlpnGrant,
+    ) -> Result<oneiron::task_verb::sdk::MeshAlpnGrant, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mesh.set_alpn_grant", value)
+    }
+    pub fn vault_mesh_revoke_machine(
+        &self,
+        input: &oneiron::task_verb::sdk::MeshMachineRevokeRequest,
+    ) -> Result<oneiron::task_verb::sdk::MeshMachineRevoked, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mesh.revoke_machine", value)
+    }
+    pub fn vault_mesh_dial(
+        &self,
+        input: &oneiron::task_verb::sdk::MeshDialRequest,
+    ) -> Result<oneiron::sync::mesh_path::MeshPathReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.mesh.dial", value)
     }
     pub fn vault_inspection_resolve(
         &self,

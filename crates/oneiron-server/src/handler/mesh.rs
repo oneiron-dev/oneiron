@@ -277,6 +277,8 @@ mod host {
             .await
             .map_err(|error| anyhow::anyhow!("mesh listener bind {bind}: {error}"))?,
         );
+        server.mesh_transport.set(Arc::clone(&transport))
+            .map_err(|_| anyhow::anyhow!("mesh endpoint is already attached to this server"))?;
         tracing::info!(%bind, machine = %machine.to_hex(), "mesh listening");
         let mut tasks = vec![tokio::spawn(accept_loop(
             Arc::clone(&transport),

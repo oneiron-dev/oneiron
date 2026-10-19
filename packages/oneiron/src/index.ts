@@ -741,6 +741,16 @@ export class Oneiron {
     mesh: {
       /** The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner. */
       path_receipts: (input: Facade.MeshPathReceiptsRequest): Facade.MeshPathReceipt[] => this.#call(() => this.#client.vaultMeshPathReceipts(input) as Facade.MeshPathReceipt[]),
+      /** This install's public mesh keys and both binding proofs, for the owner; no private key or grant is returned. */
+      identity: (input: Facade.EmptyRequest): Facade.MeshBindingIdentity => this.#call(() => this.#client.vaultMeshIdentity(input) as Facade.MeshBindingIdentity),
+      /** Bind a paired MACHINE's address and transport key using both possession proofs; the binding starts with no ALPN grants. */
+      bind_machine: (input: Facade.MeshMachineBinding): Facade.MeshMachineBound => this.#call(() => this.#client.vaultMeshBindMachine(input) as Facade.MeshMachineBound),
+      /** Allow or revoke one exact ALPN for a paired MACHINE and endpoint key, under the caller's own owner proof. */
+      set_alpn_grant: (input: Facade.MeshAlpnGrant): Facade.MeshAlpnGrant => this.#call(() => this.#client.vaultMeshSetAlpnGrant(input) as Facade.MeshAlpnGrant),
+      /** Permanently revoke a MACHINE's mesh admission and all its ALPN grants; a new enrollment needs a new MACHINE and pairing. */
+      revoke_machine: (input: Facade.MeshMachineRevokeRequest): Facade.MeshMachineRevoked => this.#call(() => this.#client.vaultMeshRevokeMachine(input) as Facade.MeshMachineRevoked),
+      /** Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream. */
+      dial: (input: Facade.MeshDialRequest): Facade.MeshPathReceipt => this.#call(() => this.#client.vaultMeshDial(input) as Facade.MeshPathReceipt),
     },
     inspection: {
       /** Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item. */

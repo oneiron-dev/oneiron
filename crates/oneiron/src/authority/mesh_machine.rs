@@ -2,20 +2,18 @@
 //! A MACHINE row is public-writable address data. The host-signed local binding
 //! selects exact ALPN slips in AUTHORITY_LOG; it cannot grant permission itself.
 //! The host, pairing slip, logged grant and current MACHINE key are rechecked together.
-use super::slip_vault::{random_slip_id, require_host};
 use super::{
-    AuthorityFold, AuthorityKey, AuthorityOp, HostSlipIssuer, SlipClaims, invalid_authority,
+    AuthorityFold, AuthorityKey, HostSlipIssuer, invalid_authority,
     roster_has_live_owner,
 };
-use crate::scan_check::{EngineScan, ScanCount};
+use crate::scan_check::ScanCount;
 use crate::{
     EntityId, Vault,
     error::Result,
     federation::{Scope, ScopeAxis},
-    ports::{EntityRecord, EntityStore, EntityStoreRead, TombstoneStoreRead},
+    ports::{EntityStore, EntityStoreRead},
     registry::ENTITY_TYPE_MACHINE,
     side_table::{self, HexId, Named, SideTable},
-    temporal::TimeRange,
 };
 use ed25519_dalek::Signature;
 use serde::{Deserialize, Serialize};
@@ -23,6 +21,12 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     net::SocketAddr,
 };
+
+#[cfg(test)]
+use crate::temporal::TimeRange;
+
+mod doors;
+pub use doors::{MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding};
 
 const DOMAIN: &str = "oneiron/mesh-machine/v1";
 const AUTH_DOMAIN: &[u8] = b"oneiron/mesh-authority/v1\0";
@@ -33,7 +37,7 @@ const MAX_LOOKUP_MACHINES: usize = 1024;
 const MAX_ALPNS: usize = 32;
 
 /// Address hints. This structure has no authority by itself.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MeshMachineAddress {
     pub endpoint_key: [u8; 32],
@@ -383,197 +387,7 @@ impl Vault {
         )?;
         Ok(())
     }
-    /// Enroll a paired device. Both pairing and transport keys prove the same binding.
-    /// Address and host-signed binding projection commit atomically, with NO ALPN grants.
-    pub fn bind_mesh_machine(
-        &self,
-        issuer: &HostSlipIssuer,
-        machine: EntityId,
-        address: MeshMachineAddress,
-        device_key: [u8; 32],
-        pairing_slip_id: [u8; 32],
-        proofs: [&[u8]; 2],
-    ) -> Result<()> {
-        let transcript = binding_transcript(machine, address.endpoint_key);
-        for (key, proof) in [(device_key, proofs[0]), (address.endpoint_key, proofs[1])] {
-            super::strong_ed25519_key(&key)?
-                .verify_strict(
-                    &transcript,
-                    &Signature::from_slice(proof).map_err(|_| invalid_authority())?,
-                )
-                .map_err(|_| invalid_authority())?;
-        }
-        let encoded = rmp_serde::to_vec_named(&MeshMachineAddressEnvelope::new(address.clone()))
-            .map_err(|_| invalid_authority())?;
-        parse_address(&encoded).ok_or_else(invalid_authority)?;
-        let mut txn = self.store.env.write_txn()?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
-        require_host(&fold, issuer)?;
-        let claims = MeshAuthorityClaims {
-            version: 1,
-            machine,
-            endpoint_key: address.endpoint_key,
-            device_key,
-            pairing_slip_id,
-            alpns: BTreeMap::new(),
-            revoked: false,
-            host_key: issuer.binding_key(),
-        };
-        if !self.mesh_pairing_live(&fold, &txn, &claims)?
-            || MESH_AUTHORITY.contains(&self.store, &txn, &HexId(machine))?
-        {
-            return Err(invalid_authority());
-        }
-        let visibility = TombstoneStoreRead::port_deletion_state(&self.store, &txn, &machine)?;
-        if visibility.deleted || visibility.archived || visibility.stale {
-            return Err(invalid_authority());
-        }
-        // Public pairing requires an existing live holder. Its host-approved
-        // binding replaces the prior MACHINE body with the typed address envelope.
-        // Never overwrite another kind, a deleted/stale holder, or a different
-        // endpoint already tagged as this MACHINE's mesh identity.
-        if let Some(existing) = EntityStoreRead::port_entity_record(&self.store, &txn, &machine)? {
-            if existing.entity_type != ENTITY_TYPE_MACHINE
-                || EntityStore::port_entity_get(self, &txn, &machine)?.is_none()
-            {
-                return Err(invalid_authority());
-            }
-            if let Ok(prior) = rmp_serde::from_slice::<MeshMachineAddressEnvelope>(&existing.body)
-                && prior.domain == DOMAIN
-                && (prior.version != 1
-                    || parse_address(&existing.body).is_none()
-                    || prior.address.endpoint_key != address.endpoint_key)
-            {
-                return Err(invalid_authority());
-            }
-        }
-        let mut count = ScanCount::start(&self.store, &txn, EngineScan::MachineRows, &[])?;
-        if self
-            .mesh_machine_by_endpoint_in_txn(&txn, address.endpoint_key, Some(&mut count))?
-            .is_some_and(|(id, _)| id != machine)
-        {
-            return Err(invalid_authority());
-        }
-        let now = self.instant_in_txn(&txn)?.secs();
-        EntityStore::port_entity_put(
-            self,
-            &mut txn,
-            &machine,
-            &EntityRecord {
-                entity_type: ENTITY_TYPE_MACHINE,
-                occurred: TimeRange {
-                    start: now,
-                    end: now,
-                },
-                learned_at: now,
-                body: encoded,
-            },
-        )?;
-        self.write_mesh_authority_in_txn(&mut txn, issuer, claims)?;
-        txn.commit()?;
-        count.finish(self);
-        Ok(())
-    }
-    /// Authorized ALPN grant or revocation. A revoked MACHINE cannot be re-enabled.
-    pub fn set_mesh_alpn_grant(
-        &self,
-        issuer: &HostSlipIssuer,
-        machine: EntityId,
-        endpoint_key: [u8; 32],
-        alpn: &[u8],
-        allow: bool,
-    ) -> Result<()> {
-        if !valid_alpn(alpn) {
-            return Err(invalid_authority());
-        }
-        let mut txn = self.store.env.write_txn()?;
-        require_host(&self.authority_fold_readonly_in_txn(&txn)?, issuer)?;
-        let mut claims = self
-            .mesh_authority_in_txn(&txn, machine)?
-            .ok_or_else(invalid_authority)?;
-        if claims.revoked
-            || claims.host_key != issuer.binding_key()
-            || claims.endpoint_key != endpoint_key
-            || self
-                .mesh_machine_in_txn(&txn, machine)?
-                .is_none_or(|row| row.endpoint_key != endpoint_key)
-        {
-            return Err(invalid_authority());
-        }
-        if let Some(previous) = claims.alpns.remove(alpn) {
-            self.append_slip_op_in_txn(
-                &mut txn,
-                issuer,
-                AuthorityOp::SlipRevoke { slip_id: previous },
-            )?;
-        }
-        if allow {
-            let fold = self.authority_fold_readonly_in_txn(&txn)?;
-            let pair = &fold
-                .slips
-                .mints
-                .get(&claims.pairing_slip_id)
-                .ok_or_else(invalid_authority)?
-                .action
-                .claims;
-            let now = self.instant_in_txn(&txn)?.secs();
-            let expires_at = pair.expires_at.min(now.saturating_add(365 * 24 * 60 * 60));
-            if expires_at <= now {
-                return Err(invalid_authority());
-            }
-            let mut scope = Scope::top();
-            scope.verbs = ScopeAxis::Some(BTreeSet::from([mesh_verb(alpn)]));
-            if !scope.is_narrowing_of(&pair.scope) {
-                return Err(invalid_authority());
-            }
-            let grant = SlipClaims {
-                slip_id: random_slip_id(),
-                vault_id: pair.vault_id,
-                parent_id: None,
-                holder_ref: machine.to_hex(),
-                binding_key: endpoint_key,
-                scope,
-                issued_at: now,
-                expires_at,
-                ttl_secs: expires_at - now,
-                single_use: false,
-                records: Default::default(),
-                channels: Default::default(),
-                actor_class: None,
-                org_ref: None,
-                grant_ref: None,
-                invitation_ref: None,
-                delegation: None,
-            };
-            let slip = self.mint_slip_in_txn(&mut txn, issuer, grant)?;
-            claims.alpns.insert(alpn.to_vec(), slip.claims.slip_id);
-        }
-        if claims.alpns.len() > MAX_ALPNS {
-            return Err(invalid_authority());
-        }
-        self.write_mesh_authority_in_txn(&mut txn, issuer, claims)?;
-        txn.commit()?;
-        Ok(())
-    }
-    /// Irreversible local MACHINE admission revoke. Reenrollment needs a new row/pairing.
-    pub fn revoke_mesh_machine(&self, issuer: &HostSlipIssuer, machine: EntityId) -> Result<()> {
-        let mut txn = self.store.env.write_txn()?;
-        require_host(&self.authority_fold_readonly_in_txn(&txn)?, issuer)?;
-        let mut claims = self
-            .mesh_authority_in_txn(&txn, machine)?
-            .ok_or_else(invalid_authority)?;
-        if claims.host_key != issuer.binding_key() {
-            return Err(invalid_authority());
-        }
-        claims.revoked = true;
-        for id in claims.alpns.values() {
-            self.append_slip_op_in_txn(&mut txn, issuer, AuthorityOp::SlipRevoke { slip_id: *id })?;
-        }
-        claims.alpns.clear();
-        self.write_mesh_authority_in_txn(&mut txn, issuer, claims)?;
-        txn.commit()?;
-        Ok(())
-    }
+
 }
 
 #[cfg(test)]
