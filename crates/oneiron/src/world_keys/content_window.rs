@@ -188,7 +188,8 @@ impl WindowManager {
     /// mirror, on a machine that may read the world now: merged as more of the
     /// same history, never in place of it, so a mirror here that already holds
     /// all of it stays as it is. With `materialize` the mirror's rows land here
-    /// too; without, they wait in the mirror for a promotion
+    /// too, a mirror that held it all already included (FIX 4788); without,
+    /// they wait in the mirror for a promotion
     /// ([`Self::materialize_sealed_mirror`]). Returns whether the mirror took
     /// anything new.
     pub(crate) fn merge_bundle_mirror(
@@ -214,6 +215,9 @@ impl WindowManager {
         let mirror = if fresh {
             incoming
         } else if mirror.oplog_vv().includes_vv(&incoming.oplog_vv()) {
+            if materialize {
+                forward_rematerialize(vault, &mirror, self.materializer(), window)?;
+            }
             return Ok(false);
         } else {
             import_doc(&mirror, snapshot)?;

@@ -171,6 +171,11 @@ side_tables! {
     DREAMER_PROACTIVITY_JUDGE_ASKS: VaultMeta b"dreamer:proactivity:judge_asks:v1:" Raw;
     /// Rolling proactivity-digest emission state (last_emitted timestamp). Key: ().
     DREAMER_PROACTIVITY_STATE: VaultMeta b"dreamer:proactivity:state:v1" LegacyJson;
+    /// OF-420: one project's tree upkeep for one body of its evidence: the project's tree in force
+    /// it revised, the Candidate revision, the reserve its fit left out, what was stored and
+    /// scored, and how it settled. A settled row keeps that evidence from minting again. Key:
+    /// id16 (project) + hash32 (evidence).
+    DREAMER_PROJECT_TREE_UPKEEP: VaultMeta b"dreamer:project-tree-upkeep:v1:" Named;
     /// The projector rounds one TURN gave words to, for erasure. Key: id16(turn).
     DREAMER_PROJECTION_GIVEN: VaultMeta b"dreamer:projection:given:v1:" Named;
     /// The latest TURN the projector queued, vault-wide, its round, and whether it holds. Key: ().

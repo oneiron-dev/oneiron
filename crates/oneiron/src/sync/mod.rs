@@ -87,6 +87,7 @@ pub use connection::{
     ConnectionConfig, DeviceResidence, HomeNodeTopology, HomeSearch, LocalUpdate,
     ResidenceModeChange, SyncConnection,
 };
+pub(crate) use ingest::forget_stale_peer_origins;
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
     LEASE_RECORD_VERSION, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP, client_id_hex,

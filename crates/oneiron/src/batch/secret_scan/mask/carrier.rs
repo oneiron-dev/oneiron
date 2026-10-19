@@ -66,7 +66,7 @@ pub(crate) fn mark_carrier_text_in_txn(
     };
     let mut plan = Masker {
         mints: true,
-        known: KnownValues::load_in_txn(store, txn)?.map(Arc::new),
+        known: KnownValues::load_backfilled_in_txn(store, txn)?.map(Arc::new),
         at: Some((origin, place.to_owned())),
         ..Masker::default()
     };

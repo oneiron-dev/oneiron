@@ -212,8 +212,9 @@ impl Vault {
         Ok(request)
     }
 
-    /// One request, in the caller's snapshot.
-    pub(super) fn world_privacy_request_in_txn(
+    /// One request, in the caller's snapshot. Crate-wide only for the wait
+    /// on it (FIX 4706), which admits its asker alone; no door reads it.
+    pub(crate) fn world_privacy_request_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         id: EntityId,
@@ -339,6 +340,9 @@ impl Vault {
     /// keeps its number on the request. Never inside a writer: the ask queue
     /// opens its own. A request whose ask failed to queue still reached its
     /// holders through the world-privacy door's list, and keeps no number.
+    /// A holder who answered before the number was kept settles the ask in
+    /// the commit that keeps it, from the request's stored answer, and its
+    /// waiters wake after that commit (FIX 4706); nothing is applied again.
     pub(super) fn queue_world_privacy_ask(
         &self,
         mut request: WorldPrivacyRequest,
@@ -350,13 +354,24 @@ impl Vault {
             return Ok(request);
         };
         request.ask = Some(seq);
-        self.with_write_txn(|txn| {
+        let settled = self.with_write_txn(|txn| {
             let Some(mut stored) = self.world_privacy_request_in_txn(txn, id)? else {
-                return Ok(());
+                return Ok(None);
             };
             stored.ask = Some(seq);
-            self.put_world_privacy_request_in_txn(txn, &stored)
+            self.put_world_privacy_request_in_txn(txn, &stored)?;
+            let (holder, yes) = match &stored.status {
+                WorldPrivacyRequestStatus::Pending => return Ok(None),
+                WorldPrivacyRequestStatus::Applied { holder, .. } => (holder, true),
+                WorldPrivacyRequestStatus::Declined { holder } => (holder, false),
+            };
+            let holder = EntityId::from_hex(holder)
+                .map_err(|_| Error::CorruptedIndex("world privacy request holder"))?;
+            self.settle_world_privacy_ask_in_txn(txn, seq, holder, yes)
         })?;
+        if let Some(seq) = settled {
+            self.signal_decision_answer(seq);
+        }
         Ok(request)
     }
 }

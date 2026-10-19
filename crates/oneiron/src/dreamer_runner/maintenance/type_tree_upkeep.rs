@@ -256,30 +256,33 @@ pub fn recount(tree: &TaskTypeTree, evidence: &[&TypeEvidence]) -> (TaskTypeTree
     (tree, skipped)
 }
 
-/// `pool`'s rows as the tree is fit on them: the held-out tasks' rows that
-/// carry a decision, which the reshape is checked on, then the fit rest.
-fn fit_split(pool: &[TypeEvidence]) -> Result<(Vec<&TypeEvidence>, Vec<&TypeEvidence>)> {
-    let skill = team_shape_skill()?;
-    Ok(pool.iter().partition(|row| {
+/// `pool`'s rows as the tree is fit on them: the rows whose task `skill`'s
+/// split holds out and that carry a decision, which the reshape is checked
+/// on, then the fit rest.
+pub(super) fn fit_split<'a>(
+    pool: &'a [TypeEvidence],
+    skill: &EntityId,
+) -> (Vec<&'a TypeEvidence>, Vec<&'a TypeEvidence>) {
+    pool.iter().partition(|row| {
         !row.decisions.is_empty()
             && row
                 .task
                 .as_deref()
-                .is_some_and(|task| receipt_is_held_out(&skill, task))
-    }))
+                .is_some_and(|task| receipt_is_held_out(skill, task))
+    })
 }
 
 /// Splits and merges one pass made.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct Reshape {
-    splits: u32,
-    merges: u32,
+pub(super) struct Reshape {
+    pub(super) splits: u32,
+    pub(super) merges: u32,
 }
 
 /// Splits each live leaf on the first decision its tasks disagree on, then
 /// merges split siblings that [`merge_supported`] allows, each node at most
 /// once a pass.
-fn reshape(tree: &mut TaskTypeTree) -> Reshape {
+pub(super) fn reshape(tree: &mut TaskTypeTree) -> Reshape {
     let mut changes = Reshape::default();
     let mut split = BTreeSet::new();
     for candidate in tree.split_candidates() {
@@ -342,7 +345,7 @@ fn merge_supported(tree: &TaskTypeTree, a: &str, b: &str) -> bool {
 
 /// Held-out decisions `tree` reads right: the winner it reads for the run's
 /// type on that axis is the value that won.
-fn held_out_hits(tree: &TaskTypeTree, held_out: &[&TypeEvidence]) -> u64 {
+pub(super) fn held_out_hits(tree: &TaskTypeTree, held_out: &[&TypeEvidence]) -> u64 {
     let mut hits = 0_u64;
     for row in held_out {
         let Some(node) = tree.resolve_ref(&row.type_ref) else {
@@ -460,7 +463,7 @@ impl Vault {
             None => (TeamShapeReserve::default(), BTreeSet::new()),
         };
         let (evidence, eligible) = self.vault_type_evidence(&receipts, &reserved)?;
-        let (held_out, fit) = fit_split(&eligible)?;
+        let (held_out, fit) = fit_split(&eligible, &team_shape_skill()?);
         let mut report =
             self.reshape_and_propose(attempt, namer, &evidence, &held_out, &fit, now)?;
         report.reserve = reserve;
